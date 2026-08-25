@@ -628,3 +628,123 @@ skipped: [`docs/architecture/agent-activity-feed.md`](../../architecture/agent-a
   deleted (`WORKER_NAME_ENV`, the `TYPE_CHECKING` import of `WorkerSpec`/`declared_workers` from
   `apps/background`, and the `sys.modules` stub of that module). **No unlanded content on any of the three.**
   **Verdict: the atom is satisfiable and now railed.** Flip `APE-3` to done.
+
+## Execution log — APE-3 wire-depth sweep, all 24 wires (2026-08-24, DISCOVERY)
+
+**DISCOVERY slot — measurement only, nothing fixed.** `tools/audit_landed_atoms.py --check-wires APE-3
+--max-wires 24` on `main` `8c8e5fe3`. APE-3 derives **24** wires from its 6 annotated modules (the brief
+said 22 remained; 24 were run, so the two already-railed ones doubled as a known-answer check).
+
+**Result: 8 RAILED · 16 UNRAILED · 0 REFUSED.**
+
+**Ground truth held.** `worker_runtime::start_worker_watchdog` → RAILED (1 red,
+`test_boot_starts_the_worker_watchdog_beside_the_backend_one`) and `app_manager::_stop_worker` → RAILED
+(2 red) — the two wires `860c2c1d` pinned. The checker distinguishes its own known-answer cases.
+
+**RAILED (8) — these bound the problem.** `start_worker_watchdog` (1 site, 1 red) ·
+`_stop_worker` (2, 2) · `_stop_backend` (3, 1) · `_start_backend` (4, 1, `test_backend_proxy_round_trip`)
+· `_reject_core_dependency_conflicts` (1, 5) · `worker_runtime::_notify` (2, 3) ·
+`worker_runtime::_notify_paused` (2, 2) · `app_manager::_run_hook` (5, 8). The **worker runtime** and the
+**hook/dependency-refusal** paths are genuinely covered.
+
+**UNRAILED (16).** Every one is a plain side-effect call statement, so none is one of the locator's
+blind shapes (no dynamic dispatch, decorator, method receiver or value-consuming call). They fall into
+three groups.
+
+*Group 1 — the boot block has no rails.* `loader::load_all_extensions` at `dashboard/server.py:1306`,
+258 selected tests green; bound: **16 further scored files cut by the cap and 1003 of 1017 test files
+overall not run**. Two lines below it, PHF-7's `registry::sync_entries_from_config` (`:1317`) is
+UNRAILED too — measured in the same session, 257 green, 33 cut, 1003 of 1017 not run. **The gateway's
+provider-extension boot block is unobserved on both of its lines.** Deleting either leaves every route
+test green while no provider extension is loaded or replayed. A fix asserts that after the app is built
+a known extension type is resolvable from the registry, with a vacuity floor that it is absent before
+boot.
+
+*Group 2 — the app-platform audit trail has no rails.* `app_manager::_audit`, **28 call sites**, all
+neutralised at once: **331 selected tests green**; bound: **83 further scored files cut by the cap and
+1003 of 1017 overall not run**. This is the same finding as MRT-5's `policy::_sel_policy_change` in the
+routing subsystem: the emit exists, nothing observes it. Caveat recorded honestly — 83 cut files is the
+largest cut in the sweep and three of them (`test_app_manager_lifecycle.py`,
+`test_app_install_fix_prompt.py`, `test_app_sandbox_p3.py`) name app-lifecycle audit kinds, so this
+verdict is re-run below with the cap raised before it should be trusted.
+
+*Group 3 — install/enable/disable/uninstall side-effect fan-out, both directions.* Ten wires, each
+UNRAILED with 267–294 selected tests green: `_seed_app_prompts` (4 sites) and `_remove_app_prompts` (3)
+· `_seed_app_skills` (4) and `_remove_app_skills` (3) · `_register_mcp` (4) and `_deregister_mcp` (3) ·
+`_register_proposal_kinds` (1) and `_deregister_proposal_kinds` (2) · `_write_seed_marker` (2) ·
+`_resync_native_manifest` (1); plus `loader::_seed_extension_prompts` (3), `_seed_extension_skills` (3)
+and `_seed_promptonly_installed_apps` (1) — those last three with **0 files cut by the cap** (1003 of
+1017 overall not run), which makes them the strongest of the group. `_deregister_mcp` is the one with a
+security-shaped consequence: drop it and a disabled or uninstalled app's MCP server stays registered.
+
+*And the worker-lifecycle other half.* `background::_install_signal_handlers` at `apps/background.py:423`
+— 99 selected tests green, **0 cut by the cap**, 1010 of 1017 overall not run. `_stop_worker` (the
+manager side of no-orphan-on-uninstall) is railed; the worker side that makes SIGTERM actually stop the
+loop is not. A fix asserts a spawned worker exits on SIGTERM within a bound, with a floor proving it
+survives the signal when the handler is absent.
+
+**Every one of the 16 is unrailed-but-correct, not a live defect** — no call is missing and no user sees
+a wrong answer today. What is missing is the rail, and the shape is the one that already bit the routing
+PUT: remove the call and the surface still reports success.
+
+**Selection-quality finding about the tool itself.** The ten app_manager wires shared one 14-file
+selection that **cut `test_app_owned_prompts.py` (7 app_manager references) and
+`test_app_seed_builtins.py` (17)** — the two files most likely to hold the seeding rails. Its scoring
+under-weights a file that drives the manager without naming the private symbol. Confirmation pass below.
+
+### Confirmation pass — the default selection cap produced EIGHT false UNRAILED verdicts
+
+Re-running the eleven cut-bounded wires with `--max-test-files 32` (enough that **0 files were cut**)
+flipped **8 of 11 from UNRAILED to RAILED**:
+
+| wire | at cap 14 | at cap 32 (0 cut) | caught by |
+|---|---|---|---|
+| `_resync_native_manifest` | UNRAILED | **RAILED** (2 red) | `test_app_seed_builtins.py::test_native_manifest_resyncs_from_source_on_restart` |
+| `_write_seed_marker` | UNRAILED | **RAILED** (5 red) | `test_app_seed_builtins.py::test_seed_is_idempotent_across_runs` |
+| `_deregister_mcp` | UNRAILED | **RAILED** (3 red) | `test_app_mcp_bridge.py::test_uninstall_removes_mcp` |
+| `_register_mcp` | UNRAILED | **RAILED** (5 red) | `test_app_mcp_bridge.py::test_install_registers_mcp_servers` |
+| `_seed_app_prompts` | UNRAILED | **RAILED** (2 red) | `test_app_owned_prompts.py::test_seed_is_non_clobbering_of_user_edits` |
+| `_remove_app_prompts` | UNRAILED | **RAILED** (1 red) | `test_app_owned_prompts.py::test_provideless_app_seeds_prompt_and_snippet_and_resolves` |
+| `_seed_app_skills` | UNRAILED | **RAILED** (3 red) | `test_app_owned_skills.py::test_install_seeds_app_skill_through_the_chokepoint` |
+| `_remove_app_skills` | UNRAILED | **RAILED** (1 red) | `test_app_owned_skills.py::test_removal_is_provenance_keyed` |
+
+Every rail lived in a file the default cap cut: `test_app_seed_builtins.py`, `test_app_owned_prompts.py`,
+`test_app_owned_skills.py`, `test_app_mcp_bridge.py`. **So "Group 3" above is retracted — the
+install/enable/disable/uninstall fan-out is covered in both directions**, and the app platform is in
+better shape than the first pass said.
+
+**This is a finding about the checker, not about APE-3.** `--max-test-files` defaults to 14, and
+`app_manager.py` is driven by far more suites than that. Its scoring under-weights a file that exercises
+the manager through its public surface without naming the private symbol, which is exactly the shape a
+seeding or MCP-bridge rail has. The report's own bound sentence is what saved this — it printed
+"15 further scored file(s) cut by the cap", so the verdicts were visibly provisional. **Rule for the next
+outing: an UNRAILED verdict with a non-zero cut is not a result, it is a prompt to raise the cap.**
+Only a `cut=0` UNRAILED is a measurement.
+
+**Surviving UNRAILED at `cut=0`:** `loader::load_all_extensions` (761 selected tests green) ·
+`app_manager::_register_proposal_kinds` (553 green) · `app_manager::_deregister_proposal_kinds` (553
+green) · `background::_install_signal_handlers` (99 green) · `loader::_seed_extension_prompts`,
+`_seed_extension_skills`, `_seed_promptonly_installed_apps` (294 green each). All seven remain bounded by
+"1003–1010 of 1017 test files overall not run".
+
+### `app_manager::_audit` is not measurable by this checker as it stands
+
+The 28-site audit-emit wire is the one verdict the sweep could not land, in either direction:
+
+* at `--max-test-files 14` — **UNRAILED**, 331 selected tests green, but **83 files cut**, the largest cut
+  in the sweep. Given that the same cut flipped 8 of 11 verdicts above, this is not credible as a result.
+* at `--max-test-files 100` (`cut=0`, 97 files) — **REFUSED**: *"baseline is not green (23 failed, 3548
+  passed, 1 skipped); a red after mutation could not be attributed to the wire."* Retried with
+  `--with-cov`, exactly as the refusal message suggests: **identical 23 failures**, so this is not the
+  known `--no-cov`-reds-async-workflows flake.
+
+Attributed: the first reds are in `tests/test_chat_craft_sel_audit.py`, and that file is
+**24 passed / green in isolation** on the same clean tree (`-n0 --no-cov`). So the 23 reds are
+**cross-test pollution inside the wide derived selection**, not reds on `main` and not this session's
+doing — and it is the SEL-audit suites that break, which is the known shared-SEL-state leak shape.
+
+**Consequence for the checker:** its two knobs pull against each other on a widely-driven module. A cap
+small enough to stay isolated cuts the rails; a cap wide enough to include them composes suites that are
+not mutually isolated and reds the baseline. Refusing was the right call — a scored verdict here would
+have been fiction. Measuring `_audit` needs either per-file isolation in the runner or a hand-picked
+selection, so **whether the app-lifecycle audit trail is railed remains an open question.**
