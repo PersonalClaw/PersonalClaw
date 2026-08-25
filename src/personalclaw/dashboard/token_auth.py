@@ -574,6 +574,26 @@ def validate_token_with_app(
     return valid, user_id, reason, app_name
 
 
+def token_nonce(token: str) -> str:
+    """The ``nonce`` claim of *token*, or ``""`` when it cannot be read.
+
+    **Precondition: the caller has already validated the token.** This decodes the payload
+    WITHOUT checking the signature, because the one caller (the token middleware) has just run
+    :func:`validate_token_with_app` over the same string — re-verifying here would be a second
+    copy of the validation rules, which is worse than stating the precondition.
+
+    Returning ``""`` on any malformed input is deliberate: every consumer treats an empty nonce
+    as "this session cannot be identified" and falls back to the stricter branch, so a decode
+    failure fails CLOSED rather than producing a nonce that matches nothing by accident.
+    """
+    try:
+        data = json.loads(_b64url_decode(token.split(".")[0]))
+    except Exception:  # noqa: BLE001 — an unreadable payload is an unidentifiable session
+        return ""
+    nonce = data.get("nonce", "") if isinstance(data, dict) else ""
+    return nonce if isinstance(nonce, str) else ""
+
+
 def _evict_expired() -> None:
     """Remove token state entries whose session has expired."""
     _state.evict_expired(time.time())
@@ -1057,6 +1077,12 @@ def token_auth_middleware(
         # Expose authenticated identity to handlers (deny-by-default)
         request["user"] = user_id
         request["app"] = app_name
+        # WHICH session authorized this request, so a handler can ask what kind of client is
+        # on the other end without re-deriving it from the raw credential. Only the nonce
+        # travels — it is the registry handle, and the token itself stays in this middleware.
+        # Consumed by the `/api/ws` origin check (CA-7): a paired device session is the one
+        # thing that can vouch for an origin-less upgrade.
+        request["session_nonce"] = token_nonce(token)
 
         # Layered app identity (untrusted-app sandbox, P1): an app's SDK sends the
         # owner cookie (browser-attached) PLUS an app-scoped token — as an

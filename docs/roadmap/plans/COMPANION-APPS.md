@@ -715,3 +715,87 @@ no-op for sessions with no device. No new route, exemption or credential surface
   sessions/inbox/settings is T4.4's bar and lands with the desktop connect dialog, which is where a second
   endpoint can actually be paired. Nothing in the shells reads the registry yet — `desktop/main.js` still
   holds one `backendUrl` — so the helper is a contract with its first consumer still to come.
+
+---
+
+## Execution log — CA-7 (S3 remote-endpoint auth path over `wss`)
+
+- **CA-7 PARTIAL — the atom stays `todo`.** The native-client half is built, tested and gated; the
+  two `done_when` clauses that need two live gateways over a real tunnel are not observed here, for
+  the same reason `CA-6`'s log already recorded against `CA-7`/`CA-8`.
+- **T3.2's verb is *verify*, and the verification FAILED — that is the finding.** The row says
+  "verify origin/CSP allow it without a new exemption", i.e. it expected the existing machinery to
+  already admit a native client. Measured against `origin.py`/`ws.py` before writing anything, it
+  did not, for **two independent reasons**:
+  1. **A native client sends no `Origin` at all** (it has no document), and `_check_ws_origin` →
+     `check_origin(require=True)` answered *False* for any non-loopback peer → `403 WebSocket
+     origin not allowed`. The old docstring stated the intent out loud: *"including missing Origin
+     (non-browser clients are not expected)"*.
+  2. **A WebView over the tunnel is refused too**, and this one is a shipped user-visible defect
+     rather than a missing feature. `dashboard.public_url` adds `wss://<host>` to the CSP
+     (`server.py:_ws_csp_sources`, measured returning `' wss://pc.example.com
+     https://pc.example.com'`) but **nothing** adds `https://<host>` to `allowed_origins`:
+     `build_allowed_origins` takes `dashboard_url` — `cfg.dashboard.url`, passed at
+     `gateway.py:3494` — and `public_url` is a different field. So the browser is *permitted* to
+     open the socket and the gateway then refuses the upgrade, and every state-changing POST 403s
+     via `csrf_middleware`. `remote-access.md` never mentions `dashboard.url`, and its own
+     troubleshooting entry blamed a `public_url` mismatch for exactly this symptom.
+- **Only (1) was fixed here; (2) was left to REMOTE-USER-AUTH, deliberately.** Closing (2) means
+  widening `build_allowed_origins`, and `CA-2`'s log already ruled that widening the allowlist "is
+  that plan's call, not this atom's" on the strength of the same "no new origin exemption" clause.
+  Both halves are pinned by tests so neither reads as accidental, and both guides now document the
+  workaround (set `dashboard.url` to the same public URL — measured to work: the origin appears in
+  the set, behind the existing `_is_token_auth` invariant at `server.py:1977-1993`).
+- **The mechanism, and why it is not an origin exemption.** `ws.py:_check_ws_origin` keeps the
+  allowlist as the rule for anything presenting an `Origin` — that path is byte-identical — and
+  admits an `Origin`-**less** upgrade only when the authorizing session carries a paired `device`
+  row. `build_allowed_origins` is untouched, so the allowed set is byte-identical and a paired
+  device gets **no** help forging an origin it does not have. `token_auth.py` publishes
+  `request["session_nonce"]` (new `token_nonce()`, documented as valid-token-only since the
+  middleware has just validated the same string) — that writer is the live call site, and without
+  it the predicate is inert.
+- **MEASURED — the refusal being relaxed protected nothing, and this is the load-bearing
+  argument.** A non-browser caller that wants past `check_origin` today simply sends `Origin:
+  http://localhost:10000`, which is in the set unconditionally. Probed on the same client: honest
+  (no `Origin`) → **403**; lying (`Origin: http://localhost:10000`) → **101**. The rule therefore
+  only ever constrained clients that *cannot* choose their headers — the honest ones — so keying
+  admission on a paired device session (revocable per-device from Settings → Devices, `last_seen`
+  stamped, revoked rows stop authenticating upstream) is strictly stronger than the header it
+  replaces. Pinned by `test_the_refusal_it_replaces_was_bypassable_by_forging_an_origin`.
+- **FAIL-CLOSED, asserted not assumed.** `_paired_device_session` answers `""` for an absent nonce,
+  a non-string nonce, an unknown nonce, a non-device row and an unreadable registry; `token_nonce`
+  answers `""` for anything undecodable. Each is a test, and the two guards were falsified: making
+  the non-device branch return a device id → **3 red** (including the ordinary-session and
+  unknown-nonce fail-closed legs); removing the `Origin`-absence precondition → **2 red** (the
+  disallowed-origin and public-origin legs). Mutating the TS scheme map (`https:` → `ws:`) → **6
+  red**. Every mutation was grepped back to confirm it applied and restored from a file copy.
+- **No config field was added**, so there is no round-trip surface: the admission is keyed on
+  existing *state* (a `sessions.json` device row), not a new knob. Pairing a device IS the owner's
+  opt-in, which is why a `companion.allow_native_remote`-style flag would have been a knob nobody
+  sets. `config/loader.py` is untouched by this atom.
+- **Client helper + docs (T3.2's declared deliverables).** `endpointSocketUrl`/`endpointSocket` in
+  `web/src/lib/endpoints.ts` map an endpoint's own scheme to `ws:`/`wss:` and refuse — never guess
+  — an unparseable URL, a bare host, or a non-http scheme. Nothing consults `kind`: that field is a
+  lifecycle fact, so a mislabelled row still dials correctly. The guide gains
+  `### Reaching a remote gateway over wss://` covering the WebView-vs-native split (and why this is
+  the one legitimate place a `base_url` is prepended to a path, which does not contradict C1's
+  "load it as an origin" rule), the admission table, the no-middle-tier property, and the known
+  rough edge.
+- **CORRECTED — this atom's own commit staled C1's `token_auth.py` anchors, and they are fixed in
+  the same change.** Adding `token_nonce()` shifted every citation in the guide's transport
+  paragraph by +20 (`:582`→`:602`, `:587`→`:607`, `:1055`→`:1075`, `:1042`→`:1062`,
+  `:1040-1041`→`:1059-1061`). `CA-6` fixed the same class of drift rather than inheriting it; the
+  docs rails do not check line numbers, so this had to be caught by hand.
+- **UNMET clauses (why the atom stays `todo`).** (a) The done-when is written as an *observation* —
+  "a native client reaches a remote gateway **over the owner's tunnel**" — and nothing here drove a
+  real tunnel with a real native shell; there is no native client in the repo to drive
+  (`desktop/main.js` still holds one `backendUrl` and no shell reads the registry, per `CA-6`).
+  (b) "killing the tunnel mid-session reconnects/degrades gracefully" is unobserved for the same
+  reason; the SPA's capped-backoff contract is reused by reference, not re-verified. (c) The
+  WebView/public-origin half is documented and pinned but not closed. `CA-8` is where a second
+  endpoint can actually be paired and is the natural place to close (a) and (b).
+- **Gate:** `make lint` clean (black 2029 files, isort, flake8, mypy 1001 sources); 22/22 on
+  `tests/test_ca7_remote_wss_auth.py`; 20/20 on the two docs rails; web typecheck clean
+  (`tsc --noEmit` + `tsconfig.sw.json`), the FULL web suite **478 files / 5050 tests**, and
+  `npm run build` (524 assets, sw.js emitted). The full web suite was run rather than a subset
+  because ~120 suites under `web/src` scan the tree.
