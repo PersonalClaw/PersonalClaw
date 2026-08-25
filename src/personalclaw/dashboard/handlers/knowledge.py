@@ -2264,6 +2264,122 @@ async def list_collections(request: web.Request) -> web.Response:
     return web.json_response({"collections": _store(request).list_collections()})
 
 
+# ---------- Library home (KNOWLEDGE-LIBRARY S3, T3.3) ----------
+
+#: How many items a home shelf carries. A shelf is a glance, not a list view — the library
+#: list is one segment away and paginates properly.
+_HOME_SHELF_LIMIT = 8
+_HOME_SHELF_MAX = 24
+#: A SMART shelf's count is `len(resolve_collection(...))` — the same call that produces the
+#: items when the shelf is opened, so the number beside a shelf cannot disagree with what
+#: opening it shows. That resolve runs hybrid retrieval, so it is capped, and the cap is
+#: REPORTED (`count_capped`) rather than rendered as a smaller number pretending to be a total.
+_HOME_SMART_COUNT_CAP = 200
+#: Ordering clauses. Literals, never interpolated from a request: the home surface picks the
+#: shelf, the caller never picks the ORDER BY.
+_HOME_ORDER_ADDED = "i.created_at DESC, i.id DESC"
+_HOME_ORDER_TOUCHED = "i.updated_at DESC, i.id DESC"
+
+
+def _listable_where() -> tuple[str, list[object]]:
+    """The library's own "should a user see this row" predicate, as SQL over alias ``i``.
+
+    Mirrors `GET /api/knowledge/items`' no-query branch: mirrored artifacts and
+    `DEFAULT_LIST_EXCLUDED_KINDS` are INDEXED, not LISTED, and an archived item is the user
+    saying "not in my active library". A home shelf that disagreed with the list it links
+    into would put rows on the landing surface that vanish the moment you click through.
+    """
+    where = ["i.item_type != ?", "COALESCE(i.is_archived, 0) = 0"]
+    params: list[object] = [ARTIFACT_ITEM_TYPE]
+    excluded = sorted(DEFAULT_LIST_EXCLUDED_KINDS)
+    if excluded:
+        marks = ",".join("?" * len(excluded))
+        where.append(f"COALESCE(i.kind, '') NOT IN ({marks})")  # noqa: S608
+        params.extend(excluded)
+    return " AND ".join(where), params
+
+
+def _home_shelf(store, extra_where: str, order: str, limit: int) -> list[dict]:
+    """One shelf's rows, list-serialized exactly like the library list serializes them."""
+    base, params = _listable_where()
+    clause = f"{base} AND {extra_where}" if extra_where else base
+    rows = store.db.execute(
+        f"SELECT i.* FROM items i WHERE {clause} ORDER BY {order} LIMIT ?",  # noqa: S608
+        [*params, limit],
+    ).fetchall()
+    return [_list_item(store, r) for r in rows]
+
+
+def _collection_count(store, coll: dict) -> tuple[int, bool]:
+    """A shelf's live count, and whether it hit the smart-resolve cap.
+
+    🔑 DERIVED FROM THE SAME QUERY THAT PRODUCES THE ITEMS, per kind — a count kept beside a
+    table is a count that can disagree with it, and `list_collections`' own `item_count` is
+    already an instance: it counts every membership row, INCLUDING archived items, while
+    `resolve_collection` excludes them. So the rail number can exceed what opening the shelf
+    shows. Here manual counts repeat `resolve_collection`'s manual WHERE (join + the archived
+    exclusion, no LIMIT, so it is exact) and smart counts ARE `resolve_collection`.
+    """
+    if coll.get("kind") == "smart":
+        n = len(store.resolve_collection(coll["id"], limit=_HOME_SMART_COUNT_CAP))
+        return n, n >= _HOME_SMART_COUNT_CAP
+    row = store.db.execute(
+        "SELECT COUNT(*) FROM collection_items ci JOIN items i ON i.id = ci.item_id "
+        "WHERE ci.collection_id = ? AND COALESCE(i.is_archived, 0) = 0",
+        (coll["id"],),
+    ).fetchone()
+    return int(row[0]), False
+
+
+async def library_home(request: web.Request) -> web.Response:
+    """GET /api/knowledge/library-home — the four shelves of the library landing surface.
+
+    ONE request, not four: the home is a glance surface, and four independent fetches would
+    make it four independent failure modes on one screen (three shelves populated, the fourth
+    blank for a reason the user cannot see). One read means one error envelope, so the client
+    can say "this whole surface failed" instead of rendering a shelf that is empty-looking and
+    broken at the same time.
+
+    The three item shelves are the library's own listable set (`_listable_where`) narrowed by
+    one column each: newest by `created_at`, `read_state='reading'`, `favorited`. The shelves
+    are deliberately NOT search results — a landing surface must not depend on the embedder or
+    the retriever being up.
+    """
+    store = _store(request)
+    try:
+        limit = min(_HOME_SHELF_MAX, max(1, int(request.query.get("limit", _HOME_SHELF_LIMIT))))
+    except ValueError:
+        return web.json_response({"error": "invalid limit"}, status=400)
+    collections = []
+    for coll in store.list_collections():
+        count, capped = _collection_count(store, coll)
+        collections.append(
+            {
+                "id": coll["id"],
+                "name": coll.get("name") or "",
+                "kind": coll.get("kind") or "manual",
+                "icon": coll.get("icon") or "",
+                "position": coll.get("position"),
+                "count": count,
+                "count_capped": capped,
+            }
+        )
+    return web.json_response(
+        {
+            "recently_added": _home_shelf(store, "", _HOME_ORDER_ADDED, limit),
+            # `read_state` is NULL for rows written before the column existed; the store
+            # normalizes that to 'unread' on read, and only an explicit 'reading' belongs here.
+            "continue_reading": _home_shelf(
+                store, "i.read_state = 'reading'", _HOME_ORDER_TOUCHED, limit
+            ),
+            "favorites": _home_shelf(
+                store, "COALESCE(i.favorited, 0) = 1", _HOME_ORDER_TOUCHED, limit
+            ),
+            "collections": collections,
+        }
+    )
+
+
 async def create_collection(request: web.Request) -> web.Response:
     """POST /api/knowledge/collections — create a manual or smart shelf."""
     try:
@@ -3456,6 +3572,7 @@ def setup_knowledge_routes(app: web.Application) -> None:
         except Exception:
             logger.debug("knowledge ingest queue wiring skipped", exc_info=True)
 
+    app.router.add_get("/api/knowledge/library-home", library_home)
     app.router.add_get("/api/knowledge/collections", list_collections)
     app.router.add_post("/api/knowledge/collections", create_collection)
     app.router.add_get("/api/knowledge/collections/{id}/items", get_collection_items)

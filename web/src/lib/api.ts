@@ -877,6 +877,15 @@ export interface KnowledgeCollection {
   id: string; name: string; kind: 'manual' | 'smart'; query?: string; icon?: string
   position?: number; item_count?: number | null; created_at?: string; updated_at?: string
 }
+// The library landing surface's four shelves in one read (KNOWLEDGE-LIBRARY S3, T3.3).
+// `count` here is DERIVED from the same query that produces a shelf's items — unlike
+// `KnowledgeCollection.item_count`, which counts archived members the opened shelf hides.
+// `count_capped` says the smart-resolve cap was hit, so the UI can render "200+" instead of
+// passing a cap off as a total.
+export interface KnowledgeLibraryHome {
+  recently_added: KnowledgeItem[]; continue_reading: KnowledgeItem[]; favorites: KnowledgeItem[]
+  collections: { id: string; name: string; kind: 'manual' | 'smart'; icon?: string; position?: number; count: number; count_capped?: boolean }[]
+}
 // One reading highlight on a knowledge item (KNOWLEDGE-LIBRARY T3.1). Anchored by TEXT,
 // not by offset: the reader renders markdown, so a character index into the item's source
 // does not survive the transform. `occurrence` says WHICH instance of `quote` this is, so
@@ -5286,6 +5295,12 @@ export const api = {
   // ── Knowledge collections (KNOWLEDGE-LIBRARY S1) ──
   knowledgeCollections: () =>
     get<{ collections: KnowledgeCollection[] }>('/api/knowledge/collections').then((d) => d.collections),
+  // The library home's four shelves in ONE read (KNOWLEDGE-LIBRARY S3, T3.3). 🔴 NO
+  // `.catch(() => …)`: four empty shelves and a failed fetch look identical, and the home is
+  // the one surface where "your library is empty" and "the read failed" must not be the same
+  // pixels. The rejection reaches the caller so it can say which.
+  knowledgeLibraryHome: (limit?: number) =>
+    get<KnowledgeLibraryHome>(`/api/knowledge/library-home${limit ? `?limit=${limit}` : ''}`),
   createKnowledgeCollection: (body: { name: string; kind?: 'manual' | 'smart'; query?: string; icon?: string }) =>
     post<{ ok: boolean; collection: KnowledgeCollection }>('/api/knowledge/collections', body),
   updateKnowledgeCollection: (id: string, body: { name?: string; kind?: 'manual' | 'smart'; query?: string; icon?: string; position?: number }) =>

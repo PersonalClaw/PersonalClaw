@@ -13,6 +13,7 @@ import { PROSE_MEASURE_CLASS } from '../../design/measure'
 import { prefersReducedMotion } from '../../design/motion'
 import { api, type KnowledgeAnnotation, type KnowledgeItem } from '../../lib/api'
 import { anchorFromSelection, clearMarks, markAnchors, scrollProgress } from './readingAnchors'
+import { getReadingPosition, setReadingPosition } from './readingPosition'
 import { parseOutline, type OutlineEntry } from './readingOutline'
 import { DocumentOutline } from './DocumentOutline'
 import { RestructureControl } from './RestructureControl'
@@ -228,6 +229,61 @@ export function ReadingView({
     root.addEventListener('scroll', onScroll, { passive: true })
     return () => { root.removeEventListener('scroll', onScroll); if (frame) cancelAnimationFrame(frame) }
   }, [content])
+
+  // ── resume where you left off (KL-8) ─────────────────────────────────────
+  // The other half of the progress ring: KL-7 reported the fraction, this persists it, and
+  // the library home's continue-reading shelf is what reads it back.
+  //
+  // 🔑 THE RESTORE GATES THE WRITE. `read()` above fires 0 on mount, and `setReadingPosition`
+  // treats a fraction under 2% as "not started" and DELETES the entry — so persisting before
+  // the restore lands would erase the position it is about to resume to. `restored` flips only
+  // after the scroll is placed (or after we know there is nothing to place).
+  const restored = useRef(false)
+  useEffect(() => {
+    restored.current = false
+    const root = scrollRef.current
+    if (!root) return
+    const saved = getReadingPosition(item.id)
+    if (!saved) { restored.current = true; return }
+    // One frame later: the article body commits in this same paint, so scrollHeight is not
+    // final until after it. A zero span (an article shorter than the pane) is not a failure —
+    // there is simply nowhere to scroll, and the reader is already at their position.
+    const frame = requestAnimationFrame(() => {
+      const span = root.scrollHeight - root.clientHeight
+      if (span > 0) root.scrollTop = saved.pct * span
+      setProgress(scrollProgress(root))
+      restored.current = true
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [item.id, content])
+
+  useEffect(() => {
+    if (!restored.current) return
+    // Debounced off `progress` (itself rAF-coalesced), so a flick through a long article
+    // writes once when it settles rather than on every frame.
+    const t = setTimeout(() => setReadingPosition(item.id, progress), 400)
+    return () => clearTimeout(t)
+  }, [item.id, progress])
+
+  // Opening the reader and actually starting to read is what "reading" MEANS, so the shelf's
+  // membership comes from the act, not from remembering to press a button. Once per mount, and
+  // only from 'unread': a finished article re-opened stays 'read' rather than being demoted
+  // back onto the continue-reading shelf. Finishing is NOT auto-detected — scrolling to the
+  // bottom to check a reference is not the same as being done, so the shelf's own "Mark read"
+  // action (and the detail page's read-state cycle) stay the way an item leaves the shelf.
+  //
+  // The window is 2%–98%, the same one `readingPosition` calls "resumable", and BOTH ends are
+  // load-bearing: `scrollProgress` reports 1 when there is nothing to scroll, so an article that
+  // fits the pane (or one already scrolled to the end) would otherwise be filed as in-progress
+  // the instant it opened and sit on the shelf until the reader dismissed it by hand.
+  const markedReading = useRef(false)
+  useEffect(() => { markedReading.current = false }, [item.id])
+  useEffect(() => {
+    if (markedReading.current || progress < 0.02 || progress >= 0.98) return
+    if ((item.read_state || 'unread') !== 'unread') return
+    markedReading.current = true
+    api.setKnowledgeReadState(item.id, 'reading').catch(() => { markedReading.current = false })
+  }, [item.id, item.read_state, progress])
 
   // ── find-in-article ──────────────────────────────────────────────────────
   // The block snapshot, re-taken whenever the body changes. In an effect rather than a memo
