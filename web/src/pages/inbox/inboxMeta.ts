@@ -86,6 +86,10 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
   if (refs.loop) return refs.loop_kind === 'code' ? `code/${refs.loop}` : `loops/${refs.loop}`
   if (refs.session) return `chat/${encodeURIComponent(refs.session)}`
   if (refs.workflow) return `workflows/${refs.workflow}`
+  // LV-4's identity report links the artifact it wrote. LAST in the chain, so every
+  // pre-existing ref resolves exactly as before — an item that carries both a session and
+  // an artifact still goes to the session, which is the referent it always went to.
+  if (refs.artifact) return `artifacts/${encodeURIComponent(refs.artifact)}`
   return ''
 }
 
@@ -96,6 +100,7 @@ export function refLabel(it: Pick<InboxItem, 'refs'>): string {
   if (refs.loop) return 'Go to loop'
   if (refs.session) return 'Go to chat'
   if (refs.workflow) return 'Go to workflow'
+  if (refs.artifact) return 'Open the report'
   return 'Go to source'
 }
 

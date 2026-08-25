@@ -55,6 +55,7 @@ const judgeBench = vi.fn<() => Promise<never>>()
 const evalStudies = vi.fn<() => Promise<never>>()
 const retrievalBench = vi.fn<() => Promise<never>>()
 const ablation = vi.fn<() => Promise<never>>()
+const identityReport = vi.fn<() => Promise<never>>()
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -67,6 +68,7 @@ vi.mock('../../lib/api', () => ({
     evalStudies: () => evalStudies(),
     retrievalBench: () => retrievalBench(),
     ablation: () => ablation(),
+    identityReport: () => identityReport(),
   },
 }))
 
@@ -95,6 +97,11 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
     // owns its rendering, and "no ablation has run yet" is its ordinary state — for months,
     // since the cadence is monthly and the registry starts empty.
     ablation.mockRejectedValue(new Error('ablation_absent'))
+    // And LV-4's identity report, for the sixth time and the same reason:
+    // `IdentityReportPanel.test.tsx` owns its rendering. Omitting it threw inside a passive
+    // effect and surfaced as five failures about rows and cache keys — the exact symptom the
+    // note above this mock block describes, reproduced by the sixth read.
+    identityReport.mockRejectedValue(new Error('not under test'))
     acceptLearningProposal.mockResolvedValue({ ok: true })
     rejectLearningProposal.mockResolvedValue(undefined)
   })

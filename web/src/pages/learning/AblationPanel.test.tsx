@@ -37,6 +37,7 @@ const learningHealth = vi.fn<() => Promise<never>>()
 const judgeBench = vi.fn<() => Promise<never>>()
 const evalStudies = vi.fn<() => Promise<never>>()
 const retrievalBench = vi.fn<() => Promise<never>>()
+const identityReport = vi.fn<() => Promise<never>>()
 const ablation = vi.fn<() => Promise<AblationView>>()
 
 vi.mock('../../lib/api', () => ({
@@ -47,6 +48,7 @@ vi.mock('../../lib/api', () => ({
     judgeBench: () => judgeBench(),
     evalStudies: () => evalStudies(),
     retrievalBench: () => retrievalBench(),
+    identityReport: () => identityReport(),
     ablation: () => ablation(),
     acceptLearningProposal: () => Promise.resolve({ ok: true }),
     rejectLearningProposal: () => Promise.resolve(undefined),
@@ -110,6 +112,9 @@ describe('the ablation report is CONSUMED, not merely served', () => {
     judgeBench.mockRejectedValue(new Error('judge_bench_absent'))
     evalStudies.mockRejectedValue(new Error('study_absent'))
     retrievalBench.mockRejectedValue(new Error('retrieval_absent'))
+    // LV-4's identity report: the page reads it, so a double that omits it throws inside a
+    // passive effect — exactly the failure mode the note above the declarations describes.
+    identityReport.mockRejectedValue(new Error('not under test'))
   })
 
   /** 🔑 THE RAIL THAT CLOSES THE INERT ROUTE.

@@ -107,6 +107,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "unknown_filter": "The request names a filter this endpoint does not support.",
     # ── evals (handlers/evals.py) ──
     "evals_disabled": "The evals surface is switched off in config.",
+    "learning_disabled": "Learning is switched off in config, so there is nothing learned to "
+    "report on.",
     "judge_bench_absent": "No judge benchmark artifact has been produced yet.",
     "judge_bench_unreadable": "The judge benchmark artifacts could not be read.",
     "studies_unreadable": "The pre-registered study artifacts could not be read.",

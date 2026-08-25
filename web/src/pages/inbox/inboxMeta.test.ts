@@ -101,6 +101,16 @@ describe('refTarget', () => {
     expect(refTarget({ refs: { session: 'a/b c' } })).toBe('chat/a%2Fb%20c')
   })
 
+  it('routes an identity-report row to its artifact, and never ahead of an older ref', () => {
+    // LV-4's inbox row carries refs.artifact and nothing else, so this is the only branch
+    // that can produce its link. The second assertion is the vacuity floor: the artifact
+    // branch is LAST, so a row that also names a session must still go to the session —
+    // without it, adding this branch would silently re-route existing rows.
+    expect(refTarget({ refs: { artifact: 'learning-identity-report' } }))
+      .toBe('artifacts/learning-identity-report')
+    expect(refTarget({ refs: { artifact: 'a', session: 's1' } })).toBe('chat/s1')
+  })
+
   it('returns empty when there is nowhere to go', () => {
     // The row then renders no deep-link affordance at all, rather than a dead link.
     expect(refTarget({ refs: {} })).toBe('')
@@ -116,6 +126,7 @@ describe('refLabel', () => {
     expect(refLabel({ refs: { loop: 'L1' } })).toBe('Go to loop')
     expect(refLabel({ refs: { session: 's1' } })).toBe('Go to chat')
     expect(refLabel({ refs: { workflow: 'w1' } })).toBe('Go to workflow')
+    expect(refLabel({ refs: { artifact: 'learning-identity-report' } })).toBe('Open the report')
   })
 
   it('falls back to a generic label', () => {

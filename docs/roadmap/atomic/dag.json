@@ -6465,7 +6465,8 @@
           "deps": [
             "LV-3",
             "EXT:INBOX-NOTIFICATIONS-UNIFICATION:emit_attention_item kind=report (pre-42 source=learning InboxItem fallback)"
-          ]
+          ],
+          "blocked_reason": "PARTIAL: compose/render/narrate/deliver + both routes + FE panel shipped and railed; counts, zero-writes, no-model floor, inbox item and quiet-hours all MET. UNMET: the clock job firing, cadence monthly|weekly|off, and 'off' disables cleanly -- all three need the learning.identity_report_* config field, which cannot be added because config/loader.py is 5900/6000 with headroom exactly 100 against a >=100 rail. OWNER: compress loader.py, split LearningConfig out, or raise the ceiling."
         },
         {
           "id": "LV-5",

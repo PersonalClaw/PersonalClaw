@@ -537,3 +537,256 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   green; `gate_report.py` 6/6 PASS; probe sweep 16, 0 introduced.
   `docs/design/consistency-audit.json` churned `filesScanned` 555 → 557 (the two new web files) with
   `driftHits` 8 and `filesWithDrift` 7 **unchanged** — zero new drift, reverted out of the commit.
+
+---
+
+## Execution log — `LV-4` (T2.4 identity-report composer + T2.5 delivery) — 2026-08-25
+
+- [2026-08-25][LV-4] **PARTIAL, deliberately.** T2.4 landed whole; T2.5 landed its *delivery*
+  half (artifact + notify-gated inbox item + FE) and **not** its *schedule/config* half. The
+  composer, the narrative pass, the no-model floor, the artifact, the inbox item, the quiet-hours
+  gating and the Learning-page panel are all live and user-reachable. The **monthly clock job**
+  and the **`learning.identity_report_*` config** are unbuilt — reasons recorded below, both
+  outside this session's fence and one of them blocked by a rail.
+- [2026-08-25][LV-4] **What exists:** `src/personalclaw/learning_report.py` (new) —
+  `compose_identity_report` (deterministic, sync, read-only), `render_markdown`,
+  `narrate_identity_report` (the ONE `one_shot_completion(use_case="background")` call),
+  `build_identity_report`, `delivery_dedup_key`, `deliver_identity_report`. Call sites:
+  `GET /api/learning/identity-report` (deterministic preview, no model call) and
+  `POST /api/learning/identity-report` (compose → narrate → versioned artifact → one attention
+  item), both in `dashboard/handlers/learning.py` beside LV-3's `/summary`; the FE consumer is
+  `web/src/pages/learning/IdentityReportPanel.tsx`, mounted on `LearningPage`.
+- [2026-08-25][LV-4] **DEVIATION 1 — `proposals_pending: int` became a section.** The plan's
+  contract spelled it as a bare integer. Shipped as a `ReportSection` so its `count` is `len()`
+  of the list it carries: a count maintained *beside* the thing it counts can disagree with it,
+  and this repo has paid for that class before. Every section now has the same shape and no count
+  in the module is stored independently of its rows.
+- [2026-08-25][LV-4] **DEVIATION 2 — the window does not filter the sections.** The identity
+  report is the *accumulated* shape (the amendment's own words: "the weekly digest shows deltas;
+  the identity report shows the accumulated shape"), so a facet reinforced two years ago and still
+  Active belongs in it. `window_days` labels the period and marks `used_in_window` per skill. A
+  windowed gather here would have been a second copy of LV-3's block.
+- [2026-08-25][LV-4] **PREMISE CORRECTION — the aging state is READ, never derived.** The plan
+  names "curator aging states". `skills/curator.py` has no read accessor; the state lives in the
+  SKILL.md `status` frontmatter and only `run_aging` (a writer) transitions it. So the report reads
+  the PERSISTED status via `list_skills`. Deriving it from `last_used_at` would have claimed a
+  skill was archived while surfacing still offered it.
+- [2026-08-25][LV-4] **PREMISE CORRECTION — `SkillUsageStore.all_usage()` is ridden, not called
+  twice.** `list_skills(with_usage=True)` already calls it. LV-3's log flagged use counts as
+  "LV-4's input"; consuming them through the loader keeps one seam instead of two readers of one
+  file.
+- [2026-08-25][LV-4] **"Zero writes" is proved by OBSERVATION, with its own vacuity floor.**
+  `_witness()` in the test file SHA-256s every file under `<home>/skills/` plus `memory.db`/`-wal`/
+  `-journal` — written in the test, sharing no code with the subject, because a witness that
+  certifies itself passes trivially. `test_the_witness_detects_a_write_so_its_silence_means_something`
+  performs one real write and asserts the witness notices; only then do the two zero-write tests
+  mean anything. **`memory.db-shm` is excluded and the exclusion is measured**: SQLite rebuilds the
+  shared-memory file from the WAL on every connection, so its bytes moved across a pure read and
+  the first draft of the guard was red for a non-write. `-wal` stays witnessed — a write that only
+  reached the WAL is still a write.
+- [2026-08-25][LV-4] **DISCOVERY — `compose_identity_report` is write-free for every LEARNING
+  store, but `proposals.list_pending()` writes to the INBOX.** It calls
+  `backfill_inbox_items()`, which raises a row for any pending proposal lacking one. That is the
+  shared read path (LV-3's block calls the same function) and the inbox is not a learning store, so
+  the criterion's "any learning store" holds. The exclusion is asserted explicitly in
+  `test_the_witness_ignores_the_inbox_because_list_pending_backfills_it`, which also asserts the
+  backfill still happens — so if that behaviour ever goes away, the stale exclusion fails loudly
+  instead of quietly widening.
+- [2026-08-25][LV-4] **Counts are tied to the STORE, not to a constant.** Each expected count is
+  derived independently in the test: raw SQL (`key LIKE 'pref.facet.%'`, `key LIKE 'lesson.%'`,
+  `is_deleted = 0`) for facets and lessons, a directory listing of `skills/auto/*/SKILL.md` for
+  skills, and the `.proposals/*.json` records read by the test for proposals. Group sizes are
+  deliberately asymmetric (3/2/4/2) so a section wired to the wrong gather cannot still agree.
+  🪤 The proposal helper first read `skills/proposals` and returned **0**, which looked like an
+  honest empty store; the dir is `.proposals` (dotted). It now asserts against
+  `proposals._PROPOSALS_DIRNAME` so a rename fails loudly rather than reading as zero.
+- [2026-08-25][LV-4] **Quiet hours, both directions, from ONE clock read.**
+  `notification_allowed` reads the LOCAL wall clock and `DashboardState.notify` passes it no
+  `now`, so `_window_around(offset_hours)` derives both windows from a single `datetime.now()` —
+  the suppressing and delivering cases differ only in where the window sits. The delivering leg IS
+  the vacuity floor, and it advances `now` a month because the dedup key is the calendar month
+  (without that the second delivery would be swallowed as a duplicate and the floor would read
+  like suppression was still in force).
+- [2026-08-25][LV-4] **The compressed-clock direction is covered as the DEDUP contract, not as a
+  fired cron.** `test_a_second_delivery_in_the_same_month_reuses_the_row_and_does_not_re_ping`
+  advances the clock across two same-month deliveries and one next-month delivery: same month →
+  same inbox id, one notification; next month → a new id and a second notification (the vacuity
+  floor for a constant dedup key). What is **NOT** covered is a trigger actually firing — see the
+  unmet clause below.
+- [2026-08-25][LV-4] **Ordering is the guarantee, not a promise.** `deliver_identity_report` writes
+  the artifact BEFORE calling `emit_attention_item`, so "quiet hours suppresses the ping but not
+  the artifact" is true by construction: the document is durable before delivery is attempted and
+  `notification_allowed` can only drop the notification. An unchanged home mints no new artifact
+  version (`store.update` does not dedupe a no-op, and an unconditional `snapshot=True` on a
+  periodic run FIFO-prunes real history off the far end — `knowledge_render_provider._write_spec`'s
+  measured finding).
+- [2026-08-25][LV-4] **The no-model floor is NAMED, not swallowed.** `one_shot_completion` returns
+  a FALSY value rather than raising when nothing resolves, so both that and a raised provider error
+  land on `narrative_status="unavailable"`, and `render_markdown` prints "No model was available to
+  summarise this period. The figures below are complete and unaffected." The test asserts the
+  deterministic payload is byte-identical across both no-model shapes, with a working-model control
+  as the floor. An empty record spends no call at all (`skipped`, a different fact from
+  `unavailable`). Lint map entry added: `learning_report.py → "assistant_reasoning"`.
+- [2026-08-25][LV-4] **The model is never shown a count.** `_narrative_facts` emits text only,
+  fenced through `fence_untrusted` (facet text is user prose from a turn and can carry an
+  injection). The surest way to stop a model misquoting a figure is to never show it one; the
+  numeric sections are rendered from the gather verbatim and never round-trip through the model.
+- [2026-08-25][LV-4] **FIVE import-bound stores had to be patched, and one of them was reading the
+  developer's real home.** `skills.loader` resolves `config_dir` lazily, but `inbox`,
+  `artifacts.native`, `providers.entity_routes` and `dashboard.state` all bind it at module scope.
+  `DashboardState.__init__` calls `_load_notifications()`, so without the fifth patch a fresh state
+  started pre-loaded with **six rows from the real `~/.personalclaw`** and `_persist_notification`
+  appended the test's own deliveries to it. Every `_notification_log == []` assertion depends on
+  that patch, and each redirect is asserted rather than assumed.
+  `artifacts.registry._providers` is additionally a process-wide dict whose native entry freezes
+  its root at first use, so it is replaced through `monkeypatch.setitem` rather than left for the
+  next test to inherit.
+- [2026-08-25][LV-4] **A fixture that was measuring its own stub, caught.** LV-3's `_memory`
+  helper sets `embed_fn = lambda t: [1.0, 0.0, 0.0]` — a CONSTANT, so every pair of lessons is
+  100% cosine-similar and `write_lesson` drops the second as a >85% duplicate. Measured: the
+  second `write_lesson` returned False and a two-lesson fixture stored one. Replaced with a
+  one-hot embedding keyed on the text's own hash, which keeps the embedding path exercised while
+  distinct texts stay orthogonal. Lesson texts are also semantically distinct because the store
+  dedups on >50% topic-word overlap.
+- [2026-08-25][LV-4] **OUT-OF-FENCE edits, each forced by a ratchet or a documented trap.** The
+  session fence named `learning_report.py`, the learning modules, `web/src/pages/learning/**` and
+  tests. Four files outside it were still touched, and none was optional:
+  · `notification_kinds.py` (+1 `NotificationKind("learning","report",…)` **and** +1
+    `_ATTENTION_FLAT` row) — `test_notification_kinds.py`'s AST sweep reds any literal
+    `emit_attention_item` pair that is not registered, and without the wire-string row every
+    delivery logged *"unregistered notification kind system/report"* and resolved to
+    system/generic. That is the registry's own 🪤 case, one level down.
+  · `web/src/pages/notifications/notificationMeta.ts` — `test_every_emittable_kind_has_a_frontend_row`
+    went red on `['report']`. Measured, not anticipated.
+  · `web/src/pages/inbox/inboxMeta.ts` — `refTarget`/`refLabel` had no `artifact` branch, so the
+    inbox row carried `refs["artifact"]` and rendered no link. The branch is LAST in the chain and
+    a test asserts a row carrying both a session and an artifact still routes to the session.
+  · `web/src/lib/api.ts` — the two typed methods and the report's interfaces.
+- [2026-08-25][LV-4] **UNMET CLAUSE 1 — the config, BLOCKED by a rail with zero headroom.**
+  `learning.identity_report_enabled` / `identity_report_cadence` belong on `LearningConfig`
+  (`config/loader.py:2072`). `loader.py` is **5900 lines against the 6000-line ceiling** that
+  `test_structural_baseline.py` marks FORBIDDEN TO RAISE, and the rail demands ≥100 lines of
+  headroom — so headroom is **exactly at the floor** and any new field reds the gate with nothing
+  left to compress. `loader.py` was left untouched (verified: empty diff against `origin/main`).
+  Consequences: no `cadence: monthly|weekly|off` and no "`off` disables cleanly". **Owner
+  decision needed:** compress `loader.py` first, split `LearningConfig` into its own module, or
+  raise the ceiling deliberately.
+- [2026-08-25][LV-4] **UNMET CLAUSE 2 — the clock job.** "compressed-clock fixture fires the job"
+  needs a `system:learning:identity-report` clock trigger, which in this tree means a registered
+  action provider: `action_providers/registry.py`, `gateway.py` (the reconcile call),
+  `guardrails/rungs.py` (the frozen grant), `triggers/screen.py` and `validation.py` — five shared
+  registries, all outside the fence, plus the cadence config above that the trigger's schedule is
+  supposed to converge on. Building it against a config field that cannot land yet would have
+  produced a hardcoded schedule the config atom then had to rework, so both halves are left for
+  one coherent follow-up. `deliver_identity_report` is the function that follow-up calls — the
+  POST route and the cron will share it, so there is one owner, not two.
+- [2026-08-25][LV-4] **Falsifications (mutate the live line, grep it back, observe, restore from a
+  file copy at the literal path).** M1: `_gather_skills` calls `SkillUsageStore.record_use` — a
+  real learning-store write through the production writer → **3 red**, both zero-write tests plus
+  the no-model section-equality test. M2: `emit_attention_item`'s notify branch raises before
+  `state.notify` → **2 red**, including `assert [] == ['report']`, which is the quiet-hours
+  vacuity floor failing exactly as designed. M3: `if False and s.get("quiet_hours_enabled")` in
+  `notification_allowed` → **1 red**, "quiet hours did not suppress the ping". Both directions of
+  the quiet-hours claim are therefore falsifiable. (A first attempt at M1 wrote raw SQL and hit a
+  NOT NULL constraint — a crash, not a write — so it was discarded and redone through the real
+  writer; a mutation that raises does not falsify a zero-write guard.)
+- [2026-08-25][LV-4] **FOUR full-suite-only ratchets went red and were FIXED, not weakened.**
+  Targeted runs never reach any of them, which is exactly the class the session brief warned about.
+  · `test_wire_error_envelope_census.py` ×3 — the first draft used flat `{"error": str}` bodies for
+  the four refusals, which pushed the flat population 1507 → 1511 and would have SPENT the
+  unresolved slack LV-3 bought on error envelopes, the one thing that pin exists to forbid. Fixed at
+  the root: all four refusals now go through `http_errors.json_error` (`learning_disabled`, appended
+  to `HTTP_ERROR_CODES` — the registry is append-only, so the frozen baseline stays a subset; and
+  the existing `bad_request` for the 400). The learning surface's FLAT count is therefore unchanged
+  at 14. `UNRESOLVED_PAYLOAD_CEILING` 205 → **207** for the two 200-status SUCCESS bodies, with the
+  same justification LV-3 recorded (a composer's return value; spelling its keys out would duplicate
+  `IdentityReport`'s schema in two places), and the learning pin's `len(unresolved)` 4 → **6** with
+  both new rows asserted `Call` and not-via-wrapper.
+  · `test_agent_reference.py` — two new routes made the checked-in offline reference stale.
+  Regenerated with `python -m personalclaw.manifest_reference`.
+- [2026-08-25][LV-4] **TWO MORE full-suite-only reds, on the web side, both fixed at the root.**
+  · `ui/disabledReasonTriage.test.ts` — the "Write it up" button gated on
+  `busy || report.total === 0`, and `total === 0` is a state a user can ACT on, so the native
+  `disabled` attribute makes a keyboard user tab past the action with no way to learn what is
+  missing. Split the gate: `disabledReason` for the empty-record half (aria-disabled, focusable,
+  announces the reason) and native `disabled` for the in-flight half — a reason on `busy` would
+  make an in-flight action re-clickable, which the same suite separately forbids. The panel test
+  now asserts the accessible OUTCOME (`aria-disabled` present, native `disabled` absent, and a
+  click while unavailable delivers nothing) rather than a hover title.
+  · `pages/learning/proposalCache.test.tsx` ×5 — the page gained a FIFTH read and the suite's
+  `api` double omitted it, so `api.identityReport is not a function` threw inside a passive effect
+  and surfaced as five failures about rows and cache keys. That is precisely the symptom the note
+  above that mock block already documents, reproduced by read number five; stubbed with the same
+  rejected-on-purpose posture as the other four.
+- [2026-08-25][LV-4] **A PRE-EXISTING red that is NOT this atom's, with the evidence.**
+  `test_lv5_refinement_arm.py::test_v3_arc_flawed_skill_stumble_refine_approve_rerun` asserts a
+  **hardcoded date**: `"## Refinement v1 (2026-08-25, from a correction)"` (line 534). The
+  provenance stamp is UTC and the session ran at 17:xx PDT, so `date -u` already read
+  **2026-08-26** while local read 2026-08-25 — the skill body carried `(2026-08-26, …)`. This
+  atom touches none of its inputs (`git diff origin/main` is empty for
+  `tests/test_lv5_refinement_arm.py`, `after_turn_review.py`, `skills/`, `history.py`), and it fires
+  every day from ~17:00 PDT onward. Left unfixed — LV-5's test is outside this session's fence — and
+  reported to the owner. **Fix: derive the expected date from the same clock the writer uses; do not
+  re-pin the literal.**
+- [2026-08-25][LV-4] **Gate:** `make lint` clean (mypy **1015** source files);
+  `pytest tests/test_lv4_identity_report.py` **26 passed**;
+  `tests/test_notification_kinds.py tests/test_resilience_degraded_lint.py
+  tests/test_research_finding_kind.py tests/test_entity_settings_routes.py` **112 passed**;
+  `npm run typecheck:web` green; `npm run test:web` green;
+  `IdentityReportPanel.test.tsx` **8 passed** (its own falsification: rendering `lines.length`
+  instead of the server `count` reds it); `scripts/gate_report.py` **6/6 PASS**, `structural-size`
+  among them — which is the gate that would have caught a `loader.py` field. Full `make test`:
+  **26658 passed / 6 failed** on the first run, then **26681 passed / 2 failed** on the re-run
+  after every one of the six ratchet fixes landed. Both remaining reds are NOT this atom's:
+  the LV-5 UTC date bomb above, and
+  `test_inbound_mcp.py::TestTransport::test_rate_cap_returns_429_with_retry_after`
+  (`assert 21 == 20` — a rate-cap timing count under 18-worker load; `git diff origin/main` is
+  empty for `src/personalclaw/inbound/` and `tests/test_inbound_mcp.py`, and it **passes in
+  isolation**, so it is a load flake, not a regression). Probe sweep 16, 0 introduced;
+  `git status` clean.
+  `docs/design/consistency-audit.json` churned `filesScanned` 562 → 563 (the new panel) with
+  `driftHits` 8 and `filesWithDrift` 7 **unchanged** — zero new drift, committed as generated
+  baseline movement caused by this change.
+
+## Execution log — LV-4 (periodic identity report)
+
+- [2026-08-26][LV-4] **PARTIAL — atom stays `todo`.** `src/personalclaw/learning_report.py` ships
+  `compose_identity_report` (deterministic, sync), `render_markdown`, `narrate_identity_report` (the
+  single `one_shot_completion(use_case="background")`), `build_identity_report`, `delivery_dedup_key`
+  and `deliver_identity_report`, over five sections built from existing read seams: facets (decayed
+  stability + live state), lessons, `auto/` skills (uses + recency + curator aging), pending proposals,
+  and a memory-stats subset. Call sites that would be caught if deleted: `GET /api/learning/identity-report`
+  (deterministic, no model call) and `POST /api/learning/identity-report` (compose → narrate → versioned
+  artifact → one attention item), both in `dashboard/handlers/learning.py`, with a route-registration
+  rail asserting both plus a vacuity sibling; the FE consumer is
+  `web/src/pages/learning/IdentityReportPanel.tsx` on `LearningPage`, whose own test spies
+  `api.deliverIdentityReport`, so the delivery path is not an inert control.
+  **MET:** counts byte-match store contents; zero writes proven by an independent `_witness()` that
+  SHA-256s every file under `<home>/skills/` plus `memory.db`/`-wal`/`-journal` and carries its own
+  detection floor (a test performs a real write and asserts the witness notices); the no-model floor in
+  both falsy and raised shapes; the inbox item lands linking the artifact; quiet hours suppresses the
+  ping but not the artifact, falsified in both directions.
+  **UNMET (why the atom does not flip):** the clock job actually firing, `cadence: monthly|weekly|off`,
+  and "`off` disables cleanly". All three need one config field, `learning.identity_report_*`.
+- [2026-08-26][LV-4] **BLOCKED on an owner decision — `loader.py` headroom.** `config/loader.py` is at
+  **5900/6000 with headroom exactly 100 against a `>=100` rail**, so adding `learning.identity_report_*`
+  reddens `structural-size` with nothing left to compress. The file is left untouched (empty diff vs
+  `origin/main`) and `gate_report.py`'s `structural-size` passes. **Owner: compress `loader.py`, split
+  `LearningConfig` into its own module, or raise the ceiling** (currently marked forbidden to raise).
+  The clock job needs that cadence field plus five shared registries, so the config decision and the
+  remaining three clauses are one coherent follow-up calling `deliver_identity_report`.
+- [2026-08-26][LV-4] **DISCOVERY — `proposals.list_pending()` writes.** It calls
+  `backfill_inbox_items()`, which writes **inbox** rows. Inherited from the shared read path (LV-3 calls
+  the same function) and the inbox is not a learning store, so the zero-writes clause is unaffected —
+  but the test asserts this explicitly, including that the backfill still happens, so a stale exclusion
+  fails loudly rather than silently widening.
+- [2026-08-26][LV-4] **DISCOVERY — `memory.db-shm` is excluded from the witness, and the exclusion is
+  measured.** SQLite rebuilds it from the WAL on every connection, so its bytes move across a pure read.
+  `-wal` stays witnessed.
+- [2026-08-26][LV-4] **DEVIATION — a sixth `api` double needed updating.** Adding a `LearningPage` read
+  breaks every suite that mounts the page with a partial `api` mock: five sites in
+  `proposalCache.test.tsx` and, found at integration, `AblationPanel.test.tsx`
+  (`TypeError: api.identityReport is not a function` at `LearningPage.tsx:92`, thrown inside a passive
+  effect). That file's own header comment already states the rule; it simply predates this atom.
+  **Six files now share an unenforced contract** — nothing fails until a sixth-party test mounts the
+  page. A shared fixture exporting the page's full read set would collapse all six.

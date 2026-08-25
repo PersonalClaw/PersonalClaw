@@ -2165,6 +2165,44 @@ export interface StudyView {
   runs: StudyCaseRun[]
   evidence: Record<string, unknown> | null
 }
+/** LV-4's periodic identity report — the accumulated shape of what has been learned.
+ *
+ *  Every section is an exact `count` plus a bounded `items` sample, and the two are separate
+ *  fields on purpose: rendering `items.length` as the count would under-report the moment a
+ *  home got busy. `narrative_status` distinguishes "nobody asked for prose" (`skipped`, what a
+ *  GET returns) from "prose was asked for and no model answered" (`unavailable`) — the second
+ *  is a degraded delivery the panel says out loud. */
+export interface IdentityReportSection<T> { count: number; items: T[] }
+export interface IdentityReportFacet {
+  text: string; cls: string; stability: number; state: string; updated_at: string; pinned: boolean
+}
+export interface IdentityReportLesson { text: string; category: string; updated_at: string }
+export interface IdentityReportSkill {
+  name: string; uses: number; last_used: string; used_in_window: boolean
+  aging_state: string; created_at: string
+}
+export interface IdentityReportProposal { label: string; kind: string }
+export interface IdentityReport {
+  period: { window_days: number; since: string; until: string }
+  window_days: number
+  generated_at: string
+  total: number
+  facets: IdentityReportSection<IdentityReportFacet>
+  lessons: IdentityReportSection<IdentityReportLesson>
+  skills: IdentityReportSection<IdentityReportSkill>
+  proposals: IdentityReportSection<IdentityReportProposal>
+  memory: Record<string, number>
+  narrative: string
+  narrative_status: 'skipped' | 'written' | 'unavailable'
+  markdown: string
+}
+export interface IdentityReportDelivery {
+  artifact_slug: string
+  artifact_version: number
+  inbox_item_id: string
+  report: IdentityReport
+}
+
 export interface LearningHealth {
   days: number
   composite: {
@@ -5031,6 +5069,15 @@ export const api = {
     get<StagingWeek>(`/api/learning/staging/week?days=${days}`),
   learningHealth: (days = 7) =>
     get<LearningHealth>(`/api/learning/health?days=${days}`),
+  /** The identity report, DETERMINISTIC (LV-4). No model call — a panel mounting must not
+   *  spend one, so the narrative is only composed by the POST below. */
+  identityReport: (days = 30) =>
+    get<IdentityReport>(`/api/learning/identity-report?days=${days}`),
+  /** Compose, narrate, persist the versioned artifact and raise ONE inbox item. Separate from
+   *  the GET because it spends a model call and writes two durable things; the scheduled job
+   *  (when it lands) calls the same backend function, so there is one owner, not two. */
+  deliverIdentityReport: (days = 30) =>
+    post<IdentityReportDelivery>(`/api/learning/identity-report?days=${days}`, {}),
   /** The judge tier-recommendation table (ES-4). Read-only: the RUN is
    *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
    *  must not start one. 404 carries a distinct code for "no benchmark yet" vs "evals off". */
