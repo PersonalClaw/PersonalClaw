@@ -1,12 +1,12 @@
 import { useId, useMemo, type ReactNode } from 'react'
-import { withWeight } from '../design/fontWeight'
 import { AnimatePresence, motion } from 'framer-motion'
 import { SlidersHorizontal, Check, type LucideIcon } from 'lucide-react'
 import { Popover } from './Popover'
+import { FilterRow } from './FilterRow'
 import { Button } from './Button'
 import { TextLink } from './TextLink'
 import { fvs } from '../design/fontWeight'
-import { spring, physics } from './../design/motion'
+import { physics } from './../design/motion'
 import { accentChip } from '../design/accent'
 
 /** One selectable choice within a filter section. */
@@ -116,20 +116,14 @@ function Row({ option, selected, onClick, indicatorId }: { option: FilterOption;
   return (
     <>
       {option.groupLabel && <div className="mt-1 px-2 pt-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide border-t border-on-surface/8">{option.groupLabel}</div>}
-      <motion.button type="button" onClick={onClick} whileTap={{ scale: 0.98 }} transition={spring.spatialFast}
-        className={`relative flex items-center gap-s w-full rounded-md px-2 h-8 text-left transition-colors ${selected ? '' : 'hover:bg-surface-high'}`}>
-        {/* liquid selected-row indicator: one shared element per section that SLIDES
-            between rows via layoutId (Segmented pattern) instead of the tint
-            blink-swapping from row to row when the selection changes. */}
-        {selected && (
-          <motion.span layoutId={indicatorId} transition={spring.spatialFast}
-            className="absolute inset-0 rounded-md" style={{ background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' }} />
-        )}
-        {Icon && <Icon size={14} className="relative shrink-0" style={{ color: selected ? 'var(--color-primary)' : 'var(--color-on-surface-var)' }} />}
-        <span className="relative flex-1 min-w-0 truncate text-[0.8125rem]" style={withWeight({ color: selected ? 'var(--color-primary)' : 'var(--color-on-surface)' }, selected ? 550 : 400)}>{option.label}</span>
-        {typeof option.count === 'number' && option.count > 0 && <span className="relative shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{option.count}</span>}
-        {selected && <Check size={14} className="relative shrink-0 text-primary" />}
-      </motion.button>
+      {/* The row itself is `ui/FilterRow` (PEP-3) — the App Store's persistent
+          category/source rail renders the same one, because it and this dropdown are one
+          control at two viewport widths. The liquid selected-row indicator (one shared
+          element per section, SLIDING between rows via layoutId rather than the tint
+          blink-swapping) lives there. */}
+      <FilterRow label={option.label} count={option.count} icon={Icon} selected={selected}
+        indicatorId={indicatorId} onClick={onClick}
+        trailing={selected ? <Check size={14} className="relative shrink-0 text-primary" /> : undefined} />
     </>
   )
 }

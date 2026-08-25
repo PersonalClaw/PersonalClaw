@@ -26,6 +26,7 @@ import { TextInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Segmented } from '../../ui/Segmented'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
+import { useIsMobile } from '../../app/useIsMobile'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import {
   api, type AppSummary, type AppDepClassification, type AppCatalogEntry,
@@ -35,6 +36,8 @@ import {
 } from '../../lib/useGuardedInstall'
 import { AppIcon } from './appIcon'
 import { QualityBadges } from './qualityBadges'
+import { StoreSideRail, type RailOption } from './StoreSideRail'
+import { artGradient } from './appArt'
 import { AppConfigFields, useAppConfig } from './appConfigForm'
 import { isInNav, setInNav } from './navApps'
 import { PageTitle } from '../../ui/PageTitle'
@@ -315,6 +318,15 @@ function tagOptions(tagLists: string[][], cap = 16): FilterOption[] {
     .map(([tag, count]) => ({ key: tag, label: tag, count }))
 }
 
+/** A manifest tag rendered as a CATEGORY name (PEP-3). Tags are author-controlled
+ *  slugs — `productivity`, `dev-tools`, `local_model` — and a rail heading that reads
+ *  "dev-tools" beside "All apps" looks like a leaked identifier. The KEY stays the raw
+ *  tag (it is what the URL carries and what the grid matches); only the label changes. */
+export function categoryLabel(tag: string): string {
+  const words = tag.replace(/[-_]+/g, ' ').trim()
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
 function matchesText(haystack: string, q: string): boolean {
   return !q || haystack.toLowerCase().includes(q)
 }
@@ -357,6 +369,15 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   const [storeType, setStoreType] = useQueryParam(q, sq, 'stype', 'all', { replace: true })
   const [storeEntity, setStoreEntity] = useQueryParam(q, sq, 'sentity', 'all', { replace: true })
   const [storeTag, setStoreTag] = useQueryParam(q, sq, 'stag', 'all', { replace: true })
+  // PEP-3: the Store's SOURCE filter. Keyed on `sourceGroup().key` (the same key the
+  // source dividers group by), so the rail, the dividers and the grid cannot disagree
+  // about what "this source" means. URL-backed like every other filter here, which is
+  // what makes a rail selection survive a reload.
+  const [storeSrc, setStoreSrc] = useQueryParam(q, sq, 'ssrc', 'all', { replace: true })
+  // PEP-3: below the shell's own rail threshold the Store rail is replaced by the
+  // FilterMenu dropdown sections. One media query, the same one the nav rail uses —
+  // when the shell collapses its rail to a drawer, this one collapses to a dropdown.
+  const isMobile = useIsMobile()
 
   const reload = () => { invalidateKeys('apps'); invalidateKeys('app-catalog'); refresh(); refreshCatalog() }
   const reloadCatalog = () => { invalidateKeys('app-catalog'); refreshCatalog() }
@@ -421,6 +442,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     if (storeType !== 'all') out = out.filter((e) => (storeType === 'provider') === e.isProvider)
     if (storeEntity !== 'all') out = out.filter((e) => e.isProvider && e.providerType === storeEntity)
     if (storeTag !== 'all') out = out.filter((e) => (e.tags ?? []).includes(storeTag))
+    if (storeSrc !== 'all') out = out.filter((e) => sourceGroup(e, catalog?.localSources ?? []).key === storeSrc)
     const byName = (a: StoreItem, b: StoreItem) => a.displayName.localeCompare(b.displayName)
     out = [...out].sort((a, b) => {
       switch (storeSort as StoreSortKey) {
@@ -430,7 +452,8 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
       }
     })
     return out
-  }, [storeUniverse, n, storeType, storeEntity, storeTag, storeSort])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeUniverse, n, storeType, storeEntity, storeTag, storeSrc, storeSort, catalog?.localSources])
 
   // The panel opens for BOTH installed apps (full detail + lifecycle actions) and
   // not-yet-installed Store entries (metadata + Install). `open` is the installed
@@ -466,6 +489,22 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     return s
   }, [apps, libSort, libStatus, libType, libCap, libEntity])
 
+  // ── PEP-3: ONE derivation of the Store's category + source vocabulary, consumed by
+  //    BOTH the wide-viewport rail and the narrow-viewport dropdown. Two derivations is
+  //    how the two presentations start disagreeing about what exists.
+  //    🔑 Counts are over `storeUniverse` — the exact set the grid can render — not over
+  //    installed ∪ catalog. The Store deliberately EXCLUDES installed apps (they live in
+  //    the Library), so a category counted over installed apps would offer a filter whose
+  //    grid comes back empty: a count maintained beside a table it does not describe.
+  const storeCategories: RailOption[] = useMemo(
+    () => tagOptions(storeUniverse.map((e) => e.tags ?? []))
+      .map((o) => ({ key: o.key, label: categoryLabel(o.label), count: o.count ?? 0 })),
+    [storeUniverse])
+  const storeSources: RailOption[] = useMemo(
+    () => groupBySource(storeUniverse, catalog?.localSources ?? [])
+      .map((g) => ({ key: g.key, label: g.label, count: g.items.length })),
+    [storeUniverse, catalog?.localSources])
+
   const storeSections: FilterSectionDef[] = useMemo(() => {
     const s: FilterSectionDef[] = [
       { title: 'Sort by', value: storeSort, defaultKey: 'name', onChange: setStoreSort,
@@ -476,19 +515,27 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     const entities = entityOptions(storeUniverse.filter((e) => e.isProvider).map((e) => e.providerType))
     if (entities.length) s.push({ title: 'Provider entity', value: storeEntity, defaultKey: 'all', onChange: setStoreEntity,
       options: [{ key: 'all', label: 'Any entity' }, ...entities] })
-    const tags = tagOptions(storeUniverse.map((e) => e.tags ?? []))
-    if (tags.length) s.push({ title: 'Tags', value: storeTag, defaultKey: 'all', onChange: setStoreTag,
-      options: [{ key: 'all', label: 'All tags' }, ...tags] })
+    // PEP-3: the two rail dimensions appear in this dropdown ONLY on a narrow viewport.
+    // The rail owns them whenever it is on screen, so a wide user never meets the same
+    // filter twice — and a narrow user, who has no rail, still reaches both.
+    if (isMobile && storeCategories.length) {
+      s.push({ title: 'Categories', value: storeTag, defaultKey: 'all', onChange: setStoreTag,
+        options: [{ key: 'all', label: 'All apps' }, ...storeCategories] })
+    }
+    if (isMobile && storeSources.length) {
+      s.push({ title: 'Sources', value: storeSrc, defaultKey: 'all', onChange: setStoreSrc,
+        options: [{ key: 'all', label: 'All sources' }, ...storeSources] })
+    }
     return s
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeUniverse, storeSort, storeType, storeEntity, storeTag])
+  }, [storeUniverse, storeSort, storeType, storeEntity, storeTag, storeSrc, isMobile, storeCategories, storeSources])
 
   // 🔑 ONE definition of "narrowed" per view, named once and used by BOTH the empty state and the
   // announcement. Each was already written out — the library's inside its empty-state condition, the
   // store's inline in `filtersActive` below — and a second copy is how the two start disagreeing
   // about whether a filter is on.
   const libNarrowed = !!n || libStatus !== 'all' || libType !== 'all' || libCap !== 'all' || libEntity !== 'all'
-  const storeNarrowed = !!n || storeType !== 'all' || storeEntity !== 'all' || storeTag !== 'all'
+  const storeNarrowed = !!n || storeType !== 'all' || storeEntity !== 'all' || storeTag !== 'all' || storeSrc !== 'all'
 
   // Controls show whenever there's a populated list to act on (or while loading).
   const showLibControls = !isStore && (apps === undefined || apps.length > 0)
@@ -557,12 +604,30 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
       >
         <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
           {isStore ? (
-            <StoreView catalog={catalog} catalogError={catalogErr} result={storeResult} totalKnown={storeUniverse.length}
-              installedCount={(apps ?? []).filter((a) => !a.native).length}
-              onInstalled={reload} reloadCatalog={reloadCatalog} onClearFilters={clearStoreFilters(setSearch, setStoreType, setStoreEntity, setStoreTag)}
-              filtersActive={storeNarrowed}
-              onOpen={(name) => setOpenName(name)} onAction={appActions.dispatch}
-              onOpenSources={() => setSourcesOpen(true)} />
+            /* PEP-3: the Store is a two-column surface on a wide viewport — the
+               persistent category/source rail, then the card grid. The rail is
+               rendered HERE, by the page a user actually reaches (`#/apps?view=store`),
+               not only inside its own test: `storeRail.test.tsx` mounts this component
+               and would go red if this line were deleted. Below the mobile threshold the
+               rail is absent and its two dimensions move into the FilterMenu dropdown. */
+            <div className="flex items-start gap-l">
+              {!isMobile && (
+                <StoreSideRail
+                  categories={storeCategories} category={storeTag} onCategory={setStoreTag}
+                  categoryTotal={storeUniverse.length}
+                  sources={storeSources} source={storeSrc} onSource={setStoreSrc}
+                  sourceTotal={storeUniverse.length}
+                  onAddSource={() => setSourcesOpen(true)} />
+              )}
+              <div className="min-w-0 flex-1">
+                <StoreView catalog={catalog} catalogError={catalogErr} result={storeResult} totalKnown={storeUniverse.length}
+                  installedCount={(apps ?? []).filter((a) => !a.native).length}
+                  onInstalled={reload} reloadCatalog={reloadCatalog} onClearFilters={clearStoreFilters(setSearch, setStoreType, setStoreEntity, setStoreTag, setStoreSrc)}
+                  filtersActive={storeNarrowed}
+                  onOpen={(name) => setOpenName(name)} onAction={appActions.dispatch}
+                  onOpenSources={() => setSourcesOpen(true)} />
+              </div>
+            </div>
           ) : apps === undefined && appsErr ? (
             // Before the skeleton branch, or a failed fetch spins it forever.
             <LoadError what="apps" error={appsErr} onRetry={reload} />
@@ -614,12 +679,15 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   )
 }
 
-/** Curried "reset every Store filter" used by the no-match empty state. */
+/** Curried "reset every Store filter" used by the no-match empty state. Every
+ *  dimension in `storeNarrowed` must appear here — a filter that narrows but that
+ *  "Clear filters" does not reset leaves the user stuck on an empty grid. */
 function clearStoreFilters(
   setSearch: (v: string) => void, setType: (v: string) => void,
   setEntity: (v: string) => void, setTag: (v: string) => void,
+  setSrc: (v: string) => void,
 ): () => void {
-  return () => { setSearch(''); setType('all'); setEntity('all'); setTag('all') }
+  return () => { setSearch(''); setType('all'); setEntity('all'); setTag('all'); setSrc('all') }
 }
 
 /** A small "showing N of M" line above a filtered list — only when a filter is
@@ -932,24 +1000,24 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
       { icon: <Blocks size={15} />, label: 'Details', onSelect: onOpen },
       { icon: <Download size={15} />, label: 'Install', onSelect: onInstall, disabled: busy },
     ]
-  // Card composition adapts to what the app declares — the four states the manifest
-  // allows (hero+icon · hero-only · icon-only · neither) all read as one coherent
-  // card, never a broken slot:
-  //   • hero  → a full-bleed banner caps the card; the icon tile (if any) floats
-  //             over its lower edge as an avatar, so hero+icon layers instead of
-  //             competing, and hero-only just shows the banner.
-  //   • icon-only → the tile sits inline in the header (the classic layout).
-  //   • neither   → no empty tile; the title leads. (Every bundled app ships an
-  //             icon today, but the card must not degrade if one is absent.)
+  // PEP-3 — ONE card anatomy, art-forward, whatever the manifest declares. Previously
+  // the card had four shapes (hero+icon · hero-only · icon-only · neither) and only the
+  // hero ones were banner-topped, so a grid mixing hero and hero-less apps read as two
+  // different components — the hero-less card looked like the image had failed to load.
+  // Now every card is: banner → icon avatar over its lower edge → name → description →
+  // quality → footer. The two art paths differ only in WHAT fills the banner:
+  //   • the app declares `heroUrl` → its own image, object-cover.
+  //   • it declares none → its deterministic token gradient (`appArt.ts`), keyed on the
+  //     app name so the art is stable across reloads/machines and neighbours differ.
+  // The icon tile is unconditional too: `AppIcon` already resolves an absent/legacy
+  // icon to the Blocks app glyph, so "no icon" is a rendered fallback, not an empty slot.
   const hero = item.heroUrl
-  const hasIcon = !!item.icon
   // Clicking the card opens the detail panel; interactive controls inside
   // (action menu, primary button) stop propagation so they act, not navigate.
   const stop = (e: React.MouseEvent) => e.stopPropagation()
 
-  const iconTile = hasIcon && (
-    <div className={`grid shrink-0 place-items-center bg-surface-high text-on-surface-low ${
-      hero ? 'size-12 rounded-lg ring-2 ring-surface-container' : 'size-12 rounded-lg'}`}>
+  const iconTile = (
+    <div className="grid size-12 shrink-0 place-items-center rounded-lg bg-surface-high text-on-surface-low ring-2 ring-surface-container">
       <AppIcon name={item.icon} size={24} />
     </div>
   )
@@ -972,21 +1040,25 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
       {/* The name was carried by `title` on the wrapper before. */}
       <RowHitTarget label={`${item.displayName} — details`} />
 
-      {/* hero banner (optional) — full-bleed cap; a subtle scrim keeps any overlaid
-          icon/edge legible over a busy image */}
-      {hero && (
-        <div className="relative h-28 w-full shrink-0 overflow-hidden bg-surface-high">
+      {/* Banner — the full-bleed cap EVERY card carries. `data-art` names which of the
+          two paths drew it, so a test can tell "the app's own hero" from "the generated
+          fallback" without reading a background string. A subtle scrim keeps the overlaid
+          icon legible over a busy image or a saturated gradient. */}
+      <div className="relative h-28 w-full shrink-0 overflow-hidden bg-surface-high"
+        data-art={hero ? 'hero' : 'generated'}
+        style={hero ? undefined : { background: artGradient(item.name) }}>
+        {hero && (
           <img src={hero} alt="" loading="lazy"
             className="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
-          <div className="absolute inset-0 bg-gradient-to-t from-surface-container/50 to-transparent" />
-        </div>
-      )}
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-surface-container/50 to-transparent" />
+      </div>
 
-      <div className={`flex flex-1 flex-col gap-2.5 p-4 ${hero ? 'pt-0' : ''}`}>
-        {/* header: icon (inline, or floating over the hero's edge) + name + version */}
-        <div className={`flex items-start gap-3 ${hero && hasIcon ? '-mt-6' : ''}`}>
+      <div className="flex flex-1 flex-col gap-2.5 p-4 pt-0">
+        {/* header: icon avatar floating over the banner's lower edge + name + version */}
+        <div className="-mt-6 flex items-start gap-3">
           {iconTile}
-          <div className={`min-w-0 flex-1 ${hero && hasIcon ? 'pt-6' : ''}`}>
+          <div className="min-w-0 flex-1 pt-6">
             <div className="flex items-center gap-1.5">
               <span data-type="body-l" className="truncate text-on-surface transition-colors group-hover:text-primary" style={fvs(550)}>{item.displayName}</span>
               {item.version && <span data-type="label-s" className="shrink-0 text-on-surface-low">v{item.version}</span>}
