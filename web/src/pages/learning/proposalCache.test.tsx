@@ -53,6 +53,7 @@ const rejectLearningProposal = vi.fn<() => Promise<void>>()
 const learningHealth = vi.fn<() => Promise<never>>()
 const judgeBench = vi.fn<() => Promise<never>>()
 const evalStudies = vi.fn<() => Promise<never>>()
+const retrievalBench = vi.fn<() => Promise<never>>()
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -63,6 +64,7 @@ vi.mock('../../lib/api', () => ({
     rejectLearningProposal: () => rejectLearningProposal(),
     judgeBench: () => judgeBench(),
     evalStudies: () => evalStudies(),
+    retrievalBench: () => retrievalBench(),
   },
 }))
 
@@ -83,6 +85,10 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
     // And the study panel, for the third time and the same reason: `StudiesPanel.test.tsx` owns
     // its rendering, and "no study registered" is its ordinary state.
     evalStudies.mockRejectedValue(new Error('study_absent'))
+    // And the retrieval-arms panel, for the fourth time and the same reason:
+    // `RetrievalBenchPanel.test.tsx` owns its rendering, and "no retrieval benchmark yet"
+    // is its ordinary state.
+    retrievalBench.mockRejectedValue(new Error('retrieval_absent'))
     acceptLearningProposal.mockResolvedValue({ ok: true })
     rejectLearningProposal.mockResolvedValue(undefined)
   })

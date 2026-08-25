@@ -13,6 +13,7 @@ export const WEEK_KEY = 'learning:week'
 export const HEALTH_KEY = 'learning:health'
 export const JUDGE_BENCH_KEY = 'learning:judge-bench'
 export const STUDIES_KEY = 'learning:studies'
+export const RETRIEVAL_BENCH_KEY = 'learning:retrieval-bench'
 export const STUDY_DETAIL_KEY_PREFIX = 'learning:study:'
 
 /** The cache key for ONE study's drill-down. Keyed per study for the same reason the
@@ -64,6 +65,7 @@ export function refreshEverything(
   refreshHealth: () => void = () => {},
   refreshJudgeBench: () => void = () => {},
   refreshStudies: () => void = () => {},
+  refreshRetrieval: () => void = () => {},
 ): void {
   invalidateKeys(PROPOSALS_KEY_PREFIX, true)
   invalidateKeys(WEEK_KEY)
@@ -78,9 +80,15 @@ export function refreshEverything(
   // states because both halves look current.
   invalidateKeys(STUDIES_KEY)
   invalidateKeys(STUDY_DETAIL_KEY_PREFIX, true)
+  // The retrieval table moves only when `personalclaw retrieval-eval` runs — a terminal
+  // command, so its staleness is invisible to the page for the same reason the judge table's
+  // is. It also moves when the user SAVES a hand-label card from this very panel, which the
+  // panel handles locally; this is the terminal-run half.
+  invalidateKeys(RETRIEVAL_BENCH_KEY)
   refreshProposals()
   refreshWeek()
   refreshHealth()
   refreshJudgeBench()
   refreshStudies()
+  refreshRetrieval()
 }

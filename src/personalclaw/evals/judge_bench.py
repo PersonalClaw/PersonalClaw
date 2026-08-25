@@ -1286,9 +1286,30 @@ def bench_cells(paired: MatrixSpec, unpaired: MatrixSpec | None) -> list[dict]:
     return [{k: v for k, v in combo.items() if k != TRIAL_KEY} for combo in combos]
 
 
+#: What a judge-bench run id starts with. Conventional only — a caller may pass its own
+#: ``bench_id`` (the tests do), so this is NOT what identifies a run's owner. See
+#: :data:`TABLE_KIND`.
+BENCH_ID_PREFIX = "judge-bench-"
+
+#: 🔴 What a judge-bench ``table.json`` DECLARES itself to be, and the only thing
+#: :func:`list_bench_runs` trusts.
+#:
+#: ``matrices/`` is a deliberately SHARED sink (§5.4 puts every report in one place), and
+#: ES-4 was for a while the only writer of a ``table.json`` in it — so "has a table.json" was
+#: a working proxy for "is a judge bench". ES-3's retrieval ablation is a second writer, and
+#: with that proxy the newest retrieval run was served AS the newest judge bench: the panel
+#: read ``row.wall_secs`` off a P@k row and took the whole Learning page down with
+#: ``Cannot read properties of undefined``. Measured in a browser, not reasoned about.
+#:
+#: The stamp lives in the ARTIFACT rather than in the run id because the id is
+#: caller-supplied: a prefix rule would have silently stranded every run whose id someone
+#: chose, which is a second bug of the same shape.
+TABLE_KIND = "judge_bench"
+
+
 def new_bench_id() -> str:
     """A sortable, filesystem-safe run id."""
-    return "judge-bench-" + datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return BENCH_ID_PREFIX + datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 async def run_judge_bench(
@@ -1424,6 +1445,8 @@ def write_bench_artifacts(
         d / "table.json",
         json.dumps(
             {
+                # The artifact declares its OWNER (see TABLE_KIND) — `matrices/` is shared.
+                "kind": TABLE_KIND,
                 "columns": list(TABLE_COLUMNS),
                 "rows": [r.to_dict() for r in table],
                 "floors": {
@@ -1479,15 +1502,40 @@ def read_recommendations(bench_id: str) -> list[dict]:
 
 
 def list_bench_runs() -> list[str]:
-    """Persisted judge-bench run ids, newest first (the id sorts chronologically)."""
+    """Persisted judge-bench run ids, newest first (the id sorts chronologically).
+
+    🔴 Filtered on :data:`BENCH_ID_PREFIX`, not on "has a ``table.json``". That proxy worked
+    only while ES-4 was the ONLY writer of a ``table.json`` under ``matrices/``: ES-3's
+    retrieval ablation is a second one, and without this filter the newest retrieval run was
+    served as the newest judge bench — the panel then read ``row.wall_secs`` off a P@k row and
+    crashed the whole Learning page with ``Cannot read properties of undefined``. Measured
+    live, not reasoned about. The shared sink is deliberate (§5.4 puts every report in one
+    place); the OWNERSHIP of a run has to be explicit rather than inferred from a filename
+    that two consumers both happen to write.
+    """
     return sorted(
-        (
-            p.name
-            for p in store.matrices_dir().iterdir()
-            if p.is_dir() and (p / "table.json").exists()
-        ),
+        (p.name for p in store.matrices_dir().iterdir() if _is_judge_run(p)),
         reverse=True,
     )
+
+
+def _is_judge_run(run_dir: "Path") -> bool:
+    """Does this ``matrices/<id>/`` hold a JUDGE bench's table? (:data:`TABLE_KIND`.)
+
+    One small read per candidate directory. At personal scale a home holds a handful of runs,
+    and the alternative — trusting the filename — is the bug this function exists to fix.
+    """
+    if not run_dir.is_dir():
+        return False
+    path = run_dir / "table.json"
+    if not path.is_file():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.debug("unreadable table at %s", path, exc_info=True)
+        return False
+    return isinstance(data, dict) and data.get("kind") == TABLE_KIND
 
 
 def latest_bench_view() -> dict | None:

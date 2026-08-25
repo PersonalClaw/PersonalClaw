@@ -302,6 +302,23 @@ CREATE INDEX IF NOT EXISTS idx_mem_volunteer_ref ON mem_volunteer_events(record_
 CREATE INDEX IF NOT EXISTS idx_mem_volunteer_arm ON mem_volunteer_events(arm);
 """
 
+#: The "used" test, as a SQL expression: the record's CURRENT ``recall_count`` exceeds what
+#: it was when the reflex volunteered it. ONE string, shared by the live health panel
+#: (:meth:`MemoryGraph.volunteer_precision`) and the offline benchmark's ground truth
+#: (:meth:`MemoryGraph.volunteer_qrels`) — two spellings of "used" would let the number a
+#: user reads and the label a benchmark scores against drift apart silently.
+_USED_EXPR = "CASE WHEN COALESCE(s.recall_count, 0) > v.recall_at_volunteer THEN 1 ELSE 0 END"
+
+#: The row population both readers score over. Episodic rows have no recall counter
+#: incremented on read, so they can never register as used; counting them would drag every
+#: arm's precision toward zero for a reason that has nothing to do with volunteer quality.
+#: Callers append their own ``AND …`` window clause, so this ends on a WHERE term.
+_VOLUNTEER_FROM_WHERE = (
+    "FROM mem_volunteer_events v "
+    "LEFT JOIN semantic_memory s ON s.key = v.record_ref "
+    "WHERE v.from_kind = 'semantic'"
+)
+
 
 # ── The graph ──────────────────────────────────────────────────────────────────
 
@@ -867,6 +884,43 @@ class MemoryGraph:
             logger.debug("volunteer event not logged", exc_info=True)
             return 0
 
+    def volunteer_qrels(self, *, window_days: int | None = None) -> dict[str, list[str]]:
+        """Mined weak labels for the retrieval bench: ``{entity name: [record key, …]}``.
+
+        A volunteered record whose recall count LATER ROSE is a positive for the query
+        that named its entity (EVALUATION-SUBSTRATE §5.2's "retrieved-then-used is a
+        positive"). The used predicate and the row population are :data:`_USED_EXPR` /
+        :data:`_VOLUNTEER_FROM_WHERE` — the SAME strings :meth:`volunteer_precision`
+        reads, so the offline benchmark's ground truth and the live health panel's
+        precision cannot drift into two definitions of "used".
+
+        Never raises: an unavailable table yields ``{}``, which
+        :mod:`personalclaw.evals.retrieval_bench` turns into an explicit empty-benchmark
+        refusal rather than a score over nothing.
+        """
+        sql = f"SELECT v.entity_name AS q, v.record_ref AS ref, {_USED_EXPR} AS used {_VOLUNTEER_FROM_WHERE}"  # noqa: E501
+        params: tuple = ()
+        if window_days:
+            sql += " AND v.created_at >= ?"
+            params = (_iso_days_ago(int(window_days)),)
+        try:
+            rows = self.db.execute(sql, params).fetchall()
+        except sqlite3.Error:
+            logger.debug("volunteer qrels unavailable", exc_info=True)
+            return {}
+        qrels: dict[str, list[str]] = {}
+        for row in rows:
+            if not int(row["used"] or 0):
+                continue
+            query = str(row["q"] or "").strip()
+            ref = str(row["ref"] or "").strip()
+            if not query or not ref:
+                continue
+            bucket = qrels.setdefault(query, [])
+            if ref not in bucket:
+                bucket.append(ref)
+        return {q: sorted(refs) for q, refs in sorted(qrels.items())}
+
     def volunteer_precision(self, *, window_days: int | None = None) -> dict:
         """Per-arm volunteered-vs-used precision (§3).
 
@@ -880,15 +934,8 @@ class MemoryGraph:
         drawing conclusions from three events.
         """
         sql = (
-            "SELECT v.arm AS arm, COUNT(*) AS n, "
-            "SUM(CASE WHEN COALESCE(s.recall_count, 0) > v.recall_at_volunteer "
-            "         THEN 1 ELSE 0 END) AS used "
-            "FROM mem_volunteer_events v "
-            "LEFT JOIN semantic_memory s ON s.key = v.record_ref "
-            # Episodic rows have no recall counter incremented on read, so they can
-            # never register as used; counting them would drag every arm's precision
-            # toward zero for a reason that has nothing to do with volunteer quality.
-            "WHERE v.from_kind = 'semantic'"
+            f"SELECT v.arm AS arm, COUNT(*) AS n, SUM({_USED_EXPR}) AS used "
+            f"{_VOLUNTEER_FROM_WHERE}"
         )
         params: tuple = ()
         if window_days:
