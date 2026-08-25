@@ -1751,7 +1751,8 @@
             "ES-1",
             "EXT:WORKFLOWS-V2:Run Ledger Slices 0-3 (\u00a75 event table) for real-run input sampling + verdict events",
             "EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:proposal queue + LEARN-R2 harvested regression suite"
-          ]
+          ],
+          "blocked_reason": "PARTIAL (2026-08-25). Nine of ten done_when clauses hold. The tenth is the criterion's opening sentence \u2014 'a flywheel template-diff RUNS a study' \u2014 short by an OWNER DECISION, not missing code: the diff pre-registers automatically, the run is a deliberate `study --run` (30 arm + 90 judge calls at 3 cases x k=5). Plan \u00a72.1 says 'the human registers the study; the substrate runs it', which the shipped seam inverts only in WHO REGISTERS. Ratify register-at-file/run-on-invocation, or gate auto-run behind Guardrails spend. PR #2050."
         },
         {
           "id": "ES-6",
@@ -5023,7 +5024,8 @@
             "SV-3",
             "EXT:WORKFLOWS-V2:Slices 0-5 (bundled template pack + run ledger + required_artifacts host)",
             "EXT:AUTONOMY-GUARDRAILS:headless profile/budgets inherited when present (graceful)"
-          ]
+          ],
+          "blocked_reason": "PARTIAL (2026-08-25). Clauses 1/2/4 met and railed. Clause 3 (a scenario mutating state through the real UI via Chrome DevTools MCP) is env-gated by a NEW cause: the 2026-08-23 tool-availability gate CLEARED (ToolSearch now returns mcp__chrome-devtools__* schemas), but chrome-devtools-mcp derives its profile dir from the server's --channel CLI arg only (browser.js:139), so concurrent sessions contend for one ~/.cache/chrome-devtools-mcp/chrome-profile, and a LIVE sibling holds it. --remote-debugging-pipe writes no DevToolsActivePort so --auto-connect cannot attach. OWNER DECISION: add --isolated or a per-session --user-data-dir to the chrome-devtools MCP server args. PR #2048."
         },
         {
           "id": "SV-10",
