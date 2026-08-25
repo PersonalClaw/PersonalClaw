@@ -92,6 +92,12 @@ EXPECTED = {
     # verdict has to land in the run ledger with a rationale and only a node holding the run
     # id can write one.
     "self-qa",
+    # The decision journal's horizon review (PROACTIVE-ASSISTANT §2.3, PA-4): fired by the
+    # one-shot `system:decision-journal:<id>` trigger `log_decision` mints. Zero model calls
+    # by design — it quotes the user's own stated expectation back rather than paraphrasing
+    # it, and the outcome capture happens through `decision_resolve` because a workflow that
+    # invented an outcome with nobody present would be worse than no review at all.
+    "decision-review",
 }
 
 

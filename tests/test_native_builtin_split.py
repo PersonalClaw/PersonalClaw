@@ -68,6 +68,12 @@ def test_app_categories_are_the_installable_entities():
         "knowledge_get",
         "knowledge_update",
         "knowledge_stats",
+        # The decision journal (PROACTIVE-ASSISTANT §2.2, PA-4) rides the SAME app entity: a
+        # decision is a knowledge item, so the journal must not be installable or removable
+        # independently of the library its entries live in.
+        "log_decision",
+        "decision_list",
+        "decision_resolve",
     }
     assert _names(BT.create_inbox_tools_provider()) == {"post_to_inbox"}
     runs = _names(BT.create_project_tools_provider())

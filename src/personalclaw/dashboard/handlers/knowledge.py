@@ -244,14 +244,16 @@ async def list_items(request: web.Request) -> web.Response:
         return web.json_response({"items": items, "total": total, "page": page, "limit": limit})
 
 
-# The 12 typed item kinds (knowledge-entity-vision). text-ish types author content
-# directly; bookmark records a url; media types arrive via /ingest (file upload).
+# The 13 typed item kinds (knowledge-entity-vision). text-ish types author content
+# directly; bookmark records a url; media types arrive via /ingest (file upload);
+# `decision` is authored by `log_decision` (PROACTIVE-ASSISTANT §2.2).
 _KNOWLEDGE_TYPES = {
     "note",
     "fleeting",
     "journal",
     "gist",
     "bookmark",
+    "decision",
     "image",
     "audio",
     "video",
@@ -262,8 +264,18 @@ _KNOWLEDGE_TYPES = {
 }
 # Types authorable via JSON create (text bodies + a bookmark URL). Media/document
 # types carry file bytes, so they can ONLY be created through /ingest — creating one
-# here would yield a broken item with no file.
+# here would yield a broken item with no file. `decision` is excluded for the same
+# reason with a different missing half: logging a decision also mints its one-shot
+# review trigger, so an item authored here would be a decision that never comes back.
 _AUTHORABLE_TYPES = {"note", "fleeting", "journal", "gist", "bookmark"}
+
+# Non-authorable types and the path that DOES create them. Kept beside the sets above so
+# the refusal names the right door: telling a caller to upload a file to /ingest in order
+# to create a decision would send them somewhere that cannot make one.
+_CREATION_PATH: dict[str, str] = {
+    "decision": "the `log_decision` chat tool, which also schedules the review",
+}
+_DEFAULT_CREATION_PATH = "uploading a file to /ingest"
 
 
 async def create_item(request: web.Request) -> web.Response:
@@ -282,10 +294,9 @@ async def create_item(request: web.Request) -> web.Response:
     if item_type not in _KNOWLEDGE_TYPES:
         return web.json_response({"error": f"unknown type {item_type!r}"}, status=400)
     if item_type not in _AUTHORABLE_TYPES:
+        via = _CREATION_PATH.get(item_type, _DEFAULT_CREATION_PATH)
         return web.json_response(
-            {
-                "error": f"'{item_type}' items are created by uploading a file to /ingest, not authored directly"  # noqa: E501
-            },
+            {"error": f"'{item_type}' items are created by {via}, not authored directly"},
             status=400,
         )
     title = str(body.get("title") or "").strip()
@@ -3082,7 +3093,7 @@ async def create_watched_source(request: web.Request) -> web.Response:
     if item_type not in _AUTHORABLE_TYPES:
         return web.json_response(
             {
-                "error": f"a watched source cannot poll '{item_type}' items (they carry file bytes); item_type must be one of {sorted(_AUTHORABLE_TYPES)}"  # noqa: E501
+                "error": f"a watched source cannot poll '{item_type}' items; item_type must be one of {sorted(_AUTHORABLE_TYPES)}"  # noqa: E501
             },
             status=400,
         )
