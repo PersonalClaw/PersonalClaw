@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -520,6 +521,13 @@ def test_v3_arc_flawed_skill_stumble_refine_approve_rerun(home):
     )
     pending = proposals.list_pending()
     assert len(pending) == 1 and pending[0].kind == "refine"
+    # The heading's date is the PROPOSAL's own `created_at` day — `overlays.render_block`
+    # splits that timestamp at "T". This arc mints its proposal through the real clock, not
+    # this module's frozen NOW, so derive the day instead of hardcoding one: a literal here
+    # agreed with the real clock only while UTC's date matched NOW's, and broke the moment
+    # UTC rolled past it. Capture before accept(), which consumes the proposal.
+    day = pending[0].created_at.split("T", 1)[0]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", day), f"no ISO day to pin the heading on: {day!r}"
     # 3. nothing was written yet: the proposal is a proposal.
     assert (home / "skills" / SKILL / "SKILL.md").read_bytes() == original_bytes
     assert _load() == BASE
@@ -531,7 +539,7 @@ def test_v3_arc_flawed_skill_stumble_refine_approve_rerun(home):
     # 5. the re-run loads the refined skill.
     refined = _load()
     assert "use uv" in refined
-    assert "## Refinement v1 (2026-08-25, from a correction)" in refined
+    assert f"## Refinement v1 ({day}, from a correction)" in refined
     assert "Run `pip install`." in refined, "the base procedure is still there"
     # …and the base file was never touched by any of it.
     assert (home / "skills" / SKILL / "SKILL.md").read_bytes() == original_bytes

@@ -54,6 +54,7 @@ const learningHealth = vi.fn<() => Promise<never>>()
 const judgeBench = vi.fn<() => Promise<never>>()
 const evalStudies = vi.fn<() => Promise<never>>()
 const retrievalBench = vi.fn<() => Promise<never>>()
+const ablation = vi.fn<() => Promise<never>>()
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -65,6 +66,7 @@ vi.mock('../../lib/api', () => ({
     judgeBench: () => judgeBench(),
     evalStudies: () => evalStudies(),
     retrievalBench: () => retrievalBench(),
+    ablation: () => ablation(),
   },
 }))
 
@@ -89,6 +91,10 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
     // `RetrievalBenchPanel.test.tsx` owns its rendering, and "no retrieval benchmark yet"
     // is its ordinary state.
     retrievalBench.mockRejectedValue(new Error('retrieval_absent'))
+    // And the ablation report, for the fifth time and the same reason: `AblationPanel.test.tsx`
+    // owns its rendering, and "no ablation has run yet" is its ordinary state — for months,
+    // since the cadence is monthly and the registry starts empty.
+    ablation.mockRejectedValue(new Error('ablation_absent'))
     acceptLearningProposal.mockResolvedValue({ ok: true })
     rejectLearningProposal.mockResolvedValue(undefined)
   })

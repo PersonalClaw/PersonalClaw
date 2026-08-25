@@ -1210,6 +1210,48 @@ Surface a message to the user in their Inbox triage queue — use when you finis
 
 ## personalclaw-knowledge-tools
 
+### `decision_list`
+
+List the user's logged decisions. Args: status ('pending'|'resolved'|'abandoned'|'overdue' — 'overdue' means pending past its review horizon), domain (str), limit (int, default 25).
+
+**Response type:** `decision.list`
+
+**Parameters:**
+- `domain` (string, optional)
+- `limit` (integer, optional)
+- `status` (string, optional)
+
+**Example — List decisions past their review horizon:**
+
+```json
+{
+  "status": "overdue"
+}
+```
+
+### `decision_resolve`
+
+Capture what actually happened for a logged decision. Writes the expectation-vs-outcome lesson to memory. Args: id (str, required), outcome (str, required — what actually happened, in the user's own words), grade (better|as_expected|worse|mixed|too_early, required; 'too_early' defers the review instead of resolving it). Never invent an outcome — ask the user.
+
+**Response type:** `decision.detail`
+
+**Safety:** risk: caution
+
+**Parameters:**
+- `grade` (string, required)
+- `id` (string, required)
+- `outcome` (string, required)
+
+**Example — Record what actually happened:**
+
+```json
+{
+  "grade": "worse",
+  "id": "dec_abc123",
+  "outcome": "Enabled by 41% in three weeks"
+}
+```
+
 ### `knowledge_create`
 
 Add an item to the user's knowledge library. Args: type ('note'|'fleeting'|'journal'|'gist'|'bookmark', default 'note'), title (str), content (str — the note/gist body), url (str — for bookmark), optional tags (list of str), optional gist_language (str — the code language for a gist, e.g. 'python').
@@ -1346,6 +1388,34 @@ Update an existing knowledge item and re-enrich it. Args: id (str, required), an
 {
   "id": "kn_abc123",
   "is_pinned": true
+}
+```
+
+### `log_decision`
+
+Record a decision the user is making, with the prediction they expect, and schedule ONE review at its horizon. Offer this when you notice a decision being made — never log one silently. Args: summary (str, required — the decision in one line), expectation (str, required — what the user predicts will happen), confidence (number 0-1, required), domain (career|financial|technical|personal|health|other, default 'other'), content (str — the reasoning, context and stakes, free prose), review_horizon (str YYYY-MM-DD — defaults to the configured horizon), tags (list of str).
+
+**Response type:** `decision.detail`
+
+**Safety:** risk: caution
+
+**Parameters:**
+- `confidence` (number, required)
+- `content` (string, optional)
+- `domain` (string, optional)
+- `expectation` (string, required)
+- `review_horizon` (string, optional)
+- `summary` (string, required)
+- `tags` (array, optional)
+
+**Example — Log a decision with the prediction it is betting on:**
+
+```json
+{
+  "confidence": 0.6,
+  "domain": "technical",
+  "expectation": "Under a third of users enable it in the first month",
+  "summary": "Ship the digest as opt-in rather than default-on"
 }
 ```
 

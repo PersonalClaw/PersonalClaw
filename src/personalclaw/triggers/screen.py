@@ -465,6 +465,17 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # unattended "puts something in front of the user" write that puts `notification-digest`
         # on this side — so the pair lands here, on the stricter of the two classifications.
         "selfqa-file-finding",
+        # The triage digest spends two background model calls and DELIVERS a notification,
+        # unattended, on a cron, forever. It executes no proposal — that is the `inbox-op`
+        # under a budget floor — but "proposes nothing and only notifies" is still the same
+        # unattended puts-something-in-front-of-the-user write that puts `notification-digest`
+        # and `usage-recap` on this side, and the spend alone earns the opt-in.
+        "triage-digest",
+        # `inbox-op` mutates inbox rows — archives, dismisses, mutes a thread, writes a
+        # draft. Every one is reversible, which is what earns it the auto-execution class, but
+        # reversible is not read-only: an unattended cron that could dismiss the user's inbox
+        # without an explicit capability opt-in is precisely what this table exists to prevent.
+        "inbox-op",
     }
 )
 

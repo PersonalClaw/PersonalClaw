@@ -171,16 +171,20 @@ def cache_hit_pct(
       cache_read_rate + cache_creation * cache_write_rate``. If ``input_tokens``
       already contained the cached tokens, the shipped cost model would double-bill
       every cached turn.
-    * ``dashboard/chat_runner.py:3712-3714`` composes the rendered "cached" figure as
-      ``cache_read + cache_creation`` and reports it BESIDE ``input_tokens``, not as a
-      subset of it.
+    * ``usage_ledger.py:197-200`` (``_fold``) sums the three into three SEPARATE
+      aggregate keys, side by side. A subset relation would make that fold
+      double-count on every cached turn, so the persisted ledger's own arithmetic
+      only balances if the buckets are disjoint. Cited over PCS-7's own
+      ``pricing.py:137-139``, which adds the same three but is this module's
+      counterpart — evidence for a premise must not be the code the premise
+      justifies.
 
     Returns ``None`` when the denominator is 0: no prompt tokens is NO MEASUREMENT,
     not ``0%``. Same honesty rule as ``context_pct`` on the turn-complete line — see
-    ``dashboard/chat_runner.py:492-525``, where a defaulted ``0`` printed
-    ``context 0%`` for providers that reported nothing, a number the backend never
-    supplied. A measured 0 (prompt tokens present, none of them cached) is a real
-    answer and returns ``0.0``.
+    ``dashboard/chat_runner.py:635-636``, whose ``if context_pct is not None`` guard
+    exists because a defaulted ``0`` printed ``context 0%`` for providers that
+    reported nothing, a number the backend never supplied. A measured 0 (prompt
+    tokens present, none of them cached) is a real answer and returns ``0.0``.
     """
     read = cache_read_tokens or 0
     prompt_tokens = read + (cache_creation_tokens or 0) + (input_tokens or 0)

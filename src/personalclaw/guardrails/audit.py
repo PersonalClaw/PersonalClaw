@@ -64,7 +64,18 @@ def _audit_path() -> Path:
 #: one record removed from an attempt, and ``PURPOSES`` is deliberately coarse: every value
 #: below maps to its single ``background`` purpose, which is exactly the collapse `G47`
 #: reports. So none of the three could carry this without being redefined.
-CALLERS: tuple[str, ...] = ("conflict_merge", "inbox_triage", "nl_to_cron", "skill_ladder")
+#: `triage_gate` and `triage_propose` are the triage digest's two background passes
+#: (PROACTIVE-ASSISTANT §1.2/§1.3), and they are TWO values rather than one `triage`: the
+#: whole point of the gate is that it is the cheap call, so a spend audit that could not tell
+#: it apart from the proposal call could not answer whether the gate is earning its keep.
+CALLERS: tuple[str, ...] = (
+    "conflict_merge",
+    "inbox_triage",
+    "nl_to_cron",
+    "skill_ladder",
+    "triage_gate",
+    "triage_propose",
+)
 
 #: What an attempt with no bound caller reads as on a read surface. Interactive chat is
 #: deliberately unguarded (``provider_bridge`` attaches the guard on four axes only), and a

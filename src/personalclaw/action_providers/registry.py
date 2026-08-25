@@ -105,6 +105,31 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(SelfQaFindingActionProvider())
+    if "triage-digest" not in _providers:
+        # PROACTIVE-ASSISTANT §1.1-§1.5 — the triage digest's one call site. Registered
+        # unconditionally, NOT behind `proactive.triage_enabled`: a provider the bundled
+        # "Morning triage" template names must be dispatchable whenever that template can be
+        # instantiated, and a registration that depends on config is one the run-start preflight
+        # cannot see. The switch is enforced inside `execute`, where a refusal is reportable.
+        # Added to ALLOWED_HOOK_PROVIDERS and to `triggers/screen.py`'s write-capable set in the
+        # SAME commit — a provider in one set but not the others saves and then fails to run.
+        from personalclaw.action_providers.triage_digest_provider import (
+            TriageDigestActionProvider,
+        )
+
+        register_action_provider(TriageDigestActionProvider())
+    if "inbox-op" not in _providers:
+        # The triage tier's hands, and the ONE provider in the
+        # default auto-capable set. Registered unconditionally, NOT behind
+        # `proactive.auto_execute_enabled`: the switch governs whether the digest DISPATCHES an
+        # action, not whether an inbox operation is a dispatchable action, and a registration
+        # that depended on config would make a user's own hand-written trigger fail at fire time
+        # because a triage setting was off. Added to ALLOWED_HOOK_PROVIDERS, to
+        # `triggers/screen.py`'s write-capable set, and to `guardrails.rungs` in the SAME commit
+        # — a provider in one set but not the others saves and then fails to run.
+        from personalclaw.action_providers.inbox_op_provider import InboxOpActionProvider
+
+        register_action_provider(InboxOpActionProvider())
     if "run-prompt" not in _providers:
         from personalclaw.action_providers.run_prompt_provider import RunPromptActionProvider
 

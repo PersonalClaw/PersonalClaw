@@ -47,7 +47,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -321,6 +321,26 @@ class RetrievalBenchmark:
             separators=(",", ":"),
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def sources(self) -> dict[str, int]:
+        """``{qrels source: query count}`` — the ground truth's PROVENANCE, published.
+
+        Every :class:`QrelsQuery` already carries its ``source``, but only inside
+        ``benchmark.json``: the report and the panel showed P@5 with no visible statement
+        of which labels produced it. §5.2 names three sources and this harness mines a
+        SUBSTITUTE for one of them (``intent_outcomes`` stands in for LEARN-R4's
+        ``surfacing_events``, which nothing in the tree writes), so a reader who cannot
+        see the mix cannot judge the number. Counted here rather than in the frontend for
+        the reason :func:`latest_retrieval_view` states: a re-derived answer eventually
+        disagrees with the runner's.
+
+        A query with no recorded source counts under ``""`` rather than being dropped — a
+        census that hides its own unlabelled rows overstates what it knows.
+        """
+        out: dict[str, int] = {}
+        for query in self.queries:
+            out[query.source] = out.get(query.source, 0) + 1
+        return dict(sorted(out.items()))
 
 
 @dataclass(frozen=True)
@@ -623,23 +643,75 @@ def store_unchanged(db_path: "str | Path") -> "Iterator[dict[str, str]]":
             ) from failure
 
 
+def sibling_store_paths(measured: "str | Path") -> list[Path]:
+    """The OTHER live store's files, when ``measured`` is a live store under this home.
+
+    §5.1's clause is "never writes to **either**" store, but a run measures only one, so
+    :func:`store_unchanged` over the measured path alone left the other store unguarded:
+    a knowledge run that wrote to ``memory.db`` — the one write the KNOWLEDGE/MEMORY
+    boundary exists to forbid — passed the rail.
+
+    Scoped to stores under :func:`~personalclaw.config.loader.config_dir` on purpose. A
+    caller measuring a ``tmp_path`` database is not measuring this home, and digesting the
+    real ``~/.personalclaw/memory.db`` to guard it would make a test read a live file that
+    a running gateway may be writing — a read-only rail must not itself reach outside the
+    home under test.
+    """
+    from personalclaw.config.loader import config_dir
+
+    try:
+        home = Path(config_dir()).resolve()
+        target = Path(measured).resolve()
+    except OSError:  # pragma: no cover - an unresolvable path guards nothing extra
+        return []
+    if home not in target.parents:
+        return []
+    out: list[Path] = []
+    for path in (knowledge_db_path(create=False), memory_db_path()):
+        resolved = path.resolve() if path.exists() else path
+        if resolved != target:
+            out.append(resolved)
+    return out
+
+
+@contextmanager
+def stores_unchanged(measured: "str | Path") -> "Iterator[dict[str, str]]":
+    """Both stores byte-identical across the block — §5.1's read-only clause, in full.
+
+    Guards the measured store AND (when it is this home's live store) the store the run
+    never opened, so a cross-store write is a raise rather than a silent pass. Composed
+    out of :func:`store_unchanged` rather than re-deriving the digest/drift comparison, so
+    "unchanged" has one definition and one error.
+    """
+    digests: dict[str, str] = {}
+    with ExitStack() as stack:
+        for path in (Path(measured), *sibling_store_paths(measured)):
+            if str(path) in ("", "."):  # a handle with no db_path guards nothing
+                continue
+            digests.update(stack.enter_context(store_unchanged(path)))
+        yield digests
+
+
 # ── store adapters: one retriever signature, two stores ──────────────────────
 
 #: ``(query, k, arms) -> ranked ids``. The ONE shape the runner knows.
 Retriever = Callable[[str, int, "tuple[str, ...]"], "list[str]"]
 
 
-def knowledge_db_path() -> Path:
+def knowledge_db_path(*, create: bool = True) -> Path:
     """The live knowledge store's path, through its own resolver.
 
     NEVER composed locally: ``knowledge.store``'s own docstring records that composing it
     yields ``<home>/knowledge/knowledge.db`` while the real store is
     ``<home>/workspace/knowledge/knowledge.db``, so a locally-built path would benchmark a
     second, empty database and report a retrieval floor of zero.
+
+    ``create=False`` forwards the resolver's own no-mkdir mode, for the read-only rail:
+    asking where a store WOULD live must not create its directory.
     """
     from personalclaw.knowledge.store import knowledge_db_path as resolver
 
-    return Path(resolver())
+    return Path(resolver(create=create))
 
 
 def memory_db_path() -> Path:
@@ -1090,7 +1162,9 @@ def run_retrieval_bench(
 
     Raises before any measurement when the pin is incomplete or the benchmark is empty, and
     AFTER measurement when the control mask retrieved anything
-    (:class:`MaskNotAppliedError`) or a store file changed (:class:`StoreMutatedError`).
+    (:class:`MaskNotAppliedError`) or EITHER store's files changed
+    (:class:`StoreMutatedError` — :func:`stores_unchanged` guards the store this run never
+    opened too, because §5.1 forbids a write to either one).
     """
     if store_kind not in STORES:
         raise RetrievalBenchError(f"unknown store {store_kind!r}; expected one of {STORES}")
@@ -1124,7 +1198,7 @@ def run_retrieval_bench(
 
         scores: list[QueryScore] = []
         cells: list[CellResult] = []
-        with store_unchanged(resolved):
+        with stores_unchanged(resolved):
             for combo in expand_cells(spec):
                 coords = {key: value for key, value in combo.items() if key != TRIAL_KEY}
                 mask = parse_mask(str(coords[ARM_AXIS]))
@@ -1283,6 +1357,11 @@ def write_bench_artifacts(
                 "benchmark_corpus_snapshot_ref": benchmark.corpus_snapshot_ref,
                 "corpus_drifted": drifted,
                 "arm_executors": dict(executors or {}),
+                # The ground truth's provenance travels WITH the numbers it produced: a
+                # P@5 read without knowing whether its labels were mined or hand-supplied
+                # is a number without a claim attached.
+                "qrels_sources": benchmark.sources(),
+                "queries": len(benchmark.queries),
                 "floors": {
                     "min_arm_contribution": MIN_ARM_CONTRIBUTION,
                     "min_scored_queries": MIN_SCORED_QUERIES,
@@ -1354,12 +1433,13 @@ def card_for_store(store_kind: str, *, limit: int = HAND_LABEL_QUERIES) -> dict:
     Opens the store, (re)mines the qrels so the card offers today's weakest-labelled
     queries, and asks the shipped retriever for each one's top candidates under the FULL
     mask — the card says "which of these answer it", so it must show what the retriever
-    actually returns. Wrapped in :func:`store_unchanged`: building a labelling card must
-    not write to knowledge.db or memory.db.
+    actually returns. Wrapped in :func:`stores_unchanged`: building a labelling card must
+    not write to knowledge.db or memory.db — BOTH, which is why the guard is the
+    two-store one and not :func:`store_unchanged` over the opened half.
     """
     handle, resolved = open_store(store_kind)
     try:
-        with store_unchanged(resolved):
+        with stores_unchanged(resolved):
             benchmark = build_benchmark(store_kind, handle)
             save_benchmark(benchmark)
             retriever = retriever_for(store_kind, handle)

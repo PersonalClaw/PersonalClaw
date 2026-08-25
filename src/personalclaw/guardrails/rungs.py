@@ -235,13 +235,46 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         providers=("artifact-update", "render-report"),
     ),
     # `usage-recap` shares this class rather than minting its own: both are
-    # deterministic, no-model, local-only notification writers, so a separate key would be a
-    # second name for one governed behavior. Neither leaves the machine.
+    # local-only notification writers, so a separate key would be a second name for one governed
+    # behavior. Nothing here leaves the machine.
+    #
+    # The `triage-digest` joins on the same reasoning `source-digest` uses in the
+    # knowledge-write class above, and the reasoning is worth stating because it CORRECTS this
+    # comment's earlier "deterministic, no-model" wording: what this class governs is the EFFECT
+    # (one local notification write), not the powers used to compose it. `triage-digest` spends
+    # model calls — a classifier gate and one proposal pass — so the class is no longer
+    # uniformly no-model. Those extra powers are governed where they can be evaluated: the
+    # write-capable fence in `triggers/screen.py`, the gate's own drop path, and the spend
+    # callers registered in `guardrails/audit.py`. Minting `action.triage` instead would be a
+    # second name for "writes one notification", which is exactly what the sibling comments
+    # above refuse to do.
     ActionTypeSpec(
         key="action.digest",
         floor=RUNG_AUTONOMOUS,
         ceiling=RUNG_AUTONOMOUS,
-        providers=("notification-digest", "usage-recap"),
+        providers=("notification-digest", "usage-recap", "triage-digest"),
+    ),
+    # The `inbox-op`. The ONE core provider that does not floor at `autonomous`, and the
+    # reason is the paragraph at the top of this table read forwards instead of backwards: that
+    # reasoning says an action which ALREADY runs unattended must declare the rung matching
+    # today's behaviour, because a lower floor would stop a user's existing automations.
+    # `inbox-op` runs nothing today — it is new in this commit — so there are no automations to
+    # stop, and the floor can be the one the behaviour deserves rather than the one history
+    # forces. `auto_with_undo` is that rung: PROACTIVE-ASSISTANT §1.6 bound 4 requires every
+    # auto-executed inbox operation to keep a handle the user can click, and this floor is what
+    # routes it through `ROUTE_EXECUTE_WITH_UNDO` so the handle is persisted and the user told.
+    #
+    # The CEILING is the same rung, which is the load-bearing half: `autonomous` would let an
+    # accumulated track record eventually take the undo offer AWAY, and "archived 40 things
+    # silently" is the exact outcome the trivial tier's reversibility argument depends on not
+    # happening. `leaves_machine` is False — every op writes a local row and nothing else; a
+    # `reply_draft` writes a DRAFT (the provider has no send path at all), so the type that
+    # marks `leaves_machine` for a reply is `inbox.reply_draft` below, not this one.
+    ActionTypeSpec(
+        key="action.inbox_op",
+        floor=RUNG_AUTO_WITH_UNDO,
+        ceiling=RUNG_AUTO_WITH_UNDO,
+        providers=("inbox-op",),
     ),
     # Spawns an LLM turn. `leaves_machine` because the turn's own toolset can reach the
     # network — the profile it runs under bounds that, not this declaration.

@@ -1,0 +1,82 @@
+{
+  "name": "morning-triage",
+  "description": "The scheduled triage digest: collect what accumulated across your inbox, channels and background runs, filter it through your own rules, propose what to do, and deliver one ranked digest through the notification gate.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "inbox",
+    "proactive",
+    "digest"
+  ],
+  "inputs": {
+    "window_hours": {
+      "type": "number",
+      "required": false,
+      "default": 24,
+      "help": "How far back to look when no digest has completed yet. Once one has, the window is 'since the last successful digest' and this is ignored — so a missed morning is caught up rather than skipped."
+    },
+    "max_proposals": {
+      "type": "number",
+      "required": false,
+      "default": 8,
+      "help": "Ceiling on proposals in one digest. Eight is the hard maximum; a lower number is a way of asking for only the most important few."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "capabilities": [
+      "inbox"
+    ],
+    "cost_tier": "cheap",
+    "why_cheap": "Two background-tier calls at most, and often zero: a quiet window short-circuits before the first one, and a window your own filter rules empty never reaches the second. Neither call is a stage — there is no session, no toolset and no retry loop.",
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Only surface review requests from GitHub, and skip dependabot entirely."
+      },
+      {
+        "event": "mutation",
+        "description": "Cap this one at three proposals — just the things that actually need me."
+      }
+    ],
+    "keywords": [
+      "morning triage",
+      "digest",
+      "inbox triage",
+      "what needs me",
+      "catch me up"
+    ],
+    "example_outputs": [
+      "one ranked digest: what your machine did, what needs you, and what your rules filtered out"
+    ],
+    "when_not_to_use": "it proposes and delivers — it executes nothing, so it is not how you get your inbox cleared"
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "action",
+        "id": "triage",
+        "label": "Collect, filter, propose and deliver",
+        "config": {
+          "provider": "triage-digest",
+          "with": {
+            "window_hours": "{{inputs.window_hours}}",
+            "max_proposals": "{{inputs.max_proposals}}",
+            "filter_rules": []
+          }
+        }
+      },
+      {
+        "kind": "transform",
+        "id": "digest",
+        "label": "The delivered digest",
+        "config": {
+          "expr": "{{nodes.triage.output.digest_body}}"
+        }
+      }
+    ]
+  }
+}

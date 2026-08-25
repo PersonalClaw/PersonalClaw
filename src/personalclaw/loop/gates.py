@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from personalclaw.cancellation import kill_timed_out
+
 logger = logging.getLogger(__name__)
 
 # A verify/test command is a build/lint/test run — generous bound so a real check
@@ -60,6 +62,12 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
             cwd=cwd or None,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
+            # Own group: this is `/bin/sh -c <persisted command>`, so the shell forks a
+            # test runner / `make` / a bundler that inherits stderr. `proc.kill()` reaches
+            # only the shell; the grandchild then holds the pipe and the reap below waits
+            # for IT, turning a 180s bound into the command's own runtime. See
+            # cancellation.kill_timed_out.
+            start_new_session=True,
         )
     except Exception:
         logger.warning("loop gate: could not spawn %s command `%s`", label, cmd, exc_info=True)
@@ -67,14 +75,7 @@ async def run_verify_command(cmd: str, cwd: str | None, *, label: str = "verify"
     try:
         _out, err = await asyncio.wait_for(proc.communicate(), timeout=VERIFY_TIMEOUT_SECS)
     except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        try:
-            await proc.wait()  # reap the killed child (no zombie)
-        except ProcessLookupError:
-            pass
+        await kill_timed_out(proc)  # group-signalled + bounded reap (no zombie, no tree)
         logger.warning("loop gate: %s command timed out — `%s`", label, cmd)
         return None
     rc = proc.returncode

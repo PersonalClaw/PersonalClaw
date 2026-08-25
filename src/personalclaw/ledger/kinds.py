@@ -139,10 +139,38 @@ CASCADE_BLOCKED = "cascade_blocked"
 WORKSPACE_PROVISIONED = "workspace_provisioned"
 WORKSPACE_TEARDOWN = "workspace_teardown"
 
+#: What the triage digest DID NOT do. `skipped_triage` is the
+#: classifier gate's drop with the rationale and the rule that drove it; `proposal_refused` is a
+#: proposal the ordinal contract, the action set or the cap rejected. Ledger kinds because a
+#: digest's most dangerous failure is a SILENT one — an item the gate swallowed because a rule
+#: was broader than the user thought, or a proposal dropped because the model invented an id,
+#: both look identical to "nothing happened" from the digest body. These two rows are the only
+#: place that difference exists, and the reply grammar's `always no` audit trail (criterion 3)
+#: reads the first of them.
+SKIPPED_TRIAGE = "skipped_triage"
+PROPOSAL_REFUSED = "proposal_refused"
+
+#: What the triage digest DID, unattended, and what it refused
+#: to do on spend grounds. `auto_executed` carries the matched rule's name and the provider's
+#: undo handle, which is what makes bound 4 ("every auto-execution is a ledger row with the rule
+#: named, and one-click undo where the provider supports it") a fact rather than a promise —
+#: without the handle on the row there is nothing for an undo click to resolve against.
+#: `skipped_budget` is the NEW-1 floor's refusal. It is a SEPARATE kind rather than an
+#: `auto_executed` row with a different outcome for the reason `skipped_triage` is separate from
+#: `proposal_refused`: a budget breach is the one auto-execution failure a user must be able to
+#: count without parsing prose, because its remedy (raise the ceiling, or wait for the window to
+#: reset) is different from every other reason a proposal stayed pending.
+AUTO_EXECUTED = "auto_executed"
+SKIPPED_BUDGET = "skipped_budget"
+
 #: The subset a downstream refiner reads. Named so a drift test can assert the engine
 #: still emits all of them.
 LEDGER_KINDS = frozenset(
     {
+        SKIPPED_TRIAGE,
+        PROPOSAL_REFUSED,
+        AUTO_EXECUTED,
+        SKIPPED_BUDGET,
         STEP_COMPLETED,
         STEP_FAILED,
         STEP_SKIPPED,

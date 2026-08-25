@@ -352,6 +352,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/knowledge/items/{id}/sections` — the section boundaries a split may cut on.
 - `GET /api/knowledge/items/{id}/staleness` — has the corpus moved under this synthesis?
 - `GET /api/knowledge/items/{id}/thumbnail` — - serve a generated thumbnail (image/webp).
+- `GET /api/knowledge/library-home` — the four shelves of the library landing surface.
 - `GET /api/knowledge/providers` — _(no summary)_
 - `POST /api/knowledge/regenerate-intelligence` — - re-run the full ingestion
 - `GET /api/knowledge/reports` — every definition, newest state as persisted.
@@ -770,6 +771,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/surfacing` — The templates list with its surfacing state — what the UX renders.
 - `DELETE /api/workflows/{name}` — _(no summary)_
 - `GET /api/workflows/{name}` — _(no summary)_
+- `POST /api/workflows/{name}/a2a-publish` — the template detail UI's publish toggle.
 - `GET /api/workflows/{name}/ledger` — recent runs of this template with their ledger totals.
 - `POST /api/workflows/{name}/refine` — fire the refiner over this template on demand.
 - `GET /api/workflows/{name}/trajectory` — The trajectory-signature distribution and regression signal for one template (PP-7).

@@ -123,6 +123,8 @@ function StoreReport({ store, report, k }: { store: string; report: RetrievalSto
         </Warn>
       )}
 
+      <Provenance sources={report.table.qrels_sources} />
+
       <div className="overflow-x-auto rounded-lg bg-surface-container">
         <table className="w-full text-[0.75rem]">
           <caption className="sr-only">
@@ -165,6 +167,33 @@ function StoreReport({ store, report, k }: { store: string; report: RetrievalSto
         </div>
       )}
     </div>
+  )
+}
+
+/** Which labels produced these numbers. A P@5 with no visible ground-truth provenance is a
+ *  number without a claim attached — and this harness mines a SUBSTITUTE for one of §5.2's
+ *  named sources, so the mix is part of reading the score. An absent census (a run written
+ *  before it existed) says so, and never renders as "0 queries from every source". */
+function Provenance({ sources }: { sources?: Record<string, number> }) {
+  if (!sources) {
+    return (
+      <p className="text-on-surface-low text-[0.75rem]">
+        Ground truth: not stated by this run — re-run to record which labels it scored.
+      </p>
+    )
+  }
+  const entries = Object.entries(sources).filter(([, count]) => count > 0)
+  if (entries.length === 0) return null
+  return (
+    <p className="text-on-surface-low text-[0.75rem]">
+      Ground truth:{' '}
+      {entries.map(([source, count], index) => (
+        <span key={source}>
+          {index > 0 ? ' · ' : ''}
+          {count} <code className="text-on-surface-var">{source || 'unlabelled'}</code>
+        </span>
+      ))}
+    </p>
   )
 }
 

@@ -133,6 +133,37 @@ describe('the per-arm retrieval ablation table', () => {
     expect([...keyword.querySelectorAll('td')][1].textContent).toBe('+0.0pp')
   })
 
+  it('names the ground truth that produced the numbers, and unlabelled queries too', () => {
+    // §5.2 names three sources and this harness mines a SUBSTITUTE for one of them, so the
+    // mix is part of reading the score. Counted server-side; rendered verbatim here.
+    render(<RetrievalBenchPanel
+      bench={view({
+        stores: {
+          knowledge: report({
+            table: {
+              ...report().table!,
+              qrels_sources: { '': 1, hand_label: 3, 'mined:intent_outcomes': 10 },
+            },
+          }),
+        },
+      })}
+      error={undefined} onRetry={() => {}} />)
+    const line = screen.getByText(/Ground truth:/)
+    expect(line.textContent).toContain('10')
+    expect(line.textContent).toContain('mined:intent_outcomes')
+    expect(line.textContent).toContain('hand_label')
+    expect(line.textContent).toContain('unlabelled')
+  })
+
+  it('says the provenance is unstated when a run recorded none — never "0 from every source"', () => {
+    const table = { ...report().table! }
+    delete table.qrels_sources
+    render(<RetrievalBenchPanel
+      bench={view({ stores: { knowledge: report({ table }) } })}
+      error={undefined} onRetry={() => {}} />)
+    expect(screen.getByText(/Ground truth: not stated by this run/)).toBeTruthy()
+  })
+
   it('warns when the corpus drifted, because R@k changed denominators', () => {
     render(<RetrievalBenchPanel
       bench={view({

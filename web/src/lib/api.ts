@@ -877,6 +877,15 @@ export interface KnowledgeCollection {
   id: string; name: string; kind: 'manual' | 'smart'; query?: string; icon?: string
   position?: number; item_count?: number | null; created_at?: string; updated_at?: string
 }
+// The library landing surface's four shelves in one read.
+// `count` here is DERIVED from the same query that produces a shelf's items — unlike
+// `KnowledgeCollection.item_count`, which counts archived members the opened shelf hides.
+// `count_capped` says the smart-resolve cap was hit, so the UI can render "200+" instead of
+// passing a cap off as a total.
+export interface KnowledgeLibraryHome {
+  recently_added: KnowledgeItem[]; continue_reading: KnowledgeItem[]; favorites: KnowledgeItem[]
+  collections: { id: string; name: string; kind: 'manual' | 'smart'; icon?: string; position?: number; count: number; count_capped?: boolean }[]
+}
 // One reading highlight on a knowledge item. Anchored by TEXT,
 // not by offset: the reader renders markdown, so a character index into the item's source
 // does not survive the transform. `occurrence` says WHICH instance of `quote` this is, so
@@ -1178,6 +1187,12 @@ export interface WorkflowDef {
      *  with no `target_def`, so the FE applies the same filter rather than rendering an edge that
      *  points nowhere. */
     hands_off_to?: WorkflowHandoff[]
+    /** Whether this template is published as an A2A skill. Optional and
+     *  DEFAULTS TO FALSE on both sides — an absent key means unpublished, which is what every
+     *  template authored before A2A existed looks like. The detail page's toggle reads this and
+     *  writes it through `publishWorkflowToA2A`, never through `saveWorkflowDef`: the def this
+     *  page holds is the secret-STRIPPED read, so re-saving it would drop credential bindings. */
+    a2a_published?: boolean
   }
 }
 /** One declared transition out of a template. `condition` is prose (when to take the edge);
@@ -1868,6 +1883,83 @@ export interface JudgeBenchView {
   pin: Record<string, unknown> | null
   runs: string[]
 }
+/** One ARM's aggregate inside an ablation report (`evals.matrix.aggregate()`).
+ *
+ *  `mean_score` is `null` when the arm produced no SCORED cell — every cell came back
+ *  `verifier_absent`. That is not a zero: the three-state contract says an absent
+ *  verifier is never a failure, and an arm with no measurement is exactly why a report
+ *  comes back `inconclusive` rather than `remove`. */
+export interface AblationArmAggregate {
+  /** outcome -> count. `verifier_absent` is counted here and never averaged into the mean. */
+  counts: Record<string, number>
+  total: number
+  scored_count: number
+  mean_score: number | null
+}
+/** One component's keep/remove/lighten report.
+ *
+ *  Everything arrives DECIDED — the verdict, the deltas, and the `epsilon` they were compared
+ *  against. A frontend that re-derived "is this a real delta" would eventually disagree with
+ *  the runner, and the copy shipping the permissive answer would be the UI. */
+export interface AblationReportView {
+  component_id: string
+  kind: string
+  target: string
+  subject: string
+  /** `keep` | `remove` | `lighten` | `inconclusive`. `inconclusive` is NOT one of
+   *  `verdict_vocabulary`'s three recommendations — it means an arm was never measured, so
+   *  there is no delta to read, and it must never be collapsed into `remove`. */
+  verdict: string
+  /** arm (`on` | `off` | `cheap`) -> aggregate. `cheap` is ABSENT unless the component
+   *  declares a cheap form; an undeclared cheap arm would score identically to `on` and be
+   *  reported as a fabricated `lighten`, so the runner omits it rather than defaulting it. */
+  arms: Record<string, AblationArmAggregate>
+  /** `on − off`. `null` when either arm is unmeasured. */
+  delta: number | null
+  /** `on − cheap`. `null` when no cheap arm ran. */
+  cheap_delta: number | null
+  epsilon: number
+  matrix_id: string
+  trials: number
+  created_at: string
+  /** The live files the byte-identity guard watched, with their unchanged digests — the
+   *  report's own proof that the run never mutated the real config. */
+  live_state: Record<string, string>
+}
+/** One registered ablatable component, from `evals/ablation_registry.json`. */
+export interface AblationRegistryRow {
+  component_id: string
+  kind: string
+  target: string
+  subject: string
+  off_value: unknown
+  cheap_value: unknown
+  live_refs: string[]
+  description: string
+}
+/** One past cadence run. `proposal` is the filed LEARN-R9 retirement proposal id, or
+ *  `not_filed:<reason>` when a `remove` verdict did not file one, or '' for a verdict that
+ *  never files. The distinction matters: a `remove` with nothing filed is a dropped
+ *  recommendation, not a completed one. */
+export interface AblationHistoryEntry {
+  ts: string
+  component_id: string
+  verdict: string
+  matrix_id: string
+  delta: number | null
+  proposal: string
+}
+export interface AblationView {
+  report: AblationReportView
+  /** The three real recommendations, in the runner's own order. */
+  verdict_vocabulary: string[]
+  registry: AblationRegistryRow[]
+  /** The last 20 cadence runs, oldest first. */
+  history: AblationHistoryEntry[]
+  last_run_ts: string
+  cadence_days: number
+  due: boolean
+}
 /** One arm-mask row of the retrieval ablation.
  *
  *  `p_at_k` is `null` when the mask retrieved NOTHING — 0/0, undefined, and deliberately
@@ -1917,6 +2009,12 @@ export interface RetrievalStoreReport {
         benchmark_corpus_snapshot_ref: string
         corpus_drifted: boolean
         arm_executors: Record<string, boolean>
+        /** `{qrels source: query count}` — the ground truth's provenance, counted
+         *  server-side beside the numbers it produced. Optional because a run written
+         *  before the census existed has no such key, and that must read as "unstated"
+         *  rather than as zero queries from every source. */
+        qrels_sources?: Record<string, number>
+        queries?: number
         floors: { min_arm_contribution: number; min_scored_queries: number }
       }
     | null
@@ -4906,6 +5004,13 @@ export const api = {
    *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
    *  must not start one. 404 carries a distinct code for "no benchmark yet" vs "evals off". */
   judgeBench: () => get<JudgeBenchView>('/api/evals/judge-bench'),
+  /** The newest keep/remove/lighten ablation report. Read-only for the bench's
+   *  reason: a POST would hold a request open for a multi-cell matrix and spend real money on
+   *  a click. The RUN is `personalclaw ablation` or the monthly cadence. 404 carries THREE
+   *  distinct codes — `evals_disabled`, `ablation_absent`, and a 500 `ablation_unreadable` —
+   *  because they send a user to three different places (the switch, the registry, a bug), and
+   *  one state for all of them would make the panel's empty state a guess. */
+  ablation: () => get<AblationView>('/api/evals/ablation'),
   /** Pre-registered template A/B studies. Read-only for the same reason as the
    *  bench: a k=5 paired study is ten template runs plus six judge calls per pair. §2.1 is
    *  also explicit that the human REGISTERS and the substrate RUNS, so there is deliberately
@@ -5202,6 +5307,12 @@ export const api = {
   // ── Knowledge collections ──
   knowledgeCollections: () =>
     get<{ collections: KnowledgeCollection[] }>('/api/knowledge/collections').then((d) => d.collections),
+  // The library home's four shelves in ONE read. 🔴 NO
+  // `.catch(() => …)`: four empty shelves and a failed fetch look identical, and the home is
+  // the one surface where "your library is empty" and "the read failed" must not be the same
+  // pixels. The rejection reaches the caller so it can say which.
+  knowledgeLibraryHome: (limit?: number) =>
+    get<KnowledgeLibraryHome>(`/api/knowledge/library-home${limit ? `?limit=${limit}` : ''}`),
   createKnowledgeCollection: (body: { name: string; kind?: 'manual' | 'smart'; query?: string; icon?: string }) =>
     post<{ ok: boolean; collection: KnowledgeCollection }>('/api/knowledge/collections', body),
   updateKnowledgeCollection: (id: string, body: { name?: string; kind?: 'manual' | 'smart'; query?: string; icon?: string; position?: number }) =>
@@ -5622,6 +5733,11 @@ export const api = {
     get<{ definition: WorkflowDef; provider: string }>(`/api/workflows/${encodeURIComponent(name)}`),
   saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; save?: boolean }) =>
     post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows', body),
+  // Publish/unpublish one template as an A2A skill. Its own route, not a
+  // field on `saveWorkflowDef`: this page holds the secret-stripped def, and re-saving that to
+  // carry one bool would persist the stripped bindings.
+  publishWorkflowToA2A: (name: string, published: boolean) =>
+    post<{ ok: boolean; name: string; a2a_published: boolean }>(`/api/workflows/${encodeURIComponent(name)}/a2a-publish`, { published }),
   deleteWorkflowDef: (name: string) => del(`/api/workflows/${encodeURIComponent(name)}`),
 
   // ── template versions + refiner ──

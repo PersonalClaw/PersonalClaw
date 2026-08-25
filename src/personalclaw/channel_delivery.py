@@ -171,5 +171,33 @@ class ChannelDelivery(Protocol):
         dashboard. Implementations own the channel-specific approval UI + the wait
         for the owner's response, and should coordinate with the dashboard via the
         ``on_prompted`` hook (invoked with the pending record) when provided by the
-        caller. ``sessions`` is the live SessionManager for cross-surface reconcile."""
+        caller. ``sessions`` is the live SessionManager for cross-surface reconcile.
+
+        **The approval brief (additive meta).** ``event.tool_meta`` carries the core-
+        composed brief under
+        :data:`~personalclaw.approval_brief.APPROVAL_BRIEF_META_KEY`, so a channel can
+        tell the owner what the call would TOUCH, not just what it is called::
+
+            {"tool": str,              # tool identity, same value as event.title
+             "risk": str,              # EFFECTIVE per-invocation risk (not the
+                                       #   DECLARED event.risk_level)
+             "blastRadius": {"writes": bool, "network": bool,
+                             "shell": bool, "readOnly": bool},   # optional
+             "blastRadiusLine": str}                             # optional
+
+        Reading it is OPTIONAL and purely additive: the method's arguments are
+        unchanged, no existing field or ``tool_meta`` key is replaced, and a channel
+        that ignores the key prompts exactly as it did before. Two rules for a
+        renderer:
+
+        * ``blastRadius``/``blastRadiusLine`` are ABSENT when nothing could be
+          established — show no blast-radius line at all, rather than "nothing
+          established", which reads as "nothing happens";
+        * every facet is a POSITIVE claim, so render only the ``True`` ones. Never
+          enumerate all four with on/off states: a ``False`` means "not established",
+          and painting it as "no network" turns absence of evidence into an all-clear.
+
+        The brief is a compact summary for a surface with no room — the dashboard
+        remains the rich approval surface, and rendering logic stays in the channel's
+        own bundle."""
         ...

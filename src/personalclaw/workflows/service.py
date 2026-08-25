@@ -396,6 +396,56 @@ async def author_def(
     )
 
 
+async def set_a2a_published(name: str, published: bool) -> dict[str, Any]:
+    """Flip one template's ``metadata.a2a_published`` (EXTERNAL-ACCESS §5, EA-8).
+
+    A DEDICATED write path rather than routing the toggle through :func:`author_def`, and the
+    reason is a data-loss hazard rather than taste. The detail UI holds the def it got from
+    :func:`get_def`, which is the STRIPPED read — credential values are replaced with ``_has*``
+    flags. Handing that copy back to ``author_def`` would persist the stripped form and destroy
+    the template's real credential bindings, so a one-bool toggle would silently break every
+    node that resolved a secret. This function mutates the RAW stored def instead and never
+    round-trips through the client.
+
+    It also declines to re-validate: publishing does not change the graph, and a template that
+    was savable when it was authored must not become unpublishable because the validator grew a
+    new warning since.
+    """
+    if not name:
+        return _service_failure("WF_DEF_NAME_REQUIRED", "a definition name is required")
+    definition = await _raw_def(name)
+    if definition is None:
+        return _service_failure("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
+    spec = definition if isinstance(definition, dict) else definition.to_dict()
+    spec = dict(spec)
+    metadata = dict(spec.get("metadata") or {})
+    # Written as an exact bool. `DefMetadata.from_dict` reads this field with `is True`, so a
+    # truthy-but-not-True value on disk would read as unpublished and the toggle would appear
+    # to do nothing.
+    metadata["a2a_published"] = bool(published)
+    spec["metadata"] = metadata
+    writable = [
+        p
+        for p in (defs_mod.get_provider(n) for n in defs_mod.list_providers())
+        if p is not None and not p.readonly
+    ]
+    if not writable:
+        return _service_failure(
+            "WF_DEF_NO_WRITABLE_PROVIDER",
+            "no writable workflow definition provider is registered",
+        )
+    try:
+        saved = await writable[0].save_def(**spec)
+    except Exception as exc:
+        return _service_failure("WF_DEF_SAVE_FAILED", f"could not save the definition: {exc}")
+    raw = saved if isinstance(saved, dict) else getattr(saved, "to_dict", lambda: {})()
+    return _ok(
+        name=name,
+        a2a_published=bool((raw.get("metadata") or {}).get("a2a_published") is True),
+        definition=secrets.strip_secrets(raw),
+    )
+
+
 async def delete_def(name: str) -> dict[str, Any]:
     if not name:
         return _service_failure("WF_DEF_NAME_REQUIRED", "a definition name is required")
