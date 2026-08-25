@@ -149,7 +149,7 @@ async def test_disabled_surface_is_404_without_reading_the_body(monkeypatch):
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status == 404
-        assert (await resp.json())["error"] == "not available"
+        assert (await resp.json())["error"]["code"] == "service_unavailable"
 
         # Vacuity floor for the patch above: an ADMITTED request does reach the read, so
         # the 404 genuinely skipped it rather than the patch being inert.
@@ -187,7 +187,7 @@ async def test_non_loopback_is_refused_even_with_a_correct_token(monkeypatch):
                 headers={"Authorization": f"Bearer {token}"},
             )
             assert resp.status == 403, route
-            assert (await resp.json())["error"] == "forbidden"
+            assert (await resp.json())["error"]["code"] == "forbidden"
     finally:
         await client.close()
 
@@ -210,7 +210,7 @@ async def test_loopback_with_a_bad_or_absent_bearer_is_401(monkeypatch, headers)
             proxy.ROUTE_OPENAI, data=json.dumps({"model": "m"}), headers=headers
         )
         assert resp.status == 401
-        assert (await resp.json())["error"] == "unauthorized"
+        assert (await resp.json())["error"]["code"] == "unauthorized"
     finally:
         await client.close()
 
@@ -323,8 +323,8 @@ async def test_guard_preflight_runs_before_any_connection(monkeypatch):
         )
         assert resp.status == 502
         payload = await resp.json()
-        assert payload["error"] == "upstream denied"
-        assert "allow-list" in payload["reason"]
+        assert payload["error"]["code"] == "upstream_denied"
+        assert "allow-list" in payload["error"]["reason"]
         assert consulted == ["https://denied.example/v1/chat/completions"]
         assert contacted == []
     finally:
@@ -358,7 +358,7 @@ async def test_empty_allowlist_refuses_every_upstream(monkeypatch, nested):
             },
         )
         assert resp.status == 502
-        assert (await resp.json())["error"] == "upstream denied"
+        assert (await resp.json())["error"]["code"] == "upstream_denied"
         assert seen == {}, "an empty allow-list must not reach the upstream at all"
     finally:
         await client.close()
@@ -497,13 +497,13 @@ def _register_operator_provider(monkeypatch, base: str, secret: str) -> str:
     key the Add-Provider flow persists — so this exercises the real resolver rather than
     a shortcut the proxy invented.
     """
+    from personalclaw.llm.branded_specs import _REGISTERED_SPECS
     from personalclaw.llm.registry import ProviderEntry, get_default_registry
 
     # Via `sdk.model`, the stable re-export apps use. Importing `BrandedProviderSpec`
     # straight from `provider_helpers` trips the circular import that module's own
     # "imported LAST" comment describes.
     from personalclaw.sdk.model import BrandedProviderSpec
-    from personalclaw.sdk.provider_helpers import _REGISTERED_SPECS
 
     spec = BrandedProviderSpec(type="stubprov", default_base_url=base)
     monkeypatch.setitem(_REGISTERED_SPECS, "stubprov", spec)
@@ -600,8 +600,8 @@ async def test_no_bound_upstream_and_no_passthrough_refuses(monkeypatch):
         )
         assert resp.status == 502
         payload = await resp.json()
-        assert payload["error"] == "upstream unavailable"
-        assert "no upstream is bound" in payload["reason"]
+        assert payload["error"]["code"] == "upstream_unavailable"
+        assert "no upstream is bound" in payload["error"]["reason"]
     finally:
         await client.close()
 
