@@ -18,6 +18,13 @@ The write itself goes through :meth:`~personalclaw.knowledge.store.KnowledgeStor
 update_item` — the store's own writer, FTS sync included. This module holds no SQL and no
 second upsert, and it does not re-implement validation either: ``semantics.check_persist``
 is the single validation entry point and is called before anything is queued.
+
+:func:`regenerate_synthesis` sits ON TOP of that one updater rather than beside it: it
+recomputes a synthesized item from the sources the item itself cites and hands the result to
+:func:`propose_update`. The recompute lives here rather than in the dashboard route so the
+route cannot grow a second one, and enqueueing through ``propose_update`` is what makes a
+regeneration inherit the stored fields, the validation, the identical-to-stored no-op and the
+content-hash idempotence instead of re-deciding all four at a second call site.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from personalclaw.knowledge import semantics
+from personalclaw.knowledge import consolidation, semantics
 from personalclaw.learning import proposals
 
 logger = logging.getLogger(__name__)
@@ -298,3 +305,116 @@ async def propose_update(
             reason="the accept step did not apply the write",
         ).to_dict()
     return UpdateOutcome(item_id=item_id, proposal_id=pid, applied=True).to_dict()
+
+
+# ── regenerating a synthesis (the staleness banner's one action) ──
+
+
+class SynthesisUnavailable(RuntimeError):
+    """No model produced a synthesis, so there was nothing to propose.
+
+    ENVIRONMENTAL, not a content refusal: the corpus was fine and the recompute simply could
+    not run. Raised rather than folded into an :class:`UpdateOutcome` reason because the caller
+    has to tell those two apart WITHOUT matching on a prose sentence — the dashboard route
+    answers 503 here and 200-with-a-reason for a refusal, and a route branching on ``reason``
+    text would change meaning the day the sentence is reworded.
+    """
+
+
+#: The use case a regeneration resolves its model through — the same one the report provider
+#: uses for report prose (``action_providers/knowledge_report_provider.py:587``). A synthesis
+#: is reasoning-grade work; running it on the background tier would quietly produce a worse
+#: document than the one it proposes to replace.
+SYNTHESIS_USE_CASE = "reasoning"
+
+
+async def _synthesis_completion(prompt: str) -> str:
+    """The ONE model call a regeneration makes, split out so a test can drive the recompute.
+
+    ``one_shot_completion`` returns a FALSY value rather than raising when no model is bound,
+    so the caller tests the returned text and never waits for an exception that will not come.
+    The ``or ""`` here normalizes the shape only — it is NOT the degradation check, which is
+    :func:`regenerate_synthesis`' business and visible to the reader.
+    """
+    from personalclaw.llm_helpers import one_shot_completion
+
+    return str(await one_shot_completion(prompt, use_case=SYNTHESIS_USE_CASE) or "")
+
+
+def synthesis_sources(store: Any, item_id: str) -> list[consolidation.Item]:
+    """The items this synthesis cites, as they read NOW. The inputs a recompute re-reads.
+
+    Read through the store's public ``item_citations`` rather than a query of this module's
+    own: the citation rows ARE the document's declared provenance, so "what would this say if
+    it were written again" has one answer instead of a second definition of relatedness that
+    can drift from the one :mod:`personalclaw.knowledge.staleness` measures.
+
+    **Known scope, stated because the banner counts more than this.** Staleness rule (b) —
+    active, non-synthesized items sharing a tag that arrived after the synthesis — is not in
+    this set. That population is only reachable through the private
+    ``staleness._new_tagged_items`` (``knowledge/staleness.py:146``), which returns a COUNT and
+    not ids. So a regeneration recompiles the sources the document declares; it does not
+    silently re-scope the document onto material it never cited. What the reviewer gets is
+    therefore arguable rather than oracular, which is the same bargain ``scope`` strikes on the
+    staleness payload.
+    """
+    seen: set[str] = set()
+    sources: list[consolidation.Item] = []
+    for citation in store.item_citations(item_id):
+        source_id = str(citation.get("source_item_id") or "")
+        if not source_id or source_id == item_id or source_id in seen:
+            continue
+        seen.add(source_id)
+        row = store.get_item(source_id)
+        if row:
+            sources.append(consolidation.Item.from_row(row))
+    return sources
+
+
+async def regenerate_synthesis(store: Any, item_id: str, *, completion: Any = None) -> dict:
+    """Recompute ONE synthesized item from its sources and file the result for review.
+
+    The action behind the staleness banner, and it has to actually regenerate: the shape this
+    replaced called :func:`propose_update` with no content at all, which returned "nothing
+    proposed" while the route reported success — an inert control on the only remedy the banner
+    offers.
+
+    It enqueues THROUGH :func:`propose_update` rather than through :func:`queue_draft`
+    directly. ``queue_draft`` is the raw enqueue underneath; reaching past ``propose_update``
+    to it would be a second updater for one row (the drift this module's header refuses) and
+    would give up the four things that layer owns: the stored fields a recompile inherits so it
+    cannot blank the summary by omission, ``semantics.check_persist``, the identical-to-stored
+    no-op, and the content-hash idempotence that makes a second click the SAME review
+    (``already_pending``) instead of a second one.
+
+    ``completion`` overrides the model call for tests. Returns an :class:`UpdateOutcome` dict,
+    whose ``pending``/``proposal_id`` are the only honest evidence that anything was filed.
+    Raises :class:`SynthesisUnavailable` when the recompute produced no text.
+    """
+    row = store.get_item(item_id)
+    if not row:
+        return UpdateOutcome(item_id=item_id, reason=f"no knowledge item {item_id!r}").to_dict()
+
+    sources = synthesis_sources(store, item_id)
+    if not sources:
+        # A recompute with no inputs cannot produce anything, and a model asked to consolidate
+        # nothing would invent the document instead — the one outcome a synthesis must never
+        # have. Refused with the reason a reader can act on (add a citation), not with a 200
+        # that claims a proposal exists.
+        return UpdateOutcome(
+            item_id=item_id,
+            reason="nothing to regenerate from — this synthesis cites no sources to re-read",
+        ).to_dict()
+
+    # The SAME prompt the consolidation pass synthesizes with, doctrine and fencing included.
+    # A second prompt here would mean two definitions of what a synthesis may say.
+    prompt = consolidation.synthesis_prompt(consolidation.Cluster(items=sources))
+    caller = completion or _synthesis_completion
+    text = str(await caller(prompt) or "").strip()
+    if not text:
+        raise SynthesisUnavailable(
+            "regeneration needs a model and none produced a synthesis — bind one for the "
+            f"{SYNTHESIS_USE_CASE} use case in Settings → Models"
+        )
+
+    return await propose_update(store, item_id, content=text, auto_accept=False)
