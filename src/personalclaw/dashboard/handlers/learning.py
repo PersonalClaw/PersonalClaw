@@ -6,6 +6,7 @@ POST   /api/learning/proposals/{id}/accept   install (human reviewers only)
 DELETE /api/learning/proposals/{id}       reject (human reviewers only)
 GET    /api/learning/staging/week         the week-at-a-glance capture panel
 GET    /api/learning/health               the flywheel observability panel (LEARN-R14b)
+GET    /api/learning/summary              the learning summary block (LV-3)
 
 The plan's success criterion 1 says "One Proposal Inbox SHOWS all six proposal kinds with
 provenance,
@@ -509,6 +510,52 @@ def _audit(request: web.Request, operation: str, outcome: str, resources: str) -
         logger.debug("learning SEL audit failed", exc_info=True)
 
 
+async def api_learning_summary(request: web.Request) -> web.Response:
+    """GET /api/learning/summary — the learning summary block (LV-3).
+
+    `?days=` bounds the window (1-90, default 7). Four groups — new skills, refined
+    skills, pending proposals, facts — each an exact `count` plus a bounded `names`
+    sample. Read-only: composing the block writes to no learning store.
+
+    LV-3's task row asked for this to register with plan 42's digest builder. No such
+    builder exists in the tree, so the same block renders on the skills page header —
+    the fallback the task row and the atom's `done_when` both sanction. A digest
+    builder, when it arrives, calls `compose_learning_summary` rather than
+    reimplementing the gather.
+
+    The facts group is memory content, so a temporary session (`blocks_reads`) gets the
+    summary WITHOUT it — matching `/api/lessons`, which returns an empty list for the
+    same caller. The skill and proposal groups are not memory and stay visible.
+    """
+    if not _enabled():
+        return web.json_response({"error": "learning is disabled"}, status=404)
+
+    from personalclaw.dashboard.handlers._shared import _blocks_reads_session, _get_memory
+    from personalclaw.learning_summary import (
+        MAX_WINDOW_DAYS,
+        MIN_WINDOW_DAYS,
+        compose_learning_summary,
+    )
+
+    state = request.app["state"]
+    try:
+        days = max(MIN_WINDOW_DAYS, min(int(request.query.get("days", "7")), MAX_WINDOW_DAYS))
+    except ValueError:
+        return web.json_response({"error": "days must be an integer"}, status=400)
+
+    vs = None
+    if _blocks_reads_session(state, request):
+        _audit(request, "learning.summary", "denied", resources="facts")
+    else:
+        try:
+            mem = _get_memory(state)
+            vs = getattr(mem, "vector_store", None)
+        except Exception:
+            logger.debug("learning summary: memory store unavailable", exc_info=True)
+
+    return web.json_response(compose_learning_summary(window_days=days, vs=vs).to_payload())
+
+
 def register_learning_routes(app: web.Application) -> None:
     """Register /api/learning/* — the Proposal Inbox and the staging panel.
 
@@ -517,6 +564,7 @@ def register_learning_routes(app: web.Application) -> None:
     """
     app.router.add_get("/api/learning/staging/week", api_learning_staging_week)
     app.router.add_get("/api/learning/health", api_learning_health)
+    app.router.add_get("/api/learning/summary", api_learning_summary)
     app.router.add_get("/api/learning/proposals", api_learning_proposals)
     app.router.add_get("/api/learning/proposals/{id}", api_learning_proposal)
     app.router.add_post("/api/learning/proposals/{id}/accept", api_learning_proposal_accept)

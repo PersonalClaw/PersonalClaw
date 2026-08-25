@@ -379,6 +379,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/learning/proposals/{id}` — one full record.
 - `POST /api/learning/proposals/{id}/accept` — install it.
 - `GET /api/learning/staging/week` — the week-at-a-glance capture panel.
+- `GET /api/learning/summary` — the learning summary block (LV-3).
 - `GET /api/legibility/always-on` — what every session receives, with provenance.
 - `GET /api/legibility/always-on/doc` — one body, verbatim, for the editor.
 - `PUT /api/legibility/always-on/doc` — replace an editable project instruction.
