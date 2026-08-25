@@ -6418,7 +6418,8 @@
           "done_when": "run/loop panel shows 'used N skills' chip with names on hover and zero new WS/SSE channels; a correction in chat yields a visible learned-chip within the session whose tap lands on the right approve/edit surface",
           "deps": [
             "LV-1"
-          ]
+          ],
+          "blocked_reason": "BLOCKED-OWNER (2026-08-25): implementation is COMPLETE on main (22f53646, c09a0e7d, 5d4250f2 are ancestors; chip at LoopCockpitPage.tsx:585 and ChatPage.tsx:3803, tap-through at :3832, zero-new-WS-channel rail in tests/test_lv2_skills_used_meta.py). Stays todo on ONE owner taste call the plan's own log records as SURFACED, NOT DECIDED (LEARNING-VISIBILITY.md:358-361): the learned chip's tap target sits inside ContextLedger, collapsed by default, so reaching the link needs one disclosure. Clears when the owner rules whether 'a visible learned-chip whose tap lands on the right surface' requires the LINK reachable without disclosure. Re-briefed by a tick on 2026-08-25 and found already built \u2014 do not spend another slot on it."
         },
         {
           "id": "LV-3",

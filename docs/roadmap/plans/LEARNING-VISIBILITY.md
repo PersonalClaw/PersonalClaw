@@ -359,6 +359,23 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   `ContextLedger`, which is collapsed by default — collapsed you see "learned 1", and the link needs
   one disclosure. That is pre-existing ledger behavior, not something LV-2 introduced, so it was left
   alone rather than redesigned inside this atom.
+
+- **DISCOVERY (2026-08-25) — LV-2 was re-briefed by an execution tick and found already built.**
+  The atom still read `todo` in `dag.json` with no `blocked_reason`, so the readiness census returned
+  it as startable and a subagent was dispatched at work that had shipped. It wrote nothing and left
+  its branch byte-identical to `0faf4003`, which is the right outcome, but it is the second time this
+  atom has consumed a slot. Root cause: the taste call above was recorded in prose here and nowhere
+  a census can read. Fixed by giving LV-2 an explicit `blocked_reason` in `dag.json` naming the open
+  question and what clears it. The verification it produced, for the record: chip renders at
+  `LoopCockpitPage.tsx:585` (`MetaPill` forwards `title` onto a real `<span title>` at `:142-151`, so
+  the hover is not inert) and `ChatPage.tsx:3803-3814`; both import the single formatter from
+  `chat/chatTypes.ts:107/117`, so no second label formatter exists. Tap-through at `:3832` resolves
+  `proposal` -> `#/skills?mode=proposals` and `lesson`/`facet` -> `#/settings/memory?tab=studio`.
+  Two falsifications confirmed the existing guards are not vacuous: deleting the cockpit's
+  `text={skillsUsedLabel(skillsUsed)}` render line reds 1 of 30 in `skillsUsedChip.test.ts`, and
+  renaming a live `broadcast_ws("chat_status")` to a feature-shaped name fires BOTH halves of the
+  zero-new-channel rail (static set + runtime). **A lesson worth generalizing: an owner taste call
+  parked only in an execution log is invisible to the machine, so it reads as ready work forever.**
 - **Gate:** `make lint` green (black 2031 files, isort, flake8, mypy — 1001 source files);
   **11 passed** in `test_lv2_skills_used_meta.py` (9 pre-existing + 2 added) and 69 passed across
   `test_after_turn_review.py` + `test_skill_allocation.py`; `scripts/gate_report.py` **all 6 gates
