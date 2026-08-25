@@ -161,7 +161,7 @@ def test_accept_marks_the_item_handled_not_dismissed(home, monkeypatch):
     fake_loader = MagicMock()
     fake_loader.create_auto_skill.return_value = "auto/extract-tables"
     with patch("personalclaw.skills.loader.SkillsLoader", return_value=fake_loader):
-        name = pr.accept(prop.id)
+        name = pr.accept(prop.id).name
     assert name == "auto/extract-tables"
     assert _proposal_items(home)[0].status == ItemStatus.HANDLED.value
 

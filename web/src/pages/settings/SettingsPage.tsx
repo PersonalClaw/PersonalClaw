@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
-  HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone, Plug2,
+  HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone, Plug2, FileType2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -20,6 +20,7 @@ import { PromptsPanel } from './PromptsPanel'
 import { AgentDefaultsPanel } from './AgentDefaultsPanel'
 import { ChatPanel } from './ChatPanel'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
+import { DocumentsPanel } from './DocumentsPanel'
 import { AuditPanel } from './AuditPanel'
 import { ArchivePanel } from './ArchivePanel'
 import { PortabilityPanel } from './PortabilityPanel'
@@ -75,6 +76,9 @@ const SUBPAGES: SubPage[] = [
   { id: 'voice', label: 'Speech & Transcription', icon: AudioLines, render: (c) => <VoicePanel go={c.go} query={c.query} /> },
   { id: 'apps', label: 'Apps', icon: Blocks, render: (c) => <AppsPanel navigate={c.navigate} /> },
   { id: 'inbox', label: 'Inbox', icon: Inbox, render: () => <InboxSettingsPanel /> },
+  // Beside Apps/Inbox in Workspace, not in Chat: the flag it owns governs the ARTIFACT
+  // surface (an office document opened from the library), not anything about a session.
+  { id: 'documents', label: 'Documents', icon: FileType2, render: () => <DocumentsPanel /> },
   { id: 'notifications', label: 'Notifications', icon: Bell, render: () => <NotificationsPanel /> },
   { id: 'security', label: 'Security', icon: Shield, render: () => <SecurityPanel /> },
   // Next to Security on purpose: "what is paired to my gateway, and can I cut it off" is a

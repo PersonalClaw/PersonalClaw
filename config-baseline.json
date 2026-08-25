@@ -291,6 +291,12 @@
     "type": "dict"
   },
   {
+    "default": false,
+    "path": "dashboard.document_editing",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": true,
     "path": "dashboard.followup_chips",
     "sensitive": false,

@@ -422,7 +422,7 @@ async def one_shot_completion(
     ``None`` (the default) sends nothing, keeping every existing call site unchanged.
 
     The per-call OUTPUT BUDGET (LMMV §2.2) is derived, never hardcoded: every resolution
-    path (pin / chain-advance / plain) asks
+    path (pin / chain-advance / plain / last-resort) asks
     :func:`personalclaw.local_models.budgets.output_budget` for the model it is about to
     run and rides the answer as a ``max_tokens`` build kwarg. A local model whose card
     declares ``context_tokens``/``output_tokens`` therefore gets ITS window instead of the
@@ -449,8 +449,9 @@ async def one_shot_completion(
     from personalclaw.guardrails.failure import OutputContractError
 
     # A pinned sampling temperature rides EVERY resolution path as a build kwarg
-    # (pin / chain-advance / plain), so a fallback entry samples at the temperature the
-    # caller asked for rather than silently reverting to the provider default.
+    # (pin / chain-advance / plain / last-resort), so a fallback entry samples at the
+    # temperature the caller asked for rather than silently reverting to the provider
+    # default.
     _bridge_kw: dict = {} if temperature is None else {"temperature": float(temperature)}
 
     async def _entry_kw(model_ref: str) -> dict:
@@ -473,8 +474,8 @@ async def one_shot_completion(
         advertised ``StructuredOutput.JSON_SCHEMA`` — see
         :func:`_enforces_json_schema_natively` for why an unadvertised provider must not
         receive the key. PER ENTRY is the whole point of deciding here rather than once
-        up front: every resolution path (pin / chain advance / plain) funnels through this
-        function WITH the ref it is about to run, and the chain walk below can advance
+        up front: every resolution path (pin / chain advance / plain / last-resort) funnels
+        through this function WITH the ref it is about to run, and the chain walk can advance
         from a capable entry to an incapable one mid-call. A decision made once would send
         the constraint to a fallback provider that cannot honour it — precisely the
         corrupt-request failure the capability gate exists to prevent.
@@ -594,6 +595,19 @@ async def one_shot_completion(
     # Last-resort fallback: no active selection AND the bridge couldn't resolve a
     # capable provider — build the first registered provider so a single-provider
     # setup with no explicit selection still works.
+    #
+    # This is the FOURTH resolution path, and it was the one place a completion still
+    # inherited the adapters' hardcoded cap: it called ``build`` with no kwargs at all,
+    # so neither the derived budget nor a pinned ``temperature`` reached the provider.
+    # ``registry.build`` forwards kwargs to the type factory exactly as the bridge does
+    # (``provider_bridge`` builds its own ``build_kwargs`` the same way), so the entry
+    # gets the budget derived for the model it is ACTUALLY about to run.
+    #
+    # Fail-soft, and the retry is the point: this path exists because the bridge already
+    # failed, and one reason a bridge resolve fails is a factory that rejects an extra
+    # kwarg. Passing kwargs unconditionally would convert today's working degraded build
+    # into a hard failure for exactly that provider, so a rejected kwarg falls back to
+    # the bare build rather than propagating.
     if provider is None:
         from personalclaw.llm.registry import get_default_registry
 
@@ -601,7 +615,16 @@ async def one_shot_completion(
         entries = registry.list_entries()
         if not entries:
             raise RuntimeError("No provider entries registered")
-        provider = registry.build(entries[0].name)
+        fallback = entries[0]
+        fallback_ref = f"{fallback.name}:{fallback.model}" if fallback.model else fallback.name
+        try:
+            provider = registry.build(fallback.name, **(await _entry_kw(fallback_ref)))
+        except Exception:  # noqa: BLE001 — an unaccepted build kwarg degrades, never blocks
+            logger.debug(
+                "one_shot_completion: last-resort build rejected derived kwargs for %r",
+                fallback.name,
+            )
+            provider = registry.build(fallback.name)
 
     return await _run(provider)
 

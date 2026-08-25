@@ -1,7 +1,7 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
-  MonitorSmartphone, Plug2,
+  MonitorSmartphone, Plug2, FileType2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { notify } from '../../app/appSdk'
@@ -524,6 +524,32 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             <BigStat value={nonProvider.length} caption={nonProvider.length === 1 ? 'installed app' : 'installed apps'} />
             <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
               {configurable > 0 ? `${configurable} configurable` : 'No configurable settings'}
+            </div>
+          </>}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'documents', group: 'Workspace', label: 'Documents', icon: FileType2, size: 'sm',
+    description: 'Whether generated Word documents can be edited in place.',
+    useSearchText() { return 'documents word docx office editing edit in place download only fidelity lossy re-render' },
+    render(query, go) {
+      // Reads the SAME flag the panel writes, and says which way it is set — a card that
+      // only described the feature would leave "is it on?" unanswered, which is the one
+      // thing a settings overview exists to answer. Shares `useDashCfg`'s key with the
+      // other dashboard-config tiles rather than opening a third namespace over one
+      // collection (see `splitCollectionBusts.test.ts`).
+      const { data, stale } = useDashCfg()
+      return (
+        <BentoCard icon={FileType2} title="Documents" query={query} onClick={() => go('documents')} loading={data === undefined} stale={stale}>
+          {data === null && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your document settings.</div>}
+          {data && <>
+            <div className="text-on-surface-var text-[0.8125rem]">
+              {data.document_editing ? 'Editing generated documents in place' : 'Generated documents are download-only'}
+            </div>
+            <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
+              {data.document_editing ? 'A save re-renders the file — the editor names what it cannot keep' : 'Turn on editing to change one in place'}
             </div>
           </>}
         </BentoCard>

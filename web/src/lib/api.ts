@@ -439,6 +439,61 @@ export interface SurfacingCandidate {
   reason: string
 }
 
+// The automation would-execute description — the five facts §3.3
+// names, each read from a shipped resolver server-side. `epoch`/`at` are empty when the trigger
+// has no next fire at all (a `manual` or expired row), which is a THIRD state distinct from
+// armed and computed: `source` is what tells them apart, so read it rather than truthiness on
+// `at`.
+export interface AutomationNextFire {
+  cadence: string
+  at: string
+  epoch: number | null
+  source: 'armed' | 'computed' | 'none'
+  armed: boolean
+}
+export interface AutomationActionConfig {
+  provider: string
+  config: Record<string, unknown>
+  vars: Record<string, unknown>
+  // Secret KEYS the config references. The values are never resolved by a preview, so this is
+  // the honest answer to "which credential does this use?".
+  secret_refs: string[]
+  rendered: string
+  render_error: string
+}
+export interface AutomationCapabilityGrants {
+  declared: Record<string, string[]>
+  requested: Record<string, string[]>
+  // What still needs an explicit opt-in after decision 7's read-only default has been applied.
+  needs_fence: Record<string, string[]>
+  refused: { key: string; value: string; reason: string }[]
+  granted: boolean
+}
+export interface AutomationObserveMode {
+  provider: string
+  provider_known: boolean
+  supported: boolean
+  // `observe` = a real observe-mode run is possible (the spawn-based LLM providers);
+  // `preview` = the T9 rule, this provider has no observe mode so we describe instead.
+  mode: 'observe' | 'preview'
+  executed: boolean
+  ok: boolean
+  detail: string
+  gate_plan: { enforced?: string[]; bypassed?: string[]; dry_run?: boolean; executes?: boolean }
+}
+export interface AutomationWouldExecute {
+  trigger: {
+    id: string; name: string; kind: string; enabled: boolean; state: string; ok: boolean
+    issues: { path: string; message: string; severity: string; closest: string }[]
+  }
+  next_fire: AutomationNextFire
+  action_config: AutomationActionConfig
+  session_key: { key: string; declared: string; mode: 'pinned' | 'conversation' | 'fresh' }
+  capability_grants: AutomationCapabilityGrants
+  observe_mode: AutomationObserveMode
+  dry_run: boolean
+}
+
 // Health-scored remediation engine.
 export interface RemediationJobRow {
   id: string
@@ -1503,13 +1558,35 @@ export interface PromptSyntaxConstruct { category: string; label: string; snippe
 export interface PromptSyntax { functions: PromptSyntaxFn[]; constructs: PromptSyntaxConstruct[] }
 export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; type: string; loaded_by_agents: string[]; integrity?: 'intact' | 'tampered' | 'unverified'; agent?: string }
 export interface EphemeralDraft { slug: string; title: string; body: string; created_at: string }
-export interface SkillProposal { id: string; slug: string; description: string; triggers: string; kind: string; refine_target?: string; session_key: string; created_at: string; status: string; procedure_preview: string }
+/** `trigger` is the STUMBLE that produced a refine proposal (`correction` | `failure_retry` |
+ *  `rejection`), or absent/'' for one a model proposed. It is the review surface's answer to
+ *  "why am I being asked this?" — a refine row without it can only say what it changes. */
+export interface SkillProposal { id: string; slug: string; description: string; triggers: string; kind: string; refine_target?: string; trigger?: string; session_key: string; created_at: string; status: string; procedure_preview: string }
 /** The most recent skill-ladder pass. `null` on the feed means the ladder has never
  *  run — which is the only thing that distinguishes an idle ladder from a broken one
  *  when `proposals` is empty. Both looked identical before this existed. */
 export interface SkillLadderReview { verdict: string; elapsed_ms: number; session_key: string; detail: string; at: string }
 export interface SkillProposalFeed { proposals: SkillProposal[]; lastReview: SkillLadderReview | null }
-export interface SkillProposalDetail extends SkillProposal { procedure_md: string; source_excerpt: string }
+/** `diff`/`version` are present only for a `kind: 'refine'` proposal, and are DERIVED per
+ *  request from the skill's current body — never stored. An empty `diff` is meaningful, not a
+ *  load failure: the refine target no longer exists, or the refinement changes nothing.
+ *  `version` is the refinement version accepting this proposal would create. */
+export interface SkillProposalDetail extends SkillProposal { procedure_md: string; source_excerpt: string; diff?: string; version?: number }
+/** One group of the learning summary block. `count` is the EXACT group size;
+ *  `names` is a bounded sample of it, so a renderer must never show `names.length` as
+ *  the count — that would silently under-report the moment a group got busy. */
+export interface LearningSummaryGroup { count: number; names: string[] }
+/** The learning summary block: what was learned in the last `window_days` days.
+ *  `total` is the sum of the four group counts and is what decides whether the block
+ *  is worth rendering at all. */
+export interface LearningSummary {
+  window_days: number
+  total: number
+  new_skills: LearningSummaryGroup
+  refined_skills: LearningSummaryGroup
+  pending_proposals: LearningSummaryGroup
+  facts: LearningSummaryGroup
+}
 export interface SkillIntegrity { name: string; integrity: 'intact' | 'tampered' | 'unverified'; ok: boolean; unlocked: boolean; mutated: string[]; missing: string[]; added: string[]; summary: string }
 export interface SkillFile { path: string; size: number }
 export interface SkillMarketplace { name: string; type: string }
@@ -3033,6 +3110,10 @@ export interface DashboardConfig {
   // MI-4 master opt-in for the composer's screen-share control. OFF by default; the
   // server refuses a frame while it is off, so this is a real gate, not just UI state.
   screen_share_enabled: boolean
+  // DFE-5 master opt-in for editing a generated office document in place. OFF by
+  // default; the server refuses `PUT …/model` while it is off, so — like the flag
+  // above — this is a real gate rather than a UI preference.
+  document_editing: boolean
   // Vestigial server field from the retired customizable-bento dashboard (the
   // grid + per-user layout persistence were dropped in the v2 launcher-forward
   // redesign — everyone gets one curated content-first layout now). No FE
@@ -3462,6 +3543,40 @@ export interface Artifact {
    *  shared chat transcripts). Read here so the UI stops OFFERING an edit rather than
    *  letting the user type into an editor whose save always 400s. */
   readonly: boolean
+}
+
+// ── the document model the editor edits ──
+// Mirrors `personalclaw/documents/model.py` field for field. Every field is REQUIRED
+// here even though the server defaults them, because this same shape is posted BACK and
+// `document_from_dict` is strict — an optional field a UI forgot to echo would be a
+// silently dropped run/style, which is the exact fidelity failure the plan exists to
+// prevent. `loss` is the report the parse produced: what the model could not hold.
+export interface DocumentRun { text: string; bold: boolean; italic: boolean; code: boolean; link: string }
+export interface DocumentParagraphStyle { align: string; space_before_pt: number; space_after_pt: number; line_spacing: number }
+export interface DocumentCell { runs: DocumentRun[]; text: string; bold: boolean; align: string }
+export interface DocumentPageSetup { orientation: string; margin_in: number }
+export interface DocumentBlock {
+  kind: 'heading' | 'paragraph' | 'bullets' | 'numbered' | 'table' | 'image' | 'pagebreak' | 'code'
+  text: string; level: number; items: string[]; rows: string[][]
+  artifact_slug: string; runs: DocumentRun[]; cells: DocumentCell[][]
+  style: DocumentParagraphStyle | null
+}
+export interface DocumentModelJson { title: string; blocks: DocumentBlock[]; page: DocumentPageSetup | null }
+/** One thing the parse could not represent — `where` locates it, `detail` names it. */
+export interface DocumentLossItem {
+  kind: string; detail: string; where: string
+  block_index: number; paragraph_ordinal: number
+}
+/** `lossless` and `summary` are the SERVER's verdict, carried beside the items on
+ *  purpose (`LossReport.to_dict`'s own note): a client that re-derived lossless as
+ *  `items.length === 0` is right today and wrong the first time a purely informational
+ *  item is added. So the editor reads these — it never recomputes them. */
+export interface DocumentLossReport {
+  lossless: boolean; kinds: string[]; summary: string; items: DocumentLossItem[]
+}
+export interface DocumentModelResponse {
+  slug: string; kind: string; version: number; mime: string
+  model: DocumentModelJson; loss: DocumentLossReport
 }
 
 /** One deployed artifact. `url` is the stable in-gateway path the artifact is
@@ -3966,6 +4081,10 @@ export const api = {
     post<{ query: string; candidates: SurfacingCandidate[] }>(
       '/api/doctor/simulate/surfacing', { text },
     ),
+  // The automation half, beside the surfacing simulator above. Read-only: nothing executes,
+  // no credential is resolved, no model is called, and the trigger row is never written.
+  doctorSimulateAutomation: (triggerId: string) =>
+    post<AutomationWouldExecute>('/api/doctor/simulate/automation', { trigger_id: triggerId }),
   doctorCrash: (filename: string) =>
     get<Record<string, unknown>>(`/api/doctor/crash/${encodeURIComponent(filename)}`),
   // ── Remediation engine ──
@@ -4817,9 +4936,16 @@ export const api = {
    *  reads of one collection — the drift this file's own callers already warn about. */
   skillProposals: () => get<SkillProposalFeed>('/api/skills/proposals'),
   skillProposalDetail: (id: string) => get<SkillProposalDetail>(`/api/skills/proposals/${encodeURIComponent(id)}`),
+  /** `version` is the refinement version this accept WROTE (0 for a `kind: 'new'` accept,
+   *  which creates a skill rather than versioning one). Returned because a refinement of a
+   *  skill that already had refinements is otherwise indistinguishable from its first. */
   acceptSkillProposal: (id: string, edits?: { description?: string; procedure_md?: string }) =>
-    post<{ ok: boolean; name: string }>(`/api/skills/proposals/${encodeURIComponent(id)}/accept`, edits ?? {}),
+    post<{ ok: boolean; name: string; version: number }>(`/api/skills/proposals/${encodeURIComponent(id)}/accept`, edits ?? {}),
   rejectSkillProposal: (id: string) => del(`/api/skills/proposals/${encodeURIComponent(id)}`),
+  /** The learning summary block. 404s when `learning.enabled` is off — the
+   *  caller must let the block be ABSENT in that case rather than render zeros, which
+   *  would claim nothing was learned when the truthful answer is "not being tracked". */
+  learningSummary: (days?: number) => get<LearningSummary>(`/api/learning/summary${days ? `?days=${days}` : ''}`),
   // Ephemeral session-skill drafts (skill-ephemeral-promotion).
   ephemeralSkills: (session: string) =>
     get<{ drafts: EphemeralDraft[] }>(`/api/skills/ephemeral/${encodeURIComponent(session)}`).then((d) => d.drafts),
@@ -5653,6 +5779,20 @@ export const api = {
   artifactVersions: (slug: string) => get<{ slug: string; versions: number[] }>(`/api/artifacts/${encodeURIComponent(slug)}/versions`),
   artifactVersion: (slug: string, n: number) => get<Artifact>(`/api/artifacts/${encodeURIComponent(slug)}/versions/${n}`),
   artifactEvents: (slug: string) => get<{ slug: string; events: ArtifactEvent[] }>(`/api/artifacts/${encodeURIComponent(slug)}/events`),
+
+  // ── the document editor's read/save pair ──
+  // Structure in both directions: the browser is handed a parsed MODEL and hands one
+  // back, and the server re-renders it with the shipped writer. No OOXML crosses here.
+  // `If-Match` is REQUIRED on the save (not optional): two tabs editing one document
+  // must collide with a 409 rather than have the second silently overwrite the first,
+  // so this is spelled out with `fetch` — the shared `put` helper carries no headers.
+  artifactModel: (slug: string) => get<DocumentModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
+  saveArtifactModel: (slug: string, version: number, model: DocumentModelJson) =>
+    fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },
+      body: JSON.stringify({ model }),
+    }).then(j<{ slug: string; version: number; mime: string }>),
 
   // ── local static artifact deploy ──
   // Deploying publishes an html/widget artifact at a stable IN-GATEWAY url

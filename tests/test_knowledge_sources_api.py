@@ -44,6 +44,7 @@ from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.dashboard.handlers import knowledge as H
+from personalclaw.knowledge.artifact_ingest import ARTIFACT_ITEM_TYPE
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.knowledge_providers import registry as prov_registry
 from personalclaw.knowledge_providers.base import (
@@ -273,6 +274,116 @@ def test_a_real_dir_saves_with_the_kinds_own_default_item_type(store, registered
     assert resp.status == 201
     assert body["source"]["item_type"] == "note"
     assert body["source"]["kind"] == "dir"
+
+
+# ── create: `item_type` is the third enum on the body, not a free string ─────────────
+#
+# `provider` and `enrichment` were already checked against their vocabularies; `item_type`
+# was not, and it is the one that OUTLIVES the request — the store persists it on the row
+# and `SourceEngine._persist` hands it to `create_typed_item` on every poll, so an
+# unvalidated body field became a permanent property of an unattended timer.
+
+
+def test_an_unknown_item_type_is_refused_and_never_reaches_the_row(store, registered):
+    resp, body = _create(
+        store, name="Typo", provider="watched-page", spec={"url": PAGE_URL}, item_type="notes"
+    )
+
+    assert resp.status == 400
+    assert body["error"] == "unknown type 'notes'"
+    # The point of the guard: nothing was persisted, so nothing polls under a bad type.
+    assert store.list_sources() == []
+
+
+def test_the_synthesized_artifact_type_cannot_be_authored_through_the_api(store, registered):
+    # `artifact_ingest` documents that keeping ARTIFACT_ITEM_TYPE outside the twelve
+    # knowledge types is "what stops the create API from ever authoring one directly", and
+    # the aggregate mirror row is created by that module calling the store, not by this
+    # route. Before the guard the claim was unenforced here. Imported, not retyped.
+    resp, body = _create(
+        store,
+        name="Fake mirror",
+        provider="watched-page",
+        spec={"url": PAGE_URL},
+        item_type=ARTIFACT_ITEM_TYPE,
+    )
+
+    assert resp.status == 400
+    assert body["error"] == f"unknown type {ARTIFACT_ITEM_TYPE!r}"
+    assert store.list_sources() == []
+
+
+@pytest.mark.parametrize("media_type", ["pdf", "image", "audio", "video", "document"])
+def test_a_media_type_no_poll_can_produce_is_refused_naming_the_pollable_set(
+    store, registered, media_type
+):
+    # A knowledge type, but not one a POLL can make: `SourceItem` has no file field and the
+    # engine sets no `file_path`, so these would mint file-less items forever — the same
+    # "broken item with no file" /api/knowledge/items refuses, except on a timer.
+    resp, body = _create(
+        store,
+        name="Media",
+        provider="watched-page",
+        spec={"url": PAGE_URL},
+        item_type=media_type,
+    )
+
+    assert resp.status == 400
+    assert media_type in body["error"]
+    # Like its two sibling enums, the refusal NAMES the accepted set.
+    for pollable in H._AUTHORABLE_TYPES:
+        assert pollable in body["error"]
+    assert store.list_sources() == []
+
+
+def test_a_pollable_item_type_is_honoured_on_the_row(store, registered):
+    # The accept case: the guard admits a valid override and it reaches the row, so the
+    # rejections above are a vocabulary check rather than a blanket refusal. `note` also
+    # differs from the web kind's `bookmark` default, so this cannot pass by defaulting.
+    resp, body = _create(
+        store, name="Notes feed", provider="watched-page", spec={"url": PAGE_URL}, item_type="note"
+    )
+
+    assert resp.status == 201
+    assert body["source"]["item_type"] == "note"
+    assert [s["item_type"] for s in store.list_sources()] == ["note"]
+
+
+def test_every_declared_default_item_type_survives_the_guard(store, registered, tmp_path):
+    """A guard that rejected a provider's OWN default would break source creation.
+
+    Every `default_item_type` in `_kind_descriptor` is asserted admissible — including the
+    generic descriptor an app-contributed provider (WS-8 connector pack) falls through to,
+    which no enrolled provider exercises and which would otherwise be the one default that
+    could rot into a 400 nobody could act on.
+    """
+    watched = tmp_path / "watched"
+    watched.mkdir()
+    specs = {
+        "watched-page": {"url": PAGE_URL},
+        "watched-feed": {"kind": "rss", "url": "https://f.example.com/f"},
+        "watched-dir": {"path": str(watched)},
+    }
+    declared = {}
+    for prov in (registered.web, registered.feed, registered.dir):
+        default = H._kind_descriptor(prov)["default_item_type"]
+        declared[prov.name] = default
+        # …and it is admissible where it is actually consumed: with `item_type` OMITTED,
+        # which is how the shipped UI creates every source (`createKnowledgeSource` sends
+        # name/provider/spec/enrichment/poll_interval_secs/budget and no item_type).
+        resp, body = _create(store, name=prov.name, provider=prov.name, spec=specs[prov.name])
+        assert resp.status == 201, body
+        assert body["source"]["item_type"] == default
+
+    assert declared == {
+        "watched-page": "bookmark",
+        "watched-feed": "bookmark",
+        "watched-dir": "note",
+    }
+    # The fourth default: the generic descriptor for a provider matching none of the three.
+    generic = H._kind_descriptor(SimpleNamespace(name="app-contributed"))
+    assert generic["default_item_type"] == "bookmark"
+    assert set(declared.values()) | {generic["default_item_type"]} <= H._AUTHORABLE_TYPES
 
 
 def test_an_unknown_provider_is_refused_and_names_the_known_ones(store, registered):

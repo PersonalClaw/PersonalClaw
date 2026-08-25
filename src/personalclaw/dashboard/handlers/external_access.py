@@ -61,6 +61,28 @@ def _surface_rows() -> list[dict]:
     return rows
 
 
+def _unknown_provider(name: str) -> str | None:
+    """``None`` when ``name`` is an acceptable ProviderEntry, else the configured names.
+
+    Deliberately asymmetric: it refuses only on POSITIVE knowledge that the name is
+    absent. An unreadable registry returns ``None`` (accept), because the alternative —
+    refusing every client creation whenever provider enumeration fails — turns an
+    unrelated fault into "you cannot register an integration", and buys no safety: this
+    value is a provider name, never a host, and the forward it selects is pre-flighted
+    against the operator's egress allow-list before any socket opens.
+    """
+    try:
+        from personalclaw.llm.registry import get_default_registry
+
+        configured = [e.name for e in get_default_registry().list_entries()]
+    except Exception:  # noqa: BLE001 — cannot enumerate ⇒ cannot call it unknown
+        logger.debug("external-access: provider enumeration failed", exc_info=True)
+        return None
+    if name in configured:
+        return None
+    return ", ".join(sorted(configured))
+
+
 def _client_rows() -> list[dict]:
     """One row per client, with activity derived from the audit trail."""
     from personalclaw.inbound import audit as audit_mod
@@ -88,6 +110,12 @@ def _client_rows() -> list[dict]:
                 "agent": client.agent,
                 "tools": list(client.tools),
                 "scope": dict(client.scope),
+                # Reported because "where does this client's captured traffic go?" must
+                # be answerable without reading inbound_clients.json by hand. It is a
+                # provider NAME, so unlike a token or a hash there is nothing here an
+                # attacker gains by reading — and an egress binding nobody can see is
+                # the one that goes unnoticed when it is wrong.
+                "upstream": client.upstream,
                 "rate_overrides": dict(client.rate_overrides),
                 "disabled": bool(client.disabled),
                 "created_at": client.created_at,
@@ -186,12 +214,35 @@ async def api_external_access_client(request: web.Request) -> web.Response:
     tools = body.get("tools")
     scope = body.get("scope")
     rate_overrides = body.get("rate_overrides")
+    upstream = str(body.get("upstream", "") or "").strip()
+    if upstream:
+        unknown_upstream = _unknown_provider(upstream)
+        if unknown_upstream is not None:
+            # Refused rather than stored, for the same reason an unknown surface is:
+            # a client whose `upstream` names nothing would look bound to a provider it
+            # is not, and would only reveal that as a 502 at its first captured turn.
+            #
+            # This is a LEGIBILITY guard, not the security boundary. `upstream` is a
+            # provider NAME, so it cannot name a host at all; the destination comes from
+            # the entry's own options and is pre-flighted against the operator's egress
+            # allow-list in `capture_proxy._handle` regardless of what lands here. So it
+            # is safe for this check to pass a name through when the registry cannot be
+            # read (see `_unknown_provider`) — the forward is still gated downstream.
+            return json_error(
+                "invalid_request",
+                message=(
+                    f"unknown upstream provider {upstream!r} "
+                    f"(configured: {unknown_upstream or 'none'})"
+                ),
+                status=400,
+            )
     client, token = clients_mod.create_client(
         label,
         surfaces=requested,
         agent=str(body.get("agent", "") or ""),
         tools=[str(t) for t in tools] if isinstance(tools, list) else None,
         scope=scope if isinstance(scope, dict) else None,
+        upstream=upstream,
         rate_overrides=rate_overrides if isinstance(rate_overrides, dict) else None,
     )
     return web.json_response(

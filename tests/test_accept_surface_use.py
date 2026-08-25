@@ -115,7 +115,7 @@ def test_accepted_skill_surfaces_on_the_next_prompt_and_counts_the_use(home, mon
     assert usage.all_usage() == {}
 
     # ── 2. accept ── the human approval that installs it.
-    created = proposals.accept(prop.id)
+    created = proposals.accept(prop.id).name
     assert created == SKILL_NAME
     assert proposals.list_pending() == []
 

@@ -699,13 +699,28 @@ async def api_skill_proposals_list(request: web.Request) -> web.Response:
 
 
 async def api_skill_proposal_detail(request: web.Request) -> web.Response:
-    """GET /api/skills/proposals/{id} — full proposal incl. procedure + fenced source."""
-    from personalclaw.skills import proposals
+    """GET /api/skills/proposals/{id} — full proposal incl. procedure + fenced source.
+
+    For a ``kind="refine"`` proposal the payload also carries ``diff`` (a unified diff) and
+    ``version`` (the refinement version accepting it would create). Both are DERIVED here,
+    per-request, from the skill's current body — never stored on the proposal. A diff frozen
+    at enqueue time would go stale the moment anything else refined the same skill, and an
+    approval surface showing a stale diff asks the user to approve a change they were not
+    shown. Empty ``diff`` is meaningful: the target no longer resolves, or the refinement
+    would change nothing.
+    """
+    from personalclaw.skills import proposals, refine
 
     prop = proposals.get(request.match_info.get("id", ""))
     if prop is None:
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response(prop.to_dict())
+    payload = prop.to_dict()
+    if prop.kind == "refine" and prop.refine_target:
+        from personalclaw.skills import overlays
+
+        payload["diff"] = refine.proposal_diff(prop)
+        payload["version"] = overlays.next_version(prop.refine_target)
+    return web.json_response(payload)
 
 
 async def api_skill_proposal_accept(request: web.Request) -> web.Response:
@@ -720,7 +735,7 @@ async def api_skill_proposal_accept(request: web.Request) -> web.Response:
         body = {}
     body = body if isinstance(body, dict) else {}
     try:
-        name = proposals.accept(
+        result = proposals.accept(
             pid,
             description=(str(body["description"]) if body.get("description") else None),
             procedure_md=(str(body["procedure_md"]) if body.get("procedure_md") else None),
@@ -728,8 +743,16 @@ async def api_skill_proposal_accept(request: web.Request) -> web.Response:
     except proposals.AcceptError as exc:
         _sel_log("skills.proposal_accept", "rejected", f"{pid}:{exc}", request)
         return web.json_response({"error": str(exc)}, status=409)
-    _sel_log("skills.proposal_accept", "ok", name, request)
-    return web.json_response({"ok": True, "name": name})
+    # The version is on the audit line, not only in the response: two refinements of one skill
+    # are two different approvals, and an audit that records both as the bare skill name cannot
+    # say which one a reader is looking at.
+    _sel_log(
+        "skills.proposal_accept",
+        "ok",
+        f"{result.name} v{result.version}" if result.version else result.name,
+        request,
+    )
+    return web.json_response({"ok": True, "name": result.name, "version": result.version})
 
 
 async def api_skill_proposal_reject(request: web.Request) -> web.Response:

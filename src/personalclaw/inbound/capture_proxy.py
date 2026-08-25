@@ -236,22 +236,21 @@ class _Upstream:
 
 
 def _client_upstream_name(client: Any) -> str:
-    """The ProviderEntry name a client record pins, across both storage shapes.
+    """The ProviderEntry name a client record pins (``InboundClient.upstream``).
 
-    ``InboundClient`` may carry ``upstream`` as its own field or inside the generic
-    ``scope`` bag depending on which lands first; this module owns neither, so it reads
-    both rather than betting on one. An unset value is "" — which means "no pinned
-    upstream", and the caller then requires passthrough. It never means "pick one".
+    ONE place a client can name an upstream. This used to also read
+    ``client.scope["upstream"]`` as a hedge while the record field had not landed yet;
+    the field landed, so the hedge is gone. That is not only tidiness — two spellings
+    for "where this client's credential-bearing traffic goes" means an operator auditing
+    the field could read one and miss the other, and the free-form ``scope`` bag is the
+    easier of the two to set by accident.
+
+    An unset value is "" — "no pinned upstream", so the caller must use passthrough with
+    its own key. It never means "pick one".
     """
     if client is None:
         return ""
-    direct = str(getattr(client, "upstream", "") or "")
-    if direct:
-        return direct
-    scope = getattr(client, "scope", None)
-    if isinstance(scope, dict):
-        return str(scope.get("upstream", "") or "")
-    return ""
+    return str(getattr(client, "upstream", "") or "")
 
 
 def _join(base: str, path: str) -> str:

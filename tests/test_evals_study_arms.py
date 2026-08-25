@@ -666,3 +666,63 @@ def test_the_cli_can_run_a_registered_study_end_to_end(eval_home, monkeypatch, c
     # The per-arm workspaces are real and distinct — 3 cases x k x 2 arms.
     arms_dir = store.study_dir(filed["study_id"]) / "arms"
     assert len(list(arms_dir.iterdir())) == 3 * verdict["k"] * 2
+
+
+# ── 🔴 the seal reaches the command a user types ──────────────────────────────
+
+
+def test_the_cli_REFUSES_a_tampered_registration_BEFORE_it_quotes_a_spend(
+    eval_home, monkeypatch, capsys
+):
+    """Both halves in one test, because a refusal means nothing without its floor.
+
+    First the same `--dry-run` on the same study with the seal intact — it must reach the
+    preflight and print the spend. Then one edit to `registration.json` and nothing else: the
+    command must refuse, and refuse BEFORE the preflight, because a quoted budget for a study
+    whose design cannot be verified is a quote for a study nobody may interpret. `--dry-run`
+    is the half that would otherwise miss it: `run_study` refuses on its own, but a dry run
+    never reaches `run_study`.
+    """
+    _install_harvested(3)
+    from personalclaw.cli_commands import _study
+    from personalclaw.workflows.native_defs import NativeWorkflowDefProvider
+
+    asyncio.run(NativeWorkflowDefProvider().save_def(**OLD_SPEC))
+    from personalclaw.learning import refiner_tools
+
+    filed = refiner_tools.file_template_diff(
+        WORKFLOW, ops=DIFF_OPS, rationale="bullets beat paragraphs", run_ids=["r0", "r1", "r2"]
+    )
+    study_id = filed["study_id"]
+
+    async def detonate(prompt, *, use_case):  # pragma: no cover - must never run
+        raise AssertionError("a study with an unverifiable registration spent money")
+
+    monkeypatch.setattr(study_arms, "_one_shot_completion", detonate)
+    monkeypatch.setattr(studies, "live_judge_caller", detonate)
+
+    args = dict(list=False, view="", run=study_id, dry_run=True, samples=0)
+    asyncio.run(_study(argparse.Namespace(**args)))
+    intact = capsys.readouterr().out
+    assert "arm + " in intact and "judge" in intact, "floor: the sealed study reaches the spend"
+    assert "Refusing:" not in intact
+
+    path = store.registration_path(study_id)
+    path.chmod(0o600)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["hypothesis"] = "whatever makes the new arm look good"
+    path.write_text(json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.chmod(0o400)
+    assert (
+        studies.registration_from_dict(store.read_study_registration(study_id)).hypothesis
+        == raw["hypothesis"]
+    ), "vacuity floor: the edit applied"
+
+    with pytest.raises(SystemExit) as exc:
+        asyncio.run(_study(argparse.Namespace(**args)))
+
+    out = capsys.readouterr().out
+    assert exc.value.code == 1
+    assert studies.SEAL_TAMPERED in out
+    assert "arm + " not in out, "refused BEFORE the preflight, not after quoting a spend"
+    assert store.read_study_verdict(study_id) is None

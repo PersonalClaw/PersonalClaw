@@ -851,6 +851,12 @@ class RunController:
 
         self._wake_due_nodes()
 
+        # A dispatched stage's subagent may have finished since the last step. Settled BEFORE
+        # the watcher reap for the same reason the reap precedes the frontier: a stage
+        # finishing IS the "accompanied work complete" a watcher is reaped for, so settling it
+        # second would delay every reap by a tick.
+        self._reconcile_dispatched_stages()
+
         # Watchers are reaped BEFORE the frontier, so a reaped watcher is already terminal in
         # this step's derivation and the run completes on the same tick its work finished.
         # After the frontier it would take an extra tick, and on the last tick of a run,
@@ -1597,6 +1603,135 @@ class RunController:
                 target, node.id if node else "", epoch=inst.epoch, actor="engine"
             )
         self._persist_state()
+
+    def _reconcile_dispatched_stages(self) -> None:
+        """Settle `stage` nodes whose spawned subagent has finished.
+
+        `dispatch_stage` spawns and returns RUNNING immediately (``engine.py:777``), so by the
+        time that result is applied the awaited asyncio task is ALREADY done: `_await_progress`
+        pops the entry out of `_inflight` (:2686) before `_apply` sees it, and the tick loop
+        then takes the idle branch (:573) that never calls `_await_progress` again.
+        `_enforce_stall_timeouts` is reachable only from there (:2682), so it stopped being able
+        to observe the node at all; `node_timeout_total` never could, because it bounds the
+        awaited dispatcher coroutine (:2539) and for a stage that coroutine ends at the spawn.
+        The result was a node that stayed RUNNING with no `step_completed` after its subagent
+        had reported `done: True` — which hung every template containing a `stage`.
+
+        **`_inflight` is deliberately NOT the home for a dispatched stage.** Every consumer of
+        that dict assumes `entry.task` is a live awaitable: `_await_progress` selects on it with
+        FIRST_COMPLETED, and both the stall sweep and `_cancel_inflight` cancel it. Re-inserting
+        an already-finished task would make `asyncio.wait` return instantly on every tick and
+        re-apply the same RUNNING result forever; parking a never-resolving placeholder there
+        instead would mean inventing a fake task to satisfy a signature. A spawned subagent is
+        not an awaited task. What the controller legitimately owns is the ID of the work, and
+        that is instance state — exactly like `wake_at`.
+
+        **One source of truth for liveness.** "Has this subagent finished?" stays owned by
+        `SubagentManager.get` (``subagent.py:1632``), the same lookup the sessions surface reads
+        (``dashboard/handlers/sessions.py:388``). Nothing is registered here. That also settles
+        the HUNG case without a second deadline: the manager's own reaper (``subagent.py:739``)
+        force-kills a child past `_default_timeout` and records the verdict as `done=True` with
+        `error="Reaped after ..."` (:791-793). That deadline already existed and was merely
+        unread — so this method is a READER, not a new timeout.
+        """
+        manager = self.services.subagents
+        if manager is None or not hasattr(manager, "get"):
+            return
+        settled = False
+        for path, inst in list(self.instances.items()):
+            if inst.state != InstanceState.RUNNING or not inst.subagent_id:
+                continue
+            try:
+                info = manager.get(inst.subagent_id)
+            except Exception:
+                # A failed lookup is not a verdict on the node. Logged and retried next tick:
+                # letting a transient error in an OBSERVER kill work that is proceeding is the
+                # shape where a safety control becomes an outage.
+                logger.debug(
+                    "run %s: subagent lookup failed for %s", self.run.id, path, exc_info=True
+                )
+                continue
+            if info is None or not getattr(info, "done", False):
+                # UNKNOWN or still working — no verdict either way. `None` is the post-restart
+                # shape (a fresh manager knows no ids): reading it as "finished" would bless
+                # work that never reported, and reading it as "failed" would invent a verdict
+                # on no evidence for a run the watchdog may be mid-adoption of.
+                # `audit.STALE_RUNNING` (``audit.py:39``) stays the backstop for a RUNNING node
+                # nobody is driving.
+                continue
+            node = dict(_walk(self.root)).get(_base_path(path))
+            node_id = node.id if node else ""
+            error = str(getattr(info, "error", "") or "")
+            reaped = bool(getattr(info, "reaped", False))
+            if error:
+                failure = Failure(
+                    # The manager reaps on its OWN deadline, so a reaped child is a timeout.
+                    # Anything else it reports is an execution fault: filing that as TIMEOUT
+                    # would tell the user to raise a limit that was never the problem.
+                    failure_class=FailureClass.TIMEOUT if reaped else FailureClass.INTERNAL,
+                    # The manager's own sentence, verbatim — it carries the elapsed time and
+                    # the deadline that was crossed, which a re-worded message would drop.
+                    cause_plain=error,
+                    remediation=(
+                        "the subagent was force-killed after exceeding its deadline; raise the "
+                        "subagent timeout, or split this stage into smaller steps"
+                        if reaped
+                        else "check the subagent's transcript for the failing turn"
+                    ),
+                    recoverable=True,
+                )
+                inst.state = InstanceState.FAILED
+                inst.failure = failure
+                inst.completed_at = _now()
+                # `retries_exhausted`, and no `_should_retry` consultation, is not a shortcut:
+                # neither TIMEOUT nor INTERNAL is in `RETRYABLE_CLASSES`, so the retry policy
+                # would decline both anyway. Re-deriving that here would be a second copy of
+                # the rule that could drift from the first.
+                self.journal.step_failed(
+                    path,
+                    node_id,
+                    epoch=inst.epoch,
+                    failure=failure,
+                    attempt=inst.attempt,
+                    retries_exhausted=True,
+                )
+            else:
+                inst.state = InstanceState.DONE
+                inst.completed_at = _now()
+                ref, preview = self.journal.store_output(
+                    path, {"result": str(getattr(info, "result", "") or "")}
+                )
+                inst.output_ref = ref
+                if node_id:
+                    # NOW the binding namespace gets the subagent's actual output. Until this
+                    # existed a downstream `{{nodes.X}}` on a stage could only ever have read
+                    # the placeholder the RUNNING branch left behind.
+                    self._outputs[node_id] = preview
+                self.journal.step_completed(
+                    path,
+                    node_id,
+                    epoch=inst.epoch,
+                    # No cache key. The awaited dispatch that owned this node's key returned at
+                    # the spawn, so there is no key under which THIS output was derived;
+                    # inventing one would let a later resume serve a cache hit for a subagent
+                    # result this run never computed.
+                    cache_key="",
+                    state=InstanceState.DONE,
+                    retries=max(0, inst.attempt - 1),
+                    output_ref=ref,
+                )
+            self._publish(
+                "workflow_node_done",
+                {
+                    "node_id": node_id,
+                    "instance_path": path,
+                    "status": inst.state.value,
+                    "node_epoch": inst.epoch,
+                },
+            )
+            settled = True
+        if settled:
+            self._persist_state()
 
     def _reap_watchers(self) -> None:
         """Stop `until_cancelled` watchers whose accompanied work has finished.
@@ -2792,11 +2927,22 @@ class RunController:
             return
 
         if result.state == InstanceState.RUNNING:
-            # An async node (a spawned stage) whose completion arrives later. Stay
-            # RUNNING; the watchdog reconciles it.
+            # A spawned stage: `dispatch_stage` returns as soon as the subagent is live
+            # (`engine.py:777`), so this node's real completion arrives out of band and
+            # `_reconcile_dispatched_stages` settles it. The old comment here said "the
+            # watchdog reconciles it" — it did not: `watchdog._reap_if_finished` reaps at the
+            # RUN level and requires every instance to be terminal already, so it could never
+            # be what moved an instance off RUNNING.
+            #
+            # The subagent id goes on the INSTANCE, for the reason `wake_at` does: it is
+            # persisted with run state, so a restart that re-adopts this run can still ask who
+            # was doing the work. Stashing it in `_outputs` (as this branch used to) was wrong
+            # twice — that dict is keyed by NODE id, so a `foreach` fan-out of stages collided
+            # under `setdefault` and kept only the first leaf's id, and it put an engine
+            # internal into the namespace a downstream `{{nodes.X}}` binding reads.
             inst.state = InstanceState.RUNNING
-            if result.output:
-                self._outputs.setdefault(item.node.id, result.output)
+            if isinstance(result.output, dict):
+                inst.subagent_id = str(result.output.get("subagent_id", "") or "")
             return
 
         if result.state == InstanceState.WAITING:

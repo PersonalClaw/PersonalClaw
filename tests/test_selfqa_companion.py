@@ -1150,6 +1150,100 @@ class TestSelfQaConfigRoundTrip:
             assert f"agent.self_qa.{f.name}" in _EDITABLE_CONFIG, f.name
 
 
+class TestTheSelfQaPanelRowsPatchTheNestedPath:
+    """The quiet-revert failure the UI drive exists to catch, railed at the FE call site.
+
+    `agent.self_qa.*` is a NESTED config section, so every row in the panel's Self-QA section
+    has to be bound to `patchSelfQa` — the closure that prefixes the sub-path — and not to the
+    flat `patch` sitting six lines above it in the same component. A row bound to the flat one
+    PATCHes `agent.<field>`, a path the server's allowlist rejects; the toggle flips
+    optimistically, the request 400s, and the FE rolls the value back. The control looks like it
+    saved and did not, which is exactly the class of defect a render check never sees.
+
+    `test_every_field_has_a_write_path` above cannot catch this: it derives its paths from
+    `SelfQaConfig`, so it stays green no matter which closure the panel actually calls. This
+    reads the panel source — the call site — and then closes the loop on the backend by
+    asserting the flat path really is rejected, because if `agent.<field>` were editable a
+    mis-bound row would be harmless and this rail would be measuring nothing.
+    """
+
+    PANEL = (
+        Path(__file__).resolve().parents[1]
+        / "web"
+        / "src"
+        / "pages"
+        / "settings"
+        / "AgentDefaultsPanel.tsx"
+    )
+
+    @classmethod
+    def _section(cls) -> str:
+        """The Self-QA `<Section>` body, bounded by real markup — not a character window.
+
+        A fixed window around the title would drift with the hint copy and could swallow a
+        sibling section's flat-`patch` rows, which would make this rail red for the wrong
+        reason.
+        """
+        src = cls.PANEL.read_text(encoding="utf-8")
+        start = src.index('<Section title="Self-QA companion"')
+        return src[start : src.index("</Section>", start)]
+
+    @classmethod
+    def _rows(cls) -> dict[str, str]:
+        """Map each `field="..."` row in the section to that element's own attribute text.
+
+        Split on `<` followed by an uppercase letter — a component open tag. Scanning to the
+        first `>` instead would truncate at the `<sha>` inside a `hint` string, and `</Section>`
+        and `<div` are both excluded by the same rule.
+        """
+        import re
+
+        rows: dict[str, str] = {}
+        for chunk in re.split(r"<(?=[A-Z])", cls._section()):
+            m = re.search(r'field="([^"]+)"', chunk)
+            if m:
+                rows[m.group(1)] = chunk
+        return rows
+
+    def test_the_scan_actually_finds_every_row(self):
+        """Vacuity floor: a regex that matched nothing would make every assertion below pass.
+
+        Pinned to the exact set rather than a count, so a renamed field cannot be absorbed by a
+        newly added one.
+        """
+        assert set(self._rows()) == {
+            "enabled",
+            "watched_repo",
+            "fix_branch_enabled",
+            "max_scenarios_per_fire",
+        }
+
+    def test_the_scan_did_not_swallow_a_sibling_section(self):
+        """Second vacuity floor: the extracted block must be a section, not the whole file.
+
+        `approval_mode` is a flat `patch={patch}` row in a *different* section. If it appears
+        here the boundary slipped, and the rail below would be asserting against rows it was
+        never meant to see.
+        """
+        section = self._section()
+        assert "approval_mode" not in section
+        assert len(section) < len(self.PANEL.read_text(encoding="utf-8"))
+
+    def test_every_row_is_bound_to_the_nested_patcher(self):
+        """The call site: `patch={patchSelfQa}`, never the flat `patch={patch}`."""
+        for field, chunk in self._rows().items():
+            assert "patch={patchSelfQa}" in chunk, field
+            assert "patch={patch}" not in chunk, field
+
+    def test_the_flat_path_each_row_would_have_sent_is_rejected(self):
+        """Why a mis-bound row reverts instead of writing the wrong key — the backend half."""
+        from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
+
+        for field in self._rows():
+            assert f"agent.self_qa.{field}" in _EDITABLE_CONFIG, field
+            assert f"agent.{field}" not in _EDITABLE_CONFIG, field
+
+
 # ── registration (the two providers the template names must be dispatchable) ──
 
 

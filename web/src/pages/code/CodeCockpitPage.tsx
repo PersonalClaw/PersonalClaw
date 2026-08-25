@@ -16,6 +16,7 @@ import { IconButton } from '../../ui/IconButton'
 import { LoadError } from '../../ui/ListScaffold'
 import { FieldError } from '../../ui/forms'
 import { Centered } from '../../ui/Centered'
+import { UnifiedDiff } from '../../ui/UnifiedDiff'
 import { confirm } from '../../ui/dialog'
 import { api, type CodeProject, type CodeStage, type CodeFinding, type FsEntry, type TaskItem, type Loop } from '../../lib/api'
 import { useQuery } from '../../lib/data'
@@ -2919,15 +2920,6 @@ function CommitView({ ws, hash, subject, onClose }: { ws: string; hash: string; 
     return () => { alive = false }
   }, [ws, hash, attempt])
   const failed = diff === 'ERR'
-  // Color each patch line by its leading marker so additions/removals/hunks read
-  // at a glance (a lightweight diff highlighter, no Monaco needed for a patch).
-  const lineColor = (l: string): string | undefined => {
-    if (l.startsWith('+') && !l.startsWith('+++')) return 'var(--color-ok)'
-    if (l.startsWith('-') && !l.startsWith('---')) return 'var(--color-danger)'
-    if (l.startsWith('@@')) return 'var(--color-primary)'
-    if (l.startsWith('diff ') || l.startsWith('index ') || l.startsWith('+++') || l.startsWith('---')) return 'var(--color-on-surface-low)'
-    return undefined
-  }
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface-low/40 px-2 py-1">
@@ -2952,9 +2944,9 @@ function CommitView({ ws, hash, subject, onClose }: { ws: string; hash: string; 
           <Centered><p className="px-4 text-center text-on-surface-low text-[0.8125rem]">This commit has no textual changes (e.g. a merge or an empty checkpoint).</p></Centered>
         ) : (
           <>
-            <pre className="font-mono text-[0.75rem] leading-snug">
-              {diff.split('\n').map((l, i) => <div key={i} style={{ color: lineColor(l) }}>{l || ' '}</div>)}
-            </pre>
+            {/* Same patch renderer the skill-refinement approval surface uses — one
+                marker→token map, so an added line is the same green in both places. */}
+            <UnifiedDiff patch={diff} label={`Diff for commit ${hash}`} className="font-mono text-[0.75rem] leading-snug" />
             {truncated && (
               <p className="mt-2 px-1 text-on-surface-low/80 text-[0.75rem]">
                 Diff truncated — this commit is large; only the first part is shown. Use the workspace terminal (<span className="font-mono">git show {hash}</span>) for the full patch.

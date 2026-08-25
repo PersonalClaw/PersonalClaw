@@ -244,14 +244,16 @@ async def list_items(request: web.Request) -> web.Response:
         return web.json_response({"items": items, "total": total, "page": page, "limit": limit})
 
 
-# The 12 typed item kinds (knowledge-entity-vision). text-ish types author content
-# directly; bookmark records a url; media types arrive via /ingest (file upload).
+# The 13 typed item kinds (knowledge-entity-vision). text-ish types author content
+# directly; bookmark records a url; media types arrive via /ingest (file upload);
+# `decision` is authored by `log_decision`.
 _KNOWLEDGE_TYPES = {
     "note",
     "fleeting",
     "journal",
     "gist",
     "bookmark",
+    "decision",
     "image",
     "audio",
     "video",
@@ -262,8 +264,18 @@ _KNOWLEDGE_TYPES = {
 }
 # Types authorable via JSON create (text bodies + a bookmark URL). Media/document
 # types carry file bytes, so they can ONLY be created through /ingest — creating one
-# here would yield a broken item with no file.
+# here would yield a broken item with no file. `decision` is excluded for the same
+# reason with a different missing half: logging a decision also mints its one-shot
+# review trigger, so an item authored here would be a decision that never comes back.
 _AUTHORABLE_TYPES = {"note", "fleeting", "journal", "gist", "bookmark"}
+
+# Non-authorable types and the path that DOES create them. Kept beside the sets above so
+# the refusal names the right door: telling a caller to upload a file to /ingest in order
+# to create a decision would send them somewhere that cannot make one.
+_CREATION_PATH: dict[str, str] = {
+    "decision": "the `log_decision` chat tool, which also schedules the review",
+}
+_DEFAULT_CREATION_PATH = "uploading a file to /ingest"
 
 
 async def create_item(request: web.Request) -> web.Response:
@@ -282,10 +294,9 @@ async def create_item(request: web.Request) -> web.Response:
     if item_type not in _KNOWLEDGE_TYPES:
         return web.json_response({"error": f"unknown type {item_type!r}"}, status=400)
     if item_type not in _AUTHORABLE_TYPES:
+        via = _CREATION_PATH.get(item_type, _DEFAULT_CREATION_PATH)
         return web.json_response(
-            {
-                "error": f"'{item_type}' items are created by uploading a file to /ingest, not authored directly"  # noqa: E501
-            },
+            {"error": f"'{item_type}' items are created by {via}, not authored directly"},
             status=400,
         )
     title = str(body.get("title") or "").strip()
@@ -2559,8 +2570,20 @@ async def get_item_staleness(request: web.Request) -> web.Response:
 async def regenerate_item(request: web.Request) -> web.Response:
     """POST /api/knowledge/items/{id}/regenerate — the one action the staleness banner offers.
 
-    It files a PROPOSAL (``auto_accept=False``) rather than overwriting in place: a synthesis
-    the reader may already have acted on should not change under them without a review step.
+    It RECOMPUTES the synthesis from the sources the item cites and files that as a PROPOSAL
+    (``auto_accept=False``) rather than overwriting in place: a synthesis the reader may already
+    have acted on should not change under them without a review step. The recompute itself lives
+    in :func:`personalclaw.knowledge.updates.regenerate_synthesis` — this route is the HTTP
+    shape around it and owns no synthesis of its own.
+
+    ``ok`` reports whether a proposal was actually FILED, so the two ways a regeneration can
+    honestly come back empty are legible instead of dressed as success:
+
+    * nothing to work with or nothing to change (no cited sources, prose identical to the
+      stored item, a validation refusal, a queue SKIP) — ``200`` with ``ok: false`` and the
+      layer's own sentence under ``proposal.reason``, which the banner renders verbatim;
+    * no model produced a synthesis — ``503`` with ``reason: "model_unavailable"``, the same
+      shape as a missing update pipeline below, because both mean the action cannot run here.
 
     Idempotency belongs to the proposal layer, which owns the pending row; this route only
     re-surfaces what that layer reports. ``already_pending`` is ``true``/``false`` when
@@ -2578,7 +2601,7 @@ async def regenerate_item(request: web.Request) -> web.Response:
             {"error": "only a synthesized item can be regenerated"}, status=400
         )
     try:
-        from personalclaw.knowledge.updates import propose_update
+        from personalclaw.knowledge.updates import SynthesisUnavailable, regenerate_synthesis
     except ImportError:
         # The update pipeline is a separate module; without it there is no regenerate action
         # to perform. An explicit "unavailable" beats a traceback on a button the banner
@@ -2592,20 +2615,34 @@ async def regenerate_item(request: web.Request) -> web.Response:
             },
             status=503,
         )
-    result = await propose_update(store, item_id, auto_accept=False)
-    already = result.get("already_pending") if isinstance(result, dict) else None
+    try:
+        result = await regenerate_synthesis(store, item_id)
+    except SynthesisUnavailable as exc:
+        # No model, no synthesis, nothing filed. Said out loud on the same rail as the missing
+        # pipeline above — the alternative (200 with a cheerful body) is the inert control this
+        # route used to be.
+        logger.warning("knowledge regenerate could not run: %s", exc)
+        return web.json_response({"error": str(exc), "reason": "model_unavailable"}, status=503)
+    if not isinstance(result, dict):  # pragma: no cover — the outcome contract is a dict
+        result = {}
+    # FILED, not merely "the call returned". `pending` is the proposal layer's own word for a
+    # row waiting on the owner and `applied` for a landed write; anything else queued nothing,
+    # which is exactly what `ok` has to say.
+    filed = bool(result.get("pending") or result.get("applied"))
+    already = result.get("already_pending")
     try:
         sel().log_tool_invocation(
             session_key="dashboard:knowledge",
             tool_name="knowledge_regenerate_item",
-            outcome="success",
+            outcome="success" if filed else "skip",
             request_id=item_id,
             source="dashboard",
+            error="" if filed else str(result.get("reason") or ""),
         )
     except Exception:
         logger.warning("SEL audit failed for knowledge regenerate", exc_info=True)
     return web.json_response(
-        {"ok": True, "item_id": item_id, "already_pending": already, "proposal": result}
+        {"ok": filed, "item_id": item_id, "already_pending": already, "proposal": result}
     )
 
 
@@ -3041,12 +3078,30 @@ async def create_watched_source(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": f"enrichment must be one of {sorted(ENRICHMENTS)}"}, status=400
         )
+    descriptor = _kind_descriptor(provider)
+    # The third enum on this body, checked like the two above it. Unvalidated it was the
+    # only one that outlived the request: the store persists it on the row and every poll
+    # hands it to `create_typed_item` (source_engine), so a typo here becomes a permanent
+    # property of an unattended timer rather than one rejected call. Two steps, exactly as
+    # /api/knowledge/items does: an unknown type is a typo (and keeps the synthesized kinds
+    # -- `artifact` -- unauthorable through the API, which artifact_ingest relies on), while
+    # a known media type is a knowledge type a POLL cannot produce: `SourceItem` carries no
+    # bytes and the engine sets no `file_path`, so it would mint file-less items forever.
+    item_type = str(body.get("item_type") or "").strip() or descriptor["default_item_type"]
+    if item_type not in _KNOWLEDGE_TYPES:
+        return web.json_response({"error": f"unknown type {item_type!r}"}, status=400)
+    if item_type not in _AUTHORABLE_TYPES:
+        return web.json_response(
+            {
+                "error": f"a watched source cannot poll '{item_type}' items; item_type must be one of {sorted(_AUTHORABLE_TYPES)}"  # noqa: E501
+            },
+            status=400,
+        )
     spec = body.get("spec") if isinstance(body.get("spec"), dict) else {}
     err = _validated_spec(provider, spec)
     if err:
         return web.json_response({"error": err}, status=400)
 
-    descriptor = _kind_descriptor(provider)
     store = _store(request)
     sid = store.create_source(
         name=name,
@@ -3058,7 +3113,7 @@ async def create_watched_source(request: web.Request) -> web.Response:
             body.get("poll_interval_secs") or getattr(provider, "poll_interval_seconds", 3600)
         ),
         budget=body.get("budget") if isinstance(body.get("budget"), dict) else {},
-        item_type=str(body.get("item_type") or descriptor["default_item_type"]),
+        item_type=item_type,
     )
     _sel_log("sources.create", source_id=sid, provider=provider.name, enrichment=enrichment)
     created = store.get_source(sid)

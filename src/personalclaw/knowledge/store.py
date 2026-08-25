@@ -1401,6 +1401,26 @@ class KnowledgeStore:
         # re-canonicalizes every candidate row.
         if url and (item_type == "bookmark" or is_source_item):
             url = normalize_url(url)
+        # `kind` (the TAXONOMY axis) and `item_type` (the INGESTION axis) do not share a
+        # vocabulary — `note`/`bookmark` are item_types, `fact` is a kind — so NOTHING is
+        # mirrored in general; mirroring everything would invent a contract the taxonomy
+        # explicitly denies (`semantics.KINDS`, "conflating the two would make 'how did this
+        # arrive' and 'what sort of knowledge is it' the same field").
+        #
+        # The one overlap that MUST be persisted is a SYNTHESIZED item_type.
+        # `semantics.check_persist` asks `SYNTHESIZED_KINDS` of the `kind` COLUMN, and an
+        # unset `kind` reads as `"fact"` downstream — so a synthesized item created here
+        # would slip the citation requirement for the rest of its life, and an unsourced
+        # synthesis is indistinguishable from a confident guess once it is being retrieved as
+        # fact. That is reachable, not hypothetical: a watched source carries a free-form
+        # `item_type` and re-polls on a timer, which is precisely the guess that accumulates
+        # unattended. `logical_key` is derived in the same breath because
+        # `set_item_identity` — the only other writer of `kind` — never leaves the pair
+        # half-set, and that column is the persist path's idempotency lookup.
+        from personalclaw.knowledge import semantics
+
+        kind = item_type if item_type in semantics.SYNTHESIZED_KINDS else ""
+        logical_key = semantics.logical_key(kind, title) if kind else ""
         self.db.execute("BEGIN")
         try:
             if is_source_item:
@@ -1419,8 +1439,9 @@ class KnowledgeStore:
             try:
                 self.db.execute(
                     "INSERT INTO items (id, title, content, item_type, summary, status, url, "
-                    "word_count, provider, source_id, guid, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)",
+                    "word_count, provider, source_id, guid, kind, logical_key, "
+                    "created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         item_id,
                         title,
@@ -1432,6 +1453,8 @@ class KnowledgeStore:
                         provider,
                         source_id or None,
                         guid or None,
+                        kind or None,
+                        logical_key or None,
                         now,
                         now,
                     ),

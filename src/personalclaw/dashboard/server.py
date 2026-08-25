@@ -542,6 +542,7 @@ async def start_dashboard(
     # ordered before it.
     app.router.add_post("/api/doctor/fix/{fix_id}", handlers.api_doctor_fix_apply)
     app.router.add_post("/api/doctor/simulate/surfacing", handlers.api_doctor_simulate_surfacing)
+    app.router.add_post("/api/doctor/simulate/automation", handlers.api_doctor_simulate_automation)
     app.router.add_post("/api/model-providers/{name}/selftest", handlers.api_provider_selftest)
     app.router.add_post("/api/doctor/remediation/run", handlers.api_doctor_remediation_run)
     # Skills marketplace

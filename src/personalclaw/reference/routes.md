@@ -229,6 +229,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/doctor/fixes` — the fix catalog with read-only dry-previews.
 - `GET /api/doctor/remediation` — current health score, a dry-run plan preview, and
 - `POST /api/doctor/remediation/run` — run the engine now (confirm-gated). SEL-audited.
+- `POST /api/doctor/simulate/automation` — {trigger_id} — what this automation WOULD do.
 - `POST /api/doctor/simulate/surfacing` — {text} — dry-run the skill scorer in
 - `GET /api/doctor/{capability}` — re-run one capability's probes (uncached).
 - `GET /api/durability/archive` — the archive browser's list (§6).
@@ -378,6 +379,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/learning/proposals/{id}` — one full record.
 - `POST /api/learning/proposals/{id}/accept` — install it.
 - `GET /api/learning/staging/week` — the week-at-a-glance capture panel.
+- `GET /api/learning/summary` — the learning summary block (LV-3).
 - `GET /api/legibility/always-on` — what every session receives, with provenance.
 - `GET /api/legibility/always-on/doc` — one body, verbatim, for the editor.
 - `PUT /api/legibility/always-on/doc` — replace an editable project instruction.
