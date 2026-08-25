@@ -462,3 +462,78 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   `docs/design/consistency-audit.json` churned on the vitest run (filesScanned 555 → 556, the new
   component; driftHits 8 and filesWithDrift 7 unchanged, i.e. **zero new drift**) and was reverted
   out of the commit.
+
+## Execution log — `LV-5` (S3 refinement arm) — 2026-08-25
+
+- [2026-08-25][LV-5] **IMPLEMENTED, status stays `todo` on ONE owner reading.** The stumble detector,
+  the refine proposal with a unified diff, the daily cap and versioned acceptance all ship and are
+  gated. See the DEVIATION below for the single clause in question.
+- [2026-08-25][LV-5] **PREMISE CORRECTIONS — the briefing was wrong twice and verify-first caught both.**
+  The brief cited `learning_summary.py` and `handlers/learning.py:513` as present; **neither exists at
+  `fc597af4`** — LV-3 is on an unmerged branch, so those citations named a tree the agent was not
+  standing on. Non-blocking, because LV-5's only intra-plan dep is `LV-1`, which IS on the base.
+  Separately, **the refine accept path already existed**: `proposals.accept` has branched on
+  `kind == "refine"` since WF2LEA-6 and applies a sidecar overlay rather than rewriting SKILL.md. So
+  the atom's real gaps were narrower than its title reads: the deterministic trigger, the diff, the
+  cap and the versioning.
+- [2026-08-25][LV-5] **The stumble detector is model-free, and its negative behaviour is the design.**
+  `after_turn_review.detect_stumble` (`:163`, vocabulary at `:147`) fires only when a skill's content
+  actually reached the prompt, on three triggers: `correction`; `failure_retry` (a tool failed **and was
+  invoked again later** — the retry is the evidence); `rejection` (a `denied` outcome that **never later
+  succeeded**). It deliberately ignores: no skill loaded, either side reading as an environment failure,
+  a failure nothing followed (an abandoned step is not a procedure gap), a denial the agent recovered
+  from (steering, not refusal), and mid-sentence negations. **Known coverage limit, pre-existing:**
+  `acp/outcomes.py` never emits `denied`, so `rejection` only fires on the native runtime.
+- [2026-08-25][LV-5] **"Versioned" has a writer and two readers, and the version is a POSITION not a
+  stored field** — a count kept beside its own collection can disagree with it. Writer:
+  `overlays.apply_overlay` returns `len(refinements)` (`overlays.py:174`). Readers:
+  `overlays.render_block` (`:194`) puts it in the loaded skill body, so two same-day refinements are
+  distinguishable; `proposals.AcceptResult` (`:391`) → `handlers/skills.py:755`; the SEL accept row at
+  `:752`; and `SkillProposals.tsx:135`. Verified at integration by mutation: forcing `apply_overlay` to
+  return a constant `1` reds `test_two_accepted_refinements_are_distinguishable_by_version`
+  (`assert 1 == 2`).
+- [2026-08-25][LV-5] **DEVIATION 1 — provenance lives in the overlay, not SKILL.md frontmatter. This is
+  the one clause awaiting an owner reading.** The atom says "writes provenance frontmatter". WF2LEA-6
+  made the base skill immutable precisely so `verify_skill_integrity` / `.pclaw-lock.json` stays valid;
+  stamping frontmatter would break a marketplace-locked skill, and doing it only for `auto/` skills
+  would be two paths for one guarantee. Provenance is therefore version + date + trigger in the rendered
+  heading plus the SEL accept row. **If "provenance frontmatter" is read literally, this atom is PARTIAL
+  and the clause needs re-scoping against WF2LEA-6's immutability guarantee; if provenance recorded
+  where it CAN be recorded satisfies it, the atom is done.** Recorded rather than decided.
+- [2026-08-25][LV-5] **DEVIATION 2 — the diff is derived at read time, not carried in `procedure_md`**
+  (plan C3 suggested the latter). `procedure_md` must hold what accept *applies*; a diff stored there
+  would be written into the overlay as garbage. Read-time derivation also cannot go stale, and an
+  approval surface must never show a change the user is not getting — which is what the strongest guard
+  asserts: building the diff from a second renderer reds with *"the diff shown to the user is not the
+  change accept made"*.
+- [2026-08-25][LV-5] **A real weakness the falsifications exposed, then closed.** Dropping the
+  loaded-skill guard reded the correction-negative case, but only via an `IndexError` caught by an
+  `except` — the call site was silent by accident rather than by construction. Closed with an explicit
+  guard in `chat_runner.py`, and a further mutation (`used = used or ["release-flow"]`) reds the silence
+  test on the guard itself.
+- [2026-08-25][LV-5] **Three ratchets went red; all fixed, none weakened.** `uiDocs.drift` → added
+  `web/src/ui/UnifiedDiff.doc.ts`. `scrollRegionNamed` → the `<pre>` is `tabIndex={0}` with a specific
+  `aria-label` at each call site, because two regions both named "Diff" is an ambiguous name.
+  `badgeCopyProse` → `refine` **converged out** of the exemption list: the pill renders
+  `Refine · you corrected it` rather than the bare `kind`, so the now-inapplicable entry was removed.
+  And `test_rendering_registry_parity` reded because the new prose *mentioned* `dangerouslySetInnerHTML`
+  — reworded the comment rather than touching the rail, since a crude substring scan is the safe
+  direction for a sanitizer-bypass gate.
+- [2026-08-25][LV-5] **Other judgment calls, named:** the refinement body is derived from the turn's own
+  record with no model call, so the arm degrades to *proposing nothing* rather than to a bad proposal —
+  the cost is that `failure_retry`/`rejection` bodies are observations, not fixes, and the user gates
+  them. The cap is a rolling 24h reading **both** halves (pending queue + accepted overlay timestamp),
+  because calendar-day would let 23:59 and 00:01 both fire and queue-only forgets the moment the user
+  accepts. `cfg.skill_ladder` is reused rather than adding a knob, since two knobs for one queue can
+  disagree. `accept()`'s return type is a clean break (`str` → `AcceptResult`, 6 call sites updated).
+  `_unified` is written locally in `refine.py` rather than importing `acp/translate.make_unified_diff`,
+  because coupling `skills/` to the ACP protocol adapter for four lines of `difflib` points the
+  dependency the wrong way.
+- [2026-08-25][LV-5] **Gate:** `make lint` clean (mypy **1012** source files); `make test`
+  **26556 passed, 30 skipped, 12 xfailed**; `test_lv5_refinement_arm.py` **21 passed**; at integration,
+  re-run on the rebased tip with `test_wire_error_envelope_census.py` +
+  `test_skill_proposals.py` + `test_after_turn_review.py` → **86 passed, 0 failed**;
+  `npm run typecheck:web` green, `npm run test:web` **483 files / 5133 tests passed**, `npm run build`
+  green; `gate_report.py` 6/6 PASS; probe sweep 16, 0 introduced.
+  `docs/design/consistency-audit.json` churned `filesScanned` 555 → 557 (the two new web files) with
+  `driftHits` 8 and `filesWithDrift` 7 **unchanged** — zero new drift, reverted out of the commit.
