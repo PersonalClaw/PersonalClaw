@@ -97,7 +97,29 @@ def provider(tmp_path) -> NativeArtifactProvider:
 
 
 @pytest.fixture
-def patched_native(provider):
+def document_editing_on(monkeypatch):
+    """``dashboard.document_editing`` ON — the §C6 consent gate ``PUT …/model`` reads.
+
+    Patched rather than assumed, for two reasons. The flag is OFF by default, so without
+    it every model write here would be measuring the CONSENT gate instead of the contract
+    under test; and ``AppConfig.load()`` inside the handler would otherwise read the
+    developer's REAL ``config.json``, making this suite's result depend on their settings.
+    A default ``AppConfig`` with one field flipped keeps the patch honest — it is the same
+    object the route reads in production, not a mock that says yes to everything.
+    (The refusal itself is covered in ``tests/test_document_editing_gate.py``.)
+    """
+    from personalclaw.config import AppConfig
+
+    def _load() -> AppConfig:
+        cfg = AppConfig()
+        cfg.dashboard.document_editing = True
+        return cfg
+
+    monkeypatch.setattr(AppConfig, "load", staticmethod(_load))
+
+
+@pytest.fixture
+def patched_native(provider, document_editing_on):
     with patch.object(registry, "get_provider", return_value=provider):
         yield provider
 

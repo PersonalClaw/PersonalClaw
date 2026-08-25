@@ -15,6 +15,7 @@ import { downloadText, safeFilename } from '../../lib/download'
 import { artifactKindMeta, relTime } from '../files/fileMeta'
 import { ContentSurface } from '../../ui/content/ContentSurface'
 import { resolveContentType } from '../../ui/content/contentTypes'
+import { useDocumentEditing } from '../../ui/content/documentEditing'
 import { ArtifactCompare } from './ArtifactCompare'
 import { ArtifactDeploy } from './ArtifactDeploy'
 import type { CommentTarget } from '../../ui/content/commentTarget'
@@ -136,9 +137,16 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   // rather than two that can drift apart.
   const frozen = !!art?.readonly
   const editable = isCurrent && !frozen
+  // `dashboard.document_editing` decides whether the office types carry an editor at all
+  // (DFE-5 §C6) — it is applied to the registry, not read inside a renderer, so OFF is
+  // byte-for-byte today's read-only preview. Read here because this is the surface where
+  // an office artifact becomes editable; it is one cached request per page load.
+  const documentEditing = useDocumentEditing()
   // The registry resolves how this artifact renders/edits/sanitizes — one source
   // of truth (was the ArtifactBody if/else + EDITABLE_KINDS/IFRAME_KINDS Sets).
-  const ctype = useMemo(() => art ? resolveContentType({ kind: art.kind }) : null, [art])
+  // `documentEditing` is a dep, not decoration: the flag arrives after first paint, and
+  // without it this memo would keep serving the pre-flag type for the life of the page.
+  const ctype = useMemo(() => art ? resolveContentType({ kind: art.kind }) : null, [art, documentEditing])
 
   // ContentSurface owns the draft + edit toggle. A plain Save records an 'edited'
   // event; the separate "Snapshot" action (below, passed as a ContentAction) cuts

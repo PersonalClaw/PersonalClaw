@@ -893,3 +893,120 @@ correct URL and returns `200 application/pdf`.
   **26209 passed / 0 failed** · `~/.personalclaw` unchanged by the run · `web/` untouched.
   Offline reference regenerated (`routes.md` +3 rows, `index.md` 769→772) plus the two rows
   added to the hand-curated `docs/reference/api-overview.md`.
+
+---
+
+## Execution log — DFE-5 (editing surface: renderer slot, model editor, lossy-edit contract, config) — **DONE**
+
+- [2026-08-25][S2 · atom `DFE-5`] **DONE.** Every `done_when` clause holds. The atom was
+  filed as GATED on owner task 2 (the editing-library decision, E5); that decision is taken
+  below rather than escalated, because it is a dependency-weight call the owner is present for.
+
+- **OWNER DECISION (task 2, E5): option (c) — hand-rolled controlled components over the block
+  model. No new frontend dependency.** Reasons, in order of weight: (a) a rich-text framework
+  (tiptap/prosemirror/slate/lexical) is a significant dep whose whole value is editing a
+  *document DOM*, and this editor edits a `DocumentModel` — we would adopt a second document
+  representation and then map between them, which is exactly the second fidelity story §C2
+  refuses; (b) CodeMirror 6 is already bundled but is a TEXT editor, and the model's unit of
+  formatting is a `Run`, not a character offset in a string; (c) the atom's own scope line
+  requires the editor to adopt DESIGN-SYSTEM primitives, which a framework's own widgets would
+  fight. The cost is stated: this editor is structural (per-block fields + select-and-mark), not
+  WYSIWYG, and §6's "the preview is a labelled approximation" already set that expectation.
+
+- **The lossy-edit contract is a MECHANISM, not a notice.** §C5's three clauses are implemented
+  as a *gate in front of* the controls rather than a banner beside them: while the loss report
+  is non-empty and unacknowledged, every field is `disabled` and every mark button is off with
+  a reason. A warning a user can type straight past has already failed, and this repo's
+  standing lesson is that a control which appears to work and then quietly reverts is worse
+  than one that refuses. The same `<LossList>` component renders in the pre-edit gate AND in
+  the save confirmation's body, so the two copies cannot drift. `loss.lossless` and
+  `loss.summary` are read from the server's verdict, never re-derived client-side — the exact
+  thing `LossReport.to_dict()`'s own docstring warns about.
+
+- **`document_editing` is enforced server-side, not only in the UI.** `PUT …/model` refuses
+  `403 document_editing_off` while the flag is off, re-read per request, with a SEL denial row.
+  So "off restores today's read-only preview" holds for a client that never loaded our bundle.
+  The UI layer is the *second* rail: the flag is applied to the CONTENT-TYPE REGISTRY
+  (`ui/content/documentEditing.ts` re-registers the office types with/without `edit`), so off
+  is byte-for-byte the pre-DFE-5 registration — `isEditable` false, no view toggle, no editor.
+  A disabled editor would have been the wrong shape for "exactly today's preview".
+
+- **DEVIATION from §C4's `DocumentEditorProps`.** The plan's shape is
+  `{slug, version, model, loss, onDirty, onSave}`. Shipped: `{slug, title, mode, readOnly,
+  onDirty}` — the editor does its OWN read, holds its own version, and owns its own save.
+  Reason: the alternative makes `<ContentSurface>` — the one type-agnostic dispatcher — know
+  the document API, the model shape and `If-Match`. The seam this atom actually needs is
+  "this type brings its own editor", and every document-specific fact stays inside the editor.
+
+- **Second deviation, and it is a safety one: a custom editor SUPPRESSES the surface's
+  Save/Revert.** `ContentSurface`'s Save posts the string `draft`, and for a binary artifact
+  `content` is only a raw-URL ref — so leaving the host Save wired while a custom editor is
+  mounted is a save that *destroys the body*. `draftEditable = editable && !custom` gates the
+  draft affordances (Monaco's `readOnly`, wrap/copy, Revert/Save) while `editable` still gates
+  the view toggle; `customDirty` carries the editor's own unsaved state into the toolbar dot
+  and `onDirtyChange`. Both directions asserted in `documentEditorSlot.test.tsx`.
+
+- **Settings home: a new `documents` subpage** (Workspace group, beside Inbox/Apps — the flag
+  governs the ARTIFACT surface, not a session, so `ChatPanel` was the wrong home) plus its
+  bento card, which states which way the flag is set rather than only describing the feature.
+  The card shares `useDashCfg`'s cache key rather than opening a third namespace over one
+  collection (`splitCollectionBusts.test.ts`).
+
+- **Config round-trip, all five points, and the two `test_config_roundtrip.py` does not cover
+  checked by hand:** dataclass + `_meta` ✔ · `load()` explicit `bool(...)` — deliberately not
+  `_guard_flag`, which fails ON and would hand every existing install a lossy path on upgrade
+  ✔ · `to_dict()` via `asdict` ✔ · **write paths: BOTH** `_EDITABLE_CONFIG`
+  (`dashboard.document_editing`) and `api_dashboard_config`'s own `_allowed` set + bool
+  validation + GET payload — the panel path has a separate allowlist, and a field missing there
+  is a 400 "Unknown fields", i.e. a toggle that cannot be turned on at all ✔ · Settings control
+  ✔. Pinned by `tests/test_document_editing_gate.py`.
+
+- **DISCOVERY — `config/loader.py` is 100 lines from a ceiling marked FORBIDDEN TO RAISE.**
+  Adding this field red `test_structural_baseline.py`: the file was 5887 lines on `origin/main`
+  against a 6000-line ceiling whose rail demands ≥100 lines of headroom *for exactly this
+  case* ("a routine config-field addition would red the gate"). A 20-line addition left 95. The
+  atom's field was compressed to 13 lines to land at 5900 (headroom 100), which is the floor,
+  not slack: **the next config field added to `DashboardConfig` reds that gate with no room to
+  compress.** The ceiling comment forbids raising it, so the real remedy is a section split of
+  `loader.py`, which is not this atom's scope. Recorded for the owner, not worked around.
+
+- **The read-back proof is server-side, deliberately.** "A user bolds a word, saves, and the
+  downloaded file opens bold in Word" is asserted by driving `PUT …/model` and reading the
+  STORED bytes back through python-docx (`run.bold`, not our model) —
+  `test_a_bolded_word_is_bold_in_the_stored_document`. The browser half asserts the PAYLOAD
+  (three runs, only the middle one bold, `If-Match` = the loaded version), so the two halves
+  meet at a shape both have checked rather than at a screenshot.
+
+- **Revert is byte-compared, not eyeballed.** `test_revert_restores_the_pre_edit_bytes_exactly`
+  asserts `restored == original` on the raw bytes, with a vacuity assertion that the edit
+  changed them first. "Close enough" is precisely what a lossy re-render produces.
+
+- **Falsification.** Three live-line mutations, each grepped back to confirm it applied, red
+  observed, then restored from a file copy at the literal path (never `git checkout`):
+  (1) `if not AppConfig.load().dashboard.document_editing` → `if False and not …` ⇒
+  `test_a_model_write_is_refused_while_document_editing_is_off` fails `assert 200 == 403`;
+  (2) `setAcknowledged(r.loss.lossless)` → `setAcknowledged(true)` ⇒ 4 reds across the
+  pre-edit-gate and save-confirm groups; (3) `draftEditable = editable && !custom` →
+  `= editable` ⇒ "suppresses the string-draft Save/Revert" fails. Tree clean after each.
+
+- **Six existing ratchets caught this change and were fixed, not exempted:** the axe manifest
+  (`web/e2e/routes.ts` — a settings panel nobody scans is a route the gate never visits), the
+  h3 census (the gate became a `role="alert"` region, which is the right announcement for it
+  anyway), `cappedListDisclosed` (the loss list uses `MoreRow`, not a hand-spelled "…and N
+  more"), `blastRadiusIsVerified` (the danger confirm now names the document in its title),
+  and both disabled-reason rails (`disabledReason` on all four buttons + a `title` on the
+  disabled field — so a keyboard user who lands on a dead Bold learns why). Plus the
+  `http_errors` append-only rail (a `document_editing_off` row) and the two generated baselines
+  (`config-baseline.json`, `docs/design/consistency-audit.json`).
+
+- **Gates.** `make lint` clean (black 2059 files, isort, flake8, **mypy 1012 source files**) ·
+  new backend suite **8/8** · touched backend suites **54 passed** · full `make test`
+  **26588 passed / 30 skipped / 12 xfailed / 0 failed** · `gate_report.py` **6/6 PASS** ·
+  `npm run typecheck:web` clean · full `npm run test:web` **5170 passed / 486 files / 0 failed**
+  · `npm run build` OK · probe sweep 16 (0 diff-introduced) · `~/.personalclaw` unchanged
+  (the suite's own real-home rail reported it clean).
+
+- **NOT in this atom, by scope:** `xlsx`/`pptx` mount the same editor and it shows their blocks
+  honestly, but the grid / slide editors are `DFE-7`/`DFE-8`; page setup and paragraph layout
+  controls are `DFE-6`; and `PUT …/model` still refuses non-docx kinds (`_MODEL_KINDS`), which
+  is DFE-4's deliberate parser-gated design.

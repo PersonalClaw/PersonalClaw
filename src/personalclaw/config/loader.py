@@ -1828,6 +1828,16 @@ class DashboardConfig:
             "screen by asking nicely.",
         ),
     )
+    document_editing: bool = field(
+        default=False,
+        metadata=_meta(
+            "Edit Documents in Place",
+            "Open a generated Word document in an editor instead of download-only. A save "
+            "RE-RENDERS the file, so constructs the model cannot hold are lost — the editor "
+            "names them before the first edit and again at save, and the previous version is "
+            "one revert away. OFF by default, and enforced server-side too (DFE-5 §C6).",
+        ),
+    )
     terminal: dict = field(
         default_factory=lambda: {"enabled": True},
         metadata=_meta(
@@ -4931,6 +4941,9 @@ class AppConfig:
                 # available. `bool()` so a truthy-string hand-edit can't smuggle a
                 # non-bool into the gate the route reads.
                 screen_share_enabled=bool(dashboard_data.get("screen_share_enabled", False)),
+                # `bool(...)`, NOT `_guard_flag` — a guard flag fails ON, which on upgrade would
+                # hand every existing install a lossy re-render path it never asked for.
+                document_editing=bool(dashboard_data.get("document_editing", False)),
                 terminal=dashboard_data.get("terminal", {"enabled": True}),
                 dashboard_layout=dashboard_data.get("dashboard_layout", {}) or {},
             ),

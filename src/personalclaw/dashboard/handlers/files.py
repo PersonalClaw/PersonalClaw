@@ -2840,6 +2840,9 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             # MI-4 — the screen-context master switch. Writable here (the panel the
             # Settings toggle drives) as well as through the PATCH allowlist.
             "screen_share_enabled",
+            # DFE-5 — the in-place document editor's master switch. Writable here (the
+            # panel its Settings toggle drives) as well as through the PATCH allowlist.
+            "document_editing",
             # home dashboard widget layout (customization; per-user)
             "dashboard_layout",
         }
@@ -2935,6 +2938,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "confirm_close_session",
             "auto_tag_sessions",
             "screen_share_enabled",
+            "document_editing",
         ):
             if _bool_field in body:
                 val = body[_bool_field]
@@ -2987,6 +2991,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "stream_reveal": cfg.dashboard.stream_reveal,
             "confirm_close_session": cfg.dashboard.confirm_close_session,
             "screen_share_enabled": cfg.dashboard.screen_share_enabled,
+            "document_editing": cfg.dashboard.document_editing,
             "dashboard_layout": cfg.dashboard.dashboard_layout or {},
         }
     )

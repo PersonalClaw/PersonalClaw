@@ -257,6 +257,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The posted document model is not a valid model. The message names the offending path."
     ),
     "render_failed": "The document model was valid but the writer could not render it.",
+    # A CONSENT refusal, not a capability one: the model was fine and the writer exists, but
+    # in-place document editing is switched off and re-rendering is lossy. Distinct from
+    # `forbidden` so the UI can say WHICH switch to turn on instead of "not allowed".
+    "document_editing_off": (
+        "In-place document editing is off, so this document cannot be re-rendered. Fix: turn "
+        "on Settings › Documents › 'Edit documents in place'."
+    ),
     # ── automation would-execute simulator (handlers/doctor.py — PLATFORM-RESILIENCE §3.3) ──
     # Two codes, not the generic `bad_request`/`not_found` pair, because the trust surface
     # branches on them: a missing id is a client bug the UI can fix by disabling its own
