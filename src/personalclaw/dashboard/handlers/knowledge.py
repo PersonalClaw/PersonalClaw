@@ -3067,12 +3067,30 @@ async def create_watched_source(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": f"enrichment must be one of {sorted(ENRICHMENTS)}"}, status=400
         )
+    descriptor = _kind_descriptor(provider)
+    # The third enum on this body, checked like the two above it. Unvalidated it was the
+    # only one that outlived the request: the store persists it on the row and every poll
+    # hands it to `create_typed_item` (source_engine), so a typo here becomes a permanent
+    # property of an unattended timer rather than one rejected call. Two steps, exactly as
+    # /api/knowledge/items does: an unknown type is a typo (and keeps the synthesized kinds
+    # -- `artifact` -- unauthorable through the API, which artifact_ingest relies on), while
+    # a known media type is a knowledge type a POLL cannot produce: `SourceItem` carries no
+    # bytes and the engine sets no `file_path`, so it would mint file-less items forever.
+    item_type = str(body.get("item_type") or "").strip() or descriptor["default_item_type"]
+    if item_type not in _KNOWLEDGE_TYPES:
+        return web.json_response({"error": f"unknown type {item_type!r}"}, status=400)
+    if item_type not in _AUTHORABLE_TYPES:
+        return web.json_response(
+            {
+                "error": f"a watched source cannot poll '{item_type}' items (they carry file bytes); item_type must be one of {sorted(_AUTHORABLE_TYPES)}"  # noqa: E501
+            },
+            status=400,
+        )
     spec = body.get("spec") if isinstance(body.get("spec"), dict) else {}
     err = _validated_spec(provider, spec)
     if err:
         return web.json_response({"error": err}, status=400)
 
-    descriptor = _kind_descriptor(provider)
     store = _store(request)
     sid = store.create_source(
         name=name,
@@ -3084,7 +3102,7 @@ async def create_watched_source(request: web.Request) -> web.Response:
             body.get("poll_interval_secs") or getattr(provider, "poll_interval_seconds", 3600)
         ),
         budget=body.get("budget") if isinstance(body.get("budget"), dict) else {},
-        item_type=str(body.get("item_type") or descriptor["default_item_type"]),
+        item_type=item_type,
     )
     _sel_log("sources.create", source_id=sid, provider=provider.name, enrichment=enrichment)
     created = store.get_source(sid)
