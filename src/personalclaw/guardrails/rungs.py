@@ -213,11 +213,19 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         # it. Its extra powers (it spends a model call, and it fires on a schedule) are governed
         # where they can be evaluated — the write-capable fence in `triggers/screen.py` and the
         # report's own iteration cap — not by a second name for one governed behavior.
+        # WS-7's `source-digest` shares it on the same reasoning as `knowledge-report`, and NOT
+        # `action.digest`: that class is documented as *deterministic, no-model, local-only*
+        # notification writers, and the source digest is a model call over scraped text. What it
+        # ultimately does is write ONE knowledge item, through the same store — plus one inbox
+        # notification, which `knowledge-propose` beside it already does. Its extra powers (the
+        # model call, the cron) are governed where they can be evaluated: the write-capable fence
+        # in `triggers/screen.py` and `MAX_DIGEST_ITEMS`.
         providers=(
             "knowledge-persist",
             "knowledge-consolidate",
             "knowledge-propose",
             "knowledge-report",
+            "source-digest",
         ),
     ),
     ActionTypeSpec(

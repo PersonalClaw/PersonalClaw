@@ -72,6 +72,17 @@ def _ensure_default_providers_registered() -> None:
         from personalclaw.action_providers.usage_recap_provider import UsageRecapActionProvider
 
         register_action_provider(UsageRecapActionProvider())
+    if "source-digest" not in _providers:
+        # WATCHED-SOURCES §6.2 (WS-7's caller). Registered unconditionally, not behind
+        # `sources.enabled`: the bundled clock trigger that names it exists whether or not a
+        # user has enrolled a source, and a provider a live trigger names must be dispatchable
+        # (the digest itself no-ops on an empty window). A trigger pointing at an unregistered
+        # provider validates, saves, and then fails at fire time.
+        from personalclaw.action_providers.source_digest_provider import (
+            SourceDigestActionProvider,
+        )
+
+        register_action_provider(SourceDigestActionProvider())
     if "create-task" not in _providers:
         from personalclaw.action_providers.create_task_provider import CreateTaskActionProvider
 

@@ -446,6 +446,10 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         "render-report",  # writes the spec artifact + its derived export
         "notification-digest",  # writes an inbox item
         "usage-recap",  # emits a notification (MRT-3) — unattended, so it needs the opt-in
+        # WS-7's morning digest: writes a knowledge item AND notifies, on a cron, forever. It
+        # also spends a model call over SCRAPED text, which is the untrusted-input boundary §8
+        # fences — the strictest side of this table is the only honest one for it.
+        "source-digest",
         # Propose-don't-write is about the KNOWLEDGE store, not about this fence: filing still
         # writes a durable proposal row and raises an inbox item, exactly like
         # `notification-digest` above. A path that puts things in front of the user unattended

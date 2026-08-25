@@ -847,6 +847,12 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # hook, so a registered provider missing from this set is one the scheduler refuses to
         # dispatch.
         "usage-recap",
+        # WATCHED-SOURCES §6.2 (WS-7's caller): the morning source digest. Registered here for
+        # the same reason as the two directly above — the bundled system trigger that runs it
+        # goes through this same validation, so a registered provider missing from this set is
+        # one the scheduler refuses to dispatch. A registered-but-refused trigger is exactly the
+        # "registered and never fired" defect one level up from WS-7's missing caller.
+        "source-digest",
         # WORKFLOWS-V2 Slice 9b (WF2-R15): writes resolved content into an artifact with upsert
         # semantics — the zero-token refresh a dashboard-style template does instead of spawning
         # a subagent to paste text. Registered in the action-provider registry in the same
