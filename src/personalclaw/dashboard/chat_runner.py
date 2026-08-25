@@ -306,7 +306,82 @@ def _maybe_after_turn_review(
             )
         except Exception:
             logger.debug("self-model observer failed", exc_info=True)
+    _maybe_refine_stumble(state, session, user_message, assistant_text, tool_outcomes, cfg)
     _stage_turn_capture(session, user_message, learned or facet_learned, cfg)
+
+
+def _maybe_refine_stumble(
+    state,
+    session,
+    user_message: str,
+    assistant_text: str,
+    tool_outcomes: list[tuple[str, str]],
+    cfg,
+) -> None:
+    """The S3 refinement arm: a turn that USED a skill and still went wrong proposes a refine.
+
+    Runs on the same permitted turn as the memory review above (its caller already returned on
+    a denied gate) and behind the same ``skill_ladder`` flag, deliberately: that flag is the
+    user's answer to "may this system propose skills from my turns?", and a second config knob
+    for the deterministic half of the same queue would let the two answers disagree.
+
+    ``session._skills_used`` and not the ladder's ``loaded_skills``: the latter is the
+    CANDIDATE index (every indexed skill), so a refine target picked from it would name a skill
+    that had no part in the turn. ``_skills_used`` is the LV-2 narrowing to the allocations
+    whose content actually reached the prompt, which is the same list the turn-time
+    ``record_uses`` counter consumes — so "used" cannot mean two things here.
+
+    Synchronous and model-free (a classifier plus a ``difflib`` diff), so it cannot delay the
+    turn and has no degraded path other than proposing nothing. Never raises into the turn.
+    """
+    if not getattr(cfg, "skill_ladder", True):
+        return
+    try:
+        from personalclaw import after_turn_review as atr
+        from personalclaw.skills import refine
+
+        used = [
+            str(s.get("name") or "")
+            for s in (getattr(session, "_skills_used", None) or [])
+            if isinstance(s, dict) and s.get("name")
+        ]
+        # Explicit, not incidental. ``detect_stumble`` refuses an empty set too, but without this
+        # line the only thing stopping ``used[0]`` below was the ``except`` — so removing the
+        # detector's own guard would have left the call site silent for the wrong reason, and a
+        # test of that silence would have been pinning an IndexError. Measured: it did.
+        if not used:
+            return
+        signal = atr.detect_stumble(
+            user_message=user_message,
+            assistant_text=assistant_text,
+            used_skills=used,
+            tool_outcomes=tool_outcomes,
+        )
+        if signal is None:
+            return
+        # The FIRST used skill, which is the allocator's own admission order — the most
+        # relevant skill for the turn. One stumble files one proposal against one target;
+        # refining everything that happened to load would turn one bad turn into N proposals.
+        prop = refine.propose_refinement(
+            trigger=signal.trigger,
+            detail=signal.detail,
+            skill=used[0],
+            user_message=user_message,
+            session_key=str(getattr(session, "key", "") or ""),
+        )
+    except Exception:
+        logger.debug("stumble refinement arm failed", exc_info=True)
+        return
+    if prop is None or not getattr(cfg, "surface_chip", True):
+        return
+    # The SAME learned-chip emitter LV-2 built, with `origin: "proposal"` — so the chip's
+    # tap-through already lands on `#/skills?mode=proposals`, where the diff renders. A new
+    # channel or a new origin would be a second idiom for an answer this one already gives.
+    label, _ = redact_credentials(redact_exfiltration_urls(f"Proposed refinement: {prop.slug}")[0])
+    state.broadcast_ws(
+        "activity_event",
+        {"session": session.key, "kind": "learned", "origin": "proposal", "text": label},
+    )
 
 
 def _stage_turn_capture(session, user_message: str, learned: str | None, cfg) -> None:

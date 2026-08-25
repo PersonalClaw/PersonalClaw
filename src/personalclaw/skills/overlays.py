@@ -32,6 +32,14 @@ logger = logging.getLogger(__name__)
 
 _OVERLAYS_DIRNAME = ".overlays"
 
+# How a stumble trigger reads in the skill body. Mapped rather than interpolated raw so an
+# unknown/absent trigger renders as NOTHING instead of leaking a raw enum into the prompt.
+_TRIGGER_PHRASE = {
+    "correction": "from a correction",
+    "failure_retry": "from a failed-then-retried step",
+    "rejection": "from a rejected action",
+}
+
 
 def _safe_parts(name: str) -> list[str] | None:
     """The path components of a skill name, or None if it is unsafe.
@@ -61,15 +69,29 @@ def overlay_path(name: str) -> Path | None:
 
 @dataclass
 class Refinement:
+    """One accepted refinement — the overlay's unit of VERSION.
+
+    **A refinement's version is its 1-based POSITION in ``refinements``, and is deliberately
+    NOT a stored field.** The list is append-only and dense, so position already *is* the
+    version; a second copy on each record could disagree with it, and a number maintained
+    beside the collection it describes is the drift this codebase has been bitten by before.
+    Readers derive it (:func:`render_block`), writers return it (:func:`apply_overlay`).
+
+    ``trigger`` is the one thing position cannot derive: which stumble produced this
+    refinement (``after_turn_review.STUMBLE_TRIGGERS``), or ``""`` for a model-proposed refine.
+    """
+
     description: str = ""
     procedure_md: str = ""
     created_at: str = ""
+    trigger: str = ""
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "description": self.description,
             "procedure_md": self.procedure_md,
             "created_at": self.created_at,
+            "trigger": self.trigger,
         }
 
 
@@ -84,14 +106,58 @@ def load_overlay(name: str) -> dict[str, Any] | None:
         return None
 
 
+def refinement_count(name: str) -> int:
+    """How many refinements *name* has already accepted (0 when it has no overlay)."""
+    data = load_overlay(name)
+    if not data:
+        return 0
+    refinements = data.get("refinements")
+    return len(refinements) if isinstance(refinements, list) else 0
+
+
+def next_version(name: str) -> int:
+    """The version the NEXT accepted refinement of *name* will carry (1-based).
+
+    Public because the refine proposal's diff has to name the version it would create
+    BEFORE it is accepted — a diff that showed an unnumbered block would be a diff of
+    something other than what accept writes.
+    """
+    return refinement_count(name) + 1
+
+
+def last_refinement(name: str) -> dict[str, Any] | None:
+    """The most recently accepted refinement record, or None.
+
+    The daily refine cap reads this: an accepted proposal is DELETED from the queue, so the
+    queue alone cannot answer "did this skill already take a refinement today?".
+    """
+    data = load_overlay(name)
+    if not data:
+        return None
+    refinements = data.get("refinements")
+    if not isinstance(refinements, list) or not refinements:
+        return None
+    last = refinements[-1]
+    return last if isinstance(last, dict) else None
+
+
 def apply_overlay(
-    name: str, *, description: str = "", procedure_md: str = "", created_at: str = ""
-) -> Path | None:
-    """Append an accepted refinement to the skill's ONE overlay file, creating it if absent.
+    name: str,
+    *,
+    description: str = "",
+    procedure_md: str = "",
+    created_at: str = "",
+    trigger: str = "",
+) -> int:
+    """Append an accepted refinement to the skill's ONE overlay file; return its VERSION.
 
     Accumulating into a single file per skill keeps the revert primitive honest: however many
     refinements a skill has taken, reverting is still the deletion of exactly one file. Never
     touches the skill directory or its ``.pclaw-lock.json``.
+
+    Returns the 1-based version assigned to this refinement (never 0 on success), which is how
+    the accept path can say WHICH version it wrote. The old ``Path`` return had no reader: not
+    one caller looked at it, so an accept could not report what it had done.
     """
     path = overlay_path(name)
     if path is None:
@@ -100,12 +166,12 @@ def apply_overlay(
     refinements = data.get("refinements")
     if not isinstance(refinements, list):
         refinements = []
-    refinements.append(Refinement(description, procedure_md, created_at).to_dict())
+    refinements.append(Refinement(description, procedure_md, created_at, trigger).to_dict())
     data["skill"] = name
     data["refinements"] = refinements
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(data, indent=2, ensure_ascii=False))
-    return path
+    return len(refinements)
 
 
 def revert_overlay(name: str) -> int:
@@ -125,9 +191,25 @@ def revert_overlay(name: str) -> int:
         return 0
 
 
-def _render_block(ref: dict[str, str]) -> str:
+def render_block(ref: dict[str, Any], version: int) -> str:
+    """Render ONE refinement as the markdown block that lands in the loaded skill body.
+
+    The heading carries the version and, when known, the stumble that produced it —
+    ``## Refinement v2 (2026-08-25, from a correction)``. That heading is the provenance:
+    it is the only place the *reader of the skill* (the model, and the user looking at the
+    prompt preview) can tell two accepted refinements apart. Before it, two refinements
+    accepted on the same day rendered byte-identical headings.
+
+    Public because the refine proposal's diff must be built from the SAME renderer that
+    accept will run; two renderers would let the previewed diff differ from the applied one.
+    """
     stamp = (ref.get("created_at") or "").split("T", 1)[0]
-    heading = f"## Refinement ({stamp})" if stamp else "## Refinement"
+    trigger = str(ref.get("trigger") or "").strip()
+    label = f"v{version}" if version > 0 else ""
+    detail = ", ".join(p for p in (stamp, _TRIGGER_PHRASE.get(trigger, "")) if p)
+    heading = " ".join(p for p in ("## Refinement", label) if p)
+    if detail:
+        heading = f"{heading} ({detail})"
     lead = re.sub(r"\s+", " ", ref.get("description") or "").strip()
     lines = [heading, ""]
     if lead:
@@ -149,7 +231,8 @@ def render_with_overlay(name: str, body: str) -> str:
     refinements = data.get("refinements")
     if not isinstance(refinements, list) or not refinements:
         return body
-    blocks = [_render_block(r) for r in refinements if isinstance(r, dict)]
+    # `i` IS the version (1-based position in an append-only, dense list) — see `Refinement`.
+    blocks = [render_block(r, i) for i, r in enumerate(refinements, start=1) if isinstance(r, dict)]
     blocks = [b for b in blocks if b.strip()]
     if not blocks:
         return body
