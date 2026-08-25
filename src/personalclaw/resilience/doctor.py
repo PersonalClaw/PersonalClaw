@@ -675,39 +675,114 @@ async def _probe_crashes(ctx: DoctorContext) -> ProbeResult:
     )
 
 
-async def _probe_memory_pipeline(ctx: DoctorContext) -> ProbeResult:
-    """memory-pipeline — is memory extraction actually running? (PLATFORM-RESILIENCE
-    §3.2, current-seam version.)
+#: The window every memory-pipeline aggregate is read over. A week, because the batch
+#: window is 15 minutes and the cadences that flush are per-turn: a day is short enough
+#: that a weekend away reads as a dead pipeline.
+_MEMORY_WINDOW_DAYS = 7
 
-    Silent memory-pipeline death (the S05 bug-class) becomes visible. The rich
-    LEARN-R19 outcome records (FLUSH_OK/FLUSH_ERROR, staging backlog, per-op cost) are
-    future Workflows-v2 infra — until then this reads what exists: the most recent
-    consolidation activity. Absence of any consolidation on a store with history is a
-    WARN. Read-only; degrades to ok when there's simply no history yet.
+#: A run of consecutive ``FLUSH_OK`` records this long is the dead-read signature —
+#: passes completing and finding nothing, over and over. Ten because a handful of turns
+#: that teach nothing is the NORMAL case (most turns are not lessons); ten in a row on a
+#: store that produced something earlier in the window is not.
+_MEMORY_OK_STREAK_WARN = 10
+
+#: Unconsumed staging entries above this are a drain that isn't running. Capture is
+#: cheap and consumption is batched, so a backlog is expected — an unbounded one is the
+#: consolidation pass never claiming a batch.
+_MEMORY_BACKLOG_WARN = 200
+
+
+async def _probe_memory_pipeline(ctx: DoctorContext) -> ProbeResult:
+    """memory-pipeline — is memory extraction actually running? (PLATFORM-RESILIENCE §3.2.)
+
+    Silent memory-pipeline death (the S05 bug-class) is invisible from outside precisely
+    because the healthy case and the dead case both look like silence: a pass that ran and
+    honestly found nothing is indistinguishable from a pass whose reader returns nothing,
+    unless someone counted. LEARN-R19's ``flush_records`` are that count, and this probe is
+    their first health consumer.
+
+    Three WARN shapes, all read off :meth:`StagingStore.health` +
+    :meth:`~personalclaw.learning.staging.StagingStore.cost_by_op`:
+
+    * **flush errors** — a pass raised. That used to vanish into a ``debug`` log; now it is
+      a ``FLUSH_ERROR`` row with its exception type, so it is a first-class WARN.
+    * **a FLUSH_OK streak with nothing produced** — ``all_ok_streak`` is the signal the
+      staging module itself names as "worth alarming on". Gated on the window having run
+      real passes AND having produced nothing, so a quiet week cannot trip it.
+    * **an unconsumed staging backlog** — capture works, the drain does not.
+
+    Read-only by contract, and that includes not CREATING the log: ``StagingStore`` builds
+    its schema on first cursor, so a home that never staged anything is answered from the
+    absent file rather than by opening one. Per-op cost rides along as evidence — "was it
+    expensive" is answerable from one total, but "expensive at WHAT" is the question that
+    leads to a change, and it is the same split the flywheel's own cost panel reads.
     """
 
     def _read() -> dict[str, Any]:
-        ev: dict[str, Any] = {"source": "history (LEARN-R19 records pending)"}
-        try:
-            from personalclaw.history import HistoryConsolidator  # noqa: F401
-        except Exception:
-            ev["available"] = False
-            return ev
-        ev["available"] = True
-        # Best-effort: report the consolidation metadata store's presence. A dedicated
-        # "last consolidation timestamp" doesn't exist yet (offsets, not wall-clock),
-        # so we report structural presence rather than fabricate a freshness metric.
-        home = ctx.home
-        ev["history_dir_present"] = (home / "history").exists()
-        return ev
+        from personalclaw.learning.staging import DB_FILE, StagingStore
 
-    ev = await asyncio.to_thread(_read)
-    # This probe is intentionally conservative today: it confirms the pipeline module
-    # is importable and reports structural signals. It never falsely alarms — the
-    # richer FLUSH_OK-streak WARN arrives with the flywheel's records.
+        home = ctx.home
+        db_path = home / DB_FILE
+        if not db_path.exists():
+            # No staging log yet — a fresh home, not a broken pipeline. Never open the
+            # store here: opening it would write the schema from a read-only probe.
+            return {"staging_log": False}
+        store = StagingStore(home)
+        try:
+            health = store.health(days=_MEMORY_WINDOW_DAYS)
+            per_op = store.cost_by_op(days=_MEMORY_WINDOW_DAYS)
+            backlog = store.pending_count()
+        finally:
+            store.close()
+        by_outcome = dict(health.get("by_outcome") or {})
+        return {
+            "staging_log": True,
+            "days": _MEMORY_WINDOW_DAYS,
+            "passes": int(health.get("passes") or 0),
+            "by_outcome": by_outcome,
+            "errors": int(health.get("errors") or 0),
+            "all_ok_streak": int(health.get("all_ok_streak") or 0),
+            "produced": int(by_outcome.get("flush_produced") or 0),
+            "staged_entries": int(health.get("staged_entries") or 0),
+            "staging_backlog": int(backlog),
+            "cost_usd": health.get("cost_usd"),
+            # Capped: the "op" is a cadence, so this list is short by construction — the
+            # cap is for a home that invented cadences, not for the shipped four.
+            "cost_by_op": per_op[:8],
+            "thresholds": {
+                "ok_streak": _MEMORY_OK_STREAK_WARN,
+                "backlog": _MEMORY_BACKLOG_WARN,
+            },
+        }
+
+    try:
+        ev = await asyncio.to_thread(_read)
+    except Exception as exc:  # noqa: BLE001 — a probe must never raise
+        return ProbeResult(ok=False, detail=f"staging log unreadable: {exc}", evidence={})
+
+    if not ev.get("staging_log"):
+        return ProbeResult(
+            ok=True, detail="no staging log yet (nothing captured on this home)", evidence=ev
+        )
+
+    reasons: list[str] = []
+    if ev["errors"]:
+        reasons.append(f"{ev['errors']} flush error(s) in {ev['days']}d")
+    if ev["all_ok_streak"] >= _MEMORY_OK_STREAK_WARN and ev["passes"] and not ev["produced"]:
+        reasons.append(
+            f"{ev['all_ok_streak']} consecutive flush_ok passes and nothing produced in "
+            f"{ev['days']}d"
+        )
+    if ev["staging_backlog"] >= _MEMORY_BACKLOG_WARN:
+        reasons.append(f"{ev['staging_backlog']} staged entries unconsumed (drain not running)")
+    if reasons:
+        return ProbeResult(ok=False, detail="; ".join(reasons), evidence=ev)
     return ProbeResult(
         ok=True,
-        detail="memory pipeline present (richer freshness metrics arrive with the flywheel)",
+        detail=(
+            f"{ev['passes']} pass(es) in {ev['days']}d, {ev['produced']} produced, "
+            f"{ev['staging_backlog']} awaiting consolidation, ${ev['cost_usd']}"
+        ),
         evidence=ev,
     )
 
