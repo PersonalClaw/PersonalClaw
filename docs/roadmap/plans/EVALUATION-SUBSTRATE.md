@@ -946,3 +946,128 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   (`test_resilience_degraded_lint`), added as `"evals/study_arms.py": "assistant_reasoning"`. Every negative
   assertion carries a paired positive floor; one floor initially failed for a *good* reason — a slot-A-only
   judge correctly became `no_signal` under the position swap — and was rewritten to vote on content.
+
+## Execution log — ES-3 (retrieval eval harness, per-arm P@k/R@k, both stores) — §5 **PARTIAL**, atom stays `todo`
+
+- [2026-08-25][ES-3] **PARTIAL.** Six of the criterion's seven clauses hold and are railed; the seventh
+  ("mined from surfacing/volunteer events") is met on the MEMORY side and met by a **substitute** on the
+  knowledge side, because the source the plan names does not exist. Ships
+  `evals/retrieval_bench.py`, an `arms=` mask on `knowledge.retrieval.HybridRetriever.search`, a new
+  `vector_memory.VectorMemoryStore.rank_semantic` extracted out of `get_semantic_context`,
+  `MemoryGraph.volunteer_qrels`, a `personalclaw retrieval-eval` CLI, `GET /api/evals/retrieval`,
+  `GET /api/evals/retrieval/card`, `POST /api/evals/retrieval/labels`, and a `RetrievalBenchPanel` on the
+  Learning page carrying §5.2's hand-label card.
+
+- [2026-08-25][ES-3] **The subject slot was designed, not invented.** `MatrixSpec.subject`'s own comment
+  already enumerates "retrieval-arm set" and `scorer` already enumerates `"qrels"` — so this is a declared
+  slot being filled. What it could NOT reuse is `runner.run_matrix`: that body resolves
+  `spec.subject` through `scenarios.resolve_scenario_path` and spawns a child per cell, which a subject
+  that is a benchmark rather than a scenario cannot satisfy. So the harness is a §1.2 *consumer* the way
+  ES-4's judge bench is — shared `expand_cells`/`aggregate`/`aggregate_by`, the same `matrices/<id>/` sinks,
+  the same `store.append_result` + `pinning.compute_pin_for_subject` — and spawns nothing, because
+  retrieval is deterministic, local and read-only.
+
+- [2026-08-25][ES-3] 🔴 **DEVIATION: `surfacing_events` has no writer, so §5.2's source (a) is half
+  unavailable.** `learning/measure.per_arm_precision` is pure and takes events; nothing in the tree writes
+  the table it reads, which `dashboard/handlers/learning.py:351` already records in prose ("*a
+  `surfacing_events` table that nothing writes yet*"). The memory half of source (a) is real and is used
+  (`mem_volunteer_events` → `volunteer_qrels`). For KNOWLEDGE the substitute is `intent_outcomes`
+  (`intent_name` = the standing intent's goal, i.e. a query; `item_id` = a positive), which has a live
+  writer in `knowledge/pipeline/runner.py` and is **not circular**: the intent stage runs at ingest over an
+  item's consolidated content and never consults the retriever.
+
+- [2026-08-25][ES-3] 🔴 **DEVIATION: §5.2's source (c) — synthetic entity queries from the alias table —
+  was deliberately NOT built.** Both stores' graph arms take entity mentions as their INPUT
+  (`knowledge.retrieval._graph_search` walks `entities`→`mentions`; `MemoryGraph.recall_refs` walks
+  `mem_links`). A qrels set generated from mentions would score the graph arm against its own index and
+  manufacture the exact "+P@5 from the graph arm" headline the report exists to TEST. That is ES-7's
+  fabricated-`remove` failure with the sign flipped, and it would be filed as ablation-grade evidence.
+  Declining it is recorded rather than silently skipped.
+
+- [2026-08-25][ES-3] **The metric contract is the whole atom, and it is asymmetric on purpose.** `P@k` over
+  an empty candidate set is `0/0` — `None`, with `REASON_NO_CANDIDATES`, and the cell is `VERIFIER_ABSENT`
+  so `matrix.aggregate` reports `mean_score=None` instead of averaging a zero the retriever never earned.
+  `R@k` over an empty candidate set is a real `0.0` (it found none of the known answers) and `None` only
+  when the qrels name no relevant id at all. Both absences are counted in their own published columns
+  (`no_candidate_queries`, `undefined_recall_queries`), so "no candidates" and "0 relevant" are never
+  spelled the same way. Falsification: returning `0.0` for the empty case reds six tests, including
+  `assert 'failed' == 'verifier_absent'` at the `aggregate` call site.
+
+- [2026-08-25][ES-3] **The harness falsifies its own mask, per run.** Every run includes an all-arms-off
+  CONTROL cell that must retrieve nothing; a control that came back with hits means the mask never reached
+  the retriever and every per-arm delta is noise, so the run raises `MaskNotAppliedError` instead of
+  publishing. Confirmed by making `HybridRetriever.search` ignore `arms`: the three end-to-end runs raise,
+  not merely a unit assertion. A masked arm's *input* is never computed either (no FTS query, no traversal,
+  no embedding call), so a cell measures the arm's ABSENCE rather than its exclusion from fusion.
+
+- [2026-08-25][ES-3] 🔴 **A declared arm with no executor scores exactly like its own absence.** Built
+  bare, `HybridRetriever(store)` has no embedder, so the vector arm returns nothing, its leave-one-out
+  delta is 0.0, and the report would have said "vector is worthless" with confidence. Fixed on both sides:
+  the harness binds the same embedder production binds, and `arm_executors()` is read off the objects that
+  actually ran, with `arm_verdict(..., has_executor=False)` forcing `unmeasured` BEFORE it looks at the
+  delta. Falsification: dropping that short-circuit turns a dead arm into `enable`.
+
+- [2026-08-25][ES-3] 🔴 **A REAL bug the drive-it-yourself pass found, in the shared `matrices/` sink.**
+  ES-4's `list_bench_runs` claimed every `matrices/<id>/` that had a `table.json` — a working proxy for "is
+  a judge bench" only while ES-4 was the only writer of one. ES-3 is a second writer, so the newest
+  retrieval run was served AS the newest judge bench and `JudgeBenchPanel` read `row.wall_secs` off a P@k
+  row: `Cannot read properties of undefined (reading 'toFixed')`, the whole Learning page in its error
+  boundary. Found in a browser, and only after removing my own panel and still reproducing it. The fix is
+  an explicit stamp in the ARTIFACT (`judge_bench.TABLE_KIND` / `retrieval_bench.LEDGER_KIND`), **not** a
+  run-id prefix — the id is caller-supplied (the judge bench's own suite passes `bench_id="bench-test"`), so
+  a prefix rule stranded ES-4's own runs, which is the same bug with the roles swapped. An unstamped table
+  now belongs to neither consumer, and pre-stamp runs in an existing home read as "not measured yet".
+
+- [2026-08-25][ES-3] **DEVIATION (two existing rails re-scoped, deliberately).**
+  `test_evals_routes.py`'s two "no way to START a run" rails asserted `{GET, HEAD}` over the WHOLE
+  `/api/evals/*` verb set. §5.2's hand-label card needs one write — one JSON file under `evals/`, no model
+  call, no store write — so the rails were narrowed to their stated intent: an enumerated
+  `_ALLOWED_WRITES`, plus a per-route assertion that no `_RUN_ROUTES` entry accepts a mutating verb. That
+  is stronger than the verb count it replaced, which would not have noticed a POST added to a run route
+  once any other write existed.
+  `test_wire_error_envelope_census.py`'s `UNRESOLVED_PAYLOAD_CEILING` went 202 → **204** for two
+  200-status success bodies (`json_response(view)` / `json_response(card)`, the same shape the three reads
+  already on that surface use). Spelling their keys at the call site would resolve them and was rejected as
+  schema duplication; instead the 2 is PINNED by a new test asserting this module emits no flat envelope at
+  all, so the slack cannot later be spent on the hazard the ceiling exists for.
+
+- [2026-08-25][ES-3] **`rank_semantic` is an EXTRACTION, not a second ranker.** The memory target is
+  `get_semantic_context`'s `0.6·vec + 0.4·kw` hybrid plus MEMORY-GRAPH's graph boost — but it returned a
+  formatted prompt block, so nothing could measure it. The ranking now lives in `rank_semantic` and the
+  formatter calls it: one hybrid-recall rule, and an offline P@k is measured on the object a live turn
+  ranks with. 157 pre-existing memory tests pass unchanged.
+  Same discipline on the ground truth: `volunteer_qrels` and the live health panel's
+  `volunteer_precision` share `_USED_EXPR`/`_VOLUNTEER_FROM_WHERE`, so "used" has one definition.
+
+- [2026-08-25][ES-3] **A bug in this atom's own first cut.** The card round-trip read
+  `entry["relevant"] or entry["already_relevant"]`, so a human marking a query with NO relevant result
+  (`[]` — a real judgement) fell through and silently re-inherited the MINED label they had just overruled.
+  Now keyed on KEY PRESENCE. Verified end to end through the real UI: unticking every candidate for one
+  query lands `relevant_ids: []` in `benchmarks/retrieval/memory.json`, and that query's recall is then
+  reported as undefined rather than as a zero.
+
+- [2026-08-25][ES-3] **Measured on a seeded dev home, driven from `personalclaw retrieval-eval` with no
+  flags.** Knowledge (16 items, 10 mined queries): the vector arm earns `enable` at ΔP@5 **+0.2259**;
+  keyword and graph both `hold` at +0.0069; graph ALONE scores P@5 0.8750 over 4 scored queries with 6
+  no-candidate. Memory (14 records, 8 queries): the vector arm is `hold` at ΔP@5 **−0.5083** — it actively
+  costs precision on that corpus, which is exactly the "does vector beat keyword on THIS user's corpus"
+  question §5.3 asks. The control row reports `p_at_k: null` with all queries no-candidate on both stores.
+
+- **What is NOT closed, precisely.** (i) §5.2's source (a) is unavailable for the knowledge store until
+  something writes `surfacing_events`; the substitute is `intent_outcomes` and is labelled
+  `mined:intent_outcomes` in every qrels row, so a reader can tell. (ii) §5.2's source (c) is declined on
+  circularity grounds (above). (iii) The push-context resolver arms (`memory_push.ARM_ALIAS/EXACT/SUFFIX`)
+  are NOT a bench target — they resolve an ENTITY, not a ranked record list, so they do not fit the
+  `Retriever` signature; the memory bench covers the graph/keyword/vector arms the criterion names. (iv)
+  `RunPin` requires a non-empty `model_fingerprint`, and a retrieval score is a function of the EMBEDDING
+  model, not the chat model. `active_models.json`'s `embedding` use case is in the fingerprint, so the pin
+  is not wrong — but a home with a corpus and no bindings cannot run the bench, and whether the pin should
+  narrow to the embedding binding for this subject is an owner call, not this atom's to make.
+
+- **Gate:** `make lint` clean (mypy 1002 files); `make test` **26194 passed, 0 failed** (a first pass showed
+  4: two were mine and fixed — the new `json_error` codes needed `HTTP_ERROR_CODES` rows and the census
+  ceiling needed the pinned raise above; `test_subagent_cwd` and `test_subagent_fanout` both pass at `-n0`
+  and are the known xdist/SEL isolation flakes); `npm run typecheck:web` clean; `npm run test:web`
+  **479 files / 5053 tests passed**; `npm run build` clean; `scripts/gate_report.py` 6/6; probe residue 16
+  tree-wide with **0** introduced. `src/personalclaw/reference/routes.md` regenerated for the three new
+  routes (verified written into the worktree, not the main checkout).

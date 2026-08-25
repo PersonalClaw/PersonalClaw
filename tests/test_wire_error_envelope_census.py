@@ -133,7 +133,17 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: flat envelopes; neither was visible as one, because the scanner correctly refuses to
 #: read a variable's shape. A ceiling that falls when work lands is the ratchet working,
 #: so it is lowered rather than left slack.
-UNRESOLVED_PAYLOAD_CEILING = 202
+#:
+#: 202 → **204** (ES-3): the retrieval ablation's two new reads on the evals surface,
+#: ``json_response(view)`` and ``json_response(card)``. Both are 200 SUCCESS bodies built by a
+#: view function, which is the same shape the three reads already on that surface use
+#: (judge-bench, studies, ablation). Spelling their keys out at the call site would resolve
+#: them, and was rejected: it duplicates the view's schema in two places, which is the drift
+#: this repo keeps finding. The 2 is bought and then PINNED by
+#: :func:`test_the_evals_surface_hides_no_flat_envelope_in_its_unresolved_rows`, so the slack
+#: cannot be spent on a flat error envelope later — that is the hazard this ceiling exists for,
+#: and every error on that surface goes through :func:`json_error` instead.
+UNRESOLVED_PAYLOAD_CEILING = 204
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites
@@ -721,3 +731,24 @@ def test_no_module_local_error_helper_came_back():
         "a module-local wire-error helper came back — use "
         "personalclaw.http_errors.json_error instead:\n  " + "\n  ".join(offenders)
     )
+
+
+def test_the_evals_surface_hides_no_flat_envelope_in_its_unresolved_rows():
+    """What the ES-3 ceiling raise bought, pinned so it cannot be re-spent.
+
+    ``UNRESOLVED_PAYLOAD_CEILING`` went 202 → 204 for two 200-status SUCCESS bodies on the
+    evals surface. The hazard the ceiling guards is a FLAT ERROR envelope hiding behind
+    indirection — so the pin is not the row count alone but the fact that this module emits
+    NO flat envelope at all: every refusal on it goes through
+    :func:`~personalclaw.http_errors.json_error`. A future flat error built into a local here
+    would land in ``census.flat`` and red the flat ceiling, not quietly occupy this slack.
+    """
+    census = scan()
+    module = "src/personalclaw/dashboard/handlers/evals.py"
+    unresolved = [row for row in census.unresolved if row[0] == module]
+    # judge-bench view, studies list, ablation view, retrieval view, retrieval card.
+    assert len(unresolved) == 5, unresolved
+    assert {row[2] for row in unresolved} == {"Name"}, unresolved
+    assert all(row[3] is False for row in unresolved), "none of these is via a wrapper"
+    assert [row for row in census.flat if row[0] == module] == []
+    assert [row for row in census.flat_via_wrapper if row[0] == module] == []

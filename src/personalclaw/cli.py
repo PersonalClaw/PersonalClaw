@@ -868,6 +868,46 @@ no-delta verdict files a retirement proposal — removing anything stays your ca
         help="Print the cell preflight and exit without calling a model",
     )
 
+    # retrieval-eval (EVALUATION-SUBSTRATE §5 / ES-3)
+    ret_parser = sub.add_parser(
+        "retrieval-eval",
+        help="Per-arm P@5/R@5 ablation over your knowledge and memory retrieval",
+        epilog="""
+Examples:
+  personalclaw retrieval-eval                     # mine + score BOTH stores, separately
+  personalclaw retrieval-eval --store knowledge   # one store only
+  personalclaw retrieval-eval --mine              # (re)mine the qrels and stop
+  personalclaw retrieval-eval --card              # the hand-labeling card, as JSON
+  personalclaw retrieval-eval --card > card.json  # ...then edit "relevant" per query
+  personalclaw retrieval-eval --label card.json   # fold the hand labels back in
+
+Both stores are read-only here: a run that wrote to knowledge.db or memory.db refuses to
+report. Every mask's P@5/R@5 lands under ~/.personalclaw/evals/matrices/<run>/, and the
+per-arm marginal contribution is the leave-one-out delta with an enable/hold verdict.
+""",
+        formatter_class=_fmt,
+    )
+    ret_parser.add_argument(
+        "--store",
+        default="both",
+        choices=["both", "knowledge", "memory"],
+        help="Which store to measure (default: both, run separately)",
+    )
+    ret_parser.add_argument(
+        "-k", type=int, default=5, dest="k", help="Cutoff for P@k/R@k (default: 5)"
+    )
+    ret_parser.add_argument(
+        "--mine",
+        action="store_true",
+        help="Mine the qrels from your events, save the benchmark, and stop",
+    )
+    ret_parser.add_argument(
+        "--card", action="store_true", help="Print the hand-labeling card as JSON and stop"
+    )
+    ret_parser.add_argument(
+        "--label", default="", help="Apply a completed hand-label card (a JSON file)"
+    )
+
     sub.add_parser("update", help="Update PersonalClaw to the latest version")
 
     # stop
@@ -1264,6 +1304,8 @@ Examples:
         asyncio.run(_study(args))
     elif args.command == "ablation":
         _ablation(args)
+    elif args.command == "retrieval-eval":
+        _retrieval_eval(args)
     elif args.command == "security":
         _security(args)
     elif args.command == "update":
@@ -1361,6 +1403,7 @@ from personalclaw.cli_commands import (  # noqa: E402
     _learn,
     _memory_cmd,
     _pair,
+    _retrieval_eval,
     _run_eval,
     _security,
     _spawn,

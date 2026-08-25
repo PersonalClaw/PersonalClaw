@@ -7,16 +7,17 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
-import { api, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type StagingWeek, type StudyRow } from '../../lib/api'
+import { api, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
 import { HealthPanel } from './HealthPanel'
 import { JudgeBenchPanel } from './JudgeBenchPanel'
+import { RetrievalBenchPanel } from './RetrievalBenchPanel'
 import { StudiesPanel } from './StudiesPanel'
 import { fvs } from '../../design/fontWeight'
 import {
   DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState,
   kindIcon, kindLabel, tierLabel, tierTone,
 } from './learningMeta'
-import { HEALTH_KEY, JUDGE_BENCH_KEY, STUDIES_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
+import { HEALTH_KEY, JUDGE_BENCH_KEY, RETRIEVAL_BENCH_KEY, STUDIES_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
 import { PageTitle } from '../../ui/PageTitle'
 
 /** The Learning page — the Proposal Inbox plus the capture week panel.
@@ -64,6 +65,13 @@ export function LearningPage() {
     STUDIES_KEY,
     () => api.evalStudies(),
   )
+  // Per-arm retrieval ablation (ES-3). `error` is read for the same two reasons again: a 404
+  // ("no retrieval benchmark yet") is the ORDINARY state, and it is the state where the panel
+  // still has something useful to offer — the hand-label card.
+  const { data: retrievalBench, error: retrievalError, refresh: refreshRetrieval } = useQuery<RetrievalBenchView>(
+    RETRIEVAL_BENCH_KEY,
+    () => api.retrievalBench(),
+  )
 
   // Kind chips carry their counts, so a filter never has to be clicked to discover it is empty.
   const kindChips = useMemo(() => {
@@ -104,7 +112,7 @@ export function LearningPage() {
         right={
           <QuietButton
             title="Refresh"
-            onClick={() => refreshEverything(refreshProposals, refreshWeek, refreshHealth, refreshJudgeBench, refreshStudies)}
+            onClick={() => refreshEverything(refreshProposals, refreshWeek, refreshHealth, refreshJudgeBench, refreshStudies, refreshRetrieval)}
           >
             <RefreshCw size={14} /> Refresh
           </QuietButton>
@@ -135,6 +143,8 @@ export function LearningPage() {
           <JudgeBenchPanel bench={judgeBench} error={judgeBenchError} onRetry={refreshJudgeBench} />
 
           <StudiesPanel studies={studies?.studies} error={studiesError} onRetry={refreshStudies} />
+
+          <RetrievalBenchPanel bench={retrievalBench} error={retrievalError} onRetry={refreshRetrieval} />
 
 
           <div className="flex flex-col gap-m">

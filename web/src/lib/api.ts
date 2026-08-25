@@ -1788,6 +1788,89 @@ export interface JudgeBenchView {
   pin: Record<string, unknown> | null
   runs: string[]
 }
+/** One arm-mask row of the retrieval ablation (ES-3 / §5.3).
+ *
+ *  `p_at_k` is `null` when the mask retrieved NOTHING — 0/0, undefined, and deliberately
+ *  not 0.0. `no_candidate_queries` is how many queries that was, so the absence is
+ *  legible instead of just missing. `r_at_k` is `null` only when the qrels name no
+ *  relevant id at all (`undefined_recall_queries`): an empty result list with real labels
+ *  is a genuine `0.0` recall and is reported as one. */
+export interface RetrievalMaskRow {
+  mask: string
+  k: number
+  p_at_k: number | null
+  r_at_k: number | null
+  queries: number
+  scored_queries: number
+  no_candidate_queries: number
+  undefined_recall_queries: number
+}
+/** One arm's leave-one-out marginal contribution and its offline verdict.
+ *
+ *  `verdict` is 'enable' | 'hold' | 'unmeasured'. `unmeasured` is first-class and covers
+ *  three different truths — no delta, too few scored queries, or no executor at all — so
+ *  `reasons[0]` is what a reader acts on. An arm with no executor never ran, which makes
+ *  its `contribution_p` exactly 0.0; rendering that as "worthless" is the mistake the
+ *  verdict exists to prevent. */
+export interface RetrievalArmContribution {
+  arm: string
+  full_p_at_k: number | null
+  without_p_at_k: number | null
+  contribution_p: number | null
+  full_r_at_k: number | null
+  without_r_at_k: number | null
+  contribution_r: number | null
+  solo_p_at_k: number | null
+  scored_queries: number
+  verdict: string
+  reasons: string[]
+}
+export interface RetrievalStoreReport {
+  /** '' when this store has never been benchmarked — a real state, not a missing key. */
+  run: string
+  table:
+    | {
+        store: string
+        columns: string[]
+        rows: RetrievalMaskRow[]
+        corpus_snapshot_ref: string
+        benchmark_corpus_snapshot_ref: string
+        corpus_drifted: boolean
+        arm_executors: Record<string, boolean>
+        floors: { min_arm_contribution: number; min_scored_queries: number }
+      }
+    | null
+  contributions: RetrievalArmContribution[] | null
+  benchmark: { name: string; store: string; queries: unknown[] } | null
+}
+/** The per-arm retrieval ablation for BOTH stores (ES-3 / §5).
+ *
+ *  Keyed by store rather than merged: §5.1 runs knowledge and memory SEPARATELY and never
+ *  shares a corpus, so one table over both would be the shape the boundary forbids. */
+export interface RetrievalBenchView {
+  stores: Record<string, RetrievalStoreReport>
+  arms: string[]
+  masks: string[]
+  control_mask: string
+  arm_verdicts: string[]
+  k: number
+  floors: { min_arm_contribution: number; min_scored_queries: number }
+}
+/** §5.2's hand-labeling card: head queries and the candidates the shipped retriever
+ *  actually returns for each, for a human to mark. */
+export interface RetrievalLabelCard {
+  store: string
+  benchmark: string
+  candidates_per_query: number
+  labelled: number
+  mined: number
+  queries: {
+    query: string
+    source: string
+    already_relevant: string[]
+    candidates: string[]
+  }[]
+}
 /** One pre-registered template A/B study, as the index lists it (ES-5 / §2.4).
  *
  *  `verdict` is `null` for a study that is registered but has not run — a real state, not a
@@ -4698,6 +4781,23 @@ export const api = {
    *  bench: a k=5 paired study is ten template runs plus six judge calls per pair. §2.1 is
    *  also explicit that the human REGISTERS and the substrate RUNS, so there is deliberately
    *  no POST here — a click that could do both would defeat the pre-registration. */
+  /** Per-arm P@k/R@k for BOTH retrieval stores (ES-3 / §5). Read-only for a different
+   *  reason than the bench's: retrieval costs no model calls, but §5.1 forbids the harness
+   *  writing to knowledge.db or memory.db at all, and the cheapest way to keep that promise
+   *  on a web surface is to have no run trigger on it. The RUN is `personalclaw
+   *  retrieval-eval`. 404 carries a distinct code for "no run yet" vs "evals off". */
+  retrievalBench: () => get<RetrievalBenchView>('/api/evals/retrieval'),
+  /** §5.2's hand-label card for one store. `store` is REQUIRED — the two stores never share
+   *  a corpus, so a card built for the wrong one would collect labels against ids the other
+   *  has never heard of, and the backend refuses a missing one rather than defaulting. */
+  retrievalLabelCard: (store: string) =>
+    get<RetrievalLabelCard>(`/api/evals/retrieval/card?store=${encodeURIComponent(store)}`),
+  /** Save a completed card. An EMPTY array for a query is a real judgement ("none of these
+   *  answer it") and MUST be sent — omitting it lets the mined weak label the human just
+   *  overruled quietly survive. */
+  saveRetrievalLabels: (store: string, labels: Record<string, string[]>) =>
+    post<{ ok: boolean; store: string; queries: number; hand_labelled: number }>(
+      '/api/evals/retrieval/labels', { store, labels }),
   evalStudies: () => get<{ studies: StudyRow[] }>('/api/evals/studies'),
   evalStudy: (studyId: string) =>
     get<StudyView>(`/api/evals/studies/${encodeURIComponent(studyId)}`),

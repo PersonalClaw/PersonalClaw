@@ -113,6 +113,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "study_absent": "No study is registered under that id.",
     "ablation_absent": "No harness-ablation report has been produced yet.",
     "ablation_unreadable": "The ablation artifacts could not be read.",
+    "retrieval_absent": "No retrieval-ablation report has been produced yet.",
+    "retrieval_unreadable": "The retrieval benchmark artifacts could not be read.",
+    "store_required": "The request must name one retrieval store (knowledge or memory).",
+    "card_unavailable": "That retrieval store could not be read for labelling.",
+    "store_mutated": "A read-only harness pass wrote to a store and was refused.",
+    "labels_required": "The request carries no qrels label mapping.",
+    "labels_rejected": "The submitted qrels labels were refused.",
     # ── packs (handlers/packs.py) ──
     "pack_not_installed": "No such installed pack.",
     "pack_not_bundled": "The pack is not bundled with this build.",
