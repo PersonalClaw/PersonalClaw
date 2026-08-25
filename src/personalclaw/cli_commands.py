@@ -1079,6 +1079,137 @@ def _print_ablation_report(report) -> None:
     print(f"  report: evals/ablation/{report.matrix_id}.json")
 
 
+def _retrieval_eval(args: argparse.Namespace) -> None:
+    """Per-arm P@k/R@k ablation over BOTH retrieval stores (ES-3 / §5).
+
+    ``--store`` defaults to ``both`` and every other input has a working default, so the
+    command a user actually types — ``personalclaw retrieval-eval`` with no flags — mines
+    the qrels, scores both stores separately and prints two tables. That default is the
+    point: ES-7's ``--subject`` defaulted to ``""`` and the bench refused on it, so the
+    bare command could never score anything while the unit tests stayed green.
+    """
+    from personalclaw.evals import retrieval_bench as rb
+
+    picked = str(getattr(args, "store", "both") or "both")
+    stores = rb.STORES if picked == "both" else (picked,)
+    k = max(1, int(getattr(args, "k", rb.DEFAULT_K) or rb.DEFAULT_K))
+    label_path = str(getattr(args, "label", "") or "")
+
+    labels: dict = {}
+    if label_path:
+        try:
+            card = json.loads(Path(label_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Error: unreadable card {label_path}: {exc}")
+            raise SystemExit(1) from exc
+        # Accept the card shape this command PRINTS, so the round-trip is copy-edit-apply
+        # and not "now transform it into some other schema".
+        card_store = str(card.get("store", "") or "")
+        if card_store and card_store not in rb.STORES:
+            print(f"Error: card declares unknown store {card_store!r}.")
+            raise SystemExit(1)
+        if card_store:
+            stores = (card_store,)
+        for entry in card.get("queries") or []:
+            # KEY PRESENCE, not truthiness: `"relevant": []` is the human saying "none of
+            # these answer it", which is a real judgement. `or already_relevant` would make
+            # an empty list fall through and silently re-inherit the MINED label — the one
+            # thing the hand pass exists to overrule.
+            if "relevant" in entry:
+                marked = entry.get("relevant") or []
+            elif "already_relevant" in entry:
+                marked = entry.get("already_relevant") or []
+            else:
+                continue
+            labels[str(entry.get("query", ""))] = [str(i) for i in marked]
+        if not labels:
+            print(
+                'Error: no labels in the card. Mark each query\'s answers under "relevant": '
+                '["<id>", ...] before applying it.'
+            )
+            raise SystemExit(1)
+
+    for store_kind in stores:
+        print(f"\n=== {store_kind} store ===")
+        handle, db_path = rb.open_store(store_kind)
+        try:
+            benchmark = rb.build_benchmark(store_kind, handle)
+            if labels:
+                benchmark = rb.apply_hand_labels(benchmark, labels)
+            path = rb.save_benchmark(benchmark)
+            hand = sum(1 for q in benchmark.queries if q.source == rb.SOURCE_HAND_LABEL)
+            print(
+                f"qrels: {len(benchmark.queries)} queries "
+                f"({hand} hand-labelled, {len(benchmark.queries) - hand} mined)\n"
+                f"corpus: {benchmark.corpus_snapshot_ref}\n"
+                f"saved:  {path}"
+            )
+            if getattr(args, "mine", False) or labels:
+                continue
+            if getattr(args, "card", False):
+                retriever = rb.retriever_for(store_kind, handle)
+                print(json.dumps(rb.hand_label_card(benchmark, retriever), indent=2))
+                continue
+            try:
+                result = rb.run_retrieval_bench(
+                    store_kind, benchmark=benchmark, handle=handle, db_path=db_path, k=k
+                )
+            except rb.EmptyBenchmarkError as exc:
+                # Not a crash and NOT a zero score: a store with no labels has no P@k, and
+                # printing 0.0 here would file "retrieval is broken" as a finding.
+                print(f"Not measured: {exc}")
+                continue
+            except (rb.MaskNotAppliedError, rb.StoreMutatedError) as exc:
+                print(f"REFUSED: {exc}")
+                raise SystemExit(1) from exc
+            _print_retrieval_report(result)
+        finally:
+            closer = getattr(handle, "close", None)
+            if callable(closer):
+                try:
+                    closer()
+                except Exception:  # noqa: BLE001 - a close fault must not hide a report
+                    pass
+
+
+def _print_retrieval_report(result) -> None:
+    """The published table + per-arm contributions, with absences spelled out."""
+    from personalclaw.evals import retrieval_bench as rb
+
+    def _num(value) -> str:
+        return "n/a" if value is None else f"{float(value):.4f}"
+
+    if result.corpus_drifted:
+        print(
+            "  ⚠ corpus DRIFTED since these labels were made — R@k's denominator is no "
+            "longer the one that was judged."
+        )
+    dead = sorted(arm for arm, live in (result.executors or {}).items() if not live)
+    if dead:
+        print(
+            f"  ⚠ no executor for: {', '.join(dead)} — that arm never ran, so its zero "
+            "delta says nothing about the arm."
+        )
+    print(f"  run: evals/matrices/{result.bench_id}/")
+    print(f"  {'mask':<24}{'P@k':>9}{'R@k':>9}{'scored':>8}{'no-cand':>9}")
+    for row in result.table:
+        print(
+            f"  {row.mask:<24}{_num(row.p_at_k):>9}{_num(row.r_at_k):>9}"
+            f"{row.scored_queries:>8}{row.no_candidate_queries:>9}"
+        )
+    print("  per-arm marginal contribution (full − leave-one-out):")
+    for contrib in result.contributions:
+        print(
+            f"    {contrib.arm:<10} ΔP@k={_num(contrib.contribution_p):>9} "
+            f"ΔR@k={_num(contrib.contribution_r):>9} solo P@k={_num(contrib.solo_p_at_k):>9} "
+            f"→ {contrib.verdict}" + (f"  ({contrib.reasons[0]})" if contrib.reasons else "")
+        )
+    print(
+        f"  enable threshold: ΔP@k >= {rb.MIN_ARM_CONTRIBUTION} over "
+        f">= {rb.MIN_SCORED_QUERIES} scored queries"
+    )
+
+
 def _learn(args: argparse.Namespace) -> None:
     """Save, list, or remove learned corrections in memory.db ``lesson.*``."""
 

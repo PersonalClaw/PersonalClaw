@@ -210,9 +210,160 @@ async def api_evals_ablation(request: web.Request) -> web.Response:
     return web.json_response(view)
 
 
+async def api_evals_retrieval(request: web.Request) -> web.Response:
+    """GET /api/evals/retrieval — the newest per-arm P@k/R@k table for BOTH stores (§5).
+
+    Read-only, like every other route here, but for a different reason than judge-bench's:
+    retrieval costs no model calls, yet §5.1's constraint is that the harness never writes
+    to knowledge.db or memory.db, and the cheapest way to keep that promise on a web
+    surface is to have no run trigger on it at all. The RUN is
+    ``personalclaw retrieval-eval``.
+
+    Both stores are always present in the payload, each with its own table — §5.1 runs them
+    SEPARATELY and never shares a corpus, so a merged table would be the one shape the
+    boundary forbids.
+    """
+    if not _enabled():
+        return json_error(
+            "evals_disabled",
+            message="The eval substrate is off. Turn on `evals.enabled` to publish "
+            "retrieval ablation reports.",
+            status=404,
+        )
+    from personalclaw.evals import retrieval_bench as rb
+
+    try:
+        view = rb.latest_retrieval_view()
+    except Exception:
+        logger.warning("retrieval view failed", exc_info=True)
+        return json_error(
+            "retrieval_unreadable",
+            message="The retrieval benchmark artifacts could not be read.",
+            status=500,
+        )
+    runs = {kind: data.get("run") or "" for kind, data in (view.get("stores") or {}).items()}
+    if not any(runs.values()):
+        # Distinct from "evals disabled": that sends a user to the switch, this sends them to
+        # the command. One code for both would make the panel's empty state a guess.
+        return json_error(
+            "retrieval_absent",
+            message="No retrieval benchmark has run yet. Run "
+            "`personalclaw retrieval-eval` to score both stores.",
+            status=404,
+        )
+    _audit(request, "evals_retrieval", "read", f"runs={runs}")
+    return web.json_response(view)
+
+
+async def api_evals_retrieval_card(request: web.Request) -> web.Response:
+    """GET /api/evals/retrieval/card?store=knowledge|memory — §5.2's hand-labeling card.
+
+    The card is the human half of the qrels set: mined weak labels answer the tail, and the
+    head queries need someone to say which results actually answer them. Read-only against
+    the stores (the builder is wrapped in the same byte-identical rail the run uses); the
+    only thing it writes is the benchmark file under ``evals/``.
+    """
+    if not _enabled():
+        return json_error(
+            "evals_disabled",
+            message="The eval substrate is off. Turn on `evals.enabled` to label "
+            "retrieval qrels.",
+            status=404,
+        )
+    from personalclaw.evals import retrieval_bench as rb
+
+    store_kind = (request.query.get("store") or "").strip()
+    if store_kind not in rb.STORES:
+        # No default: the two stores never share a corpus, so a card built for the wrong one
+        # would collect labels against ids the other store has never heard of.
+        return json_error(
+            "store_required",
+            message=f"Pass ?store= one of {', '.join(rb.STORES)}.",
+            status=400,
+        )
+    try:
+        card = rb.card_for_store(store_kind)
+    except rb.StoreMutatedError as exc:
+        return json_error("store_mutated", message=str(exc), status=500)
+    except Exception:
+        logger.warning("retrieval card failed for %s", store_kind, exc_info=True)
+        return json_error(
+            "card_unavailable",
+            message=f"The {store_kind} store could not be read for labelling.",
+            status=500,
+        )
+    _audit(request, "evals_retrieval_card", "read", f"store={store_kind}")
+    return web.json_response(card)
+
+
+async def api_evals_retrieval_labels(request: web.Request) -> web.Response:
+    """POST /api/evals/retrieval/labels — save a completed hand-label card.
+
+    Body: ``{"store": "...", "labels": {"<query>": ["<id>", ...]}}``. An EMPTY list for a
+    query is a real judgement ("none of these answer it") and is stored as such — treating
+    it as "nothing submitted" would silently re-inherit the mined weak label the human just
+    overruled.
+    """
+    if not _enabled():
+        return json_error(
+            "evals_disabled",
+            message="The eval substrate is off. Turn on `evals.enabled` to label "
+            "retrieval qrels.",
+            status=404,
+        )
+    from personalclaw.evals import retrieval_bench as rb
+
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_json", message="Body must be JSON.", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_json", message="Body must be a JSON object.", status=400)
+    store_kind = str(body.get("store") or "").strip()
+    if store_kind not in rb.STORES:
+        return json_error(
+            "store_required",
+            message=f"`store` must be one of {', '.join(rb.STORES)}.",
+            status=400,
+        )
+    raw = body.get("labels")
+    if not isinstance(raw, dict):
+        return json_error(
+            "labels_required",
+            message='`labels` must be an object of {"<query>": ["<id>", ...]}.',
+            status=400,
+        )
+    labels = {str(q): [str(i) for i in (v or [])] for q, v in raw.items() if str(q)}
+    try:
+        benchmark = rb.apply_labels_for_store(store_kind, labels)
+    except rb.RetrievalBenchError as exc:
+        _audit(request, "evals_retrieval_labels", "rejected", f"store={store_kind}")
+        return json_error("labels_rejected", message=str(exc), status=400)
+    hand = sum(1 for q in benchmark.queries if q.source == rb.SOURCE_HAND_LABEL)
+    _audit(
+        request,
+        "evals_retrieval_labels",
+        "ok",
+        f"store={store_kind} labelled={hand} queries={len(benchmark.queries)}",
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "store": store_kind,
+            "queries": len(benchmark.queries),
+            "hand_labelled": hand,
+            "subject_sha256": benchmark.sha256,
+        }
+    )
+
+
 def register_evals_routes(app: web.Application) -> None:
-    """Register /api/evals/* — the judge tier table, the studies and the ablation report."""
+    """Register /api/evals/* — the judge tier table, the studies, the ablation report and
+    the retrieval per-arm ablation (+ its hand-label card)."""
     app.router.add_get("/api/evals/judge-bench", api_evals_judge_bench)
     app.router.add_get("/api/evals/studies", api_evals_studies)
     app.router.add_get("/api/evals/studies/{study_id}", api_evals_study)
     app.router.add_get("/api/evals/ablation", api_evals_ablation)
+    app.router.add_get("/api/evals/retrieval", api_evals_retrieval)
+    app.router.add_get("/api/evals/retrieval/card", api_evals_retrieval_card)
+    app.router.add_post("/api/evals/retrieval/labels", api_evals_retrieval_labels)

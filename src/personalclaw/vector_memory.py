@@ -142,6 +142,16 @@ _MMR_LAMBDA = 0.6  # relevance vs diversity tradeoff (higher = more relevance)
 _SEMANTIC_VECTOR_WEIGHT = 0.6  # weight for vector score in hybrid semantic retrieval
 _SEMANTIC_KEYWORD_WEIGHT = 0.4  # weight for keyword score in hybrid semantic retrieval
 
+# ── the recall arm vocabulary (EVALUATION-SUBSTRATE §5.1) ─────────────────────
+# Spelled to MATCH `knowledge.retrieval.ARMS` exactly. §5.1 runs one ablation runner
+# against two stores; two arm vocabularies over one report would make "the graph arm's
+# contribution" mean two different things depending on which store produced the row.
+RECALL_ARM_KEYWORD = "keyword"
+RECALL_ARM_GRAPH = "graph"
+RECALL_ARM_VECTOR = "vector"
+#: Every arm :meth:`VectorMemoryStore.rank_semantic` fuses.
+RECALL_ARMS = (RECALL_ARM_KEYWORD, RECALL_ARM_GRAPH, RECALL_ARM_VECTOR)
+
 # Owner-preference tie-break (TEAM-SHARED-ENTITIES §2.3). Small on purpose: one
 # keyword-overlap step is 0.1 after normalization (kw_raw/10), so 0.05 breaks a near-tie
 # between an owner's and a colleague's memory without overturning a record that actually
@@ -1603,91 +1613,122 @@ class VectorMemoryStore(MemoryProvider):
 
     # ── Context Injection ──
 
+    def rank_semantic(
+        self,
+        query_text: str,
+        *,
+        limit: int = 100,
+        arms: "tuple[str, ...] | list[str] | set[str] | None" = None,
+    ) -> list[dict]:
+        """Rank semantic-memory rows against ``query_text`` — the recall ARITHMETIC.
+
+        Extracted out of :meth:`get_semantic_context` so the ranking is measurable apart
+        from the prompt block it renders into (EVALUATION-SUBSTRATE §5.1's memory target).
+        The formatter now calls this; there is exactly ONE hybrid-recall rule, and an
+        offline P@k/R@k measured here is measured on the object a live turn ranks with.
+
+        ``arms`` masks which of :data:`RECALL_ARMS` contribute. ``None`` — every
+        production caller — runs all three, so the live ranking is unchanged. A masked
+        arm's *input* is never computed (no embedding call, no graph traversal), so an
+        ablation cell measures the arm's absence and not merely its exclusion from the
+        sum. The empty mask is legal and returns ``[]``: the harness's control cell.
+        """
+        active = RECALL_ARMS if arms is None else tuple(a for a in RECALL_ARMS if a in set(arms))
+        query_words = (
+            _stem_words(set(re.findall(r"\w+", query_text.lower())))
+            if RECALL_ARM_KEYWORD in active
+            else set()
+        )
+        query_embedding = (
+            self._try_embed(query_text) if (self.embed_fn and RECALL_ARM_VECTOR in active) else None
+        )
+
+        # `contributor` rides along for the owner-preference ordering term below
+        # (TEAM-SHARED-ENTITIES §2.3) and for the recall label.
+        all_rows = self.db.execute(
+            "SELECT key, value_json, updated_at, contributor, holder, weight "
+            "FROM semantic_memory WHERE is_deleted = 0 AND " + _NON_FACT_KEY_CLAUSE
+        ).fetchall()
+        owner = current_username()
+
+        # The graph arm (MEMORY-GRAPH-AND-VAULT §2.1): records linked to entities
+        # the query NAMES. Deterministic, microseconds, and no LLM — its job is to
+        # answer "what do I know about X?" by traversal, catching records whose
+        # wording shares nothing with the question.
+        graph_boosts = self._graph_boosts(query_text) if RECALL_ARM_GRAPH in active else {}
+
+        scored_rows: list[tuple[float, dict]] = []
+        for r in all_rows:
+            # Keyword score (always available)
+            key_words = _stem_words(
+                set(re.findall(r"\w+", r["key"].replace("_", " ").replace(".", " ")))
+            )
+            val_words = _stem_words(set(re.findall(r"\w+", r["value_json"].lower())))
+            key_overlap = len(query_words & key_words)
+            val_overlap = len(query_words & val_words)
+            kw_raw = key_overlap * 3 + val_overlap
+            # Normalize keyword score to [0, 1]
+            kw_score = min(kw_raw / 10.0, 1.0) if kw_raw > 0 else 0.0
+
+            # Vector score (when embeddings available)
+            vec_score = 0.0
+            if query_embedding is not None:
+                entry_text = f"{r['key']} {r['value_json']}"
+                entry_emb = self._try_embed(entry_text)
+                if entry_emb:
+                    vec_score = max(0.0, self._cosine_sim(query_embedding, entry_emb))
+
+            # Hybrid merge
+            if query_embedding is not None and vec_score > 0:
+                score = _SEMANTIC_VECTOR_WEIGHT * vec_score + _SEMANTIC_KEYWORD_WEIGHT * kw_score
+            else:
+                score = kw_score
+
+            # Graph arm: boost, and ADMIT. A record linked to an entity the query
+            # names is relevant even when it shares no words with it — which is
+            # exactly the recall similarity search cannot reach.
+            boost = graph_boosts.get(r["key"], 0.0)
+            score += boost
+
+            if score > 0:
+                scored_rows.append((score, dict(r)))
+
+        # Owner preference (TEAM-SHARED-ENTITIES §2.3): at comparable relevance the
+        # owner's own memories order above another contributor's. Applied in the
+        # SORT KEY, deliberately NOT added to `score` above — `score > 0` is the
+        # ADMISSION gate, and a provenance bonus that could lift a zero-relevance
+        # row into the result set would make locality decide what the model sees,
+        # not just what order it sees it in. The plan's rule is "ordering only,
+        # never admission", so the term lives on the far side of that gate.
+        #
+        # Bounded and small for the same reason the graph boost is bounded: it must
+        # break near-ties, never overturn a genuinely better match. Follows the heat
+        # boost's shape (memory_service.rank_episodic) — the existing precedent for
+        # an ordering-only nudge.
+        scored_rows.sort(
+            key=lambda x: (
+                -(x[0] + _owner_rank_bonus(x[1].get("contributor"), owner)),
+                x[1]["updated_at"],
+            )
+        )
+        return [r[1] for r in scored_rows[:limit]]
+
     def get_semantic_context(self, query_text: str = "", cap: int = 1500) -> str:
         """Format semantic memory for prompt injection with hybrid retrieval.
 
         When embeddings are available and a query is provided, uses hybrid
         scoring (vector similarity + keyword overlap) for better recall.
         Falls back to keyword-only scoring without embeddings.
+
+        The query-aware ranking itself lives in :meth:`rank_semantic`; this method owns
+        only the character-capped rendering.
         """
         max_rows = max(cap // 15, 20)
 
         # Query-aware filtering: hybrid vector + keyword scoring
         if query_text:
-            query_words = _stem_words(set(re.findall(r"\w+", query_text.lower())))
-            query_embedding = self._try_embed(query_text) if self.embed_fn else None
-
-            # `contributor` rides along for the owner-preference ordering term below
-            # (TEAM-SHARED-ENTITIES §2.3) and for the recall label.
-            all_rows = self.db.execute(
-                "SELECT key, value_json, updated_at, contributor, holder, weight "
-                "FROM semantic_memory WHERE is_deleted = 0 AND " + _NON_FACT_KEY_CLAUSE
-            ).fetchall()
+            rows = self.rank_semantic(query_text, limit=max_rows)
             owner = current_username()
-
-            # The graph arm (MEMORY-GRAPH-AND-VAULT §2.1): records linked to entities
-            # the query NAMES. Deterministic, microseconds, and no LLM — its job is to
-            # answer "what do I know about X?" by traversal, catching records whose
-            # wording shares nothing with the question.
-            graph_boosts = self._graph_boosts(query_text)
-
-            scored_rows: list[tuple[float, dict]] = []
-            for r in all_rows:
-                # Keyword score (always available)
-                key_words = _stem_words(
-                    set(re.findall(r"\w+", r["key"].replace("_", " ").replace(".", " ")))
-                )
-                val_words = _stem_words(set(re.findall(r"\w+", r["value_json"].lower())))
-                key_overlap = len(query_words & key_words)
-                val_overlap = len(query_words & val_words)
-                kw_raw = key_overlap * 3 + val_overlap
-                # Normalize keyword score to [0, 1]
-                kw_score = min(kw_raw / 10.0, 1.0) if kw_raw > 0 else 0.0
-
-                # Vector score (when embeddings available)
-                vec_score = 0.0
-                if query_embedding is not None:
-                    entry_text = f"{r['key']} {r['value_json']}"
-                    entry_emb = self._try_embed(entry_text)
-                    if entry_emb:
-                        vec_score = max(0.0, self._cosine_sim(query_embedding, entry_emb))
-
-                # Hybrid merge
-                if query_embedding is not None and vec_score > 0:
-                    score = (
-                        _SEMANTIC_VECTOR_WEIGHT * vec_score + _SEMANTIC_KEYWORD_WEIGHT * kw_score
-                    )
-                else:
-                    score = kw_score
-
-                # Graph arm: boost, and ADMIT. A record linked to an entity the query
-                # names is relevant even when it shares no words with it — which is
-                # exactly the recall similarity search cannot reach.
-                boost = graph_boosts.get(r["key"], 0.0)
-                score += boost
-
-                if score > 0:
-                    scored_rows.append((score, dict(r)))
-
-            # Owner preference (TEAM-SHARED-ENTITIES §2.3): at comparable relevance the
-            # owner's own memories order above another contributor's. Applied in the
-            # SORT KEY, deliberately NOT added to `score` above — `score > 0` is the
-            # ADMISSION gate, and a provenance bonus that could lift a zero-relevance
-            # row into the result set would make locality decide what the model sees,
-            # not just what order it sees it in. The plan's rule is "ordering only,
-            # never admission", so the term lives on the far side of that gate.
-            #
-            # Bounded and small for the same reason the graph boost is bounded: it must
-            # break near-ties, never overturn a genuinely better match. Follows the heat
-            # boost's shape (memory_service.rank_episodic) — the existing precedent for
-            # an ordering-only nudge.
-            scored_rows.sort(
-                key=lambda x: (
-                    -(x[0] + _owner_rank_bonus(x[1].get("contributor"), owner)),
-                    x[1]["updated_at"],
-                )
-            )
-            rows = [r[1] for r in scored_rows[:max_rows]]
         else:
             # No query: recent entries
             rows = self.db.execute(

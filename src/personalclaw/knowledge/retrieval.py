@@ -49,6 +49,16 @@ _ANN_MAX_ATTEMPTS = 4  # so k reaches limit × 256 before giving up on a patholo
 # where the extra recall matters most.
 _ID_BATCH = 400
 
+# ── the arm vocabulary (EVALUATION-SUBSTRATE §5.1) ────────────────────────────
+# These are the SAME strings the results' ``match_type`` already reports, so the
+# ablation harness and the per-hit attribution a user sees in the UI name the arms
+# identically. A second spelling here would let a mask silently gate nothing.
+ARM_KEYWORD = "keyword"
+ARM_GRAPH = "graph"
+ARM_VECTOR = "vector"
+#: Every arm :meth:`HybridRetriever.search` fuses, in ``match_type`` order.
+ARMS = (ARM_KEYWORD, ARM_GRAPH, ARM_VECTOR)
+
 
 def relevance_cliff_cut(
     scores: list[float],
@@ -90,22 +100,50 @@ class HybridRetriever:
         self.store = store
         self.embedder = embedder
 
-    def search(self, query: str, limit: int = 10, *, include_archived: bool = False) -> list[dict]:
+    def search(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        include_archived: bool = False,
+        arms: "tuple[str, ...] | list[str] | set[str] | None" = None,
+    ) -> list[dict]:
         """Hybrid search with RRF fusion. Returns [{id, title, summary, content, score, source, match_type}].  # noqa: E501
 
         ``include_archived`` defaults False — archived items never surface to agents or
         chat context-injection. The Archived UI view sets it True so a search *within*
         that view can find archived items (matching the no-query Archived list).
+
+        ``arms`` masks which of :data:`ARMS` contribute (EVALUATION-SUBSTRATE §5.1's
+        ablation knob). ``None`` — the default every production caller uses — runs all
+        three, so the live ranking is unchanged by construction. A masked arm is not
+        merely dropped from fusion: its query is **never issued**, so an ablation cell
+        measures the arm's absence rather than its cost. An empty mask is legal and
+        returns ``[]``: that is the harness's control cell, and a control that came back
+        with hits is how you learn the mask was not applied.
         """
+        active = ARMS if arms is None else tuple(a for a in ARMS if a in set(arms))
         over = limit * 2
-        kw = self._keyword_search(query, limit=over, include_archived=include_archived)
-        gr = self._graph_search(query, limit=over, include_archived=include_archived)
+        kw = (
+            self._keyword_search(query, limit=over, include_archived=include_archived)
+            if ARM_KEYWORD in active
+            else []
+        )
+        gr = (
+            self._graph_search(query, limit=over, include_archived=include_archived)
+            if ARM_GRAPH in active
+            else []
+        )
         # chunk_locs collects, per item, the span of the chunk whose vector won for it —
         # filled by the vector arm as a by-product of its roll-up so the ranked list it
         # hands to fusion stays exactly [(item_id, rank)].
         chunk_locs: dict[str, dict] = {}
-        vec = self._vector_search(
-            query, limit=over, include_archived=include_archived, chunk_locators=chunk_locs
+        vec = (
+            self._vector_search(
+                query, limit=over, include_archived=include_archived, chunk_locators=chunk_locs
+            )
+            if ARM_VECTOR in active
+            else []
         )
 
         fused = self._rrf_fuse(kw, gr, vec)
