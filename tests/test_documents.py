@@ -649,6 +649,108 @@ class TestDocumentRegenerate:
         assert "iterated" in types
 
 
+# ── DFE-3's V1 gate, as a rail: generate with the TOOL, parse it back, diff ──
+# `test_docx_roundtrip.py` calls `render_docx` directly, so the seam between the tool
+# the agent actually invokes and the parser is joined by nothing. That is the DFE-2
+# hazard's shape: a round trip that never travels the real call site cannot see a
+# regression introduced there — a tool that quietly picked a different writer, dropped
+# the title, or stored bytes other than the ones it rendered would leave every existing
+# document test green.
+
+
+class TestToolGeneratedDocumentParsesBack:
+    """`document_create` → stored bytes → `parse_docx` → diff against the same model."""
+
+    _MARKDOWN = (
+        "# Quarterly Review\n\n"
+        "A paragraph with **bold**, *italic*, `code()` and a "
+        "[link](https://example.invalid/x).\n\n"
+        "## Findings\n\n"
+        "- first bullet\n- second bullet\n\n"
+        "1. step one\n2. step two\n\n"
+        "| Region | Units |\n| --- | --- |\n| North | 12 |\n| South | 7 |\n\n"
+        "Closing paragraph.\n"
+    )
+
+    def _generate(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+        from personalclaw.artifacts.native import NativeArtifactProvider
+        from personalclaw.mcp_artifacts import _document_create
+
+        prov = NativeArtifactProvider(root=tmp_path / "artifacts")
+        reply = _document_create(
+            prov,
+            "document_create",
+            {"name": "Quarterly", "markdown": self._MARKDOWN},
+            None,
+            lambda outcome, slug="", error="": None,
+        )
+        assert "Error" not in reply, reply
+        slug = [a.slug for a in prov.list()][0]
+        data, mime = prov.raw_bytes(slug)
+        assert mime.endswith("wordprocessingml.document"), mime
+        return data
+
+    def test_the_stored_bytes_parse_back_to_the_model_the_tool_built(self, tmp_path, monkeypatch):
+        """The diff. Kinds, title and visible text, block for block.
+
+        Compared against `document_from_markdown` of the SAME markdown — which is what
+        `_document_create` builds internally — so a tool that stored a document other
+        than the one it rendered from the caller's input reds here.
+        """
+        from personalclaw.documents.docx_parser import parse_docx
+        from personalclaw.documents.from_markup import document_from_markdown
+
+        data = self._generate(tmp_path, monkeypatch)
+        authored = document_from_markdown(self._MARKDOWN, title="")
+        parsed, _report = parse_docx(data)
+
+        def visible(model):
+            return [
+                (
+                    block.kind,
+                    block.text or "".join(run.text for run in block.runs),
+                    tuple(block.items),
+                    tuple(tuple(row) for row in block.rows),
+                )
+                for block in model.blocks
+            ]
+
+        # Vacuity floor: the fixture must actually carry the whole span of kinds, or the
+        # equality below could hold over one paragraph — or over two empty lists.
+        assert [block.kind for block in authored.blocks] == [
+            "paragraph",
+            "heading",
+            "bullets",
+            "numbered",
+            "table",
+            "paragraph",
+        ]
+        assert authored.title == "Quarterly Review"
+
+        assert parsed.title == authored.title
+        assert visible(parsed) == visible(authored)
+
+    def test_the_tool_generated_document_reports_exactly_its_one_honest_loss(
+        self, tmp_path, monkeypatch
+    ):
+        """The loss report, in BOTH directions, on a document the tool made.
+
+        Exact equality, not `in`: a shorter list means the parser went silent about the
+        template's non-uniform margins, and a longer one means it is reporting something
+        the model can hold. `page_property` is the single unavoidable item — python-docx's
+        default template is 1.00in top/bottom and 1.25in left/right, and
+        `PageSetup.margin_in` is one number.
+        """
+        from personalclaw.documents.docx_parser import parse_docx
+
+        _model, report = parse_docx(self._generate(tmp_path, monkeypatch))
+
+        assert report.kinds() == ["page_property"]
+        assert not report.lossless
+        assert [item.kind for item in report.items] == ["page_property"]
+
+
 class TestUpdateBinaryContract:
     def test_update_binary_takes_no_snapshot_argument(self):
         """Pinned so a caller can't reintroduce it: a binary update ALWAYS bumps and
