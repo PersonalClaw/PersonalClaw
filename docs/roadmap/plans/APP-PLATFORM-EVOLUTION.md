@@ -837,3 +837,33 @@ small enough to stay isolated cuts the rails; a cap wide enough to include them 
 not mutually isolated and reds the baseline. Refusing was the right call — a scored verdict here would
 have been fiction. Measuring `_audit` needs either per-file isolation in the runner or a hand-picked
 selection, so **whether the app-lifecycle audit trail is railed remains an open question.**
+- **2026-08-24 — DISCOVERY (APE-3, worker signal handling): `_install_signal_handlers` is not merely
+  unrailed, it is UNREACHABLE on the supervisor-spawned path — and the cause is a never-set env var.**
+  Came in to rail `apps/background.py:423` `_install_signal_handlers(control)` (measured UNRAILED: 99 green
+  with the wire deleted) as the missing half of worker lifecycle — `_stop_worker` is railed, the handler that
+  makes SIGTERM actually stop the loop is not. **Did not ship the rail, because the path it would assert does
+  not run.** `run_worker` resolves its context FIRST (`ctx = WorkerContext.from_env()` at
+  `background.py:419`) and only then calls `_install_signal_handlers(control)` at `:423`. `from_env` fails
+  closed unless `WORKER_GRANT_ENV` (`PERSONALCLAW_APP_WORKER_GRANT`) equals `backgroundTasks`
+  (`background.py:318-325`) — and **nothing in the tree ever sets that variable.** The constant is *defined
+  twice* (`background.py:105` and `worker_runtime.py:181`) and **assigned nowhere**: `worker_runtime.py:181`'s
+  copy has zero uses, `WorkerSupervisor._child_env` (`:461-502`) puts only `PERSONALCLAW_APP_NAME` +
+  `WORKER_ID_ENV` (+ optional data/shared-storage keys) into `extra`, and `sandbox.build_child_env` does not
+  add it. **Measured, not read:** `build_child_env(site="app-worker", extra={...})` → grant key present
+  `False`; `WorkerContext.from_env(env)` on that exact env → `WorkerContractError`, message
+  *"PERSONALCLAW_APP_WORKER_GRANT is '', expected 'backgroundTasks'"*, whose FIX text is the misdirecting
+  *"do not run this script directly"* — which is precisely what the supervisor did.
+  **Why it is invisible:** `worker_runtime.py:442-448` spawns with `stdout=DEVNULL, stderr=DEVNULL`, so the
+  contract error is swallowed; the supervisor sees an immediate crash and restarts to the crash-loop bound.
+  Latent today only because no app on disk declares `backgroundTasks`, so nothing is spawned.
+  **Consequence for the rail:** an honest wire rail cannot be written against this seam yet. Passing an
+  explicit `ctx` to skip `from_env` would rail a path no supervisor-spawned worker takes — a mechanism test
+  wearing a wire test's clothes, and it would go green over a broken handoff. The existing SIGTERM tests
+  (`test_app_worker_runtime.py:439-487`) do not cover it either: their children install their own
+  `signal.signal(SIGTERM, …)` in a hand-written body, which is what rails `_stop_worker`, not this wire.
+  **The fix is one line in `_child_env`'s `extra`** (set `WORKER_GRANT_ENV` to `BACKGROUND_TASKS_PERMISSION`,
+  importing the single constant and deleting `worker_runtime.py:181`'s duplicate). Deliberately NOT taken
+  here: it is a src behaviour change outside this session's scope (rail the gateway boot block), and it wants
+  its own rail — a worker that reaches `setup()` at all. Recorded so the next APE-3 session starts from the
+  handoff rather than re-deriving it. The shipped half of the session (the boot block's
+  `load_all_extensions()` wire) landed separately and does not touch this file's atoms.
