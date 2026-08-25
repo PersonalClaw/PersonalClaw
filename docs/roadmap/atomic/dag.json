@@ -6455,7 +6455,8 @@
           "deps": [
             "LV-1",
             "EXT:LEARNING-FLYWHEEL:refiner statistical gates slot behind same queue/kind (coordination, non-blocking)"
-          ]
+          ],
+          "blocked_reason": "IMPLEMENTED, awaiting ONE owner reading (2026-08-25). All four done_when clauses are satisfied on feature-lv5-refinement-arm EXCEPT under a literal reading of 'approving applies the diff and writes provenance frontmatter'. The diff IS applied and provenance IS written -- version + date + trigger in the rendered refinement heading, plus the SEL accept row -- but to the OVERLAY record, not to SKILL.md frontmatter. That deviation is forced, not preferred: WF2LEA-6 made the base skill immutable precisely so verify_skill_integrity / .pclaw-lock.json stays valid, so stamping frontmatter would break a marketplace-locked skill, and doing it only for auto/ skills would be two paths. OWNER DECISION: does 'provenance frontmatter' require a literal frontmatter write? If yes, this atom is PARTIAL and the clause needs re-scoping against WF2LEA-6's immutability guarantee. If no (provenance recorded where it can be recorded), flip done -- the code is ready and gated."
         },
         {
           "id": "LV-6",
