@@ -426,3 +426,71 @@ def _fenced_spans(text: str) -> list[str]:
         inside, _, rest = rest.partition("</untrusted_content>")
         spans.append(inside)
     return spans
+
+
+@pytest.mark.asyncio
+async def test_no_model_still_produces_an_honest_digest_and_advances_the_cursor(
+    store, tmp_path, _isolated_home
+):
+    """The degraded-mode floor `resilience/degraded.py` registers for ``source_digest``.
+
+    This is the shape a raised failure never had: ``one_shot_completion`` returns a FALSY value
+    rather than raising when nothing is bound, so the original ``or ""`` handed an empty string
+    onward — the digest wrote an empty note, notified with an empty body, and advanced the cursor
+    anyway. ``_synthesise``'s docstring already promised a plain-text digest; only the ``except``
+    branch delivered one.
+
+    The cursor SHOULD still advance: the items are durable in the library before the narrative is
+    attempted, so a re-run would re-summarise things the user already has. That is why this
+    surface is not ``research_report`` — nothing here is deferred.
+    """
+
+    async def _returns_nothing(prompt: str, **kw: object) -> str:
+        return ""
+
+    spool = SourceEventSpool(tmp_path / "events.jsonl")
+    await _ingest(
+        store,
+        spool,
+        [SourceItem(guid="n1", title="Only item", content="body")],
+    )
+    state = _state(tmp_path)
+    cursor = tmp_path / "cursor.json"
+
+    result = await sd.run_morning_digest(
+        knowledge_store=store,
+        spool=spool,
+        state=state,
+        completion_fn=_returns_nothing,
+        cursor_file=cursor,
+    )
+
+    # The digest ARRIVES, with a body that names the gap rather than an empty string.
+    assert result.item_id
+    body = store.get_item(result.item_id)["content"]
+    assert body == sd.UNSYNTHESISED_BODY
+    assert body.strip(), "an empty digest body is the defect this test exists for"
+
+    # And it is the same string the registered contract's floor describes, so the contract
+    # cannot drift from the behaviour without one of these two assertions failing.
+    from personalclaw.resilience.degraded import get_contract
+
+    contract = get_contract("source_digest")
+    assert contract is not None, "the surface must be registered, or the floor claim is vacuous"
+    floor = contract.floor
+    assert "still arrives" in floor and "already in the library" in floor
+
+    # The notification carries that real body, not "".
+    assert result.notified is True
+    assert len(state._notification_log) == 1
+
+    # Cursor advanced — the window is genuinely consumed, the items are in the library.
+    assert sd.read_cursor(cursor) == result.cursor > 0
+    second = await sd.run_morning_digest(
+        knowledge_store=store,
+        spool=spool,
+        state=state,
+        completion_fn=_returns_nothing,
+        cursor_file=cursor,
+    )
+    assert second.skipped_reason == "no new items"

@@ -29,6 +29,12 @@ _CALL_SITE_SURFACES = {
     "inbox_service.py": "inbox_enrichment",
     "after_turn_review.py": "memory_extraction",
     "knowledge/llm_pool.py": "knowledge_ingest",
+    # WS-7's morning digest. Its own surface, not `knowledge_ingest` and not `research_report`:
+    # the floor is a digest that still ARRIVES with an honest plain-text body (the items are
+    # already durable), which is neither "documents still captured, insights missing" nor "the
+    # run is deferred". `_synthesise` routes an EMPTY completion — the actual no-model shape,
+    # which does not raise — through the same fallback as a raised one.
+    "knowledge/source_digest.py": "source_digest",
     "nl_to_cron.py": "assistant_reasoning",
     "context.py": "assistant_reasoning",
     # visualize(data, hint) — the agency-free data→genui primitive (AMBIENT-SURFACES
