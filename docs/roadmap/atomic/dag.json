@@ -5376,7 +5376,8 @@
           "deps": [
             "WS-2",
             "EXT:AUTOMATION-SUBSTRATE:event bus for SourceItemIngested/SourcePollCompleted + morning-digest template + web_watch source_id consumption (interim JSONL spool until bus lands)"
-          ]
+          ],
+          "blocked_reason": "PARTIAL by its OWN log (WATCHED-SOURCES.md:1092-1096, bolded): 'This atom is therefore PARTIAL in one respect worth recording: the digest is invocable and fully tested, but nothing in the shipped product calls it yet' -- a bundled clock trigger (or a template referencing it) is the missing user-reachable half, and it belongs with the Sources UI (WS-9/WS-10). Everything else IS shipped and was verified on fc597af4: source_streams.py + source_queries.py + source_digest.py, run_morning_digest at source_digest.py:214 reaching notification_allowed() via DashboardState.notify, fence_item at :107 feeding the untrusted_content block at :137, tests/test_watched_sources_streams.py 13 passed. The unmet clause is a MISSING CALLER, not missing capability -- exactly the inert-control shape the census is supposed to ask about ('would deleting the caller be caught?'). Clears when WS-9/WS-10 ship the clock trigger, or when the owner descopes the user-reachable half from this atom. DO NOT flip done on the strength of the entry's '**DONE --**' opener: the PARTIAL ruling sits ~80 lines BELOW it in the same entry, and reading only the opener is how this atom was wrongly flipped once already."
         },
         {
           "id": "WS-8",
