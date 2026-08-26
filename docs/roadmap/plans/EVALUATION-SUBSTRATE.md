@@ -1445,3 +1445,36 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   to the real home"* on one 7-file invocation and passed on the identical re-run — the known
   xdist-reshuffle isolation family, in a file this diff does not touch. Probe residue **16 tree-wide,
   0 introduced**; worktree clean.
+
+- [2026-08-26][ES-7] **Integration follow-up: a real-data rail that expires every time the log grows,
+  and it is the THIRD PR this family has reddened.** `test` failed on *both* duplicate runs on the
+  same SHA, so it was deterministic and mine — but not in ES-7's feature code.
+  `test_the_real_es7_verdict_comes_from_its_own_tagged_entry` asserted a literal phrase
+  (`"now closed in INPUTS"`, later widened to two literals) against whichever entry `decide_log`
+  picks. This PR's own new §3.1 entry displaced both, so the enumeration needed a third member —
+  **its second expiry in two days**, the previous one already recorded in the test's own docstring.
+  **The enumeration cannot converge, and that is a property of the data, not of the wording.** The
+  plan log is append-only, so *which* of ES-7's entries wins changes with every legitimate entry
+  added. Censused across the file rather than assumed: of the **four** real-data rails that call
+  `decide_log`, **three have now reddened a PR for exactly this reason** — `MRT-5`'s (#2066), this
+  one (#2098), and `test_the_real_inherited_verdicts_are_gone` (#2101, still open).
+  **So the positive "which ruling is cited" clause was dropped rather than extended.** It never
+  carried the defect. The defect is that `[harvest]`'s text — an entry that says of itself *"Not an
+  atom of its own"* — used to adjudicate `ES-7`, and that is pinned by three PROVENANCE assertions
+  (`"[ES-7" in excerpt`, `"[harvest]" not in`, `"Not an atom of its own" not in`) which do not care
+  which of ES-7's own entries wins. `verdict == PARTIAL` still holds the adjudication.
+  **Non-vacuous:** neutering `decide_log`'s provenance preference so it returns `hits[0]`
+  unconditionally reds **11** tests including this one; restoring from a file copy returns 78 passed.
+  The mutation was checked to parse before running, so the red is a failure and not a collection
+  error.
+- [2026-08-26][ES-7] **A second red the rebase surfaced, and it is the pure "a green batch is not a
+  green union" shape.** `LV-4` merged (#2073) while this branch was in flight and added an
+  `api.identityReport` call to the same `LearningPage` that `evidenceGrade.test.tsx` renders. This
+  file's `vi.mock('../../lib/api')` lists only its OWN reads, and a partial mock does not fail on the
+  missing key — it throws `api.identityReport is not a function` **from inside the render**, so both
+  call-site tests died before asserting anything. **Neither PR could see it alone:** LV-4 added the
+  call, this file predates it, and the break exists only in the combination. Fixed here by adding the
+  key with a REJECTING stub rather than a resolving one — the page must paint the ablation grade
+  whether or not the identity report resolves, and if it ever grows a real dependency on that payload
+  these tests should say so rather than silently pass. Falsified both directions: removing the entry
+  reds exactly those 2 tests, restoring returns 497 files / 5277 tests.

@@ -57,6 +57,14 @@ vi.mock('../../lib/api', () => ({
     evalStudies: () => evalStudies(),
     retrievalBench: () => retrievalBench(),
     ablation: () => ablation(),
+    // LV-4's identity report is fetched by the same LearningPage this file renders. A partial
+    // `api` mock does not fail on the missing key — it throws `api.identityReport is not a
+    // function` from inside the render, so BOTH call-site tests below died before asserting
+    // anything. Neither PR could see it alone: LV-4 added the call, this file mocks only its own
+    // reads, and the break exists only in the union. Rejecting is the honest stub — the page must
+    // paint the ablation grade whether or not the identity report resolves, and if it ever grows a
+    // dependency on that payload these tests should say so rather than silently pass.
+    identityReport: () => Promise.reject(new Error('not under test')),
   },
 }))
 
