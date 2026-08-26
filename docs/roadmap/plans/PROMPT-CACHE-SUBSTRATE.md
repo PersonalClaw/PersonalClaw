@@ -720,3 +720,87 @@ Status stays DESIGNED — implementation deferred to its natural roadmap positio
   (iii) re-summing at the call site (`cache_tokens=read + creation`) →
   `TestCallSiteRail::test_call_site_passes_the_split_counts_and_no_summed_keyword` red, 1 of 15.
   No production line was changed by this session — it is an audit, and the tree carries only this entry.
+
+- **2026-08-25 — `PCS-7` CLOSURE PASS: the 2026-08-24 audit's one un-executable claim is now a
+  rail, and running it found an accumulator the hand census had missed. Atom stays `todo` —
+  PARTIAL, on the credential-gated V2 clause only.**
+  The audit above settled the content question and this pass re-settled it independently, per file
+  and per symbol, against `origin/main` `20488b9e`: `pricing.py`, `stats.py` and all three of the
+  atom's test files are **byte-identical** to `main`, and `git diff origin/main..<branch> --
+  dashboard/chat_runner.py` adds **zero lines mentioning `cache`** — its 745-line delta is `main`
+  moving forward under other plans, not un-landed PCS-7 content. So the feature is fully on `main`
+  and the row is mis-statused for the T3.2 half.
+  **The two remaining unpushed local branches are STALE — nothing to land.**
+  `feature-pcs7-cache-proof-surface` (`40a69cf9`) is a strict superset of
+  `feature-pcs7-turn-cache-telemetry` (`a68b4f7f`): the superset adds `pricing.py`, `stats.py`,
+  the two primitive test files and the docs hunks, and B's four files are A's four. Every one of
+  A's `src/` and `tests/` files diffs to zero against `main`, including `PCS.md` — `main` already
+  carries A's `PCS-8` flip. Verdict: both **already-on-main**, neither cherry-picked, no authorship
+  to preserve because the content is already authored on `main`. Deleting them is safe; left alone
+  they will keep reading as un-landed work to the next audit.
+  **THE REAL GAP, and it was the one the audit named without being able to close: "no second
+  store" was held by a HAND-RUN census recorded in this log.** The three shipped rails cannot see a
+  second store appear. `test_stats_counters_still_carry_both_cache_keys` checks the counters are
+  PRESENT — and its docstring's claim that it reds "if a refactor adds a parallel per-turn store" is
+  **false**, since a new accumulator in another module leaves `snapshot()` and the `hasattr` checks
+  untouched. `test_cache_hit_pct_is_module_level_and_stateless` pins only that the helper is not a
+  `Stats` method. `TestCallSiteRail` pins that the shared helpers are CALLED — calling them and also
+  keeping a private accumulator are not mutually exclusive. Anything a human counts once, a later
+  change un-counts silently.
+  **Built: `tests/test_cache_counters_single_store.py`** — the census, by AST rather than grep
+  (a docstring naming `cache_read_tokens` is not a store), in four halves. (1) No module on the live
+  turn path AugAssigns a prompt-cache-named target. (2) The tally's only writers are
+  `Stats.inc_cache_read_tokens`/`inc_cache_creation_tokens`, called from exactly one module. (3) The
+  two per-turn locals are `Assign`ed from the terminal complete event, never accumulated across
+  events — accumulating them would both duplicate the tally AND desynchronise the hit-rate
+  denominator, since `_turn_input_tokens` beside them is assigned. (4) The singleton carries no
+  cache-named attribute outside its one `_c` dict. Half (1)'s expected answer is the EMPTY set —
+  the shape a scanner that matches nothing also returns — so it carries a positive control it MUST
+  flag and a negative control it must not; halves (2) and (3) assert their subjects were found
+  before asserting anything about them.
+  **DISCOVERY — the census found a second accumulator the hand census missed: `usage_ledger._fold`
+  (`usage_ledger.py:199-200`).** It is **not** a second store: it is a query-time group-by reducing
+  rows the ledger already persisted (from the same terminal event that feeds `Stats`) into a
+  transient per-group dict, the way SQL `SUM()` would. Exempted explicitly, and the exemption is
+  floored two ways rather than granted: `_blank_agg()` must return a DISTINCT object per call —
+  proven behaviourally by folding into one group and asserting the other is untouched, so a shared
+  dict reds — and the exemption reds if `_fold` ever stops accumulating, so it cannot outlive its
+  reason. The audit's census was not wrong about the live path; it was scoped to writers of the
+  counter and never asked which modules accumulate.
+  **`done_when`, clause by clause.** Per-turn `cache_read_tokens`/`cache_creation_tokens`/
+  `cache_hit_pct` + saved-USD on turn-complete telemetry: **MET** (on `main`, unchanged by this
+  pass). "Reusing `stats.py:42-84` counters with no second store": **MET, and now EXECUTABLE** —
+  this pass's only addition. Honest-zero for unpriced models: **MET** (`main`'s
+  `test_unpriced_model_is_none_and_not_a_zero`, floored by
+  `test_unpriced_none_is_a_real_distinction_not_existing_behaviour`). Negative saved-USD not hidden:
+  **MET** (`test_first_turn_that_only_writes_the_cache_is_negative`, floored on the shipped price
+  table). No rail was added over either negative — a second rail over the same invariant is dead
+  code, and both already carry vacuity floors.
+  **V2 — the ONLY reason this atom is not `done`, and it is CREDENTIAL-GATED, not unbuilt.**
+  Anthropic-family live multi-turn (turn-1 creation → turn-2 read): **MET** (the Bedrock run above).
+  Undeclared/Ollama byte-identical zeros and config-off-stops-the-marker: **met at unit level**.
+  **NOT met: (a) non-zero saved-USD on a real run** — both live turns rendered `saved unpriced`
+  because no Bedrock inference-profile id resolves to a price row, which is the honest-zero design
+  behaving correctly and whose fix is a repo-wide pricing/CATO change; **(b) the OpenAI-family live
+  run reporting vendor cache reads** — no `OPENAI_API_KEY` in this environment, and it is coupled to
+  `PCS-3`'s still-unmet "OpenAI adapter declares AUTOMATIC" clause. Neither was simulated. Paying
+  real OpenAI spend to close a personal-project validation clause is an owner call.
+  **Falsified — four mutations, each red on exactly the predicted test, each restored from a file
+  COPY (never `git checkout`).** (i) `_turn_cache_read_tokens` `=` → `+=` at
+  `chat_runner.py:4003` → 2 of 7 red (the live-path census AND the turn-locals half, which is the
+  pair that should both catch it). (ii) the named mutator routed through the generic one
+  (`stats.inc("cache_read_tokens", ...)` at `:3942`) →
+  `test_the_only_tally_writers_are_the_stats_mutators` red, 1 of 7. (iii) `self._cache_read_snapshot
+  = 0` added to `Stats._init_counters` → `test_the_singleton_holds_no_cache_named_attribute_beside_
+  its_counter_dict` red, 1 of 7. (iv) a deliberately STALE exemption (`pricing.py` added to
+  `_READ_SIDE_FOLDS`) → `test_the_read_side_exemption_is_still_read_side` red, 1 of 7.
+  **Recorded, not widened** (both belong to `EXT:COST-AND-TOKEN-OBSERVABILITY`, which this atom's
+  own dep row says owns the readout): the `Telemetry` row sits behind a disclosure defaulting to
+  CLOSED, and **no frontend test asserts `activityKind === 'stats'` at all**, so the production
+  reader of these numbers could be deleted with every gate green. Also unchanged, and outside this
+  atom's file fence: `dashboard/handlers/model_telemetry.py` and `exposure.py`.
+  **Still standing after this pass: the audit's SPLIT recommendation.** The numbers half has no
+  remaining work and no remaining risk; the live-OpenAI half cannot be closed from this environment
+  at all. One row holding both makes a fully-built, fully-railed deliverable read `todo`
+  indefinitely over a credential the repo does not have. `dag.json` was not touched — that flip is
+  the owner's.
