@@ -611,3 +611,71 @@ class ElementRef:
   lifecycle/launcher) is unbuilt and `GatedCdpSession` has no production consumer yet (BA-3's by design) —
   so whether BA-2 flips on `done_when` or waits for the launcher to move to BA-4/a new atom is an **owner
   decision**, not the integrator's.
+
+- [2026-08-25][BA-2] **DONE (closure pass) — the gap was that the behavioural proof was silently
+  skippable, not that anything was unbuilt.** Triage first: both unpushed local branches are content
+  that is ALREADY on `main`, adjudicated on blob identity rather than PR state.
+  `feature-ba2-browse-egress-policy` (`b627257c`) — `net/policy.py`'s BROWSE hunk is on `main` verbatim
+  (lines 170–245) and `tests/test_browse_egress_policy.py` is blob-identical (`abb846a7`) on both;
+  `main`'s `policy.py` has since grown `_LAST_DENY_HOSTS` on top. `feature-ba2-cdp-preflight`
+  (`7859661a`) — `src/personalclaw/browse/cdp.py` is blob-identical to `main` (`066ce349`), and the only
+  delta in `tests/test_browse_cdp_preflight.py` is `main` deleting the branch's own
+  `raising=False` BROWSE stand-in scaffolding once the real profile landed. **Verdict: both stale, nothing
+  to cherry-pick.** Nothing was rebuilt.
+
+  **The real gap.** Two `done_when` clauses are behavioural — the safety script making `fetch()` /
+  `media.play()` / `navigator.bluetooth` throw or return blocked, and redirects re-evaluated per
+  `Page.frameNavigated`. Only `test_browse_safety_script.py`'s layer 2 (11 cases) and
+  `test_browse_cdp_live.py` (11 cases) reach them, and both `pytest.skip` when no browser is found — so
+  **the reach of their browser lookup was the reach of the proof**, and a skip counts as a pass. That
+  lookup was two absolute literals, duplicated per file, naming ONE Playwright revision
+  (`chromium_headless_shell-1234`) and ONE OS/CPU (`chrome-headless-shell-mac-arm64`). Two silent-skip
+  failure modes, neither able to go red: (1) `package.json` allows `playwright: "^1.62.1"`, so the first
+  bump renames the revision directory and all 22 behavioural tests stop running; (2) **the CI pytest job
+  (`ci.yml:139`, `uv run pytest`) installs no browser and runs on Linux, where those literals could never
+  match — so on the machine that gates every merge the behavioural layer had never executed once.** Its
+  green was 22 skips. A rail that matches nothing looks clean.
+
+  **Closure.** `tests/browse_chrome.py` is now the single lookup, searching by shape (per-OS roots incl.
+  `XDG_CACHE_HOME`/`LOCALAPPDATA`, `PLAYWRIGHT_BROWSERS_PATH`, a glob over the revision, a glob for the
+  executable's own name, `X_OK` not `exists()`), plus `PERSONALCLAW_TEST_CHROME` as an escape hatch and
+  `PERSONALCLAW_REQUIRE_BROWSE_PROOF` to turn a missing browser *or* missing `websockets` into a FAILURE
+  so a gate can demand the proof ran. Absence still skips by default — failing there would take the suite
+  down over an environment. `tests/test_browse_behavioural_proof_is_reachable.py` (21 cases) is the rail:
+  its load-bearing case asks whether an installed Chromium is *discoverable*, establishing "installed"
+  from Playwright's own `INSTALLATION_COMPLETE` marker that `find_chrome` never reads — so the floor is
+  not computed from the value it pins.
+
+  **Gate:** `make lint` 0 (mypy 1017 source files), 177 browse tests green (all ten browse files) with the live headless leg and **0
+  skips**, `python scripts/gate_report.py` 6/6, probe residue 16 pre-existing / 0 introduced,
+  `~/.personalclaw` unchanged per the suite's own real-home rail. No `web/` change, so no npm leg.
+  **Three falsifications, each mutated live, grepped back, restored from a file copy:** (i) the pre-flight
+  ORDERING — sending `Page.navigate` *before* returning the block, i.e. "navigated then refused", leaves
+  the outcome and the SEL row identical and reds 10 tests including
+  `test_denied_host_sends_zero_page_navigate` and live `test_a_denied_host_never_reaches_the_network`,
+  while its vacuity floor `test_allowed_host_sends_exactly_one_page_navigate` stays green; (ii) the
+  REDIRECT re-evaluation — widening `handle_event`'s teardown-URL early return to swallow any non-empty
+  frame URL reds 6 including live `test_a_real_client_side_redirect_to_a_denied_host_is_re_evaluated`
+  ("the guard never re-evaluated the redirect") and `test_the_denied_document_is_torn_down_not_merely_
+  stopped`, while both allowed-redirect partners and every pre-flight test stay green — so the mutation
+  is specific to the bypass; (iii) the new rail itself — re-pinning `_REVISION_DIR_PREFIXES` to `-1234`
+  reds 5 of the synthetic cases **while the load-bearing installed-browser case stays GREEN**, because
+  this machine's revision happens to BE 1234. That is the vacuity floor earning its place: on this
+  machine the load-bearing case alone could not have caught the brittleness.
+
+  **§6.3 headless bypass gap — still OPEN, deliberately, and correctly scoped.** Not a regression and not
+  in `done_when`. The pre-flight constrains the top-level URL and its redirect hops; the injected script
+  narrows the in-page same-context JS surface. What neither reaches is the network-stack surface —
+  subresources, workers, cross-origin-iframe egress, `window.open`, WebRTC/ICE, DNS prefetch — because
+  those resolve and dial inside Chrome. `net/policy.py`'s BROWSE prose enumerates them and
+  `pin_resolved_ip=False` refuses to advertise a rebind mitigation the surface does not implement.
+  Closing it needs enforcement at a layer Chrome must traverse (`Fetch.enable`/`Network` interception, or
+  a mandatory proxy) — a different atom. `test_browse_cdp_live.py::test_the_redirect_request_itself_
+  already_left_the_browser` asserts the gap rather than papering over it.
+
+  **All five `done_when` clauses met and proven live.** Standing owner question from 2026-08-24 (flip on
+  `done_when`, or wait for §4 Stealth Stack + §10 launcher) is unchanged and still the owner's; this pass
+  did not touch `dag.json`. **Left for the owner:** the CI pytest job installs no browser, so the
+  behavioural clauses are still proven only on a developer machine that happens to have one. Making CI
+  prove them needs `npx playwright install chromium` + `PERSONALCLAW_REQUIRE_BROWSE_PROOF=1` on that job
+  — a workflow file outside this pass's fence, and a minutes-per-run cost that is an owner call.
