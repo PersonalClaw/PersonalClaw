@@ -412,7 +412,8 @@
             "KL-2",
             "KL-7",
             "EXT:AMBIENT-SURFACES:tile-registry-for-composable-library-home"
-          ]
+          ],
+          "pr": 2069
         },
         {
           "id": "KL-9",
@@ -2897,7 +2898,8 @@
             "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:Run Ledger materiality rows (AUTO-R2) + delivery contract + fire\u2192spawn classifier machinery",
             "EXT:AUTONOMY-GUARDRAILS:NEW-2 typed structured-output (output_type) for the proposal schema",
             "EXT:INBOX-NOTIFICATIONS-UNIFICATION:notify gate + notification-kind registry the digest delivers through"
-          ]
+          ],
+          "pr": 2069
         },
         {
           "id": "PA-3",
