@@ -1,0 +1,36 @@
+{
+  "description": "delegation: split a two-part task and state the split before working. Skill-impact task set v1 (\u00a72.2). Observable: both parts named plus an enumerated split statement that precedes the work.\n",
+  "dimensions": [
+    "skill_impact"
+  ],
+  "fixture_home": "empty",
+  "name": "sk_delegation",
+  "sessions": [
+    {
+      "name": "state_the_split",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "contains",
+              "value": "cache TTL"
+            },
+            {
+              "case_sensitive": false,
+              "type": "contains",
+              "value": "assumption"
+            },
+            {
+              "case_sensitive": false,
+              "type": "regex",
+              "value": "(?is)\\b1[.)]\\s.*\\b2[.)]\\s"
+            }
+          ],
+          "user": "Two independent things, and I want them delegated in parallel: summarise the cache TTL decision, and list the three riskiest assumptions behind it. State the split as a numbered plan before you do either."
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

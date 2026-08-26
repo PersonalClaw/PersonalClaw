@@ -217,6 +217,8 @@ const PEP2_CENSUS: {
     why: 'New task → onCreate. PEP-2\'s scope asked for TEMPLATE cards here; there is no task-template catalog in the backend to source them from (src/personalclaw/tasks/ ships models+handlers, no templates), and authoring card copy would be the drift the scope forbids. Nothing changed.' },
   { surface: 'Loops', file: 'pages/loops/LoopsListPage.tsx', verdict: 'on-ramp', why: '"Start a loop" — the same handler the header CTA uses.' },
   { surface: 'Knowledge › Library', file: 'pages/knowledge/KnowledgeListPage.tsx', verdict: 'on-ramp', why: '"Add knowledge" — onCreate, the shared create route.' },
+  { surface: 'Knowledge › Decisions', file: 'pages/knowledge/DecisionJournal.tsx', verdict: 'on-ramp',
+    why: '"Open chat" — the ONLY surface that can create a decision. Logging one also mints its one-shot review trigger, so handlers/knowledge.py deliberately refuses to create a `decision` from the library create picker: an item authored there would be a decision that never comes back. Naming chat in prose and leaving the user to find it is the exact defect this census flagged on Knowledge › Intents, so `onOpenChat` is a REQUIRED prop threaded from KnowledgeSection (the ArtifactGrid rule — a call site cannot ship the fact without the way in).' },
   { surface: 'Memory', file: 'pages/settings/MemoryPanel.tsx', verdict: 'on-ramp', why: '"Add a fact" — opens the memory editor in place.' },
   { surface: 'Skills', file: 'pages/skills/SkillsPage.tsx', verdict: 'on-ramp', why: 'Browse skills — conditional on `!q`, the shape this file\'s actionExprs() comment defends.' },
   { surface: 'Agents', file: 'pages/agents/AgentsListPage.tsx', verdict: 'on-ramp', why: '"New agent" — onCreate, the same flow as the header.' },

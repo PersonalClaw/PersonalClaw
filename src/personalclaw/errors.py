@@ -105,6 +105,14 @@ ERROR_CODES: dict[str, str] = {
         "resolvable — the implementation is simply absent, so nothing the operator configures "
         "on that machine changes the answer. Nothing was clicked, typed or changed."
     ),
+    "ERR_COMPUTER_USE_UNATTENDED_NOT_GRANTED": (
+        "A run with no human watching it (a cron fire, a channel message, an inbound caller) "
+        "asked to drive the desktop, and the operator's out-of-band enable document does not "
+        "grant that tool to unattended runs. Distinct from the capability being off: the "
+        "machine is armed and the app is allowlisted — what is missing is the separate standing "
+        "grant that lets it act with nobody present. An interactive run gets the approval "
+        "prompt instead of this refusal."
+    ),
     "ERR_BROWSE_CONFIG": (
         "A browse action's config is incomplete — it named no goal, or no page to start "
         "from. Refused before a browser is touched."

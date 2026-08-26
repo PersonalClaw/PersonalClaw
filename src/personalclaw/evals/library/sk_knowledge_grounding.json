@@ -1,0 +1,37 @@
+{
+  "description": "knowledge-grounding: answer a question the seeded store can support, and decline the ungrounded one. Skill-impact task set v1 (\u00a72.2). Observable: the grounded number is present and the distractor number is absent.\n",
+  "dimensions": [
+    "skill_impact"
+  ],
+  "fixture_home": "empty",
+  "name": "sk_knowledge_grounding",
+  "seed": {
+    "lessons": [
+      "The Atlas ingest window is 45 minutes."
+    ],
+    "preferences": "Cite what you know. Say so when a number is not grounded."
+  },
+  "sessions": [
+    {
+      "name": "grounded_answer",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "contains",
+              "value": "45"
+            },
+            {
+              "case_sensitive": false,
+              "type": "not_contains",
+              "value": "60"
+            }
+          ],
+          "user": "According to what we know, what is the Atlas ingest window, and what is the Atlas export window? Do not guess \u2014 say plainly which one is not grounded."
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

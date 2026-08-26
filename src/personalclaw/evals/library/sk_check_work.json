@@ -1,0 +1,41 @@
+{
+  "description": "check-work: produce a short artifact, then verify it against the stated requirement list. Skill-impact task set v1 (see docs/roadmap/research/learning-benchmark-protocol.md \u00a72.2). Observable: an enumerated verification list whose every line carries a pass / fail / unverifiable outcome.\n",
+  "dimensions": [
+    "skill_impact"
+  ],
+  "fixture_home": "empty",
+  "name": "sk_check_work",
+  "sessions": [
+    {
+      "name": "produce_then_verify",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "contains",
+              "value": "2.1"
+            }
+          ],
+          "user": "Write a three-line release note for version 2.1. Requirements: it names the version, it names one fix, and it stays under three lines."
+        },
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "regex",
+              "value": "(?is)\\b1[.)]\\s.*\\b2[.)]\\s.*\\b3[.)]\\s"
+            },
+            {
+              "case_sensitive": false,
+              "type": "regex",
+              "value": "(?i)\\b(pass|passed|fail|failed|unverifiable)\\b"
+            }
+          ],
+          "user": "Now check your work: verify that release note against those three requirements, one numbered check each."
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

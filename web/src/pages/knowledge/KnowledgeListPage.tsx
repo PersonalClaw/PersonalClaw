@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { reportingWrite } from '../../app/reportingWrite'
-import { BookOpen, FileClock, Home, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink } from 'lucide-react'
+import { BookOpen, FileClock, Home, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink, Gavel } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
+import { DecisionJournal } from './DecisionJournal'
 import { WindowedList } from '../../ui/WindowedList'
 import { Checkbox, FieldError } from '../../ui/forms'
 import { TagManager } from './TagManager'
@@ -31,7 +32,10 @@ import { notify } from '../../app/appSdk'
 // per-shelf counts — as opposed to the filterable item list. FIRST in the view strip, because it
 // is the orienting lens; `library` stays the DEFAULT, which is a deliberate boundary rather than a
 // preference (see the `view` param below).
-type View = 'home' | 'library' | 'graph' | 'intents' | 'tags' | 'conflicts'
+// `decisions` is a LENS, not a destination (PROACTIVE-ASSISTANT §5.3: "a filtered knowledge view,
+// not a new nav section — decisions ARE knowledge items"). It earns a place in this strip for the
+// same reason Conflicts and Tags do: same library, different question asked of it.
+type View = 'home' | 'library' | 'graph' | 'intents' | 'tags' | 'conflicts' | 'decisions'
 
 function StatChip({ icon: Icon, label, value }: { icon: typeof Database; label: string; value: number | string }) {
   return (
@@ -91,7 +95,7 @@ function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/a
   )
 }
 
-export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSources, onOpenReports, query, setQuery }: { onCreate: () => void; onOpenItem: (id: string) => void; onOpenReader?: (id: string) => void; onOpenSources: () => void; onOpenReports: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSources, onOpenReports, onOpenChat, query, setQuery }: { onCreate: () => void; onOpenItem: (id: string) => void; onOpenReader?: (id: string) => void; onOpenSources: () => void; onOpenReports: () => void; onOpenChat: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   // 🪤 The default stays 'library', measured rather than preferred: `pages/listDestinationLoadError`
   // mounts this page with an empty query and asserts the ITEM LIST's failed-read and empty-library
   // branches, both of which a different default lens hides. Making Home the landing view is a
@@ -421,7 +425,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
           right={
             <HeaderActions>
               <HeaderSegmented ariaLabel="Knowledge view" value={view} onChange={(v) => setView(v as View)}
-                options={[{ key: 'home', label: 'Home', icon: Home }, { key: 'library', label: 'Library', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }, { key: 'conflicts', label: 'Conflicts', icon: Scale }]} />
+                options={[{ key: 'home', label: 'Home', icon: Home }, { key: 'library', label: 'Library', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }, { key: 'conflicts', label: 'Conflicts', icon: Scale }, { key: 'decisions', label: 'Decisions', icon: Gavel }]} />
               {view === 'library' && (items?.length ?? 0) > 0 && (
                 // `priority="low"` so this sheds into the `…` menu before the primary action —
                 // it is a maintenance nicety, not the reason anyone opens the page.
@@ -531,6 +535,14 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
             onOpenReader={onOpenReader ?? onOpenItem}
             onOpenCollection={(id) => { setCollectionTok(id); setView('library') }}
             onShowCuration={(f) => { setCurationFilter(f); setView('library') }} />
+        ) : view === 'decisions' ? (
+          // Ahead of the item-list gates for the SAME reason Home is: the journal owns its own
+          // read (`/api/knowledge/decisions`), so a failed or empty item-list fetch must not blank
+          // a surface that does not depend on it. It also renders its own empty state, which says
+          // how to log a decision — the generic "Knowledge base is empty" card offers "Add
+          // knowledge", and that flow deliberately cannot create a decision (a decision authored
+          // without its review trigger would never come back), so it would point nowhere useful.
+          <DecisionJournal onOpenItem={onOpenItem} onOpenChat={onOpenChat} />
         ) : itemsData === undefined && itemsErr ? (
               <LoadError what={collectionTok ? 'shelf items' : 'knowledge items'} error={itemsErr} onRetry={load} />
             ) : items === null ? (itemsLoading ? <ListSkeleton what={collectionTok ? 'shelf items' : 'knowledge items'} /> : null) : empty ? (

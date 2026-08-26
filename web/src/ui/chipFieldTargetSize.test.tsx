@@ -138,3 +138,52 @@ describe('the chip field is shared widely enough to be worth a primitive fix', (
     expect(areas.size).toBeGreaterThanOrEqual(4)
   })
 })
+
+// ── And the chip's REMOVE button, which was half the floor ──────────────────────────────
+//
+// The field above was the first half. Measured on `#/settings/voice` (834×1112), three chips:
+//
+//     remove button target   12×12  →  24×24
+//     chip width             60 / 87 / 73  →  60 / 87 / 73     (unchanged)
+//     chip x                 244 / 309.6 / 403  →  244 / 309.6 / 403   (unchanged)
+//     glyph                  12×12  →  12×12    (2px further right)
+//
+// 12px is HALF of SC 2.5.8's 24px, and the undersized-target spacing exception cannot rescue it: the
+// button sat `gap-1` (4px) from the chip's own text.
+//
+// 🔑 THE CHIP'S TRAILING SPACE PAID FOR IT EXACTLY, which is why the chip's width does not move.
+// Before, the right side was `gap-1` (4) + glyph (12) + `pr-2` (8) = **24px** between the text and the
+// chip's edge. After, it is `gap-0` + a 24px button with the 12px glyph centred (6px each side) +
+// `pr-0` = **the same 24px**. So `gap-1` and the right half of `px-2` are not decoration being dropped;
+// they are the budget being spent on the target. That arithmetic is pinned below, because the moment
+// the chip's padding changes, the "chip width does not move" claim stops being true.
+describe("the chip's remove button clears SC 2.5.8's 24px floor", () => {
+  const chipStart = forms.indexOf('export function ChipInput')
+  const body = forms.slice(chipStart, forms.indexOf('\nexport ', chipStart + 10))
+
+  it('found the chip and its remove button (vacuity floor)', () => {
+    expect(chipStart, 'ChipInput was renamed or removed').toBeGreaterThan(0)
+    expect(body, 'the remove button is gone').toMatch(/aria-label=\{`Remove \$\{v\}`\}/)
+  })
+
+  it('the remove button IS the 24px target', () => {
+    const i = body.indexOf('aria-label={`Remove')
+    const tag = body.slice(body.lastIndexOf('<button', i), body.indexOf('</button>', i))
+    expect(tag, 'the remove button must be a 24px box').toMatch(/\bsize-6\b/)
+    expect(tag, 'it must centre its glyph, or the 24px box is not a target the glyph sits in')
+      .toMatch(/items-center/)
+    expect(tag, 'the glyph stays 12px — the box grew, the icon did not').toMatch(/<X size=\{12\}/)
+  })
+
+  it('the chip spent its trailing space, so its width is unchanged', () => {
+    // These three are the whole pixel-neutrality argument: 4 + 12 + 8 == 24.
+    // 🪤 NOT `indexOf('{v}', …)` to end the slice — that matches the `{v}` inside `key={v}` itself and
+    // leaves `'<span key='`, which then fails against a correct file. The opening tag is one line.
+    const chipOpen = body.indexOf('<span key={v}')
+    const chipTag = body.slice(chipOpen, body.indexOf('\n', chipOpen))
+    expect(chipTag, 'the left padding is untouched').toMatch(/\bpl-2\b/)
+    expect(chipTag, 'the right padding was spent on the button').toMatch(/\bpr-0\b/)
+    expect(chipTag, 'px-2 would re-add the 8px the button now occupies').not.toMatch(/\bpx-2\b/)
+    expect(chipTag, 'gap-1 would re-add the 4px the button now occupies').not.toMatch(/\bgap-1\b/)
+  })
+})

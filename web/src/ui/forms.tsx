@@ -367,13 +367,23 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
       onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); fieldRef.current?.focus() } }}
     >
       {values.map((v) => (
-        <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var text-[0.8125rem]">
+        <span key={v} className="inline-flex items-center rounded-pill bg-surface-high pl-2 pr-0 h-7 text-on-surface-var text-[0.8125rem]">
           {v}
           {/* One per chip, icon-only: without a name every remove button is announced as bare
               "button" — N identical ones, each destructive. Named from the chip's own text, which is
               also what makes them distinct. The input below already resolves a name carefully; this
               row never did. */}
-          <button type="button" aria-label={`Remove ${v}`} onClick={() => onChange(values.filter((x) => x !== v))} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
+          {/* 🔴 AND IT WAS A 12×12 TARGET — half of SC 2.5.8's 24px. Measured on `#/settings/voice`
+              (834×1112): three chips, each remove button `12x12` inside a 28px chip, sitting `gap-1`
+              (4px) from the chip's text, so the undersized-target spacing exception cannot rescue it
+              either. Twelve call sites render this chip.
+              The chip's own trailing space pays for the fix exactly. Before, the right side was
+              `gap 4 + glyph 12 + padding-right 8` = 24px from the text to the chip's edge; now it is
+              `gap 0 + a 24px button (glyph centred, 6px each side) + padding-right 0` = the same 24px,
+              so THE CHIP'S WIDTH DOES NOT CHANGE and the glyph lands 2px further right. That is why
+              `gap-1` and the right half of `px-2` go: they are not decoration being dropped, they are
+              the budget being spent on the target. */}
+          <button type="button" aria-label={`Remove ${v}`} onClick={() => onChange(values.filter((x) => x !== v))} className="inline-flex size-6 shrink-0 items-center justify-center text-on-surface-low hover:text-on-surface"><X size={12} /></button>
         </span>
       ))}
       <input ref={fieldRef} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={values.length ? '' : placeholder}

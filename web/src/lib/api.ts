@@ -2030,6 +2030,89 @@ export interface AblationView {
   cadence_days: number
   due: boolean
 }
+/** One arm's aggregates in a skill-impact benchmark task, as `harness/fanout_measure` computed
+ *  them. Every field arrives computed; nothing here is re-derived in TS. */
+export interface BenchmarkArmAggregate {
+  trials: number
+  mean_score: number
+  spread: number
+  tokens: number
+  tokens_per_point: number
+}
+/** One frozen-register task's verdict.
+ *
+ *  `verdict` is `null` when the runner could not assemble both arms — a state deliberately
+ *  OUTSIDE the five verdict strings, because "we did not measure this" and "we measured it and
+ *  withheld a direction" are different claims. `delta_points` is `null` in exactly that case,
+ *  and it MUST NOT render as 0.000: for a benchmark asking "does an approved skill make the next
+ *  run better?", a zero delta is the case for saying skills do not help. */
+export interface BenchmarkTaskRow {
+  task_id: string
+  skill: string
+  verdict: string | null
+  verdict_class: string | null
+  reason: string
+  delta_points: number | null
+  token_ratio: number | null
+  arms: Record<string, BenchmarkArmAggregate>
+  absent_cells: number
+  tool_calls: Record<string, number>
+  /** `false` means no contributing cell observed its own spend rows — so `token_ratio` is not
+   *  evidence of a token match, and the panel says so rather than printing a bare ratio. */
+  spend_observed: boolean
+  /** Carried from `AttemptRecord.estimated`: tokens are heuristic, not provider-reported. Any
+   *  published ratio must carry that word (protocol §4). */
+  spend_estimated: boolean
+  notes: string[]
+}
+/** A task the runner refused to run at all, with the refusal's own sentence. Reported rather
+ *  than omitted: a shorter table would make ten tasks look like however many ran. */
+export interface BenchmarkSkippedRow {
+  task_id: string
+  skill: string
+  blockers: string[]
+}
+export interface BenchmarkReport {
+  run_id: string
+  created_at: string
+  protocol_doc: string
+  task_set_version: number
+  task_set_fingerprint: Record<string, string>
+  trials_per_arm: number
+  arms: string[]
+  thresholds: {
+    inconclusive_band_points: number
+    token_match_tolerance: number
+    min_trials_per_arm: number
+    source: string
+  }
+  tasks: BenchmarkTaskRow[]
+  skipped: BenchmarkSkippedRow[]
+  measured_tasks: number
+  absent_cells: number
+  reproduction?: BenchmarkReproduction
+}
+/** The (V4) reproduction judgement. The variance is NOT numeric and NOT invented by the
+ *  code: `stated_variance` is the protocol's own list of conditions and `stated_variance_source`
+ *  cites where it is stated, so a reader can check the tolerance rather than trust it. */
+export interface BenchmarkReproduction {
+  baseline_run_id: string
+  rerun_run_id: string
+  reproduces: boolean
+  stated_variance: string[]
+  stated_variance_source: string
+  conditions: Record<string, boolean>
+  verdict_changes: { task_id: string; baseline: string | null; rerun: string | null }[]
+  notes: string[]
+}
+export interface BenchmarkView {
+  report: BenchmarkReport
+  /** The whole frozen register, so a task the report does not carry is still named. */
+  register: { task_id: string; skill: string; observable: string }[]
+  task_set_version: number
+  protocol_doc: string
+  stated_variance: string[]
+}
 /** One arm-mask row of the retrieval ablation.
  *
  *  `p_at_k` is `null` when the mask retrieved NOTHING — 0/0, undefined, and deliberately
@@ -2327,6 +2410,12 @@ export type KnowledgeType =
   // through a search result, which is why it is absent from `TYPES` (the create picker's
   // catalog) and carried by `ARTIFACT_TYPE` instead.
   | 'artifact'
+  // The decision. Absent from `TYPES` for the same reason as `artifact`
+  // but a DIFFERENT missing half: logging a decision also mints its one-shot review trigger, so
+  // one authored from the create picker would be a decision that never comes back. It still needs
+  // a label/icon/tone because a search result CAN be one — without it `resolveType` fell through
+  // to `note` and every decision in the library read "Note".
+  | 'decision'
 export interface KnowledgeEntity { id: string; name: string; entity_type?: string; description?: string }
 export interface KnowledgeRelation { id: string; source_name?: string; target_name?: string; relation_type?: string; weight?: number }
 export interface KnowledgeItem {
@@ -2795,6 +2884,50 @@ export interface TriageLedgerRow {
 }
 
 export interface TriageSchedule { id: string; name: string; cron: string; enabled: boolean; created_by: string }
+
+// ── The Decision Journal ──
+/** One decision, exactly as `decisions.projection` flattens it. Mirrored field-for-field and
+ *  NOT reshaped: the journal view reads these names, and a client-side rename would be a second
+ *  place that knows the decision metadata shape. */
+export interface DecisionRow {
+  id: string; summary: string; status: string; domain: string
+  expectation: string; confidence: number | null
+  review_horizon: string; reminder_trigger_id: string | null
+  /** How many times a `too_early` re-armed the review. Capped at 2 by the backend. */
+  deferrals: number
+  /** The cap was reached: still unresolved, and no reminder is coming. Not "overdue". */
+  stale_pending: boolean
+  outcome: string | null; outcome_grade: string | null; outcome_captured_at: string | null
+  /** Soft string reference into the memory store; null when the lesson write was refused. */
+  lesson_memory_key: string | null
+  created_at: string
+  /** Derived at read time from the horizon, never stored. */
+  overdue?: boolean
+}
+
+/** One domain's calibration bucket, straight from `decisions.calibration`.
+ *
+ *  `count_honest` is the load-bearing field: FALSE means n is below the threshold and no rate
+ *  here may be rendered as a rate. `as_expected_rate`/`mean_confidence` are still present in
+ *  that case — the view must not draw them, exactly as `evidenceLabel` renders `ungraded`
+ *  rather than substituting a grade and `optimize` reports `unscored` rather than `0.0`. */
+export interface CalibrationBucket {
+  n: number
+  better: number; as_expected: number; worse: number
+  mean_confidence: number | null
+  as_expected_rate: number | null
+  count_honest: boolean
+}
+
+export interface DecisionJournalView {
+  decisions: DecisionRow[]
+  /** Per-domain, and EMPTY when nothing resolved has a calibratable grade. An empty object is
+   *  "nothing to calibrate from", which the strip must say out loud — never a flat line. */
+  calibration: Record<string, CalibrationBucket>
+  /** The threshold `count_honest` was computed against, forwarded so the caveat can name it. */
+  calibration_min_n: number
+  statuses: string[]; domains: string[]; grades: string[]
+}
 
 export interface TriageDigestView {
   state: TriageDigestState
@@ -5428,6 +5561,19 @@ export const api = {
    *  because they send a user to three different places (the switch, the registry, a bug), and
    *  one state for all of them would make the panel's empty state a guess. */
   ablation: () => get<AblationView>('/api/evals/ablation'),
+  /** The skill-impact benchmark: does an approved skill make the next run better?
+   *
+   *  Read-only, and for the sharpest reason on this route family: §3 pairs k=5 trials per arm
+   *  over ten tasks — 100 real model calls — so a click that started one would spend serious
+   *  money. The RUN is `python scripts/learning_benchmark.py --run`, which has `--preflight` and
+   *  `--dry-run` modes that call nothing.
+   *
+   *  The verdict is computed by the runner (its thresholds live in `harness/fanout_measure.py`,
+   *  outside the wheel) and written into the report. Neither the gateway nor this page can
+   *  synthesise one — which is exactly why an unmeasured task arrives as `verdict: null` and
+   *  renders as "not measured" instead of as a zero. 404 carries a distinct code for "no
+   *  benchmark yet" vs "evals off". */
+  learningBenchmark: () => get<BenchmarkView>('/api/evals/learning-benchmark'),
   /** Pre-registered template A/B studies. Read-only for the same reason as the
    *  bench: a k=5 paired study is ten template runs plus six judge calls per pair. §2.1 is
    *  also explicit that the human REGISTERS and the substrate RUNS, so there is deliberately
@@ -5969,6 +6115,18 @@ export const api = {
   proactiveInstall: (cron?: string) =>
     post<{ ok: boolean; created: boolean; schedule: TriageSchedule }>(
       '/api/proactive/install', cron ? { cron } : {}),
+  // ── The Decision Journal ──
+  // ONE read for the rows AND the strip. The strip is an aggregate of the rows beside it, so
+  // two fetches could render 11 resolved decisions next to a rate computed from 10 — two
+  // answers to one question. `status`/`domain` narrow the LIST only; `calibration` is always
+  // the whole journal, because narrowing it would silently redefine the claim it makes.
+  decisionJournal: (status?: string, domain?: string) => {
+    const p = new URLSearchParams()
+    if (status) p.set('status', status)
+    if (domain) p.set('domain', domain)
+    const qs = p.toString()
+    return get<DecisionJournalView>(`/api/knowledge/decisions${qs ? `?${qs}` : ''}`)
+  },
   // The rules manager. These three routes shipped with PA-1 and had NO consumer until now.
   approvalRules: () =>
     get<{ rules: ApprovalRuleRow[]; unreadable: string[] }>('/api/memory/approval-rules'),

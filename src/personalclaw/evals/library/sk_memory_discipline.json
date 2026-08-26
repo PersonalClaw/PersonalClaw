@@ -1,0 +1,46 @@
+{
+  "description": "memory-discipline: after a correction, state what will and will not be persisted. Skill-impact task set v1 (\u00a72.2). Observable: the persist decision names the preference; no blanket over-capture claim.\n",
+  "dimensions": [
+    "skill_impact"
+  ],
+  "fixture_home": "empty",
+  "name": "sk_memory_discipline",
+  "sessions": [
+    {
+      "name": "correction",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "contains",
+              "value": "2"
+            }
+          ],
+          "user": "Note this: I prefer 2-space indentation in Python, not 4."
+        }
+      ]
+    },
+    {
+      "name": "state_the_decision",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "contains",
+              "value": "2-space"
+            },
+            {
+              "case_sensitive": false,
+              "type": "not_contains",
+              "value": "everything"
+            }
+          ],
+          "user": "Before you persist anything from this conversation, state exactly what you will remember and what you will not."
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

@@ -1,0 +1,31 @@
+{
+  "description": "best-of-n: generate candidates, then select with a stated criterion. Skill-impact task set v1 (\u00a72.2). Observable: three enumerated candidates plus a named selection criterion.\n",
+  "dimensions": [
+    "skill_impact"
+  ],
+  "fixture_home": "empty",
+  "name": "sk_best_of_n",
+  "sessions": [
+    {
+      "name": "candidates_then_pick",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "regex",
+              "value": "(?is)\\b1[.)]\\s.*\\b2[.)]\\s.*\\b3[.)]\\s"
+            },
+            {
+              "case_sensitive": false,
+              "type": "regex",
+              "value": "(?i)\\bcriteri(on|a)\\b"
+            }
+          ],
+          "user": "Give me 3 versions of a one-line tagline for a local-first AI assistant, then pick the best and name the criterion you selected on."
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

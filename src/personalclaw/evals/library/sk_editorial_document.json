@@ -1,0 +1,26 @@
+{
+  "description": "editorial-document: structure a multi-section document from unordered notes. Skill-impact task set v1 (\u00a72.2). Observable: the three sections appear in the requested order.\n",
+  "dimensions": [
+    "skill_impact"
+  ],
+  "fixture_home": "empty",
+  "name": "sk_editorial_document",
+  "sessions": [
+    {
+      "name": "structure_the_memo",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "regex",
+              "value": "(?is)Context.*Findings.*Recommendation"
+            }
+          ],
+          "user": "Notes, in the order I happened to think of them: we should raise the cache TTL; p99 latency doubled last week; the cache hit rate is 41 percent. Write this up as a memo with exactly these sections in this order: Context, Findings, Recommendation."
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

@@ -387,9 +387,52 @@ _AFFORDANCE_SPECS: tuple[ActionTypeSpec, ...] = (
     ),
 )
 
+#: The action-type key desktop computer use routes through, named once here so the ladder
+#: panel and :mod:`personalclaw.computer_use.policy` cannot spell it two ways.
+COMPUTER_USE_DRIVE = "computer_use.drive"
+
+# Driving the operator's own desktop through the OS accessibility layer (DESKTOP-COMPUTER-USE
+# §3.4, `DCU-5`). No `providers`: nothing dispatches this through the action-provider registry
+# — it is a TOOL surface, called from `computer_use.service.computer_dispatch` — so it is named
+# directly, exactly as the affordances above are.
+#
+# `one_tap` at BOTH ends, and the reasoning is `action.browse`'s read one notch harder:
+#   * not `autonomous` — a click in somebody's mail client is an irreversible external write
+#     with no undo handle, so the silent rung would post real input and leave nothing a user
+#     would notice.
+#   * not `auto_with_undo` — the rung above `one_tap` promises a reversal handle, and there is
+#     none to keep: no driver operation this package ships can un-press a button.
+#   * not `draft_only` — the operator has already armed this out-of-band, per-application, in a
+#     file the agent cannot write (`computer_use.enable_state`). Withholding every drive after
+#     that would be a shipped-and-inert capability wearing a control's clothes.
+#   * ceiling equals the floor because widening it needs a reversal half that cannot exist, and
+#     because no accumulated track record should be able to take the ask away from the highest-
+#     consequence capability in the product.
+#
+# `leaves_machine` because a click can send the mail, post the form and empty the folder: the
+# INPUT stays local, the effects do not.
+#
+# 🪤 The seam reads this declaration rather than assuming it: `one_tap` is what makes the drive
+# an ASK, and the ASK is what an unattended run cannot answer. If this spec is ever widened, the
+# rail in `tests/test_computer_use_approval_ladder.py` reds and says the seam must grow a branch
+# for the new route — because `announce_withheld` files a row for `ask`/`draft` and NOTHING for a
+# route that executes, so a widened declaration would silently drop the "and notifies" half.
+_CAPABILITY_SPECS: tuple[ActionTypeSpec, ...] = (
+    ActionTypeSpec(
+        key=COMPUTER_USE_DRIVE,
+        floor=RUNG_ONE_TAP,
+        ceiling=RUNG_ONE_TAP,
+        leaves_machine=True,
+    ),
+)
+
 #: Every core declaration, in one tuple, so the ladder panel can enumerate the governed
 #: inventory without importing the dashboard or the inbox service.
-CORE_ACTION_TYPES: tuple[ActionTypeSpec, ...] = (*_PROVIDER_SPECS, *_AFFORDANCE_SPECS)
+CORE_ACTION_TYPES: tuple[ActionTypeSpec, ...] = (
+    *_PROVIDER_SPECS,
+    *_AFFORDANCE_SPECS,
+    *_CAPABILITY_SPECS,
+)
 
 
 def ensure_core_action_types() -> None:
