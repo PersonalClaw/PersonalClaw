@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence } from 'framer-motion'
-import { Check, Ban, LayoutDashboard, RefreshCw, ShieldCheck, CheckCheck, Smartphone } from 'lucide-react'
-import { api, type PendingApproval } from '../../lib/api'
+import { Check, Ban, BellRing, LayoutDashboard, RefreshCw, ShieldCheck, CheckCheck, Smartphone } from 'lucide-react'
+import { api, type PendingApproval, type PushStatus } from '../../lib/api'
+import { disablePush, enablePush, pushDeviceId, pushSupported } from '../../app/pushClient'
 import { useQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
-import type { RouteProps } from '../../app/useQueryState'
+import { qget, type RouteProps } from '../../app/useQueryState'
 import { InboxSection, RecentSection, RunningLoopsSection, TasksSection } from './CompanionSections'
 
 /** `#/companion` — the phone control surface, approvals first.
@@ -30,7 +31,11 @@ import { InboxSection, RecentSection, RunningLoopsSection, TasksSection } from '
  *  and would still be wrong for a tablet or a keyboard-only phone user. The layout is a
  *  single centered column that simply reads well narrow.
  */
-export function CompanionPage({ navigate }: RouteProps) {
+export function CompanionPage({ navigate, query }: RouteProps) {
+  // `?approval=<id>` — where a push notification's tap lands (MC-5 / T3.4). The service
+  // worker builds this URL from the ping's `item_id`; nothing else in the payload could
+  // have told it which card to open.
+  const focusId = qget(query, 'approval')
   // Live data, never persisted to sessionStorage: a stale approval is a dangerous thing to
   // paint. The queue re-reads on every WS approval event and on manual refresh.
   const { data, loading, error, refresh } = useQuery<PendingApproval[]>(
@@ -84,6 +89,26 @@ export function CompanionPage({ navigate }: RouteProps) {
   }
 
   const pending = (data ?? []).filter((a) => !resolved.has(a.id))
+  const focusTarget = focusId ? pending.find((a) => a.id === focusId) : undefined
+  // The deep link is honest in BOTH directions. Present-and-found: scroll it into view,
+  // move focus to it, ring it. Present-and-missing (answered elsewhere, or it timed out
+  // while the phone was locked): say so. Rendering the ordinary queue with no explanation
+  // would read as "the notification opened the wrong thing", and the user would go looking
+  // for a card that no longer exists while the run they were pinged about stays blocked.
+  const focusMissing = Boolean(focusId) && !focusTarget && data !== undefined
+  const focusRef = useRef<HTMLDivElement | null>(null)
+  const focusedFor = useRef('')
+  useEffect(() => {
+    if (!focusTarget || focusedFor.current === focusTarget.id) return
+    const el = focusRef.current
+    if (!el) return
+    focusedFor.current = focusTarget.id
+    el.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    // Focus the WRAPPER (tabIndex -1), not the Allow button. Landing focus on the card
+    // announces the prompt and puts Allow/Deny one Tab away; landing it ON Allow would put
+    // an irreversible grant one stray Enter away on a phone that just woke up in a pocket.
+    el.focus?.()
+  }, [focusTarget])
 
   return (
     <div className="h-full overflow-y-auto" style={{ background: 'var(--color-canvas)' }}>
@@ -95,6 +120,8 @@ export function CompanionPage({ navigate }: RouteProps) {
           </div>
           <IconButton icon={RefreshCw} label="Refresh approvals" onClick={refresh} size={40} iconSize={18} />
         </header>
+
+        <PushRow navigate={navigate} />
 
         <section aria-labelledby="companion-approvals-heading" className="flex flex-col gap-s">
           <h2 id="companion-approvals-heading" data-type="title-m" className="flex items-center gap-s text-on-surface">
@@ -115,8 +142,13 @@ export function CompanionPage({ navigate }: RouteProps) {
           ) : (
             <AnimatePresence initial={false}>
               {pending.map((ap) => (
-                <ApprovalPrompt
+                <div
                   key={ap.id}
+                  ref={ap.id === focusId ? focusRef : undefined}
+                  tabIndex={ap.id === focusId ? -1 : undefined}
+                  className={ap.id === focusId ? 'rounded-lg outline-none ring-2 ring-warn' : undefined}
+                >
+                <ApprovalPrompt
                   density="roomy"
                   tool={ap.tool}
                   args={argsText(ap.tool_input)}
@@ -129,9 +161,16 @@ export function CompanionPage({ navigate }: RouteProps) {
                     { key: 'reject', icon: Ban, label: 'Deny', tone: 'danger', name: `Deny ${ap.tool}`, busy: busy.has(ap.id), onClick: () => act(ap, 'reject') },
                   ]}
                 />
+                </div>
               ))}
             </AnimatePresence>
           )}
+          {focusMissing ? (
+            <p role="status" data-type="body-m" className="text-on-surface-low">
+              The approval your notification pointed at isn&rsquo;t waiting anymore &mdash; it was
+              answered or it timed out.
+            </p>
+          ) : null}
         </section>
 
         {/* The rest of the attention path (`MC-6`). The "Not on the phone yet" stub list that
@@ -155,6 +194,99 @@ export function CompanionPage({ navigate }: RouteProps) {
           </Button>
         </footer>
       </div>
+    </div>
+  )
+}
+
+/** "Is this phone woken up for an approval?" — the one control MC-5 adds to this surface.
+ *
+ *  It lives here rather than in Settings because the answer is per-BROWSER: only the device
+ *  holding the subscription can create or drop it, and a desktop Settings page cannot
+ *  subscribe a phone. The transport CHOICE (`mobile.push_backend`, the ntfy URL) is the
+ *  opposite — one gateway-wide decision — so it lives in Settings → Companion apps.
+ *
+ *  Every state is named. A silent row would leave the most important question on this
+ *  surface ("will my phone actually ring?") answered only by waiting for a push that may
+ *  never come.
+ */
+function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
+  const { data, refresh } = useQuery<PushStatus>('companion:push', () => api.pushStatus())
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  if (!data) return null
+
+  const supported = pushSupported()
+  const on = data.devices.includes(pushDeviceId())
+
+  const enable = async () => {
+    setBusy(true)
+    setNote('')
+    const result = await enablePush(data.vapid_public_key)
+    setBusy(false)
+    if (result.ok) { refresh(); return }
+    setNote(
+      result.reason === 'denied'
+        ? 'Your browser refused notification permission. Allow notifications for this site, then try again.'
+        : result.reason === 'no-key'
+          ? 'This gateway has no push keypair yet — run `personalclaw push init`.'
+          : result.reason === 'unsupported'
+            ? 'This browser cannot hold a push subscription.'
+            : `Could not subscribe${result.detail ? ` — ${result.detail}` : ''}.`,
+    )
+  }
+
+  const disable = async () => {
+    setBusy(true)
+    const ok = await disablePush()
+    setBusy(false)
+    setNote(ok ? '' : 'Could not unsubscribe — the gateway did not respond.')
+    refresh()
+  }
+
+  let line = ''
+  let action: ReactNode = null
+  if (data.backend === 'none') {
+    line = 'Push is switched off for this gateway.'
+    action = <Button variant="secondary" size="sm" onClick={() => navigate('settings/companion')}>Settings</Button>
+  } else if (data.backend === 'ntfy') {
+    line = !data.ntfy_configured
+      ? 'The backend is ntfy but no topic URL is configured.'
+      : data.approval_targeted
+        ? 'Pings go to your ntfy topic. Nothing to set up on this device.'
+        : 'Pings go to your ntfy topic, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications.'
+  } else if (!data.vapid_ready) {
+    line = 'No push keypair yet. Run `personalclaw push init` on the gateway.'
+  } else if (on) {
+    // Checked BEFORE the capability probe on purpose: the gateway holding a subscription for
+    // this profile is a FACT, and it outranks a feature test. Probing first would tell a
+    // device the gateway is actively pushing to that it cannot receive push — and hide the
+    // only control that can turn it off.
+    //
+    // Subscribed-but-not-ROUTED is a real state and it is named, not hidden. Turning push on
+    // writes the `approval/requested` rule for a user who never set one, but it deliberately
+    // does NOT override a rule they did set — so a user who once turned approval pushes off
+    // has a subscribed device that stays quiet, and the only honest thing to do is say where
+    // the switch is.
+    line = data.approval_targeted
+      ? 'Push is on for this device.'
+      : 'Push is on for this device, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications.'
+    action = <Button variant="ghost" size="sm" onClick={disable} disabled={busy}>Turn off</Button>
+  } else if (!supported) {
+    // The honest iOS story: web push needs an INSTALLED PWA there, so a Safari tab
+    // legitimately cannot subscribe and pretending otherwise wastes the user's time.
+    line = 'This browser cannot hold a push subscription. Install to your home screen first.'
+  } else {
+    line = 'Get woken up when a run needs your approval.'
+    action = <Button variant="primary" size="sm" onClick={enable} disabled={busy}><BellRing size={15} /> Turn on push</Button>
+  }
+
+  return (
+    <div className="flex flex-col gap-s rounded-lg border border-outline-variant/40 px-l py-l">
+      <div className="flex items-center justify-between gap-m">
+        <p data-type="body-m" className="min-w-0 text-on-surface-low">{line}</p>
+        {action}
+      </div>
+      {note ? <p role="alert" data-type="body-m" className="text-warn">{note}</p> : null}
     </div>
   )
 }

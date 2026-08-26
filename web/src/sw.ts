@@ -34,6 +34,7 @@
 // orphans — deterministically, with no timestamp to make builds irreproducible.
 
 import { APP_SHELL, SHELL_DOCUMENT, mayCache, strategyFor } from './app/swPolicy'
+import { isPushPayload, notificationFor, shouldFocus } from './app/pushPolicy'
 
 /** Injected by `scripts/buildServiceWorker.mjs` via esbuild `define`. */
 declare const __SW_CACHE_VERSION__: string
@@ -118,5 +119,70 @@ sw.addEventListener('fetch', (event) => {
 
   event.respondWith(
     strategy === 'network-first' ? networkFirst(request, url) : cacheFirst(request, url),
+  )
+})
+
+// ── Push → approval (MOBILE-COMPANION MC-5 / T3.4) ──────────────────────────
+//
+// The payload is `{kind, item_id}` and nothing else. EVERY word the user reads is
+// composed here from `app/pushPolicy`'s fixed table, keyed on `kind` — the wire is
+// never rendered. See that module's header: the backend refuses to put content in
+// a payload, this side refuses to render anything out of one, and neither half is
+// sufficient alone.
+//
+// A push whose payload is absent or the wrong shape still shows the generic
+// notification rather than being dropped. On iOS a `showNotification`-less push
+// event can cost the site its push permission, and silently swallowing a wake-up
+// for a blocked run is the one failure this feature exists to prevent.
+
+sw.addEventListener('push', (event) => {
+  let parsed: unknown = null
+  try {
+    parsed = event.data ? event.data.json() : null
+  } catch {
+    parsed = null
+  }
+  const payload = isPushPayload(parsed) ? parsed : { kind: '', item_id: '' }
+  const note = notificationFor(payload)
+  event.waitUntil(
+    sw.registration.showNotification(note.title, {
+      body: note.body,
+      tag: note.tag,
+      requireInteraction: note.requireInteraction,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      // The ONLY thing carried through to the click handler. Not the title, not
+      // the body: a click reads `data.url` and nothing else, so there is one path
+      // from a push to a navigation and it is a same-origin companion URL.
+      data: { url: note.url },
+    }),
+  )
+})
+
+sw.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const url = (event.notification.data as { url?: string } | null)?.url
+  event.waitUntil(
+    (async () => {
+      const target = url || '/#/companion'
+      const clients = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      for (const client of clients) {
+        if (!shouldFocus(client.url, sw.location.origin)) continue
+        // Navigate BEFORE focusing. A focused client still showing yesterday's
+        // approval is the failure mode that reads as "the notification opened the
+        // wrong thing" — and `navigate` on a hash-only change is a same-document
+        // navigation, so it is cheap and does not reload the SPA.
+        try {
+          await client.navigate(target)
+        } catch {
+          // `navigate()` rejects for a client this worker does not control (an
+          // uncontrolled tab from before installation). Focusing it is still
+          // better than opening a duplicate window.
+        }
+        await client.focus()
+        return
+      }
+      await sw.clients.openWindow(target)
+    })(),
   )
 })

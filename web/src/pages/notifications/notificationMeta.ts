@@ -43,6 +43,11 @@ const KINDS: Record<string, KindMeta> = {
   digest: { label: 'Daily digest', icon: Newspaper, tone: 'var(--color-on-surface-low)' },
   // system/usage_recap (MRT-3). Its bare kind IS its wire string, so one row covers both.
   usage_recap: { label: 'Monthly usage recap', icon: Receipt, tone: 'var(--color-on-surface-low)' },
+  // approval/requested (MOBILE-COMPANION MC-5). Its wire string is `approval`, and it is the
+  // row that makes "send blocked runs to my phone" a tickable choice in the rules matrix.
+  // `ShieldQuestion` + warn to match `ApprovalPrompt`'s own chrome — the same event, so it
+  // must not be a different colour in the feed than it is on the card.
+  approval: { label: 'Approval needed', icon: ShieldQuestion, tone: 'var(--color-warn)' },
   // knowledge/research_finding (WF2KNO-12). Newspaper like the digest — both are written
   // output — but the primary tone, not the low one: a finding is a thing to read, whereas
   // the digest is the wrapper it may arrive in.

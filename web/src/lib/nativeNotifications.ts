@@ -27,7 +27,7 @@ import { useChatSocket, type WsMessage } from './useChatSocket'
 
 /** Where a tap should land, by notification SOURCE.
  *
- *  Keyed on source rather than kind because source is the surface family — the twelve
+ *  Keyed on source rather than kind because source is the surface family — the thirteen
  *  values here are every source in `notification_kinds.py`, and each value is a route
  *  `App.tsx` already serves (`nativeNotifications.test.ts` pins that against `App.tsx`'s
  *  own NAV + ROUTABLE lists, so a renamed route reds this file instead of silently
@@ -38,6 +38,14 @@ import { useChatSocket, type WsMessage } from './useChatSocket'
  */
 export const NOTIFICATION_SOURCE_ROUTES: Record<string, string> = {
   agent: 'agents',
+  // `approval` (MOBILE-COMPANION `MC-5`) lands on CHAT, not `#/companion`. The phone's
+  // deep link is `#/companion?approval=<id>` because that surface exists for a phone, but
+  // a NATIVE tap comes from the desktop shell — and on a desktop the decision is answered
+  // by `pages/chat/ApprovalCard` (rendered from `ChatPage.tsx`), which is the surface that
+  // carries the tool, its full arguments and the Allow/Deny pair. `companion` is also
+  // deliberately absent from `App.tsx`'s ROUTABLE (it is a full-screen special case), so
+  // naming it here would red the sibling rail that pins every route to one App.tsx serves.
+  approval: 'chat',
   apps: 'apps',
   cron: 'triggers',
   heartbeat: 'notifications',

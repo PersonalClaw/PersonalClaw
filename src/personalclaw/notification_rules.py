@@ -12,8 +12,8 @@ This module adds the second axis. Each ``(source, kind)`` from
   behavior), ``digest`` (batch for the scheduled summary).
 * **targets** — where an ``immediate`` goes: ``dashboard`` today, ``channel_dm`` when a
   channel is configured, ``native`` as a real OS notification whenever the desktop shell is
-  connected (DESKTOP-CAPABILITIES DC-5 — see :func:`native_delivery`), ``push`` still
-  reserved for MOBILE-COMPANION.
+  connected (DESKTOP-CAPABILITIES DC-5 — see :func:`native_delivery`), ``push`` for a
+  content-free phone ping (:mod:`personalclaw.push`, live since MOBILE-COMPANION ``MC-5``).
 * **conditions** — keywords / name-mention that ESCALATE a quieter mode to ``immediate``.
 
 **The global gate still runs first, unchanged.** ``notification_allowed()`` in
@@ -51,10 +51,12 @@ from personalclaw.config.loader import config_dir
 
 logger = logging.getLogger(__name__)
 
-#: Delivery targets. ``push`` is accepted and persisted but inert until MOBILE-COMPANION
-#: lands — storing it now means a user's choice survives, rather than being silently
-#: dropped and needing re-entry later. ``native`` is LIVE as of DC-5: see
-#: :func:`native_delivery`.
+#: Delivery targets. ``native`` is LIVE as of DESKTOP-CAPABILITIES `DC-5` (see
+#: :func:`native_delivery`) and ``push`` is LIVE as of MOBILE-COMPANION `MC-5` — a rule
+#: carrying it sends a content-free ``{kind, item_id}`` ping through
+#: :mod:`personalclaw.push`. ``channel_dm`` is the one target still accepted and persisted
+#: but inert; storing it means a user's choice survives rather than being silently dropped
+#: and needing re-entry later.
 TARGETS: tuple[str, ...] = ("dashboard", "channel_dm", "push", "native")
 DEFAULT_TARGETS: tuple[str, ...] = ("dashboard",)
 
@@ -315,6 +317,47 @@ def save_rules(doc: dict[str, Any]) -> None:
     path = _rules_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(doc, indent=2) + "\n")
+
+
+def ensure_target(source: str, kind: str, target: str) -> bool:
+    """Add *target* to ``(source, kind)``'s rule — but ONLY if the user has never set one.
+
+    Returns True when a rule was written.
+
+    This exists so MOBILE-COMPANION `MC-5` has no hidden second switch. Tapping **Turn on
+    push** on the phone is an unambiguous statement of intent ("wake me for this"), and if
+    the user then had to go find Settings → Notifications and tick a box before anything
+    arrived, the button would read as broken. So that tap CONFIGURES the rule.
+
+    Two things it deliberately is NOT:
+
+    * **Not a default.** ``test_no_rules_file_delivers_exactly_like_before`` pins a universal
+      invariant with its rationale written down — *"an unconfigured rule adds no delivery
+      channel"*, for every kind including a brand-new one. A per-kind default target would
+      break exactly that. Here the rule stops being unconfigured because the user configured
+      it, and it shows up ticked in the rules matrix afterwards, where it can be changed.
+    * **Not an override.** A stored rule for this key is an explicit choice — including the
+      choice to leave ``push`` off — so this returns False and writes nothing. A user who
+      turned approval pushes off and later re-subscribed a device would otherwise have their
+      decision silently reversed.
+    """
+    if target not in TARGETS:
+        raise ValueError(f"unknown notification target: {target!r}")
+    registered = nk.resolve_kind(source, kind)
+    doc = load_rules()
+    rules = doc.get("rules")
+    rules = rules if isinstance(rules, dict) else {}
+    if registered.key in rules:
+        return False
+    existing = _coerce_rule(registered.source, registered.kind, None, registered.default_mode)
+    rules[registered.key] = {
+        "mode": existing.mode,
+        "targets": list(existing.targets) + [target],
+    }
+    doc["rules"] = rules
+    save_rules(doc)
+    logger.info("added %r target to notification rule %s", target, registered.key)
+    return True
 
 
 def resolve_rule(source: str, kind: str) -> Rule:

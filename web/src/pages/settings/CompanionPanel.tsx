@@ -3,7 +3,7 @@ import { Check, Radio, RadioTower, ShieldCheck, ShieldAlert } from 'lucide-react
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, RowGroup, ToggleRow, Field, Row } from './settingsUI'
+import { PanelHeader, Section, RowGroup, ToggleRow, Field, Row, SegPills } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -24,12 +24,22 @@ export function CompanionPanel() {
   const [browseCfg, setBrowseCfg] = useState<CompanionCfg | null>(null)
   const [nameDraft, setNameDraft] = useState('')
   const [nameSaved, setNameSaved] = useState(false)
+  // `mobile.*` (MOBILE-COMPANION MC-5) rides this panel rather than a new tab: it is the
+  // same question ("how does my phone talk to this gateway"), and a second Settings tab
+  // for two fields is how a settings surface becomes unnavigable.
+  const [mobileCfg, setMobileCfg] = useState<CompanionCfg | null>(null)
+  const [topicDraft, setTopicDraft] = useState('')
+  const [topicSaved, setTopicSaved] = useState(false)
 
   const { data, error: loadErr, refresh } = useQuery('settings:companion', () =>
     api.personalclawConfig().then((c) => ({
       companion: (c.companion ?? {}) as CompanionCfg,
       browse: (c.browse ?? {}) as CompanionCfg,
     })),
+    { persist: true },
+  )
+  const { data: mobileData } = useQuery('settings:companion:mobile', () =>
+    api.personalclawConfig().then((c) => (c.mobile ?? {}) as CompanionCfg),
     { persist: true },
   )
 
@@ -47,6 +57,9 @@ export function CompanionPanel() {
       setNameDraft(String(data.companion.instance_name ?? ''))
     }
   }, [data])
+  useEffect(() => {
+    if (mobileData) { setMobileCfg(mobileData); setTopicDraft(String(mobileData.ntfy_topic_url ?? '')) }
+  }, [mobileData])
 
   // A settings panel must not present fabricated values as saved state — a failed read
   // renders the failure, not controls at their fallback (mirrors AmbientPanel).
@@ -80,6 +93,22 @@ export function CompanionPanel() {
     })
   }
 
+  // `mobile.*` writes go to their own dotted prefix. Same optimistic-then-roll-back shape as
+  // `patch` above; separate because a shared helper would have to take the prefix as an
+  // argument at every call site, which is how the wrong prefix gets written.
+  const patchMobile = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
+    const prev = (mobileCfg ?? {})[key]
+    setMobileCfg((c) => ({ ...(c ?? {}), [key]: value }))
+    api.patchConfig(`mobile.${key}`, value).then(() => onSaved?.()).catch((e) => {
+      setMobileCfg((c) => ({ ...(c ?? {}), [key]: prev }))
+      // The failure names the CONTROL the user touched, never the config path: "ntfy topic
+      // URL" is a thing they just read on screen, `mobile.ntfy_topic_url` is not. The
+      // `?? key` fallback stays so a caller that forgets a label prints an identifier
+      // instead of "undefined" (`saveFailureNamesTheControl.test.ts` ratchets both halves).
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
   // Read at render: the answer depends on how the user reached this page (localhost vs LAN).
   const swBlocked = serviceWorkerBlockedReason()
   const nameDirty = nameDraft !== String(cfg.instance_name ?? '')
@@ -87,6 +116,11 @@ export function CompanionPanel() {
     setNameSaved(true)
     setTimeout(() => setNameSaved(false), 1500)
   })
+  const topicDirty = topicDraft !== String(mobileCfg?.ntfy_topic_url ?? '')
+  const saveTopic = () => patchMobile('ntfy_topic_url', topicDraft, () => {
+    setTopicSaved(true)
+    setTimeout(() => setTopicSaved(false), 1500)
+  }, 'ntfy topic URL')
 
   return (
     <div>
@@ -162,6 +196,45 @@ export function CompanionPanel() {
         <RowGroup>
           <ToggleRow label="Let tasks drive my browser" cfg={browseCfg} field="user_browser_enabled" patch={patchBrowse}
             hint="Off by default. When off, a task that asks for your browser is skipped with a reason — it is never switched to this machine's own browser profile, which has different logins. Scheduled and unattended runs can never use your browser at all." />
+        </RowGroup>
+      </Section>
+
+      {/* PHONE PUSH (MOBILE-COMPANION MC-5 §C3). Only the TRANSPORT lives here — one
+          gateway-wide choice. Whether a given notification pushes at all is Settings →
+          Notifications (plan 42's per-kind rules), and turning push on for a specific
+          device can only happen ON that device, from `#/companion`. Three surfaces, three
+          different questions; collapsing them would put a phone-only control on a desktop
+          page that cannot honour it. */}
+      <Section title="Phone push" hint="How a wake-up reaches your phone. Every push carries ids only — never the tool, its arguments or any message text.">
+        <RowGroup>
+          <Field label="Push backend" hint="'Web push' uses your browser's own subscription and needs a keypair from `personalclaw push init`. 'ntfy' publishes to a self-hosted topic. 'Off' sends nothing.">
+            <SegPills
+              ariaLabel="Push backend"
+              value={String(mobileCfg?.push_backend ?? 'webpush')}
+              onChange={(v) => patchMobile('push_backend', v, undefined, 'Push backend')}
+              options={[
+                { key: 'webpush', label: 'Web push' },
+                { key: 'ntfy', label: 'ntfy' },
+                { key: 'none', label: 'Off' },
+              ]}
+            />
+          </Field>
+          {/* Only shown for the backend that reads it. A URL field rendered beside "Web
+              push" would look like a setting that does something, and it does not. */}
+          {String(mobileCfg?.push_backend ?? '') === 'ntfy' ? (
+            <Field label="ntfy topic URL" hint="Full https URL of your topic, e.g. https://ntfy.example/personalclaw. http is refused — a ping must not travel in the clear.">
+              <div className="flex items-center gap-s">
+                <div className="flex-1" style={{ maxWidth: 320 }}>
+                  <TextInput value={topicDraft} onChange={setTopicDraft} surface="high" placeholder="https://ntfy.example/personalclaw" />
+                </div>
+                <Button size="sm" variant={topicDirty ? 'primary' : 'secondary'}
+                  disabled={!topicDirty} disabledReason={!topicDirty ? 'No changes to save' : undefined}
+                  onClick={saveTopic}>
+                  {topicSaved ? <Check size={14} /> : null} {topicSaved ? 'Saved' : 'Save'}
+                </Button>
+              </div>
+            </Field>
+          ) : null}
         </RowGroup>
       </Section>
 

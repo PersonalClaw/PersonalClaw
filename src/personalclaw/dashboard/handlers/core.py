@@ -13,7 +13,7 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 import personalclaw.validation as _validation_mod
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.edit_spec import ConfigValueError, coerce_edit_value
-from personalclaw.config.loader import MEMORY_VAULT_MODES, AppConfig
+from personalclaw.config.loader import MEMORY_VAULT_MODES, PUSH_BACKENDS, AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import MAX_SESSION_TTL_SECS, generate_token, parse_duration
 from personalclaw.security import SUSPICIOUS_BASH_PATTERNS
@@ -1052,6 +1052,12 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # Editable here so the Settings control has a write path; there is deliberately no knob for
     # the `gateway` target, which needs no permission to drive this machine's own profile.
     "browse.user_browser_enabled": {"type": "bool"},
+    # Mobile push (MOBILE-COMPANION MC-5 §C3) — which transport carries a CONTENT-FREE
+    # {kind,item_id} ping to the phone. WHETHER a notification pushes at all is plan 42's
+    # rules matrix, not this; these two only pick the pipe. The enum values are read from
+    # the loader so the write path cannot drift from the field's own declared choices.
+    "mobile.push_backend": {"type": "enum", "values": list(PUSH_BACKENDS)},
+    "mobile.ntfy_topic_url": {"type": "https_url", "max_len": 512},
     # Local models (LOCAL-MODEL-MANAGER-V2 §9) — the memory-pressure warning threshold the
     # loaded-models bar reads, and the crashed-sidecar respawn budget. Both are advisory
     # knobs on the user's own machine: the threshold blocks nothing, and the restart bound
