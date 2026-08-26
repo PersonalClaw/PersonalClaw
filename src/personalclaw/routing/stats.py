@@ -149,6 +149,30 @@ def record_routing_stats(rec: dict[str, Any], *, home: Path, now: str = "") -> N
         save_stats(home, stats)
     except Exception:  # noqa: BLE001 — observability must never break the call
         logger.warning("routing stats fold failed", exc_info=True)
+        return
+    _check_for_gap(stats, rec, home=home)
+
+
+def _check_for_gap(stats: dict[str, Any], rec: dict[str, Any], *, home: Path) -> None:
+    """New evidence just landed — ask whether it has outgrown what routing does (MRT-5 §6.3).
+
+    This is the fold write's one non-observability job, and the trigger point for the whole
+    propose-don't-write path: see :mod:`personalclaw.routing.gap` for why the gap is detected here
+    rather than at route time or on a timer. It runs AFTER the fold is durable (a proposal must
+    never be enqueued for a fold state that failed to save) and in its OWN ``try``, so a detector
+    failure is logged as a detector failure rather than masquerading as a lost fold — and, like
+    everything else on this path, never reaches the model call.
+    """
+    use_case = str(rec.get("use_case", "") or "")
+    query_class = str(rec.get("query_class", "") or "")
+    if not use_case or not query_class:
+        return
+    try:
+        from personalclaw.routing.gap import detect_gap
+
+        detect_gap(stats, use_case, query_class, home=home)
+    except Exception:  # noqa: BLE001 — a proposal check must never break the call either
+        logger.warning("routing proposal check failed", exc_info=True)
 
 
 def rebuild(home: Path, audit_path: Path | None = None) -> int:

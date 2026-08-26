@@ -523,6 +523,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
 - `GET /api/models/routing-policy` — the inspectable routing table (§6.1).
 - `PUT /api/models/routing-policy` — set one of the three user levers (§6.2).
+- `GET /api/models/routing-proposals` — the propose-don't-write review queue (§6.3).
+- `DELETE /api/models/routing-proposals/{id}` — decline it, and remember the decision (§6.3).
+- `POST /api/models/routing-proposals/{id}/accept` — apply it to the table (§6.3).
 - `DELETE /api/models/sidecar/{provider}/install` — remove a CORE-created venv.
 - `POST /api/models/sidecar/{provider}/install` — start the resumable install.
 - `GET /api/models/sidecar/{provider}/install/status` — the rich install poll shape.

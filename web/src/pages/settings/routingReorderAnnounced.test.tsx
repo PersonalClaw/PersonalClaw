@@ -42,6 +42,10 @@ vi.mock('../../lib/api', () => ({
     routingPolicy: () => routingPolicy(),
     setRoutingPolicy: (b: unknown) => setRoutingPolicy(b as never),
     modelsTelemetry: () => Promise.resolve({ rows: [] }),
+    // The panel gained a third read (the MRT-5 proposal queue). A module mock has to answer every
+    // call the component makes: an absent key is `undefined()`, which throws inside the effect and
+    // fails this file for a reason that has nothing to do with reordering.
+    routingProposals: () => Promise.resolve({ count: 0, proposals: [] }),
   },
 }))
 vi.mock('../../lib/data', () => ({

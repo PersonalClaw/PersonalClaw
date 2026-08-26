@@ -358,6 +358,20 @@ def pending(*, home: Path | None = None) -> list[RoutingProposal]:
     return sorted(props, key=lambda p: (p.created_at, p.id))
 
 
+def find(proposal_id: str, *, home: Path | None = None) -> RoutingProposal | None:
+    """One proposal by id in ANY status, or ``None`` when the queue has never held it.
+
+    :func:`accept` returns ``False`` for two different things — an id that is not pending, and a
+    refusal because the cell's order was set by hand — and a surface has to tell those apart to say
+    "no such proposal" rather than silently doing nothing. The refusal is recorded ON the record, so
+    reading it back is how a caller learns which happened.
+    """
+    for prop in _records(load_queue(home)):
+        if prop.id == proposal_id:
+            return prop
+    return None
+
+
 # ── accept / reject ─────────────────────────────────────────────────────────────
 
 
