@@ -610,6 +610,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/providers/{name}/instances/{id}` — _(no summary)_
 - `POST /api/providers/{name}/instances/{id}/test` — test connectivity.
 - `GET /api/providers/{name}/schema` — _(no summary)_
+- `GET /api/push` — The subscribe-side facts: backend, VAPID public key, which devices are subscribed.
+- `POST /api/push/subscribe` — store one device's W3C push subscription, and route approvals to it.
+- `POST /api/push/unsubscribe` — drop one device's push subscription.
 - `GET /api/recent-projects` — list recently used project directories.
 - `GET /api/resilience/degraded` — per-surface no-model floor + availability.
 - `POST /api/reveal` — reveal a file/folder in Finder or open with default app.

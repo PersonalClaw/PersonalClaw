@@ -1172,6 +1172,7 @@ class DashboardState:
             "ts": time.time(),
         }
         self.broadcast_ws("approval", self._pending_approvals[approval_id])
+        self._push_approval(approval_id)
         # `ApprovalRequest` (AUTO crit 5): declared, selectable in the hook UI, fired by nothing
         # until now. Emitted alongside the WS broadcast — the same moment the user is asked — so a
         # hook can mirror the prompt to another channel while the future is still pending.
@@ -1209,6 +1210,34 @@ class DashboardState:
         finally:
             self._pending_approvals.pop(approval_id, None)
             self._approval_futures.pop(approval_id, None)
+
+    def _push_approval(self, approval_id: str) -> None:
+        """Wake the phone for a pending approval — MOBILE-COMPANION `MC-5`'s milestone.
+
+        **Only the approval id travels.** Not the tool, not its arguments, not the session.
+        The phone opens ``#/companion?approval=<id>`` and re-fetches the card from
+        ``GET /api/approvals`` over the user's own link, so the decision's content never
+        enters a push service. This is the whole reason the payload contract is asserted in
+        :mod:`personalclaw.push` rather than left to each caller.
+
+        Routed through plan 42's rules rather than pushed unconditionally: the user owns
+        "does a blocked run reach my phone", and ``approval/requested`` is a real row in the
+        rules matrix (it ships with ``push`` among its default targets). A ``never`` mode or
+        a targets list without ``push`` silences this and nothing else.
+
+        NOT routed through :meth:`notify`: that would add a desktop toast beside the approval
+        card the dashboard already renders — a behaviour change to every existing user, in
+        exchange for nothing the phone needs.
+        """
+        try:
+            from personalclaw import notification_rules, push
+
+            rule = notification_rules.resolve_rule("approval", "requested")
+            if rule.mode == "never" or "push" not in rule.targets:
+                return
+            push.deliver_async("approval", approval_id)
+        except Exception:
+            self._log.debug("approval push dispatch failed", exc_info=True)
 
     def _audit_and_broadcast_approval(
         self, session_key: str, approval_id: str, approved: bool
@@ -1380,6 +1409,40 @@ class DashboardState:
         self._notification_log.append(note)
         self._broadcast(note)
         _persist_notification(note)
+        # Plan 42's `push` TARGET, live since MOBILE-COMPANION MC-5. Deliberately after the
+        # dashboard broadcast and outside its try: the desktop delivery is the one that must
+        # never wait on (or be broken by) a third-party push service. `deliver_async` hands
+        # the blocking POST to a daemon thread and swallows its own failures.
+        if rule is not None and "push" in rule.targets:
+            self._push_target(kind, note)
+
+    #: Meta keys that can name the item a notification is about, most specific first. The
+    #: push payload carries the id and NOTHING else, so the phone can open the right thing
+    #: without the ping having described it.
+    _PUSH_ITEM_KEYS: tuple[str, ...] = ("item_id", "inbox_item", "session")
+
+    def _push_target(self, kind: str, note: dict[str, Any]) -> None:
+        """Fire one content-free ping for *note*. **Only ids cross this boundary.**
+
+        The payload is built from ``kind`` plus a single id looked up in the note's meta —
+        never from ``title`` or ``body``, which are the fields carrying the user's own text.
+        That is why this reads specific keys instead of forwarding ``note``: a
+        forward-the-dict shape is one careless edit away from shipping the message body to a
+        push service, and :func:`personalclaw.push.content_free_payload` is the only
+        constructor that can build what the sender accepts.
+        """
+        try:
+            from personalclaw import push
+
+            item_id = ""
+            for key in self._PUSH_ITEM_KEYS:
+                candidate = str(note.get(key) or "").strip()
+                if candidate:
+                    item_id = candidate
+                    break
+            push.deliver_async(kind, item_id)
+        except Exception:
+            self._log.debug("push target dispatch failed", exc_info=True)
 
     def _operator_name(self) -> str:
         """The operator's name for name-mention conditions, or "" when unknown.

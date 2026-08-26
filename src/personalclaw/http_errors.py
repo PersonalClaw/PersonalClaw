@@ -99,6 +99,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "device_pair_origin_rejected": "The request origin is not allowed to pair a device.",
     "device_pair_locked_out": "Too many failed pairing attempts; try again later.",
     "device_unknown": "No such paired device.",
+    # ── push subscriptions (handlers/push.py) ──
+    "push_subscription_invalid": "The push subscription is missing an https endpoint or its keys.",
+    "push_not_subscribed": "That device has no push subscription.",
     # ── chat rewind (dashboard/chat_file_rewind.py) ──
     "invalid_turn": "The addressed turn does not exist or is not rewindable.",
     "turn_running": "The turn is still executing; it cannot be rewound yet.",

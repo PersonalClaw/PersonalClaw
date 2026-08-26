@@ -316,6 +316,15 @@ _KINDS: tuple[NotificationKind, ...] = (
     NotificationKind(
         "learning", "report", "Identity report", "immediate", SEV_INFO, attention=True
     ),
+    # approval — the phone milestone (MOBILE-COMPANION `MC-5`). Registered so the rules
+    # matrix carries a row for "a run is blocked waiting on me", which is the one
+    # notification whose latency directly caps how autonomous the system can be, and so a
+    # user can send THAT to the phone without sending everything else.
+    #
+    # NOT `attention=True`, deliberately: a pending approval is an in-memory future with a
+    # timeout (`DashboardState._approval_futures`), not a durable inbox row. Claiming
+    # otherwise would put an item in the attention list that vanishes on restart.
+    NotificationKind("approval", "requested", "Approval needed", "immediate", SEV_WARNING),
     # The synthetic fallback, registered so the rules UI can show a row for it.
     NotificationKind(GENERIC_SOURCE, GENERIC_KIND, "Uncategorized", "immediate", SEV_INFO),
 )
@@ -384,6 +393,12 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # kind system/report" on every delivery — the registry's own 🪤 case, one level down.
     # The bare `report` is safe as its own wire string: no other registered kind spells it.
     "report": ("learning", "report"),
+    # Same story as `usage_recap`: not an attention kind, but no pre-registry emitter ever
+    # passed "approval" either, so it ranks as the warning a blocked run actually is. It needs
+    # a wire string because that is what `resolve_rule_for_legacy` keys on — without one the
+    # push target's rule row would resolve to system/generic and a user's "push me approvals"
+    # would silently push everything else instead.
+    "approval": ("approval", "requested"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:
@@ -417,6 +432,7 @@ SESSION = "session"
 FEEDBACK_RETIRE = "feedback_retire"
 USAGE_RECAP = "usage_recap"
 RESEARCH_FINDING = "research_finding"
+APPROVAL = "approval"
 GENERIC = GENERIC_KIND
 
 #: Every constant above, for the import-time consistency check and the drift test.
@@ -436,6 +452,7 @@ WIRE_CONSTANTS: tuple[str, ...] = (
     FEEDBACK_RETIRE,
     USAGE_RECAP,
     RESEARCH_FINDING,
+    APPROVAL,
     GENERIC,
 )
 

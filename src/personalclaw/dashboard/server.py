@@ -412,6 +412,12 @@ async def start_dashboard(
 
     register_device_routes(app)
 
+    # Push subscriptions (MOBILE-COMPANION MC-5). Next to the device routes because a
+    # subscription is per-DEVICE state keyed on the same device id pairing writes.
+    from personalclaw.dashboard.handlers.push import register_push_routes
+
+    register_push_routes(app)
+
     # WebSocket (multiplexed real-time events)
     app.router.add_get("/api/ws", ws.api_ws)
 

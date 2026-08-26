@@ -181,6 +181,11 @@ describe('§3 the remaining hand-rolled server-data caches are a shrinking, name
     'pages/files/FilesSection.tsx': 'which files tab was last open',
     'pages/files/browse/useFileTabs.ts': 'the set of open file tabs and the active one',
     'pages/loops/DesignCockpitPage.tsx': 'canvas card order within one loop',
+    // MOBILE-COMPANION MC-5. The detector's own discriminator is "did the stored value come
+    // from `api.*` in this module" — and here it did not: the id is MINTED locally
+    // (`Math.random()`) and identifies this browser profile to the push-subscribe route. No
+    // server response is cached, so there is nothing that could paint stale.
+    'app/pushClient.ts': "this browser profile's own push device id",
   }
 
   /** A module that writes server data into web storage under a cache-ish prefix of its own. */

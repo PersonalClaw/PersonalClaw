@@ -60,6 +60,27 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   cannot read — if you have turned them off in System Settings, ticking Desktop will do nothing, and
   that is the OS's answer rather than a broken toggle.
 
+- **Your phone can wake you when a run is blocked on your approval — and the notification carries
+  nothing but two ids.** A tool call waiting on a decision now sends a push whose entire payload is
+  `{"kind": "approval", "item_id": "<id>"}`. Tap it and the companion screen opens on *that* card,
+  scrolled to and focused, with the whole decision on screen: tool, full arguments, where the request
+  came from, how long it has been waiting. Approve, and the run continues. If it timed out while your
+  phone was in your pocket, the screen says so instead of leaving you hunting for a card that no
+  longer exists.
+  **No push service ever sees what is being approved.** Not the tool, not its arguments, not the
+  session, not even a title — the words you read in the notification are composed on your phone from
+  the `kind`, out of a fixed table. Your phone fetches the actual decision from your own gateway.
+  That is the only claim that holds for both transports, since one of them is not encrypted at all.
+  Two transports, in **Settings → Companion apps → Phone push**: **web push** (your browser's own
+  subscription, one-time `personalclaw push init` to generate the keypair, stored per device) or
+  **ntfy** (fully self-hosted — paste your topic's https URL and no third party is involved at all;
+  plain http is refused, because an unencrypted ping would put the id on the wire in the clear).
+  `personalclaw push test` sends one ping and prints the exact payload, so you can read the ids-only
+  promise rather than take it on trust. Which notifications reach the phone is yours to set in
+  **Settings → Notifications** — *Approval needed* is a row there like everything else, and it ships
+  with the phone among its targets. On iOS the dashboard has to be installed to your home screen
+  first; the companion screen says that rather than showing a button that cannot work. Setup is in
+  [Reaching your dashboard from outside your home network](docs/guides/remote-access.md).
 - **A reviewer's findings now get triaged by you before anything touches your code.** When a workflow
   review stage reports problems in the `Finding` shape it has always been asked for
   (`severity / location / problem / why / recommended_fix`), those findings are recorded against the

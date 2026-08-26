@@ -837,6 +837,45 @@ class CompanionConfig:
     )
 
 
+#: Push transports (MOBILE-COMPANION §C3). Kept beside the dataclass so the enum and the
+#: field that validates against it cannot drift.
+PUSH_BACKENDS: tuple[str, ...] = ("webpush", "ntfy", "none")
+
+
+@dataclass
+class MobileConfig:
+    """Phone push transport (MOBILE-COMPANION §C3 — the ``push`` target's HOW).
+
+    WHETHER a notification reaches the phone is plan 42's rules matrix (per-(source,kind)
+    targets); this section is only which transport carries it. ``webpush`` uses the
+    browser's own subscription and needs a VAPID keypair (``personalclaw push init``);
+    ``ntfy`` POSTs to a self-hosted topic URL and needs no keys; ``none`` is off.
+
+    Neither field can leak content — every payload is ``{kind, item_id}`` by construction
+    (:mod:`personalclaw.push`). ``ntfy_topic_url`` is nonetheless a *destination*, so it
+    is treated as one: https-only, so a ping is not published in the clear.
+    """
+
+    push_backend: str = field(
+        default="webpush",
+        metadata=_meta(
+            "Push backend",
+            "How a push reaches your phone. 'webpush' uses the browser's own "
+            "subscription (needs `personalclaw push init`); 'ntfy' publishes to a "
+            "self-hosted ntfy topic; 'none' sends nothing.",
+            enum=list(PUSH_BACKENDS),
+        ),
+    )
+    ntfy_topic_url: str = field(
+        default="",
+        metadata=_meta(
+            "ntfy topic URL",
+            "Full https URL of your ntfy topic (e.g. https://ntfy.example/personalclaw). "
+            "Only used when the backend is 'ntfy'. Pings carry ids only, never content.",
+        ),
+    )
+
+
 @dataclass
 class BrowseConfig:
     """Autonomous-browse posture (BROWSE-AUTOMATION §(a)/(d) — BA-7).
@@ -4308,6 +4347,10 @@ class AppConfig:
         default_factory=BrowseConfig,
         metadata=_meta("Browsing", "Which browser an autonomous browse task is allowed to drive."),
     )
+    mobile: MobileConfig = field(
+        default_factory=MobileConfig,
+        metadata=_meta("Mobile push", "Which transport carries a content-free push to the phone."),
+    )
     local_models: LocalModelsConfig = field(
         default_factory=LocalModelsConfig,
         metadata=_meta(
@@ -4471,6 +4514,9 @@ class AppConfig:
         browse_data = data.get("browse", {})
         if not isinstance(browse_data, dict):
             browse_data = {}
+        mobile_data = data.get("mobile", {})
+        if not isinstance(mobile_data, dict):
+            mobile_data = {}
         local_models_data = data.get("local_models", {})
         if not isinstance(local_models_data, dict):
             local_models_data = {}
@@ -4828,6 +4874,24 @@ class AppConfig:
                 # read defaulting False. A malformed config must not make the target that
                 # inherits the operator's live logins available.
                 user_browser_enabled=bool(browse_data.get("user_browser_enabled", False)),
+            ),
+            mobile=MobileConfig(
+                # Unknown spelling → the DEFAULT transport, not "none": a typo in the
+                # backend name must not silently turn off the approval push a user is
+                # relying on, and `push.deliver` is already a no-op without keys.
+                # 🪤 `or "webpush"` is LOAD-BEARING, not defensive. `"none"` is a legal
+                # value of this enum, and `_safe_choice` stringifies its input — so a
+                # MISSING key (or an explicit JSON null) arrives as `str(None)` == "none",
+                # lands inside `PUSH_BACKENDS`, and silently turns push OFF for every
+                # install that never wrote the section. Measured, not theorised: without
+                # this, a fresh `AppConfig.load()` reported `push_backend='none'`.
+                push_backend=_safe_choice(
+                    mobile_data.get("push_backend") or "webpush", PUSH_BACKENDS, "webpush"
+                ),
+                # Kept verbatim. https is enforced where it can be EXPLAINED (the PATCH
+                # write path) and where it matters (`push.send_ntfy` refuses a non-https
+                # destination) rather than silently blanked here.
+                ntfy_topic_url=str(mobile_data.get("ntfy_topic_url", "") or "").strip(),
             ),
             local_models=LocalModelsConfig(
                 # Clamped to a real percentage: a threshold of 0 would warn permanently
@@ -5425,6 +5489,7 @@ class AppConfig:
             "ambient": asdict(self.ambient),
             "companion": asdict(self.companion),
             "browse": asdict(self.browse),
+            "mobile": asdict(self.mobile),
             "local_models": asdict(self.local_models),
             "sources": asdict(self.sources),
             "packs": asdict(self.packs),

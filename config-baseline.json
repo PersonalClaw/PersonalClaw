@@ -1241,6 +1241,18 @@
     "type": "dict[str, MemoryStoreConfig]"
   },
   {
+    "default": "",
+    "path": "mobile.ntfy_topic_url",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
+    "default": "webpush",
+    "path": "mobile.push_backend",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": 200,
     "path": "observe_max_messages",
     "sensitive": false,

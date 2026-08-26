@@ -677,6 +677,20 @@ Examples:
         "--port", type=int, default=0, help="Gateway port (defaults to the configured one)"
     )
 
+    # push — the phone's content-free wake-up transport (MOBILE-COMPANION MC-5)
+    push_parser = sub.add_parser("push", help="Set up content-free push to your phone")
+    push_sub = push_parser.add_subparsers(dest="push_command")
+    push_init_p = push_sub.add_parser("init", help="Generate the VAPID keypair (web push)")
+    push_init_p.add_argument(
+        "--force",
+        action="store_true",
+        help="Rotate an existing keypair — INVALIDATES every subscribed device",
+    )
+    push_sub.add_parser("status", help="Show the backend, keypair and subscribed devices")
+    push_test = push_sub.add_parser("test", help="Send one content-free ping to every device")
+    push_test.add_argument("--kind", default="approval", help="Payload kind (default: approval)")
+    push_test.add_argument("--item-id", default="test", help="Payload item id (default: test)")
+
     # backup — deterministic shard export + verification (DURABILITY §2)
     backup_parser = sub.add_parser(
         "backup", help="Export state as deterministic shards, and verify an export"
@@ -1424,6 +1438,10 @@ Examples:
         rc = _auth_cmd(args)
         if rc:
             raise SystemExit(rc)
+    elif args.command == "push":
+        rc = _push_cmd(args)
+        if rc:
+            raise SystemExit(rc)
     elif args.command == "backup":
         rc = _backup_cmd(args)
         if rc:
@@ -1487,6 +1505,7 @@ from personalclaw.cli_setup import (  # noqa: E402
 from personalclaw.durability.shards import backup_cmd as _backup_cmd  # noqa: E402
 from personalclaw.inbound.auth import inbound_cmd as _inbound_cmd  # noqa: E402
 from personalclaw.inbound.capture_import import capture_cmd as _capture_cmd  # noqa: E402
+from personalclaw.push import push_cmd as _push_cmd  # noqa: E402
 
 
 def _workflow_cmd(args) -> int:  # noqa: ANN001

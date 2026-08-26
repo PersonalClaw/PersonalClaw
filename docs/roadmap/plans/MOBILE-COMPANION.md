@@ -813,3 +813,70 @@ the alternative is dropping `mobile` from `workspaces`, giving it its own lockfi
 `src/personalclaw/config/loader.py` is **untouched: 5900 lines before and after.** The shell needs no
 config field — the gateway URL is per-device runtime state in the shell's own storage, not gateway
 config, and the endpoint registry is the contract that already owns it.
+
+### 2026-08-27 — `MC-5` (S3 T3.4 push half) — **PARTIAL**: the whole chain ships and is proven; the timed locked-phone leg is device-gated
+
+The whole server-side chain is built and proven. One thing holds the flip, and it is not work.
+
+**What already existed with no consumer:** `notification_rules.TARGETS` already contained `"push"`,
+with a comment saying it was *"accepted and persisted but inert until MOBILE-COMPANION lands"*.
+`rule.targets` had exactly one reader (`state.py`, which copies it into the notification dict for
+display) and **zero** delivery consumers — `channel_dm` is still in that state.
+`NotificationRulesMatrix.tsx` already rendered a per-target checkbox, so the routing control existed
+with nothing behind it.
+
+**What was built** (greenfield — `vapid`/`ntfy`/`push_backend` matched nothing under `src/`):
+`push.py` with the payload contract (`content_free_payload`/`assert_content_free`), VAPID keygen into
+the credential store, a 0600 per-device subscription store, real RFC 8291 `aes128gcm` + RFC 8292 ES256
+on `cryptography` (already a core dep, so no dependency pressure), the ntfy adapter, and
+`personalclaw push init/status/test`; three owner-authenticated routes (nothing added to any bypass
+list); two call sites (`_push_approval` from `request_approval`, `_push_target` from `notify`); an
+`("approval","requested")` kind so the rules matrix has a row; and the SW `push`/`notificationclick`
+handlers with `#/companion?approval=<id>` scroll+focus+ring.
+
+**Two real defects fell out of building it, both now pinned.** `"none"` is both a legal value of
+`push_backend` **and** `str(None)`, so a missing `mobile` section resolved to `push_backend='none'` —
+push silently off for every install that never wrote the section (measured before the fix). And the
+first chain test compared two identically-composed f-strings for the deep link, a rail matching
+nothing; it was replaced with an id assertion plus pointers to the two TS specs that own each half of
+the URL shape.
+
+**The `config/loader.py` ceiling blocker is GONE — it was never owed an owner decision, only a
+rebase.** The first pass of this atom recorded `BLOCKED` on it: `loader.py` was 5900 lines with
+headroom **exactly 100** against `test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance`'s
+`>= 100`, and the two `mobile.*` fields cost +65, leaving 35. `SH-2` then extracted the credential
+store into `config/credentials.py`, taking `loader.py` to **5581** on `main`. Live-measured on the
+rebased tree, the holder is still `config/loader.py` at **5646 lines — headroom 354**, and the watch
+band's own `>= 100` rail sits at 179. The ceiling was **not** raised, the 2800 band was **not**
+widened, and `structural-baseline.json` was **not** regenerated: the headroom was paid by another
+atom's extraction, which is the house pattern working as intended. Worth keeping for triage: the size
+ratchet itself was green throughout (`gate_report` `structural-size` PASS), because growth below the
+ceiling is deliberately not a violation — only the meta-rail on the ceiling's own headroom reds, and
+it is not one of the six gates `gate_report` runs.
+
+**Remaining clause — environment limit, not work.** The timed locked-phone leg needs a handset, a
+mobile network and a stopwatch, so the atom stays `todo` for the owner to flip. Every server-side link
+is proven in one test that starts at the real `POST /api/push/subscribe`, decrypts the captured wire
+body with the subscription's own private key, asserts `{kind,item_id}` and nothing else, and ends at
+`await request_approval(...) is True` — the value `gateway.py` awaits before letting the tool run.
+`personalclaw push test` ships so the owner can drive the missing leg by hand.
+
+**DEVIATION.** A per-kind default of `("dashboard","push")` for `approval/requested` reddened
+`test_no_rules_file_delivers_exactly_like_before`, whose docstring states the invariant in as many
+words: an unconfigured rule adds no delivery channel. The default was dropped rather than the
+invariant weakened — `POST /api/push/subscribe` calls `notification_rules.ensure_target(...)`, so the
+tap on **Turn on push** configures the rule and never overrides one the user already wrote. The
+subscribed-but-unrouted state (ntfy users, and anyone who turned approval pushes off) is named in
+words on the companion row rather than left silent.
+
+**ntfy deliberately shows raw JSON.** Any prettier ntfy header (`Title`, `Click`, `Message`) is
+rendered to the user and would have to be composed from the item — i.e. content. The test asserts the
+ntfy request carries exactly `{Content-Type, Content-Length}`.
+
+**Rebase note (2026-08-27).** This atom was authored against a base that predated `MC-6`, `MC-7`,
+`MC-8`, `SH-2` and `LV-4`. Landing it took seven conflicts, all additive except two that had to take
+`main`'s side: `MC-6` deleted `CompanionPage.tsx`'s "Not on the phone yet" stub list that this atom's
+first pass still edited around, and the settings design system moved
+`div.rounded-lg.bg-surface-container` to `<RowGroup>` — the new "Phone push" section was converted to
+`RowGroup` rather than reintroducing the retired spelling. `reference/index.md` was **regenerated**
+(`python -m personalclaw.manifest_reference`), not hand-merged.

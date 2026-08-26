@@ -37,6 +37,7 @@ from __future__ import annotations
 import math
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 __all__ = ["ConfigValueError", "coerce_edit_value"]
 
@@ -231,6 +232,26 @@ def coerce_edit_value(path_key: str, value: Any, spec: dict) -> Any:
                 clean_rule[k] = op_rx
             clean_rules.append(clean_rule)
         value = clean_rules
+    elif spec["type"] == "https_url":
+        # MOBILE-COMPANION MC-5 — `mobile.ntfy_topic_url`. A push DESTINATION, so the
+        # scheme is load-bearing: an http topic would put the pinged item id on the wire in
+        # the clear. `config/loader.py` keeps the field verbatim (so the settings input
+        # shows what was typed) and `push.send_ntfy` fails closed, which makes this the one
+        # place a user can be TOLD, rather than watching pings silently vanish.
+        # Empty is legal and means "no ntfy destination".
+        if not isinstance(value, str):
+            raise ConfigValueError("must be a string", f"{path_key}={value}")
+        value = value.strip()
+        max_len = spec.get("max_len", 512)
+        if len(value) > max_len:
+            raise ConfigValueError(f"must be at most {max_len} characters", f"{path_key}")
+        if value:
+            parsed = urlparse(value)
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise ConfigValueError(
+                    "must be a full https:// URL — a push ping must not travel in the clear",
+                    f"{path_key}",
+                )
     elif spec["type"] == "skill_catalogs":
         # A list of external skill-catalog sources (AGENT-PACKS §6): [{name, url, kind}].
         # Normalise to exactly those keys; a url is required and must be http(s); kind is a
