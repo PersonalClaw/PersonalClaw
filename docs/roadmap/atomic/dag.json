@@ -7152,12 +7152,13 @@
         {
           "id": "PHF-7",
           "title": "Offline fake-model E2E harness + a11y rail",
-          "status": "todo",
+          "status": "done",
           "scope": "Build a deterministic scripted fake model provider fixture (scripted responses, tool-call emission, zero network) usable as a real bound provider, reusing the empty seed fixture path. Add make test-e2e that boots a real gateway on the fake provider with a seeded authenticated session then runs web/e2e/ \u2014 skipped unless PERSONALCLAW_E2E=1, forced serial with addopts cleared, its own high timeout, and no coverage instrumentation on the subprocess gateway. Mount the deferred axe-per-route accessibility rail on the harness and add it to CI so every authenticated route is axe-scanned and a new WCAG AA violation reds the build. Add a strict-mode env flag that turns one persistence/fencing convention (on-loop persistence, atomic writes, or is_fenced) into a hard failure for the gate's duration. Port the manual UI-validation click-path into web/e2e/ specs so it is reproducible in CI.",
           "done_when": "A gateway boots on the fake provider and completes a scripted chat turn with no credentials present; make test-e2e runs the browser gate offline and a bare pytest does not run it; every authenticated route is axe-scanned in CI; a deliberately raw call that skips the enforced helper reds the gate; validated with network off and no provider credentials, runtime recorded.",
           "deps": [
             "EXT:DESIGN-SYSTEM-CONSISTENCY:deferred-axe-per-route-a11y-tail"
-          ]
+          ],
+          "pr": 2092
         },
         {
           "id": "PHF-8",
@@ -7816,11 +7817,6 @@
       {
         "id": "PHF-2",
         "title": "cgroup v2 second enforcement tier",
-        "plan": "PHF"
-      },
-      {
-        "id": "PHF-7",
-        "title": "Offline fake-model E2E harness + a11y rail",
         "plan": "PHF"
       },
       {
@@ -10159,9 +10155,9 @@
         "code": "PHF",
         "plan": "PLATFORM-HARDENING-FLOORS",
         "total_atoms": 13,
-        "done": 11,
+        "done": 12,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
