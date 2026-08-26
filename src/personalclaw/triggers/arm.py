@@ -16,7 +16,7 @@ the queue described, which is downstream of a tick that can actually arm a clock
 `scheduling.py` had `recompute_from_completion` (interval only) and `boot_recovery` (needs an
 EXISTING `next_fire_at`); `service.next_after_completion` returns 0.0 for every non-interval kind by
 design ("the recurrence engine's job"). Nothing computed a FIRST fire from a spec. This module is
-that missing primitive, for all four `CLOCK_KINDS`.
+that missing primitive, for every member of `CLOCK_KINDS`.
 
 **Semantics are inherited, not invented.** `schedule.compute_next_run_ts` is the shipped, live
 computation for the same question, and its two subtle rules are preserved verbatim here:
@@ -211,6 +211,26 @@ def cadence_next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0)
             elapsed = max(0.0, now - anchor)
             slots = int(elapsed // secs) + 1
             return anchor + slots * secs
+
+        if kind == "adaptive":
+            # PR2-8 §4.3. TWO declared cadences, picked by the state the LAST run recorded on the
+            # spec. Anchored on `now` rather than on a creation grid, unlike `interval`: an adaptive
+            # clock is a SLEEP ("look again in 60 minutes"), not a wall-clock slot, and that is
+            # exactly what the heartbeat job this replaces computed (`now + minutes * 60`).
+            # Re-phasing is the desired behaviour here — a degradation must shorten the wait from
+            # the moment it is observed, not from whenever the healthy grid happens to land next.
+            #
+            # PURE: reads the spec only. A cadence that called into the remediation engine to ask
+            # "am I healthy?" would put provider-specific I/O inside the generic clock and make
+            # every wake computation measure the store. The engine's own action provider is the one
+            # writer of `health_state`.
+            degraded = str(spec.get("health_state") or "").strip().lower() == "degraded"
+            secs = _positive(
+                spec.get("interval_secs_degraded" if degraded else "interval_secs_healthy")
+            )
+            if secs <= 0:
+                return 0.0
+            return now + secs
 
         if kind == "at":
             at = _positive(spec.get("at"))

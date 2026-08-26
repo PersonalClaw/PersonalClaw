@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database, Plug } from 'lucide-react'
+import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database, Plug, Wrench } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern } from '../../lib/api'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
@@ -176,6 +176,10 @@ export const ACTION_ICON: Record<string, LucideIcon> = {
   bash: TerminalSquare, 'run-script': FileCode2, webhook: Webhook,
   notify: Bell, 'send-message': MessageSquare, 'create-task': ListPlus, 'invoke-agent': Users,
   'run-prompt': Bot, 'run-workflow': Workflow,
+  // PR2-8: the health-scored remediation engine. Declared rather than left to the `Zap` default,
+  // because the fallback is the same bolt every unmapped provider draws — a maintenance pass and a
+  // shell command would be pixel-identical on the row a user manages automations from.
+  'self-remediation': Wrench,
 }
 export function actionIcon(provider?: string): LucideIcon { return ACTION_ICON[provider ?? ''] ?? Zap }
 
@@ -196,6 +200,10 @@ const ACTION_LABEL: Record<string, string> = {
   bash: 'Bash', 'run-script': 'Script', webhook: 'Webhook',
   notify: 'Notify', 'send-message': 'Send Message', 'create-task': 'Create Task',
   'invoke-agent': 'Invoke Agent', 'run-prompt': 'Run Prompt', 'run-workflow': 'Run Workflow',
+  // PR2-8. Spelled out rather than left to the id-prettifier, which would render
+  // `Self remediation` — a second spelling of the backend `display_name` this map is meant to
+  // stay in sync with.
+  'self-remediation': 'Self-Remediation',
 }
 export function actionLabel(provider?: string): string {
   if (!provider) return 'Action'
