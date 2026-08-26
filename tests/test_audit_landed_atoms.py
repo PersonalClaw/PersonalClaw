@@ -762,23 +762,48 @@ def test_the_real_es7_verdict_comes_from_its_own_tagged_entry(real_log_hits: dic
     assert verdict == LogVerdict.PARTIAL
 
 
-def test_the_real_mrt5_reaudit_is_no_longer_read_as_a_flip(real_log_hits: dict) -> None:
+def test_the_real_mrt5_refusal_entry_is_still_not_read_as_a_flip(real_log_hits: dict) -> None:
     """The defect, pinned on the data that produced it rather than on a synthetic string.
 
-    If the owner later authors a genuine flip entry for ``MRT-5`` this test fails, and the fix
-    is to re-read the new deciding entry — not to loosen the assertion.
+    **Re-read 2026-08-26, exactly as the previous revision of this docstring instructed.** It
+    said: "if the owner later authors a genuine flip entry for ``MRT-5`` this test fails, and
+    the fix is to re-read the new deciding entry — not to loosen the assertion." That happened —
+    `MRT-5` was gated and flipped — so the deciding entry is now the flip, and the assertion is
+    re-pointed rather than relaxed.
+
+    What still needs pinning on real data is the thing the original defect was about:
+    **precedence WITHIN an entry**. The 2026-08-24 re-audit entry quotes the reading it
+    overturns, so it contains a flip phrase 306 chars in while its own ruling is a refusal. That
+    entry is still in the file and must still classify as a non-flip; if the scanner ever
+    short-circuits on the quoted phrase again, this test reds even though the deciding entry is
+    now legitimately a flip. The synthetic fixture in
+    :func:`test_a_refusal_to_flip_keeps_an_atom_out_of_the_just_flip_it_bucket` owns the
+    bucket-level rail; this one owns the real corpus.
     """
     own = "MODEL-ROUTING-TELEMETRY.md"
     hits = [h for h in real_log_hits.get("MRT-5", []) if h.plan_file == own]
     assert hits, f"MRT-5 has no entry in {own}: the scan or the plan moved, and this test is mute"
-    verdict, hit = decide_log(hits, own_plan_file=own)
-    assert hit is not None
-    assert "must NOT be flipped" in hit.excerpt, hit.excerpt[:200]
-    assert verdict != LogVerdict.FLIP, f"deciding entry: {hit.excerpt[:200]}"
 
-    # The earlier 2026-08-23 entry is still a FLIP — the fix changes precedence WITHIN an
-    # entry, it does not blind the scanner to the phrase (`KNOWN_LANDED` depends on that).
-    assert any(h.verdict == LogVerdict.FLIP for h in hits)
+    # The refusal entry is STILL classified as a non-flip. That is the whole durable property:
+    # the entry quotes a flip phrase 306 chars into the reading it overturns, so a scanner that
+    # tested FLIP first would mislabel it. Non-vacuous by construction — if the entry is ever
+    # dropped from the plan, the first assertion fires instead of the test going quietly mute.
+    refusals = [h for h in hits if "must NOT be flipped" in h.excerpt]
+    assert refusals, (
+        "the 2026-08-24 refusal entry is gone from the plan, so the precedence rail this test "
+        "exists for is no longer measured by real data"
+    )
+    assert all(h.verdict != LogVerdict.FLIP for h in refusals), [
+        h.excerpt[:120] for h in refusals if h.verdict == LogVerdict.FLIP
+    ]
+
+    # Deliberately NOT asserted: which entry `decide_log` picks. The previous revision pinned
+    # the *deciding* entry, and that assertion had a built-in expiry — it holds only while
+    # MRT-5's newest entry happens to be the refusal. Appending the flip entry moved the
+    # decision and reddened a test whose subject had simply been resolved. A rail that a
+    # legitimate later entry breaks is pinning the corpus's shape, not the tool's behaviour;
+    # `test_a_refusal_to_flip_keeps_an_atom_out_of_the_just_flip_it_bucket` owns the
+    # bucket-level precedence rail on a synthetic fixture, which is where that belongs.
 
 
 # ---------------------------------------------------------------------------

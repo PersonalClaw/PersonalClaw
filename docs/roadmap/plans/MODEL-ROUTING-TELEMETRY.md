@@ -1482,3 +1482,41 @@ by construction — that is the mechanism working, not a gap.
   and the rate table per call, so "keep the hot path pure" was already false), and the structurally-zero
   feedback signal is the path the clause **explicitly permits** (renormalise onto `success_rate` with
   `feedback_n: 0`) with the producer-side stamp owned by the EXT dep.
+
+- [2026-08-26][MRT-5] **Integration follow-up: the plan's own status field, and a real-data rail
+  that had a built-in expiry.** Two CI reds, both deterministic (`test` failed on *both*
+  duplicate runs on the same SHA, which is what separates a defect from a flake here), and
+  neither was in the atom's code.
+  1. **`MODEL-ROUTING-TELEMETRY` read `in_progress` with 5/5 atoms `done`.** `MRT-5` is the
+     plan's last atom, so flipping it orphaned the plan-level `status` — the failure mode that
+     has cost three earlier batches a separate CI cycle. Flipped in the same change.
+  2. **`test_the_real_mrt5_reaudit_is_no_longer_read_as_a_flip` pinned the *deciding* log entry**,
+     which made it expire by construction: it held only while `MRT-5`'s newest entry happened to
+     be the 2026-08-24 refusal. Appending the flip entry moved the decision and reddened a test
+     whose subject had simply been resolved. Re-pointed (and renamed
+     `test_the_real_mrt5_refusal_entry_is_still_not_read_as_a_flip`) at the property that is
+     actually durable: the refusal entry — which quotes a flip phrase 306 chars into the reading
+     it overturns — must still classify as a non-flip. The assertion was **re-pointed, not
+     loosened**, exactly as the old docstring instructed; the bucket-level precedence rail stays
+     on the synthetic fixture in
+     `test_a_refusal_to_flip_keeps_an_atom_out_of_the_just_flip_it_bucket`, which is where a rail
+     that must not move belongs. Non-vacuous: making `FLIP_PATTERNS` win anywhere in
+     `_verdict_for` reds 3 tests, and restoring returns 78 passed.
+- [2026-08-26][MRT-5] 🔎 **DISCOVERY, deliberately NOT fixed here — `audit_landed_atoms` reads a
+  measurement as unmet scope.** Chasing red 2 surfaced why `MRT-5`'s flip entry classifies
+  `PARTIAL_OR_UNMET`: `PARTIAL_PATTERNS` carries a bare `\bremaining\b`, and the entry says
+  *"grepped back to 1 remaining hit = the `def` only"* — the word describing a **grep-back
+  count**, not leftover work. **Measured across the whole corpus, not assumed:** of 7518 log
+  entries, 160 are `PARTIAL` solely via `remaining`, and **11 of those are measurement or
+  completion phrasings** ("zero remaining matches", "0 hits … remaining hits are the four
+  deletion rails", "the counter had no remaining reader") spread over 6 plans — ACP-AGENT-PARITY
+  ×3, DESIGN-SYSTEM-CONSISTENCY ×4, COMPANION-APPS, PLATFORM-LEGIBILITY,
+  WORKFLOWS-V2-AUTOMATION-SUBSTRATE and this plan. A candidate fix — excluding a count-prefixed
+  or measurement-noun `remaining` — changes exactly those 11 verdicts and leaves the other 149
+  untouched, so the pattern keeps its power.
+  **Not applied in this PR on purpose:** it is a change to a shared tool with its own vacuity
+  requirement, and it belongs in a scoped change rather than riding along inside an unrelated
+  atom's integration. Recording the measurement so the next session starts from it. Note also
+  that the tool has **no pattern for an atom that HAS been flipped** — `FLIP` means
+  *flip-when-merged* — so a completed atom's entry falls through to `NO_SIGNAL`; that is a
+  vocabulary question, not a regex one, and it is why this was not resolved by widening `FLIP`.

@@ -3213,7 +3213,7 @@
     {
       "plan": "MODEL-ROUTING-TELEMETRY",
       "code": "MRT",
-      "status": "in_progress",
+      "status": "done",
       "atoms": [
         {
           "id": "MRT-1",
