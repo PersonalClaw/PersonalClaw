@@ -108,6 +108,15 @@ AUDIT_OUTCOME_FAMILIES: tuple[dict[str, object], ...] = (
 AUDIT_OUTCOME_SUCCESS = (
     "success",
     "ok",
+    # PA-5. Both emitters spell it as the SUCCESS arm of an explicit pair —
+    # `outcome="executed" if executed else "declined"` (handlers/proactive.py) and
+    # `"outcome": "executed" if ok else "failed"` (proactive/autoexec.py) — so a triage reply's
+    # verb having been carried out is a working operation, not something a failure pill should
+    # accuse. Its sibling `expired` is deliberately left UNCLASSIFIED: nobody answered, which is
+    # not a refusal, and putting it in a denied family would make the audit log assert a refusal
+    # that never happened. PA-5's own note is the distinction — "you answered and it did nothing"
+    # must stay legible against "you never answered".
+    "executed",
     "allowed",
     "approved",
     "auto_approved",
