@@ -887,7 +887,7 @@
             "PR2-5",
             "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:triggers.json + adaptive-clock trigger kind + runs-inbox digest"
           ],
-          "pr": 2099
+          "pr": 2105
         },
         {
           "id": "PR2-9",
