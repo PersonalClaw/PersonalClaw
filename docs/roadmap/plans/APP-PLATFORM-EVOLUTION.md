@@ -867,3 +867,31 @@ selection, so **whether the app-lifecycle audit trail is railed remains an open 
   its own rail — a worker that reaches `setup()` at all. Recorded so the next APE-3 session starts from the
   handoff rather than re-deriving it. The shipped half of the session (the boot block's
   `load_all_extensions()` wire) landed separately and does not touch this file's atoms.
+
+- [2026-08-26][APE-4] **DONE.** Both halves of the `done_when` are now on `main`, in two different
+  repositories, which is why this atom read `todo` while it was already half-shipped. The Store half
+  had landed earlier in core: `QualityBadges` (`web/src/pages/apps/qualityBadges.tsx`) renders the
+  declared bar in three places in `AppsSection.tsx` — the card, the detail panel, and the pre-install
+  consent surface — and renders **nothing at all** when an app declares nothing. The accountability
+  half landed in `PersonalClawApps#53` (rebase-merged, `754030cc`): a `quality-declarations` CI job
+  that invokes **core's own verifier** (`python -m personalclaw.apps.quality .`) rather than
+  re-implementing the pass rules, with `needs: [tests]` so a declaring app whose own suite is red can
+  never reach a green quality job.
+  **Falsified, both directions, on the union tree before merging** — a green "every claim is backed"
+  line is also exactly what an inert verifier prints. Flipping growth's `quality.a11y` to `true`, a
+  claim with no axe report behind it, gives `✗ growth: quality.a11y=true — no readable axe evidence at
+  a11y/axe-report.json` and **exit 1**; restoring from a file copy returns exit 0 with a clean tree.
+  The exit code was measured without a pipe, because a `| tail` in zsh reports `tail`'s status and
+  would have scored the refusal as a pass.
+  **The union was the real work here.** Neither member PR's own CI could see the pair: #49 was cut
+  against a tree where growth declared nothing, and #50's check set has six jobs — the quality job does
+  not exist on its base. The census step prints the claims (`tested=1 designSystem=1 a11y=0 — declared
+  by: growth(tested+designSystem)`) so a green run cannot be confused with "nobody declared anything".
+- [2026-08-26][APE-6] **PARTIAL — stays `todo`.** The criterion says **both** apps; only **Growth** was
+  migrated (`PersonalClawApps#53`). Growth's migration is CI-backed rather than asserted: it is the one
+  bundle in the repo declaring `quality {tested: true, designSystem: "v2", a11y: false}`, and APE-4's
+  new job re-checks that `designSystem` claim against token-lint on every push. **Minutes declares no
+  quality block and was not touched**, so it is neither migrated nor claiming to be. The remainder is
+  the same migration for `minutes/` plus its declaration; nothing blocks it. Note the honest `a11y:
+  false` — an axis declared false claims nothing and is never punished, which is the design that keeps
+  the badge row from becoming decoration.
