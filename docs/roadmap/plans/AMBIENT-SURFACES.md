@@ -751,3 +751,50 @@ picture; `web/src/pages/dashboard/world/` renders it ("Orbit", a new dashboard b
   cannot back. Clauses to re-measure against the `done_when` before any flip: the **one** `/api/ws`
   connection consumed as refetch signals only (never payloads) with backoff-reconnect, the badge as
   pending approvals + needs-input, and the Settings mute. Not blocked on another plan.
+
+- [2026-08-26][AS-7] ✅ **ATOM FLIPPED `done` (PersonalClawApps#54, rebase-merged `f3963408`).**
+  **All three clauses I sent the closing work after were already satisfied — and railed with
+  vacuity floors — which was established by mutation rather than by reading the PARTIAL note.**
+  `read_frame` returns an `int` and drops the body; `Doorbell` refuses a callback taking any
+  argument at construction *and* in `set_ring`, and `build_companion` is its only construction
+  site; the headline test feeds a frame carrying 99 fabricated approvals and asserts
+  `WS-SENTINEL` never reaches the rendered model, with a payload-*consuming* reader written into
+  the test as its floor (it surfaces all 99). Backoff is asserted as `[1,2,4,8,16]` with a
+  distinct-values floor against a fixed sleep, plus reset-after-good-connect. The badge is a
+  property over the two rendered lists, with `INSTANCE_ATTRS` forbidding a cached counter and a
+  floor test that builds the stored-counter design and shows it lying. Mute is checked at the
+  single post site with a live callable, and driven both directions (`posted == 2` unmuted, then
+  `suppressed == 2` with `posted` unchanged). Verified against core rather than assumed:
+  `GET /api/approvals` really returns a bare array of *pending* approvals, so the badge
+  arithmetic is right, and the `approve`/`reject` wire pair matches.
+  **The real gap was the entry surface.** `app.json`'s `postInstall` runs `run.py --check` as the
+  first thing that happens on a fresh Mac, and **nothing joined those two sides**: `test_manifest`
+  asserted `"--check" in ci.postInstall` while `main()` was never called, so renaming the flag or
+  moving the bundle directory left every suite green and every new install printing usage instead
+  of verifying the token. Under that mutation `test_manifest.py` alone stays 8/8 green. The new
+  rails are **computed, not restated** — the install path is derived from `clientInstall.shell`'s
+  `DEST` plus the sparse-checkout dir and required to equal the path `postInstall` invokes, which
+  is what caught a shell `;` terminator a hardcoded expectation would have sailed past. Also
+  pinned: the exit codes an installer sees (2 unconfigured, 1 unreachable, 0 healthy), that an
+  unconfigured launch never reaches `resolve_host`, and that writing credentials does not
+  silently unmute. 49 → **64 tests**.
+  **A defect in the new suite, found by mutation and fixed:** an early version *hung* the whole
+  bundle run in `_run_headless`'s `while True` until killed. A CI timeout with no failing test
+  name is strictly worse than a red, so an autouse fixture now fails fast on any fall-through to
+  the live path — same mutation, 0.26s, with the reason in the message.
+  Quality declaration added and held to account both ways: `{tested: true, designSystem: "n/a"}`,
+  with `a11y` deliberately unclaimed (no UI to scan, no axe report). Claiming `a11y: true` makes
+  APE-4's verifier exit 1 naming the bundle and axis; breaking the badge makes it exit 1 on
+  `tested` alone.
+  **The one thing not proven is an environment limit, not a gap:** a real `NSStatusItem` drawn by
+  PyObjC on a Mac with a window server. Nothing automated can click a menu-bar item or confirm the
+  title fits the bar. Named in `test_launcher.py`'s and `test_status_item.py`'s module docstrings.
+  Everything below the toolkit is proven — dispatch, exit codes, file mode, rendered text, badge
+  arithmetic, ws contract, deep-link shape.
+  Three observations recorded and NOT fixed (out of this atom's scope): `notify.py` counts "muted"
+  and "no osascript available" both as `suppressed`, so the counter cannot distinguish a
+  preference from a stripped environment; an unrecognised flag (`run.py --chekc`) launches the
+  live app rather than erroring, so a typo gets you a menu-bar item instead of a usage message;
+  and `read_frame` puts `OP_CONTINUATION` in `RINGING_OPCODES` and ignores FIN, so a fragmented
+  message rings more than once (extra refetches only, never a payload leak, and the docstring
+  reads as deliberate).
