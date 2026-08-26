@@ -48,6 +48,78 @@ def parse_descriptor(text: str) -> dict:
     return data
 
 
+def tool_call_count(scenario_result: Any) -> int:
+    """Total tool calls across every turn of every session.
+
+    ``TurnResult.tool_calls`` is populated per turn (``eval/runner.py``) and was dropped by
+    BOTH aggregation boundaries — ``ScenarioResult.summary()`` and
+    :func:`result_from_scenario` — so the benchmark protocol's declared ``tool_calls``
+    metric was unreachable from the matrix path (learning-benchmark-protocol.md §7 G3).
+    Counting it HERE is the fix: a count, not the call texts, because the texts are prompt
+    content and this payload crosses a process boundary into a retained artifact.
+
+    Tolerant of a result object that has no sessions (a partially-built double in a test)
+    because a missing count must read as 0 calls observed, never as a crashed cell."""
+    total = 0
+    for session in getattr(scenario_result, "sessions", None) or []:
+        for turn in getattr(session, "turns", None) or []:
+            total += len(getattr(turn, "tool_calls", None) or [])
+    return total
+
+
+def spend_from_home() -> dict:
+    """This cell's model spend, read from its OWN throwaway home before it is destroyed.
+
+    ``guardrails/audit.py`` writes one line per attempt into ``config_dir()/model_calls.jsonl``.
+    That file lives in the cell's ``PERSONALCLAW_HOME`` — a ``TemporaryDirectory`` the parent
+    deletes on exit — so the token denominator the honest verdict needs was being computed and
+    then thrown away (protocol §7 G4). Folding it into the payload here is what makes it
+    survive: the parent persists this dict verbatim into the cell artifact under the real home.
+
+    ``estimated`` is carried through and never dropped. ``AttemptRecord.estimated`` exists to
+    say "dollars/tokens are heuristic, not provider-reported", and §4 requires any published
+    ratio to carry that word.
+
+    ``observed`` is the load-bearing field: ``False`` means the audit file was absent or
+    unreadable, which is NOT the same fact as zero spend. A reader that cannot tell those
+    apart would publish "this arm was free" about a measurement that never happened."""
+    tokens_in = tokens_out = attempts = 0
+    dollars = 0.0
+    estimated = False
+    try:
+        from personalclaw.config import config_dir
+
+        path = Path(config_dir()) / "model_calls.jsonl"
+        if not path.is_file():
+            return {"observed": False, "reason": "no model_calls.jsonl in the cell home"}
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            attempts += 1
+            tokens_in += int(row.get("tokens_in") or 0)
+            tokens_out += int(row.get("tokens_out") or 0)
+            dollars += float(row.get("dollars_est") or 0.0)
+            estimated = estimated or bool(row.get("estimated"))
+    except Exception as exc:  # noqa: BLE001 - spend accounting never fails a measured cell
+        return {"observed": False, "reason": f"spend read failed: {exc}"[:400]}
+    return {
+        "observed": True,
+        "attempts": attempts,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "tokens": tokens_in + tokens_out,
+        "dollars_est": round(dollars, 6),
+        "estimated": estimated,
+    }
+
+
 def result_from_scenario(scenario_result: Any) -> dict:
     """Map a completed ``ScenarioResult`` to the raw cell-result dict.
 
@@ -66,6 +138,7 @@ def result_from_scenario(scenario_result: Any) -> dict:
         "ok": True,
         "passed": passed,
         "score": score,
+        "tool_calls": tool_call_count(scenario_result),
         "summary": {
             "name": getattr(scenario_result, "name", ""),
             "assertions": f"{passed_assertions}/{total}",
@@ -180,6 +253,9 @@ async def _run(descriptor: dict) -> dict:
     runner = EvalRunner(provider_factory=factory, workspace_dir=ws, judge_enabled=False)
     scenario_result = await runner.run_scenario(scenario)
     result = result_from_scenario(scenario_result)
+    # Read the spend BEFORE returning: the parent deletes this home the moment the child
+    # exits, so this is the only process that can see the audit rows it just wrote (§7 G4).
+    result["spend"] = spend_from_home()
     if cell_overlay is not None:
         # WHAT the overlay actually changed, reported back rather than assumed: an arm that
         # applied nothing is a delta of 0.0 that would otherwise read as "the component does
