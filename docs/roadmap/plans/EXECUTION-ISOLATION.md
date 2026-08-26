@@ -1076,3 +1076,34 @@ D0 is documentation and should land immediately — an inaccurate security claim
   those can bind to it, but neither binding exists yet. Gate: `make lint` clean (1029 files),
   `gate_report.py` **6/6 PASS**, `tests/test_review_triage.py` **47 passed**, web **493 files / 5238 tests,
   exit 0**. `dag.json` and `EI.md` untouched (driver-owned); no push, no PR.
+
+- **2026-08-26 — `EI-9` DONE (PR #2094).** SC9 closed end to end: a review stage emits line-anchored
+  findings, the panel validates each anchor against the REAL diff, a subset is accepted, the accepted
+  pair dispatches to the originating worker, rejections land in the calibration record, and nothing is
+  written without acceptance. Four premises were MEASURED first, and two were wrong as documented:
+  the Canonical Finding record existed only as a PROMPT contract (`git grep auto_fixable` over `src/`,
+  `web/src/`, `tests/` = **0** — no type, no parser, no consumer), and the "cockpit diff panel to
+  extend" is not a run-scoped surface (`CodeCockpitPage.tsx`, 3408 lines, has **zero** `runId`
+  occurrences). The calibration record and the steering dispatch seam DID exist and were reused
+  unchanged rather than cloned.
+  The load-bearing clause is the negative one, and a stale anchor is the worst failure available here
+  — silently applying an accepted fix at the wrong line — so the anchor is re-validated ON SUBMIT, not
+  only on render. Falsified four ways; neutering the accepted-only guard reds with "the write path was
+  reached with nothing accepted", and neutering the staleness check reds with "a stale accept reached
+  the worker".
+  **DEVIATION 1 — the triage surface is a `WorkflowRunDetail` drawer, not the cockpit diff panel §7
+  names.** That panel carries no run id; the alternative was plumbing one through a 3408-line page
+  that has never had one.
+  **DEVIATION 2 — OWNER DECISION SURFACED. "No resume capability -> fresh session with the handoff
+  brief" is PARKED, not auto-started.** A terminal run gets the brief on
+  `run.extra["review_handoff_brief"]` plus a `handoff_parked` receipt. Auto-starting a run off a
+  review acceptance is unattended execution, which is AUTONOMY-GUARDRAILS' call to make and not this
+  atom's. The owner can fund the auto-start there.
+  **DEVIATION 3 — a new ledger kind required the documented golden regeneration**
+  (`emitters_{events,journal}` only: +1 row plus the seq shift for kinds sorting after
+  `review_finding`). Run goldens untouched.
+  **Limits, stated not smoothed:** SEC 7's "Reusers" line (loop judge feedback, inbox drafts) is
+  UNBUILT — the primitive is deliberately run-free and engine-free so those can bind, but neither
+  binding exists. A run whose worktree was torn down anchors nothing and reports `empty_diff` honestly.
+  And this was NOT driven in a live browser: evidence stops at the vitest call-site pin plus the
+  backend service tests.
