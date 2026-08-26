@@ -889,6 +889,15 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   whole array, because replaying PersonalClaw's own prior assistant turns as user input is how a dialect
   teaches an agent to talk to itself — a client needing full-array fidelity is a separate decision.
 
+- [2026-08-26][EA-2] **Atom flipped `done` (PR #2086).** Landed through a combined batch with EA-8.
+  The `done_when` clause naming `_STATELESS_PREFIXES` is satisfied by the DEVIATION recorded above,
+  not by the literal mechanism: EA-9's ruling stands (that list is the provider resume/pool axis and
+  `inbound:cli:` shares the prefix, so adding it would break §9.5's `--session` clause), and
+  statelessness is enforced per-request in `_reset_session` on BOTH axes instead. The surfaced
+  `_DYNAMIC_CODE_SITE_CEILING` 16 -> 17 owner call is compensated, not open: the guarantee is
+  re-proven one level up by `test_every_dialect_error_code_is_a_registered_literal`. Still available
+  to the owner: fund the shared census scanner extension instead of the compensated ceiling.
+
 ## Execution log — `EA-8` (§5 Dialect 4: the A2A agent card + tasks)
 
 - [2026-08-25][EA-8] **PARTIAL — the inbound dialect is DONE end to end; the outbound `a2a-call` half is

@@ -4273,13 +4273,14 @@
         {
           "id": "EA-2",
           "title": "OpenAI-compatible inbound dialect (/v1/*) \u2014 agent-as-model + audio aliases",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a72 (Dialect 1): \u00a72.1 /v1/chat/completions + /v1/models, \u00a72.2 /v1/audio/{speech,transcriptions,voices} aliases, \u00a72.3 headless-profile safety composition; Amendment 2026-07-26 T2-A1/T2-A2. Session 2 (the 'doorway').",
           "done_when": "POST /v1/chat/completions maps model=personalclaw/<agent> AND bare <agent> to an agent via resolve_agent_bindings; SSE chat.completion.chunk translation with [DONE] + usage block, non-stream returns one completion; `user` field + X-PersonalClaw-Session header \u2192 inbound:<client_id>:<sha8> session (stateless unless persistent_sessions); inbound: added to _STATELESS_PREFIXES + guardrails headless classification; tool calls execute server-side (never surfaced as tool_calls deltas), needs-approval returns dashboard-pointer terminal message; unknown agent \u2192 404 in OpenAI error shape with stable code; /v1/audio/* thin aliases over /api/voice/synthesize + /api/stt/transcribe via resolve_provider_for_use_case (tts-1/whisper-1 cosmetic, resolve_voice(name) seam); per-client SpendMeter budgets via ModelCallGuard; unmodified `openai` SDK holds multi-turn convo + curl /v1/audio/speech returns bound-TTS audio (Success Criteria 2); zero provider names in dialect code paths.",
           "deps": [
             "EA-1",
             "EXT:AUTONOMY-GUARDRAILS:headless SafetyProfile + SpendMeter (Budget scope=trigger) + ModelCallGuard"
-          ]
+          ],
+          "pr": 2086
         },
         {
           "id": "EA-3",
@@ -4344,7 +4345,8 @@
           "deps": [
             "EA-1",
             "EXT:WORKFLOWS-V2:Slices 0-3 run engine + journal (inbound task mapping; outbound a2a-call is independent)"
-          ]
+          ],
+          "blocked_reason": "PARTIAL \u2014 the inbound half shipped in PR #2086 (agent card + tasks onto a WorkflowRun, SSE lifecycle, fenced artifacts, per-template publish toggle). The outbound half is cross-repo: `apps/a2a-action` is a PersonalClawApps bundle (the webhook-action precedent the plan names lives there), so `a2a-call` is deliberately ABSENT from ALLOWED_HOOK_PROVIDERS \u2014 adding the name in core alone validates and saves, then fails at fire time. Success Criterion 10's a2a-call clause is unmet for the same reason. Clears when the apps bundle lands and `a2a-call` moves to the accept side in the same commit."
         },
         {
           "id": "EA-9",
@@ -7634,11 +7636,6 @@
         "plan": "DL"
       },
       {
-        "id": "EA-2",
-        "title": "OpenAI-compatible inbound dialect (/v1/*) \u2014 agent-as-model + audio aliases",
-        "plan": "EA"
-      },
-      {
         "id": "EA-5",
         "title": "External-agent capture proxy (/capture/v1) + telemetry import",
         "plan": "EA"
@@ -9907,9 +9904,9 @@
         "code": "EA",
         "plan": "EXTERNAL-ACCESS",
         "total_atoms": 9,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
