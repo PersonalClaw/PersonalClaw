@@ -1107,3 +1107,71 @@ D0 is documentation and should land immediately — an inaccurate security claim
   binding exists. A run whose worktree was torn down anchors nothing and reports `empty_diff` honestly.
   And this was NOT driven in a live browser: evidence stops at the vitest call-site pin plus the
   backend service tests.
+- [2026-08-25][EI-7] **PARTIAL — SC6 met, SC7 met host-side only.** §4.2's `ProposerBackend` had
+  **zero hits anywhere in the tree**, so this landed as a new `src/personalclaw/proposer/` package
+  (`contract.py` the four-member protocol, `brief.py`, `selection.py`, `verify.py`, `dialects.py`,
+  `backends.py`, `service.py`), plus `action_providers/second_opinion_provider.py` and
+  `sandbox_providers/{tool_gateway,pclaw_tool}.py`.
+  **SC6 is met.** The different-runner property is STRUCTURAL, not advisory: `select_target` drops
+  the origin runner before any other filter and no argument, config value or tie-break can put it
+  back — when the exclusion empties the eligible set the answer is `None` and the service degrades
+  to the `subagent` backend, never a re-ask. Asserted the way it can fail: with `gemini-cli` the
+  ONLY healthy runner, excluding it returns nothing, and the vacuity floor (excluding `codex`
+  instead yields `gemini-cli` from the same catalog) proves the filter and not an empty universe
+  did the work. Falsified by making `is_same_runner` return `False` → 3 reds naming the defect
+  ("the stalled runner was selected to review its own stall"), green again after restore.
+  The acceptance gate is asserted as the NEGATIVE: a proposer that claims `app.py` without writing
+  it is REJECTED (`missing_paths=("app.py",)`), and the vacuity floor is the SAME claim over the
+  SAME baseline with the bytes actually written being accepted — one without the other proves
+  nothing. Falsified by dropping `diff_verified` from `accepted` → red, green after restore.
+  Acceptance is content-digest based rather than `git diff` based on purpose: it works outside a
+  repo, sees `.gitignore`d changes, and cannot be fooled by a proposer that stages or stashes. The
+  git view is captured for the brief's prose only, never as the test.
+  **The claim protocol is explicit** (`PCLAW-EDITED: <path>` per file) because prose is not a
+  verifiable claim: "I edited app.py, trust me" parses to zero claims, and zero claims is a
+  rejection — advice is not a patch.
+  **SC7 is met for three of its four clauses, host-side.** `pclaw-tool memory_recall` succeeds
+  through the exec channel driven as a REAL subprocess over a REAL `os.pipe()` pair; the shim
+  contains no socket / bind / listen / accept / HTTP client / URL / loopback address (scanner has a
+  planted-token vacuity floor), reads exactly three env names — two fd numbers and the advertised
+  tool list — and its whole environment is asserted free of credential-shaped keys and values. A
+  `REVIEW_ONLY` (research) profile is refused `memory_remember` host-side with the vacuity floor
+  that `CODING` is served the identical request. Falsified by pinning `grants = "read_write"` →
+  5 reds, green after restore.
+  🔴 **The "inside a docker/lima sandbox" clause is UNVERIFIED and structurally so** — not merely
+  environment-gated. `sandbox_providers/` ships `none` only (`grep -c docker` → 0); the container
+  tiers are `EI-2`/`EI-4`, both `todo`. `SandboxHandle` is a 3-method contract (`argv`/`exec`/
+  `cleanup`) with no `copy_file_in`, so §5.2's "copied in via `copy_file_in`" has no method to call
+  yet. What landed is the transport and the policy a container tier will use unchanged: the channel
+  is a pipe pair the HOST created (the same object `docker exec -i` hands over) and the refusal is
+  taken host-side after the request arrives, where the sandbox cannot influence it. No sandbox was
+  simulated to claim the clause.
+  **DISCOVERY: this gateway is the FIRST enforcement point for `SafetyProfile.tool_grants`.**
+  `cli_run.py:22-24` states of the pre-existing tree that the field "has no enforcement point
+  anywhere in the tree today … so trusting it would have shipped a read-only promise that denies
+  nothing". Enforcing it here does not risk the "enforcing a dead control is an outage" lesson
+  precisely because the surface is new — no existing automation can break on a control that had no
+  call sites. The read/write question is answered by `task_modes.task_mode_denies` (the
+  deny-by-default classifier that actually holds) rather than a new one, so this mints no second
+  dialect. The default surface deliberately includes one write-class tool (`memory_remember`): a
+  read-only default surface would make the refusal unreachable in production, which is the
+  present-but-inert shape that reads identically to a control that works until it matters.
+  **The provider is core-native and the name was added WITH it.** The `webhook-action` precedent
+  (core keeps only the name) does not apply — this provider reads the runner catalog, resolves a
+  sandbox provider, spawns a subagent and writes SEL rows, none of which is on the
+  `personalclaw.sdk.*` surface an app may import. So all four wiring points land in one commit:
+  `action_providers/registry.py`, `validation.ALLOWED_HOOK_PROVIDERS`, a `guardrails/rungs.py`
+  declaration (joining `action.spawn_turn` rather than minting a key for one governed behaviour),
+  and `triggers/screen.py`'s `WRITE_CAPABLE_PROVIDERS`. A missing `origin_runner` is REFUSED rather
+  than defaulted: an empty exclusion is not a safe default, it is the defect.
+  **Zero new spawn sites** — `test_spawn_ceiling_audit.py` is green untouched, because the runner
+  backend launches through the sandbox provider's own handle and the brief's fresh `git status`/
+  `git diff` reuse `loop/worktree._git` (already ceiling-wrapped and already classified) instead of
+  minting a second git runner.
+  **NOT built (out of this atom's scope, named so the next session does not have to rediscover
+  it):** the three §4.1 CONSUMERS. The loop watchdog's `stagnant` "second opinion" offer, the
+  workflow gate `on_stall: second_opinion` policy, and the cockpit stalled-banner affordance all
+  still need call sites; today the only entry point is the action provider (which a trigger or a
+  workflow action node can already reach). The `pclaw-tool` shim also has no production installer
+  call site — `install_shim` is invoked by tests only, and its real caller is the container tier's
+  `copy_file_in` in `EI-2`/`EI-4`.

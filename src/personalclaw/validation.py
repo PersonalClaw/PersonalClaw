@@ -911,6 +911,11 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # without this entry a hook, trigger or workflow naming `browse` is rejected at
         # create time, so the provider would be dispatchable by nothing at all.
         "browse",
+        # EXECUTION-ISOLATION §4.1 (EI-7): the stalled-node handoff to a DIFFERENT cataloged
+        # runner. A workflow gate's `on_stall: second_opinion` policy is an ordinary trigger
+        # action, so it goes through this same validation — registered in the action-provider
+        # registry in the same commit as this line, for the reason stated above.
+        "second-opinion",
     }
 )
 

@@ -253,3 +253,14 @@ def _ensure_default_providers_registered() -> None:
         from personalclaw.action_providers.browse_provider import BrowseActionProvider
 
         register_action_provider(BrowseActionProvider())
+    if "second-opinion" not in _providers:
+        # EXECUTION-ISOLATION §4.1 (EI-7): hand a stalled loop/gate/session's state to a
+        # DIFFERENT cataloged runner for one shot, and accept the answer only when a disk
+        # re-diff confirms the edits it claims. Added to ALLOWED_HOOK_PROVIDERS and to
+        # `triggers/screen.py`'s write-capable set in the SAME commit — a provider in one set
+        # but not the other is the mismatch that makes a trigger save and then fail to run.
+        from personalclaw.action_providers.second_opinion_provider import (
+            SecondOpinionActionProvider,
+        )
+
+        register_action_provider(SecondOpinionActionProvider())

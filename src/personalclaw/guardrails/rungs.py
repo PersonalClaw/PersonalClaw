@@ -296,12 +296,19 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
     ),
     # Spawns an LLM turn. `leaves_machine` because the turn's own toolset can reach the
     # network — the profile it runs under bounds that, not this declaration.
+    # EI-7's `second-opinion` shares this class rather than minting its own key, on the same
+    # reasoning the siblings above use: what it ultimately does is spawn ONE headless LLM turn —
+    # a cataloged runner one-shot, or a subagent when the exclusion leaves no eligible runner —
+    # and a second key would be a second name for one governed behavior. Its extra powers are
+    # governed where they can be evaluated: the write-capable fence in `triggers/screen.py`, the
+    # hard per-handoff timeout, and the disk re-diff that must confirm the edits before the
+    # result is accepted at all.
     ActionTypeSpec(
         key="action.spawn_turn",
         floor=RUNG_AUTONOMOUS,
         ceiling=RUNG_AUTONOMOUS,
         leaves_machine=True,
-        providers=("run-prompt", "invoke-agent", "run-workflow"),
+        providers=("run-prompt", "invoke-agent", "run-workflow", "second-opinion"),
     ),
     # BROWSE-AUTOMATION §9 (BA-3): drives a real browser, so its effect is a click and a form
     # POST on somebody else's site. `one_tap` at BOTH ends, which is the only spec here that
