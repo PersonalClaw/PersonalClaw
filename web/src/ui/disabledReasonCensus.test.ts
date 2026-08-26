@@ -96,8 +96,11 @@ const CLASSIFIED: Record<string, string> = {
   // disabled on purpose. (Two copies because the inbox settings panel exists twice — an open taste call.)
   'pages/inbox/InboxSettingsPanel.tsx:67': 'loading (sourcesOn === null)',
   'pages/inbox/InboxSettingsPanel.tsx:73': 'loading (engagementOn === null)',
-  'pages/settings/InboxSettingsPanel.tsx:91': 'loading (sourcesOn === null)',
-  'pages/settings/InboxSettingsPanel.tsx:95': 'loading (engagementOn === null)',
+  // 91 → 129 / 95 → 133 (PA-5): the proactive-triage section was inserted ABOVE these two, so the
+  // SITES are unchanged and only their line numbers moved. This map keys on file:line, so an edit
+  // above a classified site rots the key; the shape assertion below re-proves each one.
+  'pages/settings/InboxSettingsPanel.tsx:129': 'loading (sourcesOn === null)',
+  'pages/settings/InboxSettingsPanel.tsx:133': 'loading (engagementOn === null)',
   // The reason is the button's own visible text — "(removed — insight kept)" — not an attribute.
   // Line moved 918 → 941 when `KL-8` added the Home lens above it; the SITE is unchanged and the
   // shape assertion below re-proves it. This map keys on file:line, so any edit above a classified

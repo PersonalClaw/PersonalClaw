@@ -104,6 +104,9 @@ class TriageResult:
         return {
             "collected": len(self.manifest),
             "lanes": self.manifest.counts(),
+            # The ordinal→provenance map, so a surface opened after this process exited can
+            # still redeem an ordinal without re-collecting. See `Manifest.projection`.
+            "items": self.manifest.projection(),
             "dropped": len(self.gate.dropped),
             "surfaced": len(self.gate.surfaced),
             "proposable": len(self.gate.proposable),

@@ -136,6 +136,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "prompt_card_failed": "Rendering the prompt card failed.",
     "prompt_card_rejected": "The submitted prompt card was rejected.",
     "rejection_incomplete": "A rejection must carry a reason.",
+    # ── the triage digest (handlers/proactive.py — PROACTIVE-ASSISTANT §5.1/§5.4) ──
+    # `triage_digest_unreadable` is a 500 whose `error` object travels BESIDE the digest view's own
+    # `state: "error"`, so a client that only reads the code and one that renders the card both get
+    # a usable answer. `triage_digest_expired` is a 409 and is load-bearing: an ordinal numbers ONE
+    # digest window, so a reply against a stale run must be REFUSED by code rather than executed
+    # best-effort against whatever is third today.
+    "triage_digest_unreadable": "The triage digest could not be read.",
+    "triage_digest_expired": "That digest is no longer the current one, so its item numbers no longer address the items it listed.",  # noqa: E501
+    "triage_schedule_write_failed": "The triage digest schedule could not be written.",
     # ── research reports (handlers/research_reports.py) ──
     "research_reports_unavailable": "Scheduled research reports are not available in this build.",
     # ── voice profiles (handlers/voice_profiles.py) — VoiceProfileError.reason ──

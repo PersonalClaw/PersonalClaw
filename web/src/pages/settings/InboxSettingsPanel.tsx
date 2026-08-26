@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { api, type InboxSettings } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
+import { TriageRulesCard } from './TriageRulesCard'
 import { NumberField } from '../../ui/forms'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { InlineError } from '../../ui/InlineError'
 import { notify } from '../../app/appSdk'
 
 /** Inbox settings → /api/inbox/settings: auto-cleanup retention for the unified inbox.
@@ -19,6 +21,14 @@ export function InboxSettingsPanel() {
   // them at all.)
   const [engagementOn, setEngagementOn] = useState<boolean | null>(null)
   const [sourcesOn, setSourcesOn] = useState<boolean | null>(null)
+  // PROACTIVE-ASSISTANT §5.1/§5.2 (PA-5). `ProactiveConfig` was wired end to end by PA-1 —
+  // dataclass, loader, `to_dict`, the `_EDITABLE_CONFIG` PATCH allowlist — and had NO frontend
+  // control, so the round-trip contract's fourth point was open and `triage_enabled` was
+  // unreachable from the UI. `null` = not read yet, which is why every toggle below is disabled
+  // until it resolves rather than rendering `false` (an unread switch is not an off switch).
+  const [triageOn, setTriageOn] = useState<boolean | null>(null)
+  const [autoExecOn, setAutoExecOn] = useState<boolean | null>(null)
+  const [cfgErr, setCfgErr] = useState('')
 
   // Stale-while-revalidate + persist: paint instantly on revisit/reload. The
   // editable form state `s` is seeded/rehydrated from this read-only `data`;
@@ -37,8 +47,16 @@ export function InboxSettingsPanel() {
       .then((c) => {
         setEngagementOn(Boolean(c?.inbox?.engagement_ranking_enabled))
         setSourcesOn(Boolean(c?.inbox?.enabled))
+        setTriageOn(Boolean(c?.proactive?.triage_enabled))
+        setAutoExecOn(Boolean(c?.proactive?.auto_execute_enabled))
       })
-      .catch(() => { setEngagementOn(false); setSourcesOn(false) })
+      // 🪤 The two inbox switches keep their historical `false` fallback, but the triage ones do
+      // NOT: a failed config read that rendered "triage off" would be this panel telling the user
+      // their digest is disabled when it may be running. They stay `null` and say so.
+      .catch((e) => {
+        setEngagementOn(false); setSourcesOn(false)
+        setCfgErr(String((e as Error)?.message || e))
+      })
   }, [])
 
   const patch = (p: Partial<InboxSettings>) => {
@@ -57,6 +75,26 @@ export function InboxSettingsPanel() {
       .then(() => api.restartInbox())  // re-attach/detach the poll provider live
       .then(flash)
       .catch(() => setSourcesOn(!v))   // revert the optimistic flip on failure
+  }
+
+  // Two writes, in this order, and the order is criterion 10. The config PATCH is the one source
+  // of truth for whether the digest fires; `proactiveInstall` then reconciles the schedule row
+  // against it — retiring it on off, re-arming it on on. Patching without reconciling would leave
+  // a cron firing for a disabled digest; reconciling without patching would leave the switch and
+  // the schedule disagreeing, which the digest card reports as drift.
+  const setTriage = (v: boolean) => {
+    setTriageOn(v)
+    api.patchConfig('proactive.triage_enabled', v)
+      .then(() => api.proactiveInstall().catch(() => undefined))
+      .then(flash)
+      .catch((e) => { setTriageOn(!v); notify(`Couldn't change that: ${String((e as Error)?.message || e)}`, 'error') })
+  }
+
+  const setAutoExec = (v: boolean) => {
+    setAutoExecOn(v)
+    api.patchConfig('proactive.auto_execute_enabled', v)
+      .then(flash)
+      .catch((e) => { setAutoExecOn(!v); notify(`Couldn't change that: ${String((e as Error)?.message || e)}`, 'error') })
   }
 
   const setEngagement = (v: boolean) => {
@@ -95,6 +133,32 @@ export function InboxSettingsPanel() {
           <Toggle on={!!engagementOn} onChange={setEngagement} label="Engagement ranking" disabled={engagementOn === null} />
         </Row>
       </Section>
+
+      {/* PROACTIVE-ASSISTANT §5.2 — the digest's own switches, then the rules it taught itself.
+          Kept together and in this order because the rules are meaningless without the switch:
+          a rules list under a disabled digest reads as dormant-but-kept (criterion 10) only when
+          the switch that made it dormant is directly above it. */}
+      <Section title="Proactive triage" hint="One scheduled digest of what accumulated, with proposals you answer. Off by default; nothing is collected or spent while it is off.">
+        {cfgErr && (
+          <div className="mb-m">
+            <InlineError icon>Couldn't read your triage settings: {cfgErr}</InlineError>
+          </div>
+        )}
+        <Row label="Morning triage digest" hint="Collect, filter and propose on a schedule. Turning this off retires the schedule and keeps every rule you taught — turning it back on is lossless.">
+          <Toggle on={!!triageOn} onChange={setTriage} label="Morning triage digest"
+            disabled={triageOn === null}
+            disabledReason="Still reading your configuration — this switch appears once it loads." />
+        </Row>
+        <Row label="Auto-execute the trivial tier" hint="Let the digest perform reversible inbox actions (archive, mark read, mute) on its own, inside your daily budget and per-run cap. Every one is a ledger row with a one-click undo.">
+          <Toggle on={!!autoExecOn} onChange={setAutoExec} label="Auto-execute the trivial tier"
+            disabled={autoExecOn === null || !triageOn}
+            disabledReason={autoExecOn === null
+              ? 'Still reading your configuration — this switch appears once it loads.'
+              : 'Turn the Morning triage digest on first — there is nothing to auto-execute without it.'} />
+        </Row>
+      </Section>
+
+      <TriageRulesCard />
 
       <Section title="Retention" hint="Automatically clean up old inbox items.">
         <Row label="Auto-cleanup" hint="Remove items past their retention window.">

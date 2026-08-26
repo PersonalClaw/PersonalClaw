@@ -2719,6 +2719,117 @@ export type MemoryVaultMode = 'off' | 'mirror' | 'two_way'
  *  each, never two. See `SettingsTab`'s `patch` vs `patchCfg`. */
 export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_mode?: MemoryVaultMode; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number; graph_topology_in_context?: boolean; holder_attribution?: boolean; slot_size_cap?: number }
 
+// ── The triage digest (PROACTIVE-ASSISTANT §5.1/§5.2/§5.4 — PA-5) ──
+
+/** The digest card's state, and the whole reason it is a UNION of five and not a list.
+ *
+ *  A card that drew an empty section for every one of these would tell the user "nothing
+ *  happened" when the truth was "you never installed it", "you switched it off", or "the read
+ *  failed". `error` in particular is not a fallback — the server sets it deliberately when a
+ *  store read raised, because an empty digest is the most reassuring sentence in the app and it
+ *  must never be produced by a failure. */
+export type TriageDigestState = 'uninstalled' | 'off' | 'never_run' | 'ready' | 'error'
+
+/** One thing the machine did on its own, with the handle that takes it back.
+ *  `undoable` is false when the provider had nothing to reverse — recorded, not papered over,
+ *  so the card offers Undo only where an undo exists. */
+export interface TriageAutoDone {
+  ordinal: string; source_id: string; action_type: string; provider: string
+  rule: string; reversal: string; undoable: boolean; ok: boolean; error: string
+  permalink: string; title: string; source: string; item_permalink: string; materiality: string
+}
+
+/** One proposal still waiting on the user. `tier` drives the badge; `pattern_key` is what an
+ *  "always" answer teaches — blank means the run recorded no pattern, and the card must not
+ *  offer "always" for it rather than inventing one. */
+export interface TriagePending {
+  ordinal: string; action_type: string; tier: string; pattern_key: string; clamped: boolean
+  reason: string; rule: string; answered: boolean; answer: string
+  permalink: string; title: string; source: string; item_permalink: string; materiality: string
+}
+
+/** One ledger row in the "what your machine did" section, permalinked to the run journal. */
+export interface TriageLedgerRow {
+  kind: string; seq: number; ordinal: string; action_type: string; rule: string
+  outcome: string; reason: string; detail: string; verb: string; permalink: string
+}
+
+export interface TriageSchedule { id: string; name: string; cron: string; enabled: boolean; created_by: string }
+
+export interface TriageDigestView {
+  state: TriageDigestState
+  enabled: boolean
+  installed: boolean
+  error: string
+  workflow?: string
+  node_id?: string
+  schedule?: TriageSchedule | null
+  /** True when the config switch and the schedule's own flag disagree. Reported, not silently
+   *  repaired on a read: two switches that diverged is something the user should see. */
+  schedule_drift?: boolean
+  run_id?: string
+  status?: string
+  finished_at?: string
+  permalink?: string
+  window_start?: string
+  title?: string
+  body?: string
+  /** 🔴 "handed to the notification gate", NOT "the user saw it". `DashboardState.notify`
+   *  returns nothing, so the run cannot know whether quiet hours held the digest back — measured
+   *  by driving one inside a quiet window: the run said delivered while the notification list did
+   *  not grow. Never render this as "delivered". */
+  handed_to_notify?: boolean
+  /** The quiet-hours window, so an absent notification can be EXPLAINED rather than read as a
+   *  broken notification system. `known: false` = the settings could not be read, which is not
+   *  the same as "quiet hours are off". */
+  quiet_hours?: { known: boolean; enabled: boolean; start: string; end: string; mute_all: boolean }
+  collected?: number
+  lanes?: Record<string, number>
+  dropped?: number
+  /** False = the auto-execution stage did not run at all. NOT the same as "it ran and did
+   *  nothing", which is `true` with an empty `auto_done` — the card must say different things. */
+  auto_stage_ran?: boolean
+  auto_done?: TriageAutoDone[]
+  pending?: TriagePending[]
+  budget_breached?: boolean
+  budget_reason?: string
+  degraded?: boolean
+  machine_did?: TriageLedgerRow[]
+  /** False = rows that should exist were NOT written. Never "there were none". */
+  ledger_complete?: boolean
+  ledger_rows?: number
+}
+
+/** The reply outcome, and note what is NOT here: `expired`. A stale digest is refused with a **409**
+ *  carrying `error.code: "triage_digest_expired"`, so it REJECTS through `ApiError` (status 409)
+ *  rather than resolving — a resolved `outcome: 'expired'` is a shape the api layer cannot produce,
+ *  and a handler written for it would be dead code. */
+export interface TriageReplyResult {
+  ok: boolean
+  outcome: 'acted' | 'help'
+  /** Why the grammar refused, when it did. A help line, never an interpretation. */
+  help_reason?: string
+  help?: string
+  results?: Array<{
+    ordinal: string; outcome: 'acted' | 'already' | 'unknown'; verb?: string
+    executed?: boolean; detail?: string; rule?: string; rule_error?: string
+    /** False = the answer was not durably recorded, so the next tap would act again. */
+    recorded?: boolean
+  }>
+}
+
+/** One taught approval rule, as `GET /api/memory/approval-rules` returns it.
+ *  `send_capable` is §5.2's graduation toggle: OFF, an approved `reply_draft` still only ever
+ *  drafts (the `inbox-op` provider has no send path at all), so the toggle is a statement of
+ *  intent that a send-capable provider would honour — not a switch that starts sending. */
+export interface ApprovalRuleRow {
+  key: string; pattern: string; verdict: 'approve' | 'deny' | 'suppressed'; scope: string
+  hit_count?: number; expires_at?: string | null; send_capable?: boolean
+  created_from_digest?: string | null; specificity?: number
+  created_at?: string | null; updated_at?: string | null
+  suppressed_until?: string | null; suppression_rung?: number
+}
+
 /** Per-arm volunteered-vs-used precision for the push reflex
  *  (MEMORY-GRAPH-AND-VAULT §3). `used` = the record's recall count rose after it
  *  was volunteered, so precision is measured rather than asserted. */
@@ -5709,6 +5820,25 @@ export const api = {
   // rather than persisting something the read path would silently ignore.
   saveNotificationRules: (body: { rules?: Record<string, NotificationRulePatch>; digest?: { schedule?: string } }) =>
     put<NotificationRulesDoc & { ok: boolean }>('/api/notifications/rules', body),
+  // ── The triage digest (PROACTIVE-ASSISTANT §5.1/§5.2/§5.4 — PA-5) ──
+  // The card makes ONE read. The server assembles the sections, so the browser never has to
+  // chain run-list → node-output → ledger and guess what a partial chain means.
+  proactiveDigest: () => get<TriageDigestView>('/api/proactive/digest'),
+  // The tap. `text` is the SAME reply grammar a channel message uses ('3 yes', 'always no 4'),
+  // so the digest has one parser rather than a button vocabulary that can drift from it.
+  proactiveReply: (runId: string, text: string) =>
+    post<TriageReplyResult>('/api/proactive/digest/reply', { run_id: runId, text }),
+  // §5.4's pack card: install the Morning-triage schedule, or reconcile an installed one against
+  // `proactive.triage_enabled`. Idempotent, so the same call is both the install and the repair.
+  proactiveInstall: (cron?: string) =>
+    post<{ ok: boolean; created: boolean; schedule: TriageSchedule }>(
+      '/api/proactive/install', cron ? { cron } : {}),
+  // §5.2's rules manager. These three routes shipped with PA-1 and had NO consumer until now.
+  approvalRules: () =>
+    get<{ rules: ApprovalRuleRow[]; unreadable: string[] }>('/api/memory/approval-rules'),
+  saveApprovalRule: (body: { pattern: string; verdict: 'approve' | 'deny'; scope?: string; expires_at?: string | null; send_capable?: boolean }) =>
+    post<{ ok: boolean; rule: ApprovalRuleRow }>('/api/memory/approval-rules', body),
+  revokeApprovalRule: (key: string) => del(`/api/memory/approval-rules/${encodeURIComponent(key)}`),
   memorySettings: () => get<MemorySettings>('/api/memory/settings'),
   saveMemorySettings: (s: Partial<MemorySettings>) => put<MemorySettings>('/api/memory/settings', s),
   /** The push reflex's report card (MEMORY-GRAPH-AND-VAULT §3). */

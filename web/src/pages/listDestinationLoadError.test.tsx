@@ -43,6 +43,13 @@ function mockApi(over: Record<string, unknown>) {
       inboxStatus: () => Promise.resolve({ providers: [], enabled: false }),
       inboxKinds: () => Promise.resolve([]),
       inboxProviders: () => Promise.resolve([]),
+      // PA-5's digest card mounts above the list and makes this read. Resolved `uninstalled` so
+      // the card renders its install offer and contributes NO alert — these two tests assert the
+      // LIST's failed-vs-empty distinction, and a second `role="alert"` from the card would make
+      // `getByRole('alert')` ambiguous. Same lesson `learningSummary` above records: an unmocked
+      // method throws inside a passive effect and surfaces as several unrelated failures, which is
+      // exactly how both of these went red before this entry existed.
+      proactiveDigest: () => Promise.resolve({ state: 'uninstalled', enabled: false, installed: false, error: '' }),
       // skills
       skills: () => Promise.resolve([]),
       skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),

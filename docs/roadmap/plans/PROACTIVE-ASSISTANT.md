@@ -493,3 +493,157 @@ Where each new piece plugs into the pluggable-provider architecture — nothing 
   button, tier badges, the rules manager) is `PA-5`. The stage already emits everything that card
   needs — `summary()` carries `auto_executed` (with the reversal handle), `auto_deferred` (with the
   closed-vocabulary reason) and `budget_breached` — so PA-5 renders, it does not re-derive.
+
+---
+
+## Execution log — `PA-5` (§5.1 digest card + §5.2 rules manager + §5.4 template pack card + as-a-user validation) — **PARTIAL**
+
+- [2026-08-26][PA-5] **DONE for three of four `done_when` clauses; the fourth (as-a-user
+  validation) is met for two of its three legs and asserted by test for the third.** Recon first:
+  `git grep proactive -- web/src` on `origin/main` returned **zero** consumers, so every proactive
+  surface was unbuilt — but the BACKEND had already declared the information architecture. Three
+  routes shipped with PA-1 and had **no frontend consumer at all**:
+  `GET`/`POST`/`DELETE /api/memory/approval-rules` (`handlers/memory.py:384-525`), complete with
+  `send_capable` on the rule and an `unreadable` list for rows it could not decode. `ProactiveConfig`
+  was wired through all four round-trip points (dataclass + `_meta`, `load()`, `to_dict()`,
+  `_EDITABLE_CONFIG`) and had **no frontend control**, so `proactive.triage_enabled` was unreachable
+  from the UI and the contract's fourth point was open. §5.2 and criterion 10 were therefore surface
+  work over a finished engine, exactly as PA-3's closing note predicted.
+- [2026-08-26][PA-5] **Clause 1 (digest card):** `proactive/surface.py` is the read model —
+  a pure function over the run row, the triage node's persisted `summary()` and that run's ledger
+  slice. Nothing re-derives a verdict or asks a model anything, so §5.1's "strictly read-only on
+  view" is a property of the module rather than a rule to remember. `web/src/pages/inbox/
+  TriageDigestCard.tsx` renders auto-done rows with Undo (through the platform's existing
+  `POST /api/autonomy/undo` + the provider's own reversal handle — no second undo path), pending
+  proposals with tier badges and one-tap Yes/No/Always/Never, and the "what your machine did" ledger
+  section with a run-journal permalink per row built by `triggers.delivery.status_url` (the same
+  builder the delivered notification's `statusUrl` uses, so the two cannot drift).
+- [2026-08-26][PA-5] **Clause 2 (rules manager):** `web/src/pages/settings/TriageRulesCard.tsx`,
+  under Settings → Inbox per §5.2, shows pattern / verdict / scope / hit count / expiry / provenance,
+  revokes with a danger confirm, and carries the send-capable graduation toggle. The toggle is
+  labelled as INTENT, not as a send switch: PA-3's `inbox-op` has no send path in it at all, so a
+  control reading "send replies automatically" would be a lie in the reassuring direction.
+  `unreadable` is rendered as a first-class band — the endpoint reports undecodable rows precisely
+  so a rule the matcher ignores but the user believes in stops being invisible.
+- [2026-08-26][PA-5] **Clause 3 (template pack card):** hosted in the digest card's `uninstalled`
+  arm with an editable cron field, and `POST /api/proactive/install` mints the schedule under the
+  DETERMINISTIC id `system:triage:digest` (the `system:heartbeat:fts` convention `triggers/models.py`
+  documents), arms it, and stamps `capabilities_for_action` for decision 7's frozen grant. The same
+  route is the reconcile, which is criterion 10 in one path: disable retires (`enabled=False`, row
+  and cron KEPT), re-enable is lossless (same row, `created=False`).
+- [2026-08-26][PA-5] DEVIATION: **the pack card lives on the digest card's own empty arm, not on the
+  workflows/templates surface.** §5.4 says "on the substrate's templates surface". One surface with
+  five states — never installed / off / not yet run / a digest / a failed read — keeps the install
+  where the user is already looking for their digest, and avoids a second place that answers "why is
+  there no digest?". The templates page still lists `morning-triage` as a startable def.
+- [2026-08-26][PA-5] DEVIATION: **`created_by="system"`, not `"system:triage"`.** §5.2 spells the
+  latter, but `Trigger.created_by` documents a closed three-value vocabulary (`user`/`agent`/
+  `system`) and the FEATURE name belongs in the id — which is what the Automations page reads to
+  edit-lock the row. The deterministic id carries it.
+- [2026-08-26][PA-5] SHARED-FILE TOUCHES, each required for the atom not to be inert:
+  `proactive/manifest.py` (`Manifest.projection()` + `manifest_from_projection`),
+  `proactive/pipeline.py` (`summary()` gained `items`), `ledger/kinds.py` (`TRIAGE_REPLY` + into
+  `LEDGER_KINDS`), `dashboard/{server,handlers/__init__}.py` (three routes), `reference/
+  {index,routes}.md` (regenerated — 771 → 774 agent-callable routes; run from the worktree, MAIN's
+  copy verified byte-identical after), `web/src/lib/data/keys.ts` (the `proactive` namespace is
+  LIVE), plus five FE ratchets that a new surface necessarily moves (`toggleDisabledReason` 20 → 23
+  sites / 5 → 7 reasoned, `disabledReasonCensus` two pre-existing keys re-pointed after the
+  insertion shifted their line numbers, `listDestinationLoadError`'s api double gained
+  `proactiveDigest`).
+- [2026-08-26][PA-5] 🔴 **FINDING — the ordinal contract was not redeemable across a process
+  boundary.** `Manifest` is the ordinal→store-id map and it was never persisted, so a surface opened
+  after the minting process exited could not resolve "3" to an inbox row without re-collecting — and
+  a re-collect renumbers the window, which is criterion 9's wrong-target execution reached with no
+  adversary. `summary()` now carries `items` (provenance only: lane, store id, title, permalink,
+  materiality — never `detail`, the fenced model-facing body). Without this the one-tap Yes clause
+  is unbuildable, not merely awkward.
+- [2026-08-26][PA-5] 🔴 **FINDING, caught by DRIVING it and not by a test — the reconcile silently
+  rewrote a cron the user had edited.** Installed at `30 7 * * 1-5`, flipped the triage switch, and
+  the row came back `0 8 * * *`: the no-body reconcile fell through to the config default. An
+  "editable trigger" that a switch elsewhere in the app resets is not editable. Precedence is now
+  body cron → the INSTALLED row's own cron (the edit IS the state) → config default (first install
+  only), with `validate_cron_expr` guarding the fallback so a bad expr cannot become "never fires".
+- [2026-08-26][PA-5] 🔴 **FINDING, also caught by driving — `delivered` cannot mean delivered.**
+  Ran a digest inside quiet hours: the run reported `delivered: True` while the notification list did
+  not grow by one. `DashboardState.notify` returns `None`, so PA-2's flag can only ever mean "handed
+  to the delivery gate". Renamed at the view boundary to `handed_to_notify` so no consumer inherits
+  the wrong claim, and the card now EXPLAINS the absence from the window itself
+  (`quiet_hours: {known, enabled, start, end, mute_all}`) — `known: false` is reported as unknown,
+  never as "quiet hours are off". A digest visible on the page with no notification and no reason
+  reads as a broken notification system.
+- [2026-08-26][PA-5] The reply route is **one new CALLER of PA-3's execution seam, not a sixth
+  seam**: a tap on Yes runs through `autoexec.auto_execute` with an in-memory approve rule standing
+  for the click and `cap=1`, so `incident_active()`, the action denylist, `enforce_action`'s SEL row
+  and the NEW-1 budget floor all apply to an attended approval in the order they apply to an
+  unattended one. Idempotency is the digest's OWN run ledger (`triage_reply`, keyed
+  `(run_id, item_ordinal)`) rather than a new store — a reply that arrives twice finds the first row
+  and acks. A reply naming a run that is not the current digest is refused `digest_expired` (409).
+- [2026-08-26][PA-5] **Clause 4 — validated as-a-user, honestly split.** Driven through the real
+  frontend on an isolated home (`.dev-home-pa5`, port 10457, Playwright/Chromium; screenshots in
+  `/tmp/pa5-drive/`): (a) **rule revocation** — the rules card rendered the taught rule, the danger
+  confirm appeared, Revoke emptied the list and the surface fell to the "you haven't taught any
+  rules yet" copy (NOT the failed-read copy); (b) **quiet-hours deferral** — a digest run inside a
+  quiet window produced NO new notification while the card rendered "Quiet hours 00:44–03:44: a
+  digest that lands inside that window is held back from your notifications. It is still here, and
+  in the run journal." (this is the drive that produced the `delivered` finding above); and
+  criterion 10 end to end from the settings switch — off gave "Off · your schedule (30 7 * * 1-5)
+  and your triage rules are kept", on returned `state=ready` with the same row and cron.
+  🔴 **(c) gateway-restart reply IDEMPOTENCY is only PARTLY driven.** What was driven: a
+  `triage_reply` row written through the real writer survived TWO gateway restarts and came back
+  through `GET /api/proactive/digest` in the "what your machine did" section with its permalink, and
+  a reply against a stale run_id was refused `digest_expired` across a restart. What was NOT driven:
+  the second tap on a still-pending proposal acking instead of re-executing — this environment has
+  no model provider configured, so the proposal stage refuses and **no digest with pending proposals
+  can be produced here**. That leg is asserted by test (`answered_ordinals`, the card marking an
+  answered ordinal, `TRIAGE_REPLY in LEDGER_KINDS` so `read_events` can see it) and by the durable
+  row above, not by driving the double tap.
+- [2026-08-26][PA-5] 🔴 **FINDING — the full suite caught a NEW flat wire envelope, and fixing it
+  exposed a dead branch.** `test_wire_error_envelope_census` reddened: the flat
+  `{"error": "<prose>"}` shape is a ratcheted, shrinking population and eight new routes had just
+  grown it 1507 → 1515. Converted every failure to `http_errors.json_error`, so the three routes
+  emit the ONE structured envelope `AGENTS.md` §"Shared conventions" declares
+  (`triage_digest_unreadable`, `triage_digest_expired`, `triage_schedule_write_failed`,
+  `invalid_request`, `forbidden`) and the card branches on codes rather than prose. Two knock-ons:
+  the success body is now splatted (`json_response({**view})`) because a bare variable lands in the
+  census's `unresolved` bucket, which is a ceiling too; and the reply's help path was moved OFF the
+  `error` key entirely (`help_reason`) — the grammar refusing with a help line is §1.4's documented
+  outcome at 200, not a failed request.
+  **The dead branch:** `triage_digest_expired` is a 409, and `api.ts`'s `post` THROWS on any
+  non-2xx — so the card's `r.outcome === 'expired'` check inside `.then` could never run, and the
+  test covering it had mocked a RESOLVED `{outcome: 'expired'}`, a shape the api layer cannot
+  produce. A test that exercised the mechanism and not its use. Fixed both ways: the card branches
+  on `ApiError.status === 409` in `.catch` (an expired digest is a re-read; a 502 is a retry — with
+  a discriminating pair asserting each goes to its own sentence), and `TriageReplyResult` no longer
+  declares an `expired` member so nobody writes that handler again.
+- [2026-08-26][PA-5] FALSIFICATION, two mutations, each grep-confirmed applied and each restored
+  from a `/tmp` file copy (never `git checkout`), and **both directions measured**: (1) deleted
+  `<TriageDigestCard />` from `InboxPage.tsx` → **1 failed / 25 passed**, restored → **26 passed**
+  (the call-site rail; without it every card test would stay green after the render was deleted from
+  the page); (2) `auto_stage_ran = "auto_ledger_rows" in dict(output)` →
+  `bool(_rows(output.get("auto_executed")))` → **1 failed / 35 passed**, restored → **36 passed**
+  (the distinguishing pair — an off stage and a stage that ran and did nothing both produce an empty
+  list, so only the key's PRESENCE tells them apart). The rails' vacuity floor is
+  `_FIXTURE_ITEMS = 3`, the literal fixture size asserted directly, so a view that dropped every
+  item fails rather than satisfying `len(x) == len(x)`.
+- [2026-08-26][PA-5] The three new wire codes are registered in `http_errors.HTTP_ERROR_CODES`
+  (`triage_digest_unreadable`, `triage_digest_expired`, `triage_schedule_write_failed`) — the
+  append-only rail is the only thing that makes "a stable code a client branches on" checkable, and
+  an emitted-but-unregistered code is a surface with no declared meaning.
+- [2026-08-26][PA-5] ONE red in the first full-suite run was NOT mine:
+  `test_stop_means_stop::TestARealDrivenStop::test_no_child_process_survives_the_stop` raised
+  `TimeoutError` because I had a 493-file vitest run going concurrently on the same machine, and that
+  test spawns and reaps real child processes. It passes alone (40/40 in its own file) and the whole
+  suite run to completion with nothing else competing is **27037 passed / 0 failed**. Reported as
+  contention, not as a flake I decided to ignore.
+- [2026-08-26][PA-5] Gate: `make lint` green (black/isort/flake8/mypy, 1029 source files),
+  `python scripts/gate_report.py` **6/6 PASS**, `tests/test_proactive_surface.py` **38 passed**, `tests/test_wire_error_envelope_census.py`
+  **16 passed**, plus the nine suites a new route + ledger kind drifts (`test_proactive_{triage,autoexec,approval}`,
+  `test_ledger_golden`, `test_config_roundtrip`, `test_triggers_capability_fence`,
+  `test_action_provider_chokepoints`, `test_workflows_bundled`, `test_agent_reference`) — **591
+  passed / 0 failed** after regenerating the offline reference. Web: `npm run typecheck:web` clean,
+  `npm run test:web` **493 files / 5258 tests passed**, `npm run build` clean;
+  `docs/design/consistency-audit.json` restored. `make test` **27037 passed / 0 failed** (full suite, run with nothing else competing). Real-home
+  rail clean on every run; probe sweep 16 total / 0 diff-introduced; tree clean, one signed-off
+  commit.
+- [2026-08-26][PA-5] NOT in scope, deliberately: §5.3's Decision Journal view and the calibration
+  strip are `PA-6`; nothing here reads or writes the knowledge store.
