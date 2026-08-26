@@ -799,3 +799,105 @@ no-op for sessions with no device. No new route, exemption or credential surface
   (`tsc --noEmit` + `tsconfig.sw.json`), the FULL web suite **478 files / 5050 tests**, and
   `npm run build` (524 assets, sw.js emitted). The full web suite was run rather than a subset
   because ~120 suites under `web/src` scan the tree.
+
+---
+
+## Execution log — CA-7 / V3 (the tunnel clauses, driven over a real TLS tunnel)
+
+- **CA-7 still PARTIAL, but the two clauses that were entirely unobserved are now observed —
+  over a loopback tunnel. The atom stays `todo`; the residual is *remoteness*, not mechanism.**
+  Nothing was rebuilt: the build half (`57102588`) is on `main` and untouched. `ws.py`,
+  `token_auth.py`, `origin.py` and `web/src/lib/endpoints.ts` are byte-identical in this change.
+- **FIRST FINDING — the atom was already built, and the brief that sent me here did not know.**
+  The dispatch said "implement T3.2". `git log --grep=CA-7` returns `57102588 feat(companion):
+  CA-7 admit a native client's device session over wss`, and `_paired_device_session`,
+  `token_nonce`, `endpointSocketUrl` and a 22-test suite are all present at base `20488b9e`.
+  Re-implementing would have been a duplicate. The residual named in CA-7's own log — clauses
+  (a) and (b), needing a tunnel — is what this session took.
+- **SECOND FINDING — every existing CA-7 test authenticates with `?token=`, the one mechanism the
+  companion guide FORBIDS for a companion.** `test_ca7_remote_wss_auth.py` drives
+  `?token={token}` throughout, while the guide tells a native client to use the cookie. So the
+  shipped admission had never been exercised over the credential production would present. It
+  works — `request["session_nonce"] = token_nonce(token)` is published unconditionally
+  (`token_auth.py:1095`), on both paths — but that was luck confirmed after the fact, not
+  coverage. The new file authenticates by cookie throughout.
+- **THIRD FINDING, and the reason "reconnects gracefully" is TRUE — it rests on one `not` in one
+  line.** `token_auth` IP-binds sessions, and `token_auth.py:1072` reads `if not from_cookie and
+  not check_token_ip(token, client_ip)`. Only the query-param path is bound. A tunnel restart
+  moves the client's apparent address (and a phone changes network constantly), so had the cookie
+  path consulted that binding, every reconnect after a tunnel death would 403 with "IP mismatch"
+  and the clause would be false. Pinned by
+  `test_the_reconnect_survives_the_changed_client_ip_a_real_tunnel_produces`, which reconnects
+  the same session from two different `X-Real-IP` addresses injected by the tunnel and then shows
+  the binding it skipped would have refused the second one.
+- **FOURTH FINDING — the drop arrives in TWO shapes, and a shell handling one is broken.** Killing
+  the tunnel under a live socket either returns a close/error message from the read or *raises*
+  `ClientConnectionResetError` ("Cannot write to closing transport", raised by aiohttp's own
+  websocket writer) when autoping tries to answer a ping on the dead transport.
+  Measured, not reasoned. Both are prompt; a shell that catches only the message shape turns an
+  ordinary tunnel restart into an unhandled error. Written into the guide.
+- **What "a real tunnel" means here, stated so it cannot be over-read.** `_TlsTunnel` is a real
+  TLS-terminating reverse proxy on its own port with its own certificate, verified by the client
+  against its CA; it rewrites the request head to add `X-Real-IP` as nginx/cloudflared do, and
+  `stop()` **aborts** live transports rather than closing them, so the kill is a kill. The client
+  dials `wss://`, never holds the gateway's port, and the TLS object on its transport is asserted
+  rather than inferred from the URL string. **What it is NOT:** loopback, no public DNS, no
+  public CA, no internet path, and no shipped native shell (`desktop/main.js` still holds one
+  `backendUrl`). The topology and transport are real; the *remoteness* is simulated. Any reading
+  of clause (a) that requires a genuinely remote peer is **still unverified**, and V3's
+  LAN↔remote *switch* is untouched — it needs the second pairable endpoint `CA-8` brings.
+- **THE VACUITY TRAP THIS ALMOST FELL INTO.** `check_origin` trusts an `Origin`-less request
+  outright when the peer is loopback (`origin.py:420-424`) — so over a loopback tunnel every test
+  here would have passed with the CA-7 device branch **deleted**, measuring the tunnel instead of
+  the feature. `is_loopback` is forced False for every handshake, and
+  `test_the_device_session_is_what_admitted_it_not_the_tunnels_loopback_peer` asserts both
+  directions: device row present → 101, absent → 403.
+- **A SECOND vacuity trap, caught and removed before commit.** The no-new-exemption rail first
+  read `build_allowed_origins()`, ran the probes, then re-read it and compared the two — a floor
+  computed from the value it was meant to pin, which passes no matter what is added to the set.
+  It was replaced with a **differential**: the same four origins probed twice, once with a paired
+  device session and once with an ordinary one, verdicts required to agree everywhere, plus a
+  non-all-refusals assertion (`http://localhost:{PORT}` must still be 101) so the agreement
+  cannot be trivially satisfied by refusing everything. The one permitted difference — the
+  `Origin`-less case — is asserted last and is the whole of CA-7's seam.
+- **Also corrected: a loopback origin is NOT refused in production.** `origin.py:470` trusts any
+  loopback origin regardless of port. The tunnel-origin probe is refused only because
+  `is_loopback` is patched, which is exactly its job — it stands in for a remote origin. The
+  load-bearing probe is `https://pc.example.com`, refused on the shipped rule with no patch
+  involved. Said so in the test rather than letting the green imply otherwise.
+- **No cloud middle tier, as two rails rather than a comment.** Runtime: a closed accounting of
+  the path — the client's only TCP peer is the tunnel port it dialed, and across the whole
+  session the set of peers the gateway saw is exactly `{127.0.0.1}` with a single `Host`, so
+  there is no third address for a broker to occupy. Static: `exposure.public_url()` has **no
+  vendor default** — an unconfigured instance advertises nothing, and an owner-declared URL is
+  returned verbatim, so a cloud tier cannot enter as a fallback. That second rail is the only
+  test in the file that survived falsification (i), which is correct: it does not touch admission.
+- **NO new origin exemption, and no config field.** `build_allowed_origins` is untouched; the
+  allowed set is byte-identical to base. Nothing was added to a CSP. No knob was introduced, so
+  there is no config round-trip surface — admission remains keyed on existing *state* (a paired
+  `sessions.json` device row), which is the owner's opt-in.
+- **DELIBERATELY NOT TOUCHED — `/api/ws/terminal/{id}` still has no origin check.** Confirmed
+  while reading the WS auth path: `_check_ws_origin` is called from `api_ws` only. It is out of
+  this atom's fence and is **not** made worse here (the device branch is reachable only through
+  `api_ws`), but it remains a latent hazard for whoever owns that route.
+- **`web/` deliberately untouched, so its gate was not run.** `endpointSocketUrl`'s scheme map,
+  port carry-through, refusals and credential-stripping are already covered by 8 cases in
+  `endpoints.test.ts`; adding a host-preservation case there would have cost the FULL ~5050-test
+  web suite (~120 suites scan the tree) for a property those cases already imply. The
+  no-middle-tier rail was put on the Python side, where the path is actually observable.
+- **Gate:** `make lint` clean; **8/8** on `tests/test_ca7_wss_tunnel_e2e.py` (139s — real TLS
+  handshakes and real 5s drop windows, run with `-n 0`); **20/20** on the two docs rails
+  (`test_docs_lint_baseline.py`, `test_getting_started_walkthrough.py`) after the guide edit;
+  `scripts/gate_report.py` clean. The full `tests/` suite was NOT run — four sibling agents share
+  this machine and load had hit 38 on 18 CPUs.
+- **Falsifications (both mutated live, grepped back, restored from a file copy — never
+  `git checkout`).** (i) `_paired_device_session`'s `return str(record.device.id or "")` →
+  `return ""`: **7 failed, 1 passed**, handshakes 403 — the survivor is the static
+  `public_url` rail, which correctly has no dependency on admission. (ii) `origins.add(
+  "https://pc.example.com")` added to `build_allowed_origins`: **2 failed** — this session's
+  differential rail (`paired["https://pc.example.com"]` became 101) *and* the pre-existing
+  `test_the_allowed_origin_set_is_byte_identical` on `main`. So the no-new-exemption rail reds
+  when an exemption is added, from two independent directions.
+- **What is left for `CA-8`/T4.4.** Clause (a) under a genuinely remote peer; V3's LAN↔remote
+  switch (needs a second pairable endpoint); the WebView/public-origin half, still deliberately
+  REMOTE-USER-AUTH's call per `CA-2`'s ruling, with `dashboard.url` documented as the workaround.
