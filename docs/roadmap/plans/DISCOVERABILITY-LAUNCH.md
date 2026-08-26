@@ -452,3 +452,96 @@ change, not a drive-by, and it stays blocked behind both blockers above regardle
 
 **Core gate — clean.** No core route was added, so the offline API reference and its
 `known-docs`-style contracts are untouched; `web/` unchanged, so no frontend gate applies.
+
+### 2026-08-25 — `DL-6` (T3.4) launch-post draft, architecture-receipts narrative — **DONE**
+
+Draft landed at `docs/launch/launch-post-draft.md` (this commit). `done_when` is met: draft
+complete, owner sign-off pending (owner task 6). No site or publish wiring shipped — that is the
+website atoms' scope and building it here would have been speculative.
+
+**Why the draft is in core, not the site repo — the row's own fallback branch, fired on verified
+fact.** The T3.4 deliverable column reads "site repo: `src/content/blog/launch.md` (**or docs
+section if no blog collection**)". There is no blog collection: `personalclaw.dev`'s
+`src/content.config.ts` exports exactly one collection, `docs`, and `src/content/` contains only
+`docs/`. So the fallback applies. And per this plan's §Design, the site's docs section is
+populated **at build** from core `docs/{guides,reference,architecture,security}` — the docs section
+is authored in *this* repository. Unlike `DL-7`, whose deliverable was a marketing route and whose
+log correctly concluded "not one line of this atom is core's to build", `DL-6`'s deliverable is a
+prose draft whose every citation is a core repo path, so core is where it can actually be verified.
+
+**DISCOVERY — the draft's current location does not sync to the site (owner call, not fixed).**
+The sync list is `docs/{guides,reference,architecture,security}`; `docs/launch/` is outside it. So
+publication needs one of: a blog collection in the site repo, an extension of the sync list, or
+authoring the final post in the site repo from this draft. All three are website-atom scope and
+the third is the plan's stated intent. Deliberately not decided here.
+
+**The receipts are markdown links on purpose, so the docs-lint ratchet enforces them.** Reading
+`scripts/generate_docs_lint_baseline.py` first changed the draft's construction: `find_dead_links`
+runs on `_strip_code(text)`, which blanks inline code spans, whereas `find_stale_citations` runs on
+the **raw** text but only matches the `file.py:NNN` shape. Consequence: a backticked path that is
+not `*.py:NNN` is invisible to docs-lint. Had the receipts been plain backticked paths — the
+natural way to write them — the strict gate would have verified almost none of them. As links they
+are covered permanently, and a future file move reds the gate instead of silently publishing a lie.
+
+**Claims cut because the repo does not support them.** The draft keeps this list in its own final
+section, since the next editor needs it more than the reader does:
+
+- **"Zero telemetry"**, which the T3.4 row itself names as a thing to cite. It is not true as a
+  slogan. `self_update.py`'s release check runs at gateway start and at most every 12h
+  (`dashboard/handlers/updates.py`), carries `User-Agent: personalclaw-update-check`, and has **no
+  off switch** — `auto_update` gates the apply, not the check. This independently re-confirms the
+  2026-08-24 `DL-7` entry's finding from code. The draft claims "no analytics, no crash reporting,
+  no usage telemetry, plus one unprompted release check to GitHub" instead.
+- **"Scanner gate" read as the dependency scan.** In `.github/workflows/full.yml` the `pip-audit`
+  and `npm audit` steps sit under `continue-on-error: true` with `|| true`, and the workflow
+  comment says so outright: "visibility, not a merge gate". The honest scanner-gate receipt is the
+  separate `security-corpus` job — the adversarial corpus for the app-install supply-chain scanner,
+  carrying no `continue-on-error`, methodology published at `docs/security/scanner-testing.md`.
+  The draft names both and marks which is which.
+- **"Fail-closed approval in headless/inbound paths."** `cli_run.py`'s own docstring refuses this:
+  `HEADLESS` resolves to `HOOK_BASED`, whose fall-through is auto-approve, "so approval alone is
+  NOT a containment boundary here". What holds is the deny-by-default **task mode**, which runs
+  before the approval gate and is documented un-bypassable; and the docstring records that
+  `SafetyProfile.tool_grants` was deliberately not used because it has no enforcement point
+  (`guardrails/policy.py`). The draft cites the mechanism that holds and names the one that would
+  have been theatre.
+- **Any "sandboxed apps" / "per-app network policy" cell**, per `docs/security/limitations.md`.
+- **"Our contributor guide mandates falsification."** `git grep -in falsif -- AGENTS.md
+  CONTRIBUTING.md` returns nothing. Softened to a convention visible in the logs; those files
+  mandate the deviations ledger, not falsification.
+- **Named-competitor comparison.** Omitted — no peer set is chosen (`DL-7` BLOCKER 2), and the
+  standing name-scrub ruling applies.
+
+**Numbers vs shapes.** Shapes wherever a count would rot ("every routable host literal reds the
+sweep", "no `continue-on-error`"). Four numbers survive, each derived in-session: `0.1.3`,
+`>=3.12`, MIT (`pyproject.toml`/`LICENSE`); **19** provider types; and **54 of 70** plan files
+carrying a falsification note, stated with both the command and the pinned commit `5283468b` so
+the reader can re-derive it. **Method note worth keeping:** a regex over `manifest.py` returned
+**17** provider types because `.*?\}` stopped at the first brace inside the frozenset; importing
+`PROVIDER_TYPES` returned **19**. Import the value, do not pattern-match the source.
+
+**FALSIFICATION — the receipts themselves, both directions.** Prose has no unit test, so the
+property falsified was the one that is the deliverable: *every cited path resolves*. A one-off
+probe extracted both citation forms from the draft (markdown link targets resolved against the
+draft's directory, plus backticked repo paths resolved against the root) and asserted each exists.
+Baseline **31 citations, 0 unresolved**. One link was then repointed at
+`../reference/cli-DOES-NOT-EXIST.md`: the probe went red, `1 UNRESOLVED`, naming the exact path,
+exit 1. Restored, and it returned to **31 / 0**, exit 0 — with `git status --porcelain` empty,
+which proves the restore was byte-identical to the commit rather than merely re-green. The probe
+was run from `/private/tmp/dl6-probe/`, deliberately outside the worktree, and is **not** committed
+(no vacuity assertion was owed because nothing was added to the tree; the induced red *was* the
+vacuity check). Ongoing enforcement is the docs-lint ratchet, per the construction note above.
+
+**Gate.** `make lint` clean (black/isort/flake8 + mypy, 1024 source files); `scripts/gate_report.py`
+**all six legs PASS, 0 failures**; targeted `pytest --no-cov tests/test_docs_lint_baseline.py
+tests/test_getting_started_walkthrough.py` → **20 passed**, and the suite's real-home rail confirmed
+`~/.personalclaw` unchanged. No `src/`, `web/`, `SECURITY.md` or `docs/architecture/**` file was
+modified — those were read and cited only.
+
+**The docs-lint PASS was checked for vacuity, and it is not vacuous.** A green ratchet on a brand-new
+file is exactly the shape that can mean "not scanned" rather than "clean", and `build_inventory()`'s
+`per_file` records only files WITH findings, so the draft's *absence* from it is ambiguous on its
+face. Resolved by probing the generator directly: the draft is in `_docs_md()`'s scanned list (1 of
+**209** markdown files), `_findings_for()` on its real text returns `[]`, and the same call with one
+link repointed at a missing file returns `['dead_link:docs/reference/NOPE.md']`. So the gate really
+does read this file's citations, and really would red on a broken one.
