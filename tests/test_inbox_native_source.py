@@ -100,14 +100,16 @@ async def _coro(v):
     return v
 
 
-def test_send_routes_native_reply_to_live_session(state):
+def test_send_routes_native_reply_to_live_session(state, monkeypatch):
     item = ns.post_to_inbox("approve?", kind="question", sender_name="coder", reply_target="chat:1")
     session = MagicMock()
     state.get_session = lambda key: session if key == "chat:1" else None
-    # patch the chat runner import target
-    import personalclaw.dashboard.chat_runner as cr
-
-    cr.run_chat = MagicMock()
+    # Stub the chat runner so no real turn is dispatched. MUST be monkeypatch-scoped: a bare
+    # `chat_runner.run_chat = MagicMock()` is never undone, so it outlived this test and every
+    # later test on the same xdist worker that reads that attribute — including run_chat's own
+    # queue-processing recursion — then awaited a MagicMock and died with "object MagicMock
+    # can't be used in 'await' expression". CI-only, because worksteal decides co-location.
+    monkeypatch.setattr("personalclaw.dashboard.chat_runner.run_chat", MagicMock())
     resp = _run(H.api_inbox_send(_send_req(state, {"id": item.id, "text": "yes, go"})))
     assert resp.status == 200
     body = json.loads(resp.body)
