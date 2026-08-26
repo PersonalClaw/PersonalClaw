@@ -18,6 +18,12 @@
     "type": "str"
   },
   {
+    "default": false,
+    "path": "agent.durable_sessions",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": "WARNING",
     "path": "agent.log_level",
     "sensitive": false,
@@ -50,6 +56,12 @@
   {
     "default": 3600,
     "path": "agent.runner_health_check_secs",
+    "sensitive": false,
+    "type": "int"
+  },
+  {
+    "default": 1800,
+    "path": "agent.runner_idle_release_secs",
     "sensitive": false,
     "type": "int"
   },

@@ -3276,6 +3276,15 @@ export interface RunnerRow {
   health_stale: boolean | null
   capabilities: RunnerCapabilities | null
   adapter: { npm_pkg: string; pinned: boolean; state: string; verified: boolean; detail: string }
+  // Who is holding this runner right now (EI-6 §3.1(5)), or `null` for free. Already
+  // expiry-filtered server-side: a holder that went quiet past
+  // `agent.runner_idle_release_secs` arrives as `null`, so the UI never has to decide
+  // whether a stale lease still counts.
+  lease: RunnerLease | null
+}
+export interface RunnerLease {
+  holder: string; taken_at: number; expires_at: number; renewals: number
+  age_secs: number; expires_in_secs: number
 }
 // JSON-Schema (Draft-07 + x-meta) describing one provider's user-config fields.
 export interface ProviderSchemaProp {

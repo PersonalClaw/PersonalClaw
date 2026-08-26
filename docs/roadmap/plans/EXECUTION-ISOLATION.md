@@ -1175,3 +1175,133 @@ D0 is documentation and should land immediately — an inaccurate security claim
   workflow action node can already reach). The `pclaw-tool` shim also has no production installer
   call site — `install_shim` is invoked by tests only, and its real caller is the container tier's
   `copy_file_in` in `EI-2`/`EI-4`.
+- **2026-08-24 — atom `EI-6`: runner lifecycle landed whole; durable sessions landed as the
+  RECOVERY half only, with the spawn half named as unbuildable here.** Startability was established
+  against code, not headers: the `## Execution log` carries no `BLOCKED` for `EI-6` (the one at
+  ~`:903` is `EI-5`'s cross-repo `apps/gemini-cli-agent` scope call), and both declared deps are
+  met — `EXT:WORK-CONTAINERS:WORK-R8` exists as `workflows/leases.py` (flock + JSON claim file
+  under `locks/leases/`) and WORK-R7's suspended-liveness path exists as
+  `containers.Substrate`/`sweep_decision`.
+
+  **§3.1(5) is complete and non-inert, end to end.** New `agents/runner_lifecycle.py` is an
+  APPLICATION of the R8 convention, not a second locking scheme: target namespace
+  `runner:<runtime_id>`, same record shape, same directory, same drop-at-read expiry rule. Wired
+  with a real writer, a real sweep and a real reader — `session.py:566` now passes
+  `holder=<session_key>` into `pool.claim`, the pool's existing `_health_loop` calls
+  `sweep_idle_leases()` off the loop, and `runner_rows` carries `lease` through
+  `GET /api/agent-runners` into a **held by &lt;holder&gt;** chip plus "held for Ns / released in Ns if
+  idle" in Settings → Agents. `agent.runner_idle_release_secs` (the field EI-5 correctly refused to
+  ship knob-first) and `agent.durable_sessions` both went through all five points — dataclass +
+  `_meta`, `load()` with the same `[60, 86400]` clamp `_EDITABLE_CONFIG` enforces, `to_dict()`, the
+  PATCH allowlist, and a `NumberRow`/`ToggleRow` — with `config-baseline.json` and
+  `docs/reference/configuration.md` regenerated in the same change.
+
+  **§5.1: the reattach-not-reap pre-step is built and measured; NOTHING IN CORE SPAWNS A DURABLE
+  WORKER, and that is stated rather than papered over.** New `tmux_substrate.py` owns the socket,
+  the identity-derived `pclaw-<project>-<run>-<session>` name, and the probes; `terminal.py` now
+  takes its socket constant and its name mapping from it, so there is one tmux dialect instead of
+  two (the reaper and the sweep disagreeing about which daemon they talk to is not a symmetric
+  failure — a sweep that cannot see a live session concludes the work is dead). The pre-step went
+  into `watchdog._substrate_for`, FIRST, before any path check, and `tmux` joined
+  `Substrate.isolated`. It recognises a worker two ways: the recomputed deterministic name, and a
+  durable session whose pane cwd is inside the run's workspace (`is_relative_to`, not a string
+  prefix — `/tmp/run-1x` must not adopt `/tmp/run-1`'s worker). It returns `None` rather than a
+  dead `Substrate`, so it can only ever RESCUE a run from abort, never cause one.
+
+  **DEVIATION — no new ledger kind, because the `resumed` flag already exists.** SC5's "run resumes
+  suspended→running, journal flags `resumed`" needed nothing new: `controller._start` already sets
+  `RunStatus.RUNNING` and emits `run_started(..., resumed=bool(self.run.started_at))`
+  (`controller.py:620`/`:635`). The whole delta was making the sweep decide `suspended` instead of
+  `aborted`. Minting a `run_resumed` kind would have been the fifth-dialect defect PP-4 exists to
+  prevent.
+
+  **DEVIATION — the pre-step went into ONE orphan recovery, not the two §5.1 names.** §5.1 names
+  `reap_orphaned_loops` and subagent `_reconcile_orphans`. Neither is where the done-when's
+  vocabulary lives: `LoopStatus` has no `suspended` and `reap_orphaned_loops` RE-ARMS rather than
+  tombstones, and the subagent's recorded pid is its ACP CLI child, for which no durable session
+  can be recomputed because nothing creates one. The workflow boot sweep is the only recovery that
+  both writes the suspended/aborted decision and owns a journal, so it is the one wired. Wiring the
+  other two would have added readers of a name no writer produces.
+
+  **NOT BUILT, named rather than faked — the durable-worker SPAWN.** No core code opens a durable
+  tmux session for a run, so the pre-step's input is real substrate state (P25 terminals, or any
+  `pclaw-*` session an operator left on our socket) but not yet a worker core placed there. It is
+  not a small omission and it is not this atom's to fix by force: an ACP runner is stdio-bound
+  (JSON-RPC over pipes), so it cannot be detached into tmux without re-plumbing `AcpProcess.spawn`
+  onto a PTY, and the sandbox-interior shell §5.1 actually specifies belongs to `EI-2`'s isolated
+  provider, which this plan's own log already records as non-existent ("`EI-2`'s container provider
+  does not exist (the only provider is in-core `none`)"). Building a spawner that opens a tmux
+  session holding nothing the work depends on would be a writer that fakes aliveness — strictly
+  worse than an honest gap.
+
+  **`tmux` IS NOT INSTALLED on the development machine**, so no real tmux daemon was exercised and
+  the clause could not have been validated even with the spawn half built. Rather than skip it (a
+  skipped surface reads exactly like a pass) aliveness is answered by REAL OS PROCESS STATE: a shim
+  executable literally named `tmux` on `PATH` answers `has-session`/`list-panes` via
+  `os.kill(pid, 0)` against a process the suite really spawns. The worker is a real `Popen` child,
+  its liveness is the kernel's answer, and the production argv, subprocess spawn and exit-code
+  contract run verbatim — only the daemon is substituted, by something that defers to the OS. The
+  dead leg is `kill()` **and `wait()`**: an unreaped child is a zombie and `kill(pid, 0)` succeeds
+  on a zombie, so skipping the reap would have made the control prove nothing (falsified — F9
+  below).
+
+  **The dangerous half is proved as a NEGATIVE with a control.** One test, two legs, both with a
+  GONE workspace so the pre-step is the only thing that can rescue either and the single variable
+  is whether the process is alive: live → `PAUSED`, dead → `CANCELLED`. It first failed for a real
+  reason worth recording — the two legs shared one workspace path, so leg 1's still-running worker
+  satisfied leg 2's cwd join and rescued the run that was supposed to be tombstoned. Per-leg paths
+  now, with the finding in the test's own comment.
+
+  **Nine falsifications, each red then green on the same invocation** (`pytest
+  tests/test_ei6_runner_lifecycle.py --no-cov`, 20 tests; every restore from a file copy at the
+  literal path, never `git checkout`): F1 pre-step reports alive unconditionally → 2 failed / 18
+  passed → restored 20 passed. F2 pre-step reader deleted → 3 failed / 17 → 20. F3 `lease` dropped
+  from `RunnerRow.to_dict` → 3 failed / 17 → 20. F4 `lease_for` stops applying expiry → 2 failed /
+  18 → 20. F5 the Settings chip renders unconditionally → vitest 1 failed / 9 passed → restored 10
+  passed. F6 the pool's lease WRITER deleted → 1 failed / 19 → 20. F7 the sweep enumerates the
+  leases directory instead of the catalog (eats a WORK-R8 run claim) → 2 failed / 18 → 20. F8
+  string-prefix cwd join instead of `is_relative_to` → 1 failed / 19 → 20. F9 the fixture's "dead"
+  worker is never killed → 1 failed / 19 → 20.
+
+  **Vacuity floors, because each of these could otherwise pass for the wrong reason:** the live leg
+  re-run with `durable_sessions` OFF (proving the DIRECTORY did not produce `PAUSED`); a lease
+  inside its window surviving the same sweep that released an expired one; every row reporting
+  `lease: null` before any claim (so "the holder is visible" is not a hardcoded string); a free
+  runner rendering no chip; a claim with no holder recording nothing rather than an empty holder;
+  and the isolated-home redirect ASSERTED before anything destructive runs — both `store` and
+  `leases` bindings patched, not just `config.loader.config_dir`, since each imported `config_dir`
+  by name.
+
+  **`tmux_substrate`'s five spawn sites were classified in `test_spawn_ceiling_audit.py`** as
+  operator-exempt beside the terminal's existing tmux entries: the argv is fixed, no element is
+  agent-influenced, and capping a `has-session` probe would cap the boot sweep's ability to ask
+  whether a worker is alive.
+
+- **2026-08-24 — `EI-6` BLOCKED on ONE gate leg, and it is not this atom's: `config/loader.py` is at the
+  structural rail's EXACT floor on `origin/main`, so NO config field can be added anywhere in the repo
+  right now.** `tests/test_structural_baseline.py::test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance`
+  asserts ≥100 lines of headroom under the `SIZE_CEILING_LINES = 6000` ceiling for the biggest file.
+  Measured, not reasoned: `origin/main`'s `config/loader.py` is **5900** lines → headroom **exactly 100**,
+  and the rail is `>= 100`. Probed by padding main's own file: **main+0 → 1 passed; main+1 → 1 failed.**
+  One line. `EI-6`'s two required fields (`agent.runner_idle_release_secs`, `agent.durable_sessions`) add 35
+  lines through the contract's own points (dataclass + `_meta` + `load()`), taking headroom to 65.
+
+  **Not worked around, on purpose.** The ceiling comment says *"FORBIDDEN TO RAISE"* and *"nothing in the
+  repo may reach 6,000"*, so raising it is off the table; weakening the rail's floor to make a red green is
+  the thing the gate exists to prevent; and the two fields cannot be dropped (§3.1(5) and §5.1 both name
+  them, and the EI-5 log already refused to ship `runner_idle_release_secs` early precisely so EI-6 could
+  ship it WITH its reader). No arrangement of two `_meta` fields plus their `load()` mapping is 0 lines.
+
+  **The rail is firing for a reason it was not written to catch.** Its own docstring says it exists to stop a
+  future *"tighten the ceiling down to the max"* cleanup from shipping an outage — it is a guard on the
+  CEILING, and it has become a growth alarm on the ceiling HOLDER. The actual over-ceiling check
+  (`counts > 6000`) is still comfortably green at 5935, and `scripts/gate_report.py` reports **all 6 gates
+  PASS**. `loader.py` grew **453 lines in three days** (5447 measured 2026-08-21 → 5900 now) across sibling
+  branches, which is what consumed the 553 lines of "ordinary-maintenance headroom" the comment budgeted.
+
+  **Owner call needed, and it is repo-wide rather than EI-6-shaped:** split `config/loader.py` (the rail's
+  actual demand — a class-B refactor on the single hottest shared file, which is why it is not being done
+  inside this atom's fence), or re-author the rail with a recorded rationale. Until one of those lands, every
+  branch adding a config field carries this same red. Everything else in this change is green:
+  `make lint` clean (black/isort/flake8/mypy, 1031 files), `gate_report.py` 6/6, and the full suite red
+  ONLY on this one leg.

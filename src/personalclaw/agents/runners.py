@@ -829,6 +829,10 @@ class RunnerRow:
     evidence: HealthEvidence | None
     capabilities: dict[str, Any] | None
     adapter: AdapterVerification
+    #: EI-6: the WORK-R8 lease currently held on this runner, or None when free. Already
+    #: expiry-filtered by ``runner_lifecycle.lease_for`` — a row never carries a holder that
+    #: idle-release has taken back.
+    lease: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         ev = self.evidence
@@ -854,6 +858,10 @@ class RunnerRow:
                 "verified": self.adapter.verified,
                 "detail": self.adapter.detail,
             },
+            # Who holds this runner right now (EI-6 §3.1(5)), or null when free. `null` is
+            # a positive statement: the lease was read and either absent or past its
+            # idle-release window. There is no "maybe held" shape.
+            "lease": self.lease,
         }
 
 
@@ -872,12 +880,25 @@ def runner_rows(*, probe: bool = False) -> list[RunnerRow]:
         except Exception:
             logger.debug("adapter verification failed for %s", defn.id, exc_info=True)
             verdict = AdapterVerification(state="unverified", detail="verification errored")
+        # EI-6: the live lease. Read per row rather than passed in, so every caller of
+        # ``runner_rows`` (the Settings endpoint today, anything else tomorrow) shows the
+        # same holder — a surface that had to remember to ask separately is a surface that
+        # eventually forgets. Lazy import: ``runner_lifecycle`` reaches the workflow lease
+        # store, which must not become an import-time dependency of the catalog.
+        try:
+            from personalclaw.agents import runner_lifecycle
+
+            lease = runner_lifecycle.lease_for(defn.runtime_id)
+        except Exception:
+            logger.debug("lease read failed for %s", defn.id, exc_info=True)
+            lease = None
         rows.append(
             RunnerRow(
                 definition=defn,
                 evidence=evidence,
                 capabilities=load_capabilities(defn.id),
                 adapter=verdict,
+                lease=lease,
             )
         )
     return rows

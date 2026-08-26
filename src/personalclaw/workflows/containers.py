@@ -178,7 +178,7 @@ class Substrate:
     the work is gone and the run is honestly aborted.
     """
 
-    kind: str = "inline"  # inline | worktree | container
+    kind: str = "inline"  # inline | worktree | container | tmux
     alive: bool = False
     detail: str = ""
 
@@ -188,8 +188,14 @@ class Substrate:
 
         An inline run's substrate IS the process, so it can never survive a restart — reporting one
         as suspended would offer a Resume that cannot work.
+
+        `tmux` joined this set with EI-6's durable sessions (EXECUTION-ISOLATION §5.1). It belongs
+        for exactly the reason `container` does: the tmux DAEMON owns the worker's shell, not the
+        gateway, so killing the gateway leaves the work running. That is also why aliveness for
+        this kind is a live probe rather than a path check — a session whose shell exited is gone
+        from the server, so `alive` cannot be stale in the dangerous direction.
         """
-        return self.kind in ("worktree", "container")
+        return self.kind in ("worktree", "container", "tmux")
 
     def to_dict(self) -> dict[str, Any]:
         return {"kind": self.kind, "alive": self.alive, "detail": self.detail}

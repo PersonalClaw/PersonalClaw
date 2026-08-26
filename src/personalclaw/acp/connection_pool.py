@@ -320,10 +320,24 @@ class AcpConnectionPool:
 
     # ── claim (first chat turn) ────────────────────────────────────────────────
 
-    async def claim(self, runtime_id: str) -> "ModelProvider | None":
+    async def claim(self, runtime_id: str, *, holder: str = "") -> "ModelProvider | None":
         """Hand the live connection to a session (it leaves the pool) and re-warm a
         replacement in the background. Returns ``None`` if none is available — the
-        caller then cold-starts normally."""
+        caller then cold-starts normally.
+
+        ``holder`` is the claiming session key. When given, the claim is also RECORDED as a
+        WORK-R8 lease (EI-6 §3.1(5)) so Settings → Agents and a co-tenant session can see
+        who holds which runner, and so a holder that goes quiet past
+        ``agent.runner_idle_release_secs`` is released instead of appearing to hold it
+        forever. A same-holder re-claim renews rather than being refused, which is what
+        makes reconnect after a connection death transparent.
+
+        Recording the lease is deliberately NOT allowed to fail the claim: the pool's own
+        slot is the mutual exclusion (the provider is detached, so the next caller finds
+        nothing), and the lease is the observable record over it. Failing a working claim
+        because an advisory file could not be written would turn a visibility feature into
+        an outage.
+        """
         if self._closed:
             return None
         slot = self._slots.get(runtime_id)
@@ -338,9 +352,23 @@ class AcpConnectionPool:
             slot.snapshot = {}
             slot.warmed_at = 0.0
         logger.info("acp pool: claimed live connection for %s", runtime_id)
+        if holder:
+            self._record_lease(runtime_id, holder)
         # Re-warm a replacement so the next ACP chat is instant too.
         self._spawn_bg(self.warm(runtime_id))
         return provider
+
+    @staticmethod
+    def _record_lease(runtime_id: str, holder: str) -> None:
+        """Write the claim's WORK-R8 lease record. Best-effort by contract (see ``claim``)."""
+        try:
+            from personalclaw.agents import runner_lifecycle
+
+            granted, reason = runner_lifecycle.claim_runner(runtime_id, holder)
+            if granted is None:
+                logger.debug("acp pool: lease not recorded for %s (%s)", runtime_id, reason)
+        except Exception:
+            logger.debug("acp pool: lease record failed for %s", runtime_id, exc_info=True)
 
     # ── lifecycle ──────────────────────────────────────────────────────────────
 
@@ -367,10 +395,34 @@ class AcpConnectionPool:
                     elif (now - slot.warmed_at) >= self._ttl:
                         # Refresh a stale snapshot by re-warming (dynamic catalog).
                         await self._refresh(runtime_id)
+                # EI-6 idle-release. Runs on the same cadence as the warm sweep because it
+                # answers the same class of question — "is this still true?" — and because
+                # a lease whose holder died with the gateway must be dropped by SOMETHING
+                # that runs without the holder. Readers already drop an expired lease at
+                # render; this makes the on-disk state agree with what they show.
+                await self._release_idle_leases()
         except asyncio.CancelledError:
             pass
         except Exception:
             logger.warning("acp pool: health loop error", exc_info=True)
+
+    async def _release_idle_leases(self) -> None:
+        """Drop runner leases whose idle window elapsed. Off the loop; never raises.
+
+        The sweep reads the catalog and up to one small file per runner, which is cheap but
+        is still disk I/O inside the health loop's tick, so it runs in the default executor
+        rather than blocking every other pooled runtime behind it.
+        """
+        try:
+            from personalclaw.agents import runner_lifecycle
+
+            released = await asyncio.get_running_loop().run_in_executor(
+                None, runner_lifecycle.sweep_idle_leases
+            )
+            if released:
+                logger.info("acp pool: idle-released %d runner lease(s)", len(released))
+        except Exception:
+            logger.debug("acp pool: idle-release sweep failed", exc_info=True)
 
     async def _refresh(self, runtime_id: str) -> None:
         """Re-warm a runtime, shutting down the prior live connection first."""

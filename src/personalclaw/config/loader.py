@@ -628,6 +628,30 @@ class AgentConfig:
             "as an answer.",
         ),
     )
+    runner_idle_release_secs: int = field(
+        default=1800,
+        metadata=_meta(
+            "Runner Idle Release",
+            "How long a session may hold an agent runner without using it, in seconds. "
+            "Past this the hold is released: Settings → Agents stops showing that "
+            "session as the holder and the runner reads as free. The session itself is "
+            "untouched — this releases the RECORD of who holds what, so a session that "
+            "went quiet (or a gateway that was killed) cannot leave a runner looking "
+            "permanently taken.",
+        ),
+    )
+    durable_sessions: bool = field(
+        default=False,
+        metadata=_meta(
+            "Durable worker sessions",
+            "Let a worker's shell outlive the gateway by running it inside a tmux "
+            "session on PersonalClaw's own tmux socket. On restart the recovery sweep "
+            "recomputes each session's name, finds the still-alive worker and marks "
+            "the run resumable instead of aborting it — so a gateway restart mid-run "
+            "stops discarding work. Requires the `tmux` binary; without it the setting "
+            "has no effect and behaviour is exactly as today.",
+        ),
+    )
 
     self_qa: SelfQaConfig = field(
         default_factory=SelfQaConfig,
@@ -4563,6 +4587,17 @@ class AppConfig:
                 runner_health_check_secs=max(
                     60, min(86_400, int(agent_data.get("runner_health_check_secs", 3600)))
                 ),
+                # EXECUTION-ISOLATION §3.1(5) (EI-6). Same [60, 86400] clamp as the
+                # staleness window above and as ``_EDITABLE_CONFIG``, for the same
+                # reason: a hand-edited config.json must not be able to express a TTL
+                # the dashboard would refuse to save back.
+                runner_idle_release_secs=max(
+                    60, min(86_400, int(agent_data.get("runner_idle_release_secs", 1800)))
+                ),
+                # EXECUTION-ISOLATION §5.1 (EI-6). Read plainly, defaulting OFF: this
+                # changes what a boot sweep does with a stale run, so a fail-ON read
+                # would alter recovery behaviour on every existing install at upgrade.
+                durable_sessions=bool(agent_data.get("durable_sessions", False)),
                 self_qa=SelfQaConfig(
                     enabled=bool(self_qa_data.get("enabled", False)),
                     watched_repo=str(self_qa_data.get("watched_repo", "") or ""),

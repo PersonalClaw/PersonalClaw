@@ -54,6 +54,7 @@ const unhealthyRow = {
   health_stale: false,
   capabilities: null,
   adapter: { npm_pkg: '', pinned: false, state: 'no_adapter', verified: true, detail: 'launches its own binary' },
+  lease: null,
 }
 
 const healthyRow = {
@@ -69,6 +70,7 @@ const healthyRow = {
     models: ['m1', 'm2'], permission_modes: ['default', 'acceptEdits'], efforts: ['low', 'high'],
   },
   adapter: { npm_pkg: '@x/adapter', pinned: false, state: 'unverified', verified: false, detail: 'no recorded provenance' },
+  lease: null,
 }
 
 describe('the runner rows in Settings → Agent defaults', () => {
@@ -136,5 +138,39 @@ describe('the runner rows in Settings → Agent defaults', () => {
     // "you have none" rather than "we could not ask".
     await waitFor(() => expect(screen.getByText(/Couldn't load your runners/i)).toBeTruthy())
     expect(screen.queryByText(/No runners in the catalog/)).toBeNull()
+  })
+
+  // ── EI-6 SC5: "its lease holder is visible in Settings" ────────────────────
+  //
+  // The clause is a SURFACE claim, so it is asserted on rendered text. A python test can
+  // only prove the endpoint carries `lease` — deleting the chip that reads it would leave
+  // every backend test green and the user with no way to see who holds a runner.
+
+  const held = {
+    holder: 'chat:web:alice', taken_at: 0, expires_at: 0, renewals: 2,
+    age_secs: 42, expires_in_secs: 1758,
+  }
+
+  it('names the session holding a runner, and says when idle-release takes it back', async () => {
+    agentRunners.mockResolvedValue([{ ...healthyRow, lease: held }, unhealthyRow])
+    render(<AgentDefaultsPanel />)
+    await waitFor(() => expect(screen.getByText('held by chat:web:alice')).toBeTruthy())
+    // Not just WHO but for how long and how long until release — "held by X" alone does not
+    // tell a user whether to wait or to go look at that session.
+    expect(screen.getByText('held for 42s')).toBeTruthy()
+    expect(screen.getByText('released in 1758s if idle')).toBeTruthy()
+    // The health verdict is untouched: a held runner is still a healthy one.
+    expect(screen.getByText('healthy')).toBeTruthy()
+  })
+
+  it('shows no holder for a free runner', async () => {
+    // VACUITY FLOOR. Without this, "the holder is visible" could be satisfied by a chip
+    // that renders unconditionally — every runner would look permanently taken, which is
+    // the exact misreading idle-release exists to prevent.
+    agentRunners.mockResolvedValue([healthyRow, unhealthyRow])
+    render(<AgentDefaultsPanel />)
+    await waitFor(() => expect(screen.getByText('healthy')).toBeTruthy())
+    expect(screen.queryByText(/held by/)).toBeNull()
+    expect(screen.queryByText(/released in/)).toBeNull()
   })
 })

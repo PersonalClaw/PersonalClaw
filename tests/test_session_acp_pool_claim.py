@@ -61,9 +61,14 @@ class _FakePool:
     def __init__(self, provider=None):
         self._provider = provider
         self.claimed = []
+        #: The lease holders the session layer passed (EI-6). Recorded rather than ignored:
+        #: a fake that swallowed the kwarg would let the holder silently stop being sent and
+        #: the Settings surface would show every runner as free.
+        self.holders = []
 
-    async def claim(self, runtime_id):
+    async def claim(self, runtime_id, *, holder=""):
         self.claimed.append(runtime_id)
+        self.holders.append(holder)
         return self._provider
 
 
@@ -73,7 +78,8 @@ async def test_claim_specializes_acp_connection(monkeypatch):
 
     sm = _make_sm()
     prov = _FakeAcpProvider()
-    cp.set_acp_pool(_FakePool(prov))
+    pool = _FakePool(prov)
+    cp.set_acp_pool(pool)
     try:
         claimed = await sm._claim_acp_pool(
             "dashboard:s1",
@@ -86,6 +92,9 @@ async def test_claim_specializes_acp_connection(monkeypatch):
         assert prov.session_key == "dashboard:s1" and prov.channel == "C1"
         assert prov.agent_set == "gpu-dev"  # persona bound live
         assert prov.model_set == "claude-opus-4.8"  # model bound live
+        # EI-6: the session key travels as the lease holder, so Settings → Agents can name
+        # who has the runner. An empty holder here means the lease is never recorded.
+        assert pool.holders == ["dashboard:s1"]
     finally:
         cp.set_acp_pool(None)
 

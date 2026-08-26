@@ -418,6 +418,14 @@ class WorkflowWatchdog:
         Falls back to the cheap existence check if the inspection raises: a boot sweep must
         decide, and an unanswerable git call is not a reason to leave a stale `running` row.
         """
+        # EI-6 §5.1 reattach-not-reap PRE-STEP. It runs FIRST, before any path check, because
+        # it is the only question whose answer can be "the worker is still executing right
+        # now" — and a run with a live worker must never be decided by looking at a directory.
+        # Ordering matters in one direction only: a live durable worker outranks every other
+        # signal, and if there is none this falls through to today's decision unchanged.
+        durable = self._durable_substrate(run)
+        if durable is not None:
+            return durable
         wt = str((run.extra or {}).get("worktree_path", "") or "")
         if not wt:
             return containers.Substrate(kind="inline", alive=False)
@@ -436,6 +444,66 @@ class WorkflowWatchdog:
         except Exception:
             logger.debug("substrate inspection failed for run %s", run.id, exc_info=True)
             return containers.Substrate(kind="worktree", alive=Path(wt).is_dir(), detail=wt)
+
+    @staticmethod
+    def _durable_substrate(run: WorkflowRun) -> containers.Substrate | None:
+        """A still-alive durable tmux worker for *run*, or None. The §5.1 boot pre-step.
+
+        Two ways a worker is recognised, in order of strength:
+
+        1. **The recomputed deterministic name.** `pclaw-<project>-<run>-<session>` is derived
+           from identity alone, so a gateway that lost every byte of in-memory state can
+           reconstruct it and ask the daemon directly. This recomputability IS the mechanism —
+           nothing had to be persisted at spawn time, so there is no write a crash could have
+           missed.
+        2. **A durable session working inside the run's workspace.** A worker is also identified
+           by WHERE it is, not only by what it is called: a shell the daemon is holding whose
+           cwd is inside this run's workspace is this run's live substrate even when an earlier
+           mechanism chose its name. Without this leg the pre-step would only ever recognise
+           sessions named by this exact version of this exact function, which is a reader that
+           agrees with itself and nothing else.
+
+        Returns None — never a dead `Substrate` — so the caller falls through to today's
+        decision untouched. That is deliberate: this function may only ever RESCUE a run from
+        being aborted, never cause one to be aborted that would not have been. A bug here can
+        cost a spurious "suspended"; it cannot destroy work.
+        """
+        from personalclaw import tmux_substrate
+        from personalclaw.agents import runner_lifecycle
+
+        # The flag gate is first and cheap. Off (or no tmux binary) means not one probe is
+        # spawned and the sweep behaves exactly as it did before this existed.
+        if not runner_lifecycle.durable_sessions_enabled():
+            return None
+        name = tmux_substrate.durable_session_name(
+            run.project_id or "default", run.id, run.workflow_name or "run"
+        )
+        if tmux_substrate.has_session_sync(name):
+            return containers.Substrate(
+                kind="tmux", alive=True, detail=f"durable session {name} is still running"
+            )
+        ws = str((run.extra or {}).get("worktree_path", "") or "")
+        if not ws:
+            return None
+        try:
+            root = Path(ws).resolve()
+        except OSError:
+            return None
+        for session_name, pane_path in tmux_substrate.pane_paths_sync():
+            try:
+                pane = Path(pane_path).resolve()
+            except OSError:
+                continue
+            # `is_relative_to`, not a string prefix: `/tmp/run-1x` must not match the
+            # workspace `/tmp/run-1`, and adopting a NEIGHBOUR's worker would report someone
+            # else's live shell as this run's recoverable work.
+            if pane == root or pane.is_relative_to(root):
+                return containers.Substrate(
+                    kind="tmux",
+                    alive=True,
+                    detail=f"durable session {session_name} is working in {pane}",
+                )
+        return None
 
     async def _adopt(self, run: WorkflowRun) -> None:
         """Resume a run with no live controller.

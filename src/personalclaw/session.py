@@ -563,7 +563,10 @@ class SessionManager:
             pool = get_acp_pool()
             if pool is None:
                 return None
-            provider = await pool.claim(provider_kind)
+            # `holder=key` records the WORK-R8 runner lease (EI-6): this session key is what
+            # Settings → Agents shows as the holder, and it is what makes a re-claim after a
+            # connection death a RENEWAL rather than a refusal.
+            provider = await pool.claim(provider_kind, holder=key)
         except Exception:
             logger.debug("ACP pool claim failed for %s", key, exc_info=True)
             return None
