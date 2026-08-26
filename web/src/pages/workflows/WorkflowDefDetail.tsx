@@ -7,6 +7,7 @@ import { Button } from '../../ui/Button'
 import { HeaderActions } from '../../ui/HeaderActions'
 import { Segmented } from '../../ui/Segmented'
 import { Field, TextInput } from '../../ui/forms'
+import { Toggle } from '../../ui/Toggle'
 import { PageTitle } from '../../ui/PageTitle'
 import {
   api,
@@ -92,6 +93,10 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
   const [diffOps, setDiffOps] = useState<WorkflowVersionOp[] | null>(null)
   const [ledger, setLedger] = useState<WorkflowLedgerRow[] | null>(null)
   const [refining, setRefining] = useState(false)
+  // Named for the census's in-flight vocabulary (`disabledReasonCensus`'s BUSY list): the
+  // switch is only ever unavailable while its OWN write is in flight, which is the one class
+  // that stays natively disabled rather than carrying a `disabledReason`.
+  const [publishSaving, setPublishSaving] = useState(false)
 
   const loadVersions = useCallback(() => {
     api.workflowVersions(name)
@@ -131,6 +136,9 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
 
   const rows = useMemo(() => (def ? flatten(def.root) : []), [def])
   const declared = useMemo(() => Object.entries(def?.inputs ?? {}), [def])
+  // Read with `=== true`, matching the backend's `is True`: an absent key is UNPUBLISHED, which
+  // is what every template authored before A2A existed looks like.
+  const published = def?.metadata?.a2a_published === true
   const handoffs = useMemo(
     () => (def?.metadata?.hands_off_to ?? []).filter((h) => (h?.target_def ?? '').trim()),
     [def],
@@ -165,6 +173,27 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
       setRefining(false)
     }
   }, [name, onStarted, refining])
+
+  // EXTERNAL-ACCESS §5 — publish/unpublish this template as an A2A skill.
+  //
+  // The optimistic flip is reverted on failure rather than left standing: this switch is the
+  // user's only view of whether an external agent can reach this workflow, and a control that
+  // shows "on" after the write failed is worse than one that lags, because it claims an exposure
+  // decision that did not happen (or hides one that did).
+  const togglePublish = useCallback(async (next: boolean) => {
+    const previous = def?.metadata?.a2a_published === true
+    setPublishSaving(true)
+    setDef((d) => (d ? { ...d, metadata: { ...(d.metadata ?? {}), a2a_published: next } } : d))
+    try {
+      const res = await api.publishWorkflowToA2A(name, next)
+      setDef((d) => (d ? { ...d, metadata: { ...(d.metadata ?? {}), a2a_published: res.a2a_published } } : d))
+    } catch (e) {
+      setDef((d) => (d ? { ...d, metadata: { ...(d.metadata ?? {}), a2a_published: previous } } : d))
+      notify(e instanceof Error ? e.message : 'Could not change A2A publication')
+    } finally {
+      setPublishSaving(false)
+    }
+  }, [def, name])
 
   const rollback = useCallback(async (version: number) => {
     try {
@@ -235,6 +264,26 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                     ))}
                   </div>
                 )}
+
+                <div className="flex items-start justify-between gap-m">
+                  <div className="min-w-0">
+                    <span data-type="title-m" className="text-on-surface">Publish to A2A</span>
+                    <p className="text-on-surface-low text-[0.75rem]">
+                      {published
+                        ? 'External agents holding an A2A token can see this template on the agent card and start it.'
+                        : 'Off. This template is not on the A2A agent card and cannot be started by an external agent.'}
+                    </p>
+                  </div>
+                  {/* The accessible name states the TEMPLATE, not just the action: the switch's
+                      name is read out of context in a screen-reader's forms list, where four
+                      "Publish to A2A" switches would be indistinguishable. */}
+                  <Toggle
+                    on={published}
+                    onChange={togglePublish}
+                    disabled={publishSaving}
+                    label={`Publish ${name} to A2A`}
+                  />
+                </div>
 
                 <div className="flex flex-col gap-2xs">
                   <span data-type="title-m" className="text-on-surface">Steps</span>
