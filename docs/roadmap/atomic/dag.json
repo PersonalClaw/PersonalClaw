@@ -4607,7 +4607,8 @@
             "PCS-6",
             "PCS-4",
             "EXT:COST-AND-TOKEN-OBSERVABILITY:owns/renders the saved-USD & hit-rate readout these numbers feed"
-          ]
+          ],
+          "blocked_reason": "PARTIAL \u2014 the NUMBERS half is fully SHIPPED on main and railed: _turn_complete_line carries cache_read_tokens / cache_creation_tokens / cache_hit_pct / cache_saved_usd from a live call site; stats.cache_hit_pct returns an honest None on a zero denominator; pricing.cache_savings_usd computes both sides THROUGH estimate_cost so the rate lookup cannot drift, returns None (never 0.0) for an unpriced model, and leaves a negative saving unclamped. 'No second store' holds structurally and is AST-enforced. UNMET is the V2 live-run half, and it is environment-gated not code-gated: (a) no Bedrock inference-profile id resolves to a price row, so a real run renders 'saved unpriced' -- fixing that is _rates id normalisation, a repo-wide pricing change; (b) no OPENAI_API_KEY here, and it is coupled to PCS-3's still-unmet clause that the OpenAI adapter declare AUTOMATIC (today llm/openai.py declares no posture and inherits PromptCache.NONE). SEPARATELY: the FRONTEND reader is unrailed -- ChatPage folds activityKind==='stats' and gates its rendering, but no FE test covers that kind, so the production reader of these numbers could be deleted with every gate green. Left alone deliberately: the atom's own dep row assigns the readout to EXT:COST-AND-TOKEN-OBSERVABILITY. OWNER CALL: three independent audit passes now recommend SPLITTING this atom -- the numbers half has no remaining work or risk, and the live-provider half cannot be closed from this environment at all."
         },
         {
           "id": "PCS-8",
