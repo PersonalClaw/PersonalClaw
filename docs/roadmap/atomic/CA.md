@@ -18,7 +18,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `CA-6` | ✅ | S3 shared client contract doc + multi-gateway registry (amendment T3.3) | `EXT:PLATFORM-RESILIENCE:degraded-connection contract to reuse` | contract is precise enough that desktop + mobile implement it without re-deciding; two paired gateways are switchable from one client with zero state bleed (distinct sessions/inbox/settings per endpoint id); the doc states the hub veto verbatim; degraded UI reuses the existing contract |
 | `CA-7` | ⬜ | S3 remote-endpoint auth path over wss (no new origin exemption) | `CA-6`, `EXT:REMOTE-USER-AUTH:S4 remote/TLS boundary (public_url, Secure/wss) — already shipped 2026-07-30` | a native client reaches a remote gateway over the owner's tunnel using its device session with no new origin exemption and no cloud middle tier in the path (client->owner-gateway only, Success Criterion 3); killing the tunnel mid-session reconnects/degrades gracefully |
 | `CA-8` | ⬜ | S4 desktop connect-to-gateway mode + multi-gateway switcher (T4.1 + amendment T4.4) | `CA-6`, `CA-7`, `EXT:DESKTOP-CAPABILITIES:Electron shell connect-mode coordination` | the desktop app connects to a gateway it did not spawn (LAN or remote) while defaulting to spawn-local; the connect dialog lists N paired gateways, shows the active one, switches cleanly with graceful reconnect per S3; revoking one gateway's device session breaks only that entry |
-| `CA-9` | ⬜ | S4 coordination docs: mobile task refs + future-platform recipe | `CA-6`, `EXT:MOBILE-COMPANION:PWA/Capacitor consumes pairing + endpoint switch` | MOBILE-COMPANION S4 pairing references C2 with no parallel device-token code; the future-platform recipe is written with no speculative per-platform code shipped |
+| `CA-9` | ✅ | S4 coordination docs: mobile task refs + future-platform recipe | `CA-6`, `EXT:MOBILE-COMPANION:PWA/Capacitor consumes pairing + endpoint switch` | MOBILE-COMPANION S4 pairing references C2 with no parallel device-token code; the future-platform recipe is written with no speculative per-platform code shipped |
 
 ## Atom scopes
 
@@ -138,7 +138,7 @@ Session 4 T4.1, T4.4 + V4; desktop/main.js + a connect dialog, coordinated with 
 
 ### `CA-9` — S4 coordination docs: mobile task refs + future-platform recipe
 
-**Status:** todo
+**Status:** done (PR #2068)
 
 Session 4 T4.2, T4.3; MOBILE-COMPANION.md task refs point pairing/endpoint-switch at C2/C1/S3 (no duplicated device-token code); docs/guides/companion-apps.md future-platform recipe (wrap served UI + implement S3 client contract, gated on PLATFORM-REACH)
 

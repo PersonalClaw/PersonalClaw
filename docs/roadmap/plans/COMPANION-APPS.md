@@ -1003,3 +1003,20 @@ no-op for sessions with no device. No new route, exemption or credential surface
   `ls`-verified before running so a mistyped path could not read as a pass). Nothing under `src/`
   or `web/src` changed, so no web suite was run. Probe sweep `FALSIFICATION|if False and|# PROBE`
   over `src/ tests/` = **16**, all pre-existing, **0** introduced; `git status --porcelain` empty.
+- [2026-08-25][CA-9] ✅ **ATOM FLIPPED `done` (PR #2068).** Integration re-gated on `origin/main` rather
+  than inheriting: `make lint` pass (black 2071, mypy 1017 sources); `pytest` **25 passed** over the new
+  rail plus both docs rails (paths `ls`-verified); `scripts/gate_report.py` **6/6** with `docs-lint`
+  included; `src/` and `web/` diffs **empty**; probe sweep 16 pre-existing / 0 introduced.
+  **Falsification re-run independently:** planting `handlers/rival_pairing.py` (a second redemption path
+  with `mint_device_token`/`DEVICE_TOKEN_TTL`, importing `auth.pairing` and calling `attach_device`)
+  produced **3 red** — device-token census 0→5, importer count 1→2, provenance writers 1→2 — while the
+  vacuity floor stayed green, correctly, because it measures the scanner and not the repo. The
+  implementing agent measured 4 because it also planted a `@capacitor` marker; counts are therefore not
+  comparable and this entry records mine.
+  **A reusable lesson worth more than the atom:** `git grep` **cannot see an untracked file**. It
+  returned 0 for the planted module while plain `grep` found 4 matching lines — so a falsification whose
+  grep-back uses `git grep` on a NEW file reads as "the mutation never applied", silently voiding the
+  exercise. This matters because `git grep` is the mandated tool for the probe sweep.
+  The flip is justified against the criterion: both clauses are met and now railed rather than asserted.
+  The enroll-provenance DISCOVERY recorded above is adjacent scope (it concerns §C2's "folds in C3
+  enroll" claim, not CA-9's `done_when`) and needs its own atom, so it does not hold this one `todo`.
