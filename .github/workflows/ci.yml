@@ -273,9 +273,21 @@ jobs:
         run: npm ci
       - name: install chromium
         run: npx playwright install --with-deps chromium
+      # `--reporter=github,json` because the step below has to READ the result: a green
+      # playwright exit says the job ran, not that anything was measured.
       - name: axe per route, both themes (web/e2e/a11y.spec.ts)
         working-directory: web
-        run: npx playwright test e2e/a11y.spec.ts --project=chromium
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: a11y-report.json
+        run: npx playwright test e2e/a11y.spec.ts --project=chromium --reporter=github,json
+      # A SKIP reads exactly like a PASS in a green job, and this job's whole claim is a
+      # COUNT ("every authenticated route"). So the count is asserted against the manifest
+      # rather than trusted: zero route-level skips, and scans == declared routes × themes.
+      # Without this, emptying a route list in web/e2e/routes.ts would shrink the gate's
+      # coverage to nothing and still show a green check.
+      - name: every authenticated route was actually SCANNED (not skipped)
+        working-directory: web
+        run: node e2e/assert-no-route-skips.mjs a11y-report.json
       # DSC-11's OTHER half. axe cannot express any of these three: whether a focus stop is
       # VISIBLE (it checks name/role, not "was the user told"), what a user with
       # prefers-reduced-motion actually gets, or whether the page pans sideways on a phone.

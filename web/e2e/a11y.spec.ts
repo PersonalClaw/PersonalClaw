@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
-import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, THEMES } from './routes'
+import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, THEMES } from './routes'
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
 
 // ── a11y (WCAG 2 AA) scan — every nav route × both themes ───────────────────
@@ -24,14 +24,30 @@ const BLOCKING = new Set(['serious', 'critical'])
 //   3. OPENED SURFACES          — modals, docks, menus. Nothing was ever opened, so
 //                                every defect behind a click was invisible: 10
 //                                blocking violations found by hand in cycle 45 alone.
+//   4. NON-NAV ROUTABLE PAGES   — `App.tsx` routes to pages that have no nav tile.
+//                                `mission-control` is a parameterless authenticated
+//                                page, so "every authenticated route is scanned" was
+//                                false while it sat outside all three lists above.
 //
 // Tier 3 asserts the surface actually OPENED (element-count delta) before trusting a
 // clean result — a recipe that silently no-ops would otherwise report a pass, which is
 // the failure mode this whole family exists to close.
+//
+// ── What this tag set does NOT cover ────────────────────────────────────────
+// `wcag2a/wcag2aa/wcag21a/wcag21aa` omits `target-size` (WCAG 2.2 AA, tag `wcag22aa`),
+// so a control smaller than 24×24 CSS px passes here. It also cannot express
+// intent-level questions — "was the user TOLD this failed?", "does this order make
+// sense?" — so a clean run is the absence of MACHINE-detectable AA violations on the
+// scanned states, not a claim the surface is accessible.
 
 for (const theme of THEMES) {
   test.describe(`a11y (WCAG AA): ${theme} theme`, () => {
-    for (const { route, id, label } of [...ROUTES, ...SETTINGS_ROUTES, ...VIEW_ROUTES]) {
+    for (const { route, id, label } of [
+      ...ROUTES,
+      ...SETTINGS_ROUTES,
+      ...VIEW_ROUTES,
+      ...NON_NAV_ROUTES,
+    ]) {
       test(`${label} (#/${route})`, async ({ page }, testInfo) => {
         await seedTheme(page, theme)
         await gotoRoute(page, route)
