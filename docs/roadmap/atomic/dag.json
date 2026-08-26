@@ -6087,7 +6087,8 @@
           "done_when": "src/content/blog/launch.md draft complete citing threat model, scanner gate, egress chokepoint, zero telemetry, plus an honest limitations paragraph; owner sign-off recorded",
           "deps": [
             "EXT:SECURITY-LEGIBILITY:threat model + scanner gate + egress chokepoint narrative"
-          ]
+          ],
+          "blocked_reason": "PARTIAL \u2014 the draft is substantively COMPLETE at docs/launch/launch-post-draft.md (threat model, scanner gate, runtime egress chokepoint, zero telemetry, honest limitations). Two clauses cannot be met from core. (1) CROSS-REPO: done_when names src/content/blog/launch.md, and that path exists in NEITHER repo -- core has no src/content/ at all, and personalclaw.dev's content.config.ts defines exactly one collection (docs, Starlight) with no blog collection and no src/content/blog/. Publishing needs a website-repo change: define the collection, add the route and a listing. A file dropped at that path today would not build. (2) OWNER SIGN-OFF is not producible by an agent; the draft reads 'pending owner sign-off' rather than paraphrasing the clause into something tickable. FINDING carried into the draft and verified by EXECUTION, not by reading: the egress chokepoint is deny-by-default about PRIVATE RANGES, not destinations -- STRICT.allow_only is False, so the default profile and the `all` tier reach every public host; and security.egress.allow_hosts does DOUBLE DUTY (guard.py:169 feeds both the :174 exclusive allow-list and the :230 private-range waiver), so one host added for a homelab LAN webhook silently widens every later registry-tier run even though policy.py's own docstring calls that tier 'dev registries only'. Three claims were cut from the draft rather than shipped."
         },
         {
           "id": "DL-7",
