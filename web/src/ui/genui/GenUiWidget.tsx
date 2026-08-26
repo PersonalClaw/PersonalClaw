@@ -12,14 +12,23 @@
  *  Registered as the `embed` capability of the `genui` content type
  *  (registerBuiltins.ts), so Markdown.tsx's existing `embedFor(seg.kind)` dispatch
  *  routes `kind="genui"` here with no edit to blocks.ts / Markdown.tsx. */
-import { memo, type ReactNode } from 'react'
+import { memo, useCallback, useState, type ReactNode } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { Surface } from '../Surface'
 import { fvs } from '../../design/fontWeight'
 import type { EmbedProps } from '../content/contentTypes'
+import { LAYER_CORE } from '../surfaces/layers'
+import { LayerBoundary } from '../surfaces/LayerBoundary'
 import { parseGenUi, type ParsedLine } from './parse'
 import { getComponent, validateInvocation } from './registry'
 import { registerCoreGenUiComponents } from './components'
+import {
+  GenUiActionCtx,
+  composeDualPayload,
+  routeGenUiAction,
+  useGenUiHost,
+  type GenUiEmit,
+} from './actions'
 
 // Ensure the core set is registered even if app bootstrap hasn't run (tests,
 // SSR-less lazy paths). Idempotent — a no-op after the first call.
@@ -66,12 +75,48 @@ function renderLine(
     })
   }
   const Comp = def.component
-  return <Comp key={line.id} args={line.args} children={children} />
+  const node = <Comp key={line.id} args={line.args} children={children} />
+  // A component from a layer ABOVE core is app/user code fed model-authored args, so
+  // it renders inside a boundary: it may fail, it may not take the tree with it (§6).
+  // Core components are NOT wrapped — a boundary around every line would make a real
+  // core crash silent, and L0 is the layer the build owns.
+  if (def.layer <= LAYER_CORE) return node
+  return (
+    <LayerBoundary key={line.id} layer={def.layer} what={def.name}>
+      {node}
+    </LayerBoundary>
+  )
 }
 
 /** The genui widget embed. Parses + validates + renders the DSL body. */
-export const GenUiWidget = memo(function GenUiWidget({ content, title }: EmbedProps) {
+export const GenUiWidget = memo(function GenUiWidget({ content, title, slug }: EmbedProps) {
+  // WHO is rendering this widget (§5.4). Supplied by the host, never by the widget's own
+  // text — see actions.ts. Absent host ⇒ chat-born, the harmless default.
+  const host = useGenUiHost()
   const { lines, parseErrors } = parseGenUi(content || '')
+  // A refused / failed action is reported HERE, next to the widget that raised it —
+  // a submit that quietly did nothing is the worst outcome of the three.
+  const [actionError, setActionError] = useState('')
+  const emit = useCallback<GenUiEmit>(async ({ action, label, payload }) => {
+    setActionError('')
+    const dual = composeDualPayload({
+      action,
+      label,
+      payload,
+      live: slug ? { saved: true, slug } : undefined,
+    })
+    if (!dual) {
+      setActionError('That action could not be sent — its values are not serializable.')
+      return
+    }
+    // The PRODUCER decides the sink: a component cannot choose its own router, or a chat
+    // widget's click could be aimed at a workflow run.
+    const result = await routeGenUiAction(dual, host.producer, { action, payload })
+    if (!result.ok) setActionError(result.message || 'That action could not be completed.')
+    // The host's own refresh runs only on success — closing an inbox row after a refused
+    // submit would hide a gate that is still waiting.
+    else host.onResolved?.()
+  }, [host, slug])
   const byId = new Map<string, ParsedLine>()
   for (const l of lines) byId.set(l.id, l)
 
@@ -87,14 +132,17 @@ export const GenUiWidget = memo(function GenUiWidget({ content, title }: EmbedPr
       <div className="border-b border-outline-variant/40 bg-surface-container px-3 py-1.5">
         <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{title || 'Widget'}</span>
       </div>
-      <div className="flex flex-col gap-s p-l">
-        {roots.map((l) => (
-          <div key={l.id}>{renderLine(l, byId, new Set())}</div>
-        ))}
-        {parseErrors.map((pe) => (
-          <DroppedLine key={`pe-${pe.line}`} message={`Line ${pe.line}: ${pe.message} — "${pe.text.slice(0, 60)}"`} />
-        ))}
-      </div>
+      <GenUiActionCtx.Provider value={emit}>
+        <div className="flex flex-col gap-s p-l">
+          {roots.map((l) => (
+            <div key={l.id}>{renderLine(l, byId, new Set())}</div>
+          ))}
+          {parseErrors.map((pe) => (
+            <DroppedLine key={`pe-${pe.line}`} message={`Line ${pe.line}: ${pe.message} — "${pe.text.slice(0, 60)}"`} />
+          ))}
+          {actionError && <DroppedLine message={actionError} />}
+        </div>
+      </GenUiActionCtx.Provider>
     </Surface>
   )
 })

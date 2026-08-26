@@ -129,7 +129,12 @@ async def index(request: web.Request) -> web.Response:
             status=503,
         )
     html = react_index.read_text(encoding="utf-8")
-    return web.Response(text=html, content_type="text/html")
+    # Safe-surfaces mode (§6) is stamped into the document itself, so the SPA knows its
+    # layer ceiling BEFORE the first app module loads. A fetch would land after that
+    # decision, which would make `--safe-surfaces` advisory rather than a recovery mode.
+    from personalclaw.surface_layers import inject_safe_meta
+
+    return web.Response(text=inject_safe_meta(html), content_type="text/html")
 
 
 async def favicon(request: web.Request) -> web.StreamResponse:

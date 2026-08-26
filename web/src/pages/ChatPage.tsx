@@ -1351,14 +1351,17 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // frame validates + republishes it, and this conversation sends it as the next
   // turn. Claiming the bridge here is what keeps a chat-born action in THIS session
   // rather than falling through to the shell's launcher.
-  useWidgetActionBridge((text) => { void send(text) })
+  // `meta.label` is the genui dual payload's `humanFriendlyMessage` (§5.4): the bubble
+  // shows THAT, the model receives `text`. Absent for a raw-HTML widget, whose turn
+  // text is its own visible text.
+  useWidgetActionBridge((text, meta) => { void send(text, { uiLabel: meta.label }) })
 
   // A widget action raised from a NON-chat host (artifact-library preview, dashboard
   // tile band) staged its `[UI]` text and navigated here through `ne:launch-chat`.
   // Drain it once and send — the action's whole point is that it lands as a turn.
   useEffect(() => {
     const pending = takePendingWidgetAction()
-    if (pending) void send(pending)
+    if (pending) void send(pending.text, { uiLabel: pending.label })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -1553,7 +1556,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     }
   }
 
-  async function send(text = input, opts?: { original?: string; inputOrigin?: string }) {
+  async function send(
+    text = input,
+    opts?: { original?: string; inputOrigin?: string; uiLabel?: string },
+  ) {
     const t = text.trim()
     if (!t) return
     // Sending dismisses any follow-up chips from the prior turn (CHAT-CRAFT S3) and
@@ -1635,8 +1641,16 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // broke Edit & resend (it locates the message by ts → "index or ts required").
     const clientTs = new Date().toISOString()
     // When optimized: bubble shows `original` as primary + `t` (optimized) collapsed.
-    setTurns((prev) => [...prev, userTurn(original ?? t, clientTs, turnPastes.length ? turnPastes : undefined, files, original ? t : undefined)])
-    setPromptHistory((prev) => { const h = original ?? t; return (prev[prev.length - 1] === h ? prev : [...prev, h]).slice(-50) })
+    // When this turn came from a genui widget action (§5.4), `uiLabel` is the dual
+    // payload's `humanFriendlyMessage` and it is ALL the bubble shows — the machine
+    // payload is the turn's content (what the model reads), never its rendered text.
+    // Deliberately NOT passed as `optimized`: that disclosure would put the JSON back
+    // on screen under a chip that says "Optimized", which is both ugly and untrue.
+    const uiLabel = opts?.uiLabel?.trim() || undefined
+    setTurns((prev) => [...prev, userTurn(uiLabel ?? original ?? t, clientTs, turnPastes.length ? turnPastes : undefined, files, original ? t : undefined)])
+    // A widget action is not something the user TYPED, so it never joins ↑-history —
+    // replaying a machine payload as a prompt is not an affordance anyone wants.
+    if (!uiLabel) setPromptHistory((prev) => { const h = original ?? t; return (prev[prev.length - 1] === h ? prev : [...prev, h]).slice(-50) })
     const knowledgeIds = mentionedKnowledge.map((k) => k.id)
     const artifactSlugs = mentionedArtifacts.map((a) => a.slug)
     // breakText=TRUE: a fresh send must open a NEW coalesced text run. A follow-up in
@@ -1660,6 +1674,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       // record the user's original prompt so the optimized-turn bubble can show
       // both after reload (content sent to the model is the optimized text).
       if (original) meta.original = original
+      // §5.4: persist the human-friendly label so a RELOAD still shows the label rather
+      // than the machine payload. Without this the transcript is honest live and shows
+      // raw JSON after F5 — the defect surviving one refresh.
+      if (uiLabel) meta.ui_label = uiLabel
       // On a brand-new chat, seed the instant-paint cache with THIS user message so
       // the post-create remount paints it immediately (no skeleton over the user's
       // own words) — mirrors the persisted history shape hydrateTurns expects.

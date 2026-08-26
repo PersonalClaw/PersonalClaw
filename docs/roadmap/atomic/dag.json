@@ -2227,7 +2227,8 @@
             "AS-4",
             "AS-5",
             "EXT:AUTOMATION-SUBSTRATE:resume-target path for gate resolution + frozen capability set on tile re-fire"
-          ]
+          ],
+          "blocked_reason": "PARTIAL 2026-08-26 (PR pending) \u2014 five of six done_when clauses close; the atom stays todo on clause 6 and one leg of clause 2. (1) The L2 producer DOES NOT EXIST: the ceiling, the refusals and the LayerBoundary are layer-generic and L2 is exercised in tests (a user-layer component is boundaried and refused under safe mode), but nothing WRITES a user/agent overlay - there is no $PERSONALCLAW_HOME/surfaces/ loader. Building one is agent-writable-code surface that wants its own threat argument, so it was named rather than half-built; a declared layer with no producer is the exact shape this repo gets burned by. (2) Clause 6's 'tiles rendered as inert links' under safe mode is NOT built - safe mode stops the app layer and the overlay registrations, and the tile band is L0 so the recovery route is uncompromised, but the inert-link treatment is absent. (3) Clause 2's live-send leg is SOURCE-asserted, not rendered: ChatPage.tsx (4k lines, owns a socket + composer) is not mountable in the vitest suite, so the four live call sites are pinned on source while the RELOAD path goes through the real hydrateTurns with a vacuity leg. Nothing was driven in a browser for this atom. Not blocked on anyone: each remainder is buildable work with a named shape. NOTE the criterion's app-registers-a-component clause IS the 'separate atom with its own threat argument' that APP-PLATFORM-EVOLUTION.md reserves - it landed behind a distinct generative-component capability (a generative-widget grant does not imply it), additive-only names, host-schema validation, a layer boundary and removal-on-disable; APE-11's own unknown-component test still passes untouched."
         },
         {
           "id": "AS-7",

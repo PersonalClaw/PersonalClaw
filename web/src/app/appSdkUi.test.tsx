@@ -336,7 +336,16 @@ describe('APE-11: resolvableAppSpecs is the gate', () => {
     expect(Object.keys(map['@personalclaw/app-sdk/ui'])).toEqual(
       expect.arrayContaining(['Button', 'Surface', 'useTheme', 'readAppTheme']),
     )
-    expect(Object.keys(map['@personalclaw/app-sdk/genui'])).toEqual(['GenerativeWidget'])
+    // AS-6 added the REGISTRATION reading APE-11 deferred ("if the owner wants it, it is a
+    // separate atom with its own threat argument"): an app may now contribute a genui
+    // COMPONENT, gated on the `generative-component` capability, additive-only (never
+    // shadowing a core name), host-validated, and removed on disable. Enumerated exactly, so
+    // a third entry appearing here has to be argued for rather than noticed later.
+    expect(Object.keys(map['@personalclaw/app-sdk/genui'])).toEqual([
+      'GenerativeWidget',
+      'registerComponent',
+      'unregisterComponents',
+    ])
     // The pre-APE-11 alias is gone: /ui is its own module, not the base surface again.
     expect(map['@personalclaw/app-sdk/ui']).not.toBe(map['@personalclaw/app-sdk'])
     expect(map['@personalclaw/app-sdk/ui'].useAppApi).toBeUndefined()

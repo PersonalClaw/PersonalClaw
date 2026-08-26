@@ -84,7 +84,7 @@ export function WorkflowGateActions({ runId, nodeId, onChanged, navigate }: {
   return (
     <div className="flex flex-col gap-m">
       {conts.map((c) => (
-        <WorkflowAsk key={c.resume_token} continuation={c} busy={busy} onAnswer={answer} />
+        <WorkflowAsk key={c.resume_token} continuation={c} runId={runId} busy={busy} onAnswer={answer} />
       ))}
       {err && <FieldError>{err}</FieldError>}
     </div>

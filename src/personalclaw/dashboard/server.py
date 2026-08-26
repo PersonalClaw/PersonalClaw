@@ -868,6 +868,7 @@ async def start_dashboard(
     # read-only (PUT/DELETE on a preset → 403).
     from personalclaw.dashboard.handlers.views import (
         api_dashboard_view_detail,
+        api_dashboard_view_tile_action,
         api_dashboard_view_tile_binding,
         api_dashboard_view_tile_refresh,
         api_dashboard_view_tile_resolve,
@@ -893,6 +894,11 @@ async def start_dashboard(
     )
     app.router.add_get(
         "/api/dashboard/views/{view_id}/tiles/refresh", api_dashboard_view_tile_refresh
+    )
+    # A genui control inside a tile widget re-firing the tile's bound workflow, fenced by
+    # that tile's frozen capability set (AMBIENT-SURFACES §5.4 / AS-6).
+    app.router.add_post(
+        "/api/dashboard/views/{view_id}/tiles/action", api_dashboard_view_tile_action
     )
     app.router.add_post("/api/dashboard/views/{view_id}/tiles", api_dashboard_view_tiles)
     app.router.add_get("/api/dashboard/views/{view_id}", api_dashboard_view_detail)

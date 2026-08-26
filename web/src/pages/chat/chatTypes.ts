@@ -309,7 +309,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { index, files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[] } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[] } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -377,7 +377,12 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // it); meta.original is what the user typed. Show the original as primary,
       // the optimized in the collapsed section — same as the live send.
       const original = m.meta?.original
-      const primary = original ?? m.content
+      // A genui widget action (§5.4) persisted the MACHINE payload as content and its
+      // `humanFriendlyMessage` as meta.ui_label. Show the label — and, unlike an
+      // optimized turn, do NOT hand the payload to the collapsed disclosure: the
+      // transcript must not render raw JSON on either the live or the reload path.
+      const uiLabel = m.meta?.ui_label
+      const primary = uiLabel ?? original ?? m.content
       const display = pastes?.length ? recollapsePastes(primary, pastes) : primary
       const files = Array.isArray(m.meta?.files) ? m.meta!.files : undefined
       const ut = userTurn(display, m.ts, pastes?.length ? pastes : undefined, files, original ? m.content : undefined)

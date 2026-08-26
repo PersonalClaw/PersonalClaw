@@ -685,6 +685,12 @@ export interface AppSummary {
   heroUrl?: string  // resolved data: URI for the optional hero/banner image; absent/"" if none
   hasBackend: boolean; hasUI: boolean
   uiPages: AppUiPage[]
+  // The app's genui components module (manifest `ui.components`, relative to its ui/
+  // dir) + its declared `uiCapabilities`. The shell loads the module for an ENABLED app
+  // that declared `generative-component`, so its components exist for any genui widget —
+  // not only inside that app's own page (AMBIENT-SURFACES §5.1).
+  uiComponents?: string
+  uiCapabilities?: string[]
   isProvider: boolean; providerType: string; hasConfig: boolean
   permissions: AppPermissionsWire
   tags: string[]
@@ -6258,6 +6264,13 @@ export const api = {
     get<{ row: TileRefreshRow }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/refresh?ref=${encodeURIComponent(ref)}`).then((d) => d.row),
   tileLedgerHref: (viewId: string, ref: string) =>
     `/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/refresh?ref=${encodeURIComponent(ref)}`,
+  /** A genui control inside a TILE widget re-firing the tile's bound workflow (§5.4).
+   *  Server-side the request is checked against that tile's FROZEN capability set, so a
+   *  rendered button cannot introduce an action the binding never declared — hence a
+   *  refusal is a normal, expected answer here (`ok:false` + `code`), not an error. */
+  tileWidgetAction: (viewId: string, body: { ref: string; action: string; payload?: Record<string, unknown> }) =>
+    post<{ ok: boolean; code?: string; message?: string; outcome?: string; violations?: string[][]; row?: TileRefreshRow }>(
+      `/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/action`, body),
 
   // App Platform (A7) — install/manage apps that extend PClaw.
   // Normalize the app-category flag at the boundary: `native` is the single source

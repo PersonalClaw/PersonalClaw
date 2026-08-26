@@ -48,7 +48,17 @@ const TILES = 'pages/dashboard/PinnedTiles.tsx'
  *  mounted-host claim below needs — "before `<WidgetFrame>`" would still admit a morph nested in
  *  the same branch. If the tile's body ever stops being one ternary on `WidgetFrame`, this stops
  *  matching and the rail goes red asking to be re-derived, which is the intended failure. */
-const BODY_GATE = /\{\s*[\w$?.]+\s*\?\s*<WidgetFrame/
+const BODY_GATE = /\{\s*body\s*\?/
+
+/** Both body renderers the conditional may choose between. RE-DERIVED for AS-6, which is the
+ *  re-derivation the comment above asks for: a tile whose rendered projection is a genui tree
+ *  now paints in the HOST React tree (registry-validated, action-producing) instead of the
+ *  sandboxed iframe, so the body conditional is nested and no longer opens directly onto
+ *  `<WidgetFrame`. The INVARIANT this rail exists for is untouched — the morph must sit before
+ *  that conditional and inside neither branch — so only the anchor moved: from the element to
+ *  the `{body ?` expression that opens the conditional, with both renderers asserted to live
+ *  inside it (which is what makes it "the body-switching conditional" rather than any ternary). */
+const BODY_RENDERERS = ['<WidgetFrame', '<GenUiWidget'] as const
 
 const sourceOf = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 
@@ -83,8 +93,12 @@ describe('the liquid state transition is adopted in the product', () => {
     // Positive markers: the band and the per-tile component this rail's claims are about.
     expect(src).toContain('data-testid="pinned-tiles"')
     expect(src).toMatch(/function PinnedTile\(/)
-    expect(src, `${TILES} must still switch its body on one WidgetFrame ternary`)
+    expect(src, `${TILES} must still switch its body on one conditional`)
       .toMatch(BODY_GATE)
+    for (const renderer of BODY_RENDERERS) {
+      expect(src.slice(src.search(BODY_GATE)), `${renderer} must render inside the body conditional`)
+        .toContain(renderer)
+    }
   })
 
   it('reaches the primitive through the shared motion barrel', () => {

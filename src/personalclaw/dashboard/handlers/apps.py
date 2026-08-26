@@ -248,6 +248,11 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 "hasBackend": bool(manifest.get("backend", {}).get("entryPoint")),
                 "hasUI": bool(manifest.get("ui", {}).get("pages")),
                 "uiPages": ui_pages,
+                # The genui components module (AMBIENT-SURFACES §5.1), paired with the
+                # capability that grants it. The shell loads it for an ENABLED app so its
+                # components exist for a chat-born widget, not only on the app's own page.
+                "uiComponents": str((manifest.get("ui", {}) or {}).get("components", "")),
+                "uiCapabilities": [str(c) for c in (manifest.get("uiCapabilities") or []) if c],
                 "isProvider": is_provider,
                 "providerType": (
                     (manifest.get("provider") or {}).get("type", "") if is_provider else ""

@@ -80,6 +80,14 @@ async def api_healthz(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "version": personalclaw.__version__})
 
 
+def _safe_surfaces_flag() -> bool:
+    """The `--safe-surfaces` latch, imported lazily so the status handler keeps no
+    import-time dependency on the surface-layer module."""
+    from personalclaw.surface_layers import safe_surfaces
+
+    return safe_surfaces()
+
+
 async def api_status(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     uptime = time.time() - state.start_time
@@ -120,6 +128,10 @@ async def api_status(request: web.Request) -> web.Response:
             "update_progress": state._update_progress,
             "version": personalclaw.__version__,
             "platform": sys.platform,
+            # §6: whether this process was started with --safe-surfaces. Reported so the
+            # CLI/doctor (and a support conversation) can see the layer ceiling without
+            # reading the served HTML.
+            "safe_surfaces": _safe_surfaces_flag(),
             "yolo": state.is_yolo_active(),
             "yolo_expires_in": state.yolo_remaining_secs(),
             "owner_id_hash": owner_hash,

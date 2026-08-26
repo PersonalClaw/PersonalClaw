@@ -343,7 +343,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
           <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">
             {/* Pending asks come FIRST: they are the only thing here a user can act on. */}
             {conts.map((c) => (
-              <WorkflowAsk key={c.resume_token} continuation={c} busy={busy} onAnswer={answer} />
+              <WorkflowAsk key={c.resume_token} continuation={c} runId={runId} busy={busy} onAnswer={answer} />
             ))}
 
             {run.error && (

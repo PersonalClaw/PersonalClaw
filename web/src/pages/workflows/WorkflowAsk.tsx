@@ -4,6 +4,9 @@ import { Button } from '../../ui/Button'
 import { QuietButton } from '../../ui/QuietButton'
 import { Checkbox, Field, NumberField, Select, TextArea, TextInput } from '../../ui/forms'
 import type { WorkflowContinuation } from '../../lib/api'
+import { findGenUiBlock, widgetlessText } from '../../ui/widget/blocks'
+import { GenUiWidget } from '../../ui/genui/GenUiWidget'
+import { GenUiHostCtx } from '../../ui/genui/actions'
 
 /** The ONE renderer for every human-input gate (WF2-R7).
  *
@@ -12,9 +15,17 @@ import type { WorkflowContinuation } from '../../lib/api'
  *  renderer is how "just add a prompt string" becomes twelve half-broken dialogs.
  *
  *  An expired token renders as a dead end WITH a next step: a button that silently does
- *  nothing is indistinguishable from a bug. */
-export function WorkflowAsk({ continuation, busy, onAnswer }: {
+ *  nothing is indistinguishable from a bug.
+ *
+ *  A gate may ALSO author its prompt as a generative-UI tree (AMBIENT-SURFACES §5.4): when
+ *  the prompt carries a `<widget kind="genui">` block, that widget renders here with THIS
+ *  gate declared as its action producer, so submitting its form answers the gate through the
+ *  same resume path the typed controls use — the run advances instead of the answer landing
+ *  in a chat. `runId` is required rather than optional precisely so a caller cannot render
+ *  an interactive gate widget whose submit has nowhere to go. */
+export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
   continuation: WorkflowContinuation
+  runId: string
   busy: boolean
   onAnswer: (c: WorkflowContinuation, value: unknown, alwaysAllow: boolean) => void | Promise<void>
 }) {
@@ -43,11 +54,29 @@ export function WorkflowAsk({ continuation, busy, onAnswer }: {
     )
   }
 
+  // A gate whose prompt carries a genui tree (§5.4). Parsed with the SAME seam chat uses
+  // (`parseWidgetBlocks`), so a widget authored for a transcript and one authored for a gate
+  // are the same artifact — only the producer differs.
+  const gateWidget = findGenUiBlock(ask.prompt || '')
+  const promptText = widgetlessText(ask.prompt || '')
+  const gateHost = {
+    producer: { kind: 'workflow-gate' as const, runId, token: continuation.resume_token },
+  }
+
   const hasContext = !!(handoff.checks_run?.length || handoff.outstanding?.length || handoff.risks?.length)
 
   return (
     <div className="flex flex-col gap-m rounded-xl border border-outline-variant p-l">
-      <p className="text-on-surface text-[0.9375rem]">{ask.prompt || 'This run needs your input.'}</p>
+      {gateWidget ? (
+        <>
+          {promptText && <p className="text-on-surface text-[0.9375rem]">{promptText}</p>}
+          <GenUiHostCtx.Provider value={gateHost}>
+            <GenUiWidget content={gateWidget.html} title={gateWidget.title} />
+          </GenUiHostCtx.Provider>
+        </>
+      ) : (
+        <p className="text-on-surface text-[0.9375rem]">{ask.prompt || 'This run needs your input.'}</p>
+      )}
 
       {/* The handoff bundle: what a returning human needs to re-acquire context without
           reading the whole journal. */}
