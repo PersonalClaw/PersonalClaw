@@ -1621,3 +1621,97 @@ the browser gate stays out of the unit run. `docs/roadmap/atomic/dag.json` delib
   window that didn't close in time, which reads exactly like a real defect. All passed under `-n0`. The
   "all failures are timeouts ⇒ starvation" heuristic is too narrow; the reliable test is re-running the
   suspects serially.
+
+- [2026-08-25][PHF-7] **The owner decision is RULED, and the ruling was cheaper than the question.**
+  The prior entry left the atom `todo` on one call: should `mission-control` — an authenticated,
+  parameterless, routable page — be axe-scanned? **Ruled: scan it.** The criterion says *every*
+  authenticated route, and the honest test is whether the harness CAN reach the page, not whether it
+  has a nav tile. Measured rather than predicted: `mission-control` is **axe-clean in both themes**, so
+  the exemption was never protecting the gate from a known red — it was an unexamined list entry.
+  Clause 3 now holds with **no live exception**.
+
+- [2026-08-25][PHF-7] 🪤 **A SECOND drift, found while closing the first — and the more instructive
+  one.** Three of the seven `EXEMPT_FROM_THE_HARNESS` entries stated why the page has no **NAV TILE**,
+  not why the harness **cannot reach it**: `notifications` ("reached from the header bell, no nav
+  tile"), `discover` ("reached from Apps"), `mission-control` ("reached only from the command
+  palette"). `App.tsx`'s `renderPage` switches on the **first route segment**, so all three render off
+  a bare `#/<id>`. "No nav tile" is not a reason a page cannot be scanned, and reading it as one is
+  exactly what kept three authenticated pages unscanned behind a contract that looked complete. All
+  three are now scanned in both themes — **6 new scans, all green, 7 passed in 81 s** (incl. the auth
+  setup). The four survivors are exempt for a reason the harness cannot satisfy: `loops`/`code`/`app`
+  need a record id or an installed app name, and `loop` additionally carries the logged
+  overflowing-control-row taste call.
+  **Carry forward: when an exemption list is introduced to replace a drifted comment, audit the
+  REASONS, not just the membership.** The count was right; three of the reasons were category errors.
+
+- [2026-08-25][PHF-7] **`NON_NAV_ROUTES` is deliberately a third list, not new `ROUTES` entries.**
+  `routeManifestParity.test.ts` holds `ROUTES` to an exact mirror of `App.tsx`'s NAV ids, and
+  `visual.spec.ts` iterates `ROUTES + VIEW_ROUTES` — so folding these in would both red the parity
+  rail and mint three platform-qualified visual baselines nobody asked for. The separate list buys the
+  a11y scan alone. The parity contract learned it: a `nonNavRoutes()` parser (throws rather than
+  silently narrowing), a stale-entry rail, a NAV/ROUTES disjointness rail (a nav route hiding here
+  could lose its visual baseline with nothing reding), and a vacuity floor. The undeclared-route
+  message now says outright that "it has no nav tile" is not an acceptable reason.
+
+- [2026-08-25][PHF-7] **The other four clauses re-verified on `main` at `20488b9e`, not assumed:**
+  71 passed across `test_scripted_provider.py`, `test_browser_gate_stays_out_of_pytest.py`,
+  `test_e2e_specs_are_executed.py`, `test_model_call_chokepoint_rail.py`, with the real-home rail
+  reporting `/Users/golani/.personalclaw` unchanged. Clause 1 was also observed **incidentally live**
+  in this session's browser run: the gateway log carries
+  `Failed to parse suggestions response: SCRIPTED-E2E-OK: this reply came from the offline scripted
+  provider` — i.e. the boot bound the scripted provider and served a real turn with no credential and
+  no network.
+
+- [2026-08-25][PHF-7] **Both falsifications re-run against the live rails.** (i) The strict/raw-call
+  rail: planting `if _force_model_axis: return _SomeVendorProvider(model="x")` into
+  `resolve_provider_for_use_case` reds `1 failed / 7 passed`, naming the resolver and the chokepoint;
+  restored from a file copy, `git diff` empty. (ii) The bare-pytest rail: appending a
+  `subprocess.run(["npx","playwright","test", …])` test to `tests/test_scripted_provider.py` reds
+  `1 failed / 13 passed` naming `test_scripted_provider.py: run() at line 666`; restored from a file
+  copy. Both mutations were grepped back before the run, so neither red was a no-op.
+
+- [2026-08-25][PHF-7] **What the axe tag set does NOT cover, now stated in the spec itself.** The scan
+  runs `wcag2a, wcag2aa, wcag21a, wcag21aa`, which **omits `target-size`** (WCAG 2.2 AA, tag
+  `wcag22aa`) — a control under 24×24 CSS px passes here. axe also cannot express intent-level
+  questions ("was the user TOLD it failed?"), so a green run means "no machine-detectable AA violation
+  on the scanned states", not "accessible". Written into `a11y.spec.ts` so the next reader does not
+  over-read a pass.
+
+- [2026-08-25][PHF-7] **Standing DEVIATION restated (not newly introduced): `PERSONALCLAW_E2E=1` is
+  not the opt-in mechanism, and should not be added.** The scope wording asks for "skipped unless
+  `PERSONALCLAW_E2E=1`". The shipped separation is **by test runner** — the gate is Playwright `.ts`
+  under `web/e2e/`, unreachable from any `pytest` invocation — which is strictly stronger than an env
+  guard that a stray `export` would defeat, and it is now *asserted* by
+  `test_browser_gate_stays_out_of_pytest.py` (Makefile parse + AST sweep over 100+ collected modules)
+  rather than merely true. Adding the env var would create a second, weaker gate to keep in sync.
+  Likewise "no coverage on the subprocess gateway": the gateway is spawned by Playwright's `webServer`,
+  never under `pytest-cov`, so there is no instrumentation to disable.
+
+- [2026-08-25][PHF-7] **The axe clause's real weak point was not coverage, it was CREDIBILITY: a
+  skip reads exactly like a pass.** `npx playwright test e2e/a11y.spec.ts` exits 0 whether it scanned
+  112 routes or skipped them, so the green check proved the job *ran*, not that anything was
+  *measured* — and this job's entire claim is a COUNT. Added `web/e2e/assert-no-route-skips.mjs` plus a
+  CI step that reads the JSON report back and holds it to the manifest: **zero route-level skips**, and
+  **scans == declared routes × themes**, with the expected number DERIVED from `routes.ts` rather than
+  hard-coded (emptying a route list is the one edit that would shrink coverage to nothing and stay
+  green). It prints the count, so the CI log now *says* `112 authenticated route scans ran
+  (56 routes × 2 themes), 0 skipped — ROUTES=18, SETTINGS_PANELS=34, VIEW_ROUTES=1, NON_NAV_ROUTES=3`.
+  Route scans must never skip; the interaction tier legitimately may (4 do — the peek docks have no
+  rows in a fresh home), so the checker keys on the `(#/…)` title that only route scans carry.
+  Deliberately a `.mjs`, not a `*.spec.ts`, so `test_e2e_specs_are_executed.py`'s glob correctly does
+  not treat a report checker as an unexecuted spec.
+
+- [2026-08-25][PHF-7] **Both arms of that checker falsified, and its own vacuity floor too.** Count
+  arm: adding a 4th `NON_NAV_ROUTES` entry and re-running against the SAME report reds with
+  `route scans ran: 112, manifest declares: 114`; restored from a file copy. Skip arm: flipping one
+  `Mission Control (#/mission-control)` result to `skipped` in a doctored copy of the report reds
+  naming that route. The checker also fails loudly if any manifest list parses as EMPTY — otherwise it
+  would demand 0 scans and pass vacuously, which is the exact shape of the bug it exists to catch.
+  Full a11y gate measured end-to-end on this machine: **119 passed / 4 skipped in 153 s**.
+
+- [2026-08-25][PHF-7] Gate: `make lint` clean (black 2070 files unchanged, isort, flake8, mypy);
+  targeted `pytest --no-cov` 71 passed (4 rails) + the two falsification runs; `npm run typecheck:web`
+  clean; `npm run test:web` **487 files / 5182 tests passed**; `npm run build` EXIT=0 (527 assets);
+  the new axe leg **7 passed in 81 s** (recorded runtime). Probe residue 0, `git status` empty,
+  real-home rail green, harness gateway confirmed gone (port 10437 free, no worktree processes).
+  `docs/roadmap/atomic/dag.json` deliberately **untouched** — the owner flips the atom.

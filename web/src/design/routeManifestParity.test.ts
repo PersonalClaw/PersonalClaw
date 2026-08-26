@@ -33,17 +33,18 @@ import { join } from 'node:path'
 // was written to catch, one axis over. So the list below is now a CONTRACT: a new non-nav
 // routable page reds this test, and whoever adds it either scans it or declares it here.
 // Declaring it is cheap; the point is that it becomes a decision instead of a silence.
+// 🪤 The second drift, found while closing the first (PHF-7): three of these "exemptions"
+// stated why the page has no NAV TILE, not why the harness cannot reach it —
+// `notifications`, `discover` and `mission-control` are all plain parameterless routes that
+// `renderPage` serves off a bare `#/<id>`. "No nav tile" is not a reason a page cannot be
+// scanned, and reading it as one is how three authenticated pages stayed unscanned. They
+// now live in `NON_NAV_ROUTES` in web/e2e/routes.ts and are axe-scanned in both themes.
+// What survives here is the residue that genuinely cannot be reached by a bare route.
 const EXEMPT_FROM_THE_HARNESS: Record<string, string> = {
-  notifications: 'attention surface; reached from the header bell, no nav tile',
-  discover: 'store/discovery surface reached from Apps',
-  loop: 'loop detail — the Loop nav tile was retired; launched from within Projects',
-  loops: 'loop history/planning sub-route (#/loops/<id>)',
-  code: 'code sub-route of a loop (#/code/<id>)',
-  app: 'per-app surface (#/app/<name>), one route per installed app',
-  'mission-control':
-    'locked DASHBOARD VIEW registered server-side (views_store._mission_control_preset), ' +
-    'reached only from the command palette until a rail is built from /api/dashboard/views. ' +
-    'NOT yet axe-scanned — an owner call on harness scope, recorded rather than assumed.',
+  loop: 'loop detail — needs a loop to address; also carries the logged overflowing-control-row taste call',
+  loops: 'loop history/planning sub-route (#/loops/<id>) — needs a loop id to render a record',
+  code: 'code sub-route of a loop (#/code/<id>) — needs a loop id to render a record',
+  app: 'per-app surface (#/app/<name>) — needs an installed app name; one route per app',
 }
 
 const WEB = process.cwd()
@@ -62,6 +63,19 @@ function manifestRoutes(): string[] {
   const block = src.match(/export const ROUTES: RouteEntry\[\] = \[(.*?)\n\]/s)
   if (!block) throw new Error('could not locate the ROUTES literal in e2e/routes.ts')
   return [...block[1].matchAll(/route: '([^']+)'/g)].map((m) => m[1])
+}
+
+/** The `route` fields of `export const NON_NAV_ROUTES: RouteEntry[] = [...]` in e2e/routes.ts. */
+function nonNavRoutes(): string[] {
+  const src = readFileSync(join(WEB, 'e2e/routes.ts'), 'utf8')
+  const block = src.match(/export const NON_NAV_ROUTES: RouteEntry\[\] = \[(.*?)\n\]/s)
+  if (!block) throw new Error('could not locate the NON_NAV_ROUTES literal in e2e/routes.ts')
+  return [...block[1].matchAll(/route: '([^']+)'/g)].map((m) => m[1])
+}
+
+/** Every route the harness actually scans, across all of its lists. */
+function scannedRoutes(): string[] {
+  return [...manifestRoutes(), ...nonNavRoutes()]
 }
 
 /** The string literals in `ROUTABLE` that are NOT spread in from NAV — the non-nav routes. */
@@ -101,21 +115,29 @@ describe('e2e route manifest vs NAV', () => {
       // If this regex stops matching, `extras` is [] and the contract test below passes for a
       // repo whose every non-nav route is unscanned and undeclared.
       expect(routableExtras().length).toBeGreaterThan(3)
-      expect(Object.keys(EXEMPT_FROM_THE_HARNESS).length).toBeGreaterThan(3)
+      // Both escape hatches must PARSE. An empty EXEMPT map is legitimate now (it would mean
+      // every non-nav route is scanned), but a NON_NAV_ROUTES literal that stopped parsing
+      // would throw rather than silently narrow the scanned set — that is what the parser's
+      // own `throw` is for. Assert it is non-empty so the list cannot quietly become dead.
+      expect(nonNavRoutes().length).toBeGreaterThan(0)
+      expect(Object.keys(EXEMPT_FROM_THE_HARNESS).length).toBeGreaterThan(0)
     })
 
-    it('every non-nav routable page is either in the manifest or declared exempt', () => {
+    it('every non-nav routable page is either scanned or declared exempt', () => {
       const nav = navIds()
-      const manifest = manifestRoutes()
+      const scanned = scannedRoutes()
       const undeclared = routableExtras().filter(
-        (r) => !nav.includes(r) && !manifest.includes(r) && !(r in EXEMPT_FROM_THE_HARNESS),
+        (r) => !nav.includes(r) && !scanned.includes(r) && !(r in EXEMPT_FROM_THE_HARNESS),
       )
       expect(
         undeclared,
         'These routes are reachable in the SPA (they are in App.tsx ROUTABLE) but are in no nav\n' +
           'tile, no e2e route manifest, and no exemption — so they get NO axe scan and NO visual\n' +
-          'baseline, and nothing says that was intended. Add them to web/e2e/routes.ts to scan\n' +
-          'them, or to EXEMPT_FROM_THE_HARNESS above with the reason they cannot be.',
+          'baseline, and nothing says that was intended. Add them to NON_NAV_ROUTES in\n' +
+          'web/e2e/routes.ts to scan them, or to EXEMPT_FROM_THE_HARNESS above with the reason\n' +
+          'they cannot be. "It has no nav tile" is NOT such a reason — renderPage serves every\n' +
+          'ROUTABLE id off a bare #/<id>, so state what the harness cannot supply (a record id,\n' +
+          'an installed app) or scan it.',
       ).toEqual([])
     })
 
@@ -129,9 +151,32 @@ describe('e2e route manifest vs NAV', () => {
 
     it('exempts no route that IS already scanned', () => {
       // Both claims cannot be true; one of them is a lie the next reader would trust.
-      const manifest = manifestRoutes()
-      const both = Object.keys(EXEMPT_FROM_THE_HARNESS).filter((r) => manifest.includes(r))
+      const scanned = scannedRoutes()
+      const both = Object.keys(EXEMPT_FROM_THE_HARNESS).filter((r) => scanned.includes(r))
       expect(both, 'these routes are declared exempt AND scanned — drop the exemption').toEqual([])
+    })
+
+    it('scans no non-nav route the shell does not route to', () => {
+      // The mirror of the stale-exemption check. A NON_NAV_ROUTES entry App.tsx no longer
+      // serves would scan the ONBOARDING shell and report it clean — a green test for a page
+      // that is gone, which is worse than no test.
+      const routable = new Set(routableExtras())
+      const stale = nonNavRoutes().filter((r) => !routable.has(r))
+      expect(stale, 'NON_NAV_ROUTES names routes App.tsx no longer routes to').toEqual([])
+    })
+
+    it('keeps NON_NAV_ROUTES disjoint from NAV and from ROUTES', () => {
+      // A nav route listed here would be scanned twice and, worse, would satisfy the
+      // "covers every nav route" check from the wrong list — the nav page could then be
+      // dropped from ROUTES and lose its VISUAL baseline without anything reding.
+      const nav = navIds()
+      const manifest = manifestRoutes()
+      const overlap = nonNavRoutes().filter((r) => nav.includes(r) || manifest.includes(r))
+      expect(
+        overlap,
+        'these routes are in NON_NAV_ROUTES and also in NAV/ROUTES — a nav route belongs in\n' +
+          'ROUTES, which is what also gives it a visual baseline',
+      ).toEqual([])
     })
 
     it('every exemption carries a real reason', () => {
