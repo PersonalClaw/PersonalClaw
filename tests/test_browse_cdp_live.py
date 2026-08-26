@@ -32,7 +32,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 import shutil
 import socket
 import subprocess
@@ -44,32 +43,18 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 
+import browse_chrome
 import pytest
 
 from personalclaw.browse import cdp
 from personalclaw.config.loader import AppConfig
 from personalclaw.net import policy as net_policy
 
-_CHROME_CANDIDATES = (
-    os.path.expanduser(
-        "~/Library/Caches/ms-playwright/chromium_headless_shell-1234"
-        "/chrome-headless-shell-mac-arm64/chrome-headless-shell"
-    ),
-    os.path.expanduser(
-        "~/Library/Caches/ms-playwright/chromium-1234"
-        "/chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium"
-    ),
-)
-
 ALLOWED_HOST = "allowed.local"
 DENIED_HOST = "denied.local"
 
-
-def _chrome_path() -> str | None:
-    for candidate in _CHROME_CANDIDATES:
-        if os.path.exists(candidate):
-            return candidate
-    return None
+#: Named once so the skip/fail message says which proof stopped running.
+PROOF = "LIVE PROOF"
 
 
 def _free_port() -> int:
@@ -361,17 +346,8 @@ def live() -> dict:
     restored on the way out — it is module state that would otherwise carry this test's
     denials into whatever else this xdist worker runs.
     """
-    chrome = _chrome_path()
-    if chrome is None:
-        pytest.skip(
-            "LIVE PROOF NOT RUN: no chrome-headless-shell found. Install the pinned browser "
-            "with `npx playwright install chromium`. This is an environment gate, not a pass: "
-            "the redirect clause is only proven against a real browser here."
-        )
-    try:
-        import websockets  # noqa: F401
-    except ImportError:  # pragma: no cover - environment guard
-        pytest.skip("LIVE PROOF NOT RUN: `websockets` is not importable in this environment.")
+    chrome = browse_chrome.chrome_or_skip(PROOF)
+    browse_chrome.websockets_or_skip(PROOF)
 
     sel_rows: list = []
 
