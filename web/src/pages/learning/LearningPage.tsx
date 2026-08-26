@@ -7,8 +7,9 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
-import { api, type AblationView, type IdentityReport, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
+import { api, type AblationView, type BenchmarkView, type IdentityReport, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
 import { AblationPanel } from './AblationPanel'
+import { BenchmarkPanel } from './BenchmarkPanel'
 import { HealthPanel } from './HealthPanel'
 import { IdentityReportPanel } from './IdentityReportPanel'
 import { JudgeBenchPanel } from './JudgeBenchPanel'
@@ -30,6 +31,11 @@ import { PageTitle } from '../../ui/PageTitle'
  *  that that the Refresh control re-reads it by calling this panel's own `refresh` beside
  *  `refreshEverything`: with one reader, a refetch IS the invalidation. */
 const ABLATION_KEY = 'learning:ablation'
+
+/** The skill-impact benchmark report's cache key (LV-7). Module-level for the same two reasons
+ *  `ABLATION_KEY` is: `dataLayerAdoption`'s census resolves it, and it has exactly one reader, so
+ *  a refetch IS the invalidation and there is nothing for `proposalCache.ts` to coordinate. */
+const BENCHMARK_KEY = 'learning:benchmark'
 
 /** The Learning page — the Proposal Inbox plus the capture week panel.
  *
@@ -101,6 +107,15 @@ export function LearningPage() {
     ABLATION_KEY,
     () => api.ablation(),
   )
+  // The skills-on/off benchmark (LV-7). `error` is read for the ablation route's three reasons and
+  // one that is sharper here: this panel's ORDINARY state is "no benchmark has run yet", and the
+  // run is 100 real model calls, so most users will be in that state permanently. Swallowing the
+  // error would make an unreachable gateway look identical to a benchmark nobody chose to run —
+  // and this is the one panel whose whole subject is not overclaiming a measurement.
+  const { data: benchmark, error: benchmarkError, refresh: refreshBenchmark } = useQuery<BenchmarkView>(
+    BENCHMARK_KEY,
+    () => api.learningBenchmark(),
+  )
 
   // Kind chips carry their counts, so a filter never has to be clicked to discover it is empty.
   const kindChips = useMemo(() => {
@@ -149,6 +164,9 @@ export function LearningPage() {
               // `refreshEverything` because its key has a single reader, so the refetch is the
               // whole invalidation, not because the parameter list is full.
               refreshAblation()
+              // Same reasoning, same shape: the benchmark report moves only when someone runs
+              // `scripts/learning_benchmark.py --run`, so its staleness is invisible to the page.
+              refreshBenchmark()
             }}
           >
             <RefreshCw size={14} /> Refresh
@@ -191,6 +209,8 @@ export function LearningPage() {
           <RetrievalBenchPanel bench={retrievalBench} error={retrievalError} onRetry={refreshRetrieval} />
 
           <AblationPanel view={ablation} error={ablationError} onRetry={refreshAblation} />
+
+          <BenchmarkPanel view={benchmark} error={benchmarkError} onRetry={refreshBenchmark} />
 
 
           <div className="flex flex-col gap-m">
