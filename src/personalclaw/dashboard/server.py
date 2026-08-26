@@ -442,6 +442,25 @@ async def start_dashboard(
     except Exception:  # noqa: BLE001 — an inbound fault must never block startup
         logging.getLogger(__name__).warning("inbound: /capture mount failed", exc_info=True)
 
+    # OpenAI-compatible inbound dialect (EXTERNAL-ACCESS §2) — `/v1/*`, where `model`
+    # names one of the user's AGENTS. Registered HERE for the same three reasons as the
+    # two surfaces above: its own bearer, its own peer rail, and outside the dashboard's
+    # cookie-auth world. Like /capture (and unlike /mcp) it mounts unconditionally and
+    # refuses per request, so the Settings toggle needs no restart; a disabled surface
+    # answers 404 either way. Early, so no `{...}` pattern below can capture `v1`.
+    # The turn runner is handed IN rather than imported by the dialect: `inbound/` is
+    # domain code, and an `inbound/` -> `dashboard/` import is the
+    # `core-must-not-import-the-http-surface` inversion (see that dialect's
+    # `register_routes`). This module is the composition root and legitimately faces
+    # downward, so the dependency belongs here.
+    try:
+        from personalclaw.dashboard.chat_handlers import _run_chat_scoped
+        from personalclaw.inbound.openai_dialect import register_routes as _register_openai
+
+        _register_openai(app, turn_runner=_run_chat_scoped)
+    except Exception:  # noqa: BLE001 — an inbound fault must never block startup
+        logging.getLogger(__name__).warning("inbound: /v1 mount failed", exc_info=True)
+
     # Status / system
     app.router.add_get("/api/healthz", handlers.api_healthz)
     app.router.add_get("/api/status", handlers.api_status)

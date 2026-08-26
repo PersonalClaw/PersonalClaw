@@ -176,6 +176,39 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "action_not_bound": "The calling client's bindings do not include this action.",
     "action_failed": "The control-bridge action raised while running.",
     "confirm_token_invalid": "The confirmation token is unknown, already used, or expired.",
+    # ── OpenAI-compatible inbound dialect (inbound/openai_dialect.py — EXTERNAL-ACCESS §2) ──
+    #
+    # ADMISSION reuses the generic rows for the same reason the MCP surface below does: a
+    # code naming this surface, or naming which kill switch fired, hands a prober exactly
+    # what the 404 status is chosen to withhold. So 404/403/401/503 admission answers carry
+    # `not_found`/`forbidden`/`unauthorized`/`service_unavailable`, and `rate_limited` and
+    # `request_too_large` are reused for the caps.
+    #
+    # The rows below are the ones a caller PAST admission needs to tell its own mistakes
+    # apart. They ride inside the `/v1` wire envelope — that surface's shape wins per the
+    # 2026-07-26 amendment — with `type`/`param` added via `json_error`'s `error_extra`, so
+    # the stable code survives in `code` exactly where a script branches on it.
+    #
+    # `unknown_agent` is the load-bearing one: `model` names an AGENT on this surface, and
+    # `resolve_agent_bindings` would answer an unknown name with the DEFAULT agent. This
+    # code is how a client learns it asked for something that does not exist instead of
+    # being quietly served by something else.
+    "unknown_agent": "The requested model does not name an agent on this instance.",
+    "agent_binding_violation": "This client is pinned to a different agent than it requested.",
+    "empty_messages": "The request carried no message with content.",
+    "turn_timeout": "The agent did not finish the turn within this surface's deadline.",
+    # Audio aliases (§2.2). "No voice is bound" and "synthesis broke" are separate codes
+    # because the first is fixed in Settings and the second is a fault to report; a client
+    # that cannot tell them apart will retry a configuration problem forever.
+    "no_bound_voice": "No text-to-speech voice is selected on this instance.",
+    "synthesis_failed": "Speech synthesis was attempted and raised.",
+    "synthesis_empty": "Speech synthesis completed but produced no audio.",
+    "missing_input": "The synthesis request carried no input text.",
+    "stt_unavailable": "No speech-to-text model is installed on this instance.",
+    "transcription_failed": "Transcription was attempted and raised.",
+    "missing_file": "The upload carried no file field.",
+    "invalid_content_type": "The request's Content-Type is not supported on this route.",
+    "invalid_upload": "The multipart upload could not be parsed.",
     # ── inbound MCP surface (inbound/mcp_http.py — MCP-READONLY-INBOUND §C2) ──
     #
     # Same reasoning as the bridge above, and the same conclusion: ADMISSION reuses the

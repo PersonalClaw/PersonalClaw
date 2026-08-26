@@ -108,7 +108,22 @@ _CODE_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
 #: code can enter without this rail noticing, so the number of such sites may not
 #: grow. Measured at PL-8: 13 in voice_profiles (``exc.reason``), 2 in packs
 #: (``f"pack_refused_{...}"``), 1 in devices (a local chosen from its constants).
-_DYNAMIC_CODE_SITE_CEILING = 16
+#:
+#: 17th (EA-2): ``inbound/openai_dialect.openai_error`` forwards a keyword-only ``code``
+#: parameter into :func:`json_error`. It is NOT the hazard this ceiling describes — no
+#: code is COMPUTED anywhere on that path; every one of its call sites passes a bare
+#: literal, so nothing can be minted that a static reader cannot see. The scanner's
+#: existing wrapper-following resolves ``json_response`` PAYLOAD wrappers and module-level
+#: string constants, neither of which covers a forwarded code parameter, so the site reads
+#: as dynamic despite being fully enumerable.
+#:
+#: The hole that indirection would otherwise open is closed one level up instead, by
+#: ``tests/test_ea2_openai_dialect.py::test_every_dialect_error_code_is_a_registered_literal``
+#: — it parses that module, asserts every ``openai_error`` call passes a literal, and
+#: asserts each of those literals is in ``HTTP_ERROR_CODES``. That is the same guarantee
+#: this ceiling protects, proven at the indirection level that actually exists. Raising
+#: this number for a computed code would still be wrong.
+_DYNAMIC_CODE_SITE_CEILING = 17
 
 
 def test_every_released_code_is_still_present():
