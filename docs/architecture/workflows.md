@@ -71,6 +71,7 @@ while not terminal:
 | `loop_middleware.py` | the breaker's next tier: call fingerprinting, failure-class routing, the Continue→Nudge→Escalate→Halt ladder, the interrupt queue |
 | `supervisor_policy.py` | the ONE `SupervisorPolicy` a loop node declares (rubric, escalation ladder, failure mutations, dwell/metric gates, marginal-value band, judge model tier, reproduce-before-ship, write scope, budget, HITL posture), its tolerant parser and its authoring-time `WF_SUPERVISOR_*` validation. Reuses the scattered types rather than re-minting them; deliberately inert with a two-directional honesty rail (PP-15 is the wiring owner) |
 | `judge_calibration.py` | the nodding-loop detector, divergence records, stuck detection, and the verdict ledger they read |
+| `review_service.py` | the run-scoped binding for `personalclaw.review_triage` (EI-9): the live `git diff` a run's findings are anchored against, the `review_finding` ledger read, the re-anchor-on-submit TOCTOU check, dispatch of the ACCEPTED subset through `service.steer_run`, and rejections written as `judge_divergence` calibration rows |
 | `loop_aliases.py` | read-time aliases for legacy loop-kind references, and cockpit stream-key equivalence |
 | `longrun.py` | long-run watcher mechanics: item identity, the persistent seen-set, bounded sibling views, buffer-seal, the adaptive-delay clamp, lineage caps |
 | `intent.py` | the no-LLM intent classifier: the (complexity, uncertainty, stakes, time_pressure) tuple, irreversibility, and rigor routing |

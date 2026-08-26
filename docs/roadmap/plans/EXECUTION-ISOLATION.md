@@ -1026,3 +1026,53 @@ D0 is documentation and should land immediately — an inaccurate security claim
   against every committed baseline and **exactly two differed** (`security-page-{desktop,mobile}-linux.png`),
   so no unrelated drift was swept in. Website gate: **94 Playwright tests, Lighthouse `/security` 100/100/100/100,
   exit 0.**
+
+- **2026-08-26 — `EI-9` (§7 reviewer-comment triage): built, with the two EXT deps resolved against what
+  actually exists rather than waited on.** The atom's deps name `EXT:WORK-CONTAINERS:cockpit diff panel to
+  extend` and `EXT:LEARNING-FLYWHEEL:calibration record for rejections`. Measured before building:
+  1. **The Canonical Finding record exists only as a PROMPT contract.** `workflows/bundled/shared/
+     finding-record.md` is the severity ladder + location rules, referenced by `{{block:finding-record}}`
+     from `audit-sweep`, `produce-and-audit`, `publish-article` and `macros.py:201`. There was **no Python
+     type, no parser, and no consumer** — `git grep auto_fixable` over `src/`, `web/src`, `tests/` returned
+     **zero** hits. So the record was parsed here for the first time; no second schema was invented.
+  2. **There is no run-scoped diff panel to extend.** `web/src/pages/code/DiffView.tsx` is a per-file
+     working-vs-HEAD Monaco diff in the code cockpit, and `CodeCockpitPage.tsx` contains **zero**
+     occurrences of `runId` — it is workspace-scoped, not run-scoped. So the triage surface was built as a
+     `WorkflowRunDetail` drawer beside `WorkspacePanel`/`OutboxPanel`/`IntrospectPanel`/`SteeringPanel`,
+     which is where a run id actually is. **DEVIATION** from "extends the WORK-CONTAINERS cockpit diff
+     panel"; the alternative was plumbing a run id through a 3408-line page that has never had one.
+  3. **The calibration record DID exist and was reused unchanged.** `judge_calibration.DivergenceRecord` +
+     the `judge_divergence` ledger kind, with `RunController._emit_judge_divergence`'s rule ("only write on
+     disagreement") preserved: a rejected finding is `judge_verdict=REJECT / human_verdict=PASS`, which
+     `DivergenceRecord.direction` computes as `false_reject`; an ACCEPTED finding is agreement and writes
+     nothing. `divergences_from_journal` parses the rows this writes — asserted, not assumed.
+  4. **The dispatch seam is the run's own steering queue.** `service.steer_run` → `run.extra
+     ["steering_queue"]` → `RunController._consume_steering` at the iteration boundary. That IS §7's
+     "follow-up instructions to the originating session" for a workflow run, so no new channel was added.
+     §7's "no resume capability → fresh session with the handoff brief" is **DEVIATED**: a terminal run
+     parks the brief on `run.extra["review_handoff_brief"]` and the receipt says `handoff_parked`, rather
+     than auto-starting a run. Starting an unasked run off a review acceptance is unattended execution,
+     which is Autonomy-Guardrails' call, not this atom's.
+  **The load-bearing clause is the negative one** ("nothing was auto-written without acceptance"), so it is
+  pinned by absence-of-call on a spy delivery seam, with the vacuity leg in the same class: the accepted
+  pair reaches the SAME spy through the SAME function. Falsified in both directions — `if False and not
+  result.accepted` → **3 failed / 8 passed**, restored → **11 passed**. The anchor content check
+  (`content_moved`) falsified the same way → **3 failed / 8 passed** including the service-level leg
+  reporting *"a stale accept reached the worker"*, restored → **11 passed**. Both call sites were
+  falsified too, because a primitive nothing calls is the defect this repo keeps finding: disabling the
+  controller emit → **1 failed / 1 passed**, restored → **2 passed**; removing the panel from
+  `WorkflowRunDetail` → **1 failed / 10 passed**, restored → **11 passed**.
+  **`auto_fixable` batching cannot become a second door.** `auto_apply_candidates` reads
+  `TriageResult.accepted`, never the findings, and excludes off-ladder severities (an unknown severity
+  ranks LAST by `severity_rank`, which is right for a gate predicate and would clear every ceiling here).
+  **A new ledger kind was added** (`review_finding`, in `LEDGER_KINDS` because the panel reads it back after
+  the node settled), which required the documented golden regeneration (`python tests/test_ledger_golden.py`):
+  `emitters_{events,journal}.jsonl` only, +1 row and the seq shift for kinds sorting after it. The run
+  goldens were untouched.
+  **Not done, so it is not re-derived:** anchors are validated against the run's `git diff HEAD` plus
+  synthesized `--no-index` patches for untracked files (capped at 40) — a diff read from a **live**
+  workspace only; a run whose worktree was torn down anchors nothing and says `empty_diff`. The `Reusers`
+  line in §7 (loop judge feedback, inbox drafts) is unbuilt: `review_triage` is deliberately run-free so
+  those can bind to it, but neither binding exists yet. Gate: `make lint` clean (1029 files),
+  `gate_report.py` **6/6 PASS**, `tests/test_review_triage.py` **47 passed**, web **493 files / 5238 tests,
+  exit 0**. `dag.json` and `EI.md` untouched (driver-owned); no push, no PR.

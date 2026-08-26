@@ -163,6 +163,15 @@ PROPOSAL_REFUSED = "proposal_refused"
 AUTO_EXECUTED = "auto_executed"
 SKIPPED_BUDGET = "skipped_budget"
 
+#: EXECUTION-ISOLATION §7 (EI-9): one line-anchored Finding a review stage emitted, in the
+#: WORKFLOWS-V2 Canonical Finding shape plus `auto_fixable`. A LEDGER kind rather than a side file
+#: because the triage panel reads findings back AFTER the node settled — sometimes after the run
+#: finished — and the ledger is the one channel that survives that. It is also the only way the
+#: flywheel can pair a reviewer's output with the `judge_divergence` rows its rejections produce:
+#: a reviewer whose findings are always rejected is a fake gate, and that claim is only provable
+#: when both halves live in the same vocabulary.
+REVIEW_FINDING = "review_finding"
+
 #: The subset a downstream refiner reads. Named so a drift test can assert the engine
 #: still emits all of them.
 LEDGER_KINDS = frozenset(
@@ -204,6 +213,7 @@ LEDGER_KINDS = frozenset(
         ITEMS_COLLECTED,
         JUDGE_VERDICT,
         JUDGE_DIVERGENCE,
+        REVIEW_FINDING,
         WATCHER_REAPED,
         SEEN_SET,
         BUFFER_SEAL,

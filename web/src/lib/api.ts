@@ -1278,6 +1278,37 @@ export interface WorkflowContinuation {
 export interface WorkflowCascadePreview {
   rerun: string[]; stale: string[]; skipped: string[]; committed_effects: string[]; needs_confirmation: boolean
 }
+// One review finding as the triage panel receives it (EXECUTION-ISOLATION §7, EI-9): the
+// WORKFLOWS-V2 Canonical Finding record, plus `auto_fixable`, plus the ANCHOR VERDICT computed
+// against the run's diff on this request. `anchor_state: 'unanchored'` with an `anchor_reason` is a
+// finding that must be shown as unverifiable rather than as truth — `resolved_path`/`resolved_line`
+// are the diff's own spelling of where it landed, and are what the accepted brief cites.
+export interface ReviewFinding {
+  key: string; severity: string; location: string; problem: string; why: string
+  recommended_fix: string; status: string; auto_fixable: boolean; line_text: string
+  origin_run_id: string; origin_node_id: string; origin_session_key: string
+  anchor_state: 'anchored' | 'unanchored'; anchor_reason: string
+  resolved_path: string; resolved_line: number; diff_line_text: string
+}
+export interface WorkflowReviewPayload {
+  run_id: string; workspace: string; diff: string; diff_truncated: boolean
+  findings: ReviewFinding[]
+  counts: { total: number; anchored: number; unanchored: number }
+  terminal: boolean
+}
+// `delivered: false` with `reason: 'nothing_accepted'` is the CORRECT outcome of a full rejection —
+// not an error. `handoff_parked` means the run was already terminal, so the brief was saved for a
+// follow-up run rather than a fresh one being started unasked.
+export interface WorkflowTriageResult {
+  run_id: string; dry_run: boolean; brief?: string
+  accepted: ReviewFinding[]
+  rejected: Array<ReviewFinding & { rejection_reason: string }>
+  refused: Array<ReviewFinding & { refused_reason: string }>
+  untriaged: ReviewFinding[]
+  receipt: { delivered: boolean; reason: string; target: string; brief: string; count: number }
+  calibrated?: number
+  auto_apply_candidates?: string[]
+}
 // The §5 reconstructability set for one terminal node (WF2-A2) — what the WV-10 inspector
 // drawer renders. `resolved_prompt` is the fully-resolved post-binding prompt inline, or a
 // `{ ref }` when it was too large to inline; `output` is the node's value, or an
@@ -5845,6 +5876,16 @@ export const api = {
   workflowSteering: (id: string) =>
     get<{ run_id: string; pending: Array<{ text: string; queued_at: string }>; count: number }>(
       `/api/workflows/runs/${encodeURIComponent(id)}/steering`),
+  // Review findings, anchored against the run's diff AT READ TIME (EI-9). The anchor verdict is
+  // never cached client-side for the same reason the server never stores it: the worker keeps
+  // working, and a stale `anchored` is how an accepted fix lands on the wrong line.
+  workflowReview: (id: string) =>
+    get<WorkflowReviewPayload>(`/api/workflows/runs/${encodeURIComponent(id)}/review`),
+  workflowReviewTriage: (
+    id: string,
+    body: { decisions: Array<{ key: string; outcome: 'accept' | 'reject'; reason?: string }>; dry_run?: boolean },
+  ) =>
+    post<WorkflowTriageResult>(`/api/workflows/runs/${encodeURIComponent(id)}/review/triage`, body),
   resumeWorkflowRun: (id: string, body: { answer?: unknown; resume_token?: string; always_allow?: boolean }) =>
     post<{ ok?: boolean; approved?: boolean; node_id?: string; resumed?: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/resume`, body),
   rewindWorkflowRun: (id: string, body: { node_id: string; redo_effects?: boolean; force?: boolean }) =>

@@ -41,7 +41,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from personalclaw import project_context
+from personalclaw import project_context, review_triage
 from personalclaw.knowledge import session_brief
 from personalclaw.ledger import outcomes
 from personalclaw.loop import tick as convergence
@@ -3103,6 +3103,35 @@ class RunController:
                 status=out.get("judge_status", "kept"),
                 evidence=out.get("judge_evidence", {}),
             )
+
+        # Review findings → Run Ledger (EXECUTION-ISOLATION §7, EI-9). ANY stage whose output
+        # carries `findings` is a review-producing stage — the `{{block:finding-record}}` prompt
+        # contract is what makes it one, not the node kind, so `audit-sweep`'s parallel infer nodes
+        # and a judge gate both land here without either declaring anything new.
+        #
+        # Emitted RAW (the reviewer's own claimed `location`), one row per finding. Anchor
+        # validation deliberately does NOT happen here: §7 requires findings validated against the
+        # ACTUAL diff "before render", and the diff at settle time is not the diff the human will
+        # be looking at — the worker keeps working. Validating once at emit and storing the verdict
+        # would bake in an answer that goes stale, which is the exact wrong-line failure the
+        # validation exists to prevent. The panel re-anchors on every read.
+        # A `findings` key in a DICT output, or a JSON string that mentions one — an `infer` node
+        # returns its JSON as text, and gating on dicts alone would make the emit fire for
+        # `transform` nodes and stay silent for the LLM reviewers §7 is actually about. The cheap
+        # substring test comes first so a megabyte of prose is not JSON-parsed on every settle.
+        raw_out = result.output
+        if isinstance(raw_out, dict) or (isinstance(raw_out, str) and '"findings"' in raw_out):
+            for finding in review_triage.parse_findings(
+                raw_out, run_id=self.run.id, node_id=item.node.id or item.path
+            ):
+                self.journal.write(
+                    journal_mod.REVIEW_FINDING,
+                    instance_path=item.path,
+                    node_id=item.node.id,
+                    epoch=inst.epoch,
+                    template=str(self.run.workflow_name or ""),
+                    **finding.to_dict(),
+                )
 
         if result.state in SUCCESS_STATES:
             ref, preview = self.journal.store_output(item.path, result.output)
