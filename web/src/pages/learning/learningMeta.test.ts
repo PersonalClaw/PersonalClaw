@@ -15,7 +15,7 @@ import type { LearningRow, StagingDay } from '../../lib/api'
 const row = (over: Partial<LearningRow> = {}): LearningRow => ({
   id: 'p1', kind: 'template_diff', title: 'add a retry', provenance: 'refiner',
   source_cadence: 'run_end', source_excerpt: 'step_failed x4',
-  evidence_refs: ['r1'], reinforcements: 4, confidence: 0.8,
+  evidence_refs: ['r1'], evidence_strength: 'correlated', reinforcements: 4, confidence: 0.8,
   manifest_valid: true, manifest_issues: [], risk_tier: 'review',
   status: 'pending', renderable: true, bulk_acceptable: true,
   ...over,

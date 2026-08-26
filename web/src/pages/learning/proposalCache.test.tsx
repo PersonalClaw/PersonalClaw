@@ -25,6 +25,7 @@ import type { LearningInbox, LearningRow, StagingWeek } from '../../lib/api'
 const row = (over: Partial<LearningRow> = {}): LearningRow => ({
   id: 'skill-f6fab94955e7', kind: 'skill', title: 'summarize before filing', provenance: 'refiner',
   source_cadence: 'run_end', source_excerpt: '', evidence_refs: ['r1'],
+  evidence_strength: 'correlated',
   reinforcements: 2, confidence: 0.7, manifest_valid: true, manifest_issues: [],
   risk_tier: 'low', status: 'pending', renderable: true, bulk_acceptable: true,
   ...over,

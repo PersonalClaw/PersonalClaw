@@ -218,6 +218,28 @@ def test_the_projection_survives_an_older_record():
     empty the inbox exactly when someone needs to review a backlog."""
     row = row_from_proposal(_Prop(id="old", kind="skill", title="t", provenance="p"))
     assert row.reinforcements == 0 and row.evidence_refs == [] and row.manifest_valid is True
+    # UNGRADED, not "correlated": defaulting to a tier would upgrade a record from before the
+    # tier existed into a claim nobody made.
+    assert row.evidence_strength == ""
+
+
+def test_a_row_carries_the_evidence_TIER_not_only_the_count():
+    """The count cannot distinguish a MEASUREMENT from a co-occurrence.
+
+    EVALUATION-SUBSTRATE §3.1 files a retirement whose evidence is a paired on/off ablation and
+    stamps `evidence_strength="ablation"` to say so. Before this projection carried the field, the
+    tier was write-only across the whole queue — NINE `enqueue` call sites in eight modules stamped
+    one and nothing anywhere read it — so the reviewer deciding a retirement saw `2 evidence
+    ref(s)` whether the claim was measured or merely correlated.
+    """
+    measured = row_from_proposal(_prop("a", kind="retirement", evidence_strength="ablation"))
+    correlated = row_from_proposal(_prop("b", evidence_strength="correlated"))
+
+    assert measured.to_dict()["evidence_strength"] == "ablation"
+    # VACUITY FLOOR: a hardcoded constant would satisfy the line above. These two rows carry the
+    # same evidence COUNT, so only the tier can tell them apart.
+    assert measured.evidence_refs == correlated.evidence_refs
+    assert measured.to_dict()["evidence_strength"] != correlated.to_dict()["evidence_strength"]
 
 
 # ── risk tiers are metadata, never a lane ──

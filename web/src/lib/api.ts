@@ -1812,7 +1812,10 @@ export interface TriggerRunResult { ok: boolean; name?: string; result?: unknown
 export interface LearningRow {
   id: string; kind: string; title: string; provenance: string
   source_cadence: string; source_excerpt: string
-  evidence_refs: string[]; reinforcements: number; confidence: number
+  // `evidence_strength` is WHICH KIND of evidence the refs are — anecdotal / correlated / causal /
+  // ablation. The count alone cannot tell a measured on/off ablation (EVALUATION-SUBSTRATE §3.1
+  // files retirements with `ablation`) from a co-occurrence, and "" is UNGRADED, never a grade.
+  evidence_refs: string[]; evidence_strength: string; reinforcements: number; confidence: number
   manifest_valid: boolean; manifest_issues: string[]
   risk_tier: string; status: string
   renderable: boolean; bulk_acceptable: boolean

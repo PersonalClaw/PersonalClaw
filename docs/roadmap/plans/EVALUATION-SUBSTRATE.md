@@ -1375,3 +1375,73 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   `npm run typecheck:web` clean; `npm run test:web` **492 files / 5229 tests passed** with
   `docs/design/consistency-audit.json` unchanged; `npm run build` clean; probe residue **16 tree-wide
   with 0 introduced**; `git status --porcelain` empty.
+## Execution log — ES-7 §3.1 (the LEARN-R9 hand-off: the evidence GRADE is now read) — atom stays `todo`
+
+- [2026-08-26][ES-7 §3.1] **Verify-first drive. Eight of nine `done_when` clauses were already on
+  `main` and railed** — the periodic runner (`ablation.run_cadence`, live at
+  `durability/service.py:857` inside the periodic loop), one component per cadence
+  (`pick_component` round-robin + `state["cursor"]`), keep/remove/lighten
+  (`test_all_three_verdicts_are_reachable`), child-process overlay toggling
+  (`runner.py:175` spawns `python -m personalclaw.evals.child` with the overlay on the env COPY
+  only), the byte-identity live-state guard **with its vacuity leg**
+  (`test_live_state_guard_reds_when_a_mutation_leaks`), §3.3's surfaced-vs-suppressed replay, the
+  watchdog's exactly-one digest (`test_a_rebind_of_three_bindings_emits_exactly_one_digest`) and its
+  per-fingerprint `results.tsv` baselines. **Nothing was rebuilt.** The unmeasured-arm honesty
+  property was also already held at every surface checked — `arm_mean` returns `None`,
+  `_proposal_body` prints `n/a`, `AblationPanel.fmtMean` prints `not measured`, and both
+  `test_an_unscored_baseline_is_none_not_zero` and `test_an_unmeasured_arm_is_reported_not_averaged`
+  pin it.
+
+- [2026-08-26][ES-7 §3.1] 🔴 **The one clause that was HALF met: "attaches as the ablation-grade
+  evidence" attached, and nothing read the grade.** `file_retirement_proposal` stamps
+  `evidence_strength="ablation"` — the tier that means a paired on/off measurement rather than a
+  co-occurrence — and `git grep evidence_strength -- src/ web/src` returned **nine `enqueue` call
+  sites across eight modules and ZERO readers**: not a queue gate, not `inbox.row_from_proposal`,
+  not the `GET /api/learning/proposals` payload, not `LearningRow` in `api.ts`, not the page. The
+  refs ARE read (`LearningPage` renders their count, `bulk_acceptable` requires one), so the two
+  modules were not merely coexisting — but the row a human decides a RETIREMENT on read
+  `2 evidence ref(s)` whether the null result was measured or merely co-occurred, which is the one
+  distinction that decides that particular question. Deleting the stamp would have reddened one
+  assertion on the returned object and nothing else.
+
+- [2026-08-26][ES-7 §3.1] **Closed as a READER, not as a gate.** `inbox.Row` carries
+  `evidence_strength`, `to_dict()` publishes it, and `LearningPage`'s evidence clause now reads
+  `evidenceLabel(row)` — `2 evidence ref(s) · measured on/off` for an ablation, `· correlated` for a
+  co-occurrence, `· measured (controlled study)` for §2's `causal`. **Deliberately NOT a
+  strength-based admission gate:** eight other modules stamp a tier, so a gate would silently
+  re-scope every one of their proposals, and no `done_when` in this plan asks for one. Surfacing is
+  what the clause asks for and it is contained.
+  **An UNGRADED tier ("" from a record filed before the tier existed, or a name this build does not
+  know) renders `ungraded`, never a fallback grade** — the same rule as `fmtMean(null)`: turning
+  "nobody said" into `correlated` would be the evidence-tier form of drawing an unmeasured arm as
+  `0.000`.
+
+- [2026-08-26][ES-7 §3.1] **Falsified both directions, on the LIVE line, restored from a file copy.**
+  (1) `to_dict` hardcoded to `"evidence_strength": "correlated"` (`ast.parse`d, grepped back) →
+  **2 red**, `assert 'correlated' == 'ablation'`, one in `test_learning_inbox.py` and one in the
+  end-to-end `test_the_ablation_grade_reaches_the_row_a_reviewer_decides_on`; restored → the SAME
+  invocation **2 passed**. (2) `LearningPage`'s clause reverted to the count-only form it shipped
+  with → `evidenceGrade.test.tsx` **2 failed / 4 passed**; restored → **6 passed**, same invocation.
+  The two page-level cases are the ones that move: everything else in that file calls
+  `evidenceLabel` directly and would survive the deletion, which is exactly the state the field was
+  already in. Every tier assertion is paired with a vacuity floor comparing two rows that carry the
+  SAME ref count, so a label built from the count alone cannot pass.
+
+- [2026-08-26][ES-7 §3.1] **Still `todo`, and NOT for anything added here.** §3.3's plural replay
+  remains the open clause: `MatrixSpec` carries one `subject`, so the bench scores the newest
+  harvested case and reports `subject_candidates` it did not score. That needs the per-skill
+  `MatrixSpec.subject` form — **an owner scope call, unchanged by this drive**. The §3.2 plan-text
+  drift recorded on 2026-08-23 (the plan names four watched bindings; `eval_judge` is not in
+  `VALID_USE_CASES`, so only three are watchable) is also still open as a **plan-text** correction.
+
+- **Gate:** `make lint` clean (black 2094 files, isort, flake8, mypy 1029 source files);
+  `make test` **27084 passed, 1 failed, 30 skipped, 12 xfailed** (738s) — the one red is
+  `test_inbound_mcp.py::TestTransport::test_rate_cap_returns_429_with_retry_after` (`assert 21 == 20`,
+  a token bucket over-admitting by one under an 18-worker load), **green alone in 67s** and touching
+  no file in this diff; `scripts/gate_report.py` **6/6**; `npm run typecheck:web` clean,
+  `npm run test:web` **493 files / 5233 tests passed** (and `docs/design/consistency-audit.json` came
+  back byte-identical), `npm run build` clean. One further narrowed-run flake seen and dismissed:
+  `test_consulted_runs_reads_the_wf2_r13_ledger_event` ERRORed with *"the run store must not resolve
+  to the real home"* on one 7-file invocation and passed on the identical re-run — the known
+  xdist-reshuffle isolation family, in a file this diff does not touch. Probe residue **16 tree-wide,
+  0 introduced**; worktree clean.

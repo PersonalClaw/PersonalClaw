@@ -16,7 +16,7 @@ import { RetrievalBenchPanel } from './RetrievalBenchPanel'
 import { StudiesPanel } from './StudiesPanel'
 import { fvs } from '../../design/fontWeight'
 import {
-  DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState,
+  DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState, evidenceLabel,
   kindIcon, kindLabel, tierLabel, tierTone,
 } from './learningMeta'
 import { HEALTH_KEY, IDENTITY_REPORT_KEY, JUDGE_BENCH_KEY, RETRIEVAL_BENCH_KEY, STUDIES_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
@@ -295,7 +295,7 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
             {row.provenance ? `from ${row.provenance}` : 'source unknown — cannot be weighed'}
             {row.source_cadence ? ` · ${row.source_cadence}` : ''}
             {row.reinforcements > 1 ? ` · seen ${row.reinforcements}×` : ''}
-            {row.evidence_refs.length ? ` · ${row.evidence_refs.length} evidence ref(s)` : ' · no evidence'}
+            {` · ${evidenceLabel(row)}`}
           </div>
           {row.source_excerpt && (
             <p className="mt-2 rounded-md bg-surface-high px-m py-2 text-on-surface-var text-[0.75rem] break-words">
