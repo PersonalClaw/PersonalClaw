@@ -3317,6 +3317,45 @@ export interface OnboardingStatePatch {
   essentials?: Partial<OnboardingEssentials>
   first_success?: Partial<{ knowledge: boolean; trigger: boolean; loop: boolean }>
 }
+/** One thing another local agent tool holds that PersonalClaw could adopt (PEP-5).
+ *  `existing` is the server's answer, from the fingerprint ledger of what THIS
+ *  importer already wrote — so a re-entered first run marks an item instead of
+ *  offering it again. `redactions` is a COUNT; the matched values never leave the
+ *  scanner. */
+export interface OnboardingImportItem {
+  fingerprint: string; source: string; category: string; key: string; title: string
+  redactions: number; existing: boolean
+}
+/** What one source's scanner found. `detected` is computed server-side (present on
+ *  this machine AND holding something), so "did we find it" is decided once. */
+export interface OnboardingImportSource {
+  source: string; display_name: string; root: string; present: boolean; detected: boolean
+  counts: Record<string, number>
+  items: OnboardingImportItem[]
+  secrets_skipped: number; redactions: number
+  notes: string[]
+}
+/** `GET /api/onboarding/import` — every registered source (found or not) plus the
+ *  closed category vocabulary, in the writers' declaration order. */
+export interface OnboardingImportScan {
+  sources: OnboardingImportSource[]
+  categories: string[]
+}
+/** What happened to ONE item at its destination. The four-value vocabulary is
+ *  closed: `conflict` means something different was already there and was KEPT,
+ *  `rejected` means a security floor refused it. Neither is a silent success. */
+export interface OnboardingImportOutcome {
+  fingerprint: string; source: string; category: string; key: string
+  outcome: 'imported' | 'existing' | 'conflict' | 'rejected'
+  destination: string; detail: string
+}
+/** `POST /api/onboarding/import` — per-item outcomes plus what was withheld. */
+export interface OnboardingImportReport {
+  counts: Record<string, number>
+  results: OnboardingImportOutcome[]
+  secrets_skipped: number; redactions: number
+  notes: string[]
+}
 export interface ChatModelOption { name: string; model_id: string; provider: string; description?: string }
 export interface SavedAgent {
   name: string; provider: string; provider_agent?: string; acp_mode?: string; model?: string; approval_mode?: string
@@ -4576,6 +4615,13 @@ export const api = {
    *  only what it learned. Never read-modify-write the whole document. */
   saveOnboardingState: (patch: OnboardingStatePatch) =>
     post<{ ok: boolean; state: OnboardingState }>('/api/onboarding/state', patch),
+  /** What other local agent tools on this machine hold (PEP-5). Read-only in both
+   *  directions — it writes neither their config nor our home. */
+  onboardingImportScan: () => get<OnboardingImportScan>('/api/onboarding/import'),
+  /** Import the picked categories. The server RE-SCANS: only the two selection axes
+   *  travel, never items, so a caller can never name a directory to copy in. */
+  runOnboardingImport: (body: { sources: string[]; categories: string[] }) =>
+    post<OnboardingImportReport>('/api/onboarding/import', body),
   chatModels: () => get<ChatModelOption[]>('/api/models/chat'),
   setActiveModel: (useCase: string, models: string[]) => put<{ ok?: boolean }>(`/api/models/active/${encodeURIComponent(useCase)}`, { models }),
   // Re-index all knowledge + memory embeddings after the embedding model changed.

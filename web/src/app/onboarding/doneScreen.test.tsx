@@ -34,6 +34,13 @@ vi.mock('../identity', () => ({
   DEFAULT_USER_NAME: 'Operator',
 }))
 vi.mock('../../ui/DotGlow', () => ({ DotGlow: () => null }))
+// PEP-5's import step, stubbed to its escape hatch for the same reason — `importStep.test.tsx`
+// owns its own behaviour, and un-stubbed it would fetch a scan on mount.
+vi.mock('./ImportStep', () => ({
+  ImportStep: ({ onSkip }: { onSkip: () => void }) => (
+    <button type="button" onClick={onSkip}>stub-skip-import</button>
+  ),
+}))
 vi.mock('./EssentialsStep', () => ({
   EssentialsStep: ({ onSkip }: { onSkip: () => void }) => (
     <button type="button" onClick={onSkip}>stub-skip</button>
@@ -75,12 +82,13 @@ afterEach(() => {
   runtime.bounciness = DEFAULT_BOUNCINESS
 })
 
-/** Drive the real flow to its last step: name → skip essentials → skip try-one. */
+/** Drive the real flow to its last step: name → skip import → skip essentials → skip try-one. */
 async function reachDoneScreen() {
   render(<AppearanceProvider><Onboarding /></AppearanceProvider>)
   await waitFor(() => expect(onboarding).toHaveBeenCalled())
   fireEvent.change(screen.getByPlaceholderText('Your name'), { target: { value: 'Ada Lovelace' } })
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-import' }))
   fireEvent.click(await screen.findByRole('button', { name: 'stub-skip' }))
   fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
   await screen.findByRole('button', { name: /Start using/ })

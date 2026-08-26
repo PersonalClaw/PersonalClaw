@@ -218,7 +218,7 @@
     "outlineNoneFiles": 69,
     "localFocusVisibleFiles": 35,
     "reducedMotionFiles": 13,
-    "animatedFiles": 169,
+    "animatedFiles": 170,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -783,7 +783,7 @@
   "drift": [
     {
       "file": "app/Onboarding.tsx",
-      "line": 265,
+      "line": 295,
       "category": "color",
       "snippet": "(measured off the node: rgb(240,244,248)). There, the base accent is **4.37:1** against a"
     },

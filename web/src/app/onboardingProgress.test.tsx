@@ -37,6 +37,16 @@ vi.mock('./identity', () => ({
 }))
 // The 3D backdrop needs a real canvas; the flow's logic does not.
 vi.mock('../ui/DotGlow', () => ({ DotGlow: () => null }))
+// PEP-5's import step, stubbed like its siblings: this file tests the SHELL's resume writes,
+// and `onboarding/importStep.test.tsx` owns the step itself (un-stubbed it fetches a scan).
+vi.mock('./onboarding/ImportStep', () => ({
+  ImportStep: ({ onDone, onSkip }: { onDone: (s: string) => void; onSkip: () => void }) => (
+    <div>
+      <button type="button" onClick={() => onDone('2 imported')}>stub-imported</button>
+      <button type="button" onClick={onSkip}>stub-skip-import</button>
+    </div>
+  ),
+}))
 vi.mock('./onboarding/EssentialsStep', () => ({
   EssentialsStep: ({ onDone, onSkip }: { onDone: (s: string) => void; onSkip: () => void }) => (
     <div>
@@ -94,14 +104,38 @@ async function enterName() {
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
 }
 
+/** Walk past PEP-5's import step — which is where committing the name now lands.
+ *
+ *  The import step is NOT a stored resume point (`STEPS` in `onboarding.py` has no id for it,
+ *  exactly as it has none between `first_success` and `done`), so the name commit records
+ *  nothing and LEAVING import is what records `essentials`. A fresh run therefore has to pass
+ *  through here to reach the essentials step; a RESUMED run (the describe below) jumps over it. */
+async function enterNameAndImport() {
+  await enterName()
+  fireEvent.click(await screen.findByRole('button', { name: 'stub-imported' }))
+}
+
+
 describe('every step transition persists its resume point', () => {
-  it('records `essentials` when the name is committed', async () => {
+  it('records nothing for the import step, then `essentials` when it is left', async () => {
+    // PEP-5 put a step between `name` and `essentials` that has no id in `STEPS`. Writing a
+    // point on the way IN would claim the user finished a step they are standing on; writing
+    // `import` would be a fifth stored value `merge_onboarding_state` rejects with a 400.
     await enterName()
+    expect(await screen.findByRole('button', { name: 'stub-imported' })).toBeTruthy()
+    expect(saveOnboardingState).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'stub-imported' }))
+    await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'essentials' }))
+  })
+
+  it('records `essentials` when the import step is SKIPPED too', async () => {
+    await enterName()
+    fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-import' }))
     await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'essentials' }))
   })
 
   it('records `first_success` when the essentials step is completed', async () => {
-    await enterName()
+    await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
     await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'first_success' }))
   })
@@ -109,13 +143,13 @@ describe('every step transition persists its resume point', () => {
   it('records `first_success` when the essentials step is SKIPPED too', async () => {
     // A skip is still a resume point: a user who comes back should not be dropped
     // onto the step they deliberately walked past.
-    await enterName()
+    await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip' }))
     await waitFor(() => expect(saveOnboardingState).toHaveBeenCalledWith({ step: 'first_success' }))
   })
 
   it('records `done` and commits the name LAST', async () => {
-    await enterName()
+    await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
     fireEvent.click(await screen.findByRole('button', { name: 'stub-tried' }))
     fireEvent.click(await screen.findByRole('button', { name: /Start using/ }))
@@ -131,7 +165,7 @@ describe('every step transition persists its resume point', () => {
   })
 
   it('leaving the first-success step does NOT invent a fourth resume point', async () => {
-    await enterName()
+    await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
     fireEvent.click(await screen.findByRole('button', { name: 'stub-tried' }))
     // `merge_onboarding_state` rejects an unknown step value with a 400, so a spelled-out
@@ -141,14 +175,14 @@ describe('every step transition persists its resume point', () => {
   })
 
   it('skipping the first-success step reaches the recap too', async () => {
-    await enterName()
+    await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
     expect(await screen.findByRole('button', { name: /Start using/ })).toBeTruthy()
   })
 
   it('writes only the `step` key — no lane progress the shell did not observe', async () => {
-    await enterName()
+    await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
     for (const [patch] of saveOnboardingState.mock.calls) expect(Object.keys(patch)).toEqual(['step'])
   })
@@ -160,7 +194,7 @@ describe('finishing marks the install as onboarded under THIS version (OU-5 / C4
   // fresh install performs. Without it a brand-new user lands on the full 19-row rail and the
   // starter rail never ships to anybody.
   async function finishFlow() {
-    await enterName()
+    await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
     // OU-3 landed a fourth step (`try`) between essentials and ready while this atom was in
     // flight, so the flow has to pass through it to reach the finish button — the same path
@@ -254,7 +288,10 @@ describe('re-entering the flow resumes at the persisted step', () => {
       needs_model: true, has_model_provider: false, has_chat_binding: false, step: 'done',
     })
     await enterName()
-    expect(await screen.findByRole('button', { name: 'stub-continue' })).toBeTruthy()
+    // The FIRST step after the name, which is PEP-5's import step — not the recap. A restarted
+    // run redoes the import too, and re-entry is free there (already-imported items come back
+    // marked `existing`, so nothing is duplicated by walking it again).
+    expect(await screen.findByRole('button', { name: 'stub-imported' })).toBeTruthy()
   })
 })
 
@@ -279,7 +316,7 @@ describe('skip at any step lands in a working dashboard', () => {
   })
 
   it('skips from a MIDDLE step, keeping the name that was typed', async () => {
-    await enterName()
+    await enterNameAndImport()
     expect(await screen.findByRole('button', { name: 'stub-continue' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Skip setup and go to the dashboard' }))
     await waitFor(() => expect(setName).toHaveBeenCalledWith('Ada Lovelace'))
@@ -287,7 +324,7 @@ describe('skip at any step lands in a working dashboard', () => {
   })
 
   it('offers no skip on the last step — "Start using" is the door', async () => {
-    await enterName()
+    await enterNameAndImport()
     fireEvent.click(await screen.findByRole('button', { name: 'stub-continue' }))
     fireEvent.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
     expect(await screen.findByRole('button', { name: /Start using/ })).toBeTruthy()
@@ -298,7 +335,7 @@ describe('skip at any step lands in a working dashboard', () => {
 describe('a failed progress write costs the user nothing', () => {
   it('still advances when the resume-point POST rejects', async () => {
     saveOnboardingState.mockRejectedValue(new Error('gateway down'))
-    await enterName()
+    await enterNameAndImport()
     // The essentials step is reached regardless: resume is a convenience, not a gate.
     expect(await screen.findByRole('button', { name: 'stub-continue' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'stub-continue' }))
