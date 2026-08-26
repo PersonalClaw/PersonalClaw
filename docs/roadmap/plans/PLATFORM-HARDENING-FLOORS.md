@@ -1715,3 +1715,62 @@ the browser gate stays out of the unit run. `docs/roadmap/atomic/dag.json` delib
   the new axe leg **7 passed in 81 s** (recorded runtime). Probe residue 0, `git status` empty,
   real-home rail green, harness gateway confirmed gone (port 10437 free, no worktree processes).
   `docs/roadmap/atomic/dag.json` deliberately **untouched** — the owner flips the atom.
+
+- [2026-08-25][SH1.3] DISCOVERY: **an unbounded drain after `proc.kill()` is not a timeout — it is
+  the grandchild's runtime wearing a timeout's name.** Measured, not reasoned: `asyncio`'s
+  `Process.wait()` resolves when every *inherited pipe* has disconnected, **not** when the child is
+  reaped, so `proc.kill(); await proc.communicate()` waits for whatever grandchild still holds the
+  inherited stdout/stderr. A 1s timeout over a `sleep 30` grandchild: **30.02s** with `proc.kill()`,
+  **1.01s** with `start_new_session=True` + `os.killpg`. Two corrections to the obvious theory, both
+  measured: (1) the block is **not** in `wait_for` — `wait_for` returns at 1.00s every time; it is in
+  the post-kill reap (29.0s of a 30.0s total), so the async shape is affected exactly as the sync one
+  is; (2) `start_new_session=True` **alone does not fix it** (30.03s) — the group must actually be
+  *signalled*. Third discriminator: a spawn with `stdout=DEVNULL, stderr=DEVNULL` is **immune**
+  (post-kill reap 0.00s) because there is no inherited pipe to hold; **either** stream as a `PIPE` is
+  enough to expose it (DEVNULL+PIPE = 29.02s, PIPE+DEVNULL = 29.02s).
+- [2026-08-25][SH1.3] DONE: censused all 17 `.kill()`/`terminate()` files under `src/personalclaw/`
+  on three axes — leads its own group? / can fork a grandchild? / does a timeout promise depend on
+  it? **5 of ~30 sites needed changing; the rest are provably safe and were left alone.** Fixed:
+  `dashboard/handlers/updates.py` `git fetch` (:95), `pip -U` (:359), `git pull` (:564),
+  `pip install -e` (:591) — each forks a remote helper or a build backend that inherits the pipe —
+  and `loop/gates.py:57`, the worst case (`/bin/sh -c <persisted command>`, so the shell *always*
+  forks, under a 180s bound). Each gained `start_new_session=True` plus a new single primitive,
+  `cancellation.kill_timed_out`, which routes through the existing `_signal_child` leader rail
+  (group when the child leads one, single pid when it does not) and **bounds** the reap.
+  **Deliberately NOT changed, with reasons:** the five `updates.py` leaf spawns (`git rev-parse`
+  ×2, `git show`, `git diff`, `git status`) fork nothing, and none of them leads its own group — a
+  group signal there would have hit **the gateway's own group**, which is why this is a census and
+  not a sweep; `frontend.py` `npm ci`/`npm run build` and `self_update.py`'s `git fetch` are
+  DEVNULL-on-both and measured immune; `dashboard/handlers/files.py`'s `_git` helper serves only
+  read-only plumbing callers; `screencapture` is DEVNULL-both; `personalclaw skills list` /
+  `skills mcp uninstall` are leaves (`src/personalclaw/skills/` has **zero** spawn sites);
+  `mcp_discovery.py:710` already bounds its reap at 5s; `workflows/effects.py:238` and
+  `provisioning.py:256` kill and return without waiting, so they cannot hang; every sync `Popen`
+  site (`apps/backend_runtime.py`, `apps/worker_runtime.py`, `cli_run.py`, `local_models/sidecar.py`)
+  uses `Popen.wait(timeout=…)`, which reads no pipes; and `acp/transport.py`, `terminal.py`,
+  `session.py`, `session_pid.py`, `subagent.py` + `cancellation.py` itself were already
+  group-correct. `builtin_tools.py:1712`'s comment ("reaps the shell's children too, which
+  `proc.kill()` never did") was right in 2 of ~30 places and never propagated; `kill_timed_out` is
+  now the one place it lives.
+- [2026-08-25][SH1.3] `tests/test_kill_timed_out_pipe_block.py` pins the **call site**, not the
+  mechanism: it drives the real `loop.gates.run_verify_command` against a real forking shell and
+  asserts both halves — returned under the bound **and** the process group is empty afterwards
+  (fast-because-we-stopped-waiting would leak the tree). Vacuity is explicit: a control test runs the
+  shape the fix replaced against the same grandchild and the same bound and must **exceed** it —
+  measured **8.07s** control vs **1.02s** fixed over an 8s grandchild with a 1s bound. The census
+  rail is bidirectional, so a future blanket sweep that gives a leaf spawn a session it does not need
+  reds it. The **spawn-ceiling audit's expected set did not have to move**: SH1.3a keys on
+  `file::qualname::callee`, and adding a kwarg moves no key (3 passed, unchanged).
+- [2026-08-25][SH1.3] Falsifications, both directions. F1: deleted the live `start_new_session=True`
+  in `loop/gates.py` → the call-site test reds with *"spawned the shell into the gateway's own
+  process group"* and the rail reds independently; restored from a file copy, same invocation
+  **2 passed in 12.10s**. F2: swapped `_signal_child(proc, signal.SIGKILL)` for `proc.kill()` inside
+  `kill_timed_out` → reds with *"process group … still has members"* — notably **not** on the timer,
+  because the bounded reap alone hides the leak, which is precisely why the group assertion exists;
+  restored, same invocation **1 passed**.
+- [2026-08-25][SH1.3] SCOPE NOTE — this entry does **not** satisfy SH1.3's own criterion. SH1.3 is the
+  two AST tripwires (`test_spawn_ceiling_audit.py`, `test_spawn_preexec_guard.py`); this work only
+  *confirmed* the first one's expected set is unmoved by the kwarg. The kill-timeout fix is an
+  adjacent hardening improvement filed here because it shares the plan's spawn/teardown surface, and
+  it is tagged SH1.3 for locality only. No atom status changes — `SH1.3` is a plan task row, not an
+  id in `docs/roadmap/atomic/dag.json` (0 occurrences), so there is nothing to flip.
