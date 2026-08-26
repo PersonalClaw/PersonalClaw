@@ -1731,7 +1731,8 @@
           "deps": [
             "ES-1",
             "EXT:MEMORY-GRAPH-AND-VAULT:memory-side graph arm + push-context resolver arms for the memory ablation"
-          ]
+          ],
+          "blocked_reason": "PARTIAL \u2014 six of seven clauses hold and are SHIPPED on main (evals/retrieval_bench.py, the arms= mask on both retrievers, `personalclaw retrieval-eval`, three /api/evals/retrieval* routes and RetrievalBenchPanel.tsx). Two real gaps closed in PR #2091: the read-only rail guarded only the store the run OPENED, so a knowledge run that wrote to memory.db -- the one write the KNOWLEDGE/MEMORY boundary exists to forbid -- passed; and the qrels provenance was on disk but absent from table.json, the API view and the panel, so P@5/R@5 were published with no statement of which labels produced them. BLOCKED (E6, external): clause 4's source (a) for the knowledge store needs `surfacing_events`, which appears in the entire tree exactly ONCE and only as prose in dashboard/handlers/learning.py -- no table, no schema, no reader, no writer. Mining it means minting LEARN-R4's schema AND its writer inside ES-3, which is LEARNING-FLYWHEEL section 2.5's deliverable. Clears when that lands. OWNER CALL, surfaced not decided (carried from 2026-08-25): RunPin requires a non-empty model_fingerprint, but a retrieval score is a function of the EMBEDDING model -- whether the pin narrows to the embedding binding for this subject is the owner's call. Source (c) stays declined on circularity grounds, and push-context resolver arms have a second blocker beyond the signature mismatch: mem_volunteer_events stores entity_name/arm but never the surface text that triggered the match, so there is no stored input to replay."
         },
         {
           "id": "ES-4",
