@@ -481,3 +481,84 @@ def test_a_card_that_marked_nothing_at_all_is_refused(evals_on):
     resp = _run(E.api_evals_retrieval_labels(_JsonRequest({"store": "memory", "labels": {"": []}})))
     assert resp.status == 400
     assert _body(resp)["error"]["code"] == "labels_rejected"
+
+
+# ── LV-7: the skill-impact benchmark route ───────────────────────────────────
+
+
+def _bench_req(**kw):
+    return _req(path="/api/evals/learning-benchmark", **kw)
+
+
+def test_benchmark_disabled_is_a_404_with_its_own_code(monkeypatch):
+    monkeypatch.setattr(E, "_enabled", lambda: False)
+    resp = _run(E.api_evals_learning_benchmark(_bench_req()))
+    assert resp.status == 404
+    assert _body(resp)["error"]["code"] == "evals_disabled"
+
+
+def test_no_benchmark_run_yet_is_a_distinct_404_code(evals_on, monkeypatch):
+    """This panel's ORDINARY state, permanently so for most users — the paired design is 100
+    real model calls. It is therefore the state that must be distinguishable from a failure, and
+    the message names the command rather than leaving a user to guess."""
+    monkeypatch.setattr("personalclaw.evals.learning_bench.latest_report", lambda: None)
+    resp = _run(E.api_evals_learning_benchmark(_bench_req()))
+    assert resp.status == 404
+    code = _body(resp)["error"]["code"]
+    assert code == "learning_benchmark_absent"
+    assert code != "evals_disabled"
+    assert "scripts/learning_benchmark.py" in _body(resp)["error"]["message"]
+
+
+def test_an_unreadable_benchmark_report_is_a_500_not_an_empty_table(evals_on, monkeypatch):
+    def boom():
+        raise OSError("bad json")
+
+    monkeypatch.setattr("personalclaw.evals.learning_bench.latest_report", boom)
+    resp = _run(E.api_evals_learning_benchmark(_bench_req()))
+    assert resp.status == 500
+    assert _body(resp)["error"]["code"] == "learning_benchmark_unreadable"
+
+
+def test_an_unmeasured_task_reaches_the_wire_as_null_not_as_zero(evals_on, monkeypatch):
+    """The route is a pass-through by design: the §5 thresholds live in `harness/`, outside the
+    wheel, so nothing here CAN synthesise a verdict or a score. A `null` verdict must survive
+    serialization untouched — a 0.0 substituted anywhere would read as "the skill scored
+    nothing", which is the benchmark's negative answer asserted from a run that never happened."""
+    report = {
+        "run_id": "learnbench-x",
+        "measured_tasks": 0,
+        "tasks": [
+            {
+                "task_id": "sk_grill",
+                "skill": "grill",
+                "verdict": None,
+                "verdict_class": None,
+                "delta_points": None,
+                "token_ratio": None,
+            }
+        ],
+        "skipped": [],
+    }
+    monkeypatch.setattr("personalclaw.evals.learning_bench.latest_report", lambda: report)
+    resp = _run(E.api_evals_learning_benchmark(_bench_req()))
+    assert resp.status == 200
+    body = _body(resp)
+    row = body["report"]["tasks"][0]
+    assert row["verdict"] is None
+    assert row["verdict_class"] is None
+    assert row["delta_points"] is None
+    assert row["token_ratio"] is None
+
+
+def test_the_whole_frozen_register_travels_with_the_report(evals_on, monkeypatch):
+    """A report carrying two rows must not make a ten-task register look like a two-task one."""
+    from personalclaw.evals import learning_bench as lb
+
+    monkeypatch.setattr(lb, "latest_report", lambda: {"run_id": "x", "tasks": [], "skipped": []})
+    body = _body(_run(E.api_evals_learning_benchmark(_bench_req())))
+    assert len(body["register"]) == len(lb.BENCH_TASKS) == 10
+    assert body["task_set_version"] == lb.TASK_SET_VERSION
+    assert body["protocol_doc"] == lb.PROTOCOL_DOC
+    # The variance a reproduction is judged against is SHIPPED to the reader, not implied.
+    assert body["stated_variance"] == list(lb.REPRODUCTION_CONDITIONS)
