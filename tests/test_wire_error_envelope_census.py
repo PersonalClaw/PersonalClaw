@@ -173,7 +173,14 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: for a tree carrying both, and taking either one would silently un-pin the other surface.
 #: The ceiling is the sum, and the two per-surface FLAT pins above are what keep the slack
 #: from being spent on an error envelope.
-UNRESOLVED_PAYLOAD_CEILING = 210
+#: 210 → **211** (PEP-5): one 200-status SUCCESS body on the onboarding surface —
+#: ``json_response(report.to_dict())`` in ``handlers/onboarding_import.py``. Same shape and
+#: same reasoning as the LV-3/LV-4 rows above: it is a composer's return value, and spelling
+#: its keys out at the call site would duplicate ``ImportReport``'s schema in two places —
+#: exactly the drift this census exists to catch. **The slack is not spendable on an error
+#: envelope:** the import route's refusals go through ``json_error``, which needs no payload
+#: dict at all, so the onboarding surface's FLAT count is unchanged.
+UNRESOLVED_PAYLOAD_CEILING = 211
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites

@@ -7787,11 +7787,6 @@
         "plan": "PCS"
       },
       {
-        "id": "PEP-5",
-        "title": "Onboarding import step UI",
-        "plan": "PEP"
-      },
-      {
         "id": "PEP-9",
         "title": "React artifact build path",
         "plan": "PEP"
@@ -10146,9 +10141,9 @@
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
         "total_atoms": 11,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
