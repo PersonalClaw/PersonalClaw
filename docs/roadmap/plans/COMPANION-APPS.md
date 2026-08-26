@@ -901,3 +901,105 @@ no-op for sessions with no device. No new route, exemption or credential surface
 - **What is left for `CA-8`/T4.4.** Clause (a) under a genuinely remote peer; V3's LAN↔remote
   switch (needs a second pairable endpoint); the WebView/public-origin half, still deliberately
   REMOTE-USER-AUTH's call per `CA-2`'s ruling, with `dashboard.url` documented as the workaround.
+## Execution log — CA-9 (S4 T4.2 mobile coordination + T4.3 future-platform recipe)
+
+- [2026-08-25][CA-9] DONE: S4 T4.2 + T4.3. Docs-only in the deliverables, but the atom's two
+  `done_when` clauses are claims about the **repository**, so both are now pinned by a rail
+  (`tests/test_companion_single_pairing_mechanism.py`, 5 tests) instead of by prose that asserts
+  a code property with nothing measuring it.
+- [2026-08-25][CA-9] **T4.2 — the pairing half was already pointed; the ENDPOINT half was not.**
+  `CA-3` (2026-08-17) had already folded MOBILE-COMPANION §C1/§C4 into this plan's C1/C2, and its
+  T4.2 row already said "Routes consumed from plan 54, not defined here". What no line in
+  MOBILE-COMPANION referenced was the **endpoint switch** — a census of that plan for
+  `endpoint switch|endpoints.ts|multi-gateway` returned **1** hit, and it was the Depends-on line,
+  not a task. Meanwhile its T4.1 specified the shell's connection state as "config: gateway URL",
+  i.e. a single stored URL: not a rival *pairing* design, but a rival **connection** model, and the
+  exact shape `CA-6`'s `{active, endpoints[]}` registry replaced. Fixed by pointing S4 at the
+  contract three times: a new note under the Sessions 4-6 heading (the wrapper tier defines no
+  connectivity of its own → §C1 + S3 + the eight-item wrapper list in
+  `docs/guides/companion-apps.md` + `web/src/lib/endpoints.ts`, with the same E4 escalation §C1
+  carries for pairing); T4.1's "gateway URL" replaced by §C1's registry (`{active, endpoints[]}`
+  per S3/T3.3), "**not** a single stored gateway URL and not a second registry shape"; T4.2 widened
+  to "QR pairing screen **and endpoint switching**, both consumed from plan 54" — the paired gateway
+  becomes a §C1 registry entry (`device_session_ref`), the switcher is S3's spec (re-point `active`,
+  reload the same SPA, state namespaced by endpoint `id`), and the done-when gains "a second paired
+  gateway is switchable from the shell with no state bleed". MOBILE-COMPANION T4.3 (platform push)
+  was left alone — this plan's T4.3 is the future-platform note, a different row.
+- [2026-08-25][CA-9] **T4.3 — the recipe, and why it ships with zero code.** New
+  `## Bringing up a new platform` section at the END of `docs/guides/companion-apps.md`, kept clear
+  of the `wss`/reconnect region so it union-resolves against the in-flight `CA-7` edit to the same
+  file. Two steps and no third: wrap the served UI as an origin, implement the eight-item contract
+  unchanged. Explicitly enumerated: what is legitimately per-platform (packaging/signing,
+  notification permission, safe areas + back button, secure storage for the registry), what the
+  gateway will never grow (no platform-shaped endpoint, no server-side user-agent branch, no fan-out
+  service — a platform that needs one has found a gap in the contract, report it rather than closing
+  it privately), and the `PLATFORM-REACH` gate: no SDK dependency, no SDK identifier in the shared
+  surfaces, no `if (platform === …)` reserving a slot, **no empty directory or scaffold**. Framed as
+  the clean-break tenet applied to a platform: dead code that names a platform reads as a promise.
+- [2026-08-25][CA-9] **Census of the "no parallel device-token code" claim — it HOLDS, one
+  mechanism, and here are the sites.** Pairing codes: **one** store,
+  `src/personalclaw/auth/pairing.py` (`issue_code:138`/`redeem_code:162`, `pair_codes.json`), with
+  exactly **one** production importer, `dashboard/handlers/devices.py:170`/`:254`. Device
+  provenance: **one** writer, `session_store.py:347` `attach_device`, called from exactly one
+  production site, `devices.py:288`. Paired-device session minting: **one** site,
+  `devices.py:275` `generate_token(PAIRED_DEVICE_USER, …)`, and `PAIRED_DEVICE_USER` (`:88`) appears
+  in no other module. Identifier-shaped `device[_-]?token` across `src/personalclaw`, `web/src` and
+  `desktop`: **0**. The only textual survivor in code is the mechanism denying itself —
+  `devices.py:10` "**There is no device token.**" — which is why the rail's pattern is
+  identifier-shaped rather than prose-shaped. `auth/enrollment.py` is NOT a second implementation:
+  its own module docstring calls it a deliberate sibling, it has a different store file
+  (`enroll_codes.json`) and a different surface (recovery at the box), and it writes no device
+  provenance. Per-platform code: no `mobile/`, `ios/`, `android/` or `capacitor/` tree exists, and
+  the nine native-SDK markers score **0** across `src/personalclaw` + `web/src`.
+- [2026-08-25][CA-9] **The rail, and why one was warranted.** Success Criterion 1 and T4.3 are both
+  claims that go stale silently: `CA-3` recorded a grep as evidence, and a recorded grep protects
+  nothing the day after it is run. `tests/test_companion_single_pairing_mechanism.py` pins four
+  properties (single pairing-code importer, single provenance writer + single `PAIRED_DEVICE_USER`
+  module, zero device-token identifiers, zero native SDK markers in the shared surfaces) behind a
+  `test_scanner_is_not_vacuous` floor that asserts the roots resolve, that two control patterns
+  (`attach_device`, `endpointSocketUrl`) DO hit, and that the device-token regex matches all four
+  identifier spellings while deliberately missing the prose form. Scoping decided so the rail cannot
+  fight sanctioned work: the platform census covers only `src/personalclaw` + `web/src` (the shared
+  halves) and says nothing about a shell directory, so a `PLATFORM-REACH`-cleared native tree
+  landing later is the recipe working, not a regression; `desktop/` is excluded because an Electron
+  shell may branch on host OS; `auth/enrollment.py` is excluded as a documented sibling.
+- [2026-08-25][CA-9] **Falsification — all four censuses proven able to fail.** Wrote a rival
+  implementation at `src/personalclaw/dashboard/handlers/rival_pairing.py`: a `mint_device_token`
+  with its own `DEVICE_TOKEN_TTL`, importing `auth.pairing` and calling `attach_device`, plus one
+  `@capacitor` marker. Grepped the mutation back on disk first (plain `grep`, not `git grep` —
+  an untracked file is invisible to `git grep`, which would have read as "no mutation"): 8 matching
+  lines, 5 of them device-token identifiers. Result: **4 failed, 1 passed** —
+  `test_no_parallel_device_token_code` (census **0 → 5** hits in that file),
+  `test_pairing_code_store_has_one_production_importer` (1 → 2 importers),
+  `test_device_provenance_has_one_writer` (1 → 2 writers) and
+  `test_no_speculative_per_platform_code` (`@capacitor` in a shared surface) all red, each naming
+  the file; only `test_scanner_is_not_vacuous` stayed green, which is correct — the floor measures
+  the scanner, not the subject. Restored by deleting the literal path (never `git checkout`),
+  re-ran: **5/5 green**, census back to **0**. `git status --porcelain` empty afterwards.
+- [2026-08-25][CA-9] DISCOVERY (out of scope, wants its own atom): **C2 says it "folds in
+  REMOTE-USER-AUTH C3 enroll", and the code has folded the store but not the session.**
+  `handlers/auth.py:441` still mints `generate_token("enrolled-device", …)` and writes **no**
+  device provenance — no `attach_device`, so `issuer` stays `ISSUER_UNKNOWN` and the row carries no
+  `device` block. Consequence: a device enrolled via `auth enroll` is a live durable session that
+  **does not appear in the Devices list and cannot be revoked from the Devices panel** (the registry
+  is a view over rows that have a `device` block). This is not a parallel *device-token* design —
+  it mints no new credential type and adds no route, store, claim or TTL — so Criterion 1 still
+  holds, and the rail is scoped to leave it alone deliberately. But it is a second code→session
+  redemption path under a contract that says there is one, and CA-6's log already flagged the
+  sibling question ("whether the two code paths should converge on one redeem screen"). Closing it
+  means either enroll writing device provenance (one `attach_device` call, `issuer="enroll"`, which
+  §C1 already has a slot for) or C2 dropping the "folds in C3 enroll" claim. Owner call.
+- [2026-08-25][CA-9] DISCOVERY: `docs/roadmap/atomic/CA.md`'s per-atom **"Status:"** blocks
+  disagree with its own status table and with `dag.json` — `CA-2` and `CA-3` are `done` in
+  `dag.json` and ✅ in the table, but their scope blocks below still read `**Status:** todo`. The
+  table is right; the blocks are stale. Not touched here (the file is generated and `dag.json` is
+  off-limits to this atom) — flagged for the next regen.
+- [2026-08-25][CA-9] **Gate:** `make lint` clean (black 2071 files unchanged, isort, flake8, mypy
+  1017 sources); `python scripts/gate_report.py` — **all 6 legs PASS** with 0 failures each,
+  `docs-lint` included (no per-file counter rose, so the new guide section introduced no dead link
+  and no stale citation); `pytest --no-cov` **5/5** on
+  `tests/test_companion_single_pairing_mechanism.py` and **20/20** on the two docs rails
+  (`tests/test_docs_lint_baseline.py`, `tests/test_getting_started_walkthrough.py`, both
+  `ls`-verified before running so a mistyped path could not read as a pass). Nothing under `src/`
+  or `web/src` changed, so no web suite was run. Probe sweep `FALSIFICATION|if False and|# PROBE`
+  over `src/ tests/` = **16**, all pre-existing, **0** introduced; `git status --porcelain` empty.

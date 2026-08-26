@@ -123,10 +123,19 @@ Plan 42 rules-engine `push` target calls `send_push` with `{kind, item_id}` only
 
 ### Sessions 4-6 — Wrapper tier (Wave 3)
 
+> **The wrapper tier defines no connectivity of its own** (`CA-9` coordination, 2026-08-25). The
+> shell's connection state, its endpoint switching and its reconnect behaviour are COMPANION-APPS
+> §C1 + its S3 client contract, written out as the eight-item wrapper list in
+> [docs/guides/companion-apps.md](../../guides/companion-apps.md) and shipped as
+> `web/src/lib/endpoints.ts` (plan 54 `CA-6`). This plan's S4 tasks *implement that list* on
+> Capacitor; they do not restate it, extend it, or hold a second registry shape. The same rule
+> that governs pairing (§C1/§C4: read plan 54, mint nothing) governs the endpoint half — E4 if a
+> task here appears to need its own connection model.
+
 | ID | Task | Files | Done when |
 |---|---|---|---|
-| T4.1 | Capacitor shell: wraps the served companion URL (config: gateway URL + the device session obtained from plan-54 pairing), native safe-areas, no forked UI | new `mobile/` dir in core repo (or org repo — decision recorded) | shell builds for iOS+Android; renders the live companion |
-| T4.2 | QR pairing screen: Settings → Devices → "Pair phone" renders a QR of COMPANION-APPS §C2's `{pairing_url, code}` → app scans → `pair/complete` → device session. **Routes consumed from plan 54, not defined here** | app pairing screen (the Settings/QR surface + the routes are plan 54 T1.1/T1.2) | pair from QR end to end against plan 54's routes; single-use + TTL verified there, not re-specified here |
+| T4.1 | Capacitor shell: wraps the served companion URL, native safe-areas, no forked UI. Connection state is COMPANION-APPS §C1's endpoint registry (`{active, endpoints[]}` per plan 54 S3/T3.3, already shipped in `web/src/lib/endpoints.ts`) — **not** a single stored gateway URL and not a second registry shape; the device session in each entry is the one plan-54 pairing returned | new `mobile/` dir in core repo (or org repo — decision recorded) | shell builds for iOS+Android; renders the live companion from the registry's `active` endpoint |
+| T4.2 | QR pairing screen **and endpoint switching**, both consumed from plan 54: Settings → Devices → "Pair phone" renders a QR of COMPANION-APPS §C2's `{pairing_url, code}` → app scans → `pair/complete` → device session (§C1); the paired gateway then becomes a §C1 registry entry (`device_session_ref`) and the switcher is plan 54's S3 spec — re-point `active`, reload the same served SPA, per-endpoint state namespaced by endpoint `id`. **Routes and switch semantics consumed from plan 54, not defined here** | app pairing + switcher screens (the routes are plan 54 T1.1/T1.2; the registry/switch contract is plan 54 T3.1/T3.3) | pair from QR end to end against plan 54's routes; a second paired gateway is switchable from the shell with no state bleed; single-use + TTL, the registry shape and the no-hub rule verified in plan 54, not re-specified here |
 | T4.3 | Platform push: ntfy app integration documented as default; optional relay: open-source `push-relay` (stateless, content-free, org repo) + APNs/FCM wiring in the shell for relay users | relay repo content, shell push registration | both paths deliver; relay logs contain no content (audit fixture) |
 | T4.4 | Store packaging: icons/splash from brand assets, privacy declarations (no data collection — truthfully), build docs; TestFlight/internal-track builds | shell config + `docs/maintainers/mobile-release.md` | installable builds produced via documented steps (owner runs store submissions — owner tasks 3-4) |
 | V4-6 | Validation: full field week — owner daily-driving approvals from the wrapper app; friction list triaged | — | week recorded; fix-now items closed |
