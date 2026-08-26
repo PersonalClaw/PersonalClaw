@@ -813,3 +813,20 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
   words and loses the secret. `web/src/app/onboarding/importStep.test.tsx` (19 tests) holds the UI half —
   including that the POST payload contains neither the root path nor an item key (with the vacuity
   assertion that the SCAN does).
+- [2026-08-25][PEP-5] ✅ **ATOM FLIPPED `done` (PR #2071).** Integration re-gated on `origin/main` rather
+  than inheriting: `make lint` pass (black 2072, mypy 1018 files); `pytest` **96 passed** over 6
+  `ls`-verified suites; `scripts/gate_report.py` **6/6**; `npm run typecheck:web` + `npm run test:web`
+  **489 files / 5211 passed** + `npm run build` green; probe sweep 16 pre-existing / 0 introduced.
+  **The `dashboard/server.py` fence exception was audited, not waved through:** the diff is a comment, a
+  function-local import and one `register_onboarding_import_routes(app)` call after an existing
+  registrar — additive, no logic touched, matching ~20 siblings. Without it the handler would be the
+  green-build-doesn't-mount defect the criterion exists to prevent.
+  **Falsification re-run independently, and my first attempt was INVALID — recorded because the failure
+  mode is reusable.** Removing `'import'` from the `ORDER` literal (`Onboarding.tsx:28`) and running the
+  single file through `npx vitest run --root web` showed "4 failed", which looked like a strong red — but
+  the file **still failed 4/4 after the mutation was restored**, so every one of those reds was an
+  artifact of that invocation (it sets cwd to `/private/tmp`, and tests reading baselines via
+  `process.cwd()` then misbehave). Re-run under **`npm run test:web`**, the accepted runner, the same
+  mutation reds **exactly 1 test of 5211**: `stepProgressAnnounced.test.ts` — *"all 4 rows in ORDER must
+  read from TITLES: expected 5 to be 4"*. Only the accepted runner yields a trustworthy verdict; that run
+  also dirties `docs/design/consistency-audit.json`, which must be restored before pushing.

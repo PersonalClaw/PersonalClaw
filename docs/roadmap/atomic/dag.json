@@ -7286,13 +7286,14 @@
         {
           "id": "PEP-5",
           "title": "Onboarding import step UI",
-          "status": "todo",
+          "status": "done",
           "scope": "Add an onboarding step that surfaces detected sources ('We found Claude Code / Codex on this machine - import?') with per-category checkboxes, counts, and a conflict review; skippable and idempotent on re-entry (already-imported items shown as 'existing'). Wire GET/POST /api/onboarding/import. Validate against a fake source seeded under the dev home: run onboarding, import, confirm memories/MCP/skills landed and a planted secret did not, and confirm the skip path and re-entry idempotence.",
           "done_when": "Fresh home with a fixture source shows the step; import completes without any secret appearing; re-entry shows already-imported items as 'existing'; skip path works; validation recorded.",
           "deps": [
             "PEP-4",
             "EXT:ONBOARDING-UX:step-stack-primitive"
-          ]
+          ],
+          "pr": 2071
         },
         {
           "id": "PEP-6",
