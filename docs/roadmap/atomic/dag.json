@@ -3260,7 +3260,7 @@
         {
           "id": "MRT-5",
           "title": "Learned policy + cost-aware ordering + propose-don't-write proposals",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a74.2 LearnedPolicy (60/40 scoring, >=5-sample floor, EMA+hysteresis), \u00a74.3/\u00a75.2 cost-aware near-equal ordering + cloud_quality_margin, \u00a76.3-6.4 proposals + cooldown + notification + SEL audit; Session 3 (\u00a79)",
           "done_when": "per-(use_case,query_class,ref) score=0.60*success_rate+0.40*feedback over the fold with feedback extracted from WF2 ledger/eval_judge (renormalizing onto success_rate + feedback_n:0 when absent); a genuine quality gap at n>=5 enqueues a routing proposal (skills/proposals.py pattern) with inspectable evidence (scores, n, latency/cost deltas, sample_audit_ids) WITHOUT editing routing_policy.json; accept updates the table with proposal_id basis + SEL entry, reject suppresses re-propose for reproposal_cooldown_days (SC #5); cost only reorders within-hysteresis near-equals with cloud needing to beat local by cloud_quality_margin; deleting routing_stats.json/routing_policy.json degrades to heuristic/off and nothing writes memory.db/knowledge.db (SC #8)",
           "deps": [
@@ -3268,7 +3268,9 @@
             "MRT-1",
             "MRT-2",
             "EXT:WORKFLOWS-V2:step_completed ledger events for the feedback signal (soft; router functions from model_calls.jsonl alone; already built)"
-          ]
+          ],
+          "pr": 2066,
+          "evidence": "routing/gap.py detector wired at routing/stats.py:153 (fold write); GET/POST/DELETE /api/models/routing-proposals; RoutingPanel proposals section. All 14 wires answer \"would deleting the caller be caught?\" YES, including policy::save_policy which the audit tool had REFUSED. Falsified: cutting the wire reds 6, incl. the byte-identity test's own vacuity floor."
         }
       ]
     },
@@ -7759,11 +7761,6 @@
         "plan": "MI"
       },
       {
-        "id": "MRT-5",
-        "title": "Learned policy + cost-aware ordering + propose-don't-write proposals",
-        "plan": "MRT"
-      },
-      {
         "id": "OU-9",
         "title": "Structured approval brief over the ChannelDelivery.request_approval seam",
         "plan": "OU"
@@ -9778,9 +9775,9 @@
         "code": "MRT",
         "plan": "MODEL-ROUTING-TELEMETRY",
         "total_atoms": 5,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
