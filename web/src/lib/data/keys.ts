@@ -71,6 +71,10 @@ export const CACHE_NAMESPACES: Record<string, NamespacePolicy> = {
   models: CONFIG,
   notifications: LIVE,
   onboarding: CONFIG,
+  // PA-5's digest card. LIVE, not COLLECTION: the digest is a read of what a scheduled run just
+  // did, and it changes behind the app's back on every fire — a 30-second-fresh digest could
+  // show a pending proposal the user already answered on another surface.
+  proactive: LIVE,
   prompt: COLLECTION,
   'prompt-snippets': COLLECTION,
   prompts: COLLECTION,

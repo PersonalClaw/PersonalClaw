@@ -21,6 +21,7 @@ import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpe
 import { InboxDetail } from './InboxDetail'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
 import { ProposalsLens } from './ProposalsLens'
+import { TriageDigestCard } from './TriageDigestCard'
 import { ContextMenu, EntranceGroup, EntranceRegion, type ContextMenuItem } from '../../ui/motion'
 import { PageTitle } from '../../ui/PageTitle'
 
@@ -283,6 +284,12 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
             column stay one element, so neither the tour nor the layout learns about motion. */}
         <EntranceRegion>
         <div data-tour="inbox" className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        {/* PA-5 — the triage DIGEST card (PROACTIVE-ASSISTANT §5.1). Above the list rather than
+            beside it: the digest is the summary of everything below, and a digest a user has to
+            scroll past their inbox to find is a digest they read after doing the work by hand.
+            It renders its own five states (never installed / off / not yet run / a digest / a
+            failed read), so nothing here needs to know which one is showing. */}
+        <TriageDigestCard />
         {/* Kind chips. Only rendered once MORE THAN ONE kind is present: on an inbox that
             only ever receives messages, a single "Messages" chip is a control with nothing
             to choose. Uses the canonical Segmented so it matches every other pick-one in

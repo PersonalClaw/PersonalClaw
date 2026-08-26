@@ -709,6 +709,13 @@ async def start_dashboard(
 
     register_lexicon_routes(app)
 
+    # The triage digest (PROACTIVE-ASSISTANT §5.1/§5.4 — PA-5). Registered beside the approval
+    # rules on purpose: the digest card and the rules manager read one system, and the rules
+    # endpoints below are the manager's half of it.
+    app.router.add_get("/api/proactive/digest", handlers.api_proactive_digest)
+    app.router.add_post("/api/proactive/digest/reply", handlers.api_proactive_reply)
+    app.router.add_post("/api/proactive/install", handlers.api_proactive_install)
+
     # Vector Memory (Semantic)
     app.router.add_get("/api/memory/approval-rules", handlers.api_memory_approval_rules)
     app.router.add_post("/api/memory/approval-rules", handlers.api_memory_approval_rule_add)

@@ -158,13 +158,19 @@ describe('the triage, pinned per site', () => {
     // and a reason there would soften it. Reasoned count therefore holds at 5.
     // A surface that is off for a PRECONDITION (no token yet) is explained on the row itself by
     // the "not serving" pill naming the cause — not by disabling the control the user needs.
-    // 🔺 20 → 21 (EA-8): the template detail page gained "Publish to A2A". IN-FLIGHT class — the
-    // only thing that ever disables it is its own POST (`disabled={publishSaving}`), so it stays
-    // native for the same reason the five above do: re-clicking a publication switch mid-flight is
-    // the failure being prevented, and a reason there would soften it. Whether the template is
-    // published is stated by the row's own prose beneath the heading, not by the switch going dark.
-    // Reasoned count therefore holds at 5.
-      expect(sites.length).toBe(21)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'five carry a reason; fifteen stay native').toBe(5)
+    // 🔺 20 → 24 (EA-8 + PA-5, reconciled at integration). Both sides of this census were written
+    // against a base of 20 and each counted only its own additions, so NEITHER side's number is
+    // right for the union — 21 and 23 both undercount. EA-8 added ONE switch (the template detail
+    // page's "Publish to A2A"), PA-5 added THREE (two Settings → Inbox proactive-triage switches
+    // and one per-rule send-capability switch in the rules manager). 20 + 1 + 3 = 24.
+    //
+    // Reasoned sites 5 → 7, and the split is the point rather than the total. EA-8's switch and
+    // PA-5's rules-manager switch are the IN-FLIGHT class — each is disabled only by its own POST
+    // (`disabled={publishSaving}` / `disabled={busy === rule.key}`) — so they stay native, because
+    // re-clicking mid-flight IS the failure being prevented and a reason there would soften it.
+    // PA-5's two triage switches are PRECONDITION switches (one waits on the config read, the other
+    // on triage being enabled at all), so both name what unlocks them. 5 + 0 + 2 = 7.
+      expect(sites.length).toBe(24)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'seven carry a reason; seventeen stay native').toBe(7)
   })
 })
