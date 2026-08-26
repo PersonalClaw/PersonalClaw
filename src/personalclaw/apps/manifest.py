@@ -166,6 +166,15 @@ class UIConfig:
     entry: str = ""  # ESM bundle path relative to app root, e.g. "dist/index.mjs"
     pages: list[UIPage] = field(default_factory=list)
     sidebar: UISidebar = field(default_factory=UISidebar)
+    #: An ESM module (path relative to the app's ``ui/`` dir) whose ``register(sdk, ctx)``
+    #: export adds genui components to the HOST registry (AMBIENT-SURFACES §5.1).
+    #: Loaded at shell bootstrap for an ENABLED app that also declares the
+    #: ``generative-component`` UI capability — a components module without that
+    #: declaration registers nothing, so the manifest states the intent in ONE place and
+    #: the capability grants it. Deliberately separate from ``pages[].entryPoint``: an
+    #: app's components must be available to a chat-born widget without the user first
+    #: visiting that app's page.
+    components: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -173,6 +182,8 @@ class UIConfig:
             d["entry"] = self.entry
         if self.pages:
             d["pages"] = [p.to_dict() for p in self.pages]
+        if self.components:
+            d["components"] = self.components
         sidebar_d = self.sidebar.to_dict()
         if sidebar_d:
             d["sidebar"] = sidebar_d
@@ -183,7 +194,12 @@ class UIConfig:
         pages = [UIPage.from_dict(p) for p in data.get("pages", []) if isinstance(p, dict)]
         sidebar_raw = data.get("sidebar", {})
         sidebar = UISidebar.from_dict(sidebar_raw) if isinstance(sidebar_raw, dict) else UISidebar()
-        return cls(entry=str(data.get("entry", "")), pages=pages, sidebar=sidebar)
+        return cls(
+            entry=str(data.get("entry", "")),
+            pages=pages,
+            sidebar=sidebar,
+            components=str(data.get("components", "")),
+        )
 
 
 @dataclass
@@ -1160,11 +1176,19 @@ DESIGN_SYSTEM_LEVELS = frozenset({"v2", "legacy", "n/a"})
 #   registry, and renders it. The app contributes a *widget*, never a component
 #   TYPE — the registry stays host-owned, so model/app text can only reach
 #   components the host already registered.
+# * ``generative-component`` — the app may REGISTER a genui component into the host
+#   registry (AMBIENT-SURFACES §5.1/§6, the "registration reading" APE-11 deferred to
+#   this atom). Strictly additive: an app registration is an L1 layer entry that may
+#   add a name, never SHADOW a core one (refused at register time), it is validated
+#   against the HOST's schema like any other component, and it is removed the moment
+#   the app is disabled. Separate from ``generative-widget`` on purpose — supplying a
+#   DSL body and extending the component vocabulary are different trust edges, and one
+#   declaration must not grant the other.
 #
 # Closed on purpose: an unrecognised capability is an install error, not a silently
 # dropped string, for the same reason ``quality.designSystem`` is closed — a
 # capability the host does not know about reads exactly like one it refused.
-UI_CAPABILITIES = frozenset({"shell-primitives", "generative-widget"})
+UI_CAPABILITIES = frozenset({"shell-primitives", "generative-widget", "generative-component"})
 
 #: The axis names, in card order. Named once so the verifier, the wire and the
 #: Store badges cannot drift into three different axis vocabularies.
@@ -1467,6 +1491,17 @@ class AppManifest:
         # UI entry path traversal check
         if self.ui.entry and ".." in self.ui.entry:
             errors.append(f"ui.entry contains path traversal: {self.ui.entry!r}")
+
+        # The genui components module is fetched by the SHELL for every enabled app, so a
+        # traversing path here would be read before any page mounted. Checked like every
+        # other app-supplied path rather than trusted because it names a module.
+        if self.ui.components and ".." in self.ui.components:
+            errors.append(f"ui.components contains path traversal: {self.ui.components!r}")
+        if self.ui.components and "generative-component" not in self.uiCapabilities:
+            errors.append(
+                "ui.components requires the generative-component UI capability — declare it in "
+                "uiCapabilities, or drop the components module"
+            )
 
         # UI page validation
         for page in self.ui.pages:

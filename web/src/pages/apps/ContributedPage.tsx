@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, AlertTriangle } from 'lucide-react'
 import { AppApiProvider, loadContributedModule, type AppContext } from '../../app/appSdk'
+import { LAYER_APP, maxSurfaceLayer } from '../../ui/surfaces/layers'
+import { LayerBoundary } from '../../ui/surfaces/LayerBoundary'
 import type { AppHost } from './AppFrame'
 import { createRoot, type Root } from 'react-dom/client'
 import { createElement } from 'react'
@@ -43,6 +45,15 @@ export function ContributedPage({ app, host, src, mountFunction = 'mount' }: Pro
     let root: Root | undefined
 
     setLoading(true); setError(null)
+    // §6: an app page is an L1 surface. Safe mode forces maxLayer=0, so the bundle is
+    // never FETCHED — refusing at the mount site (not inside the loader) keeps the
+    // gate where the layer is named, and means safe mode holds even for a caller that
+    // reaches the loader some other way.
+    if (maxSurfaceLayer() < LAYER_APP) {
+      setError('Safe mode is on — app-contributed surfaces are not loaded. Reload without ?safe=1 to restore them.')
+      setLoading(false)
+      return
+    }
     // ctx carries the host bridge so an app can contribute header actions + open
     // the standard detail panel. Mutate-merge so the object identity the SDK
     // hooks read (useContext) still matches `app`.
@@ -63,7 +74,12 @@ export function ContributedPage({ app, host, src, mountFunction = 'mount' }: Pro
         try { node = (fn as (ctx: AppContext) => React.ReactNode)(ctx) } catch { node = undefined }
         if (node !== undefined && node !== null) {
           root = createRoot(hostRef.current)
-          root.render(createElement(AppApiProvider, { app: ctx, children: node as React.ReactNode }))
+          // Error-boundaried at the LAYER seam (§6): a contributed component that throws
+          // during render renders a named notice instead of blanking the app area.
+          root.render(createElement(
+            LayerBoundary,
+            { layer: LAYER_APP, what: app.name, children: createElement(AppApiProvider, { app: ctx, children: node as React.ReactNode }) },
+          ))
         } else {
           // Fall back to imperative mount(el, ctx).
           const ret = (fn as (el: HTMLElement, ctx: AppContext) => void | (() => void))(hostRef.current, ctx)

@@ -6,6 +6,9 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { relPast } from '../schedule/scheduleMeta'
 import { WidgetFrame } from '../../ui/widget/WidgetFrame'
+import { GenUiWidget } from '../../ui/genui/GenUiWidget'
+import { GenUiHostCtx } from '../../ui/genui/actions'
+import { findGenUiBlock } from '../../ui/widget/blocks'
 import { LiquidShape } from '../../ui/motion'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { costLabel, isLive, lastRefreshFailed, sourceChips } from './tileFreshness'
@@ -174,6 +177,11 @@ function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref:
   // silhouette in the header and the frame at the bottom, so the two cannot disagree
   // about whether this tile has settled.
   const body = artifact?.content
+  // A tile whose rendered projection IS a genui tree renders in the host tree instead of
+  // the widget iframe. Detected from the BODY (the same block seam chat uses), not from an
+  // artifact kind: `genui` is an inline-embed content type with no saved-artifact kind, so
+  // a kind check here would be a comparison that can never be true.
+  const genuiBody = findGenUiBlock(body || '')
 
   return (
     <div className="flex min-w-0 flex-col gap-xs rounded-lg border border-outline-variant/40 bg-surface-low/60 p-s">
@@ -239,7 +247,19 @@ function PinnedTile({ tile, onResolve }: { tile: DashboardTile; onResolve: (ref:
         )}
       </div>
       {body
-        ? <WidgetFrame html={body} title={artifact?.name || slug} slug={slug} />
+        ? (genuiBody
+          // A GENUI tile renders in the host tree (registry-validated), not in the widget
+          // iframe — and it declares itself as the ACTION PRODUCER, so a control inside it
+          // re-fires THIS tile's bound workflow server-side, inside the tile's frozen
+          // capability set (§5.4). `onResolved` re-reads the body the re-fire rewrote.
+          ? (
+            <GenUiHostCtx.Provider
+              value={{ producer: { kind: 'tile', viewId: 'overview', ref: tile.ref }, onResolved: refresh }}
+            >
+              <GenUiWidget content={genuiBody.html} title={artifact?.name || slug} slug={slug} />
+            </GenUiHostCtx.Provider>
+          )
+          : <WidgetFrame html={body} title={artifact?.name || slug} slug={slug} />)
         : <div data-type="body-s" className="px-s py-l text-center text-on-surface-low">Loading tile…</div>}
     </div>
   )

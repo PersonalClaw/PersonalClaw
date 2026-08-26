@@ -661,8 +661,20 @@ async def _gateway(
     port_override: str | None = None,
     json_ready: bool = False,
     approval_mode: str | None = None,
+    safe_surfaces: bool = False,
 ) -> None:
     """Load config and start the gateway (dashboard + channel transports)."""
+    # Latch safe-surfaces mode BEFORE anything serves a page: the SPA's layer ceiling is
+    # stamped into index.html at serve time, so setting it later would let one early load
+    # resolve app/user layers the operator asked to keep out (§6).
+    if safe_surfaces:
+        from personalclaw.surface_layers import set_safe_surfaces
+
+        set_safe_surfaces(True)
+        logging.getLogger(__name__).warning(
+            "safe-surfaces mode: only core (L0) surfaces will resolve — no app pages, "
+            "no app-contributed components, no user/agent overlays"
+        )
     # Resolve the web React build for the dashboard. Skipped in headless
     # mode since no dashboard will be served. The Docker image ships a
     # pre-bundled dist/ (no-op inside). Source-tree checkouts get a symlink

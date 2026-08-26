@@ -7,13 +7,16 @@
  *  a `<widget kind="genui">` block. Keep the set SMALL — every component costs
  *  prompt space. Charts follow the dataviz conventions (one series = one token).
  *
- *  These are pure presentational components: AS-4 is the render core. Interactive
- *  action-bearing components (Form/Input/Button with dual-payload actions) land in
- *  AS-6 on top of this registry. */
-import type { ReactNode } from 'react'
+ *  Most are pure presentational components (AS-4 is the render core). The `Forms`
+ *  group is the action-bearing set (AS-6): activating one emits the §5.4 dual
+ *  payload through the host's emitter — the component never knows, or chooses,
+ *  where that action is routed. */
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { Surface } from '../Surface'
 import { fvs } from '../../design/fontWeight'
 import { cx } from '../cx'
+import { Button } from '../Button'
+import { useGenUiAction } from './actions'
 import { defineComponent, type GenUiRenderProps } from './registry'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -175,6 +178,86 @@ function ProgressBar({ args }: GenUiRenderProps) {
   )
 }
 
+// ── Forms (action-bearing — AS-6 §5.4) ──────────────────────────────────────
+
+/** One declared field name → its input id. Kept out of the DSL: a field is a bare
+ *  name, and the label the user reads is that name title-cased, so a model does not
+ *  have to write a parallel label array that can drift out of order. */
+const fieldLabel = (name: string): string =>
+  name.replace(/[_-]+/g, ' ').replace(/^./, (c) => c.toUpperCase())
+
+/** An action button. `label` is BOTH the visible text and the dual payload's
+ *  `humanFriendlyMessage` — one string, so what the transcript shows is literally
+ *  what the user clicked. */
+function ActionButton({ args }: GenUiRenderProps) {
+  const emit = useGenUiAction()
+  const [busy, setBusy] = useState(false)
+  const label = s(args.label, 'Submit')
+  const action = s(args.action)
+  return (
+    <Button
+      variant={s(args.tone) === 'danger' ? 'danger' : 'primary'}
+      size="sm"
+      className="w-fit"
+      loading={busy}
+      // A component with no `action` is not renderable (the arg is required), so a
+      // disabled state here would only ever be dead UI.
+      onClick={async () => {
+        setBusy(true)
+        try { await emit({ action, label, payload: undefined }) }
+        finally { setBusy(false) }
+      }}
+    >
+      {label}
+    </Button>
+  )
+}
+
+/** A typed form: named fields + one submit action. The submitted values become the
+ *  dual payload's MACHINE half (`llmFriendlyMessage` carries the full state); the
+ *  submit label becomes its HUMAN half, so a transcript reads "Submitted expense"
+ *  rather than the JSON of every field. This is the typed-questionnaire consumer
+ *  (§5.4) — one component family, many producers. */
+function GenUiForm({ args }: GenUiRenderProps) {
+  const emit = useGenUiAction()
+  const fields = arr(args.fields).map((f) => s(f)).filter(Boolean)
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [busy, setBusy] = useState(false)
+  const label = s(args.submit, 'Submit')
+  const action = s(args.action)
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    // Every declared field is sent, present or not: a form that silently omits an
+    // empty field hands the agent a payload whose shape depends on what the user
+    // happened to fill, which is how "the model ignored my answer" bugs start.
+    const payload: Record<string, unknown> = {}
+    for (const f of fields) payload[f] = values[f] ?? ''
+    try { await emit({ action, label, payload }) }
+    finally { setBusy(false) }
+  }
+  return (
+    <form className="flex flex-col gap-s" onSubmit={onSubmit}>
+      {args.title != null && (
+        <span className="text-on-surface text-[0.8125rem]" style={fvs(500)}>{s(args.title)}</span>
+      )}
+      {fields.map((f) => (
+        <label key={f} className="flex flex-col gap-1">
+          <span className="text-on-surface-low text-[0.75rem]">{fieldLabel(f)}</span>
+          <input
+            type="text"
+            name={f}
+            value={values[f] ?? ''}
+            onChange={(e) => setValues((prev) => ({ ...prev, [f]: e.target.value }))}
+            className="rounded-lg border border-outline-variant bg-surface px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus-visible:border-primary"
+          />
+        </label>
+      ))}
+      <Button type="submit" variant="primary" size="sm" className="w-fit" loading={busy}>{label}</Button>
+    </form>
+  )
+}
+
 // ── registration ───────────────────────────────────────────────────────────
 
 let _registered = false
@@ -256,6 +339,25 @@ export function registerCoreGenUiComponents(): void {
       { key: 'label', type: 'string' },
     ],
     component: ProgressBar,
+  })
+  defineComponent({
+    name: 'Button', group: 'Forms', description: 'Action button — click sends its label as the turn',
+    args: [
+      { key: 'label', type: 'string', required: true, note: 'visible text AND the message the transcript shows' },
+      { key: 'action', type: 'string', required: true, note: 'the action name the agent/run receives' },
+      { key: 'tone', type: 'string', note: 'primary (default) | danger' },
+    ],
+    component: ActionButton,
+  })
+  defineComponent({
+    name: 'Form', group: 'Forms', description: 'Named text fields + one submit action',
+    args: [
+      { key: 'fields', type: 'string[]', required: true, note: 'field names; values are sent as {name: value}' },
+      { key: 'action', type: 'string', required: true },
+      { key: 'submit', type: 'string', note: 'submit button label (default "Submit")' },
+      { key: 'title', type: 'string' },
+    ],
+    component: GenUiForm,
   })
 }
 

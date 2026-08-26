@@ -68,7 +68,7 @@ describe('artifact-library preview', () => {
     expect(child).not.toBeNull()
     postFrom(child, action)
     expect(launched).toEqual([{}])
-    expect(takePendingWidgetAction()).toBe('[UI] refresh: {"range":"30d"}')
+    expect(takePendingWidgetAction()?.text).toBe('[UI] refresh: {"range":"30d"}')
   })
 
   it('still refuses a forged action from another window', async () => {
@@ -90,7 +90,7 @@ describe('dashboard tile band', () => {
     expect(iframe, 'the tile band rendered no widget frame').not.toBeNull()
     postFrom((iframe as HTMLIFrameElement).contentWindow, action)
     expect(launched).toEqual([{}])
-    expect(takePendingWidgetAction()).toBe('[UI] refresh: {"range":"30d"}')
+    expect(takePendingWidgetAction()?.text).toBe('[UI] refresh: {"range":"30d"}')
   })
 })
 

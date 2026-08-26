@@ -176,6 +176,36 @@ async def api_dashboard_view_tile_refresh(request: web.Request) -> web.Response:
     return web.json_response(result.to_dict())
 
 
+async def api_dashboard_view_tile_action(request: web.Request) -> web.Response:
+    """POST .../tiles/action {ref, action, payload?} — a genui control re-firing this tile.
+
+    The action name is MODEL-AUTHORED (a tile's body is generated), so it is checked against
+    the tile's frozen capability set before anything dispatches. A refusal is a normal
+    answer here, not an error: it comes back 200 with ``ok:false`` + a code + the
+    violations, because the FE renders it beside the control that raised it. A 4xx would
+    make the refusal indistinguishable from a broken request.
+    """
+    from personalclaw.dashboard import tile_actions
+
+    view_id = request.match_info["view_id"]
+    body = await _json_body(request)
+    ref = str(body.get("ref", "")).strip()
+    if not ref:
+        return web.json_response(
+            {"error": {"code": "tile_ref_required", "message": "ref is required"}}, status=400
+        )
+    action = str(body.get("action", "")).strip()
+    payload = body.get("payload")
+    result = await tile_actions.refire(
+        view_id, ref, action=action, payload=payload if isinstance(payload, dict) else None
+    )
+    if result.get("code") == tile_actions.CODE_NOT_FOUND:
+        return web.json_response(
+            {"error": {"code": "tile_not_found", "message": "view or tile not found"}}, status=404
+        )
+    return web.json_response(result)
+
+
 async def api_dashboard_view_tile_resolve(request: web.Request) -> web.Response:
     """POST /api/dashboard/views/{view_id}/tiles/resolve {ref, keep} — accept/dismiss/unpin.
 

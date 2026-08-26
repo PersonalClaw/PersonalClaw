@@ -15,6 +15,7 @@ import { useHashRoute } from './useHashRoute'
 import { useIsMobile } from './useIsMobile'
 import type { RouteProps } from './useQueryState'
 import { ErrorBoundary } from './ErrorBoundary'
+import { syncAppGenUiComponents } from './appGenUiLayer'
 import { api } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { ACTIVE_LOOP_STATUSES } from '../lib/loopStatus'
@@ -245,6 +246,15 @@ function AppInner() {
     // `undefined`. The badge below already tolerates `undefined` (it is the pre-fetch state).
     'apps', () => api.apps(), { persist: true },
   )
+  // The L1 genui component layer (AMBIENT-SURFACES §5.1): an enabled app that declares
+  // `generative-component` + a components module contributes to the HOST registry here,
+  // at the shell — so a chat-born widget can name its components without the user having
+  // opened that app, and DISABLING the app removes them on the same pass. Refused
+  // wholesale in safe mode (the loader checks `maxSurfaceLayer`).
+  useEffect(() => {
+    if (!installedApps) return
+    void syncAppGenUiComponents(installedApps)
+  }, [installedApps])
   const [navAppSet, setNavAppSet] = useState<string[]>(() => getNavApps())
   useEffect(() => onNavAppsChange(() => setNavAppSet(getNavApps())), [])
   const appNavItems: NavItem[] = (installedApps ?? [])

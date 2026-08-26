@@ -31,6 +31,13 @@ import { useInvestigate } from '../lib/investigate'
 import { Button } from '../ui/Button'
 import { Surface } from '../ui/Surface'
 import { GenUiWidget } from '../ui/genui/GenUiWidget'
+import {
+  registerLayerComponent,
+  removeComponentsFrom,
+  type GenUiComponentDef,
+  type GenUiRegisterResult,
+} from '../ui/genui/registry'
+import { LAYER_APP } from '../ui/surfaces/layers'
 
 // ── permission scope carried per app (mirrors manifest Permissions) ──
 export interface AppPermissions {
@@ -46,7 +53,7 @@ export interface AppPermissions {
 /** The closed vocabulary of declared UI capabilities (APE-11). MIRRORS
  *  `UI_CAPABILITIES` in `apps/manifest.py` — the manifest is the source of truth and
  *  rejects anything outside it at install, so this type can stay a plain union. */
-export type UiCapability = 'shell-primitives' | 'generative-widget'
+export type UiCapability = 'shell-primitives' | 'generative-widget' | 'generative-component'
 
 export interface AppContext {
   name: string
@@ -471,6 +478,45 @@ export function GenerativeWidget({ spec, title }: { spec: string; title?: string
   return createElement(GenUiWidget, { content: spec, title: title ?? 'Widget' })
 }
 
+/** Register a genui component contributed by an app (AMBIENT-SURFACES §5.1/§6).
+ *
+ *  This is the "registration reading" APE-11 deferred to AS-6, and it ships with the
+ *  threat argument that scope call asked for. Four properties make it safe:
+ *
+ *   1. **Declared** — refused unless the app's manifest names `generative-component`.
+ *      A `generative-widget` declaration does NOT grant it: supplying a DSL body and
+ *      extending the component vocabulary are different trust edges.
+ *   2. **Additive only** — the registry refuses a name a lower layer owns, so
+ *      model-authored `StatTile(…)` in a chat transcript always reaches the CORE
+ *      StatTile. An app can add `AcmeGauge`; it can never become `Table`.
+ *   3. **Host-validated** — the component's args are declared to the HOST registry and
+ *      validated by it, exactly like a core component's. Nothing here widens what
+ *      `validateInvocation` enforces.
+ *   4. **Removable** — `unregisterAppGenUiComponents(name)` drops every registration an
+ *      app made, and the app-disable path calls it, so a disabled app's components stop
+ *      appearing in `library.prompt()` and stop rendering.
+ *
+ *  Returns the registry's typed result so the app can log its own refusal rather than
+ *  believing a silent no-op registered something. */
+export function registerAppGenUiComponent(
+  app: Pick<AppContext, 'name' | 'uiCapabilities'>,
+  def: GenUiComponentDef,
+): GenUiRegisterResult {
+  if (!hasUiCapability(app, 'generative-component')) {
+    return {
+      ok: false,
+      code: 'invalid',
+      message: `${app.name || 'this app'} did not declare the generative-component UI capability.`,
+    }
+  }
+  return registerLayerComponent(def, { layer: LAYER_APP, source: app.name })
+}
+
+/** Drop every genui component an app registered — the app-disable / unmount path. */
+export function unregisterAppGenUiComponents(appName: string): number {
+  return removeComponentsFrom(appName)
+}
+
 /** Whether *app* declared `cap` in its manifest `uiCapabilities` block. */
 export function hasUiCapability(
   app: Pick<AppContext, 'uiCapabilities'> | undefined,
@@ -502,7 +548,7 @@ export function resolvableAppSpecs(app?: Pick<AppContext, 'uiCapabilities'>): st
 const APP_SDK_UI = { Button, Surface, useTheme, readAppTheme }
 
 /** The `@personalclaw/app-sdk/genui` module — see {@link GenerativeWidget}. */
-const APP_SDK_GENUI = { GenerativeWidget }
+const APP_SDK_GENUI = { GenerativeWidget, registerComponent: registerAppGenUiComponent, unregisterComponents: unregisterAppGenUiComponents }
 
 let installed = false
 

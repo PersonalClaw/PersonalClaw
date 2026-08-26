@@ -116,11 +116,79 @@ parameter would turn "auto-send this prompt" into a link anyone could hand the u
 keeping the authority in-process means only a real widget action can arm it, and the
 handoff expires so a navigation that never reached chat cannot fire a stale turn later.
 
+## Genui actions: dual payloads and the producer (AS-6)
+
+A `<widget kind="genui">` block renders in the HOST React tree, so its controls do not cross
+the postMessage boundary at all. What they share with the iframe path is the TURN DIALECT —
+the `[UI] ` prefix and the 16 KiB clip (`ui/widget/actionTurn.ts`, a leaf module both sides
+import) — and nothing else.
+
+Activating a genui control emits **dual payloads**:
+
+| field | who reads it | content |
+| --- | --- | --- |
+| `llmFriendlyMessage` | the model / the run | `[UI] <action>: {full state}` — the collected form values, JSON |
+| `humanFriendlyMessage` | the TRANSCRIPT | the control's own label ("Log expense") |
+
+The pair exists so a form submit is not shown to the user as raw JSON. On the chat path the
+machine half becomes the message content and the human half rides as `meta.ui_label`, which
+is what the bubble renders — live and after a reload, since the label is persisted with the
+turn.
+
+**Routing is by PRODUCER, and the producer comes from the HOST, never from the widget's own
+text** (`GenUiHostCtx` in `ui/genui/actions.ts`):
+
+| producer | host that declares it | where the action goes |
+| --- | --- | --- |
+| `chat` (default) | none needed | the next user turn, via `ne:widget-action` |
+| `workflow-gate` | `WorkflowAsk` (run view + inbox) | `POST /api/workflows/runs/{id}/resume` with that gate's token — the run advances |
+| `tile` | `PinnedTiles` | `POST /api/dashboard/views/{view}/tiles/action` — a fenced re-fire |
+
+A producer stamped into the block (`gate="run:token"`) was considered and rejected: block
+attributes are model-authored, so a transcript could name a run and turn a click into a gate
+answer. Only a host that already holds the run or tile identity can widen a widget's reach,
+and the default — a plain chat turn — is the harmless one.
+
+**The tile fence.** A tile's body is generated, so the action name arriving at the endpoint is
+untrusted text. `dashboard/tile_actions.py` checks it against the capability set frozen on the
+tile's SAVED binding, through the same helper the trigger fence uses
+(`triggers.screen.unfenced_actions`), and only then re-fires — via `refresh_tile(force=True)`,
+the same path the tile's own refresh button uses, so a UI-originated fire cannot skip the
+unattended gates. The trigger fence's read-only default is deliberately NOT applied here: a
+tile's set is derived from its own nodes, so it is never empty-by-omission, and the default
+would let a button reach a read-only provider the tile never declared.
+
+## The layered surface overlay (L0/L1/L2) + safe mode (AS-6 §6)
+
+| layer | what | removable by |
+| --- | --- | --- |
+| L0 core | the shipped `web/dist` bundle | nothing — the build owns it |
+| L1 app | app pages + app-registered genui components | disabling the app |
+| L2 user/agent | user/agent surface overrides | deleting the override |
+
+Component registrations **compose**: a higher layer may ADD a name, never SHADOW a lower
+layer's — refused at register time (`registerLayerComponent`), because the reason a genui tree
+may render in the host tree at all is that only registered, schema-validated components can
+appear in it, and model-authored `StatTile(…)` must reach the CORE StatTile.
+
+Every load above L0 is error-boundaried (`ui/surfaces/LayerBoundary.tsx`): a broken app
+component renders a named notice and the surface around it survives.
+
+Safe mode forces `maxLayer = 0` — two ways in, deliberately: `#/dashboard?safe=1` (the URL a
+user can be read over the phone) and the `--safe-surfaces` gateway flag, which latches the
+process and stamps a `<meta name="personalclaw-safe-surfaces">` into `index.html` so the
+ceiling is known BEFORE the first app module loads. Because L0 is immutable and the safe route
+is part of L0, agent-written UI cannot brick the app.
+
 ## Where this lives
 
 | concern | file |
 | --- | --- |
-| the wire: validator, `[UI]` composer, consumers | `web/src/ui/widget/useWidgetActionBridge.ts` |
+| the wire: validator, consumers | `web/src/ui/widget/useWidgetActionBridge.ts` |
+| the `[UI]` turn dialect (prefix, clip, publisher) — a LEAF both paths import | `web/src/ui/widget/actionTurn.ts` |
+| genui dual payloads + producer routing | `web/src/ui/genui/actions.ts` |
+| the surface-layer ceiling + safe mode | `web/src/ui/surfaces/layers.ts`, `personalclaw/dashboard/surface_layers.py` |
+| the tile re-fire fence | `personalclaw/dashboard/tile_actions.py` |
 | the child document + its `isTrusted` gates | `web/src/ui/widget/widgetSrcdoc.ts` |
 | HTML widget host (chat, tile band) | `web/src/ui/widget/WidgetFrame.tsx` |
 | React widget host (height + errors only) | `web/src/ui/widget/ReactWidgetFrame.tsx` |

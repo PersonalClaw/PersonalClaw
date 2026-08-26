@@ -798,3 +798,95 @@ picture; `web/src/pages/dashboard/world/` renders it ("Orbit", a new dashboard b
   and `read_frame` puts `OP_CONTINUATION` in `RINGING_OPCODES` and ignores FIN, so a fragmented
   message rings more than once (extra refetches only, never a payload leak, and the docstring
   reads as deliberate).
+## Execution log — AS-6 (Genui action routing + app-contributed components + L0/L1/L2 + safe mode)
+
+- [2026-08-26][AS-6] **DONE for five of the six `done_when` clauses; the sixth is partial and named
+  below.** What already existed with no consumer: the genui registry + renderer (AS-4), the
+  `[UI]`-turn bridge (AS-5), `controller.resume` (whose docstring already advertised "the out-of-band
+  entry point (widget, …)"), the trigger-side frozen-capability helpers
+  (`triggers.screen.unfenced_actions`/`capability_allows`), and the `resume`/`refresh` endpoints. What
+  this atom BUILT: `ui/genui/actions.ts` (dual payloads + producer routing), the `Forms` component
+  group (`Button`, `Form` — the first action-bearing components), the `ui_label` turn seam through
+  ChatPage + `hydrateTurns`, `ui/surfaces/layers.ts` + `LayerBoundary.tsx`, the layer-aware registry
+  (`registerLayerComponent`/`removeComponentsFrom`), the `generative-component` capability +
+  `ui.components` manifest field + the shell-side L1 loader (`app/appGenUiLayer.ts`),
+  `dashboard/tile_actions.py` + `POST /api/dashboard/views/{view}/tiles/action`, and
+  `surface_layers.py` + `--safe-surfaces`. Gate: `make lint` 0 (mypy 1031 files),
+  `scripts/gate_report.py` 6/6, 47 targeted pytest + 203 adjacent pytest, `npm run typecheck:web` 0,
+  **497 web test files / 5291 tests**, `npm run build` 0.
+- [2026-08-26][AS-6] 🔴 **DISCOVERY — the fence's negative tests were being satisfied by the WRONG
+  control, and only a falsification run showed it.** With `unfenced_actions` deleted from
+  `tile_actions.check`, all sixteen tile tests still passed: every action they named (`bash`,
+  `run-prompt`, `notify`, …) is refused by the `DATA_PROVIDERS` allowlist on its own, so the frozen
+  set was **unmeasured**. The missing case is the one only it catches — `knowledge-retrieve` IS a tile
+  data provider (the allowlist admits it) but THIS tile declared only `knowledge-health`. Added as
+  `test_an_allowlisted_provider_the_tile_never_DECLARED_is_still_refused`, with the allowlist
+  membership asserted so the test says out loud when it would stop measuring the fence.
+- [2026-08-26][AS-6] 🔴 **DISCOVERY — a five-module import cycle, found as a collection error.**
+  `appSdk` imports the genui renderer → the genui component set → the action router → the widget
+  bridge → `appSdk` (for `launchChat`). The genui suite failed with
+  `registerCoreGenUiComponents is not a function` — whichever module the bundler entered first lost
+  its exports. Fixed by carving the `[UI]` turn dialect (prefix, 16 KiB clip, event name, publisher)
+  into a LEAF module `ui/widget/actionTurn.ts` that reaches nothing; both sides import it and the
+  bridge re-exports it so its existing consumers keep one public path. The single-path rail was
+  re-derived onto the leaf rather than widened.
+- [2026-08-26][AS-6] **DEVIATION — the producer is HOST-supplied, not stamped into the block.** The
+  first implementation carried `gate="<run>:<token>"` / `tile="<view>:<ref>"` as `<widget>`
+  attributes. That is a forge vector: block attributes are MODEL-authored, so a transcript could name
+  a run and turn a click into a gate answer. Replaced with `GenUiHostCtx` — only a host that already
+  holds the run/tile identity can widen a widget's reach, and the default (a chat turn) is the
+  harmless one. The attribute plumbing was reverted in the same change, so there is one path.
+- [2026-08-26][AS-6] **DEVIATION — "the *trigger's* frozen capability set" reads as the TILE's.** A
+  tile cannot bind a trigger yet: `TileRefresh.mode: "view"` is deliberately absent until
+  EXT:AUTOMATION-SUBSTRATE step 8 (AS-2's own log records why). So the frozen set is derived from the
+  tile's SAVED binding, enforced through the same helper the trigger fence uses, in ONE function
+  (`tile_actions.frozen_capabilities`) that a `mode:"view"` tile will later read `Trigger.capabilities`
+  from instead. The invariant and its enforcement point do not move. The trigger path's READ-ONLY
+  DEFAULT is deliberately NOT reused: a tile's set is derived from its own nodes so it is never
+  empty-by-omission, and the default would admit a read-only provider the tile never declared.
+- [2026-08-26][AS-6] **DEVIATION — this atom lands the "registration reading" APE-11 deferred.**
+  `APP-PLATFORM-EVOLUTION.md` states the scope call plainly ("an app contributes a WIDGET, never a
+  component TYPE … if the owner wants the registration reading, it is a separate atom with its own
+  threat argument"). AS-6's `done_when` IS that atom, so the reading landed with the argument that
+  call asked for: a separate `generative-component` declaration (a `generative-widget` grant does NOT
+  imply it), additive names only (core names refused at register time, so model-authored `Table(…)`
+  always reaches the core `Table`), host-schema validation unchanged, an error boundary at the layer
+  seam, and removal on disable in the same pass that loads. APE-11's own test — an app-named
+  component is dropped with `unknown-component` — still passes untouched, because an app that
+  registered nothing still reaches nothing.
+- [2026-08-26][AS-6] 🔴 **DEVIATION / process incident — a test booted the REAL gateway against the
+  REAL home.** An early version of `test_the_entrypoint_latches_before_it_boots_anything` called
+  `cli_server._gateway(safe_surfaces=True, no_dashboard=True)` expecting a fast failure. It started a
+  real gateway: it regenerated `~/.personalclaw/agents/personalclaw.json` and appended one
+  `tool_policy.no_session_key` row to `~/.personalclaw/security_events.jsonl` before the 120 s pytest
+  timeout killed it. Nothing was destroyed (the agent config is rewritten at every boot; the ledger is
+  append-only), and no other real-home path was touched. The test was replaced with a source-order
+  assertion (the latch precedes `AppConfig.load()`), and the incident is written into that test's
+  docstring so the next author does not repeat it.
+- [2026-08-26][AS-6] **DISCOVERY — a form gate is `kind: "approval"` + `ask_kind: "form"`.** Writing
+  `kind: "form"` in a gate's config fails the node with "unknown gate kind" and raises NO continuation
+  at all (`GateKind` is a closed enum; `engine._ask_payload` reads the separate `ask_kind`). The
+  gate-resolution test first failed this way.
+- [2026-08-26][AS-6] **DEVIATION — two re-derived guards, both invited by their own comments.**
+  `liquidAdoptionRail`'s `BODY_GATE` regex anchored on `{x ? <WidgetFrame`, which the genui tile
+  branch nests; re-anchored on the `{body ?` expression with BOTH renderers asserted inside it (the
+  invariant — the morph sits before the conditional and in neither branch — is unchanged).
+  `widgetBridgeSinglePath`'s "exactly one owner" now names the leaf and additionally asserts the
+  bridge does not RE-DECLARE the event name.
+- [2026-08-26][AS-6] **UNMET — the L2 producer does not exist.** The layer model, the ceiling, the
+  refusals and the boundary are layer-generic and L2 is exercised (a user-layer component is
+  boundaried and refused in safe mode), but nothing WRITES a user/agent surface overlay: there is no
+  `~/.personalclaw/surfaces/` loader. Building one is an agent-writable-code surface that wants its own
+  threat argument, and a declared layer with no producer is the shape this repo has been burned by, so
+  it is named here rather than half-built. Safe mode's consequence for L1 IS real and tested (an app
+  page refuses to load, app registrations are refused).
+- [2026-08-26][AS-6] **UNMET — "tiles rendered as inert links" in safe mode.** §6 names that as part of
+  the recovery route; today safe mode stops the app layer and the overlay layer, and the tile band
+  still renders its own core widget. The tile band is L0 code, so the recovery route is not
+  compromised, but the inert-link treatment is not built.
+- [2026-08-26][AS-6] **STILL UNVERIFIED — not driven in a browser.** Every clause is asserted in
+  jsdom against real components (`WorkflowAsk`, `PinnedTiles`, `GenUiWidget`) with `api` mocked, and
+  the two backend halves against real runs / a real tile store. No live gateway drive was done. The
+  chat-bubble leg is the weakest: `ChatPage.tsx` is not mountable in this suite, so the live-send
+  wiring is asserted on its SOURCE (four call sites) while the RELOAD path is asserted through the
+  real `hydrateTurns` with a vacuity leg.
