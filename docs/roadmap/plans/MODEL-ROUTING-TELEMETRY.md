@@ -1464,3 +1464,21 @@ untouched here by instruction. ② The feedback signal is still structurally zer
 `success_rate` — correct per the clause, and the producer-side stamp remains EXT's, not this atom's.
 ③ A user who never triggers unattended model calls never accumulates a fold, so the queue stays empty
 by construction — that is the mechanism working, not a gap.
+- [2026-08-25][MRT-5] ✅ **ATOM FLIPPED `done` (PR #2066).** Integration re-gated the branch on
+  `origin/main` = `20488b9e` rather than inheriting: `make lint` pass (black 2073, mypy 1018 sources);
+  `pytest` 274 passed over 8 routing suites, 27 over chokepoint+guard, 53 over the reference/alias
+  ratchet; `scripts/gate_report.py` 6/6; `npm run test:web` **488 files / 5189 passed** (full suite),
+  `typecheck:web` + `build` green; probe sweep 16 pre-existing / 0 introduced. **Falsification re-run
+  independently:** cutting the enqueuer wire at `routing/stats.py:153` (`_check_for_gap(...)` → `pass`,
+  grepped back to 1 remaining hit = the `def` only) produced **6 red**, and the load-bearing one is
+  `test_the_fold_write_leaves_routing_policy_byte_identical` failing with *"nothing was proposed — this
+  would pass vacuously"*. Without that floor the propose-don't-write assertion would have gone **green
+  with the wire cut** — the vacuity requirement earning its place, not decorating the test.
+  **Both unpushed MRT-5 branches were adjudicated STALE on blob identity** (`routing/learned.py`
+  `5edc24cd` and `routing/proposals.py` `d28994c9` are byte-identical to main; both test files strict
+  subsets), so nothing was cherry-picked and no authorship was lost. The flip is justified against the
+  criterion: the trigger-point choice was an in-scope implementation decision resolved with a
+  measurement (route time already pays `AppConfig.load()`, a fold read, `feedback_index`'s events walk
+  and the rate table per call, so "keep the hot path pure" was already false), and the structurally-zero
+  feedback signal is the path the clause **explicitly permits** (renormalise onto `success_rate` with
+  `feedback_n: 0`) with the producer-side stamp owned by the EXT dep.
