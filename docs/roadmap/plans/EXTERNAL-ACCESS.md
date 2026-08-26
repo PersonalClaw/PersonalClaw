@@ -782,3 +782,109 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   **Gate:** `make lint` clean (mypy 1011 files); at integration on the rebased tip, the 6 suites importing
   `inbound.capture_proxy`/`inbound.clients` plus the new file → **260 passed, 0 failed**; the new file alone
   **10 passed**; `gate_report.py` 6/6 PASS; probe sweep 16. No `web/` files.
+
+## Execution log — `EA-2` (§2 Dialect 1: the OpenAI-compatible `/v1` doorway, Session 2)
+
+- [2026-08-25][EA-2] **DONE — `/v1/*` mounted.** New `inbound/openai_dialect.py` registered from
+  `dashboard/server.py:439` beside `/mcp` and `/capture`: outside the cookie-auth world, its own bearer,
+  its own peer rail. Mounts UNCONDITIONALLY and refuses per request (the capture-proxy pattern, not
+  `mcp_http.mount`'s startup gate) so the Settings toggle needs no restart; a disabled surface answers 404
+  either way. Five literal routes: `POST /v1/chat/completions`, `GET /v1/models`, `POST /v1/audio/speech`,
+  `POST /v1/audio/transcriptions`, `GET /v1/audio/voices`. `external_access.openai` already existed from
+  EA-1 (loader.py:3944/5159) so no config round-trip work was needed.
+- [2026-08-25][EA-2] **Closed:** dual `model` form (`personalclaw/<agent>` + bare) → agent; unknown agent
+  → **404 in the wire error shape with a stable `code`**; SSE `chat.completion.chunk` translation with
+  `usage` on the final frame + `[DONE]`; non-stream returns exactly one `chat.completion`; `user` +
+  `X-PersonalClaw-Session` → `inbound:<client_id>:<sha8>` behind `persistent_sessions`; tool calls
+  server-side only (never `tool_calls` deltas); needs-approval → dashboard-pointer message with
+  `finish_reason: "stop"`; `/v1/audio/*` aliases with the `resolve_voice(name)` seam; per-client
+  `SpendMeter` budgets; guardrails headless classification; the no-provider-names rail.
+- [2026-08-25][EA-2] **The unknown-agent 404 is the load-bearing line.** `resolve_agent_bindings`
+  (loader.py:5800 step 2) **silently falls back to `default_agent`** for a name it does not know. Right for
+  the dashboard, wrong for an external caller, who would be answered by an agent it did not ask for with no
+  way to tell. So the dialect checks `config.agents` membership ITSELF and 404s before calling the
+  resolver. Falsified: inverting that one boolean turns the 404 into a **200 from the wrong agent**.
+- [2026-08-25][EA-2] **DEVIATION — `inbound:` was NOT added to `session._STATELESS_PREFIXES`.** EA-9's
+  ruling stands and its reasoning was re-verified: that list is the PROVIDER resume/pool axis, and
+  `inbound:cli:` shares this prefix, so adding it would break §9.5's `--session` continuation clause. No
+  narrower literal prefix separates them (the middle segment is a client_id and `cli` is a value it can
+  take). Statelessness is therefore enforced per-request in `_reset_session`, on **both** axes: the
+  transcript AND the provider resume id. The guardrails half of the clause needed no work — EA-9 already
+  landed `policy.INBOUND_PREFIX`, so `profile_for_session` on an `inbound:` key resolves `headless`
+  (asserted, with `mychat` → `interactive` beside it as the vacuity floor).
+- [2026-08-25][EA-2] 🔴 **A purge through a fresh `SessionMap()` would have been silently undone.**
+  `SessionMap` loads from disk in `__init__` and every read answers from `self._data`, so a fresh instance
+  deleting a row removes it from DISK while the gateway's long-lived `SessionManager._session_map` keeps it
+  in memory — and that instance's next `set`/shutdown writes the whole dict back, restoring the id. The
+  purge now goes through the LIVE map (`state.sessions._session_map`) and only falls back to a fresh
+  instance. Caught by a test asserting the live instance, not "some copy lost the row".
+- [2026-08-25][EA-2] **Per-client budgets came free from the key shape, and that is fragile.**
+  `chat_handlers._run_chat_scoped` (added by EA-9) reads segment 1 of an `inbound:` key as the SpendMeter
+  run scope and binds `safety_budget_for_inbound()`. Using §2.1's `inbound:<client_id>:<sha8>` therefore
+  makes the budget per-CLIENT with no new code — but it also means a change to the key shape would
+  silently relabel every client's spend into one bucket. Pinned by its own test.
+- [2026-08-25][EA-2] 🔴 **mypy caught a real defect: `stitch_wavs` is `async`.** The sentence-chunk
+  stitcher was called synchronously, so `await`-less `stitch_wavs(paths) or ""` returned a truthy coroutine
+  that passed the guard and raised inside `open()` — swallowed by the broad except, which returned the
+  **first sentence only** as a 200 with valid audio. A multi-sentence reply playing back truncated is
+  exactly the plausible-sounding wrong answer that fallback exists to avoid.
+- [2026-08-25][EA-2] **DEVIATION — `openai_error` DELEGATES to `http_errors.json_error`; admission reuses
+  the generic codes.** `gate_report.py` flagged the first draft twice and both were right. (1)
+  `structural-duplication`: a module-local envelope helper is a fourteenth clone of the family PL-8 spent a
+  session deleting — `json_error`'s `error_extra` already merges keys INSIDE the `error` object, which is
+  exactly what the wire's `type`/`param` need, so the surface's shape is expressible with no clone. That
+  also puts all 19 codes under the append-only registry rail. (2) Following the inbound-MCP section's
+  stated ruling, ADMISSION answers reuse `not_found`/`forbidden`/`unauthorized`/`service_unavailable`
+  and the caps reuse `rate_limited`/`request_too_large`, because a code naming this surface hands a prober
+  what the 404 status is chosen to withhold. 13 new post-admission codes registered in `HTTP_ERROR_CODES`.
+- [2026-08-25][EA-2] **DEVIATION — the turn runner is INJECTED, not imported.** `gate_report.py`'s
+  `core-must-not-import-the-http-surface` caught `inbound/` → `dashboard.chat_handlers`. The gate's
+  rationale is the real argument: a domain module that imports a handler cannot be exercised without
+  standing up the web app, which is how a feature becomes reachable through one route and invisible to the
+  CLI and the harness. `register_routes(app, *, turn_runner)` now takes it from the composition root
+  (`dashboard/server.py`), a REQUIRED keyword — an optional injection point is one that silently stops
+  being used. Two tests: the dialect source contains no `personalclaw.dashboard`, and `server.py` really
+  passes it (a required parameter proves the module ASKS, not that anything hands one over).
+- [2026-08-25][EA-2] **OWNER DECISION SURFACED — `_DYNAMIC_CODE_SITE_CEILING` 16 → 17.** `openai_error`
+  forwards a keyword-only `code` into `json_error`, and the census scanner follows `json_response` PAYLOAD
+  wrappers and module-level string constants but not a forwarded code parameter, so the site reads as
+  "computes its code" while nothing on that path computes anything. Rather than weaken the guarantee, it is
+  re-proven one level up: `test_every_dialect_error_code_is_a_registered_literal` AST-parses the module,
+  asserts every `openai_error` call passes a bare literal (with a ≥10-site vacuity floor), and asserts each
+  literal is registered. **That new rail immediately caught a real `code=... if ... else ...` expression in
+  the admission path**, now two explicit literal branches. The alternative — teaching the shared census
+  scanner to follow code-forwarding wrappers — is the stronger fix but edits a rail owned by
+  PLATFORM-HARDENING-FLOORS; not taken here to avoid widening scope. **Owner call available:** accept the
+  compensated ceiling, or fund the scanner extension.
+- [2026-08-25][EA-2] **Zero provider names, with a rail that has been watched fail.** The rail greps the
+  dialect for BINDABLE vendor names (piper, faster-whisper, kokoro, elevenlabs, anthropic, gemini, ollama,
+  bedrock, …) and is deliberately scoped to THIS module and deliberately excludes `openai` itself:
+  `docs/architecture/provider-boundary.md:32` blesses the `/v1/audio` shapes in core as "a de-facto
+  protocol implemented by many vendors", so banning the wire format's own name would make the rail
+  unsatisfiable and it would be deleted. A second, independent assertion pins that the dialect never
+  BRANCHES on `tts-1`/`whisper-1` — the leak the name-grep alone would miss. Vacuity proven two ways: the
+  scan function is called on mutated strings (`piper` caught, `openai`/`tts-1` not), and inserting a live
+  `if model == "tts-1": voice = "piper"` reddened both rails.
+- [2026-08-25][EA-2] **Success Criteria 2 VERIFIED with the real client.** `openai` 3.0.0 is already an
+  optional extra (`pyproject.toml [openai]`, not a runtime dep, so none was added);
+  `tests/test_ea2_openai_sdk_drive.py` drives an UNMODIFIED `openai.OpenAI` — a two-turn conversation with
+  `user` continuity landing on ONE session key, `stream=True` with `usage` surfaced by the SDK's own
+  parser, `models.list()`, and typed `NotFoundError`/`AuthenticationError` carrying the stable codes — plus
+  a real `curl` POST to `/v1/audio/speech` returning `audio/wav` bytes. Guarded by `importorskip` with a
+  reason naming what goes unverified without the extra. **Honest limit:** the bound TTS/STT providers are
+  stubbed (a real one needs a downloaded voice model), so what is verified end-to-end is the HTTP contract
+  and that the cosmetic `model` never chose the engine — not a live synthesis.
+- [2026-08-25][EA-2] **Gate:** `make lint` exit 0 (black 2073 files, isort, flake8, **mypy 1018 source
+  files** clean) · `gate_report.py` **6/6 PASS** (both earlier FAILs root-caused, not suppressed) ·
+  `test_ea2_openai_dialect.py` + `test_ea2_openai_sdk_drive.py` + `test_http_error_codes_append_only.py`
+  + `test_wire_error_envelope_census.py` → **65 passed, 0 failed** · the 5 suites importing
+  `inbound.clients`/`external_access`/config round-trip → **268 passed, 0 failed** · probe sweep **16
+  pre-existing, 0 introduced** · real-home rail clean on a serial re-run (one `skills` residue during a
+  6.6-min parallel run was a sibling agent on this shared machine, not this change — no `skills` string
+  exists anywhere in the diff). No `web/` files touched.
+- [2026-08-25][EA-2] **Not built here (out of the atom's `done_when`):** `GET /v1/models` for a client
+  with no record lists every configured agent (the surface-token caller is anonymous by design); `/v1`
+  carries no `allow_remote` integration test (the peer rail is `auth.peer_allowed`, already covered by
+  EA-1); `_prompt_of` sends the last user turn plus system messages rather than replaying the client's
+  whole array, because replaying PersonalClaw's own prior assistant turns as user input is how a dialect
+  teaches an agent to talk to itself — a client needing full-array fidelity is a separate decision.
