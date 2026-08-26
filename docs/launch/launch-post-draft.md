@@ -4,6 +4,14 @@
 Repo-relative links below must be rewritten to canonical `personalclaw.dev` URLs at publication
 time; that rewrite and the site plumbing belong to the website atoms, not to this draft.
 
+**Why this file is here and not at `src/content/blog/launch.md`.** DL-6 names that path, but it is
+an Astro content path and no such collection exists in either repo: this repo has no `src/content/`
+at all, and `personalclaw.dev/src/content.config.ts` defines a single `docs` collection (Starlight
+`docsLoader`) with no `blog`. Publishing this post therefore needs a website-repo change — define a
+`blog` collection, add its route and listing — which cannot land from the core repo. The prose lives
+here, in the repo whose code every claim below is verified against; moving it under a website
+collection is a website atom.
+
 **How to read this post.** Every claim below names the file that proves it. If a claim has no
 artifact next to it, it should not be here — and a few claims that started in the outline were
 cut for exactly that reason. The list of what got cut is at the end, because it is the most
@@ -55,6 +63,43 @@ host, and a new module reaching an already-listed host does not red the sweep. S
 can answer "is there somewhere new it could go", which is the question a phone-home is; it cannot
 answer "what data left".
 
+### The runtime chokepoint, and the exact shape of its default
+
+The census is a build-time control. The runtime one is a single function:
+[`src/personalclaw/net/guard.py`](../../src/personalclaw/net/guard.py)`::evaluate`, which every
+core fetch surface routes through, deciding against a declared
+[`EgressPolicy`](../../src/personalclaw/net/policy.py). Its order is worth reading because the
+order *is* the control: scheme allow-list, then the operator's `deny_hosts` (a deny always wins),
+then the exclusive allow-list — both **before** DNS resolution, since a DNS query is itself an
+egress signal — then resolve, classify each returned IP, block the private/loopback/link-local
+ranges, and pin the resolved IP so the connection dials what was actually validated. An
+unresolvable host fails closed.
+
+Now the part a launch post is tempted to overstate. **The default posture is deny-by-default about
+private ranges, not about destinations.** The default profile `STRICT`, and the `all` egress tier,
+reach *every public host*; what they block is the LAN, loopback and metadata-address class of
+target. An exclusive "only these hosts" stance exists only under the `listed` and `registry` tiers
+(`allow_only=True`), and `policy.py`'s own comment records that before that flag existed the tier
+plane "was decorative" — a 22-host registry preset reached the whole public internet exactly like
+`STRICT`.
+
+Two things narrow the claim further, and both are in the code rather than in the marketing:
+
+- **`security.egress.allow_hosts` does double duty.** The same match populates
+  `operator_allowed` in `guard.py`, which both waives the private-range block (the homelab
+  LAN-webhook case) *and* satisfies the exclusive allow-list. Operator hosts are UNIONed onto a
+  tier's preset by `egress_policy_for`. So a host you added once for a LAN webhook also widens a
+  later `registry`-tier run, and "the registry tier reaches dev registries only" stops being true
+  the moment you have any operator allow-list at all.
+- **`on_violation: "warn"` audits and allows.** It is a documented operator escape hatch, so the
+  chokepoint can be configured down into a logger.
+
+There is also one narrow fail-open window, which the function's own comment names: if the egress
+config has never been read successfully, the best-effort `except` returns the base profile and the
+operator's `deny_hosts` do not apply. After one successful read the last-known deny list is
+remembered at module scope specifically so a later read failure cannot un-deny a host. Denials only
+ever grow; allowances are dropped on error. That is the right asymmetry, and it is still a window.
+
 **And one destination is contacted without you asking.** At gateway start, and at most once every
 12 hours ([`src/personalclaw/dashboard/handlers/updates.py`](../../src/personalclaw/dashboard/handlers/updates.py)),
 PersonalClaw asks GitHub whether a newer release exists. The request carries a
@@ -66,6 +111,17 @@ gates the unattended pull-and-restart, not the check.
 So the accurate claim is: no analytics, no crash reporting, no usage telemetry, and one unprompted
 release check to GitHub. A post claiming "zero telemetry, and you can turn off even the update
 check" would be factually wrong today, so this post does not claim it.
+
+One detail belongs here precisely because it looks bad on a grep and turns out to be fine. Your
+PersonalClaw home contains a file called `telemetry_salt`, and `GET /api/status` returns an
+`owner_id_hash` — an HMAC-SHA256 of your hostname and username
+([`src/personalclaw/dashboard/handlers_system.py`](../../src/personalclaw/dashboard/handlers_system.py)).
+That is exactly the shape of a pseudonymous analytics identifier. It is not one: it is a field in a
+response served to your own dashboard by your own local gateway, there is no code that sends it
+anywhere, and the salt is treated as a secret — excluded from sync shards, denied to packs, and
+filed under `security` in `snapshot.py`. The name is aspirational for infrastructure that does not
+exist; `handlers/core.py` says so in as many words ("Derived, not collected … no telemetry
+infrastructure"). Grep it yourself rather than taking the sentence.
 
 ## Receipt 3: an audit trail that notices tampering
 
@@ -153,6 +209,26 @@ you need per-app network isolation, dependency isolation between apps, or enforc
 auto-approving agent, PersonalClaw does not have those today and this post is not going to imply
 otherwise.
 
+The egress chokepoint needs its own sentence, because "all network access goes through one guarded
+function" is the kind of claim a reader will reasonably assume from Receipt 2, and it is not what
+the code says. `net/guard.py` governs **core's** fetch surfaces. An installed app's backend is its
+own OS process with its own network stack, so its outbound traffic never reaches the guard at all —
+[`docs/security/threat-model.md`](../security/threat-model.md) lists an app's own network traffic
+under what PersonalClaw deliberately does not defend against, and the `network` permission is
+disclosure at install consent rather than a boundary. What is enforced for apps is the supply-chain
+scan on what you install and the gateway-mediated `api` reach. Alongside that: the default posture
+reaches any public host, one operator allow-list entry widens every exclusive tier that later run
+uses, `on_violation: "warn"` demotes the guard to an audit log, and operator denials do not apply
+until the egress config has been read successfully once. Each of those is defensible in isolation;
+together they mean the honest summary is "a real chokepoint with a configurable ceiling, covering
+core and not apps", not "nothing leaves without passing the guard".
+
+The threat model is also explicit that a compromised host OS or account, physical access to an
+unlocked machine, tampering with the installed package before startup, and the owner's own
+auto-approve choices are all outside the model. Those are scope statements, not bugs — but a reader
+deciding whether to trust this software unattended should read them as limits, because that is what
+they are.
+
 ## How the work is checked
 
 The roadmap is executed as small atoms, each with a written execution log in
@@ -201,3 +277,13 @@ attractive sentences are unsupported.
   logs, because neither `CONTRIBUTING.md` nor `AGENTS.md` uses the word.
 - **A comparison against named competitors.** Omitted. No peer set has been chosen, and naming
   peers is positioning, not implementation.
+- **"All network access goes through one guarded chokepoint."** Cut. `net/guard.py::evaluate` is a
+  real chokepoint for core's fetch surfaces, but an app backend is a separate OS process with its
+  own network stack and never passes through it.
+- **"Egress is deny-by-default."** Cut as written. It is deny-by-default about private/loopback/
+  link-local ranges; the default profile reaches any public host. Only the `listed` and `registry`
+  tiers are an exclusive allow-list.
+- **"The registry egress tier reaches package registries only."** Cut. `egress_policy_for` unions
+  the operator's `security.egress.allow_hosts` onto the tier preset, and `guard.py` uses one match
+  for both the private-range waiver and the exclusive allow-list — so any operator entry widens the
+  tier.
