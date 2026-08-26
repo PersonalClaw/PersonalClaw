@@ -2231,11 +2231,11 @@
         {
           "id": "AS-7",
           "title": "macOS menu-bar tray companion (thin client app)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a77 Menu-Bar Companion (\u00a77.1 what it shows, \u00a77.2 how it connects \u2014 thin shell/no new backend, \u00a77.3 packaging through the app platform).",
           "done_when": "a first-party app with platform:{os:[darwin], installMode:client} renders live run rows (GET /api/loops), pending approvals (GET /api/approvals) with one-click Approve/Deny (POST /api/approvals/{id}/{action}), and needs-input deep links (#/loops/<id>); ONE /api/ws connection consumed as refetch signals (never payloads) with backoff-reconnect; a badge = pending approvals + needs-input; muting notifications in Settings mutes the tray (single notification_allowed gate); gateway-offline renders a grey \"gateway offline\" state; install drops the native menu-bar binary + a login LaunchAgent and uninstall removes both; manifest permissions.api/events scope it, with no provider block and no new PROVIDER_TYPES entry.",
           "deps": [],
-          "blocked_reason": "PARTIAL 2026-08-26 (PersonalClawApps#53, rebase-merged 754030cc) - the menu-bar-companion bundle ships (20 files, 49 tests green, platform client-install manifest) and its own PR declares PARTIAL. The bundle declares no quality block, so APE-4's verifier does not reach it. Unmet clauses to re-measure against the done_when before flipping: the ONE /api/ws connection consumed as refetch signals only (never payloads) with backoff-reconnect, the badge = pending approvals + needs-input, and the Settings mute. Not blocked on another plan."
+          "pr": 54
         },
         {
           "id": "AS-8",
@@ -5737,7 +5737,7 @@
             "APE-11",
             "EXT:DESIGN-SYSTEM-CONSISTENCY:tokens/primitives to consume"
           ],
-          "blocked_reason": "PARTIAL 2026-08-26 (PersonalClawApps#53, rebase-merged 754030cc) - the criterion says BOTH apps and only GROWTH was migrated. Growth's migration is real and CI-backed rather than asserted: it is the one bundle in the repo declaring quality {tested:true, designSystem:'v2', a11y:false}, and APE-4's new quality-declarations job re-checks that designSystem claim against token-lint on every push (falsified locally: flipping growth's a11y to true, a claim with no axe report behind it, exits 1). MINUTES declares no quality block and was not touched. Remaining work is exactly the same migration for minutes/ plus its declaration; nothing blocks it."
+          "blocked_reason": "PARTIAL 2026-08-26 (PersonalClawApps#54, rebase-merged f3963408) - BOTH apps are now migrated and token-lint is 0 for each (growth 0; minutes 9 -> 0, with all six copied style constants deleted, spacing/radius tokenized, type moved to the data-type role layer, and every prop passed to Button/Surface audited against their real signatures - 9 and 2 used, ZERO unknown, which matters because neither forwards ...rest). Minutes now declares quality {tested:true, designSystem:'v2', a11y:false}, so APE-4's verifier re-checks its designSystem claim on every push. THE ONE UNMET CLAUSE is the done_when's 'look native (SCREENSHOT check)': neither minutes/ui nor growth/ui has node_modules, so no bundle can be built offline and the host cannot mount either page for a visual comparison. The committed rail covers this as far as static evidence can - test_built_bundle_imports_only_specifiers_the_host_resolves checks the real artifact when one exists and asserts its own absence otherwise rather than silently passing. Clears with npm ci in both ui/ dirs plus a gateway run with PERSONALCLAW_FIRST_PARTY_APPS_DIR pointed at the apps clone."
         },
         {
           "id": "APE-7",
@@ -7553,11 +7553,6 @@
       {
         "id": "AS-6",
         "title": "Genui action routing + app-contributed components + L0/L1/L2 surface overlay + safe mode",
-        "plan": "AS"
-      },
-      {
-        "id": "AS-7",
-        "title": "macOS menu-bar tray companion (thin client app)",
         "plan": "AS"
       },
       {
@@ -9709,9 +9704,9 @@
         "code": "AS",
         "plan": "AMBIENT-SURFACES",
         "total_atoms": 9,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
