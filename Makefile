@@ -84,6 +84,16 @@ test:
 ## whether the app is accessible, installable or functional. Folding an always-red suite into the
 ## default browser gate would make the gate mean nothing — the failure mode every rail in this repo
 ## is written to avoid.
+##
+## MEASURED OFFLINE AND CREDENTIAL-FREE (PHF-7's last clause), Darwin dev machine, 2026-08-26:
+## 484 passed / 8 skipped / 0 failed, 7.8m of Playwright time, 469s wall clock including `npm run
+## build` and both webServer boots. Run with HTTP_PROXY/HTTPS_PROXY/ALL_PROXY pointed at the closed
+## port 127.0.0.1:1 and NO_PROXY=localhost (localhost MUST stay exempt or the harness cannot reach
+## the gateway it just started), and with every provider credential unset from the environment.
+## Egress was DENIED, not merely unused — which is the distinction that makes the number mean
+## something. The gateway's update checker reached for `git fetch` and was refused 537 times over
+## the run, and the gate stayed green anyway. A run where nothing had tried would have proved
+## nothing about being offline; this one proves the app degrades rather than depends.
 test-e2e:
 	cd $(WEB_DIR) && npx playwright test --project=chromium --ignore-snapshots
 
