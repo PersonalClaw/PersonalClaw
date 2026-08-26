@@ -1322,3 +1322,145 @@ skipped / 12 xfailed**, one red: `test_loop_worktree_sparse::TestPoolBound::test
 
 **The sweep's line numbers were all exact** against `03729754` — `:119`, `:122`, and the three SEL sites
 at `:604`/`:617`/`:654`. No drift to correct.
+
+## Execution log — MRT-5's missing executor: the gap detector, its trigger point, and the review surface (2026-08-25)
+
+**DONE — the two NOT-MET clauses of the 2026-08-24 audit are built, and its ⚠️ OWNER DECISION is
+answered.** Base `origin/main` `20488b9e`, branch `improvement-mrt5-close`, commit `6335c929`.
+
+**Branch triage first — both leftover local branches are ALREADY ON MAIN and were deleted from the
+work plan, not landed.** Decided on CONTENT, per [[stacked-pr-merged-is-not-on-main]], never on PR
+state or `git cherry`:
+
+- `feature-mrt5-learned-ordering` (`7850420e`) — `routing/learned.py` blob
+  `5edc24cd` **byte-identical** to `origin/main`; `tests/test_routing_learned_order.py` is a strict
+  SUBSET of main's (`git diff branch main` = **13 added / 0 removed**, main's copy carrying the
+  later `≥5`-from-below rails). Verdict: **already-on-main, stale.**
+- `feature-mrt5-routing-proposals` (`9c289d8c`) — `routing/proposals.py` blob `d28994c9`
+  **byte-identical**; `tests/test_routing_proposals.py` again a strict subset (**45 added / 0
+  removed** — main has the raising-path byte-identity case the branch predates). Verdict:
+  **already-on-main, stale.**
+
+Nothing was cherry-picked. Rebuilding either would have been a second rail over a live invariant.
+
+**⚠️ OWNER DECISION — RESOLVED: the enqueuer runs on the STATS-FOLD WRITE** (option (b) of the
+2026-08-24 entry), from `stats.record_routing_stats` via a named `_check_for_gap` helper into the new
+`routing/gap.py`. Four reasons, in the order they decided it:
+
+1. **A proposal is a function of the evidence, not of a request.** The fold write is the one moment
+   new evidence arrives, so it is the only moment a gap can newly appear.
+2. **A proposal must reach a user who never opens the Routing tab.** That disqualifies the cheapest
+   variant considered — sweeping when the proposals list is read — because its notification would
+   only ever fire while the user was already looking at the surface it points to.
+3. **Route time (option (a)) is worse than the entry above assumed, and measurably so.** `route_refs`
+   already pays `AppConfig.load()`, a fold read, `feedback_index`'s walk of
+   `workflows/runs/*/events.jsonl` and the rate table **per call** (`policy.py:397-421`), so "keep the
+   hot path pure" is not the live property; what route time would ADD is a queue read plus a write on
+   the path a model call waits on, AND running the learned stage on the lever-3 branch that currently
+   short-circuits before it — new work on every call for every cell that already has a recorded order.
+4. **The module was written for this call site.** `proposals._notify`'s own docstring says it is
+   "reached from a fold, not a request", which is why it fetches the dashboard state through the
+   process-wide accessor instead of a request object. Option (c)'s missing interval and job owner
+   stayed missing; no scheduler was invented.
+
+**What a gap IS — the definition that makes propose-don't-write meaningful rather than noisy.**
+*The learned finding is not what routing will actually do.* `current` is `route_refs`' answer
+(whichever lever wins) and `proposed` is the learned stage applied on top of it, so:
+
+| state | `current` | proposal? |
+|---|---|---|
+| `learned`, no recorded order | the learned order (lever 4 is live) | **no** — the machine does not ask permission for what it already does |
+| `heuristic` | the heuristic floor | **yes** — a proposal is the only route to the table |
+| any non-`off` mode, recorded order the evidence outgrew | the recorded order (lever 3 short-circuits lever 4) | **yes** |
+| `off`, or a pin set, or master switch off | — | **no** — the order could not take effect |
+
+`learned_order`'s **idempotence** is load-bearing for row 1 and is asserted, not assumed
+(`test_the_learned_stage_is_idempotent`): a stage that permuted its own output would propose against
+itself forever.
+
+**Every floor is borrowed, never restated.** `n >= min_samples` is `learned._opinion`'s floor (which
+is `stats._score` behind it), and the quality floor is the same `hysteresis` band the ordering stage
+bands by. A **within-band** difference is deliberately NOT a gap: cost is the only thing allowed to
+reorder near-equals (§5.2), and a cost preference must not nag a user about their table. So
+`routing.min_samples` now has a second reader — the proposal path — which is what the audit found
+missing ("read at exactly one place, the ordering path").
+
+**Evidence (§6.3) is built from the EXISTING read model, not a second derivation.**
+`telemetry.telemetry_rows` supplies p50 and cost for the same bucket the Routing tab renders, so a
+proposal's numbers cannot disagree with the tab's; `sample_audit_ids` come from the same bounded
+`read_recent` tail, newest first, this cell and these two refs only. Payload: `n` and `scores`
+per ref, the three floors that applied, `p50_delta_ms`, `cost_delta_usd`, `sample_audit_ids` — all
+numbers, dicts of numbers, or id lists, because `_clean_evidence` FENCES any other string and would
+mangle a ref into an untrusted-text block. **Documented deviation from the §6.3 example:** `n` is
+per-ref rather than the example's scalar — a scalar hides which ref is thin, which is the one thing
+the floor exists to expose.
+
+**The surface (§6.3's "surfaced in the Routing tab") — three routes and a section.**
+`GET /api/models/routing-proposals` (fail-open to an empty queue), `POST …/{id}/accept`,
+`DELETE …/{id}` — the shape of `/api/learning/proposals`, the tree's other propose-only queue, so
+"dismiss" means the same verb in both places. Accept distinguishes its two falsehoods: an id that is
+not pending is a **404**, a REFUSAL (hand-set basis) is a **200** with `applied:false` and the
+recorded reason, because a refusal is a correct answer to a legitimate request and the surface has to
+say why rather than appearing to do nothing. `RoutingPanel.tsx` grows a "Proposed routing changes"
+section that renders EVEN WHEN EMPTY — one line saying routing proposes rather than rewrites, since a
+section that appeared only once there was something to accept would never teach the property. §6.3's
+badge count lands as a sentence ("2 proposed changes waiting on you. Routing measured these — it has
+not applied them"), because the number is only meaningful beside what it means.
+
+**Wire census: MRT-5 now derives 14 wires, not 9** — annotating `stats.py` with §6.3 pulled its three
+pre-existing wires (`record_routing_stats`, `fold_record`, `save_stats`) into this atom's scope and
+added two new ones (`_check_for_gap`, `detect_gap`). All 14 answer YES to "would deleting the caller
+be caught?": the nine previously scored (`set_order`, `_overlay_feedback`, `set_mode`, `set_pin`,
+`_sel_policy_change`×3, `_notify`, `_save_queue`, `_sel_decision`) plus `record_routing_stats`
+(railed by the pre-existing `TestLiveHookThroughGuard`), `fold_record`/`save_stats` (round-trip +
+rebuild), and the two new ones railed here. **`policy::save_policy` at `policy.py:653` — the wire the
+tool REFUSED to score, because a mutated run broke fixtures that set up THROUGH `set_order` — is now
+RAILED**: neutralised, it turns **6 tests red with ZERO collection errors**, because the accept path
+reaches it through a proposal rather than through a fixture that builds state with it.
+
+**Clause-by-clause.** `0.60*success_rate + 0.40*feedback` with the renormalisation — MET (unchanged,
+`stats._score`). `n>=5` gap enqueues a proposal — **MET, now with a caller.** Inspectable evidence —
+MET. **WITHOUT editing `routing_policy.json`** — MET and falsified end-to-end. Accept updates the
+table with a `proposal_id` basis + a SEL row — MET (asserted off disk, through the route). Reject
+suppresses re-propose for `reproposal_cooldown_days` — MET (asserted by re-proposing after a
+rejection). Cost only reorders within-hysteresis near-equals — MET (unchanged), and now also the
+reason the proposal path is quality-only. SC #8 degradation with nothing writing `memory.db` /
+`knowledge.db` — MET, with the negative given a floor.
+
+**Falsified — four mutations, each applied on the live line, grepped back to confirm, red observed,
+restored from a file copy at the literal path (never `git checkout --`):**
+
+1. **propose-don't-write.** `policy.set_order(...)` spliced in before the `propose` call in
+   `detect_gap` → **2 red**, including `test_the_byte_harness_can_see_the_write_that_accepting_makes`.
+2. **SC #8's db negative.** `sqlite3.connect(home/"memory.db")` at the top of `_check_for_gap` →
+   `assert ['memory.db'] == []` **red**. The negative is live, not vacuous.
+3. **SC #8's degradation half.** `mode_for`'s unknown-value fallback `"off"` → `"learned"` →
+   `assert 'learned' == 'off'` **red**.
+4. **The wire itself.** `_check_for_gap(stats, rec, home=home)` → `pass` → **6 red**, including the
+   byte-identity test's own guard *"nothing was proposed — this would pass vacuously"*, which is the
+   assertion that stops that rail from passing for the wrong reason.
+   Plus the fifth above: `save_policy` in `set_order` → `pass` → **6 red**.
+
+**Gate.** `make lint` clean (black 2073 files / isort / flake8 / mypy 1018 sources). Targeted pytest,
+paths `ls`-verified first: the whole routing surface + the reference ratchet (13 files) **368 passed**;
+the model-call-guard suites (5 files, the fold's producer side) **91 passed**; `test_routing_proposal_gap.py`
+**32** and `test_routing_proposals_api.py` **10**. `scripts/gate_report.py` **6/6 PASS**.
+Web: `npm run typecheck:web` clean, `npm run test:web` **488 files / 5189 passed** (the full suite, not
+a path-scoped run), `npm run build` clean. Probe sweep **16 pre-existing / 0 introduced**;
+`git status --porcelain` empty; no `.bak` in the tree; conftest's real-home rail reported
+`~/.personalclaw` unchanged on every run, and `routing_proposals.json` does not exist there.
+
+**One collision found and fixed while building the surface.** `RoutingPanel`'s new status region was
+initially `sr-only` at rest, which shadowed `RoutingPolicySection`'s reorder announcement for
+`routingReorderAnnounced.test.tsx`'s "first `role=status` with `sr-only`" lookup — a real ambiguity,
+not a test artifact. The proposals region is now visible-when-spoken and bare-when-empty (it must be
+visible anyway: the row it describes is gone after the reload, so it is the only confirmation ANY
+user gets). `routingReorderAnnounced.test.tsx`'s api mock also gained `routingProposals` — a module
+mock has to answer every call the component makes.
+
+**Left for the owner.** ① The atom's `todo` → `done` flip lives in `docs/roadmap/atomic/dag.json`,
+untouched here by instruction. ② The feedback signal is still structurally zero on every install (no
+`judge_verdict` producer stamps `use_case`/`query_class`/`ref`), so `_score` renormalises onto
+`success_rate` — correct per the clause, and the producer-side stamp remains EXT's, not this atom's.
+③ A user who never triggers unattended model calls never accumulates a fold, so the queue stays empty
+by construction — that is the mechanism working, not a gap.

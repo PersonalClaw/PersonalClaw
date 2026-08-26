@@ -3891,6 +3891,35 @@ export interface RoutingPolicyRow {
   classes: Record<string, { order: string[]; basis: Record<string, unknown> }>
 }
 
+/** One pending routing PROPOSAL (MODEL-ROUTING-TELEMETRY §6.3, MRT-5).
+ *
+ *  Measurement never rewrites the routing table: when the fold shows one bound model
+ *  clearly beating another for a request kind, the change lands here and waits for a
+ *  person. `current`/`proposed` are permutations of the same refs (a proposal reorders,
+ *  it never adds or drops a binding), and `evidence` is what makes it reviewable without
+ *  re-running anything — per-ref scores and sample counts, the floors that applied, the
+ *  latency/cost deltas (promoted minus demoted, so negative is better) and audit ids
+ *  that correlate back to the actual calls. */
+export interface RoutingProposal {
+  id: string
+  use_case: string
+  query_class: string
+  current: string[]
+  proposed: string[]
+  created_at: string
+  status: string
+  evidence: {
+    n?: Record<string, number>
+    scores?: Record<string, number>
+    min_samples?: number
+    hysteresis?: number
+    cloud_quality_margin?: number
+    p50_delta_ms?: number
+    cost_delta_usd?: number
+    sample_audit_ids?: string[]
+  }
+}
+
 /** Build the ?since=&until=&session=&group_by= query for the usage endpoints
  *  (empty/absent params omitted). */
 function _usageQuery(opts?: { since?: string; until?: string; session?: string; group_by?: string }): string {
@@ -4067,6 +4096,20 @@ export const api = {
     query_class?: string
     order?: string[]
   }) => put<{ ok: boolean; use_case: string; applied: string[] }>('/api/models/routing-policy', body),
+  // The propose-don't-write review queue (MRT-5 §6.3). `count` is the Routing tab's badge.
+  // Fail-open server-side: an unreadable queue reads as empty rather than erroring.
+  routingProposals: () =>
+    get<{ count: number; proposals: RoutingProposal[] }>('/api/models/routing-proposals'),
+  // Accept APPLIES the proposed order to the table with the proposal as its basis. `applied:false`
+  // is a legitimate 200: the cell's order was set by hand, and a user decision is never
+  // overwritten — `reason` is the sentence to show. Reject writes no table at all; it records a
+  // suppression so the same finding cannot re-nag for routing.reproposal_cooldown_days.
+  acceptRoutingProposal: (id: string) =>
+    post<{ ok: boolean; applied: boolean; id: string; reason?: string }>(
+      `/api/models/routing-proposals/${encodeURIComponent(id)}/accept`,
+      {},
+    ),
+  rejectRoutingProposal: (id: string) => del(`/api/models/routing-proposals/${encodeURIComponent(id)}`),
   // full backend config (read the `agent` subtree for Agent defaults) + the
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),

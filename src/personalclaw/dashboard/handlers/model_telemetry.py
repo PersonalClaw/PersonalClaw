@@ -169,7 +169,93 @@ async def api_routing_policy_put(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "use_case": use_case, "applied": applied})
 
 
+async def api_routing_proposals(request: web.Request) -> web.Response:
+    """GET /api/models/routing-proposals — the propose-don't-write review queue (§6.3).
+
+    ``{count, proposals: [{...summary, evidence}]}``, oldest first. The evidence rides along on the
+    list because a proposal without it is not reviewable, and there is no second round-trip worth
+    saving for a queue capped at 50. ``count`` is the Routing tab's badge.
+
+    Fail-open to an empty queue, exactly like the policy read above: an unreadable proposal store
+    means "nothing to review", never a 500 that blanks the tab.
+    """
+    try:
+        from personalclaw.routing.proposals import pending
+
+        props = pending()
+        rows = [{**p.summary(), "evidence": p.evidence} for p in props]
+    except Exception:  # noqa: BLE001 — a review queue must never 500 the tab
+        logger.debug("routing proposals read failed", exc_info=True)
+        return web.json_response({"count": 0, "proposals": []})
+    return web.json_response({"count": len(rows), "proposals": rows})
+
+
+async def api_routing_proposal_accept(request: web.Request) -> web.Response:
+    """POST /api/models/routing-proposals/{id}/accept — apply it to the table (§6.3).
+
+    The table write, the ``proposal_id`` basis and the SEL row are all the policy layer's; this
+    handler only turns the outcome into a response. ``accept`` returns ``False`` for two unlike
+    things, so they answer differently: an id the queue does not hold pending is a **404**, while a
+    REFUSAL (the cell's order was set by hand — a user decision routing may propose changing but
+    never overwrite) is a **200** carrying ``applied: false`` and the recorded reason. A refusal
+    is a correct answer to a legitimate request, not a client error, and the surface has to be able
+    to say why rather than appearing to do nothing.
+    """
+    proposal_id = request.match_info.get("id", "")
+    try:
+        from personalclaw.routing.proposals import accept, find
+
+        applied = accept(proposal_id)
+        record = find(proposal_id)
+    except Exception:  # noqa: BLE001
+        logger.debug("routing proposal accept failed", exc_info=True)
+        return web.json_response(
+            {"error": {"code": "internal", "message": "could not accept the proposal"}},
+            status=500,
+        )
+    if applied:
+        return web.json_response({"ok": True, "applied": True, "id": proposal_id})
+    if record is None:
+        return json_error("not_found", message=f"no routing proposal {proposal_id!r}", status=404)
+    if record.status == "refused":
+        return web.json_response(
+            {"ok": True, "applied": False, "id": proposal_id, "reason": record.refusal_reason}
+        )
+    return json_error(
+        "not_found", message=f"routing proposal {proposal_id!r} is not pending", status=404
+    )
+
+
+async def api_routing_proposal_reject(request: web.Request) -> web.Response:
+    """DELETE /api/models/routing-proposals/{id} — decline it, and remember the decision (§6.3).
+
+    Writes NO table. The rejection suppresses the same finding for
+    ``routing.reproposal_cooldown_days``, which is the proposals module's job — the shape mirrors
+    ``DELETE /api/learning/proposals/{id}``, the tree's other propose-only queue, so "dismiss"
+    means the same verb in both places.
+    """
+    proposal_id = request.match_info.get("id", "")
+    try:
+        from personalclaw.routing.proposals import reject
+
+        dismissed = reject(proposal_id)
+    except Exception:  # noqa: BLE001
+        logger.debug("routing proposal reject failed", exc_info=True)
+        return web.json_response(
+            {"error": {"code": "internal", "message": "could not reject the proposal"}},
+            status=500,
+        )
+    if not dismissed:
+        return json_error(
+            "not_found", message=f"routing proposal {proposal_id!r} is not pending", status=404
+        )
+    return web.json_response({"ok": True, "id": proposal_id})
+
+
 def register_model_telemetry_routes(app: web.Application) -> None:
     app.router.add_get("/api/models/telemetry", api_models_telemetry)
     app.router.add_get("/api/models/routing-policy", api_routing_policy)
     app.router.add_put("/api/models/routing-policy", api_routing_policy_put)
+    app.router.add_get("/api/models/routing-proposals", api_routing_proposals)
+    app.router.add_post("/api/models/routing-proposals/{id}/accept", api_routing_proposal_accept)
+    app.router.add_delete("/api/models/routing-proposals/{id}", api_routing_proposal_reject)

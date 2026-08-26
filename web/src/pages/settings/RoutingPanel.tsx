@@ -1,8 +1,9 @@
 import { ArrowDown, ArrowUp, Trophy } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-import { api, type RoutingPolicyRow, type TelemetryRow } from '../../lib/api'
+import { api, type RoutingPolicyRow, type RoutingProposal, type TelemetryRow } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
+import { Button } from '../../ui/Button'
 import { Segmented } from '../../ui/Segmented'
 import { Field, FieldError, Select } from '../../ui/forms'
 import { unavailableWhen } from '../../ui/unavailable'
@@ -167,9 +168,157 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
         )}
       </Section>
 
+      <RoutingProposalsSection />
+
       <RoutingPolicySection useCase={useCase} queryClass={queryClass} />
     </div>
   )
+}
+
+/** Proposed routing changes (MODEL-ROUTING-TELEMETRY §6.3, MRT-5) — propose-don't-write.
+ *
+ *  The measured table above can show that one of your bound models clearly beats another
+ *  for a kind of request. It must never act on that alone: `routing_policy.json` is YOUR
+ *  table, and a telemetry fold quietly rewriting it would mean the machine changed which
+ *  provider sees your content without anyone deciding to. So a measured gap lands here,
+ *  with the evidence that justified it, and waits.
+ *
+ *  Deliberately NOT scoped to the two selectors above: a proposal is a decision waiting on
+ *  the user, and hiding one because they happened to be looking at another bucket would
+ *  make the queue unfindable. Each row names its own use case and request kind instead.
+ *
+ *  The section renders even when the queue is empty — one quiet line that says the machine
+ *  proposes rather than rewrites. That sentence is the product property; a section that
+ *  appeared only once there was something to accept would never teach it. */
+function RoutingProposalsSection() {
+  const [props_, setProps] = useState<RoutingProposal[] | null | undefined>(undefined)
+  const [busy, setBusy] = useState('')
+  const [note, setNote] = useState('')
+  const [said, setSaid] = useState('')
+
+  const load = useCallback(() => {
+    api.routingProposals()
+      .then((d) => setProps(d.proposals))
+      .catch(() => setProps(null))
+  }, [])
+  useEffect(load, [load])
+
+  // Accept can legitimately answer "not applied": the cell's order was set by hand, and a
+  // user decision is never overwritten. That is not an error, so it lands in the polite
+  // status line with the server's own reason — the backend owns that wording.
+  const decide = async (p: RoutingProposal, accept: boolean) => {
+    setBusy(p.id)
+    setNote('')
+    try {
+      if (accept) {
+        const r = await api.acceptRoutingProposal(p.id)
+        setSaid(r.applied
+          ? `Applied: ${p.use_case} / ${p.query_class} now tries ${p.proposed[0]} first.`
+          : `Not applied — ${r.reason ?? 'this order was set by hand.'}`)
+      } else {
+        await api.rejectRoutingProposal(p.id)
+        setSaid(`Dismissed. This suggestion won't come back for a while.`)
+      }
+      load()
+    } catch {
+      setNote("Couldn't record that — nothing changed.")
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <Section title="Proposed routing changes">
+      {props_ === null ? (
+        <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var text-[0.8125rem]" role="status">
+          Couldn't read the proposal queue right now. Nothing is pending action — your routing
+          table is unchanged either way.
+        </div>
+      ) : props_ === undefined ? (
+        <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low text-[0.8125rem]">Loading…</div>
+      ) : props_.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
+          Nothing proposed. When measurements show one of your models clearly beating another for a
+          request kind, the change is proposed here — routing never rewrites your table on its own.
+        </div>
+      ) : (
+        <>
+        {/* §6.3's count, in a sentence rather than a bare badge: the number is only meaningful
+            beside what it means, and "measured, not applied" is the property the queue exists to
+            enforce. */}
+        <p className="mb-m text-on-surface-var text-[0.8125rem]">
+          {props_.length} proposed {props_.length === 1 ? 'change' : 'changes'} waiting on you.
+          Routing measured these — it has not applied them.
+        </p>
+        <ul className="flex flex-col gap-2">
+          {props_.map((p) => (
+            <li key={p.id} className="rounded-lg bg-surface-container px-3 py-2.5">
+              <p className="text-on-surface text-[0.8125rem]">
+                For <span className="text-on-surface-var">{p.use_case} / {p.query_class}</span>, try{' '}
+                <span className="font-mono">{p.proposed[0]}</span> before{' '}
+                <span className="font-mono">{p.current[0]}</span>.
+              </p>
+              <ProposalEvidence evidence={p.evidence} promoted={p.proposed[0]} demoted={p.current[0]} />
+              <div className="mt-s flex items-center gap-s">
+                <Button size="xs" variant="primary" loading={busy === p.id}
+                  onClick={() => void decide(p, true)}
+                  ariaLabel={`Apply: try ${p.proposed[0]} first for ${p.use_case} ${p.query_class}`}>
+                  Apply
+                </Button>
+                <Button size="xs" variant="ghost" disabled={busy === p.id}
+                  onClick={() => void decide(p, false)}
+                  ariaLabel={`Dismiss the proposal for ${p.use_case} ${p.query_class}`}>
+                  Dismiss
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+        </>
+      )}
+      {/* Requested outcome → polite status. ALWAYS MOUNTED and empty at rest: a live region created
+          at the moment its text appears is not reliably announced. Deliberately NOT `sr-only` — the
+          row it describes is gone after the reload, so this line is the ONLY confirmation any user
+          gets, sighted or not. (It is also why the resting class is bare rather than `sr-only`: the
+          policy section below owns the page's one visually-hidden status region, and a second one
+          would shadow it for any reader that picks the first.) */}
+      <p role="status" aria-live="polite"
+        className={said ? 'mt-m text-on-surface-var text-[0.8125rem]' : ''}>{said}</p>
+      {note && <FieldError className="mt-s">{note}</FieldError>}
+    </Section>
+  )
+}
+
+/** The evidence behind one proposal, in the same units the table above uses.
+ *
+ *  Only what is present is rendered — a proposal built with no `model_calls.jsonl` tail has
+ *  no p50 to show, and an em-dash for a number that was never measured would read as zero.
+ *  Deltas are promoted-minus-demoted, so a negative is an improvement; they are phrased as
+ *  "faster"/"cheaper" rather than signed numbers because a bare "-780ms" needs a legend. */
+function ProposalEvidence({ evidence, promoted, demoted }: {
+  evidence: RoutingProposal['evidence']
+  promoted: string
+  demoted: string
+}) {
+  const scores = evidence.scores ?? {}
+  const counts = evidence.n ?? {}
+  const p50 = evidence.p50_delta_ms
+  const cost = evidence.cost_delta_usd
+  const bits: string[] = []
+  if (scores[promoted] !== undefined && scores[demoted] !== undefined) {
+    bits.push(`scored ${fmtPct(scores[promoted])} vs ${fmtPct(scores[demoted])}`)
+  }
+  if (counts[promoted] !== undefined && counts[demoted] !== undefined) {
+    bits.push(`over ${counts[promoted]} and ${counts[demoted]} calls`)
+  }
+  if (p50 !== undefined && p50 !== 0) {
+    bits.push(`${fmtMs(Math.abs(p50))}ms ${p50 < 0 ? 'faster' : 'slower'}`)
+  }
+  if (cost !== undefined && cost !== 0) {
+    bits.push(`${fmtCost(Math.abs(cost))} ${cost < 0 ? 'cheaper' : 'dearer'} per call`)
+  }
+  if (bits.length === 0) return null
+  return <p className="mt-1 text-on-surface-low text-[0.75rem]">{bits.join(' · ')}.</p>
 }
 
 /** The routing POLICY table (MODEL-ROUTING-TELEMETRY §6.1-6.2, MRT-4).
