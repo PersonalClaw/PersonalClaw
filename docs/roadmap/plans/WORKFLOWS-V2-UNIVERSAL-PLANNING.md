@@ -1209,3 +1209,66 @@ session. It lands there now.
   `TestStopTurnSessionState::test_stop_turn_session_state_transitions_soft` (`assert ['idle'] == ['soft_pending']`)
   and `::test_stop_event_replace_in_place`. Both restores were `cp` from a `/tmp` copy using the literal path, never
   `git checkout`, verified by md5 match and an empty `git status`; the re-run returned **339 passed**.
+- **2026-08-26 — `WF2UNI-12` clause 2 RE-VERIFIED A THIRD TIME, STILL BLOCKED (E3/E6). Nothing deleted. Clause 1
+  re-confirmed complete. The one substantive change since 2026-08-24 is a NEW rail finding, not a cleared blocker.**
+  Every fact was re-measured against this branch's base `73f5540f`, not inherited from the two entries above.
+  **Clause 1 — still MET.** `git grep -c plan_format -- src/ tests/` returns **zero hits in both trees**, so the
+  renamed-then-deleted format half has not crept back and no stranded reference survives.
+  **Fact 1 — the replacement still has zero reach into the surfaces the deletion would strand.**
+  `git grep 'workflows.intent' -- src/personalclaw/loop src/personalclaw/dashboard` returns **0**, unchanged across
+  all three verifications. `workflows/intent.py` has gained a fifth src consumer since 08-24 —
+  `workflows/loop_run_map.py` — but it sits in `workflows/`, so the consumer set inside `loop/` and `dashboard/` is
+  still empty and the ruling is untouched. **Vacuity asserted:** the same pattern does match elsewhere
+  (`planning/scratchpad.py` 2x, `grill_protocol.py`, `loop_run_map.py`, `rigor.py` 1x each), so the 0 is a real
+  absence in the two scoped directories, not a dead grep.
+  **Fact 2 — all three routes are still registered and still reached.** `register_unified_loop_routes`
+  (`handlers/loop_routes.py:1041`, called at `server.py:1234` — further line drift from the recorded `:1218`, same
+  call) still registers `POST /api/loops/classify` (`:1046`), `GET /api/loops/{id}/plan-session` (`:1058`) and
+  `POST /api/loops/{id}/plan/start` (`:1059`). The six composer field names still occur **24x** in `loop/classify.py`
+  and **21x** in `loop/code_classify.py` — both counts identical to 08-24 — a shape `intent.classify(text) -> Intent`
+  still cannot produce. Frontend still live, with the recorded path corrected: the calls are in
+  **`web/src/lib/api.ts`** (not a top-level `api.ts`) at `:4753` `uLoopPlanSession` and `:4754` `uLoopPlanStart`, with
+  consumers at `pages/code/CodePlanReview.tsx:97`, `pages/code/CodePlanningView.tsx:19-20` and
+  `pages/loop/LoopSection.tsx:43`; `LoopPlanningView`/`CodePlanningView`/`CodePlanReview`/`PlanningArtifactDoc` still
+  appear in **4/3/8/3** `web/src` files, matching 08-24 exactly.
+  **Importer census — the recorded 15 is CORRECT; a broader sweep's 17 is inflated by two non-importers.** A
+  reference-level `git grep` over the nine modules returns 17 src files, but `workflows/controller.py:1199` is a
+  **prose docstring mention** of `planning.session.comment_step` with no import statement, and
+  `loop/plan_walkthrough.py` is one of the nine itself. Neither is an external importer, so the deletion blast radius
+  is unchanged. The `planning/__init__.py` hazard is re-confirmed by reading it: it re-exports **twelve** symbols
+  `from personalclaw.planning.session`, so deleting `session.py` still breaks the kept `planning.scratchpad` import
+  that `gateway.py` performs unless `__init__.py` is rewritten in the same change.
+  **Sub-clause finding — "with their example intents already seeding the eval fixtures" has no source material.**
+  Neither `loop/classify.py` nor `loop/code_classify.py` contains any `EXAMPLE`/`SAMPLE`/`examples` collection under
+  any name (grep: 0 hits), and no file under `evals/` or `eval/` mentions `intake_rigor` or `clarifying_questions`.
+  So this sub-clause cannot be satisfied by harvesting — there are no example intents in the modules to harvest. It is
+  recorded as unmet-and-unsatisfiable-as-written rather than silently treated as done.
+  **Ruling unchanged, third time: the clause's own "as loops drain" precondition is unmet, and it is also a declared
+  dependency** (`EXT:LOOPS-EVOLUTION:loop drain / retirement before planning-module deletion` in `dag.json`).
+  Deleting today would strand 15 real importers and break five live, frontend-wired routes with no replacement — a
+  regression, not a clean break. No gate, shim or dual path was built; there is nothing to build until the
+  replacement exists. Atom stays `todo`.
+  **RAIL BUILT AND PROVEN — the runtime import sweep the 08-17 DISCOVERY said this atom class needs.** A sweep that
+  `walk_packages`-es and imports every `personalclaw.*` module under an isolated `PERSONALCLAW_HOME`, runnable in
+  forward and reverse module order. On the unmodified base: **996/996 OK, 0 failures forward**. **Falsified in both
+  directions:** re-adding `from personalclaw.plan_format import looks_like_plan` to the live `chat_title.py` (grepped
+  back at `:7`, `ast.parse`-d to rule out a collection error) reds the sweep at **874/891, 17 failures** forward and
+  **873/891, 18 failures** reverse, while `mypy src/personalclaw harness` on the SAME mutant still reports
+  **`Success: no issues found in 1027 source files`** — reproducing the 08-17 finding that `ignore_missing_imports`
+  makes mypy structurally blind to a stranded first-party import. Restored by `cp` from a `/tmp` copy using the
+  literal path, never `git checkout`; md5 matched, the mutation grepped back to **0**, `git status` empty, and the
+  same invocation returned to **996/996, 0 failures**.
+- **2026-08-26 — DISCOVERY (`WF2UNI-12`, OUT OF FENCE, pre-existing on `main`): `personalclaw.sdk.provider_helpers`
+  cannot be imported first — a real circular import on the SDK boundary apps are required to use.** Surfaced by the
+  reverse-order leg of the sweep above on a tree with **zero modifications** (`git status` empty), so it is not this
+  atom's doing. `python -c "import personalclaw.sdk.provider_helpers"` as the first SDK import raises
+  `ImportError: cannot import name 'register_branded_app' from partially initialized module`: `provider_helpers.py:42`
+  imports from `sdk/model.py`, which at `sdk/model.py:121` imports `register_branded_app` back out of the
+  still-initializing `provider_helpers` (defined at `provider_helpers.py:244`). It only resolves when something
+  imports `sdk.model` first, which every forward-order path happens to do — so the forward sweep is 996/996 clean and
+  the defect is invisible to it. **Consequence:** an app bundle whose first `personalclaw.sdk.*` touch is
+  `provider_helpers` fails at import, and `docs/architecture/provider-boundary.md` makes `sdk.*` the only legal
+  import path for apps, so this is on the one surface that must not have order-dependent imports. **Rail note for
+  every future deletion atom:** the reverse-order sweep has a standing baseline of **1** pre-existing failure on
+  `main`; a deletion atom must compare against 1, not 0, or it will read this as its own breakage. Not fixed here —
+  it is an SDK-boundary change with no relation to the nine planning modules, and belongs to its own atom.
