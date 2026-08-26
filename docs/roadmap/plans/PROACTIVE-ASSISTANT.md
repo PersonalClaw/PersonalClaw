@@ -647,3 +647,27 @@ Where each new piece plugs into the pluggable-provider architecture — nothing 
   commit.
 - [2026-08-26][PA-5] NOT in scope, deliberately: §5.3's Decision Journal view and the calibration
   strip are `PA-6`; nothing here reads or writes the knowledge store.
+
+- [2026-08-26][PA-5] **Integration follow-up: two new audit outcome words, and the fix was a
+  classification, not a ceiling raise.** `test_the_unclassified_remainder_is_visible_not_silent`
+  reddened at `assert 33 <= 32`. Its own message offers three routes — classify into a family,
+  classify as success, or raise the ceiling deliberately — and its docstring warns that
+  classifying is *"a judgement per word, not a sweep; getting it wrong on a security surface is
+  worse than leaving a pill narrow."* So each word was traced to its emitter rather than swept.
+  **Diffed against `origin/main` to find which words were actually new** (main 31 unclassified,
+  branch 33): `executed` and `expired`.
+  **`executed` → `AUDIT_OUTCOME_SUCCESS`.** Both emitters spell it as the success arm of an
+  explicit pair: `outcome="executed" if executed else "declined"` (`handlers/proactive.py:616`)
+  and `"outcome": "executed" if ok else "failed"` (`proactive/autoexec.py:492`). A reply's verb
+  having been carried out is a working operation, and `test_the_families_are_disjoint_and_exclude_success`
+  exists precisely to stop a success word being filtered as a failure.
+  **`expired` deliberately left UNCLASSIFIED.** It is emitted at `handlers/proactive.py:564` when
+  a proposal's reply window lapses — nobody answered. That is not a refusal, and putting it in a
+  denied family would make the audit log assert a refusal that never happened. This plan's own
+  design note is the distinction being protected: *"you answered and it did nothing"* must stay
+  legible against *"you never answered"*. Leaving it informational is what the test sanctions for
+  the majority of these words.
+  **No ceiling raise was needed:** classifying one of the two takes the remainder to exactly
+  **32**, which is tight against the existing ceiling — verified by lowering the ceiling to 1 and
+  reading back `assert 32 <= 1`. Non-vacuous: removing `"executed"` reds the suite (1 failed / 7
+  passed) and restoring from a file copy returns 8 passed, checked in both directions.

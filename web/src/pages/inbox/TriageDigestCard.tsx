@@ -97,7 +97,11 @@ export function TriageDigestCard() {
             </div>
             <p className="mt-s text-on-surface-low text-[0.75rem]">
               Installing adds a schedule you can edit or pause any time. Turn the digest itself on under{' '}
-              <a href="#/settings/inbox" className="text-primary-emphasis hover:underline">Settings → Inbox</a>.
+              {/* `underline` at REST, not `hover:underline`. This link sits mid-sentence, so axe's
+                  `link-in-text-block` (serious) fires when it is distinguishable from the surrounding
+                  prose by colour alone — measured on #/inbox in CI. The app's standalone links keep
+                  `hover:underline` because that rule only applies to a link inside a text block. */}
+              <a href="#/settings/inbox" className="text-primary-emphasis underline">Settings → Inbox</a>.
             </p>
           </div>
         </div>
@@ -337,8 +341,10 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
         <p className="mt-0.5 flex flex-wrap items-center gap-s text-[0.75rem]">
           <TierBadge tier={row.tier} clamped={row.clamped} />
           {row.source && <span className="text-on-surface-low">{row.source}</span>}
+          {/* Same reason as the install-hint link above: this sits in a `<p>` beside the tier badge
+              and the source label, so it IS inside a text block and needs the rest-state underline. */}
           {row.item_permalink && (
-            <a href={row.item_permalink} className="text-primary-emphasis hover:underline">the item</a>
+            <a href={row.item_permalink} className="text-primary-emphasis underline">the item</a>
           )}
         </p>
       </div>
