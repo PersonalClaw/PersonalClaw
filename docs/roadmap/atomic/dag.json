@@ -2394,7 +2394,8 @@
             "WF2UNI-1",
             "WF2UNI-6",
             "EXT:LOOPS-EVOLUTION:loop drain / retirement before planning-module deletion"
-          ]
+          ],
+          "blocked_reason": "PARTIAL \u2014 clause 1 is already MET (plan_memory was RENAMED not deleted; the format half shipped as plan_format.py and was then deleted with its test, and history.py / chat_title.py are clean: `git grep -c plan_format -- src/ tests/` is 0). Clause 2 is BLOCKED on the precondition it names itself, EXT:LOOPS-EVOLUTION loop-drain: the replacement has ZERO reach (`workflows.intent` has 0 importers under loop/ or dashboard/, non-vacuous because the same pattern matches 4 other src files), while planning/ and the loop plan-brief modules still have 15 live importers plus five registered routes (server.py:1232-1234) with three frontend consumers. Deleting today is a regression, not a clean break. Also note planning/__init__.py re-exports twelve symbols from planning.session, so deleting session.py would break the KEPT planning.scratchpad import that gateway.py performs. One done_when sub-clause is unsatisfiable as written: 'example intents already seeding the eval fixtures' has no source material -- neither classifier holds an example collection and nothing under evals/ mentions intake_rigor or clarifying_questions."
         },
         {
           "id": "WF2UNI-13",
