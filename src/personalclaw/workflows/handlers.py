@@ -36,6 +36,7 @@ from personalclaw.dashboard.sse import stream_response
 from personalclaw.safety_flags import strict_bool
 from personalclaw.sel import sel
 from personalclaw.workflows import service, store
+from personalclaw.workflows.review_service import apply_triage, review_findings
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,10 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     "WF_DROP_APPROVAL_REQUIRED": (428, "approval_required"),
     "WF_DROP_LIMIT": (409, "drop_limit"),
     "WF_DROP_WRITE_FAILED": (500, "drop_write_failed"),
+    # A malformed triage decision list (EI-9). 400: the request is the problem and the
+    # client can fix it — and it must NOT be defaulted through, because a decision whose
+    # outcome we could not read is neither an accept nor a reject.
+    "WF_TRIAGE_BAD_DECISIONS": (400, "invalid_request"),
 }
 
 #: A validation-shaped service code we did not map explicitly still must not read as a
@@ -837,6 +842,44 @@ async def api_run_steer(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+async def api_run_review(request: web.Request) -> web.Response:
+    """GET this run's review findings, anchored against its workspace diff as it is right now.
+
+    A READ, so it is not `_guard`ed as a mutation — but the anchor verdicts it returns are the
+    thing the panel renders, and they are computed here rather than stored, so a stale finding
+    can never render as truth (EXECUTION-ISOLATION §7).
+    """
+    return _reply(await review_findings(request.match_info.get("run_id", "")))
+
+
+async def api_run_review_triage(request: web.Request) -> web.Response:
+    """POST accept/reject decisions; dispatch the accepted subset to the originating worker.
+
+    Guarded and audited like every other run mutation: this is the endpoint that can change what
+    a running autonomous worker does next, and it is the one place a review finding becomes an
+    instruction. `dry_run: true` computes the same triage and delivers nothing.
+    """
+    denied = _guard(request, "workflow_run_review_triage")
+    if denied is not None:
+        return denied
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    run_id = request.match_info.get("run_id", "")
+    result = await apply_triage(
+        run_id,
+        body.get("decisions"),
+        dispatch=not strict_bool(body.get("dry_run"), field="dry_run", default=False),
+    )
+    _audit(
+        request,
+        "workflow_run_review_triage",
+        "success" if result.get("ok") else "failure",
+        run_id,
+    )
+    return _reply(result)
+
+
 async def api_run_steering(request: web.Request) -> web.Response:
     """GET what is queued but unconsumed — so the UI can show it as pending.
 
@@ -1081,6 +1124,8 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_post("/api/workflows/runs/{run_id}/confirm", api_run_confirm)
     app.router.add_post("/api/workflows/runs/{run_id}/steer", api_run_steer)
     app.router.add_get("/api/workflows/runs/{run_id}/steering", api_run_steering)
+    app.router.add_get("/api/workflows/runs/{run_id}/review", api_run_review)
+    app.router.add_post("/api/workflows/runs/{run_id}/review/triage", api_run_review_triage)
     app.router.add_post("/api/workflows/runs/{run_id}/rewind", api_run_rewind)
     app.router.add_post("/api/workflows/runs/{run_id}/run-from", api_run_from)
     app.router.add_post("/api/workflows/runs/{run_id}/fork", api_run_fork)

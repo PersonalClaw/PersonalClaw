@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, Package, Pause, Pencil, RotateCcw, ScanSearch, SkipForward, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, RotateCcw, ScanSearch, SkipForward, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
@@ -23,6 +23,7 @@ import { SteeringPanel } from './SteeringPanel'
 import { WorkspacePanel } from './WorkspacePanel'
 import { OutboxPanel } from './OutboxPanel'
 import { IntrospectPanel } from './IntrospectPanel'
+import { ReviewTriagePanel } from './ReviewTriagePanel'
 
 /** One workflow run, live (WORKFLOWS-V2 Slice 7b).
  *
@@ -50,6 +51,12 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
   // to decide what to do with the work.
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
   const [outboxOpen, setOutboxOpen] = useState(false)
+  // The reviewer-comment triage drawer (EXECUTION-ISOLATION §7 / criterion 9). Closed by default
+  // and fetched on open — the read costs a live `git diff` plus a ledger scan, and it re-anchors
+  // every finding on each open rather than caching a verdict that goes stale as the worker works.
+  // On BOTH sides of the terminal split: mid-run an accepted finding is steered into the next
+  // iteration, and after, it is still the surface that records what the reviewer got wrong.
+  const [reviewOpen, setReviewOpen] = useState(false)
   // The §6.4 introspection drawer: the nine questions, the cost/latency strip, the template
   // p50/p95 card, the said-no badges and the Proof section. Closed by default and fetched on
   // open — answering costs a cross-run ledger read, and most runs are never audited.
@@ -303,6 +310,12 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
             <QuietButton onClick={() => setIntrospectOpen((v) => !v)} ariaExpanded={introspectOpen} title="Introspect — cost, latency, gates, timeline and proof">
               <ScanSearch size={13} /> Introspect
             </QuietButton>
+            {/* Review, likewise on both sides: mid-run an accepted finding is steered into the next
+                iteration, and on a finished run it is still where a reviewer's misses get recorded.
+                Nothing here writes to the code without an explicit accept. */}
+            <QuietButton onClick={() => setReviewOpen((v) => !v)} ariaExpanded={reviewOpen} title="Review — accept or reject this run's line-anchored findings">
+              <MessageSquareCode size={13} /> Review
+            </QuietButton>
             {!isTerminal(run.status) ? (
               <>
                 <QuietButton onClick={() => setSteerOpen((v) => !v)} ariaExpanded={steerOpen} title="Steer this run — queue an instruction or accept a judge comment">
@@ -499,6 +512,15 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
           economics — which on this surface would be a wrong number a user would act on. */}
       {introspectOpen && (
         <IntrospectPanel runId={runId} onClose={() => setIntrospectOpen(false)} />
+      )}
+
+      {/* The reviewer-comment triage drawer (§7 / criterion 9), docked right. Keyed on the run id
+          like its siblings. The panel re-anchors on mount, so opening it is what produces a fresh
+          anchor verdict — there is no cached one to go stale. */}
+      {reviewOpen && (
+        <SidePanel title="Review findings" icon={<MessageSquareCode size={18} />} onClose={() => setReviewOpen(false)} fillHeight>
+          <ReviewTriagePanel runId={runId} onDispatched={refetch} />
+        </SidePanel>
       )}
 
       {/* The steering + judge-triage drawer (R14 / criterion 8), docked right. Mounted only for
