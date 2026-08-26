@@ -27,6 +27,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 ## Registered providers
 
 - **bash-action** — type `action` / `` (enabled); capabilities: execute, blocking
+- **browse-action** — type `action` / `` (enabled); capabilities: execute
 - **create-task-action** — type `action` / `` (enabled); capabilities: execute
 - **inbox-op-action** — type `action` / `` (enabled); capabilities: execute, reverse
 - **invoke-agent-action** — type `action` / `` (enabled); capabilities: execute

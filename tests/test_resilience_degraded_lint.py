@@ -46,6 +46,11 @@ _CALL_SITE_SURFACES = {
     # is collected without a model, so a missing model costs the PROPOSALS, not the digest —
     # neither a deferred run nor an unreasoned answer.
     "proactive/pipeline.py": "triage_digest",
+    # BA-3's browse loop. Its own surface, NOT `assistant_reasoning`, because there is no
+    # reduced tier to degrade to: every step is a model decision, so losing the model ends the
+    # run rather than thinning it. What the floor promises is the preservation — notes and
+    # visited URLs survive on an `ok=False` result — and that no navigation is guessed.
+    "action_providers/browse_provider.py": "browse",
     "nl_to_cron.py": "assistant_reasoning",
     "context.py": "assistant_reasoning",
     # visualize(data, hint) — the agency-free data→genui primitive (AMBIENT-SURFACES

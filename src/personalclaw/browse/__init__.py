@@ -11,8 +11,16 @@ agent can act on, plus the sentinel action language it emits back:
   * ``sentinels`` — ``parse_sentinel`` turns an LLM's text (``CLICK <ref>``, ``TYPE <ref>(v)``,
     …) into typed ``Action`` objects that round-trip back to their sentinel line.
 
-No network, no gateway, no config — the browse LOOP that drives these (CDP, egress, the
-ActionProvider) lands in later BA atoms.
+BA-3 adds the driver that consumes all three:
+
+  * ``loop`` — ``run_browse_loop``: navigate (through BA-2's egress gate) → extract → FENCE →
+    decide → act, bounded by ``max_steps``, the model budget and stuck detection, verifying
+    every SUBMIT and PARKING with its notes intact when it runs out of room.
+  * ``page`` — ``CdpPageDriver``: the non-navigation half of the wire (click / fill / submit /
+    scroll / back / screenshot-to-a-PATH), addressing elements by BA-1's stable identity.
+
+``action_providers.browse_provider`` is the ActionProvider that supplies the loop with a real
+model and a real browser; nothing in this package knows about a provider or a gateway.
 """
 
 from personalclaw.browse.compress import (
@@ -29,6 +37,20 @@ from personalclaw.browse.extraction import (
     render_forms_dsl,
     render_links_dsl,
 )
+from personalclaw.browse.loop import (
+    MAX_STEPS_DEFAULT,
+    PARK_BUDGET_EXHAUSTED,
+    PARK_NAVIGATION_BLOCKED,
+    PARK_STEP_EXHAUSTED,
+    PARK_STUCK,
+    STUCK_REPEAT_LIMIT,
+    BrowseLoopResult,
+    BrowseStep,
+    PageDriver,
+    run_browse_loop,
+    verify_submission,
+)
+from personalclaw.browse.page import CdpPageDriver, PageActionError
 from personalclaw.browse.sentinels import (
     Action,
     ClickAction,
@@ -65,4 +87,17 @@ __all__ = [
     "DoneAction",
     "NotesAction",
     "parse_sentinel",
+    "run_browse_loop",
+    "verify_submission",
+    "BrowseLoopResult",
+    "BrowseStep",
+    "PageDriver",
+    "MAX_STEPS_DEFAULT",
+    "STUCK_REPEAT_LIMIT",
+    "PARK_STEP_EXHAUSTED",
+    "PARK_BUDGET_EXHAUSTED",
+    "PARK_STUCK",
+    "PARK_NAVIGATION_BLOCKED",
+    "CdpPageDriver",
+    "PageActionError",
 ]

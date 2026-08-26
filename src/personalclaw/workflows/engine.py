@@ -1137,6 +1137,23 @@ async def dispatch_action(
             output=output,
             degraded_reason="action queued a run behind one already in flight; it has not started",
         )
+    if getattr(result, "outcome", "") == "needs_input":
+        # BROWSE-AUTOMATION §7.2: the action did real work, ran into a ceiling it cannot lift
+        # (steps or budget), and kept what it learned. WAITING with NO `wake_at`, which is the
+        # combination the controller reads as "nothing will wake this run" and finishes as
+        # `RunStatus.NEEDS_INPUT` — a human decides whether to raise the ceiling or accept the
+        # partial result.
+        #
+        # Not DONE (the goal was not reached, and downstream nodes would consume a partial as
+        # if it were complete), not FAILED (a failure buries the notes under a red error and
+        # invites the retry machinery to pay for the whole task again to hit the same
+        # ceiling), and not DEGRADED (that is a SUCCESS with a reason, and this needs a
+        # person). The output carries the partial result, so the notes survive the park.
+        return NodeResult(
+            state=InstanceState.WAITING,
+            output=output,
+            degraded_reason=str(getattr(result, "stderr", "") or "the action needs your input"),
+        )
     if getattr(result, "outcome", "") == "skip":
         return NodeResult(state=InstanceState.NO_CHANGE, output=output)
     return NodeResult(state=InstanceState.DONE, output=output)

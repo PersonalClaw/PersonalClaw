@@ -476,6 +476,12 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # reversible is not read-only: an unattended cron that could dismiss the user's inbox
         # without an explicit capability opt-in is precisely what this table exists to prevent.
         "inbox-op",
+        # BROWSE-AUTOMATION §7/§9 (BA-3): drives a real browser. Write-capable is not a close call
+        # — a SUBMIT is an irreversible POST on somebody else's site — but even a read-only browse
+        # belongs here, because the loop spends a model call PER STEP over attacker-controlled page
+        # text. That is both the untrusted-input boundary §8 fences and an unbounded unattended
+        # spend, and either alone earns the opt-in.
+        "browse",
     }
 )
 

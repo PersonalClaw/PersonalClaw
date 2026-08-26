@@ -55,6 +55,19 @@ class ActionResult:
     #               vocabulary does not recognise is recorded as FAILED
     #               (`triggers.executor._record_fire_outcome`), so adding a
     #               member here means adding it to those maps in the same change.
+    #   "needs_input" — the action did real work, hit a ceiling it may not lift
+    #               (BROWSE-AUTOMATION §7.2: max_steps or the model budget), and
+    #               PRESERVED what it produced. A human decides whether to raise
+    #               the ceiling or accept the partial result. Distinct from all
+    #               three neighbours: "skip" would discard a real partial result,
+    #               "launched"/"queued" both claim work that continues elsewhere,
+    #               and a FAILED result would bury the partial under a red error
+    #               and invite a retry that pays for the whole task again to reach
+    #               the same ceiling. `workflows.engine.dispatch_action` maps it to
+    #               a WAITING instance with no `wake_at` (which the controller
+    #               finishes as `RunStatus.NEEDS_INPUT`) and
+    #               `triggers.executor.STATUS_TO_OUTCOME` to `Outcome.DEFERRED` —
+    #               both added in the same change, per the rule above.
     outcome: str = ""
     # PLATFORM-LEGIBILITY §2: the WHAT/WHY/FIX envelope for a failed action. The
     # three dispatch seams wrap an uncaught provider exception into one, so
