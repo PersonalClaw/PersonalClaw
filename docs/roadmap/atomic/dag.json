@@ -6813,14 +6813,15 @@
         {
           "id": "EI-9",
           "title": "Reviewer-comment triage primitive (line-anchored findings \u2192 accepted-subset dispatch)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a77: consume the approved WORKFLOWS-V2 Canonical Finding record + auto_fixable flag; diff-anchored triage panel with anchor validation against the actual diff; accepted subset auto-dispatched to the originating session (native resume per \u00a73 capability matrix); rejections feed the flywheel calibration; \u00a711 Session 7",
           "done_when": "SC9: a workflow review stage emits line-anchored findings; the triage panel validates anchors against the real diff; the user accepts 2 of 5; the accepted pair auto-dispatches to the originating worker which applies them; rejected findings land in the calibration record; nothing was auto-written without acceptance",
           "deps": [
             "EI-5",
             "EXT:WORK-CONTAINERS:cockpit diff panel to extend",
             "EXT:LEARNING-FLYWHEEL:calibration record for rejections"
-          ]
+          ],
+          "pr": 2094
         },
         {
           "id": "EI-10",
@@ -7663,11 +7664,6 @@
       {
         "id": "EI-7",
         "title": "Second-opinion handoff + ProposerBackend + sandbox-internal tool gateway",
-        "plan": "EI"
-      },
-      {
-        "id": "EI-9",
-        "title": "Reviewer-comment triage primitive (line-anchored findings \u2192 accepted-subset dispatch)",
         "plan": "EI"
       },
       {
@@ -10129,9 +10125,9 @@
         "code": "EI",
         "plan": "EXECUTION-ISOLATION",
         "total_atoms": 12,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
