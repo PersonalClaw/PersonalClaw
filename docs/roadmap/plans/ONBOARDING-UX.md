@@ -897,3 +897,81 @@ Owner rulings, mapped onto the existing sessions honestly:
   `page.route` interception installed BEFORE boot, plus a real `page.reload()`, plus a mounted-ness
   floor (`main.querySelectorAll('*').length`) produced a trustworthy measurement. Add the mount floor to
   any empty-state probe: an empty page and an unmounted page are indistinguishable by text alone.
+- [2026-08-25][OU-9] **PARTIAL (S3 T3.3 / C2) — core half DONE, apps-repo renderer NOT DONE.**
+  New `src/personalclaw/approval_brief.py` composes C2's brief backend-side and
+  `gateway.py:591` stamps it onto the approval event before the channel call, so
+  `ChannelDelivery.request_approval` payloads now carry
+  `tool_meta["approval_brief"] = {tool, risk, blastRadius?, blastRadiusLine?}`. The fields
+  are OU-7's, not a second shape: `BlastRadius` is C2's `{writes, network, shell, readOnly}`
+  verbatim, the four facet labels are `approvalMeta.ts`' `FACET_COPY` verbatim, and the
+  name-evidence tuples are **derived from `task_modes`' own** `_DESTRUCTIVE_NAME_HINTS` /
+  `_READ_VERB_HINTS` / `_MUTATING_NAME_HINTS` (the same tuples the TypeScript mirrors), so a
+  hint added to the gate flows into the brief automatically. A test parses
+  `approvalMeta.ts` and asserts all five hint lists, the facet order and every label still
+  agree — cross-language drift is a red test, not a third vocabulary.
+- [2026-08-25][OU-9] **Why the seam grew no argument.** "Additive meta" is the whole
+  constraint, and the apps repo ships a `SlackDelivery.request_approval` with an explicit
+  keyword-only signature. A new `brief=` kwarg would raise `TypeError` there until the apps
+  repo caught up — and because the call site sits inside `except Exception: falling back to
+  dashboard`, the failure mode is silent: channel approval would just stop working. So the
+  brief rides `tool_meta`, the additive-meta bag both event dataclasses already carry
+  (`AcpEvent.tool_meta` is documented as its mirror, and the adapter maps it field-for-field,
+  so no event field and no adapter changed). Every tool_meta consumer reads named keys with
+  `.get` — none enumerates — and a permission-request event's `tool_meta` is empty in practice
+  (the runtimes populate it on tool RESULTS), so the stamp only ever adds. Asserted both
+  ways: a channel written against the ORIGINAL signature (no `**kwargs`, no knowledge of the
+  brief) is still called and still decides, and the same object reds with `TypeError` when
+  handed a `brief=` kwarg — so the additive rail is not vacuously green.
+- [2026-08-25][OU-9] **DEVIATION (`readOnlyCommand` pass-through deliberately NOT wired —
+  OU-8 was right, and wiring it was actively WRONG).** OU-8 left this for OU-9 having measured
+  it redundant. Wiring it measured *worse* than redundant. Feeding
+  `classify_invocation`'s verdict in as the screening input made **every unrecognized tool
+  claim "reads only"**: its name-fallback branch is `MUTATING if any(mutating hint) else
+  READ_ONLY` (`task_modes.py:264`), so a name matching nothing resolves to `READ_ONLY` — a
+  positive read claim minted from zero evidence, on the surface least able to check it. Caught
+  by the honesty-contract test on `frobnicate_xyzzy`, not by review. Deny-by-default holds for
+  the GATE that consumes that verdict (its consumers deny `UNCLASSIFIED`); it does not make the
+  verdict evidence for a brief. The brief now takes ONE classification,
+  `resolve_effective_risk`, which already routes a readable command through
+  `is_read_only_bash` and floors an unknown name at `caution`, never `safe` — so `risk ==
+  'safe'` is genuine positive evidence, exactly as OU-7's `RISK_ESTABLISHES_READ_ONLY`
+  assumed. The `read_only_command` parameter stays on `derive_blast_radius` for parity with
+  the frontend, with no caller, as in OU-7.
+- [2026-08-25][OU-9] **DISCOVERY (a pre-existing over-claim, shared with OU-7's shipped
+  frontend — pinned, not fixed).** The hint tuples match by SUBSTRING (`task_modes`' own
+  scheme), and the read-verb check short-circuits BEFORE the write hints. `widget` contains
+  the read verb `get`, so `artifact_widget_create` derives
+  `{writes: false, …, readOnly: true}` → "reads only" for a tool that CREATES. This is not
+  introduced here: the identical precedence ships today in `approvalMeta.ts`, so the chat
+  chips and the approval toast already say it. Fixing it means word-boundary matching in BOTH
+  languages, i.e. changing a shipped frontend surface OU-7 owns — a follow-up atom, not a
+  silent divergence from the drift rail. Pinned as
+  `test_known_limitation_hint_matching_is_substring_not_word`, which should be inverted when
+  that atom lands.
+- [2026-08-25][OU-9] **UNMET — the apps-repo slack renderer (one session, no core work).**
+  `done_when` asks for a minimal Slack render too. `PersonalClawApps` is a different
+  repository and this session had no worktree for it, so the atom lands PARTIAL and stays
+  `todo`. Nothing in core blocks it: the data is on the payload today and any channel that
+  ignores the key is unaffected. The change is `SlackDelivery.request_approval` in
+  `PersonalClawApps/apps/slack/` — read
+  `event.tool_meta.get("approval_brief")` and, when `blastRadiusLine` is present, add ONE
+  context line under the existing command block (e.g. `⚠️ Can: runs a command, uses the
+  network`); show `risk` beside it if the block has room. Two renderer rules, both already
+  documented on the Protocol: omit the line entirely when `blastRadiusLine` is absent
+  (absence is C2's unknown channel — "nothing established" reads as "nothing happens"), and
+  render only the `True` facets, never all four with on/off states. The dashboard stays the
+  rich surface; no rendering logic moved into core.
+- [2026-08-25][OU-9] **Gate.** `make lint` clean (black/isort/flake8 + mypy, 1025 files).
+  `pytest tests/test_approval_brief.py` 36/36. Seam neighbours green:
+  `test_approval_threading` + `test_gateway` + `test_channel_conformance_kit` +
+  `test_approval_timeout_policy` + `test_task_modes` + `test_acp_agent_event_mapping` =
+  203 passed, 9 xfailed (xfails pre-existing). `scripts/gate_report.py` 6/6. No `web/` change,
+  so no npm legs. Falsified twice, both directions: (1) replacing the live
+  `attach_approval_brief(event)` call with `pass` → 6 red, all `KeyError: 'approval_brief'`
+  at the seam; restored → 36 green on the same invocation. (2) making the stamp REPLACE
+  `tool_meta` instead of adding a key → exactly the two additive rails red with
+  `KeyError: 'ok'`; restored → 36 green. Each mutation grepped back before running.
+- [2026-08-25][OU-9] **No CHANGELOG entry.** Nothing a user can perceive changed yet: the
+  payload carries the brief but the only channel renderer lives in the apps repo and is
+  untouched. The entry belongs to the renderer session, which is the first point a user sees
+  a blast-radius line on their phone.

@@ -31,6 +31,7 @@ from aiohttp import web
 
 from personalclaw import notification_kinds, shutdown_event
 from personalclaw.acp.errors import AcpError, AcpProcessDied
+from personalclaw.approval_brief import attach_approval_brief
 from personalclaw.autonudge import (
     AutoNudgeService,
     NudgeLoop,
@@ -581,6 +582,13 @@ class GatewayOrchestrator:
 
                         dashboard_future.add_done_callback(_on_dashboard_done)
 
+                    # OU-9: stamp the structured brief (tool + blast-radius line) onto
+                    # the event as ADDITIVE meta before handing it to the channel, so a
+                    # phone prompt can say what the call can touch. Adds one
+                    # `tool_meta` key and changes no argument — a channel that ignores
+                    # it prompts exactly as before. The dashboard stays the rich
+                    # surface; this is data, not rendering.
+                    attach_approval_brief(event)
                     try:
                         approved = await self._channel_delivery.request_approval(
                             event,
