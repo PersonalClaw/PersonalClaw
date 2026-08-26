@@ -743,3 +743,11 @@ picture; `web/src/pages/dashboard/world/` renders it ("Orbit", a new dashboard b
 - **STILL UNVERIFIED — not driven in a browser.** The lanes, the approve verb and the answer verb are
   asserted in jsdom against mocked `api` helpers. Both write paths post to endpoints that already
   existed and are exercised elsewhere, but no live gateway drive was done for this atom.
+
+- [2026-08-26][AS-7] **PARTIAL — stays `todo`.** The `menu-bar-companion` bundle shipped in
+  `PersonalClawApps#53` (rebase-merged, `754030cc`): 20 files, 49 tests green, a
+  `platform:{os:[darwin], installMode:client}` manifest, and its own PR declares PARTIAL. It declares
+  no `quality` block, so APE-4's verifier does not reach it — the bundle is not claiming a bar it
+  cannot back. Clauses to re-measure against the `done_when` before any flip: the **one** `/api/ws`
+  connection consumed as refetch signals only (never payloads) with backoff-reconnect, the badge as
+  pending approvals + needs-input, and the Settings mute. Not blocked on another plan.
