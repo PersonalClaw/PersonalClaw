@@ -2940,7 +2940,8 @@
           "deps": [
             "PA-2",
             "PA-3"
-          ]
+          ],
+          "blocked_reason": "PARTIAL \u2014 clauses 1-3 MET and criterion 10 driven end to end. Built on a backend that had already declared the IA with ZERO frontend consumers (`git grep proactive -- web/src` was 0): the approval-rules routes shipped with PA-1 unconsumed, and ProactiveConfig was wired through all four round-trip points with no UI control, so proactive.triage_enabled was unreachable. Clause 4 is met for TWO of three legs -- rule revocation and quiet-hours deferral were DRIVEN through the real frontend; the third leg's positive case (a second tap on a still-pending proposal acking rather than re-executing) is asserted by TEST ONLY, because this environment has no model provider so the proposal stage refuses and no digest with pending proposals can be produced here. That leg needs a bound model to drive. FOUR defects found, three of them only by DRIVING: (1) the ordinal contract was not redeemable across a process boundary -- Manifest was never persisted, so a card opened after the minting process exited resolved an ordinal against a re-collected, RENUMBERED window, which is criterion 9's wrong-target execution with no adversary; (2) the reconcile silently rewrote the user's edited cron (installed 30 7 * * 1-5, got back 0 8 * * *) -- precedence is now body -> installed row -> config default; (3) `delivered: True` was returned for a digest suppressed by quiet hours because notify returns None, renamed to handed_to_notify; (4) converting a new flat wire envelope exposed a DEAD branch whose test mocked a shape the api layer cannot produce. DEVIATIONS: pack card lives in the digest card's uninstalled arm rather than the templates surface; created_by is \"system\" (a closed three-value vocabulary) with the feature name on the deterministic id system:triage:digest."
         },
         {
           "id": "PA-6",
