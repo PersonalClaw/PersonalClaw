@@ -804,6 +804,8 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # below at a minute (a shorter window would mark every row overdue between two
     # clicks) and above at a day.
     "agent.runner_health_check_secs": {"type": "int", "min": 60, "max": 86_400},
+    "agent.runner_idle_release_secs": {"type": "int", "min": 60, "max": 86_400},
+    "agent.durable_sessions": {"type": "bool"},
     # PROMPT-CACHE-SUBSTRATE §C6 — the prompt-cache switch (default ON). Off collapses
     # the provider's declared cache mode to NONE, which is the byte-identical no-marker
     # path an undeclared provider already takes. It does NOT revert the §C2/§C3 wire

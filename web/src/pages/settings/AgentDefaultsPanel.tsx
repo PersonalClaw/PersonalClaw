@@ -130,6 +130,10 @@ export function AgentDefaultsPanel() {
             hint="Seconds to wait for a cooperative cancel before hard-killing a session." />
           <NumberRow label="Runner health check interval" cfg={cfg} field="runner_health_check_secs" patch={patch} min={60} max={86400} step={60} suffix="s"
             hint="How long a runner's measured health stays current. Past this, its row under Runners is marked check overdue rather than presenting an old reading as the present state. Nothing is probed automatically — use Re-check runners." />
+          <NumberRow label="Runner idle release" cfg={cfg} field="runner_idle_release_secs" patch={patch} min={60} max={86400} step={60} suffix="s"
+            hint="How long a session may hold an agent runner without using it. Past this the hold is released and the runner reads as free under Runners — so a session that went quiet, or a gateway that was killed, cannot leave a runner looking permanently taken. The session itself is untouched." />
+          <ToggleRow label="Durable worker sessions" cfg={cfg} field="durable_sessions" patch={patch}
+            hint="Run workers inside a tmux session on PersonalClaw's own socket so their shell outlives the gateway. On restart the recovery sweep finds the still-alive worker and marks the run resumable instead of aborting it. Requires the tmux binary; without it this has no effect." />
         </RowGroup>
         {/* multi-agent space concurrency (max_spaces / max_space_agents) lives in
             Settings → Spaces, not here. */}
@@ -241,7 +245,21 @@ function RunnerRowItem({ row }: { row: RunnerRow }) {
             looking at is older than the health-check interval, so "healthy" describes
             then, not now. Only shown for `true`: `null` means we do not know the age. */}
         {row.health_stale === true && <Chip>check overdue</Chip>}
+        {/* EI-6: who holds this runner. Shown beside the health verdict because it answers
+            a different question — a healthy runner someone else is using is not one you can
+            start a chat on right now. The backend has already dropped an expired lease, so
+            a chip here always names a CURRENT holder. */}
+        {row.lease !== null && <Chip>held by {row.lease.holder}</Chip>}
       </div>
+      {/* The lease detail, only when there is a lease. "for Ns" is the age of the hold and
+          "released in Ns" is when idle-release takes it back — together they tell a user
+          whether to wait or to go look at that session. */}
+      {row.lease !== null && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-on-surface-low text-[0.75rem]">
+          <span>held for {row.lease.age_secs}s</span>
+          <span>released in {row.lease.expires_in_secs}s if idle</span>
+        </div>
+      )}
 
       {/* Health evidence. `version`/`latency_ms` can be null even on a healthy probe —
           the CLI answered but its output carried no version we could parse — so each is
