@@ -771,6 +771,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/surfacing` — The templates list with its surfacing state — what the UX renders.
 - `DELETE /api/workflows/{name}` — _(no summary)_
 - `GET /api/workflows/{name}` — _(no summary)_
+- `POST /api/workflows/{name}/a2a-publish` — the template detail UI's publish toggle.
 - `GET /api/workflows/{name}/ledger` — recent runs of this template with their ledger totals.
 - `POST /api/workflows/{name}/refine` — fire the refiner over this template on demand.
 - `GET /api/workflows/{name}/trajectory` — The trajectory-signature distribution and regression signal for one template (PP-7).
