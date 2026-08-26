@@ -246,6 +246,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/durability/status` — schedule state + what's due.
 - `GET /api/evals/ablation` — the newest keep/remove/lighten report (ES-7 §3.1).
 - `GET /api/evals/judge-bench` — the newest tier-recommendation table.
+- `GET /api/evals/learning-benchmark` — the newest skill-impact benchmark report (LV-7).
 - `GET /api/evals/retrieval` — the newest per-arm P@k/R@k table for BOTH stores (§5).
 - `GET /api/evals/retrieval/card` — §5.2's hand-labeling card.
 - `POST /api/evals/retrieval/labels` — save a completed hand-label card.

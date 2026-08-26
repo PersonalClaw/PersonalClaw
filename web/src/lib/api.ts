@@ -2030,6 +2030,89 @@ export interface AblationView {
   cadence_days: number
   due: boolean
 }
+/** One arm's aggregates in a skill-impact benchmark task, as `harness/fanout_measure` computed
+ *  them. Every field arrives computed; nothing here is re-derived in TS. */
+export interface BenchmarkArmAggregate {
+  trials: number
+  mean_score: number
+  spread: number
+  tokens: number
+  tokens_per_point: number
+}
+/** One frozen-register task's verdict.
+ *
+ *  `verdict` is `null` when the runner could not assemble both arms — a state deliberately
+ *  OUTSIDE the five verdict strings, because "we did not measure this" and "we measured it and
+ *  withheld a direction" are different claims. `delta_points` is `null` in exactly that case,
+ *  and it MUST NOT render as 0.000: for a benchmark asking "does an approved skill make the next
+ *  run better?", a zero delta is the case for saying skills do not help. */
+export interface BenchmarkTaskRow {
+  task_id: string
+  skill: string
+  verdict: string | null
+  verdict_class: string | null
+  reason: string
+  delta_points: number | null
+  token_ratio: number | null
+  arms: Record<string, BenchmarkArmAggregate>
+  absent_cells: number
+  tool_calls: Record<string, number>
+  /** `false` means no contributing cell observed its own spend rows — so `token_ratio` is not
+   *  evidence of a token match, and the panel says so rather than printing a bare ratio. */
+  spend_observed: boolean
+  /** Carried from `AttemptRecord.estimated`: tokens are heuristic, not provider-reported. Any
+   *  published ratio must carry that word (protocol §4). */
+  spend_estimated: boolean
+  notes: string[]
+}
+/** A task the runner refused to run at all, with the refusal's own sentence. Reported rather
+ *  than omitted: a shorter table would make ten tasks look like however many ran. */
+export interface BenchmarkSkippedRow {
+  task_id: string
+  skill: string
+  blockers: string[]
+}
+export interface BenchmarkReport {
+  run_id: string
+  created_at: string
+  protocol_doc: string
+  task_set_version: number
+  task_set_fingerprint: Record<string, string>
+  trials_per_arm: number
+  arms: string[]
+  thresholds: {
+    inconclusive_band_points: number
+    token_match_tolerance: number
+    min_trials_per_arm: number
+    source: string
+  }
+  tasks: BenchmarkTaskRow[]
+  skipped: BenchmarkSkippedRow[]
+  measured_tasks: number
+  absent_cells: number
+  reproduction?: BenchmarkReproduction
+}
+/** The §8 (V4) reproduction judgement. The variance is NOT numeric and NOT invented by the
+ *  code: `stated_variance` is the protocol's own list of conditions and `stated_variance_source`
+ *  cites where it is stated, so a reader can check the tolerance rather than trust it. */
+export interface BenchmarkReproduction {
+  baseline_run_id: string
+  rerun_run_id: string
+  reproduces: boolean
+  stated_variance: string[]
+  stated_variance_source: string
+  conditions: Record<string, boolean>
+  verdict_changes: { task_id: string; baseline: string | null; rerun: string | null }[]
+  notes: string[]
+}
+export interface BenchmarkView {
+  report: BenchmarkReport
+  /** The whole frozen register, so a task the report does not carry is still named. */
+  register: { task_id: string; skill: string; observable: string }[]
+  task_set_version: number
+  protocol_doc: string
+  stated_variance: string[]
+}
 /** One arm-mask row of the retrieval ablation (ES-3 / §5.3).
  *
  *  `p_at_k` is `null` when the mask retrieved NOTHING — 0/0, undefined, and deliberately
@@ -5419,6 +5502,19 @@ export const api = {
    *  because they send a user to three different places (the switch, the registry, a bug), and
    *  one state for all of them would make the panel's empty state a guess. */
   ablation: () => get<AblationView>('/api/evals/ablation'),
+  /** The skill-impact benchmark: does an approved skill make the next run better? (LV-7)
+   *
+   *  Read-only, and for the sharpest reason on this route family: §3 pairs k=5 trials per arm
+   *  over ten tasks — 100 real model calls — so a click that started one would spend serious
+   *  money. The RUN is `python scripts/learning_benchmark.py --run`, which has `--preflight` and
+   *  `--dry-run` modes that call nothing.
+   *
+   *  The verdict is computed by the runner (its thresholds live in `harness/fanout_measure.py`,
+   *  outside the wheel) and written into the report. Neither the gateway nor this page can
+   *  synthesise one — which is exactly why an unmeasured task arrives as `verdict: null` and
+   *  renders as "not measured" instead of as a zero. 404 carries a distinct code for "no
+   *  benchmark yet" vs "evals off". */
+  learningBenchmark: () => get<BenchmarkView>('/api/evals/learning-benchmark'),
   /** Pre-registered template A/B studies (ES-5). Read-only for the same reason as the
    *  bench: a k=5 paired study is ten template runs plus six judge calls per pair. §2.1 is
    *  also explicit that the human REGISTERS and the substrate RUNS, so there is deliberately

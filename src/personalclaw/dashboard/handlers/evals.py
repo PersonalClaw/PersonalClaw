@@ -1,10 +1,11 @@
-"""Evals routes — the judge tier table (§6 / ES-4), pre-registered studies (§2 / ES-5)
-and the harness ablation report (§3.1 / ES-7).
+"""Evals routes — the judge tier table (§6 / ES-4), pre-registered studies (§2 / ES-5),
+the harness ablation report (§3.1 / ES-7) and the skill-impact benchmark (LV-7).
 
 GET /api/evals/judge-bench           the newest benchmark run's table + recommendations
 GET /api/evals/studies               one row per pre-registered study
 GET /api/evals/studies/{study_id}    one study's verdict, agreement rate and per-run rows
 GET /api/evals/ablation              the newest keep/remove/lighten report + the registry
+GET /api/evals/learning-benchmark    the newest skills-on/off report + the frozen register
 
 **Read-only on purpose.** The full shipped matrix is 540 judge calls; a POST that started
 one would hold a request open for minutes and spend real money on a click. So the RUN is
@@ -210,6 +211,67 @@ async def api_evals_ablation(request: web.Request) -> web.Response:
     return web.json_response(view)
 
 
+async def api_evals_learning_benchmark(request: web.Request) -> web.Response:
+    """GET /api/evals/learning-benchmark — the newest skill-impact benchmark report (LV-7).
+
+    Read-only for a sharper reason than the other routes here: §3 pairs ``k = 5`` trials per
+    arm over ten tasks — 100 real model calls — so a POST that started one would spend serious
+    money on a click. The RUN is ``python scripts/learning_benchmark.py --run``, which has
+    ``--preflight`` and ``--dry-run`` modes that call nothing, and this route publishes what it
+    produced.
+
+    **The verdict is READ, never computed here.** The §5 thresholds live in
+    ``harness/fanout_measure.py``, a dev package outside the wheel; the runner computes the
+    verdict and writes it into the report. So this route cannot synthesise a verdict or a score
+    it was not given, and a task the runner did not measure arrives with ``verdict: null`` for
+    the panel to render as "not measured" rather than as ``0.000``.
+
+    Three distinct codes, like the ablation route's, because they send a user to three different
+    places: the config switch, the runner, and a broken artifact.
+    """
+    if not _enabled():
+        return json_error(
+            "evals_disabled",
+            message="The eval substrate is off. Turn on `evals.enabled` to publish "
+            "benchmark reports.",
+            status=404,
+        )
+    from personalclaw.evals import learning_bench
+
+    try:
+        report = learning_bench.latest_report()
+    except Exception:
+        logger.warning("learning benchmark report read failed", exc_info=True)
+        return json_error(
+            "learning_benchmark_unreadable",
+            message="The benchmark report could not be read.",
+            status=500,
+        )
+    if report is None:
+        return json_error(
+            "learning_benchmark_absent",
+            message="No skill-impact benchmark has run yet. Run "
+            "`python scripts/learning_benchmark.py --preflight` and then `--run`.",
+            status=404,
+        )
+    _audit(request, "evals_learning_benchmark", "read", f"run_id={report.get('run_id')}")
+    return web.json_response(
+        {
+            "report": report,
+            # The register travels WITH the report so the panel can name a task the report does
+            # not carry — a task the runner skipped is absent from `tasks`, and a panel that
+            # only knew about rows it received would silently narrow the task set.
+            "register": [
+                {"task_id": t.task_id, "skill": t.skill, "observable": t.observable}
+                for t in learning_bench.BENCH_TASKS
+            ],
+            "task_set_version": learning_bench.TASK_SET_VERSION,
+            "protocol_doc": learning_bench.PROTOCOL_DOC,
+            "stated_variance": list(learning_bench.REPRODUCTION_CONDITIONS),
+        }
+    )
+
+
 async def api_evals_retrieval(request: web.Request) -> web.Response:
     """GET /api/evals/retrieval — the newest per-arm P@k/R@k table for BOTH stores (§5).
 
@@ -364,6 +426,7 @@ def register_evals_routes(app: web.Application) -> None:
     app.router.add_get("/api/evals/studies", api_evals_studies)
     app.router.add_get("/api/evals/studies/{study_id}", api_evals_study)
     app.router.add_get("/api/evals/ablation", api_evals_ablation)
+    app.router.add_get("/api/evals/learning-benchmark", api_evals_learning_benchmark)
     app.router.add_get("/api/evals/retrieval", api_evals_retrieval)
     app.router.add_get("/api/evals/retrieval/card", api_evals_retrieval_card)
     app.router.add_post("/api/evals/retrieval/labels", api_evals_retrieval_labels)
