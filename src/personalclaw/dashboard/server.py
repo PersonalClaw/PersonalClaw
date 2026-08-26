@@ -481,6 +481,13 @@ async def start_dashboard(
     # Onboarding progress is ENTITY state (entity_settings/onboarding.json), so it gets its
     # own write path rather than riding the config PATCH allowlist.
     app.router.add_post("/api/onboarding/state", handlers.api_onboarding_state)
+    # The onboarding import step's GET (scan) + POST (import). Its own module
+    # because the handler owns the client-supplied-items refusal and the report shape.
+    from personalclaw.dashboard.handlers.onboarding_import import (
+        register_onboarding_import_routes,
+    )
+
+    register_onboarding_import_routes(app)
     # Doctor — tiered read-only health probes
     # Scheduled-backup status, the archive list with its
     # retention plan, and on-demand jobs. Restore is deliberately NOT here (see the
@@ -702,6 +709,13 @@ async def start_dashboard(
 
     register_lexicon_routes(app)
 
+    # The triage digest. Registered beside the approval
+    # rules on purpose: the digest card and the rules manager read one system, and the rules
+    # endpoints below are the manager's half of it.
+    app.router.add_get("/api/proactive/digest", handlers.api_proactive_digest)
+    app.router.add_post("/api/proactive/digest/reply", handlers.api_proactive_reply)
+    app.router.add_post("/api/proactive/install", handlers.api_proactive_install)
+
     # Vector Memory (Semantic)
     app.router.add_get("/api/memory/approval-rules", handlers.api_memory_approval_rules)
     app.router.add_post("/api/memory/approval-rules", handlers.api_memory_approval_rule_add)
@@ -854,6 +868,7 @@ async def start_dashboard(
     # read-only (PUT/DELETE on a preset → 403).
     from personalclaw.dashboard.handlers.views import (
         api_dashboard_view_detail,
+        api_dashboard_view_tile_action,
         api_dashboard_view_tile_binding,
         api_dashboard_view_tile_refresh,
         api_dashboard_view_tile_resolve,
@@ -879,6 +894,11 @@ async def start_dashboard(
     )
     app.router.add_get(
         "/api/dashboard/views/{view_id}/tiles/refresh", api_dashboard_view_tile_refresh
+    )
+    # A genui control inside a tile widget re-firing the tile's bound workflow, fenced by
+    # that tile's frozen capability set.
+    app.router.add_post(
+        "/api/dashboard/views/{view_id}/tiles/action", api_dashboard_view_tile_action
     )
     app.router.add_post("/api/dashboard/views/{view_id}/tiles", api_dashboard_view_tiles)
     app.router.add_get("/api/dashboard/views/{view_id}", api_dashboard_view_detail)

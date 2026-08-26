@@ -859,6 +859,13 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # hook, so a registered provider missing from this set is one the scheduler refuses to
         # dispatch.
         "usage-recap",
+        # The health-scored remediation engine, re-homed off the
+        # heartbeat onto one adaptive-clock trigger. Same reason as the two directly above — the
+        # system trigger that runs it goes through this validation, so a registered provider missing
+        # from this set is one the scheduler refuses to dispatch. Added in the SAME commit that
+        # registers it in `action_providers.registry` and lists it in `triggers/screen.py`'s
+        # write-capable set.
+        "self-remediation",
         # WATCHED-SOURCES §6.2 (the caller): the morning source digest. Registered here for
         # the same reason as the two directly above — the bundled system trigger that runs it
         # goes through this same validation, so a registered provider missing from this set is
@@ -898,6 +905,17 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # registry in the same commit as this line; a provider in one set but not the other
         # validates, saves, and then fails at run time.
         "artifact_inspect",
+        # The autonomous web-interaction provider. Registered in
+        # the action-provider registry in the SAME commit as this line, for the reason every
+        # comment above states — and here it is the load-bearing half of the change's contract:
+        # without this entry a hook, trigger or workflow naming `browse` is rejected at
+        # create time, so the provider would be dispatchable by nothing at all.
+        "browse",
+        # The stalled-node handoff to a DIFFERENT cataloged
+        # runner. A workflow gate's `on_stall: second_opinion` policy is an ordinary trigger
+        # action, so it goes through this same validation — registered in the action-provider
+        # registry in the same commit as this line, for the reason stated above.
+        "second-opinion",
     }
 )
 

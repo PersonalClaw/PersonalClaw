@@ -37,6 +37,11 @@ vi.mock('../../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
 vi.mock('../../ui/DotGlow', () => ({ DotGlow: () => null }))
 // The two middle steps are stubbed down to their escape hatch — this file is about what
 // happens AFTER the flow, and `essentialsStep.test.tsx` / `tryOneOutcome.test.tsx` own them.
+vi.mock('./ImportStep', () => ({
+  ImportStep: ({ onSkip }: { onSkip: () => void }) => (
+    <button type="button" onClick={onSkip}>stub-skip-import</button>
+  ),
+}))
 vi.mock('./EssentialsStep', () => ({
   EssentialsStep: ({ onSkip }: { onSkip: () => void }) => (
     <button type="button" onClick={onSkip}>stub-skip-essentials</button>
@@ -141,6 +146,7 @@ function firstRun() { ENVELOPES.dashboardConfig = { user_name: '' } }
 async function reachDoneScreen(user: ReturnType<typeof userEvent.setup>) {
   await user.type(await screen.findByLabelText('Your name'), 'Ada')
   await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.click(await screen.findByRole('button', { name: 'stub-skip-import' }))
   await user.click(await screen.findByRole('button', { name: 'stub-skip-essentials' }))
   await user.click(await screen.findByRole('button', { name: 'stub-skip-try' }))
   return screen.findByRole('button', { name: /Take the quick tour/ })

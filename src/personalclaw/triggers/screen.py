@@ -446,6 +446,11 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         "render-report",  # writes the spec artifact + its derived export
         "notification-digest",  # writes an inbox item
         "usage-recap",  # emits a notification — unattended, so it needs the opt-in
+        # The remediation engine DELETES history files, prunes the SEL and rebuilds indexes,
+        # unattended, forever — the most destructive local writer in this table, and the only one
+        # whose failure mode is silent (an absent prune is invisible by nature). The frozen grant is
+        # decision 7's requirement, and this is the only honest side of the table for it.
+        "self-remediation",
         # The morning digest: writes a knowledge item AND notifies, on a cron, forever. It
         # also spends a model call over SCRAPED text, which is the untrusted-input boundary §8
         # fences — the strictest side of this table is the only honest one for it.
@@ -476,6 +481,18 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # reversible is not read-only: an unattended cron that could dismiss the user's inbox
         # without an explicit capability opt-in is precisely what this table exists to prevent.
         "inbox-op",
+        # Drives a real browser. Write-capable is not a close call
+        # — a SUBMIT is an irreversible POST on somebody else's site — but even a read-only browse
+        # belongs here, because the loop spends a model call PER STEP over attacker-controlled page
+        # text. That is both the untrusted-input boundary §8 fences and an unbounded unattended
+        # spend, and either alone earns the opt-in.
+        "browse",
+        # The second-opinion handoff spawns a cataloged runner (or a subagent) one-shot
+        # with write access to a real workspace — the strictest side of this table is the only
+        # honest one for it. Note the disk re-diff that gates ACCEPTANCE is not a substitute for
+        # this opt-in: the proposer's edits are already on disk by the time the re-diff runs, so
+        # what the gate protects is whether we BELIEVE the result, not whether files were written.
+        "second-opinion",
     }
 )
 

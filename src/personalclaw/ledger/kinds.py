@@ -163,6 +163,24 @@ PROPOSAL_REFUSED = "proposal_refused"
 AUTO_EXECUTED = "auto_executed"
 SKIPPED_BUDGET = "skipped_budget"
 
+#: One line-anchored Finding a review stage emitted, in the
+#: WORKFLOWS-V2 Canonical Finding shape plus `auto_fixable`. A LEDGER kind rather than a side file
+#: because the triage panel reads findings back AFTER the node settled — sometimes after the run
+#: finished — and the ledger is the one channel that survives that. It is also the only way the
+#: flywheel can pair a reviewer's output with the `judge_divergence` rows its rejections produce:
+#: a reviewer whose findings are always rejected is a fake gate, and that claim is only provable
+#: when both halves live in the same vocabulary.
+REVIEW_FINDING = "review_finding"
+
+#: The user's own answer to one digest proposal, whether it was
+#: tapped in the digest card or typed as a channel reply. Written to the DIGEST'S OWN run, keyed by
+#: `(run_id, item_ordinal)`, and that is the whole point: it is what makes a reply idempotent
+#: across a gateway restart (criterion 9). A reply handler that kept its acted-set in memory would
+#: re-execute after a restart, and one that kept it in a new store would be a second thing to back
+#: up for a fact the run's ledger is already the record of. The row carries the parsed verb, so
+#: "you answered and it did nothing" is distinguishable from "you never answered".
+TRIAGE_REPLY = "triage_reply"
+
 #: The subset a downstream refiner reads. Named so a drift test can assert the engine
 #: still emits all of them.
 LEDGER_KINDS = frozenset(
@@ -171,6 +189,7 @@ LEDGER_KINDS = frozenset(
         PROPOSAL_REFUSED,
         AUTO_EXECUTED,
         SKIPPED_BUDGET,
+        TRIAGE_REPLY,
         STEP_COMPLETED,
         STEP_FAILED,
         STEP_SKIPPED,
@@ -204,6 +223,7 @@ LEDGER_KINDS = frozenset(
         ITEMS_COLLECTED,
         JUDGE_VERDICT,
         JUDGE_DIVERGENCE,
+        REVIEW_FINDING,
         WATCHER_REAPED,
         SEEN_SET,
         BUFFER_SEAL,

@@ -55,3 +55,32 @@ export function parseWidgetBlocks(raw: string, streaming = false): ContentSegmen
   if (rest.trim()) out.push({ type: 'md', content: rest })
   return out
 }
+
+/** The first COMPLETE `<widget kind="genui">` block in `raw`, or null.
+ *
+ *  The shared detector for every non-chat genui HOST (a workflow gate's prompt, a
+ *  dashboard tile's rendered body — AMBIENT-SURFACES §5.4). Those surfaces are not
+ *  markdown-rendered, so they cannot pick the block up through `Markdown`'s embed
+ *  dispatch; they ask HERE instead of each re-deriving "is this a genui payload",
+ *  which is how one surface ends up recognizing a block another one renders as text.
+ *
+ *  Incomplete (still-streaming) blocks are skipped deliberately: a gate prompt and a
+ *  tile body are FINISHED artifacts by the time a host paints them, so a half-parsed
+ *  tree there means malformed input, not progress. */
+export function findGenUiBlock(raw: string): WidgetSegment | null {
+  if (!raw) return null
+  for (const seg of parseWidgetBlocks(raw)) {
+    if (seg.type === 'widget' && seg.kind === 'genui' && seg.complete) return seg
+  }
+  return null
+}
+
+/** The non-widget text of `raw`, joined — the prose around a genui block. */
+export function widgetlessText(raw: string): string {
+  if (!raw) return ''
+  return parseWidgetBlocks(raw)
+    .filter((s): s is MdSegment => s.type === 'md')
+    .map((s) => s.content.trim())
+    .filter(Boolean)
+    .join('\n\n')
+}

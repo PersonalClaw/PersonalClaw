@@ -107,6 +107,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "unknown_filter": "The request names a filter this endpoint does not support.",
     # ── evals (handlers/evals.py) ──
     "evals_disabled": "The evals surface is switched off in config.",
+    "learning_disabled": "Learning is switched off in config, so there is nothing learned to "
+    "report on.",
     "judge_bench_absent": "No judge benchmark artifact has been produced yet.",
     "judge_bench_unreadable": "The judge benchmark artifacts could not be read.",
     "studies_unreadable": "The pre-registered study artifacts could not be read.",
@@ -134,6 +136,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "prompt_card_failed": "Rendering the prompt card failed.",
     "prompt_card_rejected": "The submitted prompt card was rejected.",
     "rejection_incomplete": "A rejection must carry a reason.",
+    # ── the triage digest (handlers/proactive.py) ──
+    # `triage_digest_unreadable` is a 500 whose `error` object travels BESIDE the digest view's own
+    # `state: "error"`, so a client that only reads the code and one that renders the card both get
+    # a usable answer. `triage_digest_expired` is a 409 and is load-bearing: an ordinal numbers ONE
+    # digest window, so a reply against a stale run must be REFUSED by code rather than executed
+    # best-effort against whatever is third today.
+    "triage_digest_unreadable": "The triage digest could not be read.",
+    "triage_digest_expired": "That digest is no longer the current one, so its item numbers no longer address the items it listed.",  # noqa: E501
+    "triage_schedule_write_failed": "The triage digest schedule could not be written.",
     # ── research reports (handlers/research_reports.py) ──
     "research_reports_unavailable": "Scheduled research reports are not available in this build.",
     # ── voice profiles (handlers/voice_profiles.py) — VoiceProfileError.reason ──
@@ -260,6 +271,19 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # guess between "reload the document", "you sent the wrong file type" and "this
     # artifact has no binary body at all" — three remedies, one of which destroys the
     # user's work if guessed wrong.
+    # ── React artifact deploy (artifacts/handlers.py) ────────────────────────────
+    #
+    # Two codes, not one, because the remedies are opposite: a build failure is the
+    # user's SOURCE to fix, a bad slug is the request to fix. The `message=` on both
+    # carries the raiser's own "WHAT — WHY. Fix: FIX" sentence verbatim.
+    "artifact_build_failed": (
+        "Bundling the artifact's React source failed, so nothing was published. Fix: read the "
+        "build message — it names the file and the reason."
+    ),
+    "artifact_slug_invalid": (
+        "The artifact slug is not a usable directory name, so no served path could be built for "
+        "it. Fix: rename the artifact to something slug-safe."
+    ),
     "kind_not_binary": (
         "The artifact's kind stores its body as text, so it has no binary body to replace. "
         "Fix: PATCH the artifact instead."
@@ -313,6 +337,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # up (`error_extra`), so a support log says WHICH automation vanished.
     "trigger_id_required": "A trigger id is required to describe what an automation would do.",
     "unknown_trigger": "No automation exists with that id.",
+    # ── onboarding import (handlers/onboarding_import.py) ──
+    # ONE code for both halves: a scan that could not read, and an import that stopped
+    # after a write raised. Both mean "the machinery failed", both carry the failure's own
+    # sentence, and both are safe to retry (the fingerprint ledger records each write as it
+    # lands). A `conflict` or `rejected` ITEM is not this — those are 200 rows of the report.
+    "onboarding_import_failed": "Scanning for or importing from another agent tool failed.",
 }
 
 

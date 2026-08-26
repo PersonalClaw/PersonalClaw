@@ -28,7 +28,9 @@ directly instead of inferred from a digest body.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 #: The three collect lanes §1.1 names. Ordered — this tuple IS the manifest's lane order,
 #: so "inbox first" is one list, not a comparison scattered across the ranking code.
@@ -133,6 +135,62 @@ class Manifest:
         for item in self.items:
             out[item.source] = out.get(item.source, 0) + 1
         return out
+
+    def projection(self) -> list[dict[str, str]]:
+        """The ordinal→provenance rows a LATER surface needs to act on this window.
+
+        The ordinal contract is only worth what it can be *redeemed* for. An ordinal that
+        outlives the process which minted it — the digest card a user opens tomorrow, a channel
+        reply that arrives after a restart — has to resolve to a store id without re-collecting,
+        because a re-collect renumbers the window and `3 yes` then acts on a different item
+        (criterion 9's wrong-target execution, reached with no adversary). So the map travels
+        with the run's own output rather than being rebuilt from a fresh read.
+
+        Provenance only: source lane, store id, title, permalink, materiality. Never `detail`,
+        which is the fenced, model-facing body — a read model for a card must not become a
+        second copy of untrusted item text.
+        """
+        return [
+            {
+                "ordinal": item.ordinal,
+                "source": item.source,
+                "source_id": item.source_id,
+                "title": item.title,
+                "permalink": item.permalink,
+                "materiality": item.materiality,
+            }
+            for item in self.items
+        ]
+
+
+def manifest_from_projection(
+    rows: Sequence[Mapping[str, Any]], *, window_start: str = ""
+) -> Manifest:
+    """Rebuild a manifest from :meth:`Manifest.projection` rows, in the recorded order.
+
+    The inverse of the projection, and deliberately NOT a re-collect: numbering is taken from
+    the rows verbatim, so a manifest restored here has the ordinals the digest was delivered
+    with even if the underlying stores have moved on. Rows with no ordinal or no `source_id`
+    are dropped — an item that cannot be addressed cannot be acted on, and admitting it would
+    put an un-actionable ordinal back into the id space a reply is checked against.
+    """
+    items: list[CollectedItem] = []
+    for row in rows:
+        ordinal = str(row.get("ordinal", "") or "").strip()
+        source_id = str(row.get("source_id", "") or "").strip()
+        if not ordinal or not source_id:
+            continue
+        items.append(
+            CollectedItem(
+                source=str(row.get("source", "") or ""),
+                source_id=source_id,
+                title=str(row.get("title", "") or ""),
+                permalink=str(row.get("permalink", "") or ""),
+                materiality=str(row.get("materiality", "") or MATERIALITY_RESPONSE),
+                ordinal=ordinal,
+            )
+        )
+    return Manifest(items=tuple(items), window_start=window_start)
 
 
 def _sort_key(item: CollectedItem) -> tuple[int, str, str]:

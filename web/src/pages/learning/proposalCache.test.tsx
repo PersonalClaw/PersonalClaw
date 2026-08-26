@@ -25,6 +25,7 @@ import type { LearningInbox, LearningRow, StagingWeek } from '../../lib/api'
 const row = (over: Partial<LearningRow> = {}): LearningRow => ({
   id: 'skill-f6fab94955e7', kind: 'skill', title: 'summarize before filing', provenance: 'refiner',
   source_cadence: 'run_end', source_excerpt: '', evidence_refs: ['r1'],
+  evidence_strength: 'correlated',
   reinforcements: 2, confidence: 0.7, manifest_valid: true, manifest_issues: [],
   risk_tier: 'low', status: 'pending', renderable: true, bulk_acceptable: true,
   ...over,
@@ -55,6 +56,7 @@ const judgeBench = vi.fn<() => Promise<never>>()
 const evalStudies = vi.fn<() => Promise<never>>()
 const retrievalBench = vi.fn<() => Promise<never>>()
 const ablation = vi.fn<() => Promise<never>>()
+const identityReport = vi.fn<() => Promise<never>>()
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -67,6 +69,7 @@ vi.mock('../../lib/api', () => ({
     evalStudies: () => evalStudies(),
     retrievalBench: () => retrievalBench(),
     ablation: () => ablation(),
+    identityReport: () => identityReport(),
   },
 }))
 
@@ -95,6 +98,11 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
     // owns its rendering, and "no ablation has run yet" is its ordinary state — for months,
     // since the cadence is monthly and the registry starts empty.
     ablation.mockRejectedValue(new Error('ablation_absent'))
+    // And the identity report, for the sixth time and the same reason:
+    // `IdentityReportPanel.test.tsx` owns its rendering. Omitting it threw inside a passive
+    // effect and surfaced as five failures about rows and cache keys — the exact symptom the
+    // note above this mock block describes, reproduced by the sixth read.
+    identityReport.mockRejectedValue(new Error('not under test'))
     acceptLearningProposal.mockResolvedValue({ ok: true })
     rejectLearningProposal.mockResolvedValue(undefined)
   })

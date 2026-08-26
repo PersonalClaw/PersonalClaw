@@ -388,8 +388,6 @@ class TestHeartbeatWiring:
         Drives the real ``_beat`` rather than inspecting source, so deleting the
         call site fails this test.
         """
-        from unittest.mock import MagicMock
-
         from personalclaw import heartbeat
 
         calls: list = []
@@ -398,11 +396,9 @@ class TestHeartbeatWiring:
         service = heartbeat.HeartbeatService.__new__(heartbeat.HeartbeatService)
         service._tick = heartbeat._SESSION_INDEX_TICKS  # a tick the sweep runs on
         service._processing = True  # skip the heartbeat-file work
-        service._memory = MagicMock()
         service._consolidator = None
         service._on_due_commitments = None
         service._interval = 60
-        monkeypatch.setattr(service, "_maybe_remediate", _noop_async, raising=False)
 
         await service._beat()
         assert calls, "the heartbeat must run the session-search reindex"
@@ -410,8 +406,6 @@ class TestHeartbeatWiring:
 
     @pytest.mark.asyncio
     async def test_a_reindex_failure_does_not_kill_the_tick(self, monkeypatch):
-        from unittest.mock import MagicMock
-
         from personalclaw import heartbeat
 
         def _boom(**kwargs):
@@ -421,17 +415,11 @@ class TestHeartbeatWiring:
         service = heartbeat.HeartbeatService.__new__(heartbeat.HeartbeatService)
         service._tick = heartbeat._SESSION_INDEX_TICKS
         service._processing = True
-        service._memory = MagicMock()
         service._consolidator = None
         service._on_due_commitments = None
         service._interval = 60
-        monkeypatch.setattr(service, "_maybe_remediate", _noop_async, raising=False)
 
         await service._beat()  # must not raise
-
-
-async def _noop_async(*args, **kwargs):
-    return None
 
 
 # ── Regressions found by driving the real gateway ────────────────────────────
@@ -470,7 +458,6 @@ class TestValidationRegressions:
         """`_tick` starts at 1, so a plain modulo left a fresh install unsearchable
         for the first five minutes — including the initial history sweep."""
         import asyncio as _asyncio
-        from unittest.mock import MagicMock
 
         from personalclaw import heartbeat
 
@@ -479,11 +466,9 @@ class TestValidationRegressions:
         service = heartbeat.HeartbeatService.__new__(heartbeat.HeartbeatService)
         service._tick = 1  # the very first wake-up
         service._processing = True
-        service._memory = MagicMock()
         service._consolidator = None
         service._on_due_commitments = None
         service._interval = 60
-        monkeypatch.setattr(service, "_maybe_remediate", _noop_async, raising=False)
         _asyncio.run(service._beat())
         assert calls, "the first tick must build the index"
 

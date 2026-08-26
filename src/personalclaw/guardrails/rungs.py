@@ -254,6 +254,24 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         ceiling=RUNG_AUTONOMOUS,
         providers=("notification-digest", "usage-recap", "triage-digest"),
     ),
+    # The health-scored remediation engine, driven by one
+    # adaptive-clock trigger. Its OWN key rather than sharing `action.digest`'s, on the same
+    # reasoning the sibling comments use in reverse: this is a different governed BEHAVIOR, not a
+    # second name for one. A digest writes one local row; this deletes aged history files, prunes
+    # the security event log and rebuilds search indexes.
+    #
+    # `autonomous` at the floor because the table's own rule forces it: the engine has run
+    # unattended on every tick since PR2-5 (as `HeartbeatService._maybe_remediate`), so a lower
+    # floor would not harden anything — it would stop the maintenance a live install depends on.
+    # The lesson cited at the top of this table, `enforcing a dead control is an outage`, is exactly
+    # this case. The ceiling is the same rung and `leaves_machine` is False: every job it runs
+    # writes local state and nothing escapes the machine.
+    ActionTypeSpec(
+        key="action.self_remediation",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("self-remediation",),
+    ),
     # The `inbox-op`. The ONE core provider that does not floor at `autonomous`, and the
     # reason is the paragraph at the top of this table read forwards instead of backwards: that
     # reasoning says an action which ALREADY runs unattended must declare the rung matching
@@ -278,12 +296,41 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
     ),
     # Spawns an LLM turn. `leaves_machine` because the turn's own toolset can reach the
     # network — the profile it runs under bounds that, not this declaration.
+    # The `second-opinion` shares this class rather than minting its own key, on the same
+    # reasoning the siblings above use: what it ultimately does is spawn ONE headless LLM turn —
+    # a cataloged runner one-shot, or a subagent when the exclusion leaves no eligible runner —
+    # and a second key would be a second name for one governed behavior. Its extra powers are
+    # governed where they can be evaluated: the write-capable fence in `triggers/screen.py`, the
+    # hard per-handoff timeout, and the disk re-diff that must confirm the edits before the
+    # result is accepted at all.
     ActionTypeSpec(
         key="action.spawn_turn",
         floor=RUNG_AUTONOMOUS,
         ceiling=RUNG_AUTONOMOUS,
         leaves_machine=True,
-        providers=("run-prompt", "invoke-agent", "run-workflow"),
+        providers=("run-prompt", "invoke-agent", "run-workflow", "second-opinion"),
+    ),
+    # Drives a real browser, so its effect is a click and a form
+    # POST on somebody else's site. `one_tap` at BOTH ends, which is the only spec here that
+    # is not `autonomous`, and deliberately so:
+    #   * not `autonomous` — a SUBMIT is an irreversible external write with no undo handle
+    #     (`reversal_kinds` is empty), so the silent rung would run it and leave nothing a user
+    #     would notice.
+    #   * not `draft_only` — that is the registration decision for a persisted browse PLAN;
+    #     applying it to the PROVIDER would withhold every browse dispatch at every trigger
+    #     seam before the change that could promote it exists, which is a shipped-and-inert
+    #     capability wearing a control's clothes.
+    #   * ceiling equals the floor because widening it needs the reversal half BA-6 owns; a
+    #     ceiling of `auto_with_undo` above a provider that cannot undo would route a form
+    #     submission to "executes, then keeps a handle" and keep no handle.
+    # Workflow ACTION NODES are unaffected — `workflows.engine.dispatch_action` does not
+    # consult the ladder, which is why the engine path and the trigger path read differently.
+    ActionTypeSpec(
+        key="action.browse",
+        floor=RUNG_ONE_TAP,
+        ceiling=RUNG_ONE_TAP,
+        leaves_machine=True,
+        providers=("browse",),
     ),
     # Executes author-supplied code: arbitrary shell / sandboxed Python. The denylist and
     # the capability fence are what license these; the ladder does not add a gate.

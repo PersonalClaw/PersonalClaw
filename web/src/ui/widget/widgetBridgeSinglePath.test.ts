@@ -12,6 +12,12 @@ import { readWidgetMessage } from './useWidgetActionBridge'
 
 const SRC = join(process.cwd(), 'src')
 const BRIDGE = join('ui', 'widget', 'useWidgetActionBridge.ts')
+/** The LEAF that owns the `[UI]` turn dialect (prefix, byte cap, event name, publisher).
+ *  Split out of the bridge in AS-6 because the bridge imports `appSdk` for `launchChat` and
+ *  `appSdk` imports the genui renderer, which needs the dialect — a five-module import cycle
+ *  that cost one module its exports. The "exactly one owner" claim below is UNCHANGED; only
+ *  which file that owner is moved, and the bridge re-exports it so consumers keep one path. */
+const DIALECT = join('ui', 'widget', 'actionTurn.ts')
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -36,7 +42,13 @@ describe('widget bridge: single path', () => {
 
   it('gives the ne:widget-action event exactly one owner', () => {
     const owners = files.filter((f) => f.text.includes("'ne:widget-action'")).map((f) => f.rel)
-    expect(owners).toEqual([BRIDGE])
+    expect(owners).toEqual([DIALECT])
+    // The bridge REACHES the name, it does not re-declare it — a second literal is exactly
+    // the dual path this rail exists to catch, and it would still satisfy "one owner" above
+    // if the list were merely widened.
+    const bridge = files.find((f) => f.rel === BRIDGE)?.text ?? ''
+    expect(bridge).toContain("from './actionTurn'")
+    expect(bridge).not.toContain("= 'ne:widget-action'")
   })
 
   it('lets nobody but the bridge interpret a widget-action off a raw message listener', () => {

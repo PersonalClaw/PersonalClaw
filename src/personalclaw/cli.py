@@ -172,6 +172,9 @@ def _resolve_gateway_args(args: argparse.Namespace) -> dict:
         "port_override": port,
         "json_ready": json_ready,
         "approval_mode": approval,
+        # §6 recovery lever. Deliberately NOT part of the --test-mode bundle: a harness
+        # that ran with no app layer would pass while the layer it never loaded was broken.
+        "safe_surfaces": getattr(args, "safe_surfaces", False),
     }
 
 
@@ -348,6 +351,17 @@ The posture is announced on stderr, so stdout stays pipeable.
         "--no-open",
         action="store_true",
         help="Do not auto-open the dashboard URL in the default browser on startup",
+    )
+    gw_parser.add_argument(
+        "--safe-surfaces",
+        action="store_true",
+        help=(
+            "Serve the dashboard in SAFE-SURFACES mode: only the shipped core (L0) "
+            "surfaces resolve — no app-contributed pages or components, no user/agent "
+            "surface overlays, tiles rendered inert. The recovery route when a "
+            "contributed or generated surface breaks the app. Equivalent to opening "
+            "#/dashboard?safe=1, but process-wide and unaffected by the URL."
+        ),
     )
     gw_parser.add_argument(
         "--port",

@@ -73,7 +73,7 @@ describe('non-chat hosts route through the ONE ne:launch-chat path', () => {
     render(<Shell />)
     publish({ text: '[UI] refresh: {"range":"30d"}' })
     expect(launched).toEqual([{}])
-    expect(takePendingWidgetAction()).toBe('[UI] refresh: {"range":"30d"}')
+    expect(takePendingWidgetAction()?.text).toBe('[UI] refresh: {"range":"30d"}')
   })
 
   it('does not put the auto-send authority in the URL', () => {
@@ -97,7 +97,7 @@ describe('non-chat hosts route through the ONE ne:launch-chat path', () => {
   it('drains the staged turn exactly once', () => {
     render(<Shell />)
     publish({ text: '[UI] once' })
-    expect(takePendingWidgetAction()).toBe('[UI] once')
+    expect(takePendingWidgetAction()?.text).toBe('[UI] once')
     expect(takePendingWidgetAction()).toBeNull()
   })
 

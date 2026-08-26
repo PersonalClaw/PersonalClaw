@@ -19,8 +19,10 @@ beforeAll(() => registerCoreGenUiComponents())
 describe('genui registry', () => {
   it('bundles a core component set spanning every group', () => {
     const groups = new Set(allComponents().map((c) => c.group))
-    expect(groups).toEqual(new Set(['Layout', 'Data', 'Charts', 'Feedback']))
-    for (const name of ['Stack', 'StatTile', 'Table', 'List', 'Bar', 'Callout']) {
+    // `Forms` joined the core set: the action-bearing components. Enumerated,
+    // so a new group has to be argued for here rather than appearing unnoticed.
+    expect(groups).toEqual(new Set(['Layout', 'Data', 'Charts', 'Forms', 'Feedback']))
+    for (const name of ['Stack', 'StatTile', 'Table', 'List', 'Bar', 'Callout', 'Button', 'Form']) {
       expect(getComponent(name), `${name} registered`).toBeTruthy()
     }
   })

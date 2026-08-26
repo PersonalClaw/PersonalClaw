@@ -685,6 +685,12 @@ export interface AppSummary {
   heroUrl?: string  // resolved data: URI for the optional hero/banner image; absent/"" if none
   hasBackend: boolean; hasUI: boolean
   uiPages: AppUiPage[]
+  // The app's genui components module (manifest `ui.components`, relative to its ui/
+  // dir) + its declared `uiCapabilities`. The shell loads the module for an ENABLED app
+  // that declared `generative-component`, so its components exist for any genui widget —
+  // not only inside that app's own page.
+  uiComponents?: string
+  uiCapabilities?: string[]
   isProvider: boolean; providerType: string; hasConfig: boolean
   permissions: AppPermissionsWire
   tags: string[]
@@ -1278,6 +1284,37 @@ export interface WorkflowContinuation {
 export interface WorkflowCascadePreview {
   rerun: string[]; stale: string[]; skipped: string[]; committed_effects: string[]; needs_confirmation: boolean
 }
+// One review finding as the triage panel receives it: the
+// WORKFLOWS-V2 Canonical Finding record, plus `auto_fixable`, plus the ANCHOR VERDICT computed
+// against the run's diff on this request. `anchor_state: 'unanchored'` with an `anchor_reason` is a
+// finding that must be shown as unverifiable rather than as truth — `resolved_path`/`resolved_line`
+// are the diff's own spelling of where it landed, and are what the accepted brief cites.
+export interface ReviewFinding {
+  key: string; severity: string; location: string; problem: string; why: string
+  recommended_fix: string; status: string; auto_fixable: boolean; line_text: string
+  origin_run_id: string; origin_node_id: string; origin_session_key: string
+  anchor_state: 'anchored' | 'unanchored'; anchor_reason: string
+  resolved_path: string; resolved_line: number; diff_line_text: string
+}
+export interface WorkflowReviewPayload {
+  run_id: string; workspace: string; diff: string; diff_truncated: boolean
+  findings: ReviewFinding[]
+  counts: { total: number; anchored: number; unanchored: number }
+  terminal: boolean
+}
+// `delivered: false` with `reason: 'nothing_accepted'` is the CORRECT outcome of a full rejection —
+// not an error. `handoff_parked` means the run was already terminal, so the brief was saved for a
+// follow-up run rather than a fresh one being started unasked.
+export interface WorkflowTriageResult {
+  run_id: string; dry_run: boolean; brief?: string
+  accepted: ReviewFinding[]
+  rejected: Array<ReviewFinding & { rejection_reason: string }>
+  refused: Array<ReviewFinding & { refused_reason: string }>
+  untriaged: ReviewFinding[]
+  receipt: { delivered: boolean; reason: string; target: string; brief: string; count: number }
+  calibrated?: number
+  auto_apply_candidates?: string[]
+}
 // The reconstructability set for one terminal node (WF2-A2) — what the inspector
 // drawer renders. `resolved_prompt` is the fully-resolved post-binding prompt inline, or a
 // `{ ref }` when it was too large to inline; `output` is the node's value, or an
@@ -1781,7 +1818,10 @@ export interface TriggerRunResult { ok: boolean; name?: string; result?: unknown
 export interface LearningRow {
   id: string; kind: string; title: string; provenance: string
   source_cadence: string; source_excerpt: string
-  evidence_refs: string[]; reinforcements: number; confidence: number
+  // `evidence_strength` is WHICH KIND of evidence the refs are — anecdotal / correlated / causal /
+  // ablation. The count alone cannot tell a measured on/off ablation (EVALUATION-SUBSTRATE §3.1
+  // files retirements with `ablation`) from a co-occurrence, and "" is UNGRADED, never a grade.
+  evidence_refs: string[]; evidence_strength: string; reinforcements: number; confidence: number
   manifest_valid: boolean; manifest_issues: string[]
   risk_tier: string; status: string
   renderable: boolean; bulk_acceptable: boolean
@@ -2134,6 +2174,44 @@ export interface StudyView {
   runs: StudyCaseRun[]
   evidence: Record<string, unknown> | null
 }
+/** The periodic identity report — the accumulated shape of what has been learned.
+ *
+ *  Every section is an exact `count` plus a bounded `items` sample, and the two are separate
+ *  fields on purpose: rendering `items.length` as the count would under-report the moment a
+ *  home got busy. `narrative_status` distinguishes "nobody asked for prose" (`skipped`, what a
+ *  GET returns) from "prose was asked for and no model answered" (`unavailable`) — the second
+ *  is a degraded delivery the panel says out loud. */
+export interface IdentityReportSection<T> { count: number; items: T[] }
+export interface IdentityReportFacet {
+  text: string; cls: string; stability: number; state: string; updated_at: string; pinned: boolean
+}
+export interface IdentityReportLesson { text: string; category: string; updated_at: string }
+export interface IdentityReportSkill {
+  name: string; uses: number; last_used: string; used_in_window: boolean
+  aging_state: string; created_at: string
+}
+export interface IdentityReportProposal { label: string; kind: string }
+export interface IdentityReport {
+  period: { window_days: number; since: string; until: string }
+  window_days: number
+  generated_at: string
+  total: number
+  facets: IdentityReportSection<IdentityReportFacet>
+  lessons: IdentityReportSection<IdentityReportLesson>
+  skills: IdentityReportSection<IdentityReportSkill>
+  proposals: IdentityReportSection<IdentityReportProposal>
+  memory: Record<string, number>
+  narrative: string
+  narrative_status: 'skipped' | 'written' | 'unavailable'
+  markdown: string
+}
+export interface IdentityReportDelivery {
+  artifact_slug: string
+  artifact_version: number
+  inbox_item_id: string
+  report: IdentityReport
+}
+
 export interface LearningHealth {
   days: number
   composite: {
@@ -2646,6 +2724,117 @@ export type MemoryVaultMode = 'off' | 'mirror' | 'two_way'
  *  `holder_attribution` and `slot_size_cap` ride the `_EDITABLE_CONFIG` PATCH — one writer
  *  each, never two. See `SettingsTab`'s `patch` vs `patchCfg`. */
 export interface MemorySettings { history_idle_hours: number; history_max_days: number; migrated?: boolean; l1_manifest?: boolean; active_recall?: boolean; proactive_commitments?: boolean; vault_mode?: MemoryVaultMode; vault_path?: string; graph_enabled?: boolean; push_context?: boolean; push_min_confidence?: number; graph_topology_in_context?: boolean; holder_attribution?: boolean; slot_size_cap?: number }
+
+// ── The triage digest ──
+
+/** The digest card's state, and the whole reason it is a UNION of five and not a list.
+ *
+ *  A card that drew an empty section for every one of these would tell the user "nothing
+ *  happened" when the truth was "you never installed it", "you switched it off", or "the read
+ *  failed". `error` in particular is not a fallback — the server sets it deliberately when a
+ *  store read raised, because an empty digest is the most reassuring sentence in the app and it
+ *  must never be produced by a failure. */
+export type TriageDigestState = 'uninstalled' | 'off' | 'never_run' | 'ready' | 'error'
+
+/** One thing the machine did on its own, with the handle that takes it back.
+ *  `undoable` is false when the provider had nothing to reverse — recorded, not papered over,
+ *  so the card offers Undo only where an undo exists. */
+export interface TriageAutoDone {
+  ordinal: string; source_id: string; action_type: string; provider: string
+  rule: string; reversal: string; undoable: boolean; ok: boolean; error: string
+  permalink: string; title: string; source: string; item_permalink: string; materiality: string
+}
+
+/** One proposal still waiting on the user. `tier` drives the badge; `pattern_key` is what an
+ *  "always" answer teaches — blank means the run recorded no pattern, and the card must not
+ *  offer "always" for it rather than inventing one. */
+export interface TriagePending {
+  ordinal: string; action_type: string; tier: string; pattern_key: string; clamped: boolean
+  reason: string; rule: string; answered: boolean; answer: string
+  permalink: string; title: string; source: string; item_permalink: string; materiality: string
+}
+
+/** One ledger row in the "what your machine did" section, permalinked to the run journal. */
+export interface TriageLedgerRow {
+  kind: string; seq: number; ordinal: string; action_type: string; rule: string
+  outcome: string; reason: string; detail: string; verb: string; permalink: string
+}
+
+export interface TriageSchedule { id: string; name: string; cron: string; enabled: boolean; created_by: string }
+
+export interface TriageDigestView {
+  state: TriageDigestState
+  enabled: boolean
+  installed: boolean
+  error: string
+  workflow?: string
+  node_id?: string
+  schedule?: TriageSchedule | null
+  /** True when the config switch and the schedule's own flag disagree. Reported, not silently
+   *  repaired on a read: two switches that diverged is something the user should see. */
+  schedule_drift?: boolean
+  run_id?: string
+  status?: string
+  finished_at?: string
+  permalink?: string
+  window_start?: string
+  title?: string
+  body?: string
+  /** 🔴 "handed to the notification gate", NOT "the user saw it". `DashboardState.notify`
+   *  returns nothing, so the run cannot know whether quiet hours held the digest back — measured
+   *  by driving one inside a quiet window: the run said delivered while the notification list did
+   *  not grow. Never render this as "delivered". */
+  handed_to_notify?: boolean
+  /** The quiet-hours window, so an absent notification can be EXPLAINED rather than read as a
+   *  broken notification system. `known: false` = the settings could not be read, which is not
+   *  the same as "quiet hours are off". */
+  quiet_hours?: { known: boolean; enabled: boolean; start: string; end: string; mute_all: boolean }
+  collected?: number
+  lanes?: Record<string, number>
+  dropped?: number
+  /** False = the auto-execution stage did not run at all. NOT the same as "it ran and did
+   *  nothing", which is `true` with an empty `auto_done` — the card must say different things. */
+  auto_stage_ran?: boolean
+  auto_done?: TriageAutoDone[]
+  pending?: TriagePending[]
+  budget_breached?: boolean
+  budget_reason?: string
+  degraded?: boolean
+  machine_did?: TriageLedgerRow[]
+  /** False = rows that should exist were NOT written. Never "there were none". */
+  ledger_complete?: boolean
+  ledger_rows?: number
+}
+
+/** The reply outcome, and note what is NOT here: `expired`. A stale digest is refused with a **409**
+ *  carrying `error.code: "triage_digest_expired"`, so it REJECTS through `ApiError` (status 409)
+ *  rather than resolving — a resolved `outcome: 'expired'` is a shape the api layer cannot produce,
+ *  and a handler written for it would be dead code. */
+export interface TriageReplyResult {
+  ok: boolean
+  outcome: 'acted' | 'help'
+  /** Why the grammar refused, when it did. A help line, never an interpretation. */
+  help_reason?: string
+  help?: string
+  results?: Array<{
+    ordinal: string; outcome: 'acted' | 'already' | 'unknown'; verb?: string
+    executed?: boolean; detail?: string; rule?: string; rule_error?: string
+    /** False = the answer was not durably recorded, so the next tap would act again. */
+    recorded?: boolean
+  }>
+}
+
+/** One taught approval rule, as `GET /api/memory/approval-rules` returns it.
+ *  `send_capable` is the graduation toggle: OFF, an approved `reply_draft` still only ever
+ *  drafts (the `inbox-op` provider has no send path at all), so the toggle is a statement of
+ *  intent that a send-capable provider would honour — not a switch that starts sending. */
+export interface ApprovalRuleRow {
+  key: string; pattern: string; verdict: 'approve' | 'deny' | 'suppressed'; scope: string
+  hit_count?: number; expires_at?: string | null; send_capable?: boolean
+  created_from_digest?: string | null; specificity?: number
+  created_at?: string | null; updated_at?: string | null
+  suppressed_until?: string | null; suppression_rung?: number
+}
 
 /** Per-arm volunteered-vs-used precision for the push reflex
  *  (MEMORY-GRAPH-AND-VAULT §3). `used` = the record's recall count rose after it
@@ -3248,6 +3437,45 @@ export interface OnboardingStatePatch {
   essentials?: Partial<OnboardingEssentials>
   first_success?: Partial<{ knowledge: boolean; trigger: boolean; loop: boolean }>
 }
+/** One thing another local agent tool holds that PersonalClaw could adopt.
+ *  `existing` is the server's answer, from the fingerprint ledger of what THIS
+ *  importer already wrote — so a re-entered first run marks an item instead of
+ *  offering it again. `redactions` is a COUNT; the matched values never leave the
+ *  scanner. */
+export interface OnboardingImportItem {
+  fingerprint: string; source: string; category: string; key: string; title: string
+  redactions: number; existing: boolean
+}
+/** What one source's scanner found. `detected` is computed server-side (present on
+ *  this machine AND holding something), so "did we find it" is decided once. */
+export interface OnboardingImportSource {
+  source: string; display_name: string; root: string; present: boolean; detected: boolean
+  counts: Record<string, number>
+  items: OnboardingImportItem[]
+  secrets_skipped: number; redactions: number
+  notes: string[]
+}
+/** `GET /api/onboarding/import` — every registered source (found or not) plus the
+ *  closed category vocabulary, in the writers' declaration order. */
+export interface OnboardingImportScan {
+  sources: OnboardingImportSource[]
+  categories: string[]
+}
+/** What happened to ONE item at its destination. The four-value vocabulary is
+ *  closed: `conflict` means something different was already there and was KEPT,
+ *  `rejected` means a security floor refused it. Neither is a silent success. */
+export interface OnboardingImportOutcome {
+  fingerprint: string; source: string; category: string; key: string
+  outcome: 'imported' | 'existing' | 'conflict' | 'rejected'
+  destination: string; detail: string
+}
+/** `POST /api/onboarding/import` — per-item outcomes plus what was withheld. */
+export interface OnboardingImportReport {
+  counts: Record<string, number>
+  results: OnboardingImportOutcome[]
+  secrets_skipped: number; redactions: number
+  notes: string[]
+}
 export interface ChatModelOption { name: string; model_id: string; provider: string; description?: string }
 export interface SavedAgent {
   name: string; provider: string; provider_agent?: string; acp_mode?: string; model?: string; approval_mode?: string
@@ -3780,6 +4008,35 @@ export interface RoutingPolicyRow {
   classes: Record<string, { order: string[]; basis: Record<string, unknown> }>
 }
 
+/** One pending routing PROPOSAL.
+ *
+ *  Measurement never rewrites the routing table: when the fold shows one bound model
+ *  clearly beating another for a request kind, the change lands here and waits for a
+ *  person. `current`/`proposed` are permutations of the same refs (a proposal reorders,
+ *  it never adds or drops a binding), and `evidence` is what makes it reviewable without
+ *  re-running anything — per-ref scores and sample counts, the floors that applied, the
+ *  latency/cost deltas (promoted minus demoted, so negative is better) and audit ids
+ *  that correlate back to the actual calls. */
+export interface RoutingProposal {
+  id: string
+  use_case: string
+  query_class: string
+  current: string[]
+  proposed: string[]
+  created_at: string
+  status: string
+  evidence: {
+    n?: Record<string, number>
+    scores?: Record<string, number>
+    min_samples?: number
+    hysteresis?: number
+    cloud_quality_margin?: number
+    p50_delta_ms?: number
+    cost_delta_usd?: number
+    sample_audit_ids?: string[]
+  }
+}
+
 /** Build the ?since=&until=&session=&group_by= query for the usage endpoints
  *  (empty/absent params omitted). */
 function _usageQuery(opts?: { since?: string; until?: string; session?: string; group_by?: string }): string {
@@ -3956,6 +4213,20 @@ export const api = {
     query_class?: string
     order?: string[]
   }) => put<{ ok: boolean; use_case: string; applied: string[] }>('/api/models/routing-policy', body),
+  // The propose-don't-write review queue. `count` is the Routing tab's badge.
+  // Fail-open server-side: an unreadable queue reads as empty rather than erroring.
+  routingProposals: () =>
+    get<{ count: number; proposals: RoutingProposal[] }>('/api/models/routing-proposals'),
+  // Accept APPLIES the proposed order to the table with the proposal as its basis. `applied:false`
+  // is a legitimate 200: the cell's order was set by hand, and a user decision is never
+  // overwritten — `reason` is the sentence to show. Reject writes no table at all; it records a
+  // suppression so the same finding cannot re-nag for routing.reproposal_cooldown_days.
+  acceptRoutingProposal: (id: string) =>
+    post<{ ok: boolean; applied: boolean; id: string; reason?: string }>(
+      `/api/models/routing-proposals/${encodeURIComponent(id)}/accept`,
+      {},
+    ),
+  rejectRoutingProposal: (id: string) => del(`/api/models/routing-proposals/${encodeURIComponent(id)}`),
   // full backend config (read the `agent` subtree for Agent defaults) + the
   // single-field PATCH (allowlisted dotted paths — see _EDITABLE_CONFIG).
   personalclawConfig: () => get<Record<string, any>>('/api/config/personalclaw'),
@@ -4507,6 +4778,13 @@ export const api = {
    *  only what it learned. Never read-modify-write the whole document. */
   saveOnboardingState: (patch: OnboardingStatePatch) =>
     post<{ ok: boolean; state: OnboardingState }>('/api/onboarding/state', patch),
+  /** What other local agent tools on this machine hold. Read-only in both
+   *  directions — it writes neither their config nor our home. */
+  onboardingImportScan: () => get<OnboardingImportScan>('/api/onboarding/import'),
+  /** Import the picked categories. The server RE-SCANS: only the two selection axes
+   *  travel, never items, so a caller can never name a directory to copy in. */
+  runOnboardingImport: (body: { sources: string[]; categories: string[] }) =>
+    post<OnboardingImportReport>('/api/onboarding/import', body),
   chatModels: () => get<ChatModelOption[]>('/api/models/chat'),
   setActiveModel: (useCase: string, models: string[]) => put<{ ok?: boolean }>(`/api/models/active/${encodeURIComponent(useCase)}`, { models }),
   // Re-index all knowledge + memory embeddings after the embedding model changed.
@@ -5000,6 +5278,15 @@ export const api = {
     get<StagingWeek>(`/api/learning/staging/week?days=${days}`),
   learningHealth: (days = 7) =>
     get<LearningHealth>(`/api/learning/health?days=${days}`),
+  /** The identity report, DETERMINISTIC. No model call — a panel mounting must not
+   *  spend one, so the narrative is only composed by the POST below. */
+  identityReport: (days = 30) =>
+    get<IdentityReport>(`/api/learning/identity-report?days=${days}`),
+  /** Compose, narrate, persist the versioned artifact and raise ONE inbox item. Separate from
+   *  the GET because it spends a model call and writes two durable things; the scheduled job
+   *  (when it lands) calls the same backend function, so there is one owner, not two. */
+  deliverIdentityReport: (days = 30) =>
+    post<IdentityReportDelivery>(`/api/learning/identity-report?days=${days}`, {}),
   /** The judge tier-recommendation table. Read-only: the RUN is
    *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
    *  must not start one. 404 carries a distinct code for "no benchmark yet" vs "evals off". */
@@ -5539,6 +5826,25 @@ export const api = {
   // rather than persisting something the read path would silently ignore.
   saveNotificationRules: (body: { rules?: Record<string, NotificationRulePatch>; digest?: { schedule?: string } }) =>
     put<NotificationRulesDoc & { ok: boolean }>('/api/notifications/rules', body),
+  // ── The triage digest ──
+  // The card makes ONE read. The server assembles the sections, so the browser never has to
+  // chain run-list → node-output → ledger and guess what a partial chain means.
+  proactiveDigest: () => get<TriageDigestView>('/api/proactive/digest'),
+  // The tap. `text` is the SAME reply grammar a channel message uses ('3 yes', 'always no 4'),
+  // so the digest has one parser rather than a button vocabulary that can drift from it.
+  proactiveReply: (runId: string, text: string) =>
+    post<TriageReplyResult>('/api/proactive/digest/reply', { run_id: runId, text }),
+  // The pack card: install the Morning-triage schedule, or reconcile an installed one against
+  // `proactive.triage_enabled`. Idempotent, so the same call is both the install and the repair.
+  proactiveInstall: (cron?: string) =>
+    post<{ ok: boolean; created: boolean; schedule: TriageSchedule }>(
+      '/api/proactive/install', cron ? { cron } : {}),
+  // The rules manager. These three routes shipped with PA-1 and had NO consumer until now.
+  approvalRules: () =>
+    get<{ rules: ApprovalRuleRow[]; unreadable: string[] }>('/api/memory/approval-rules'),
+  saveApprovalRule: (body: { pattern: string; verdict: 'approve' | 'deny'; scope?: string; expires_at?: string | null; send_capable?: boolean }) =>
+    post<{ ok: boolean; rule: ApprovalRuleRow }>('/api/memory/approval-rules', body),
+  revokeApprovalRule: (key: string) => del(`/api/memory/approval-rules/${encodeURIComponent(key)}`),
   memorySettings: () => get<MemorySettings>('/api/memory/settings'),
   saveMemorySettings: (s: Partial<MemorySettings>) => put<MemorySettings>('/api/memory/settings', s),
   /** The push reflex's report card. */
@@ -5845,6 +6151,16 @@ export const api = {
   workflowSteering: (id: string) =>
     get<{ run_id: string; pending: Array<{ text: string; queued_at: string }>; count: number }>(
       `/api/workflows/runs/${encodeURIComponent(id)}/steering`),
+  // Review findings, anchored against the run's diff AT READ TIME. The anchor verdict is
+  // never cached client-side for the same reason the server never stores it: the worker keeps
+  // working, and a stale `anchored` is how an accepted fix lands on the wrong line.
+  workflowReview: (id: string) =>
+    get<WorkflowReviewPayload>(`/api/workflows/runs/${encodeURIComponent(id)}/review`),
+  workflowReviewTriage: (
+    id: string,
+    body: { decisions: Array<{ key: string; outcome: 'accept' | 'reject'; reason?: string }>; dry_run?: boolean },
+  ) =>
+    post<WorkflowTriageResult>(`/api/workflows/runs/${encodeURIComponent(id)}/review/triage`, body),
   resumeWorkflowRun: (id: string, body: { answer?: unknown; resume_token?: string; always_allow?: boolean }) =>
     post<{ ok?: boolean; approved?: boolean; node_id?: string; resumed?: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/resume`, body),
   rewindWorkflowRun: (id: string, body: { node_id: string; redo_effects?: boolean; force?: boolean }) =>
@@ -5948,6 +6264,13 @@ export const api = {
     get<{ row: TileRefreshRow }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/refresh?ref=${encodeURIComponent(ref)}`).then((d) => d.row),
   tileLedgerHref: (viewId: string, ref: string) =>
     `/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/refresh?ref=${encodeURIComponent(ref)}`,
+  /** A genui control inside a TILE widget re-firing the tile's bound workflow.
+   *  Server-side the request is checked against that tile's FROZEN capability set, so a
+   *  rendered button cannot introduce an action the binding never declared — hence a
+   *  refusal is a normal, expected answer here (`ok:false` + `code`), not an error. */
+  tileWidgetAction: (viewId: string, body: { ref: string; action: string; payload?: Record<string, unknown> }) =>
+    post<{ ok: boolean; code?: string; message?: string; outcome?: string; violations?: string[][]; row?: TileRefreshRow }>(
+      `/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/action`, body),
 
   // App Platform (A7) — install/manage apps that extend PClaw.
   // Normalize the app-category flag at the boundary: `native` is the single source

@@ -7,18 +7,19 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
-import { api, type AblationView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
+import { api, type AblationView, type IdentityReport, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
 import { AblationPanel } from './AblationPanel'
 import { HealthPanel } from './HealthPanel'
+import { IdentityReportPanel } from './IdentityReportPanel'
 import { JudgeBenchPanel } from './JudgeBenchPanel'
 import { RetrievalBenchPanel } from './RetrievalBenchPanel'
 import { StudiesPanel } from './StudiesPanel'
 import { fvs } from '../../design/fontWeight'
 import {
-  DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState,
+  DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState, evidenceLabel,
   kindIcon, kindLabel, tierLabel, tierTone,
 } from './learningMeta'
-import { HEALTH_KEY, JUDGE_BENCH_KEY, RETRIEVAL_BENCH_KEY, STUDIES_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
+import { HEALTH_KEY, IDENTITY_REPORT_KEY, JUDGE_BENCH_KEY, RETRIEVAL_BENCH_KEY, STUDIES_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
 import { PageTitle } from '../../ui/PageTitle'
 
 /** The ablation report's cache key.
@@ -82,6 +83,14 @@ export function LearningPage() {
     RETRIEVAL_BENCH_KEY,
     () => api.retrievalBench(),
   )
+  // The identity report, on the DETERMINISTIC read: 30 days because the report's cadence is
+  // monthly, and no model call, so opening the page costs nothing. `error` is read for the same
+  // reason every panel above reads its own — an unread failure renders as "nothing was learned",
+  // which is the one answer this panel must never give by accident.
+  const { data: identityReport, error: identityError, refresh: refreshIdentity } = useQuery<IdentityReport>(
+    IDENTITY_REPORT_KEY,
+    () => api.identityReport(30),
+  )
 
   // The keep/remove/lighten ablation report. `error` is read for the judge table's two
   // reasons and a third: this route mints THREE distinct codes (evals off / nothing has run /
@@ -133,13 +142,12 @@ export function LearningPage() {
           <QuietButton
             title="Refresh"
             onClick={() => {
-              refreshEverything(refreshProposals, refreshWeek, refreshHealth, refreshJudgeBench, refreshStudies, refreshRetrieval)
+              refreshEverything(refreshProposals, refreshWeek, refreshHealth, refreshJudgeBench, refreshStudies, refreshRetrieval, refreshIdentity)
               // The ablation report moves only when `personalclaw ablation` or the monthly cadence
               // runs — terminal-side, so its staleness is invisible to the page, exactly like the
               // judge and retrieval tables. It refreshes here rather than inside
               // `refreshEverything` because its key has a single reader, so the refetch is the
-              // whole invalidation; adding a seventh positional parameter over there would buy
-              // nothing and couple two files for one call.
+              // whole invalidation, not because the parameter list is full.
               refreshAblation()
             }}
           >
@@ -166,6 +174,13 @@ export function LearningPage() {
           {week === undefined && weekError
             ? <LoadError what="capture week" error={weekError} onRetry={refreshWeek} />
             : week && <WeekPanel week={week} />}
+
+          <IdentityReportPanel
+            report={identityReport}
+            error={identityError}
+            onRetry={refreshIdentity}
+            onDelivered={refreshIdentity}
+          />
 
           <HealthPanel health={health} error={healthError} onRetry={refreshHealth} />
 
@@ -280,7 +295,7 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
             {row.provenance ? `from ${row.provenance}` : 'source unknown — cannot be weighed'}
             {row.source_cadence ? ` · ${row.source_cadence}` : ''}
             {row.reinforcements > 1 ? ` · seen ${row.reinforcements}×` : ''}
-            {row.evidence_refs.length ? ` · ${row.evidence_refs.length} evidence ref(s)` : ' · no evidence'}
+            {` · ${evidenceLabel(row)}`}
           </div>
           {row.source_excerpt && (
             <p className="mt-2 rounded-md bg-surface-high px-m py-2 text-on-surface-var text-[0.75rem] break-words">

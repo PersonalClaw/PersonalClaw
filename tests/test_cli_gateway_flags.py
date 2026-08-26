@@ -51,6 +51,10 @@ class TestNoFlags:
             "port_override": None,
             "json_ready": False,
             "approval_mode": None,
+            # AS-6 §6 recovery lever. Enumerated here (an exact dict, not a subset) on purpose:
+            # every key this resolver returns is splatted into `_gateway`, so a new one has to
+            # be argued for in this test before it can reach the entry point.
+            "safe_surfaces": False,
         }
 
     def test_headless_flag_passes_through(self):

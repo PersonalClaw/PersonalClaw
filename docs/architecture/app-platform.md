@@ -205,6 +205,7 @@ the two together):
 |---|---|---|
 | `@personalclaw/app-sdk/ui` | `shell-primitives` | `Button`, `Surface`, `useTheme`, `readAppTheme` |
 | `@personalclaw/app-sdk/genui` | `generative-widget` | `GenerativeWidget` |
+| `@personalclaw/app-sdk/genui` | `generative-component` | `registerComponent`, `unregisterComponents` |
 
 `Button`/`Surface` are the host's OWN components by identity, not copies, so a page built
 from them renders markup identical to a native page's — which is what
@@ -214,10 +215,27 @@ from them renders markup identical to a native page's — which is what
 app never names a host CSS variable directly.
 
 `GenerativeWidget` takes a genui DSL body and hands it to the HOST renderer, which validates
-every line against the host's own component registry (`ui/genui/registry.ts`). An app
-contributes a **widget**, never a component **type**: the registry stays host-owned, so
-neither an app nor a model writing that app's spec can put unregistered markup into the host
-React tree. Authoring surface for the DSL is `library.prompt()`.
+every line against the host's own component registry (`ui/genui/registry.ts`). Authoring
+surface for the DSL is `library.prompt()`.
+
+**Contributing a component TYPE** is the separate reading APE-11 deferred, and AMBIENT-SURFACES
+AS-6 landed it under `generative-component` — a distinct declaration, because supplying a DSL
+body and extending the component vocabulary are different trust edges and one must not grant
+the other. An app declares `ui.components` (a module whose `register(sdk, ctx)` export calls
+`sdk.registerComponent(ctx, def)`); the SHELL loads it for every enabled declaring app, so a
+chat-born widget can name the component without the user ever opening that app's page. Four
+properties keep the safety model intact:
+
+- **additive only** — an app registration is an L1 layer entry that may add a name, never
+  shadow a core one (refused at register time, so model-authored `Table(…)` always reaches the
+  core `Table`);
+- **host-validated** — the component declares its args to the host registry and is validated
+  by it like any core component;
+- **error-boundaried** — it renders inside a `LayerBoundary`, so a throwing app component
+  cannot blank the surface it was composed into;
+- **removed on disable** — the same sync pass that loads a module drops the components of any
+  app that is no longer enabled or no longer declares the capability, and they leave
+  `library.prompt()` with it.
 
 **The gate is a declaration, not a sandbox.** `resolvableAppSpecs()` omits an undeclared
 subpath from the bundle's import rewrite, so its bare import fails to resolve — but a

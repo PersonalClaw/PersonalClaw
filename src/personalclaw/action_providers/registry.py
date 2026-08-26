@@ -72,6 +72,19 @@ def _ensure_default_providers_registered() -> None:
         from personalclaw.action_providers.usage_recap_provider import UsageRecapActionProvider
 
         register_action_provider(UsageRecapActionProvider())
+    if "self-remediation" not in _providers:
+        # The health-scored remediation engine, re-homed off the
+        # heartbeat onto its own adaptive-clock trigger. Registered unconditionally rather than
+        # behind `resilience.remediation.enabled`, because the trigger row exists either way (the
+        # reconciler disables it instead of deleting it, so a user can see the switch) and a live
+        # row naming an unregistered provider validates, saves, and then fails at fire time. Added
+        # to `ALLOWED_HOOK_PROVIDERS` and to `triggers/screen.py`'s write-capable set in the SAME
+        # commit — a provider in one set but not the others is that same save-then-refuse mismatch.
+        from personalclaw.action_providers.remediation_provider import (
+            SelfRemediationActionProvider,
+        )
+
+        register_action_provider(SelfRemediationActionProvider())
     if "source-digest" not in _providers:
         # WATCHED-SOURCES §6.2 (the caller). Registered unconditionally, not behind
         # `sources.enabled`: the bundled clock trigger that names it exists whether or not a
@@ -230,3 +243,24 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(KnowledgeReportActionProvider())
+    if "browse" not in _providers:
+        # The autonomous web-interaction provider. Registered
+        # unconditionally, like `source-digest` above and for the same reason — a workflow
+        # template or trigger naming `browse` must be dispatchable whenever it can run, and a
+        # registration that depended on config is one the run-start preflight cannot see. The
+        # provider itself refuses cheaply (a typed `ERR_BROWSE_NO_TARGET`) when no browser
+        # target is configured, so registering it costs nothing on a machine without one.
+        from personalclaw.action_providers.browse_provider import BrowseActionProvider
+
+        register_action_provider(BrowseActionProvider())
+    if "second-opinion" not in _providers:
+        # Hand a stalled loop/gate/session's state to a
+        # DIFFERENT cataloged runner for one shot, and accept the answer only when a disk
+        # re-diff confirms the edits it claims. Added to ALLOWED_HOOK_PROVIDERS and to
+        # `triggers/screen.py`'s write-capable set in the SAME commit — a provider in one set
+        # but not the other is the mismatch that makes a trigger save and then fail to run.
+        from personalclaw.action_providers.second_opinion_provider import (
+            SecondOpinionActionProvider,
+        )
+
+        register_action_provider(SecondOpinionActionProvider())

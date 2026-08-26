@@ -79,6 +79,14 @@ _CEILING_WRAPPED: dict[str, str] = {
     "loop/worktree.py::_git::subprocess.run": (
         "loop worktree git → build ceiling via spawn_shim_argv"
     ),
+    # React artifact bundle (build profile) — PRODUCT-EXPERIENCE-PARITY `PEP-9`. The source
+    # handed to the bundler is a model- or user-authored artifact body, so this is
+    # agent-influenced in the fullest sense and is exactly the unbounded build spawn §1
+    # exists to bound. It is the ONLY spawn in artifacts/, and there is no unwrapped
+    # sibling path.
+    "artifacts/build.py::_run_esbuild::create_subprocess_limited": (
+        "react artifact bundle → build ceiling via create_subprocess_limited"
+    ),
     # App backend respawn (tool profile) — off the watchdog thread, argv-prepend not preexec_fn.
     "apps/backend_runtime.py::BackendSupervisor.start::subprocess.Popen": (
         "app backend → tool ceiling via spawn_shim_argv (argv-prepend; NOT preexec_fn)"
@@ -262,6 +270,13 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     ),
     "dashboard/handlers/files.py::api_file_git_original::asyncio.create_subprocess_exec": (
         "operator: git show for diff view"
+    ),
+    # The review-triage diff read. Same class as the file browser's `_git` above: a fixed
+    # read-only argv (`diff` / `ls-files`), `cwd` the run's OWN workspace path off the run record,
+    # and never a shell. Nothing agent-authored reaches the argv — the reviewer's finding is only
+    # ever COMPARED against this command's output, never passed to it.
+    "workflows/review_service.py::_git::asyncio.create_subprocess_exec": (
+        "operator: run workspace git diff read"
     ),
     "dashboard/handlers/files.py::api_reveal_path::subprocess.Popen": (
         "operator: reveal in Finder/xdg-open"
@@ -524,6 +539,9 @@ def test_agent_influenced_seams_are_all_ceiling_wrapped():
         # Third-party parser code from a Store app. Ratcheted in for the same reason —
         # this is the site where an exemption would be least defensible.
         "knowledge_providers/pack_parse.py::run_parse_script::subprocess.run",
+        # Bundling a react artifact runs a bundler over agent-authored source.
+        # Ratcheted in so the artifact deploy path can never grow a second, unwrapped build.
+        "artifacts/build.py::_run_esbuild::create_subprocess_limited",
     }
     missing = sorted(required - set(_CEILING_WRAPPED))
     assert not missing, f"agent seams not ceiling-wrapped: {missing}"

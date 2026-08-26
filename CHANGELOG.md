@@ -10,6 +10,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A reviewer's findings now get triaged by you before anything touches your code.**
+
 - **Your watched sources now write you a morning digest, without you scheduling anything.**
 
 - **App cards now tell you whether an app is tested, styled like the rest of PersonalClaw, and accessible — and for our own apps, a card that claims it and isn't fails the build.**

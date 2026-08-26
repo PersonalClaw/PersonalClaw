@@ -158,7 +158,49 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: schema in two places, which is the drift this repo keeps finding. The 3 is bought and then
 #: PINNED by :func:`test_the_a2a_surface_hides_no_flat_envelope_in_its_unresolved_rows`, which
 #: takes the pin's stronger shape: that module emits NO flat envelope at all.
-UNRESOLVED_PAYLOAD_CEILING = 208
+#: 205 → **207**: the identity report's two new 200 SUCCESS bodies on the same learning
+#: surface — ``json_response(compose_identity_report(...).to_payload())`` and
+#: ``json_response(delivery.to_payload())``. Identical shape and identical reasoning to the LV-3
+#: row above (a composer's return value; spelling its keys out would duplicate
+#: ``IdentityReport``/``IdentityReportDelivery``'s schema in two places). **The slack is not
+#: spendable on an error envelope:** the four refusals go through :func:`json_error`, which
+#: needs no payload dict at all, so the learning surface's FLAT count is unchanged at 14 and
+#: :func:`test_the_learning_surfaces_new_unresolved_row_cannot_become_a_flat_envelope` pins it
+#: there. The first draft used flat ``{"error": str}`` bodies and reds three of these
+#: ratchets at once, which is how the structured envelope came to be used here.
+#: **208 + 2 = 210 (union).** Both rows above were measured against the SAME base of 205 —
+#: EA-8 bought +3 and LV-4 bought +2, independently — so NEITHER side's number is correct
+#: for a tree carrying both, and taking either one would silently un-pin the other surface.
+#: The ceiling is the sum, and the two per-surface FLAT pins above are what keep the slack
+#: from being spent on an error envelope.
+#: 210 → **211**: one 200-status SUCCESS body on the onboarding surface —
+#: ``json_response(report.to_dict())`` in ``handlers/onboarding_import.py``. Same shape and
+#: same reasoning as the rows above: it is a composer's return value, and spelling
+#: its keys out at the call site would duplicate ``ImportReport``'s schema in two places —
+#: exactly the drift this census exists to catch. **The slack is not spendable on an error
+#: envelope:** the import route's refusals go through ``json_error``, which needs no payload
+#: dict at all, so the onboarding surface's FLAT count is unchanged.
+#: 211 → **212**: one 200-status SUCCESS body on the artifact-deploy route — the
+#: ``{"ok": True, "deployment": …, "build": …}`` payload, whose members are the stores' own
+#: ``to_dict()`` returns. Same reasoning as the rows above.
+#: **The slack is not spendable on an error envelope:** this change's two refusals were CONVERTED
+#: to :func:`json_error` (``artifact_build_failed`` 422, ``artifact_slug_invalid`` 400) rather
+#: than accommodated, so ``FLAT_BASELINE`` stayed at 1507 — it is shrink-only and was not raised.
+#: **Measured against `origin/main`, not carried forward.** An earlier revision of this branch
+#: recorded a net delta of ZERO, and that reading expired: it was taken before ES-7 landed a site
+#: of its own. The delta a branch needs is main-RELATIVE, so it has to be re-measured at every
+#: rebase rather than reused — main now measures 211 and this branch measures 212.
+#: 212 → **213**: one 200-status SUCCESS body on the tile-action route —
+#: ``POST /api/dashboard/views/{view}/tiles/action`` answers with the record
+#: ``tile_actions.check`` builds, whose ``violations`` member is a list of tuples the checker
+#: owns. Spelling those out at the call site would duplicate the fence's own shape in two places.
+#: **The slack is not spendable on an error envelope:** the route's refusals are part of that same
+#: 200 record BY DESIGN — the fence reports what it refused so the caller can name the denied
+#: provider — and no flat ``{"error": …}`` body was added, so ``FLAT_BASELINE`` stays 1507.
+#: Measured against `origin/main` at rebase time: main 212, this branch 213. This row read
+#: "211 → 212" one rebase ago; the step is MAIN-RELATIVE and moves whenever another change lands
+#: one of these, so it is re-measured at every rebase rather than carried forward.
+UNRESOLVED_PAYLOAD_CEILING = 213
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites
@@ -798,7 +840,10 @@ def test_the_learning_surfaces_new_unresolved_row_cannot_become_a_flat_envelope(
     module = "src/personalclaw/dashboard/handlers/learning.py"
 
     unresolved = [row for row in census.unresolved if row[0] == module]
-    assert len(unresolved) == 4, unresolved
+    # 4 → 6: the identity report's GET preview and POST delivery bodies. Both are
+    # composer return values, both `Call`, neither via a wrapper — exactly the shape the
+    # ceiling is raised for, and the flat assertion below is what keeps the slack unspendable.
+    assert len(unresolved) == 6, unresolved
     assert {row[2] for row in unresolved} == {"Call"}, unresolved
     assert all(row[3] is False for row in unresolved), "none of these is via a wrapper"
 

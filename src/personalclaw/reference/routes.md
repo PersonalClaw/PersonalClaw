@@ -209,6 +209,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/dashboard/views/{view_id}` — read, edit, or delete a view.
 - `PUT /api/dashboard/views/{view_id}` — read, edit, or delete a view.
 - `POST /api/dashboard/views/{view_id}/tiles` — {slug, size?} — pin an artifact tile.
+- `POST /api/dashboard/views/{view_id}/tiles/action` — POST .../tiles/action {ref, action, payload?} — a genui control re-firing this tile.
 - `PUT /api/dashboard/views/{view_id}/tiles/binding` — {ref, mode, ttl_secs?, skeleton?, data?}
 - `GET /api/dashboard/views/{view_id}/tiles/refresh` — POST .../tiles/refresh {ref, force?} — run one chatless refresh (§2.3).
 - `POST /api/dashboard/views/{view_id}/tiles/refresh` — POST .../tiles/refresh {ref, force?} — run one chatless refresh (§2.3).
@@ -375,6 +376,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PATCH /api/knowledge/tags/{id}` — rename, or re-parent via `parent_id`.
 - `POST /api/knowledge/tags/{id}/merge` — {into} — fold this tag into another.
 - `GET /api/learning/health` — the flywheel observability panel (LEARN-R14b).
+- `GET /api/learning/identity-report` — the deterministic report, no model call.
+- `POST /api/learning/identity-report` — compose, narrate, persist, surface.
 - `GET /api/learning/proposals` — the inbox across all six kinds.
 - `DELETE /api/learning/proposals/{id}` — dismiss it, and REMEMBER the decision.
 - `GET /api/learning/proposals/{id}` — one full record.
@@ -521,6 +524,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/models/local/{provider}/{model}` — delete a downloaded local model.
 - `GET /api/models/routing-policy` — the inspectable routing table (§6.1).
 - `PUT /api/models/routing-policy` — set one of the three user levers (§6.2).
+- `GET /api/models/routing-proposals` — the propose-don't-write review queue (§6.3).
+- `DELETE /api/models/routing-proposals/{id}` — decline it, and remember the decision (§6.3).
+- `POST /api/models/routing-proposals/{id}/accept` — apply it to the table (§6.3).
 - `DELETE /api/models/sidecar/{provider}/install` — remove a CORE-created venv.
 - `POST /api/models/sidecar/{provider}/install` — start the resumable install.
 - `GET /api/models/sidecar/{provider}/install/status` — the rich install poll shape.
@@ -539,6 +545,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/notifications/settings` — _(no summary)_
 - `POST /api/notifications/unack` — mark a single notification as unread.
 - `GET /api/onboarding` — First-run onboarding signal — model readiness plus persisted flow progress.
+- `GET /api/onboarding/import` — what each source holds, and what is already ours.
+- `POST /api/onboarding/import` — import the picked categories and report outcomes.
 - `POST /api/onboarding/state` — Record first-run progress — a partial merge into the onboarding entity state.
 - `POST /api/optimizer/optimize` — rewrite a prompt using session context.
 - `GET /api/outbox` — list files in the outbox.
@@ -555,6 +563,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/packs/{name}/finish-setup` — Return a pack's re-runnable setup interview (the "Finish setup" chip).
 - `POST /api/packs/{name}/roster/deploy` — One-click team deploy: promote a pack's ``always`` roster tier (§4.2).
 - `POST /api/packs/{name}/update` — The §1 ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true.
+- `GET /api/proactive/digest` — §5.1's card, assembled from the last digest run.
+- `POST /api/proactive/digest/reply` — one tap or one typed reply. Body ``{run_id, text}``.
+- `POST /api/proactive/install` — §5.4's pack card. Idempotent; also the reconcile.
 - `GET /api/projects` — _(no summary)_
 - `POST /api/projects` — _(no summary)_
 - `POST /api/projects/import` — import a project archive (multipart `file`).
@@ -763,6 +774,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/pause` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/resume` — Answer a gate, or clear a pause.
+- `GET /api/workflows/runs/{run_id}/review` — GET this run's review findings, anchored against its workspace diff as it is right now.
+- `POST /api/workflows/runs/{run_id}/review/triage` — POST accept/reject decisions; dispatch the accepted subset to the originating worker.
 - `POST /api/workflows/runs/{run_id}/rewind` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/run-from` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/steer` — POST a mid-run steering instruction (LOOPS-EVOLUTION R14).
