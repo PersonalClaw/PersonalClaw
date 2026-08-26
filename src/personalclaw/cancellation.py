@@ -282,6 +282,48 @@ async def terminate_and_reap(proc: Any, *, grace: float = REAP_GRACE_SECS) -> bo
         return False
 
 
+async def kill_timed_out(proc: Any, *, grace: float = REAP_GRACE_SECS) -> bool:
+    """SIGKILL a child whose **timeout already expired**, then reap under a BOUND.
+
+    The timeout-path counterpart of :func:`terminate_and_reap`. Use it wherever an
+    ``asyncio.wait_for(...)`` just raised: the deadline is spent, so there is no grace
+    to give, and the only job left is to leave nothing running and nothing blocked.
+
+    Two things distinguish it from the ``proc.kill()`` / ``await proc.communicate()``
+    pair it replaces, and both were measured rather than reasoned:
+
+    * **It signals the group.** ``proc.kill()`` reaches only the direct child, so a
+      grandchild (``git``'s remote helper, a ``pip`` build backend, a bundler worker)
+      survives — and keeps the *inherited* stdout/stderr pipe open. :func:`_signal_child`
+      takes the whole group when the child leads one, and falls back to the single pid
+      when it does not, so this is safe at a site that shares the gateway's group.
+    * **The reap is bounded.** ``asyncio``'s ``Process.wait()`` resolves only once every
+      inherited pipe has disconnected, not when the child is reaped — so an *unbounded*
+      drain after a kill waits for the grandchild's full runtime instead of the child's
+      exit. A 1s timeout over a ``sleep 30`` grandchild took **30.0s** to return that
+      way, and **1.0s** once the group was signalled. An un-bounded drain is not a
+      timeout; it is the child's own duration wearing a timeout's name.
+
+    A child that must lead its own group for the group branch to fire has to be spawned
+    with ``start_new_session=True``. Without it ``getpgid(pid) != pid`` and this falls
+    back to the single pid — correct, but it cannot reach the grandchild, which is why
+    the caller adds the flag rather than this function assuming it.
+
+    Returns True once the child is reaped, False if it outlived *grace*.
+    """
+    if getattr(proc, "pid", None) is None:
+        return False
+    _signal_child(proc, signal.SIGKILL)
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=grace)
+        return True
+    except Exception:
+        logger.warning(
+            "cancel: timed-out child %s not reaped within %ss", getattr(proc, "pid", "?"), grace
+        )
+        return False
+
+
 # ── ambient binding (so a deep spawn site is stoppable without a parameter) ──
 
 _CURRENT_SCOPE: contextvars.ContextVar["CancelScope | None"] = contextvars.ContextVar(
