@@ -782,3 +782,78 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   **Gate:** `make lint` clean (mypy 1011 files); at integration on the rebased tip, the 6 suites importing
   `inbound.capture_proxy`/`inbound.clients` plus the new file → **260 passed, 0 failed**; the new file alone
   **10 passed**; `gate_report.py` 6/6 PASS; probe sweep 16. No `web/` files.
+- [2026-08-25][EA-8] **PARTIAL — the inbound dialect is DONE end to end; the outbound `a2a-call` half is
+  cross-repo and deliberately NOT started here.** New `src/personalclaw/inbound/a2a.py` mounts three
+  literal routes from `dashboard/server.py` (beside `/mcp` and `/capture`, before any `{...}` pattern):
+  `GET /a2a/agent-card`, `POST /a2a/tasks`, `GET /a2a/tasks/{task_id}`. Registered UNCONDITIONALLY and
+  refused per request via `gate.admission_problem` — the capture-proxy pattern, not `mcp_http.mount`'s
+  startup gate — so a Settings toggle needs no restart and a disabled surface 404s.
+  **CLOSED clauses.** (1) `metadata.a2a_published` is a typed `DefMetadata` field defaulting to **False**,
+  read with `is True` (the `guided` precedent), with `to_dict`/`from_dict` and a **per-template toggle** on
+  the template detail page. (2) The card's skills ARE the published templates; inputs are advertised by
+  name/type only — declared DEFAULTS are withheld, because a default can be a hostname or a path.
+  (3) `POST /a2a/tasks` goes through `workflows.service.start_run` with `origin_kind=API` and
+  `session_key="inbound:a2a:<client>"`, which is the entire implementation of "headless profile":
+  `guardrails.policy.INBOUND_PREFIX` already classifies that family as unattended, so the profile is
+  INHERITED, never chosen. Client budget = `caps.caps_for(client)`, the same three-layer resolution the
+  other dialects use. (4) Lifecycle streams as A2A `status-update` + `artifact-update` SSE frames when the
+  client sends `Accept: text/event-stream`. (5) Artifacts are fenced through `inbound.framing.fence_payload`
+  — the ONE wrapper over `security.fence_untrusted`; an AST census asserts this module declares no second
+  fencing helper.
+  **The WF2 gate is MOOT, not skipped.** §5 says the card "mounts empty until WF2 Slices 0-3"; those landed
+  (run engine + `personalclaw/ledger/` are on `main`), so the card is live and its emptiness now means only
+  "nobody opted in".
+  🔴 **DESIGN FINDING — an empty card and a broken card were the same bytes.** `service.list_defs` swallows
+  a per-provider exception by design; when the ONLY provider raises it returns `{"ok": True, "defs": []}`,
+  which serves as a well-formed card advertising nothing — indistinguishable from the *correct* "nothing is
+  published" answer. So `published_skills()` enumerates providers DIRECTLY (also required: `list_defs` strips
+  `metadata`, so the publish flag is invisible through it), counts failures, and a catalog that could not be
+  read answers **503 `a2a_catalog_unavailable`** instead of a 200 empty card. The swallow is asserted on the
+  service first, so the test cannot pass by the premise silently changing.
+  🔴 **DESIGN FINDING — §5's stated egress composition is PERMISSIVE, and the clause contradicts it.** The
+  prose says "CONNECTOR policy layered by `egress_policy_for`"; measured, `CONNECTOR.allow_only` is False and
+  `egress_policy_for` UNIONS the operator's `allow_hosts` onto the profile's — an additive waiver. That
+  composition reaches every public host and the allow-list is decorative, which is the same defect
+  `capture_proxy.capture_policy` records for a STRICT base. The clause's own words are "deny-by-default host
+  allowlist", and only `allow_only=True` delivers that. `a2a.outbound_policy()` therefore builds on `LISTED`
+  and copies CONNECTOR's byte/timeout ceilings. Proven non-vacuously: an empty allowlist REFUSES
+  `agent.example.com`; naming it PERMITS it; a different host is still refused; and the prose's composition
+  is shown to allow. **§5's sentence should be corrected — owner call.**
+  🔴 **UNMET clause — `apps/a2a-action` belongs in the `PersonalClawApps` repo, and `a2a-call` is therefore
+  deliberately ABSENT from `ALLOWED_HOOK_PROVIDERS`.** §5 names the `apps/webhook-action` precedent exactly,
+  and that app lives in `PersonalClawApps/webhook-action` (core carries only the NAME `webhook` in the
+  allowlist). So the provider, its `app.json`, its `ActionProvider` factory, `test_provider.py`, README and
+  LICENSE are an apps-repo change this core PR cannot make. Adding the name here alone would be strictly
+  worse than omitting it — `validation.py`'s own comments say so three times: a provider in one set but not
+  the other validates, saves, and then fails at fire time. `test_inbound_a2a.TestHookProviderAllowlist`
+  is the executable statement of that state and asserts BOTH directions (`webhook` accepted, `a2a-call`
+  rejected, through the same `HOOK_CREATE_SCHEMA` call with otherwise-identical payloads); when the app
+  lands, `a2a-call` moves from the reject side to the accept side in the SAME commit and the assertion
+  flips. Success Criterion 10's `a2a-call` half is unmet for the same reason.
+  **Write path.** `metadata.a2a_published` gets its own route, `POST /api/workflows/{name}/a2a-publish` →
+  `service.set_a2a_published`, NOT a field on the def save. The detail UI holds the SECRET-STRIPPED def, so
+  re-saving that document to carry one bool would persist `_has_*` flags where the bindings were and break
+  every node that resolved a credential; the new function mutates the RAW stored def and is tested against
+  exactly that hazard.
+  **Bug found and fixed in passing.** `service._service_failure` returns a FLAT `{"ok", "code", "message"}`
+  envelope, not a nested `{"error": {...}}`. An earlier revision of the task-start refusal read
+  `started["error"]["message"]`, so every refusal collapsed to "the run could not be started" and discarded
+  the actionable sentence. The test now builds its fake by CALLING `_service_failure`, so it cannot drift
+  back.
+  **Ratchets moved, with pins.** `UNRESOLVED_PAYLOAD_CEILING` 205 → 208 for three 200-status protocol
+  documents (card + two Task bodies), pinned by
+  `test_the_a2a_surface_hides_no_flat_envelope_in_its_unresolved_rows` in the stronger ES-3 shape (this
+  module emits NO flat envelope at all). Toggle census 20 → 21, in-flight class (`disabled={publishSaving}`),
+  reasoned count unchanged at 5. One new wire code, `a2a_catalog_unavailable`.
+  **Falsifications (3, each restored from a `cp` copy).** (i) `a2a_published: bool = False` → `True` reds
+  `test_dataclass_default_is_false`; mutating ONE of the two card-side publish gates reds nothing (they are
+  genuine defense in depth), mutating BOTH so an absent flag publishes reds 2 tests. (ii) adding `a2a-call`
+  to `ALLOWED_HOOK_PROVIDERS` reds the rejection test AND its same-validator vacuity floor while the
+  `webhook` accept stays green. (iii) rebasing `outbound_policy()` on `CONNECTOR` reds all three egress
+  assertions.
+  **Gate:** `make lint` clean (black/isort/flake8 over 2072 files, mypy 1018 source files); new suite **36
+  passed**; 11 neighbouring suites (workflows api/surfacing/settings/batch, validation, capture proxy,
+  inbound MCP, external-access seam, config round-trip) **572 passed**; route/inert/SDK ratchets **26
+  passed**; error-code + census rails **57 passed** with `test_inbound_a2a`; `gate_report.py` **6/6 PASS**;
+  `npm run typecheck:web` clean, `npm run test:web` **487 files / 5180 tests passed**, `npm run build` OK.
+  Probe sweep 16 (0 introduced); `git status` clean.

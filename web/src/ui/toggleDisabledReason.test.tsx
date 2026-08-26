@@ -158,7 +158,13 @@ describe('the triage, pinned per site', () => {
     // and a reason there would soften it. Reasoned count therefore holds at 5.
     // A surface that is off for a PRECONDITION (no token yet) is explained on the row itself by
     // the "not serving" pill naming the cause — not by disabling the control the user needs.
-      expect(sites.length).toBe(20)
+    // 🔺 20 → 21 (EA-8): the template detail page gained "Publish to A2A". IN-FLIGHT class — the
+    // only thing that ever disables it is its own POST (`disabled={publishSaving}`), so it stays
+    // native for the same reason the five above do: re-clicking a publication switch mid-flight is
+    // the failure being prevented, and a reason there would soften it. Whether the template is
+    // published is stated by the row's own prose beneath the heading, not by the switch going dark.
+    // Reasoned count therefore holds at 5.
+      expect(sites.length).toBe(21)
     expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'five carry a reason; fifteen stay native').toBe(5)
   })
 })

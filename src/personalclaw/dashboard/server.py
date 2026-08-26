@@ -442,6 +442,18 @@ async def start_dashboard(
     except Exception:  # noqa: BLE001 — an inbound fault must never block startup
         logging.getLogger(__name__).warning("inbound: /capture mount failed", exc_info=True)
 
+    # A2A gateway (EXTERNAL-ACCESS §5). Three literal paths under /a2a — the agent card
+    # plus task start/poll. Registered HERE for the same reasons as the two above: its own
+    # bearer, outside the cookie-auth world, and early enough that no `{...}` pattern below
+    # can capture the literal `a2a` segment. Mounts unconditionally and refuses per
+    # request, like /capture, so toggling the surface in Settings needs no restart.
+    try:
+        from personalclaw.inbound.a2a import register_routes as _register_a2a
+
+        _register_a2a(app)
+    except Exception:  # noqa: BLE001 — an inbound fault must never block startup
+        logging.getLogger(__name__).warning("inbound: /a2a mount failed", exc_info=True)
+
     # Status / system
     app.router.add_get("/api/healthz", handlers.api_healthz)
     app.router.add_get("/api/status", handlers.api_status)
