@@ -108,7 +108,14 @@ function startGateway() {
       args,
       {
         stdio: ["ignore", "pipe", "pipe"],
-        detached: false,
+        // Its OWN process group (Node's `detached` calls setsid), so quit can signal
+        // the GROUP and take the gateway's subprocesses — ACP CLIs, MCP servers,
+        // terminal sessions — with it. Measured under the previous `detached: false`:
+        // the gateway pid reaped cleanly while a child of its own survived with
+        // `ppid=1`, and its pgid was THIS app's group, which made a group-kill
+        // unavailable rather than merely unused. Deliberately NOT `unref()`ed: we
+        // still track the handle, wait for its `exit`, and reap it in `before-quit`.
+        detached: true,
         env: {
           ...baseEnv,
           // Restore the user's real login-shell PATH so the backend can resolve
@@ -178,10 +185,14 @@ function startGateway() {
  * The shell spawned this process, so quit is the one moment its data can be torn in
  * half. This used to be `kill("SIGTERM")` followed immediately by dropping the
  * handle inside a synchronous `before-quit` — which never learned whether the child
- * exited, and (spawned `detached: false`, so with no process group of its own) left
- * an orphan gateway holding the port whenever SIGTERM was slow to land. The waiting
- * and the SIGKILL escalation live in `gatewayShutdown.js`; the outcome is logged so a
- * quit that MIGHT have orphaned something says so.
+ * exited, and left an orphan gateway holding the port whenever SIGTERM was slow to
+ * land. The waiting and the SIGKILL escalation live in `gatewayShutdown.js`; the
+ * outcome is logged so a quit that MIGHT have orphaned something says so.
+ *
+ * The second half is `killGroup`. Waiting for the gateway pid was never enough: the
+ * gateway spawns its own subprocesses, and signalling one pid leaves them running
+ * (measured — a child survived with `ppid=1`). The spawn now gives the gateway its own
+ * process group so this signal can reach the whole tree.
  */
 async function stopGateway() {
   const child = gatewayProcess;
@@ -190,9 +201,16 @@ async function stopGateway() {
   const result = await shutdownGateway({
     child,
     graceMs: GATEWAY_GRACE_MS,
+    // We spawned it `detached: true`, so it leads its own group and the signal can
+    // reach the subprocesses IT started. `shutdownGateway` re-verifies that against
+    // the OS and degrades to a single-pid signal if this ever stops being true.
+    killGroup: true,
     log: (msg) => console.log(`gateway shutdown: ${msg}`),
   });
-  console.log(`Gateway shutdown outcome: ${result.outcome}`);
+  console.log(
+    `Gateway shutdown outcome: ${result.outcome}` +
+      (result.groupSwept ? " (residual process-group members were killed)" : "")
+  );
   return result;
 }
 
