@@ -4247,13 +4247,15 @@
         {
           "id": "CA-9",
           "title": "S4 coordination docs: mobile task refs + future-platform recipe",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 T4.2, T4.3; MOBILE-COMPANION.md task refs point pairing/endpoint-switch at C2/C1/S3 (no duplicated device-token code); docs/guides/companion-apps.md future-platform recipe (wrap served UI + implement S3 client contract, gated on PLATFORM-REACH)",
           "done_when": "MOBILE-COMPANION S4 pairing references C2 with no parallel device-token code; the future-platform recipe is written with no speculative per-platform code shipped",
           "deps": [
             "CA-6",
             "EXT:MOBILE-COMPANION:PWA/Capacitor consumes pairing + endpoint switch"
-          ]
+          ],
+          "pr": 2068,
+          "evidence": "Census: pairing store 1 site (auth/pairing.py), 1 production importer, 1 provenance writer (session_store.py:347), 0 device-token identifiers across src+web+desktop. Railed by tests/test_companion_single_pairing_mechanism.py with a vacuity floor. MOBILE-COMPANION T4.1/T4.2 repointed off a rival single-URL connection model onto C1/S3. Future-platform recipe written, zero per-platform code shipped."
         }
       ]
     },
@@ -7569,11 +7571,6 @@
         "plan": "CA"
       },
       {
-        "id": "CA-9",
-        "title": "S4 coordination docs: mobile task refs + future-platform recipe",
-        "plan": "CA"
-      },
-      {
         "id": "CE-9",
         "title": "Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note",
         "plan": "CE"
@@ -9888,9 +9885,9 @@
         "code": "CA",
         "plan": "COMPANION-APPS",
         "total_atoms": 9,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
