@@ -1,0 +1,26 @@
+{
+  "description": "visual-output: render structured output in the declared visual syntax. Skill-impact task set v1 (\u00a72.2). Observable: the <widget> envelope.\n",
+  "dimensions": [
+    "skill_impact"
+  ],
+  "fixture_home": "empty",
+  "name": "sk_visual_output",
+  "sessions": [
+    {
+      "name": "render_the_widget",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "regex",
+              "value": "<widget[\\s>]"
+            }
+          ],
+          "user": "Render a widget showing last quarter's three regions \u2014 North 41, South 28, West 33 \u2014 as a bar chart."
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

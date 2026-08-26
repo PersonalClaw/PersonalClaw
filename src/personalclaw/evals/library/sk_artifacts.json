@@ -1,0 +1,26 @@
+{
+  "description": "artifacts: emit a versioned artifact rather than inline prose. Skill-impact task set v1 (\u00a72.2). Observable: the artifact reference form /artifacts/<slug>.\n",
+  "dimensions": [
+    "skill_impact"
+  ],
+  "fixture_home": "empty",
+  "name": "sk_artifacts",
+  "sessions": [
+    {
+      "name": "save_and_locate",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "regex",
+              "value": "/artifacts/[a-z0-9][a-z0-9-]*"
+            }
+          ],
+          "user": "Save a one-card sales dashboard as an artifact named Sales Dashboard, then tell me the exact dashboard path where I can reopen it."
+        }
+      ]
+    }
+  ],
+  "version": 1
+}
