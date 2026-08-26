@@ -554,6 +554,56 @@ def test_a_no_delta_report_attaches_as_ablation_grade_evidence(eval_home):
     assert any(p.id == proposal.id for p in proposals.list_pending(proposals.Kind.RETIREMENT.value))
 
 
+def test_the_ablation_grade_reaches_the_row_a_reviewer_decides_on(eval_home):
+    """THE HAND-OFF RAIL — the clause says "attaches as the ablation-grade evidence", and an
+    attachment nothing downstream can read is two modules coexisting.
+
+    Measured before this rail existed: `evidence_strength` had NINE `enqueue` call sites across
+    eight modules (`ablation`, `causal`, seven `correlated`) and ZERO readers — not a gate, not
+    the inbox projection, not the API payload, not the frontend. `file_retirement_proposal` stamping
+    `"ablation"` therefore could not change anything a human saw: the row said "2 evidence
+    ref(s)" whether the null result was measured on/off or merely co-occurred. Deleting the
+    stamp would have reddened only an assertion on the returned object.
+
+    So this asserts the far END of the hand-off — the row the Proposal Inbox serves.
+    """
+    from personalclaw.learning import inbox, proposals
+
+    report = ablation.run_ablation(
+        _component(),
+        trials=3,
+        now=NOW,
+        run_matrix=_fake_matrix(
+            {overlay_lib.ARM_ON: [0.90, 0.90, 0.90], overlay_lib.ARM_OFF: [0.895, 0.895, 0.895]}
+        ),
+    )
+    _verdict, filed = ablation.file_retirement_proposal(report)
+    assert filed is not None
+
+    # A co-occurrence proposal with the SAME evidence count, in the SAME inbox, is the vacuity
+    # floor: every assertion below would pass on a hardcoded string without it.
+    _v2, correlated = proposals.enqueue(
+        kind=proposals.Kind.SKILL.value,
+        title="summarize before filing",
+        body="seen together four times",
+        target="skill.summarize",
+        provenance="inferred",
+        evidence_refs=[report.evidence_ref(), f"matrix:{report.matrix_id}"],
+        occurrences=9,
+    )
+    assert correlated is not None
+    assert correlated.evidence_strength == "correlated"
+
+    rows = {r.id: r for r in inbox.build_view(proposals.list_pending()).rows}
+    measured_row, correlated_row = rows[filed.id], rows[correlated.id]
+
+    assert measured_row.to_dict()["evidence_strength"] == ablation.ABLATION_EVIDENCE_STRENGTH
+    assert len(measured_row.evidence_refs) == len(correlated_row.evidence_refs)
+    assert (
+        measured_row.to_dict()["evidence_strength"] != correlated_row.to_dict()["evidence_strength"]
+    ), "the served rows must distinguish a measurement from a co-occurrence"
+
+
 def test_a_keep_report_files_nothing(eval_home):
     from personalclaw.learning import proposals
 

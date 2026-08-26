@@ -188,6 +188,13 @@ class Row:
     source_cadence: str = ""
     source_excerpt: str = ""
     evidence_refs: list[str] = field(default_factory=list)
+    #: WHICH KIND of evidence the refs are — `anecdotal` / `correlated` / `causal` / `ablation`,
+    #: the tier the proposer stamped at `enqueue`. The count alone cannot distinguish a paired
+    #: on/off measurement (EVALUATION-SUBSTRATE §3.1 files retirements with `ablation`) from a
+    #: co-occurrence (`correlated`, the default), and "retire this" backed by two co-occurrences
+    #: is a different claim from "retire this" backed by a measured null result. An EMPTY string
+    #: is UNGRADED — a record from before the tier existed — and must never read as a grade.
+    evidence_strength: str = ""
     reinforcements: int = 0
     confidence: float = 0.0
     manifest_valid: bool = True
@@ -234,6 +241,7 @@ class Row:
             "source_cadence": self.source_cadence,
             "source_excerpt": self.source_excerpt,
             "evidence_refs": list(self.evidence_refs),
+            "evidence_strength": self.evidence_strength,
             "reinforcements": self.reinforcements,
             "confidence": round(self.confidence, 4),
             "manifest_valid": self.manifest_valid,
@@ -264,6 +272,9 @@ def row_from_proposal(prop: Any, *, risk_tier: str = "") -> Row:
         source_cadence=str(getattr(prop, "source_cadence", "") or ""),
         source_excerpt=str(getattr(prop, "source_excerpt", "") or ""),
         evidence_refs=[str(r) for r in (getattr(prop, "evidence_refs", None) or [])],
+        # Read, never defaulted to a tier: an older record without the field is UNGRADED, and
+        # substituting "correlated" would upgrade an unknown provenance to a claim nobody made.
+        evidence_strength=str(getattr(prop, "evidence_strength", "") or ""),
         reinforcements=int(getattr(prop, "reinforcements", 0) or 0),
         confidence=float(getattr(prop, "confidence", 0.0) or 0.0),
         manifest_valid=bool(getattr(prop, "manifest_valid", True)),

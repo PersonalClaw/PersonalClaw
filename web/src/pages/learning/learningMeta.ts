@@ -64,6 +64,29 @@ export function bulkBlockedReason(row: LearningRow): string {
   return 'not eligible for bulk accept'
 }
 
+// ── Evidence: how many refs, and WHAT KIND ──
+// The queue stamps a tier at `enqueue` and the tiers are not interchangeable: an ablation is a
+// paired on/off MEASUREMENT (EVALUATION-SUBSTRATE §3.1 files a retirement on one), a correlation is
+// a co-occurrence. Rendering only the count made those identical on screen — and "retire this
+// component" is exactly the decision where the difference decides the answer.
+const EVIDENCE_GRADE: Record<string, string> = {
+  ablation: 'measured on/off',
+  causal: 'measured (controlled study)',
+  correlated: 'correlated',
+  anecdotal: 'anecdotal',
+}
+
+/** The evidence clause on a proposal row: how much, and of what kind.
+ *
+ *  An UNGRADED tier — "" from a record filed before the tier existed, or a name this build does not
+ *  know — renders as `ungraded` rather than falling back to a grade. Substituting `correlated` would
+ *  turn "nobody said" into a claim, the same failure as drawing an unmeasured mean as `0.000`. */
+export function evidenceLabel(row: LearningRow): string {
+  if (!row.evidence_refs.length) return 'no evidence'
+  const grade = EVIDENCE_GRADE[row.evidence_strength] ?? 'ungraded'
+  return `${row.evidence_refs.length} evidence ref(s) · ${grade}`
+}
+
 // ── The staging week panel ──
 /** How a day should render. `silent` is the alarming one: no passes at all means capture did not run,
  *  and an aggregate view cannot see it — which is the whole reason this panel exists. */
