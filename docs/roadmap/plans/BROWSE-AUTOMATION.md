@@ -679,3 +679,97 @@ class ElementRef:
   behavioural clauses are still proven only on a developer machine that happens to have one. Making CI
   prove them needs `npx playwright install chromium` + `PERSONALCLAW_REQUIRE_BROWSE_PROOF=1` on that job
   — a workflow file outside this pass's fence, and a minutes-per-run cost that is an owner call.
+
+- **2026-08-25 — `BA-3` COMPLETE (all five clauses). Atom stays `todo` only because this code is
+  unmerged**; flip it when the PR lands. Landed: `browse/loop.py` (the §7 loop), `browse/page.py`
+  (`CdpPageDriver` — the non-navigation half of the wire), `action_providers/browse_provider.py`, plus
+  the §9 wiring and `apps/native/browse-action/app.json`. 30 new tests, `make lint` clean,
+  `gate_report.py` 6/6, probe sweep 16 with 0 introduced. §9's wiring list is INCOMPLETE as written:
+  a new provider must land in FIVE tables, not two — `ALLOWED_HOOK_PROVIDERS`, the action registry,
+  `rungs._PROVIDER_SPECS` (or `test_guardrails_rung_routing` reds), `triggers.screen`'s
+  read-only/write-capable fence (or `test_triggers_capability_fence` reds) and a native app manifest
+  (or the trigger UI offers the provider with no config form). The last two were found by a broad
+  sweep AFTER the targeted suites were green, which is the argument for running the sweep. Sweep
+  result: **2772 passed / 1 failed**, and that one — `test_guardrails_ladder.py::
+  test_create_task_deletes_the_row_it_filed` — reproduces IDENTICALLY on a detached worktree at bare
+  `origin/main` (`2e394588`, no BA-3 code), together with its neighbour
+  `test_a_provider_that_refuses_leaves_the_rung_ALONE` at `-n0`. Pre-existing, not this branch's.
+
+  **Clause 1 — the ABC + the allowlist.** Asserted on the object the SEAMS get
+  (`get_action_provider("browse")`), not on the imported class, and through `HOOK_CREATE_SCHEMA` —
+  the validation a hook/trigger create actually runs — rather than against the frozenset alone.
+  Falsified by retyping the frozenset entry to `"browse-not-really"`: reds the create-path test while
+  110 other validation tests stay green, so the entry is load-bearing and nothing else stands in for it.
+
+  **Clause 2 — the workflow action node.** `dispatch_action(node, ctx)` with `get_provider=None`, so
+  the name resolves through the REAL `action_providers.registry`. The control leg is the one that makes
+  it evidence: with `get_action_provider` patched to `None` the identical node fails "unknown action
+  provider", so the green is about the resolution and not about the fake plumbing being reachable
+  another way. Denylist inheritance is asserted at the real `hooks.run_script_hook` seam with
+  `enforce_action` spied at its definition site — the spy sees `("browse", {...start_url...})` and a
+  block short-circuits before `execute`.
+
+  **Clause 3 — multi-step under the ceiling, every page fenced.** Four steps under 20 (navigate,
+  click, note, DONE) IS the ceiling's control leg; without it "parks at exhaustion" would be satisfied
+  by a loop that parked on step one. `MAX_STEPS_DEFAULT == 20` is proven by COUNTING model calls a
+  never-finishing task makes, not by reading the constant back. Fencing is counted PER PAGE: stripping
+  `fence_untrusted` from `_fence_page` reds with `page(s) reached the model unfenced: [0, 1, 2, 3]` —
+  all four named, so one unfenced page out of four cannot hide. Widening the loop range to `+ 101` reds
+  the two exhaustion legs at `assert 31 == 20` while the completion leg stays GREEN, which is what
+  proves the two legs measure different things.
+
+  **Clause 4 — SUBMIT verification (§7.1).** A second, separate model call, with the post-submit page
+  fenced in it too. The control is the honest half: a submit that produced neither a URL change nor a
+  content delta is reported FAILED **without asking the model at all**, because judging an identical
+  page invites a hallucinated success. `assert not [p for p in prompts if "FORM_OK" in p]` is what pins
+  that.
+
+  **Clause 5 — parks cleanly into needs-input, notes preserved.** Proven at four layers: the loop
+  (`park_reason`, `notes` intact), the provider (`outcome="needs_input"`, notes on stdout, a user-facing
+  sentence), the engine (`InstanceState.WAITING`, no `wake_at`) and a REAL `RunController`
+  (`RunStatus.NEEDS_INPUT`). That last layer is the one that mattered: mapping the outcome to `DONE`
+  instead reds it with `AssertionError: complete` — the run would have ended COMPLETE and buried the
+  park, with every other assertion still green. Budget: the guard sits immediately before the model
+  call, and disabling its comparison reds only the budget-park test while the OK-verdict control leg
+  finishes the identical script.
+
+  **DEVIATIONS (four, each recorded rather than smuggled):**
+  1. **Core placement, not the app bundle §9 describes.** §9 says `apps/browse-action/app.json`, a
+     first-party app. BA-1 and BA-2 already landed `browse/` in core, and an app bundle may only import
+     `personalclaw.sdk.*` — which does not export `GatedCdpSession`, the thing BA-2 built for this atom
+     to consume. Following the landed precedent; the manifest ships as a NATIVE app
+     (`apps/native/browse-action/app.json`) so the trigger UI still gets a real schema-driven config
+     form. Re-homing to the apps repo is an SDK-export decision, not a BA-3 one.
+  2. **A new `ActionResult.outcome` member, `"needs_input"`.** The vocabulary had no way to say "did
+     real work, hit a ceiling, kept the result". `skip` discards a real partial, `launched`/`queued`
+     both claim work continuing elsewhere, and FAILED buries the notes and invites a retry that pays
+     for the whole task again to reach the same ceiling. Added with BOTH its readers in the same
+     change, per the rule in `base.py`: `engine.dispatch_action` → WAITING, `triggers.executor`
+     `STATUS_TO_OUTCOME` → `Outcome.DEFERRED`.
+  3. **Rung declaration is `one_tap` at both ends** — the only non-`autonomous` spec in
+     `rungs._PROVIDER_SPECS`. Not `autonomous`: a SUBMIT is an irreversible external write and browse
+     produces no reversal handle. Not `draft_only`: that is BA-6's decision for a persisted browse
+     PLAN, and applying it to the PROVIDER would withhold every browse dispatch at every trigger seam
+     before the atom that could promote it exists. Ceiling equals floor because widening it needs the
+     reversal half BA-6 owns. Workflow action nodes are unaffected — `dispatch_action` does not consult
+     the ladder.
+  4. **No browser launcher.** The provider drives a page target it is GIVEN (`cdp_url`) and returns a
+     typed `ERR_BROWSE_NO_TARGET` refusal without one, rather than reporting success while browsing
+     nothing. Launching Chrome with a persistent per-site profile is BA-4's slice (§5.1) and §10's
+     Session 4.
+
+  **DISCOVERY — `DenyRule.actions` is a field nobody reads.** `check_action` matches on path-carrying
+  and command-carrying config values only; the `actions` tuple is parsed out of
+  `security.autonomy_denylist` and then never consulted. So no operator rule can deny an action by
+  PROVIDER NAME, and browse in particular carries no `_PATH_KEYS` value for a path glob to match — it
+  is screened by the seam and unmatchable by any rule an operator can currently write. Not fixed here
+  (it is an AUTONOMY-GUARDRAILS contract, and enforcing a dead control is its own outage class), but
+  worth an atom. Note also that §9's `validation.py:555` line reference is stale — the frozenset is at
+  `:812`, and `hooks.py:494` / `gateway.py:701` / `event_triggers.py:214` have all drifted too.
+
+  **NOT verified, honestly.** `CdpPageDriver`'s identity-based element locator is proven on the CDP
+  wire (methods, params, one-pass JSON-escaped substitution) against a fake transport, and on its
+  not-found and screenshot-to-a-PATH contracts — but NOT against a real DOM, because the pytest gate
+  installs no browser (the same limitation BA-2's entry records). Colliding element identities resolve
+  to the FIRST match, documented in the module rather than papered over. Real-browser actuation
+  fidelity belongs to BA-5's as-a-user validation.

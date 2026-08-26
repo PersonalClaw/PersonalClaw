@@ -92,6 +92,28 @@ ERROR_CODES: dict[str, str] = {
         "timeout, or returned something unreadable. Reported as a failure rather than as an "
         "empty result, because a computer-use no-op reads to a model as success."
     ),
+    "ERR_BROWSE_CONFIG": (
+        "A browse action's config is incomplete — it named no goal, or no page to start "
+        "from. Refused before a browser is touched."
+    ),
+    "ERR_BROWSE_NO_TARGET": (
+        "There is no Chrome DevTools page target for the browse provider to drive. A typed "
+        "refusal rather than a silent no-op: an action that reports success while browsing "
+        "nothing is indistinguishable to a workflow from one that did the work."
+    ),
+    "ERR_BROWSE_CONNECT_FAILED": (
+        "Connecting to the configured CDP page target failed. The browser is not running, "
+        "or the target's WebSocket URL has gone stale (they are per-tab and short-lived)."
+    ),
+    "ERR_BROWSE_INCIDENT_ACTIVE": (
+        "Incident mode is on, which suspends unattended work, so the browse run was refused "
+        "before it started rather than retried against a control someone deliberately pulled."
+    ),
+    "ERR_BROWSE_FAILED": (
+        "A browse run ended without reaching its goal — the first navigation was denied by "
+        "the BROWSE egress policy, the page could not be read, or the decision call failed. "
+        "Distinct from a PARK, which succeeds with notes and asks for a human."
+    ),
 }
 
 

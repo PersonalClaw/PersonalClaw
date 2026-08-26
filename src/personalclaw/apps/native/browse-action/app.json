@@ -1,0 +1,68 @@
+{
+  "name": "browse-action",
+  "version": "1.0.0",
+  "displayName": "Browse the Web",
+  "description": "Drive a real browser toward a goal: read pages, follow links, fill and submit forms. Every page is read as untrusted data, every navigation passes the BROWSE egress policy, and a run that exhausts its steps or its budget stops and asks you rather than guessing.",
+  "icon": "Globe",
+  "author": "PersonalClaw",
+  "tags": [
+    "action",
+    "bundled",
+    "native"
+  ],
+  "provider": {
+    "type": "action",
+    "entity": "browse",
+    "implementation": "personalclaw.action_providers.browse_provider:create_provider",
+    "capabilities": [
+      "execute"
+    ],
+    "settingsSchema": {
+      "type": "object",
+      "required": [
+        "goal",
+        "start_url"
+      ],
+      "properties": {
+        "goal": {
+          "type": "string",
+          "x-meta": {
+            "label": "Goal",
+            "help": "What to accomplish, in a sentence. The agent stops when it judges this done."
+          }
+        },
+        "start_url": {
+          "type": "string",
+          "x-meta": {
+            "label": "Start URL",
+            "help": "The first page to load. Checked against the BROWSE egress policy before it opens."
+          }
+        },
+        "max_steps": {
+          "type": "integer",
+          "default": 20,
+          "minimum": 1,
+          "x-meta": {
+            "label": "Step limit",
+            "help": "How many actions the agent may take. On reaching it the run stops and asks you, keeping its notes."
+          }
+        },
+        "cdp_url": {
+          "type": "string",
+          "x-meta": {
+            "label": "Browser page target",
+            "help": "The Chrome DevTools WebSocket URL of the tab to drive (ws://127.0.0.1:9222/devtools/page/...). Without one the action refuses instead of pretending to browse."
+          }
+        },
+        "screenshot_dir": {
+          "type": "string",
+          "x-meta": {
+            "label": "Screenshot folder",
+            "help": "Optional. Where per-step screenshots are written. They are referenced by path and never pasted into the model's context."
+          }
+        }
+      }
+    }
+  },
+  "native": true
+}
