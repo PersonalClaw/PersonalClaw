@@ -763,6 +763,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/pause` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/resume` — Answer a gate, or clear a pause.
+- `GET /api/workflows/runs/{run_id}/review` — GET this run's review findings, anchored against its workspace diff as it is right now.
+- `POST /api/workflows/runs/{run_id}/review/triage` — POST accept/reject decisions; dispatch the accepted subset to the originating worker.
 - `POST /api/workflows/runs/{run_id}/rewind` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/run-from` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/steer` — POST a mid-run steering instruction (LOOPS-EVOLUTION R14).

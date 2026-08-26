@@ -10,6 +10,27 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **A reviewer's findings now get triaged by you before anything touches your code.** When a workflow
+  review stage reports problems in the `Finding` shape it has always been asked for
+  (`severity / location / problem / why / recommended_fix`), those findings are recorded against the
+  run and shown in a **Review** panel on the run page — each one accept or reject, one at a time. Only
+  what you accept is sent back to the worker that wrote the diff, as a follow-up instruction it picks
+  up on its next iteration. Nothing is written on your behalf: reject everything and nothing is sent,
+  decide nothing and nothing is sent.
+  **Every finding is checked against your actual diff before you see it.** A comment pointing at a
+  line that isn't in the diff, at a file the run never touched, at a filename that matches two files,
+  or at a line whose contents have since changed is shown as *unverifiable* with the reason in plain
+  words — and cannot be accepted at all. Applying a real critique at the wrong line is the worst thing
+  this feature could do, so a finding whose anchor no longer holds is never quietly relocated. The
+  check re-runs when you open the panel and again when you submit, so an accept that went stale while
+  you were reading is refused rather than dispatched.
+  **The findings you reject are recorded against the reviewer.** They land in the same calibration
+  record a human override of a judge does, which is what makes "this gate only ever cries wolf"
+  something the system can notice instead of something you have to remember.
+  **`auto_fixable` is a property, not a permission.** A finding the reviewer marked as a mechanical
+  edit is labelled as one, and it still has to be accepted before it can be applied — and only up to
+  `Minor`. A `Critical` fix worth making is worth watching land.
+
 - **Your watched sources now write you a morning digest, without you scheduling anything.** At 07:00
   PersonalClaw reads whatever your watched web sources collected since the last digest, writes one
   short note into your library summarising it, and sends you one notification pointing at it. One

@@ -263,6 +263,13 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers/files.py::api_file_git_original::asyncio.create_subprocess_exec": (
         "operator: git show for diff view"
     ),
+    # EI-9's review-triage diff read. Same class as the file browser's `_git` above: a fixed
+    # read-only argv (`diff` / `ls-files`), `cwd` the run's OWN workspace path off the run record,
+    # and never a shell. Nothing agent-authored reaches the argv — the reviewer's finding is only
+    # ever COMPARED against this command's output, never passed to it.
+    "workflows/review_service.py::_git::asyncio.create_subprocess_exec": (
+        "operator: run workspace git diff read"
+    ),
     "dashboard/handlers/files.py::api_reveal_path::subprocess.Popen": (
         "operator: reveal in Finder/xdg-open"
     ),
