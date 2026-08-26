@@ -202,6 +202,18 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
             # without this key a migrated `every` cron parses its own spec as an unknown field and
             # warns on the very number that defines when it fires.
             "interval_secs",
+            # The `adaptive` clock kind's payload (PR2-8). TWO cadences and the state that picks
+            # between them, because an adaptive clock is not "an interval whose number changes":
+            # the two numbers are declared up front so the row is readable on the Triggers page
+            # without running the thing that would tell you which one is live.
+            #
+            # `health_state` is the ONLY spec key a system writer mutates after creation. It is
+            # here rather than on a runtime rollup field for the reason `cadence_next_fire` needs:
+            # arming must stay a PURE function of the spec, so the cadence cannot be made to
+            # depend on a subsystem the generic clock knows nothing about.
+            "interval_secs_healthy",
+            "interval_secs_degraded",
+            "health_state",
             "timezone",
             "jitter_secs",
             "strict",
@@ -245,7 +257,14 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
 #: Measured against the OWNER's real store: 4 jobs, of which 1 uses `every`. The plan's §1.2 union
 #: and its §6 lossless-migration promise cannot both hold with three kinds, and the promise is the
 #: one with data behind it. So the union widens rather than the migration lying.
-CLOCK_KINDS: frozenset[str] = frozenset({"cron", "at", "sequence", "interval"})
+#: **`adaptive` is the fifth (PR2-8).** PLATFORM-RESILIENCE §4.3 asks for the remediation engine to
+#: run as ONE trigger with an "adaptive clock kind" — healthy → a long sleep, degraded → a short
+#: tick — replacing the heartbeat job that carried that cadence in `_remediation_next_ts`. It's a
+#: CLOCK kind rather than a new top-level trigger kind because it answers the clock's question
+#: ("when does this fire next?") and nothing else: the dispatch, the capability fence, the ledger
+#: and the delivery path are all the ordinary ones, which is the whole point of re-homing onto
+#: the substrate instead of keeping a private scheduler.
+CLOCK_KINDS: frozenset[str] = frozenset({"cron", "at", "sequence", "interval", "adaptive"})
 
 #: Minimum interval for an LLM-invoking clock trigger, in seconds (R1). A floor rather than a hard
 #: rule: the plan makes it overridable, because a 5-minute local-model poll is a legitimate choice —
@@ -373,6 +392,24 @@ def validate_spec(kind: str, spec: dict[str, Any]) -> list[Issue]:
             issues.append(
                 Issue(path="spec.at", message=f"an {clock_kind} clock needs `at`", severity="error")
             )
+        elif clock_kind == "adaptive":
+            # BOTH cadences are required, and as an ERROR rather than a warning: an adaptive clock
+            # missing one of them has no computable next fire at all in that state, so it would arm
+            # to 0.0 and sit enabled-and-inert — the exact failure this module's never-throw
+            # validation exists to make visible instead of silent.
+            for key in ("interval_secs_healthy", "interval_secs_degraded"):
+                try:
+                    value = float((spec or {}).get(key) or 0)
+                except (TypeError, ValueError):
+                    value = 0.0
+                if value <= 0:
+                    issues.append(
+                        Issue(
+                            path=f"spec.{key}",
+                            message=f"an adaptive clock needs a positive `{key}`",
+                            severity="error",
+                        )
+                    )
         if clock_kind == "interval":
             # 🔴 THE R1 FLOOR, finally enforced (S109). `MIN_CLOCK_INTERVAL_SECS` was declared and
             # read by NOTHING — measured: `create(spec={"kind":"interval","interval_secs":5})`

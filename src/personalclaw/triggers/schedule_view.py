@@ -130,7 +130,7 @@ def session_key_of(trigger: Any) -> str:
 
 
 def cadence_kind(trigger: Any) -> str:
-    """The clock spec's kind (`cron` / `interval` / `at` / `sequence`), or ""."""
+    """The clock spec's kind (`cron` / `interval` / `at` / `sequence` / `adaptive`), or ""."""
     spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
     return str(spec.get("kind") or "")
 
@@ -270,6 +270,13 @@ def describe_cadence(trigger: Any) -> str:
             )
         elif kind == "at":
             definition = ScheduleDefinition(kind="at", at_ts=_float_or_none(spec.get("at")))
+        elif kind == "adaptive":
+            # PR2-8: an adaptive clock has TWO cadences and a live state, so `format_schedule` has
+            # nothing to say about it — a `ScheduleDefinition` cannot express "either of these".
+            # Rendered here rather than falling through to the bare kind name, because "adaptive"
+            # alone tells a user nothing about when the row will next run, which is the one question
+            # this column answers.
+            return _describe_adaptive(spec)
         else:
             return kind or "unknown"
         return format_schedule(definition, tz_name=tz)
@@ -278,6 +285,30 @@ def describe_cadence(trigger: Any) -> str:
             "could not describe cadence for %s", getattr(trigger, "id", "?"), exc_info=True
         )
         return kind or "unknown"
+
+
+def _describe_adaptive(spec: dict[str, Any]) -> str:
+    """The cadence sentence for an `adaptive` clock (PR2-8).
+
+    Names BOTH cadences and which one is live, because that is what an adaptive row's reader needs:
+    "every 5m" alone would look like a misconfigured 5-minute poll rather than a system that is
+    currently working harder because something is wrong.
+    """
+    healthy = _int_or_none(spec.get("interval_secs_healthy"))
+    degraded = _int_or_none(spec.get("interval_secs_degraded"))
+    if not healthy or not degraded:
+        return "adaptive"
+    live = (
+        "degraded"
+        if str(spec.get("health_state") or "").strip().lower() == "degraded"
+        else "healthy"
+    )
+    return f"adaptive — every {_mins(healthy)} healthy, {_mins(degraded)} degraded (now: {live})"
+
+
+def _mins(secs: int) -> str:
+    """`600` → `10m`. Minutes because both adaptive cadences are configured in minutes."""
+    return f"{max(1, round(secs / 60))}m"
 
 
 def _float_or_none(value: Any) -> float | None:

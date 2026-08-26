@@ -859,6 +859,13 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # hook, so a registered provider missing from this set is one the scheduler refuses to
         # dispatch.
         "usage-recap",
+        # PLATFORM-RESILIENCE §4.3 (PR2-8): the health-scored remediation engine, re-homed off the
+        # heartbeat onto one adaptive-clock trigger. Same reason as the two directly above — the
+        # system trigger that runs it goes through this validation, so a registered provider missing
+        # from this set is one the scheduler refuses to dispatch. Added in the SAME commit that
+        # registers it in `action_providers.registry` and lists it in `triggers/screen.py`'s
+        # write-capable set.
+        "self-remediation",
         # WATCHED-SOURCES §6.2 (WS-7's caller): the morning source digest. Registered here for
         # the same reason as the two directly above — the bundled system trigger that runs it
         # goes through this same validation, so a registered provider missing from this set is

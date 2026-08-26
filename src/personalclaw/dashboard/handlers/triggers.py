@@ -305,7 +305,12 @@ def _project_one(trigger: Any, *, start: Any, days: int) -> tuple[list[Any], boo
         if first <= 0:
             return [], False
         return project_occurrences(interval_secs=interval, first_fire_at=first, **common)
-    if kind == "cron" and spec.get("expr"):
+    # `adaptive` (PR2-8) rides the cron branch, not the interval one: it has no `interval_secs`,
+    # so the arithmetic path above would read 0 and drop it — and the week view is the OTHER half
+    # of the Triggers page, where a live maintenance automation plotting nothing is the same
+    # invisible-but-firing defect the interval comment above records. It steps cleanly, because
+    # `cadence_next_fire` for an adaptive clock is `after + <the live cadence>`.
+    if (kind == "cron" and spec.get("expr")) or kind == "adaptive":
         return project_occurrences(
             interval_secs=0,
             first_fire_at=0,

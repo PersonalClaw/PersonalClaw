@@ -72,6 +72,19 @@ def _ensure_default_providers_registered() -> None:
         from personalclaw.action_providers.usage_recap_provider import UsageRecapActionProvider
 
         register_action_provider(UsageRecapActionProvider())
+    if "self-remediation" not in _providers:
+        # PLATFORM-RESILIENCE §4.3 (PR2-8): the health-scored remediation engine, re-homed off the
+        # heartbeat onto its own adaptive-clock trigger. Registered unconditionally rather than
+        # behind `resilience.remediation.enabled`, because the trigger row exists either way (the
+        # reconciler disables it instead of deleting it, so a user can see the switch) and a live
+        # row naming an unregistered provider validates, saves, and then fails at fire time. Added
+        # to `ALLOWED_HOOK_PROVIDERS` and to `triggers/screen.py`'s write-capable set in the SAME
+        # commit — a provider in one set but not the others is that same save-then-refuse mismatch.
+        from personalclaw.action_providers.remediation_provider import (
+            SelfRemediationActionProvider,
+        )
+
+        register_action_provider(SelfRemediationActionProvider())
     if "source-digest" not in _providers:
         # WATCHED-SOURCES §6.2 (WS-7's caller). Registered unconditionally, not behind
         # `sources.enabled`: the bundled clock trigger that names it exists whether or not a

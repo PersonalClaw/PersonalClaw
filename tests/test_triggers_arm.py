@@ -236,7 +236,7 @@ def test_an_elapsed_one_shot_never_rearms():
     assert A.next_fire(_clock({"kind": "at", "at": NOW - 900}), now=NOW) == 0.0
 
 
-@pytest.mark.parametrize("kind", ["cron", "interval", "at", "sequence"])
+@pytest.mark.parametrize("kind", ["cron", "interval", "at", "sequence", "adaptive"])
 def test_every_declared_clock_kind_is_handled(kind):
     """🔴 A clock kind the primitive does not know returns 0.0 and is silently inert — exactly the
     bug this module exists to fix. Derived from `CLOCK_KINDS` so a new kind fails here."""
@@ -248,6 +248,13 @@ def test_every_declared_clock_kind_is_handled(kind):
         "interval": {"kind": "interval", "interval_secs": 300},
         "at": {"kind": "at", "at": NOW + 60},
         "sequence": {"kind": "sequence", "interval_secs": 300},
+        # PR2-8. Both cadences are required, so a minimal armable spec carries both; which one is
+        # picked is `test_resilience_remediation_trigger.py`'s subject.
+        "adaptive": {
+            "kind": "adaptive",
+            "interval_secs_healthy": 3600,
+            "interval_secs_degraded": 300,
+        },
     }[kind]
     assert A.next_fire(_clock(spec), now=NOW) > NOW
 
@@ -256,7 +263,7 @@ def test_the_parametrized_kinds_cover_the_whole_union():
     """The guard that keeps the test above honest as the union grows."""
     from personalclaw.triggers.models import CLOCK_KINDS
 
-    assert set(CLOCK_KINDS) == {"cron", "interval", "at", "sequence"}
+    assert set(CLOCK_KINDS) == {"cron", "interval", "at", "sequence", "adaptive"}
 
 
 # ── refusals ──
