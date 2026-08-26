@@ -497,6 +497,72 @@ def test_store_files_excludes_the_shm_sidecar(tmp_path):
     assert names == ["memory.db", "memory.db-wal"]
 
 
+def test_the_sibling_of_a_live_store_is_the_other_live_store():
+    """§5.1 forbids a write to EITHER store, and a run only ever opens one of them."""
+    siblings = rb.sibling_store_paths(rb.knowledge_db_path(create=False))
+    assert [p.name for p in siblings] == ["memory.db"]
+    assert rb.knowledge_db_path(create=False).resolve() not in siblings
+    assert [p.name for p in rb.sibling_store_paths(rb.memory_db_path())] == ["knowledge.db"]
+
+
+def test_a_store_outside_the_home_gets_no_sibling_guard(tmp_path):
+    """The scope restriction, asserted: guarding a `tmp_path` db must not reach into the
+    home and digest a live database a running gateway may be writing."""
+    assert rb.sibling_store_paths(tmp_path / "elsewhere.db") == []
+
+
+def test_asking_where_the_knowledge_store_would_live_creates_nothing():
+    """A read-only rail that mkdirs is not read-only — so the rail's path lookup passes
+    `create=False`. Both directions: the default DOES create, which is why it is unsafe here."""
+    quiet = rb.knowledge_db_path(create=False)
+    assert not quiet.parent.exists(), "create=False created the store directory"
+    assert rb.knowledge_db_path().parent.exists(), "create=True stopped creating it"
+
+
+def test_a_real_sibling_store_does_not_make_the_rail_fire(
+    knowledge_store, memory_store, bound_models
+):
+    """The other half of the rail, and the one that matters in production: with a REAL,
+    populated `memory.db` sitting beside the knowledge run, the guard must stay silent.
+    Without this the guard's green side is vacuous — every other passing test leaves the
+    sibling ABSENT, which digests identically before and after by construction."""
+    assert rb.memory_db_path().is_file(), "the sibling store was never created"
+    result = rb.run_retrieval_bench(
+        rb.STORE_KNOWLEDGE,
+        handle=knowledge_store,
+        db_path=knowledge_store.db_path,
+        benchmark=_seeded_benchmark(knowledge_store),
+    )
+    assert result.bench_id
+    assert rb.memory_db_path() in rb.sibling_store_paths(knowledge_store.db_path)
+
+
+def test_a_knowledge_run_refuses_a_write_to_the_memory_store(
+    knowledge_store, bound_models, monkeypatch
+):
+    """The CALL SITE, not the mechanism: `run_retrieval_bench` on the KNOWLEDGE store must
+    catch a write to `memory.db` — the one write the KNOWLEDGE/MEMORY boundary exists to
+    forbid, and the one a single-store guard passed."""
+    memory_db = rb.memory_db_path()
+
+    def _writing_retriever(store_kind, handle):
+        def _search(query: str, k: int, arms: "tuple[str, ...]") -> list[str]:
+            memory_db.write_bytes(b"a cross-store write")
+            return []
+
+        return _search
+
+    monkeypatch.setattr(rb, "retriever_for", _writing_retriever)
+    with pytest.raises(rb.StoreMutatedError) as excinfo:
+        rb.run_retrieval_bench(
+            rb.STORE_KNOWLEDGE,
+            handle=knowledge_store,
+            db_path=knowledge_store.db_path,
+            benchmark=_seeded_benchmark(knowledge_store),
+        )
+    assert "memory.db" in str(excinfo.value)
+
+
 # ── 7. per-arm contribution + the dark-ship verdict ──────────────────────────
 
 
@@ -637,6 +703,26 @@ def test_build_benchmark_prefers_a_hand_label_over_a_remined_one(knowledge_store
     assert hand.relevant_ids == ()
 
 
+def test_the_qrels_census_counts_every_source_including_unlabelled():
+    """A census that drops its own unlabelled rows overstates what the bench knows."""
+    bench = rb.RetrievalBenchmark(
+        name="b",
+        store=rb.STORE_KNOWLEDGE,
+        queries=(
+            rb.QrelsQuery(query="a", source=rb.SOURCE_MINED_INTENT),
+            rb.QrelsQuery(query="b", source=rb.SOURCE_MINED_INTENT),
+            rb.QrelsQuery(query="c", source=rb.SOURCE_HAND_LABEL),
+            rb.QrelsQuery(query="d"),
+        ),
+    )
+    assert bench.sources() == {"": 1, rb.SOURCE_HAND_LABEL: 1, rb.SOURCE_MINED_INTENT: 2}
+    assert sum(bench.sources().values()) == len(bench.queries)
+
+
+def test_the_qrels_census_is_absent_not_zero_for_an_empty_benchmark():
+    assert rb.RetrievalBenchmark(name="b", store=rb.STORE_MEMORY).sources() == {}
+
+
 def test_the_card_offers_the_weakest_labelled_queries_first(knowledge_store):
     bench = rb.RetrievalBenchmark(
         name="b",
@@ -684,6 +770,9 @@ def test_a_run_lands_in_matrices_via_scorer_qrels(knowledge_store, bound_models)
     table = json.loads((run_dir / "table.json").read_text(encoding="utf-8"))
     assert table["store"] == rb.STORE_KNOWLEDGE
     assert table["floors"]["min_arm_contribution"] == rb.MIN_ARM_CONTRIBUTION
+    # The ground truth's provenance travels with the numbers, not only inside benchmark.json.
+    assert table["qrels_sources"] == {rb.SOURCE_MINED_INTENT: table["queries"]}
+    assert table["queries"] > 0
     control = next(r for r in table["rows"] if r["mask"] == rb.MASK_NONE)
     assert control["p_at_k"] is None, "the control published a precision"
 

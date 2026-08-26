@@ -2003,6 +2003,12 @@ export interface RetrievalStoreReport {
         benchmark_corpus_snapshot_ref: string
         corpus_drifted: boolean
         arm_executors: Record<string, boolean>
+        /** `{qrels source: query count}` — the ground truth's provenance, counted
+         *  server-side beside the numbers it produced. Optional because a run written
+         *  before the census existed has no such key, and that must read as "unstated"
+         *  rather than as zero queries from every source. */
+        qrels_sources?: Record<string, number>
+        queries?: number
         floors: { min_arm_contribution: number; min_scored_queries: number }
       }
     | null

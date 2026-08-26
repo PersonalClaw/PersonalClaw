@@ -1295,3 +1295,83 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   `make test` **26699 passed, 0 failed, 30 skipped, 12 xfailed** (424s); `scripts/gate_report.py`
   **6/6**; `tests/test_evals_optimize.py` 47 tests; probe residue **16 tree-wide with 0 introduced**;
   worktree clean. No `web/` change (this atom ships no FE surface — see the not-closed list).
+
+---
+
+## Execution log — ES-3 (continued: the read-only clause, in full; qrels provenance) — atom stays `todo`
+
+- **[2026-08-26][ES-3] Startability re-established against CODE first, and the finding is that this
+  atom was already ~95% built.** `src/personalclaw/evals/retrieval_bench.py` (1457 lines), the
+  `arms=` mask on both retrievers, the CLI, three routes and `RetrievalBenchPanel` all landed on
+  2026-08-25 and are on `main`. Six of the criterion's seven clauses hold. This session did NOT
+  rebuild any of it; it closed two gaps where the shipped report said more than it measured, and
+  re-verified the load-bearing claims by mutation rather than by reading the previous log.
+
+- **[2026-08-26][ES-3] 🔴 A REAL gap in §5.1's read-only clause: it was half-asserted.** §5.1 says the
+  harness "never writes to **either**" store, but `run_retrieval_bench` and `card_for_store` wrapped
+  only the store the run OPENED in `store_unchanged`. A knowledge run that wrote to `memory.db` — the
+  single write the KNOWLEDGE/MEMORY boundary exists to forbid — passed the rail. Now
+  `stores_unchanged()` guards the measured path plus the sibling live store, composed out of
+  `store_unchanged` rather than re-deriving the digest/drift comparison, so "unchanged" keeps one
+  definition and one error message.
+  **Scope restriction, deliberate:** `sibling_store_paths` returns nothing for a path outside
+  `config_dir()`. A caller measuring a `tmp_path` database is not measuring this home, and digesting
+  the real `~/.personalclaw/memory.db` to guard it would make a test READ a live file a running
+  gateway may be writing — a read-only rail must not itself reach outside the home under test. The
+  lookup passes `create=False`: a read-only rail that mkdirs is not read-only.
+  **Falsified both directions.** Reverting the run call site to `store_unchanged(resolved)` (live
+  line mutated, grepped back) reds exactly one test — `DID NOT RAISE StoreMutatedError`, 1 failed /
+  57 passed — and the same invocation is 58 passed after restoring from a file copy at the literal
+  path. The green side is railed separately, because it would otherwise be VACUOUS: every other
+  passing test leaves the sibling store ABSENT, which digests identically before and after by
+  construction, so `test_a_real_sibling_store_does_not_make_the_rail_fire` runs a knowledge bench
+  with a real, populated, still-OPEN `memory.db` beside it and asserts the guard stays silent.
+
+- **[2026-08-26][ES-3] The qrels provenance was on disk but not in the report.** The 2026-08-25 log
+  claims the `intent_outcomes` substitute is "labelled `mined:intent_outcomes` in every qrels row, so
+  a reader can tell". Measured: a reader can tell only by opening `benchmark.json` — `table.json`, the
+  API view and the panel published P@5/R@5 with no statement of which labels produced them. Since
+  this harness mines a SUBSTITUTE for one of §5.2's three named sources, the mix is part of reading
+  the score. `RetrievalBenchmark.sources()` counts it server-side (a frontend re-deriving it would
+  eventually disagree with the runner — `latest_retrieval_view`'s own doctrine) and `table.json`
+  carries `qrels_sources` + `queries`. An unlabelled query counts under its own `""` bucket rather
+  than being dropped: a census that hides its own unlabelled rows overstates what it knows.
+  **Absence is not zero, on the FE too.** A run written before the census existed has no key, and the
+  panel renders "Ground truth: not stated by this run", never "0 from every source". Falsified:
+  collapsing that branch to `return null` reds `says the provenance is unstated…` (1 failed / 11
+  passed → 12 passed after restore); dropping `"qrels_sources"` from the artifact reds the run test
+  with `KeyError: 'qrels_sources'` (1 failed / 59 passed → 60 passed after restore).
+
+- **[2026-08-26][ES-3] 🔴 E6 ESCALATION, not improvised: `surfacing_events` does not exist as a
+  schema.** The one clause still open is §5.2's source (a) for the knowledge store. Verified this
+  session: `surfacing_events` appears in the whole tree exactly ONCE, as prose in
+  `dashboard/handlers/learning.py:352`. There is no table, no schema, no reader and no writer —
+  `learning/measure.per_arm_precision(events)` is a PURE function over a list of dicts. So mining it
+  would mean minting LEARN-R4's schema and its writer inside ES-3, which is another plan's
+  deliverable (LEARNING-FLYWHEEL §2.5). Recorded rather than improvised. The knowledge-side
+  substitute (`intent_outcomes`) and the memory-side real source (`mem_volunteer_events`) both stand,
+  and their mix is now visible in the report per the item above.
+
+- **What is still NOT closed** (unchanged from 2026-08-25 except where noted): (i) §5.2 source (a) for
+  knowledge — blocked on the above, now with the substitute's provenance PUBLISHED rather than only
+  on disk; (ii) §5.2 source (c) stays declined on circularity grounds; (iii) the push-context resolver
+  arms (`memory_push.ARM_ALIAS/EXACT/SUFFIX`) are still not a bench target, and this session found a
+  SECOND reason beyond the signature mismatch: `mem_volunteer_events` records `entity_name`/`arm` but
+  never the surface text that triggered the match, so there is no stored input to replay a resolver on
+  — an offline resolver bench is not buildable from the state the tree persists, and synthesizing the
+  surface from the alias table is exactly source (c)'s circularity; (iv) the `RunPin`
+  embedding-vs-chat-fingerprint question remains an OWNER CALL and is not decided here.
+
+- **Also observed, not fixed (out of this atom's scope):** `open_store(memory)` calls `handle.init()`
+  — a `CREATE TABLE IF NOT EXISTS` write — before the digest is taken, which the code documents; and
+  `personalclaw retrieval-eval` has no test of its own (`git grep -l 'retrieval-eval' -- tests/` is
+  empty), so the CLI's argument handling is covered only through `run_retrieval_bench`.
+
+- **Gate:** `make lint` clean (black 2088 files, isort, flake8, mypy **1027 source files**);
+  `scripts/gate_report.py` **6/6** (including `structural-duplication` — the new guard composes the
+  existing one rather than cloning it); targeted `pytest --no-cov`
+  `test_retrieval_bench.py` + `test_evals_routes.py` + `test_evals_store.py` +
+  `test_knowledge_contradiction.py` **167 passed** (61 in the bench suite, up from 54);
+  `npm run typecheck:web` clean; `npm run test:web` **492 files / 5229 tests passed** with
+  `docs/design/consistency-audit.json` unchanged; `npm run build` clean; probe residue **16 tree-wide
+  with 0 introduced**; `git status --porcelain` empty.
