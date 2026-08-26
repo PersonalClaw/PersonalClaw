@@ -1254,10 +1254,14 @@ async def api_artifact_deploy(request: web.Request) -> web.Response:
             )
         except ArtifactBuildError as exc:
             _audit(request, "artifact.deploy", "denied", f"slug={slug} build_failed")
-            return web.json_response({"error": str(exc)}, status=422)
+            # `message=` carries the builder's WHAT — WHY. Fix: FIX sentence VERBATIM, which is
+            # the whole point of raising it: `errText` puts that sentence in front of the user.
+            # The structured envelope does not cost us that — it adds a code a client can branch
+            # on, which flat `{"error": "<prose>"}` never could.
+            return json_error("artifact_build_failed", message=str(exc), status=422)
         except ValueError as exc:  # invalid slug from files_root
             _audit(request, "artifact.deploy", "denied", f"slug={slug}: {exc}")
-            return web.json_response({"error": str(exc)}, status=400)
+            return json_error("artifact_slug_invalid", message=str(exc), status=400)
         entry = build.entry
     try:
         dep = store.deploy(slug, entry=entry)
