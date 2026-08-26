@@ -84,6 +84,13 @@ class InboundClient:
     #: then use passthrough with its OWN key; it never means "pick one for me".
     upstream: str = ""
     rate_overrides: dict[str, Any] = field(default_factory=dict)
+    #: Whether this client's chat sessions CARRY OVER between requests (§2.1).
+    #: Default False, which is the whole point: an inbound caller gets a fresh
+    #: context per request unless it has declared otherwise, the same
+    #: declared-choice gate crons' ``persistent_session`` uses. Continuity is a
+    #: standing grant — an external client that could accumulate context by
+    #: accident could also accumulate standing instructions by accident.
+    persistent_sessions: bool = False
     disabled: bool = False
     created_at: str = ""
     last_seen_at: str = ""
@@ -137,6 +144,13 @@ def load_clients() -> dict[str, InboundClient]:
                 scope=dict(row.get("scope") or {}),
                 upstream=str(row.get("upstream", "") or ""),
                 rate_overrides=dict(row.get("rate_overrides") or {}),
+                # Read with `is True`, not `bool(...)`: the OPEN position here is the
+                # permissive one (continuity), so an unparseable value must land on
+                # False. `bool("false")` is True, which for THIS flag would silently
+                # grant a standing session to a client whose record got mangled — the
+                # exact inverse of the `disabled` reasoning two lines down, and the
+                # reason the two flags deliberately do not share a parse.
+                persistent_sessions=row.get("persistent_sessions") is True,
                 # `disabled` is read with plain `bool`, NOT `_expose_flag`: this flag's
                 # True is the CLOSED position, so an unparseable value must read as
                 # disabled-ish, not as enabled. `bool("false")` is True — which here
