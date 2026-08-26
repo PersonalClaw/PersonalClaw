@@ -112,6 +112,66 @@ function NativePage() {
   )
 }
 
+// ── settled-motion residue: the byte-identity comparison's one normalisation ───
+// Every host `Button` wraps its label in a `motion.span` carrying
+// `animate={{ opacity, y }}`. framer-motion commits that element's RESTING values as an
+// inline style AFTER mount, on its rAF frame loop — so the SAME markup serialises three
+// different ways depending only on when it is read (all three measured here):
+//
+//   (1) `<span class="…">`                                       before the commit
+//   (2) `<span class="…" style="transform: none;">`              mid-commit
+//   (3) `<span class="…" style="opacity: 1; transform: none;">`  after it
+//
+// …and (3)'s two declarations are emitted in EITHER order: measured in one run, the
+// contributed render settled `opacity` first and the native render `transform` first.
+//
+// That is what reds this test intermittently on CI and misattributes the failure to
+// APE-11: on PR #2010 — a test-only diff touching neither `web/` nor the SDK — the `web`
+// job failed here on a SHA that also had a PASSING run of the same job, with state (3)
+// on the contributed side and state (1) on the native side.
+//
+// Awaiting settle on both sides is NOT sufficient on its own: measured 30/30 red,
+// because (2) and (3)-in-the-other-order stay reachable per side. So the residue is
+// normalised out of BOTH sides as well, and only the residue — the two declarations
+// removed are `opacity: 1` and `transform: none`, the CSS INITIAL values, whose removal
+// cannot change a rendered pixel. Everything else is still compared byte-for-byte,
+// including the button's `font-variation-settings` and the sheen's `opacity: 0.9` and
+// gradient; a `style` attribute carrying no resting-motion declaration is returned
+// untouched. The rail for that claim is the last `describe` in this file.
+const MOTION_RESTING_DECLARATIONS = new Set(['opacity: 1', 'transform: none'])
+
+function stripSettledMotionStyles(html: string): string {
+  return html.replace(/ style="([^"]*)"/g, (attribute, body: string) => {
+    const declarations = body.split(';').map((d) => d.trim()).filter(Boolean)
+    const kept = declarations.filter((d) => !MOTION_RESTING_DECLARATIONS.has(d))
+    // Byte-transparent unless something motion-owned was actually removed.
+    if (kept.length === declarations.length) return attribute
+    return kept.length === 0 ? '' : ` style="${kept.join('; ')};"`
+  })
+}
+
+/** The compared subtree: the innermost host div the page's `Surface` renders. */
+const pageMarkup = (root: HTMLElement) =>
+  root.querySelector('button')!.closest('div[class]')!.outerHTML
+
+/** Drives a render past framer-motion's resting-value commit. Requires BOTH
+ *  declarations, so the mid-commit state (2) above cannot be mistaken for a settled
+ *  one. The timeout is generous for the same reason `vitest.config.ts` raises
+ *  `testTimeout`: wall clock per test inflates ~3x under the full suite's workers. */
+async function awaitMotionSettled(root: HTMLElement) {
+  await waitFor(
+    () => {
+      const style = root.querySelector('button > span:last-child')!.getAttribute('style') ?? ''
+      expect(style).toContain('opacity: 1')
+      expect(style).toContain('transform: none')
+    },
+    { timeout: 5_000 },
+  )
+}
+
+/** State (3) in either emission order — used only as a vacuity check. */
+const SETTLED_RESIDUE = /style="(opacity: 1; transform: none|transform: none; opacity: 1);"/
+
 const declaring: AppContext = {
   name: 'ui-fixture',
   permissions: {},
@@ -130,16 +190,55 @@ describe('APE-11: a fixture app page renders from host primitives via the UI SDK
     const app = render(<ContributedPage app={{ ...declaring }} src="/apps/ui-fixture/ui/page.js" />)
     // The app's markup lands in the innermost host div ContributedPage mounts into.
     await waitFor(() => expect(app.container.querySelector('button')).not.toBeNull())
-    const contributed = app.container.querySelector('button')!.closest('div[class]')!.outerHTML
-
     const native = render(<NativePage />)
-    const baseline = native.container.querySelector('button')!.closest('div[class]')!.outerHTML
+
+    // Symmetry, half one: BOTH renders are driven past the resting-value commit before
+    // EITHER is read, so neither side's bytes depend on how long the `waitFor` above
+    // happened to take. Settling one side only would turn the intermittent failure into
+    // an intermittent PASS — the same bug with the signal removed.
+    await awaitMotionSettled(app.container)
+    await awaitMotionSettled(native.container)
+
+    const contributed = pageMarkup(app.container)
+    const baseline = pageMarkup(native.container)
+
+    // Vacuity for the normalisation below: the residue it exists for must really be
+    // present in what was just read, or `stripSettledMotionStyles` is dead code here and
+    // this test would be green for the wrong reason. If a framer-motion upgrade stops
+    // writing resting values, `awaitMotionSettled` times out and says so out loud.
+    for (const [side, html] of [['contributed', contributed], ['native', baseline]] as const) {
+      expect(html, `the ${side} side must carry the settled-motion residue`).toMatch(SETTLED_RESIDUE)
+    }
 
     // Non-vacuity: the compared markup must actually be a rendered primitive, not two
     // empty strings agreeing. A Button carries its variant's token classes.
     expect(baseline).toContain('<button')
     expect(baseline.length).toBeGreaterThan(120)
-    expect(contributed).toBe(baseline)
+
+    // Symmetry, half two: the normalisation is applied to BOTH sides. This is still
+    // `toBe` over the whole serialised subtree — byte-identity is NOT weakened to a
+    // substring or `toContain` check; two no-op declarations neither page authored are
+    // all that is removed.
+    expect(stripSettledMotionStyles(contributed)).toBe(stripSettledMotionStyles(baseline))
+  })
+
+  it('serialises to the same bytes read before or after the motion commit', async () => {
+    served = FIXTURE_BUNDLE
+    const app = render(<ContributedPage app={{ ...declaring }} src="/apps/ui-fixture/ui/settle.js" />)
+    await waitFor(() => expect(app.container.querySelector('button')).not.toBeNull())
+    const beforeCommit = pageMarkup(app.container)
+    await awaitMotionSettled(app.container)
+    const afterCommit = pageMarkup(app.container)
+
+    // The property the flake violated, stated directly: one unchanged render must
+    // compare equal to itself no matter which side of framer-motion's commit the read
+    // landed on. Whether `beforeCommit` actually caught state (1) is itself
+    // timing-dependent — which is the point; this holds either way, and holding either
+    // way is what makes the comparison above deterministic rather than lucky.
+    expect(stripSettledMotionStyles(beforeCommit)).toBe(stripSettledMotionStyles(afterCommit))
+    // Non-vacuity: a real rendered primitive, not two empty strings agreeing.
+    expect(afterCommit).toContain('<button')
+    expect(afterCommit).toMatch(SETTLED_RESIDUE)
   })
 
   it('renders the host Button and Surface, not a lookalike', async () => {
@@ -261,5 +360,58 @@ describe('APE-11: the generative-widget contribution path', () => {
     )
     // Dropped with a typed, visible error rather than executing app-named markup.
     expect(getByRole('alert').textContent).toContain('Unknown component "AppOwnedThing"')
+  })
+})
+
+describe('APE-11: the settled-motion normalisation the byte-identity test rests on', () => {
+  // The label span in each state measured above, quoted verbatim.
+  const PRE_COMMIT = '<span class="relative inline-flex items-center gap-s">Save</span>'
+  const MID_COMMIT =
+    '<span class="relative inline-flex items-center gap-s" style="transform: none;">Save</span>'
+  const SETTLED =
+    '<span class="relative inline-flex items-center gap-s" style="opacity: 1; transform: none;">Save</span>'
+  const SETTLED_REVERSED =
+    '<span class="relative inline-flex items-center gap-s" style="transform: none; opacity: 1;">Save</span>'
+
+  it('collapses every observed residue state onto the pre-commit bytes', () => {
+    // Vacuity: the normaliser is NOT the identity function on the shape it exists for.
+    // Without this, the two tests above could pass with a no-op normaliser on any
+    // machine fast enough never to observe the residue.
+    expect(stripSettledMotionStyles(SETTLED)).not.toBe(SETTLED)
+    for (const state of [PRE_COMMIT, MID_COMMIT, SETTLED, SETTLED_REVERSED]) {
+      expect(stripSettledMotionStyles(state)).toBe(PRE_COMMIT)
+    }
+  })
+
+  it('strips ONLY declarations whose removal cannot change a rendered pixel', () => {
+    // Each of these is a real authored style on the compared subtree, or a real
+    // mid-animation value. All must survive byte-for-byte — a normaliser that ate any of
+    // them would let a genuine SDK-vs-native divergence through, which is the failure
+    // mode a `toContain` "fix" would have had.
+    const authored = [
+      // the button's own `style={fvs(470)}`
+      '<b style="font-variation-settings: &quot;wght&quot; 470;">x</b>',
+      // the sheen span's authored opacity + gradient
+      '<i style="opacity: 0.9; background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--color-on-primary) 22%, transparent), transparent 60%);">x</i>',
+      // a transform that is NOT the resting value (the `loading` label lift)
+      '<u style="transform: translateY(-4px);">x</u>',
+      // opacity 0 is the loading cross-fade, not a no-op
+      '<s style="opacity: 0;">x</s>',
+      // prefix safety: set membership is exact, so `opacity: 1` does not swallow this
+      '<em style="opacity: 10;">x</em>',
+      // the TOKENS bundle's cssVars spread
+      '<span style="--app-surface: var(--color-surface);">x</span>',
+    ]
+    for (const html of authored) expect(stripSettledMotionStyles(html)).toBe(html)
+
+    // A mixed attribute keeps its authored half and loses only the no-ops.
+    expect(
+      stripSettledMotionStyles('<span style="opacity: 1; background: red; transform: none;">x</span>'),
+    ).toBe('<span style="background: red;">x</span>')
+
+    // Nothing outside a `style` attribute is in scope, not even a value that reads like
+    // one. `data-style="…"` is likewise not ` style="…"`.
+    const decoy = '<span data-note="opacity: 1; transform: none;" data-style="opacity: 1;">x</span>'
+    expect(stripSettledMotionStyles(decoy)).toBe(decoy)
   })
 })
