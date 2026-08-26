@@ -17,6 +17,7 @@ from typing import Any
 from personalclaw import notification_kinds
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
+from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ __all__ = [
     "emit_attention_item",
     "evaluate_alert",
     "notify_inbox_alert",
+    "redact_item",
 ]
 
 _STATE_FILE = "inbox_state.json"
@@ -380,6 +382,55 @@ def evaluate_alert(item: InboxItem, user_name: str = "") -> str:
     return rule.conditions.matches(text, user_name)
 
 
+def redact_item(item: dict) -> dict:
+    """Redact LLM-generated fields, and stamp the feedback-producer meta, on one item dict.
+
+    **Lives here, below the HTTP surface, because it is not an HTTP concern.** It moved down from
+    `dashboard/handlers_inbox` when PA-3's `inbox-op` provider needed it: an auto-executed archive
+    has to push the mutated row over the websocket, and every OTHER writer of that same event
+    redacts first, so the provider importing the handler module would have been a core→HTTP edge
+    (caught by `structural-import-direction`) *and* the alternative — a second redaction path —
+    would have been the R18 duplicate that eventually diverges. `handlers_inbox._redact_item` is
+    now an alias for this function, so there is exactly one implementation.
+    """
+    for key in ("message", "draft", "text", "context_summary"):
+        if item.get(key):
+            item[key], _ = redact_exfiltration_urls(item[key])
+            item[key], _ = redact_credentials(item[key])
+    for ctx in item.get("thread_context", []):
+        if ctx.get("text"):
+            ctx["text"], _ = redact_exfiltration_urls(ctx["text"])
+            ctx["text"], _ = redact_credentials(ctx["text"])
+    # Feedback producer meta (plan 58 T1.5, additive): each judgment field on the
+    # item names its producing artifact — the bound prompt ref — so the FE thumbs
+    # can attribute a verdict without a second lookup. Digest items are their own
+    # judgment (source == "digest").
+    try:
+        from personalclaw.providers.prompt_use_cases import active_prompt_ref
+
+        producers: dict[str, dict] = {}
+        if item.get("classification"):
+            producers["classification"] = {
+                "producer_kind": "prompt",
+                "producer_id": active_prompt_ref("inbox_classify"),
+            }
+        if item.get("draft"):
+            producers["draft"] = {
+                "producer_kind": "prompt",
+                "producer_id": active_prompt_ref("inbox_draft"),
+            }
+        if item.get("source") == "digest":
+            producers["digest"] = {
+                "producer_kind": "prompt",
+                "producer_id": active_prompt_ref("inbox_digest"),
+            }
+        if producers:
+            item["feedback_producers"] = producers
+    except Exception:  # noqa: BLE001 — meta must never break the inbox payload
+        logger.debug("feedback producer meta failed", exc_info=True)
+    return item
+
+
 def live_store(state: Any) -> "InboxStore | None":
     """The RUNNING inbox service's store, or None when no service is up.
 
@@ -396,6 +447,21 @@ def live_store(state: Any) -> "InboxStore | None":
     svc = getattr(state, "_inbox_svc", None)
     live = getattr(svc, "inbox", None) if svc is not None else None
     return live if isinstance(live, InboxStore) else None
+
+
+def live_state(state: Any) -> "InboxState | None":
+    """The RUNNING inbox service's `InboxState`, or None when no service is up.
+
+    :func:`live_store`'s sibling, for the two sets that live beside the items rather than on
+    them — ``dismissed`` and ``muted_threads``. Same hazard and the same reason: the service
+    holds them in memory and its next ``save()`` writes its own copy, so a writer that
+    constructed its own ``InboxState()`` would add a mute the API cannot see and that the
+    service then erases. Type-checked for the same reason too — a ``MagicMock()`` state answers
+    every getattr, so an attribute check alone would route real writes into a fake.
+    """
+    svc = getattr(state, "_inbox_svc", None)
+    live = getattr(svc, "state", None) if svc is not None else None
+    return live if isinstance(live, InboxState) else None
 
 
 def emit_attention_item(

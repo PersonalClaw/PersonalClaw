@@ -471,6 +471,11 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # unattended puts-something-in-front-of-the-user write that puts `notification-digest`
         # and `usage-recap` on this side, and the spend alone earns the opt-in.
         "triage-digest",
+        # PA-3: `inbox-op` mutates inbox rows — archives, dismisses, mutes a thread, writes a
+        # draft. Every one is reversible, which is what earns it the auto-execution class, but
+        # reversible is not read-only: an unattended cron that could dismiss the user's inbox
+        # without an explicit capability opt-in is precisely what this table exists to prevent.
+        "inbox-op",
     }
 )
 

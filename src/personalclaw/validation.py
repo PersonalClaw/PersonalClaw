@@ -832,6 +832,14 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # that registers it in `action_providers.registry` — a provider in one set but not the
         # other is the mismatch that makes a trigger save and then fail to run.
         "triage-digest",
+        # PROACTIVE-ASSISTANT §1.6 (PA-3): the triage tier's hands — archive / mark-read /
+        # mute-thread / dismiss / reply-draft against the inbox, every one reversible. Added
+        # here in the SAME commit that registers it in `action_providers.registry` and that
+        # lists it in `triggers/screen.py`'s write-capable set: a provider in one set but not
+        # the others is the mismatch that makes a trigger save and then fail to run. Listed
+        # for ALL trigger kinds on purpose — once an inbox operation is a first-class action,
+        # a hand-written lifecycle hook may perform one too, not only the triage digest.
+        "inbox-op",
         # WORKFLOWS-V2 Slice 3: re-added in the SAME commit that re-registers the v2
         # provider. Listing a provider that cannot be dispatched is worse than omitting
         # it — the trigger would validate, save, and then fail at run time.

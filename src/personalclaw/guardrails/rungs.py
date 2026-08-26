@@ -254,6 +254,28 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         ceiling=RUNG_AUTONOMOUS,
         providers=("notification-digest", "usage-recap", "triage-digest"),
     ),
+    # PA-3's `inbox-op`. The ONE core provider that does not floor at `autonomous`, and the
+    # reason is the paragraph at the top of this table read forwards instead of backwards: that
+    # reasoning says an action which ALREADY runs unattended must declare the rung matching
+    # today's behaviour, because a lower floor would stop a user's existing automations.
+    # `inbox-op` runs nothing today — it is new in this commit — so there are no automations to
+    # stop, and the floor can be the one the behaviour deserves rather than the one history
+    # forces. `auto_with_undo` is that rung: PROACTIVE-ASSISTANT §1.6 bound 4 requires every
+    # auto-executed inbox operation to keep a handle the user can click, and this floor is what
+    # routes it through `ROUTE_EXECUTE_WITH_UNDO` so the handle is persisted and the user told.
+    #
+    # The CEILING is the same rung, which is the load-bearing half: `autonomous` would let an
+    # accumulated track record eventually take the undo offer AWAY, and "archived 40 things
+    # silently" is the exact outcome the trivial tier's reversibility argument depends on not
+    # happening. `leaves_machine` is False — every op writes a local row and nothing else; a
+    # `reply_draft` writes a DRAFT (the provider has no send path at all), so the type that
+    # marks `leaves_machine` for a reply is `inbox.reply_draft` below, not this one.
+    ActionTypeSpec(
+        key="action.inbox_op",
+        floor=RUNG_AUTO_WITH_UNDO,
+        ceiling=RUNG_AUTO_WITH_UNDO,
+        providers=("inbox-op",),
+    ),
     # Spawns an LLM turn. `leaves_machine` because the turn's own toolset can reach the
     # network — the profile it runs under bounds that, not this declaration.
     ActionTypeSpec(

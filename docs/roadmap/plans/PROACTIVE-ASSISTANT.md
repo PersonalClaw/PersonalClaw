@@ -390,3 +390,106 @@ Where each new piece plugs into the pluggable-provider architecture — nothing 
   `test_proactive_approval`, `test_prompt_use_cases`, `test_prompts`,
   `test_native_hook_providers`, `test_triggers_delivery`. Real-home rail clean; probe sweep 16
   total / 0 diff-introduced; tree clean, one signed-off commit.
+
+---
+
+## Execution log — `PA-3` (§1.6 trivial-tier auto-execution + the `inbox-op` action provider) — **DONE**
+
+- [2026-08-25][PA-3] DONE. Every done_when clause is met. Recon first: `git grep -n "inbox-op"` on
+  `main` @`5283468b` found the name only in COMMENTS (`triggers/screen.py:469` and the plan), so
+  this was genuinely unbuilt. `proactive.max_auto_actions_per_run` was **already wired end to end**
+  by PA-1 (`config/loader.py:3753` + validation at `:3784` + the `_EDITABLE_CONFIG` PATCH
+  allowlist), so **no config work was needed and none was done** — `loader.py` sits at 5900/6000
+  with headroom exactly 100 against a `>=100` rail, so a new field there would have reddened
+  `structural-size` with nothing left to compress.
+- [2026-08-25][PA-3] `inbox-op` is `action_providers/inbox_op_provider.py`: five ops (`archive`,
+  `mark_read`, `mute_thread`, `dismiss`, `reply_draft`), every one REVERSIBLE, because §1.6 makes
+  reversibility the definition of the trivial-capable class. The undo rides the platform's existing
+  `ActionResult.reversal` / `ActionProvider.reverse` contract (AG §5.2/§6.1) rather than a private
+  one, so `guardrails.ladder.reverse_action` resolves an inbox undo through the same path it
+  resolves a task undo. The handle is base64 rather than colon-joined: two of the three things it
+  carries — an item id (`{channel}_{ts}`) and a previous draft (free text) — cannot be delimited by
+  any character reserved in the handle grammar. `reverse` refuses when the item MOVED ON since
+  (asserted, with its own vacuity sibling), because a reversal that clobbers a newer change takes
+  away the user's undo AND their evidence in one call.
+- [2026-08-25][PA-3] **`reply_draft` has no send path at all**, and that is asserted by a source
+  scan for `send_reply`/`add_reaction`/`send_message` in the provider module — §1.6 bound 2
+  enforced in the code that performs the action rather than trusted to whoever calls it. A user's
+  own always-approve rule for `reply_draft` therefore still produces a draft; the graduation toggle
+  PA-5 renders can only ever point at a different, send-capable provider.
+- [2026-08-25][PA-3] The stage is `proactive/autoexec.py`, and it runs BETWEEN stage 3 and stage 4,
+  not after delivery. `run_triage` gained an injected `auto_execute` hook and passes only the
+  LEFTOVERS to `render_digest`; `render_digest` gained `auto_lines`, rendered first inside the
+  existing "What your machine did" heading. Ordering it after `deliver` would have produced a
+  digest that offered the user a proposal for work the machine had already done seconds earlier —
+  the one thing a digest cannot get wrong. Pinned by a rail: mutating `pending = auto.pending` back
+  to `batch.proposals` reds on `assert 'Needs you:' not in ...`.
+- [2026-08-25][PA-3] 🔴 **FINDING — the first draft had §1.6's four bounds and NONE of the
+  platform's two.** `test_action_provider_chokepoints.test_the_site_list_is_not_STALE` caught it:
+  this module is a FIFTH unattended dispatch seam (AG §1.2) and was reaching a provider with no
+  policy check, so a digest would have kept archiving through an incident and past the operator's
+  denylist. Fixed by adding `incident_active()` (before the loop, fail-closed, everything deferred
+  with a reason so an incident reads as a deferral and not as a digest that went silent) and
+  `enforce_action(provider, config, ctx, session_key=…)` (per action, before dispatch). Both live
+  in `auto_execute` itself, NOT in `_default_dispatch`: a gate inside the default dispatch is
+  bypassed by any caller that supplies its own, which is the exact shape of a seam that loses a
+  control. `DispatchFn` grew a `ctx` parameter so the gate screens the SAME context object the
+  provider executes against. `EXECUTION_SITES` + `DENYLIST_SEAMS` both gained the module.
+- [2026-08-25][PA-3] DEVIATION (deliberate, documented in the module docstring): **the budget check
+  fails CLOSED here, opposite to `triggers/screen.py`'s fail-OPEN.** That gate decides whether a
+  trigger FIRES AT ALL, where a hung probe stopping every automation would be the worse outage.
+  This gate decides whether an unattended WRITE happens, and its fallback is not an outage — the
+  proposal queues pending, exactly where it would have been anyway. Nothing is lost by refusing.
+- [2026-08-25][PA-3] The ledger row carries the matched rule's key, and a trivial-tier execution
+  with no taught rule behind it records `policy:trivial-tier` rather than an empty string: an empty
+  `rule` reads as a taught rule whose key went missing. `auto_executed` + `skipped_budget` joined
+  `LEDGER_KINDS` (a kind outside that set is written and then invisible to `read_events`). The
+  deferral reason and the ledger kind are the SAME token for a breach, asserted, so a user counting
+  breaches does not have to know which surface to trust.
+- [2026-08-25][PA-3] 🔴 **FINDING — `structural-import-direction` caught a core→HTTP edge** that a
+  green build and green tests both missed: the provider's websocket push needs the redaction pass
+  every other writer of `inbox_item_updated` runs, and that lived in
+  `dashboard/handlers_inbox._redact_item`. Fixed by INVERTING the dependency as the gate asks —
+  `_redact_item` moved DOWN to `inbox.redact_item` and `handlers_inbox._redact_item` is now a plain
+  alias, so there is exactly one implementation. Re-implementing it in the provider would have been
+  the R18 duplicate that eventually diverges on the next redaction rule. `inbox.live_state` was
+  added beside the existing `live_store` for the two sets that live beside the items
+  (`dismissed`/`muted_threads`), isinstance-checked for the same reason: a `MagicMock()` state
+  answers every getattr, so an attribute check alone would route real writes into a fake.
+- [2026-08-25][PA-3] Criterion 2 (adversarial injection) is driven through the REAL parser and the
+  REAL stage from a model reply that is exactly what a jailbroken item produces — four attacks in
+  one payload: self-assign `trivial` for `dismiss`, self-assign `trivial` for `reply_draft`, invent
+  an action outside `ACTION_TYPES`, and name an ordinal the manifest never minted. Result: two
+  refused at the parse boundary, two clamped UP (`high`/`medium`), **zero dispatches**. Hand-built
+  `Proposal`s were deliberately not used — a hand-built proposal has already passed the clamp the
+  attack is trying to skip. Its vacuity sibling runs the same window without the injection and
+  requires one dispatch, so "nothing ran" cannot be satisfied by a stage that never runs anything.
+- [2026-08-25][PA-3] SHARED-FILE TOUCHES: `action_providers/registry.py` (register),
+  `validation.py` (`ALLOWED_HOOK_PROVIDERS`), `triggers/screen.py` (`WRITE_CAPABLE_PROVIDERS` —
+  reversible is not read-only), `guardrails/rungs.py` (`action.inbox_op`, floor AND ceiling
+  `auto_with_undo`: `autonomous` would let an accumulated track record take the undo offer away,
+  and §1.6's whole reversibility argument dies with it), `ledger/kinds.py` (two kinds + both into
+  `LEDGER_KINDS`), `apps/native/inbox-op-action/app.json` (the settings-schema manifest; its `op`
+  enum IS the provider's op set, asserted), `reference/{index,providers}.md` (regenerated — one
+  added line + one count, unlike PA-2 which produced no drift because it shipped no native app),
+  `inbox.py`, `dashboard/handlers_inbox.py`, `proactive/{pipeline,rank}.py`,
+  `tests/test_action_provider_chokepoints.py`.
+- [2026-08-25][PA-3] FALSIFICATION, three mutations, each grep-confirmed applied and each restored
+  from a `/tmp` file copy (never `git checkout`): (1) `breached = False` after the budget check →
+  **1 red** (`assert 3 == 1` on the breach clause); (2) `auto_execute=None` at the provider call
+  site → **2 reds** (the wiring rail and the end-to-end archive); (3) `pending = batch.proposals`
+  in the pipeline → **1 red** (`'Needs you:' not in body`). The rails' vacuity floor is
+  `_EXPECTED_UNDER_BUDGET = 3`, the literal inbox-lane size of the fixture asserted directly, so a
+  stage that dispatched nothing (both legs zero) fails rather than passes.
+- [2026-08-25][PA-3] Gate: `make lint` green (black 2084 files / isort / flake8 / mypy 1026 source
+  files), `python scripts/gate_report.py` **6/6 PASS** (after the import-direction fix above),
+  targeted **931 passed / 1 failed / 1 skipped** across 21 suites. The one red is
+  `test_guardrails_ladder::test_create_task_deletes_the_row_it_filed` — PRE-EXISTING and unrelated:
+  it passes alone (`-n0`, and under xdist with this branch's changes present) and fails identically
+  on `main` @`5283468b` in the same multi-file batch, so it is the known xdist
+  `_isolated_home`-leak family, not a `create-task` regression. Real-home rail clean on every run;
+  probe sweep 16 total / 0 diff-introduced; tree clean, one signed-off commit.
+- [2026-08-25][PA-3] NOT in scope, deliberately: the digest CARD (auto-done section with the undo
+  button, tier badges, the rules manager) is `PA-5`. The stage already emits everything that card
+  needs — `summary()` carries `auto_executed` (with the reversal handle), `auto_deferred` (with the
+  closed-vocabulary reason) and `budget_breached` — so PA-5 renders, it does not re-derive.

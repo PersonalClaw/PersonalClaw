@@ -2904,13 +2904,14 @@
         {
           "id": "PA-3",
           "title": "Trivial-tier auto-execution + `inbox-op` action provider (Session 3)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a71.6 Trivial-tier auto-execution \u2014 guardrails; `inbox-op` provider (\u00a71.6 + Plug-in Map); Success Criteria 2/3/4",
           "done_when": "`inbox-op` implements ActionProvider, is registered via register_action_provider, added to ALLOWED_HOOK_PROVIDERS, and carries a settings-schema manifest; trivial/always-approve proposals auto-execute bounded by the NEW-1 budget floor + max_auto_actions_per_run cap, each emitting a named-rule ledger row with one-click undo, and budget breach demotes remaining proposals to pending with skipped_budget rows; adversarial injection test (criterion 2) passes",
           "deps": [
             "PA-2",
             "EXT:AUTONOMY-GUARDRAILS:NEW-1 budget floor (per-run/day token+dollar+action ceilings) consulted before each auto-executed action"
-          ]
+          ],
+          "pr": 2082
         },
         {
           "id": "PA-4",
@@ -7778,13 +7779,13 @@
         "plan": "OU"
       },
       {
-        "id": "PA-3",
-        "title": "Trivial-tier auto-execution + `inbox-op` action provider (Session 3)",
+        "id": "PA-4",
+        "title": "Decision journal core: `decision` native type + tools + horizon triggers + R18 lesson (Session 4)",
         "plan": "PA"
       },
       {
-        "id": "PA-4",
-        "title": "Decision journal core: `decision` native type + tools + horizon triggers + R18 lesson (Session 4)",
+        "id": "PA-5",
+        "title": "Triage FE surfaces + as-a-user validation (Session 5a)",
         "plan": "PA"
       },
       {
@@ -9780,9 +9781,9 @@
         "code": "PA",
         "plan": "PROACTIVE-ASSISTANT",
         "total_atoms": 6,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {

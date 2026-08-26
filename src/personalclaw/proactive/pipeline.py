@@ -33,6 +33,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from personalclaw.proactive.autoexec import AutoExecResult, render_auto_lines
 from personalclaw.proactive.gate import (
     GateResult,
     GateRule,
@@ -65,6 +66,11 @@ PROPOSE_SCOPE = "triage_propose"
 
 CompletionFn = Callable[..., Awaitable[object]]
 DeliverFn = Callable[[Digest], bool]
+#: §1.6's auto-execution stage, injected rather than imported-and-called so the ordering test
+#: does not also become a test of the guardrails floor. `None` means "propose only", which is
+#: what every caller before PA-3 did and what a caller with `auto_execute_enabled` off still
+#: effectively gets (the stage itself refuses, one layer down).
+AutoExecFn = Callable[[tuple[Proposal, ...], Manifest], Awaitable["AutoExecResult"]]
 
 
 @dataclass
@@ -75,6 +81,8 @@ class TriageResult:
     gate: GateResult = field(default_factory=GateResult)
     batch: ProposalBatch = field(default_factory=ProposalBatch)
     digest: Digest | None = None
+    #: §1.6's outcome, or None when the caller passed no auto-execution stage.
+    auto: AutoExecResult | None = None
     llm_calls: int = 0
     delivered: bool = False
     #: True when the window was empty and the pipeline returned before any model was reachable.
@@ -120,6 +128,10 @@ class TriageResult:
             "degraded": self.batch.degraded,
             "digest_title": self.digest.title if self.digest else "",
             "digest_body": self.digest.body if self.digest else "",
+            # Merged rather than nested: `summary()` is the flat shape a template binds with
+            # `{{nodes.triage.output.auto_executed}}`, and a nested object would make the one
+            # thing PA-5's digest card needs the one thing a binding cannot reach.
+            **(self.auto.summary() if self.auto is not None else {}),
         }
 
 
@@ -228,6 +240,7 @@ async def run_triage(
     trigger_id: str = "",
     completion: CompletionFn | None = None,
     deliver: DeliverFn | None = None,
+    auto_execute: AutoExecFn | None = None,
 ) -> TriageResult:
     """Run the digest over an already-collected item set and deliver it.
 
@@ -333,13 +346,29 @@ async def run_triage(
                             extra_keys=batch.extra_keys,
                         )
 
+    # Stage 3.5 (§1.6). BEFORE rendering, and that order is the whole reason this stage is not
+    # bolted on after `deliver`: a digest that listed an archived item under "needs you" and
+    # then archived it a second later would be actively misleading — the user would tap a
+    # proposal for work the machine had already done. Auto-execution therefore happens here,
+    # and only its LEFTOVERS reach the "needs you" section.
+    auto: AutoExecResult | None = None
+    if auto_execute is not None and batch.proposals:
+        try:
+            auto = await auto_execute(batch.proposals, manifest)
+        except Exception:  # noqa: BLE001 - an unattended run degrades to propose-only
+            logger.warning("triage: auto-execution stage failed", exc_info=True)
+            notes.append("auto-execution failed: every proposal stayed pending")
+            auto = None
+    pending = auto.pending if auto is not None else batch.proposals
+
     # Stages 4-5. Ranking and rendering are deterministic; delivery is the singular gate.
     digest = render_digest(
         manifest,
         kept=gate.kept,
-        proposals=batch.proposals,
+        proposals=pending,
         dropped_count=len(gate.dropped),
         degraded=batch.degraded,
+        auto_lines=render_auto_lines(auto) if auto is not None else (),
     )
     delivered = bool(deliver(digest))
 
@@ -348,6 +377,7 @@ async def run_triage(
         gate=gate,
         batch=batch,
         digest=digest,
+        auto=auto,
         llm_calls=llm_calls,
         delivered=delivered,
         short_circuited=False,
