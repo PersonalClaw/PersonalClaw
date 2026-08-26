@@ -56,6 +56,7 @@ import threading
 import time
 import urllib.request
 
+import browse_chrome
 import pytest
 
 from personalclaw.browse.safety_script import (
@@ -250,27 +251,12 @@ def test_module_import_pulls_in_no_http_client() -> None:
 # Layer 2: real execution. A live browser, over raw CDP.
 # --------------------------------------------------------------------------------------------
 
-_CHROME_CANDIDATES = (
-    os.path.expanduser(
-        "~/Library/Caches/ms-playwright/chromium_headless_shell-1234"
-        "/chrome-headless-shell-mac-arm64/chrome-headless-shell"
-    ),
-    os.path.expanduser(
-        "~/Library/Caches/ms-playwright/chromium-1234"
-        "/chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium"
-    ),
-)
-
 #: Names our guard uses for its rejections/throws. Asserting on this — not merely on "it
 #: threw" — is what separates our guard from the browser refusing on its own.
 BLOCKED_ERROR = "PersonalClawBlockedError"
 
-
-def _chrome_path() -> str | None:
-    for candidate in _CHROME_CANDIDATES:
-        if os.path.exists(candidate):
-            return candidate
-    return None
+#: Named once so the skip/fail message says which proof stopped running.
+PROOF = "BEHAVIOURAL PROOF"
 
 
 def _silent_wav_data_uri() -> str:
@@ -620,20 +606,8 @@ def browser_runs() -> dict:
     The baseline is not decoration. Without it, "zero server hits under injection" is
     indistinguishable from a harness that never reached the network at all.
     """
-    chrome = _chrome_path()
-    if chrome is None:
-        pytest.skip(
-            "BEHAVIOURAL PROOF NOT RUN: no Chromium binary found at "
-            f"{_CHROME_CANDIDATES[0]} (nor the full Chromium). The safety script's whole "
-            "value is behavioural, so the content tests above do NOT substitute for this."
-        )
-    try:
-        import websockets  # noqa: F401
-    except ImportError:  # pragma: no cover - environment guard
-        pytest.skip(
-            "BEHAVIOURAL PROOF NOT RUN: no `websockets` in the venv and `playwright` is "
-            "absent, so there is no way to speak CDP."
-        )
+    chrome = browse_chrome.chrome_or_skip(PROOF)
+    browse_chrome.websockets_or_skip(PROOF)
 
     site = _LocalSite()
     try:
