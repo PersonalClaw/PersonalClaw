@@ -889,3 +889,17 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
   user. `web/src/lib/errText.ts` returns a JSON `error` string verbatim and
   `ArtifactDeploy.tsx:54` already toasts it (`Could not deploy: <message>`), so a 422 carrying
   the WHAT — WHY. Fix: FIX sentence lands in front of the user on the surface that caused it.
+- [2026-08-26][PEP-9] ✅ **ATOM FLIPPED `done` (PR #2078).** Integration re-gated on `origin/main` rather
+  than inheriting: `make lint` pass (black 2083, mypy 1025 clean); `pytest` **122 passed** over 5
+  `ls`-verified artifact/ceiling suites; `scripts/gate_report.py` **6/6**; `web/` diff **empty**; probe
+  sweep 16 pre-existing / 0 introduced. **Falsification re-run independently:** swapping
+  `profile=PROFILE_BUILD` for `profile="none"` at `build.py:424` (grepped back, `ast.parse`d) produced
+  **2 red**, and both halves of the ceiling proof fire — the static argv assertion ("the build did not go
+  through the post-exec resource shim") **and** the dynamic in-child probe ("the build child inherited
+  this process' soft NOFILE"). Static-plus-dynamic is what makes this rail hard to fake; either alone
+  would have been satisfiable by the other's absence. Restored from a file copy; same invocation, 20 passed.
+  The flip is justified against the criterion: all five `done_when` clauses are met. The two DEVIATIONS
+  (no `webapp` kind synonym; the build command stays core-owned rather than artifact-declared) are
+  scope-shape choices recorded above, not unmet clauses — and the second is deliberately left as an owner
+  security-posture call, since a declared build command is arbitrary command execution from artifact
+  metadata and the rlimit ceiling bounds resources, not semantics.

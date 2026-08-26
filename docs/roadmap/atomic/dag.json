@@ -7328,13 +7328,14 @@
         {
           "id": "PEP-9",
           "title": "React artifact build path",
-          "status": "todo",
+          "status": "done",
           "scope": "Add a React build path for webapp artifacts: build once in a sandboxed, resource-limited spawn and store the emitted static bundle as the artifact's files (build-once-serve-static; no per-artifact dev server), served through the PEP-8 static route. A build failure surfaces a legible WHAT/WHY/FIX error rather than a hang. This is the unbounded-spawn hazard, so it must ride the shared resource-ceiling build-spawn profile and must not begin before that profile exists.",
           "done_when": "A small React artifact builds and serves as static files through the deploy route and is interactable in-app; a build failure is legible, not a hang.",
           "deps": [
             "PEP-8",
             "EXT:EXECUTION-ISOLATION:resource-limited-build-spawn"
-          ]
+          ],
+          "pr": 2078
         },
         {
           "id": "PEP-10",
@@ -7786,11 +7787,6 @@
         "id": "PCS-7",
         "title": "Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface, V2)",
         "plan": "PCS"
-      },
-      {
-        "id": "PEP-9",
-        "title": "React artifact build path",
-        "plan": "PEP"
       },
       {
         "id": "PEP-11",
@@ -10142,9 +10138,9 @@
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
         "total_atoms": 11,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {

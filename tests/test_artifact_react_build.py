@@ -522,9 +522,15 @@ async def test_deploy_builds_a_react_artifact_and_serves_the_static_bundle(
 async def test_deploy_reports_a_build_failure_and_publishes_nothing(
     tmp_path, patched_native, monkeypatch
 ) -> None:
-    """The failure reaches the USER on the surface that caused it: a 422 whose ``error``
-    string is exactly what ``errText`` puts in the toast — and no deployment row, so a
-    broken app is never reachable at a URL."""
+    """The failure reaches the USER on the surface that caused it: a 422 whose ``error.message``
+    is exactly what ``errText`` puts in the toast — and no deployment row, so a broken app is
+    never reachable at a URL.
+
+    The envelope is the STRUCTURED one (``{"error": {"code", "message"}}``), not flat prose.
+    That was not a free change: the flat shape would have grown the shrink-only flat-envelope
+    ceiling, so the route emits :func:`personalclaw.http_errors.json_error` instead. The
+    sentence still arrives verbatim — the point of this test — and the caller additionally gets
+    ``artifact_build_failed`` to branch on, which flat prose could never give it."""
     root = _toolchain(tmp_path / "tc", stub_fails('entry.jsx:4:1: ERROR: Expected ")"'))
     monkeypatch.setenv(TOOLCHAIN_ROOT_ENV, str(root))
     prov = patched_native
@@ -533,7 +539,9 @@ async def test_deploy_reports_a_build_failure_and_publishes_nothing(
     try:
         resp = await client.post(f"/api/artifacts/{art.slug}/deploy")
         assert resp.status == 422, await resp.text()
-        message = (await resp.json())["error"]
+        envelope = (await resp.json())["error"]
+        assert envelope["code"] == "artifact_build_failed", envelope
+        message = envelope["message"]
         assert "React build failed" in message
         assert 'Expected ")"' in message, f"the bundler's reason was swallowed: {message}"
         assert "Fix:" in message

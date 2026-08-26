@@ -180,7 +180,17 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: exactly the drift this census exists to catch. **The slack is not spendable on an error
 #: envelope:** the import route's refusals go through ``json_error``, which needs no payload
 #: dict at all, so the onboarding surface's FLAT count is unchanged.
-UNRESOLVED_PAYLOAD_CEILING = 211
+#: 211 → **212** (PEP-9): one 200-status SUCCESS body on the artifact-deploy route — the
+#: ``{"ok": True, "deployment": …, "build": …}`` payload, whose members are the stores' own
+#: ``to_dict()`` returns. Same reasoning as the LV-3/LV-4 rows above.
+#: **The slack is not spendable on an error envelope:** this atom's two refusals were CONVERTED
+#: to :func:`json_error` (``artifact_build_failed`` 422, ``artifact_slug_invalid`` 400) rather
+#: than accommodated, so ``FLAT_BASELINE`` stayed at 1507 — it is shrink-only and was not raised.
+#: **Measured against `origin/main`, not carried forward.** An earlier revision of this branch
+#: recorded a net delta of ZERO, and that reading expired: it was taken before ES-7 landed a site
+#: of its own. The delta a branch needs is main-RELATIVE, so it has to be re-measured at every
+#: rebase rather than reused — main now measures 211 and this branch measures 212.
+UNRESOLVED_PAYLOAD_CEILING = 212
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites

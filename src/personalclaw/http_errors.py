@@ -262,6 +262,19 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # guess between "reload the document", "you sent the wrong file type" and "this
     # artifact has no binary body at all" — three remedies, one of which destroys the
     # user's work if guessed wrong.
+    # ── React artifact deploy (artifacts/handlers.py — PEP-9) ────────────────────
+    #
+    # Two codes, not one, because the remedies are opposite: a build failure is the
+    # user's SOURCE to fix, a bad slug is the request to fix. The `message=` on both
+    # carries the raiser's own "WHAT — WHY. Fix: FIX" sentence verbatim.
+    "artifact_build_failed": (
+        "Bundling the artifact's React source failed, so nothing was published. Fix: read the "
+        "build message — it names the file and the reason."
+    ),
+    "artifact_slug_invalid": (
+        "The artifact slug is not a usable directory name, so no served path could be built for "
+        "it. Fix: rename the artifact to something slug-safe."
+    ),
     "kind_not_binary": (
         "The artifact's kind stores its body as text, so it has no binary body to replace. "
         "Fix: PATCH the artifact instead."
