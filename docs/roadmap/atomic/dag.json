@@ -1515,7 +1515,8 @@
             "BA-2",
             "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:action-node dispatch contract",
             "EXT:AUTONOMY-GUARDRAILS:model-call budget chokepoint (SpendMeter) + denylist dispatch seams"
-          ]
+          ],
+          "blocked_reason": "IMPLEMENTATION COMPLETE \u2014 all five done_when clauses met and proven live (see BROWSE-AUTOMATION.md's 2026-08-25 entry). Held `todo` on an OPEN OWNER QUESTION standing since 2026-08-24: flip on `done_when` as written, or wait for the Sec.4 Stealth Stack + Sec.10 launcher before calling browse done. Second owner call in the same entry: the CI pytest job installs no browser, so the behavioural clauses are proven only on a developer machine that has one; making CI prove them needs `npx playwright install chromium` plus PERSONALCLAW_REQUIRE_BROWSE_PROOF=1 on that job, which is a workflow-file change and a per-run minutes cost. Neither question is a code gap."
         },
         {
           "id": "BA-4",
