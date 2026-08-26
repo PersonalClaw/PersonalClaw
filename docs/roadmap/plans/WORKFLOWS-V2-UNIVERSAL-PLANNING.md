@@ -1269,6 +1269,12 @@ session. It lands there now.
   the defect is invisible to it. **Consequence:** an app bundle whose first `personalclaw.sdk.*` touch is
   `provider_helpers` fails at import, and `docs/architecture/provider-boundary.md` makes `sdk.*` the only legal
   import path for apps, so this is on the one surface that must not have order-dependent imports. **Rail note for
-  every future deletion atom:** the reverse-order sweep has a standing baseline of **1** pre-existing failure on
-  `main`; a deletion atom must compare against 1, not 0, or it will read this as its own breakage. Not fixed here —
-  it is an SDK-boundary change with no relation to the nine planning modules, and belongs to its own atom.
+  every future deletion atom:** the reverse-order sweep had a standing baseline of **1** pre-existing failure on
+  `main` — this exact cycle — so a deletion atom measured before the fix had to compare against 1, not 0, or it
+  would read the cycle as its own breakage. **That baseline is now 0.** The cycle was fixed in the same combined
+  batch that landed this entry: the `provider_helpers -> sdk.model` edge is gone (the sixteen relayed names now
+  come from their real `personalclaw.llm.*` homes), pinned by a cold-subprocess test per import order plus an
+  `ast` rule forbidding the module-scope re-import. **So compare against 0, and treat a reverse-order failure as
+  yours.** The fix was deliberately kept out of this atom's own commit — it is an SDK-boundary change unrelated
+  to the nine planning modules — but it is not deferred to a later atom, and this note is corrected here rather
+  than left to become a stale number that silently excuses a real regression.
