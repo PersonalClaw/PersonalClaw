@@ -229,6 +229,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The caller already has the maximum number of requests in flight."
     ),
     "request_too_large": "The request body exceeds this surface's size cap.",
+    # ── inbound A2A gateway (inbound/a2a.py — EXTERNAL-ACCESS §5) ──
+    #
+    # Admission reuses the generic rows above for the reason the MCP block states. This
+    # ONE code exists because a 200 card with no skills is a legitimate, meaningful answer
+    # ("nobody published a template"), so a catalog that could not be READ must be able to
+    # say so instead of borrowing that answer. Without it, an empty card and a broken card
+    # are the same bytes — and a client would stop asking.
+    "a2a_catalog_unavailable": "The published-workflow catalog could not be read.",
     # ── desktop computer use (handlers/computer_use.py) ──
     # Both rows additionally carry agent_code/what/why/fix INSIDE the `error` object: the
     # AgentError the dispatch composed has to reach the model unchanged, and the wire code is

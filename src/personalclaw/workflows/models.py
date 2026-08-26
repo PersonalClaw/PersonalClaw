@@ -685,6 +685,17 @@ class DefMetadata:
     hands_off_to: list[dict[str, Any]] = field(default_factory=list)
     #: Blueprint mode (R16): render as a guided conversation rather than injected text.
     guided: bool = False
+    #: EXTERNAL-ACCESS §5 (EA-8): whether this template appears as a SKILL on
+    #: ``GET /a2a/agent-card`` and is startable through ``POST /a2a/tasks``.
+    #:
+    #: 🔴 Defaults to FALSE and must stay that way. Publishing is a per-template decision
+    #: the owner makes in the template detail UI, because the alternative — published by
+    #: default with an opt-out — means turning the A2A surface on silently exposes every
+    #: template the user ever authored, including ones whose declared *inputs* are the
+    #: sensitive part. Read with ``is True`` below for the same reason ``guided`` is: a
+    #: truthy-but-not-True value on disk (``"false"``, ``1``, ``{}``) must not publish a
+    #: template, and only an exact ``true`` does.
+    a2a_published: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -708,6 +719,7 @@ class DefMetadata:
             "packs": list(self.packs),
             "hands_off_to": [dict(h) for h in self.hands_off_to],
             "guided": self.guided,
+            "a2a_published": self.a2a_published,
         }
 
     @classmethod
@@ -733,6 +745,7 @@ class DefMetadata:
             packs=[str(pk) for pk in (d.get("packs") or [])],
             hands_off_to=[dict(h) for h in (d.get("hands_off_to") or []) if isinstance(h, dict)],
             guided=d.get("guided") is True,
+            a2a_published=d.get("a2a_published") is True,
             requirements={
                 str(k): [str(x) for x in (v or [])]
                 for k, v in (reqs.items() if isinstance(reqs, dict) else [])

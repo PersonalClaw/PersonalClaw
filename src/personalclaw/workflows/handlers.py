@@ -264,6 +264,26 @@ async def api_def_save(request: web.Request) -> web.Response:
     return _reply(result, status=201 if result.get("saved") else 200)
 
 
+async def api_def_a2a_publish(request: web.Request) -> web.Response:
+    """POST /api/workflows/{name}/a2a-publish — the template detail UI's publish toggle.
+
+    Its own route rather than a field on the def save (EXTERNAL-ACCESS §5): the detail UI holds
+    the SECRET-STRIPPED def, so re-saving that document to carry one bool would persist the
+    stripped bindings. Guarded as a def SAVE because that is what it is — a write to the stored
+    template — and because publishing a workflow to an external protocol is not a read.
+    """
+    denied = _guard(request, "workflow_def_save")
+    if denied is not None:
+        return denied
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    name = request.match_info.get("name", "")
+    result = await service.set_a2a_published(name, body.get("published") is True)
+    _audit(request, "workflow_def_a2a_publish", "success" if result.get("ok") else "failure", name)
+    return _reply(result)
+
+
 async def api_def_delete(request: web.Request) -> web.Response:
     denied = _guard(request, "workflow_def_delete")
     if denied is not None:
@@ -1078,6 +1098,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_post("/api/workflows/{name}/versions/repin", api_def_repin)
     app.router.add_get("/api/workflows/{name}/ledger", api_def_ledger)
     app.router.add_post("/api/workflows/{name}/refine", api_def_refine)
+    app.router.add_post("/api/workflows/{name}/a2a-publish", api_def_a2a_publish)
     app.router.add_get("/api/workflows/{name}", api_def_detail)
     app.router.add_get("/api/workflows/{name}/trajectory", api_template_trajectory)
     app.router.add_delete("/api/workflows/{name}", api_def_delete)

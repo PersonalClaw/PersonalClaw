@@ -150,7 +150,15 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: was rejected for the same reason: it would duplicate ``LearningSummary``'s schema in two
 #: places, which is the drift this repo keeps finding. The 1 is bought and then PINNED by
 #: :func:`test_the_learning_surface_hides_no_flat_envelope_in_its_unresolved_rows`.
-UNRESOLVED_PAYLOAD_CEILING = 205
+#:
+#: 205 → **208** (EA-8): three 200-status SUCCESS bodies on the A2A gateway — the agent card
+#: and the two A2A Task documents (``POST /a2a/tasks``, ``GET /a2a/tasks/{id}``). All three are
+#: protocol documents whose shape is defined by the A2A spec and built by ``a2a.build_card`` /
+#: ``a2a._task_envelope``; spelling their keys out at the call site would duplicate the wire
+#: schema in two places, which is the drift this repo keeps finding. The 3 is bought and then
+#: PINNED by :func:`test_the_a2a_surface_hides_no_flat_envelope_in_its_unresolved_rows`, which
+#: takes the ES-3 pin's stronger shape: that module emits NO flat envelope at all.
+UNRESOLVED_PAYLOAD_CEILING = 208
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites
@@ -799,4 +807,28 @@ def test_the_learning_surfaces_new_unresolved_row_cannot_become_a_flat_envelope(
         f"flat envelopes on the learning surface moved {_LEARNING_FLAT_BASELINE} -> "
         f"{len(flat)}; the LV-3 unresolved slack must not be spent on a flat error envelope"
     )
+    assert [row for row in census.flat_via_wrapper if row[0] == module] == []
+
+
+def test_the_a2a_surface_hides_no_flat_envelope_in_its_unresolved_rows():
+    """What the EA-8 ceiling raise bought, pinned so it cannot be re-spent.
+
+    ``UNRESOLVED_PAYLOAD_CEILING`` went 205 → 208 for three 200-status SUCCESS bodies on the
+    A2A gateway: the agent card, and the A2A Task document returned by the task-start and
+    task-poll routes.
+
+    This pin takes the **stronger** ES-3 shape rather than the LV-3 one, because the stronger
+    claim is measurably true here: ``inbound/a2a.py`` emits NO flat envelope at all — every
+    refusal on the surface goes through :func:`~personalclaw.http_errors.json_error`. So a
+    future flat error built into a local on this module would land in ``census.flat`` and red
+    the flat ceiling rather than quietly occupying this slack.
+    """
+    census = scan()
+    module = "src/personalclaw/inbound/a2a.py"
+    unresolved = [row for row in census.unresolved if row[0] == module]
+    # agent card, task start, task poll.
+    assert len(unresolved) == 3, unresolved
+    assert {row[2] for row in unresolved} == {"Name"}, unresolved
+    assert all(row[3] is False for row in unresolved), "none of these is via a wrapper"
+    assert [row for row in census.flat if row[0] == module] == []
     assert [row for row in census.flat_via_wrapper if row[0] == module] == []

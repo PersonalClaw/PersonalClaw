@@ -1187,6 +1187,12 @@ export interface WorkflowDef {
      *  with no `target_def`, so the FE applies the same filter rather than rendering an edge that
      *  points nowhere. */
     hands_off_to?: WorkflowHandoff[]
+    /** Whether this template is published as an A2A skill (EXTERNAL-ACCESS §5). Optional and
+     *  DEFAULTS TO FALSE on both sides — an absent key means unpublished, which is what every
+     *  template authored before A2A existed looks like. The detail page's toggle reads this and
+     *  writes it through `publishWorkflowToA2A`, never through `saveWorkflowDef`: the def this
+     *  page holds is the secret-STRIPPED read, so re-saving it would drop credential bindings. */
+    a2a_published?: boolean
   }
 }
 /** One declared transition out of a template. `condition` is prose (when to take the edge);
@@ -5721,6 +5727,11 @@ export const api = {
     get<{ definition: WorkflowDef; provider: string }>(`/api/workflows/${encodeURIComponent(name)}`),
   saveWorkflowDef: (body: { name: string; root: WorkflowNode; description?: string; inputs?: Record<string, unknown>; tags?: string[]; metadata?: Record<string, unknown>; save?: boolean }) =>
     post<{ saved: boolean; definition?: WorkflowDef; valid: boolean; issues: Array<{ code: string; message: string; path?: string; severity?: string }>; levels?: string[][] }>('/api/workflows', body),
+  // EXTERNAL-ACCESS §5 — publish/unpublish one template as an A2A skill. Its own route, not a
+  // field on `saveWorkflowDef`: this page holds the secret-stripped def, and re-saving that to
+  // carry one bool would persist the stripped bindings.
+  publishWorkflowToA2A: (name: string, published: boolean) =>
+    post<{ ok: boolean; name: string; a2a_published: boolean }>(`/api/workflows/${encodeURIComponent(name)}/a2a-publish`, { published }),
   deleteWorkflowDef: (name: string) => del(`/api/workflows/${encodeURIComponent(name)}`),
 
   // ── template versions + refiner (WF2LEA-6) ──
