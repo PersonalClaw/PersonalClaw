@@ -15,6 +15,12 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.artifacts import registry
+from personalclaw.artifacts.build import (
+    ArtifactBuildError,
+    BuildResult,
+    build_react_artifact,
+    needs_build,
+)
 from personalclaw.artifacts.deploy import (
     DEPLOYABLE_KINDS,
     SERVE_HEADERS,
@@ -1200,6 +1206,11 @@ async def api_artifact_deploy(request: web.Request) -> web.Response:
 
     Idempotent: re-deploying an already-deployed slug refreshes its entry rather than
     erroring, because the UI control is "Deploy / Open" and the second press must not fail.
+
+    A kind that needs a build (``react`` — PEP-9) is BUILT FIRST, and a build failure
+    answers 422 with the bundler's own reason instead of publishing an app that cannot
+    render. Re-deploying therefore also re-builds, which is how an edited component
+    reaches its URL under build-once-serve-static.
     """
     state = request.app.get("state")
     if _is_restricted_session(state, request):
@@ -1227,13 +1238,41 @@ async def api_artifact_deploy(request: web.Request) -> web.Response:
         body = {}
     if not isinstance(body, dict):
         body = {}
+    store = _deploy_store(prov)
+    entry = str(body.get("entry") or "")
+    build: BuildResult | None = None
+    if needs_build(art.kind):
+        # The build runs BEFORE the registry write, so a slug is never published with
+        # nothing servable behind it. The error is returned, never swallowed: its
+        # sentence is what `errText` puts in front of the user.
+        try:
+            build = await build_react_artifact(
+                slug=slug,
+                source=art.content or "",
+                files_root=store.files_root(slug),
+                title=art.name or slug,
+            )
+        except ArtifactBuildError as exc:
+            _audit(request, "artifact.deploy", "denied", f"slug={slug} build_failed")
+            return web.json_response({"error": str(exc)}, status=422)
+        except ValueError as exc:  # invalid slug from files_root
+            _audit(request, "artifact.deploy", "denied", f"slug={slug}: {exc}")
+            return web.json_response({"error": str(exc)}, status=400)
+        entry = build.entry
     try:
-        dep = _deploy_store(prov).deploy(slug, entry=str(body.get("entry") or ""))
+        dep = store.deploy(slug, entry=entry)
     except (ValueError, PermissionError) as exc:
         _audit(request, "artifact.deploy", "denied", f"slug={slug}: {exc}")
         return web.json_response({"error": str(exc)}, status=400)
     _audit(request, "artifact.deploy", "ok", f"slug={slug}")
-    return web.json_response({"ok": True, "deployment": dep.to_dict()})
+    payload: dict[str, Any] = {"ok": True, "deployment": dep.to_dict()}
+    if build is not None:
+        payload["build"] = {
+            "files": build.files,
+            "bundle_bytes": build.bundle_bytes,
+            "warnings": build.warnings,
+        }
+    return web.json_response(payload)
 
 
 async def api_artifact_teardown(request: web.Request) -> web.Response:
@@ -1313,6 +1352,11 @@ async def serve_deployed_artifact(request: web.Request) -> web.StreamResponse:
         if target != dep.entry:
             return _refuse_serve(request, slug, "file_missing", 404)
         # Entry with no file on disk: a single-body html/widget artifact IS its entry.
+        # A build-required kind is NOT: its body is JSX, and answering it as text/html
+        # would hand a browser source it cannot run (and, for a react body, would put
+        # unbundled artifact source on the origin). No bundle means nothing to serve.
+        if needs_build(art.kind):
+            return _refuse_serve(request, slug, "not_built", 404)
         if art.content is None:
             return _refuse_serve(request, slug, "empty_body", 404)
         return web.Response(

@@ -830,3 +830,62 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
   mutation reds **exactly 1 test of 5211**: `stepProgressAnnounced.test.ts` — *"all 4 rows in ORDER must
   read from TITLES: expected 5 to be 4"*. Only the accepted runner yields a trustworthy verdict; that run
   also dirties `docs/design/consistency-audit.json`, which must be restored before pushing.
+- [2026-08-25][PEP-9] DONE: SP5.3 — the React artifact build path. `artifacts/build.py` bundles a
+  `kind='react'` body once with a core-owned `esbuild --bundle` invocation and writes
+  `index.html` + `bundle.js` (+ `bundle.css` when the component imported styles) into the
+  artifact's PEP-8 `webapp/` root; `POST /api/artifacts/{slug}/deploy` builds BEFORE the
+  registry write, so a slug is never published with nothing servable behind it, and a
+  re-deploy re-builds. Measured against the real toolchain (esbuild 0.25.12 + React 19.2.8
+  from a `npm ci`'d checkout): a counter component builds in **0.22s** to a **194409-byte**
+  self-contained bundle with **zero** `://` in `index.html` and no CDN string in the bundle;
+  rendered in jsdom it shows `<div><h1>Counter</h1><button>clicked 0 times</button></div>` and
+  a dispatched click gives `clicked 1 times` — the "interactable" half of the done-when,
+  proven behaviourally rather than asserted.
+- [2026-08-25][PEP-9] DONE: the ceiling. The one spawn goes through
+  `sandbox.create_subprocess_limited(..., profile=PROFILE_BUILD)`; the site is censused in
+  `tests/test_spawn_ceiling_audit.py` (both allowlist and the ratcheted `required` set) and
+  proved twice in `tests/test_artifact_react_build.py` — once on the argv actually handed to
+  the OS (shim module + the literal `build` policy `{"RLIMIT_NOFILE": ["hard","hard"],
+  "oom_score_adj": 1000}` + `--` + the bundler) and once IN THE CHILD, which reports its own
+  `ulimit`. The child probe carries its own vacuity floor: the test lowers its OWN soft
+  RLIMIT_NOFILE to the literal 4321 and first asserts an unshimmed spawn of the same stub
+  reports 4321, so "the build child reports its hard limit instead" cannot be a host
+  coincidence. Falsified: `PROFILE_BUILD`→`PROFILE_NONE` reds both (argv is the bare bundler;
+  child reports `4321 != 4321`), and both go green again on restore.
+- [2026-08-25][PEP-9] DISCOVERY: **a bounded build timeout needs `start_new_session`, not
+  `proc.kill()`.** Measured: a 1s timeout over a `sleep 30` bundler took **30.5s** to raise,
+  because killing the leader leaves a child holding the inherited stdout pipe and
+  `asyncio.Process.wait()` does not return until that pipe closes — `communicate()` and a
+  bare `proc.wait()` variant were identical. With `start_new_session=True` + `os.killpg` the
+  same case raises in **1.06s**. A "timeout" that waits for the runaway build is not a
+  timeout, so this is the difference between the done-when's "not a hang" holding and reading
+  as if it holds.
+- [2026-08-25][PEP-9] DISCOVERY: **`--bundle` alone does not make the OUTPUT network-free.**
+  Measured with esbuild 0.25.12: a body containing `import x from 'https://esm.sh/lodash'`
+  builds at **rc 0 with empty stderr at `--log-level=warning`** and the URL is left in the
+  bundle as an external import — the only place that says so is the metafile
+  (`external: true`). So the build now passes `--metafile` and refuses any import left
+  outside the bundle (`external_imports`). Without it a deployed page would carry an
+  off-origin fetch that only the CSP stopped, i.e. an egress question surviving as a
+  silently-passed build. No `npm install` exists on this path at all: the toolchain is
+  DISCOVERED (`$PERSONALCLAW_ARTIFACT_BUILD_ROOT`, else the source checkout, else
+  `<home>/artifacts/.toolchain`) and a host without one gets a refusal naming the fix.
+- [2026-08-25][PEP-9] DEVIATION: SP5.1's `webapp` artifact kind is NOT added. `react` is
+  already in `ALLOWED_KINDS` and in PEP-8's `DEPLOYABLE_KINDS`, and PEP-8 already serves extra
+  files from `<slug>/webapp/`, so a second kind would have been a synonym for `react` with a
+  different name — the clean-break call is to build the react kind's missing build step
+  instead of minting a duplicate kind. Deploy metadata is likewise unchanged: the build
+  command is core-owned and fixed, deliberately NOT artifact-declared, because a
+  user/model-declared build command is arbitrary command execution from artifact metadata and
+  the rlimit ceiling bounds resources, not semantics.
+- [2026-08-25][PEP-9] DEVIATION: the serve route's single-body fallback ("a one-file
+  html/widget artifact IS its entry") no longer applies to a build-required kind. Before this,
+  deploying a react artifact answered `/artifacts/serve/<slug>/` with the raw JSX as
+  `text/html` — unbundled artifact source on the origin, rendering nothing. It now 404s
+  `not_built`. Falsified: swallowing the build error in the deploy handler (`except
+  ArtifactBuildError: build = BuildResult()`) makes the route answer `200 {"ok": true}` for a
+  build that failed, and the deploy test reds on exactly that; green again on restore.
+- [2026-08-25][PEP-9] DISCOVERY: no frontend change was needed for the failure to reach the
+  user. `web/src/lib/errText.ts` returns a JSON `error` string verbatim and
+  `ArtifactDeploy.tsx:54` already toasts it (`Could not deploy: <message>`), so a 422 carrying
+  the WHAT — WHY. Fix: FIX sentence lands in front of the user on the surface that caused it.
