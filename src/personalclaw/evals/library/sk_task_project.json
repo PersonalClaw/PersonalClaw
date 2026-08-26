@@ -1,0 +1,46 @@
+{
+  "description": "task-and-project: create a project, add three tasks, report status. Skill-impact task set v1 (\u00a72.2). Observable: each task title echoed plus a status line.\n",
+  "dimensions": [
+    "skill_impact"
+  ],
+  "fixture_home": "empty",
+  "name": "sk_task_project",
+  "sessions": [
+    {
+      "name": "create_then_report",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "contains",
+              "value": "Draft the brief"
+            },
+            {
+              "case_sensitive": false,
+              "type": "contains",
+              "value": "Review the brief"
+            },
+            {
+              "case_sensitive": false,
+              "type": "contains",
+              "value": "Publish the brief"
+            },
+            {
+              "case_sensitive": false,
+              "type": "contains",
+              "value": "Atlas Launch"
+            },
+            {
+              "case_sensitive": false,
+              "type": "contains",
+              "value": "status"
+            }
+          ],
+          "user": "Create a project called Atlas Launch and add three tasks: Draft the brief, Review the brief, Publish the brief. Then report status."
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

@@ -1,0 +1,31 @@
+{
+  "description": "grill: interrogate a supplied claim before accepting it. Skill-impact task set v1 (\u00a72.2). Observable: no bare acceptance, and at least two questions put back to the user.\n",
+  "dimensions": [
+    "skill_impact"
+  ],
+  "fixture_home": "empty",
+  "name": "sk_grill",
+  "sessions": [
+    {
+      "name": "challenge_the_claim",
+      "turns": [
+        {
+          "assertions": [
+            {
+              "case_sensitive": false,
+              "type": "not_contains",
+              "value": "sounds good"
+            },
+            {
+              "case_sensitive": false,
+              "type": "regex",
+              "value": "(?s)\\?[^?]*\\?"
+            }
+          ],
+          "user": "My claim: caching every response will cut our costs in half. Poke holes in it before you accept it."
+        }
+      ]
+    }
+  ],
+  "version": 1
+}
