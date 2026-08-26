@@ -17,6 +17,7 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 from personalclaw import __version__ as _local_version
 from personalclaw import self_update, shutdown_event
 from personalclaw.atomic_write import atomic_write
+from personalclaw.cancellation import kill_timed_out
 from personalclaw.config.loader import AppConfig, config_path
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.frontend import build_frontend_async
@@ -99,15 +100,14 @@ async def _do_update_check() -> None:
             cwd=proj,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
+            # Own group: `git fetch` forks a remote helper (git-remote-https, ssh) that
+            # inherits stderr, so only a GROUP signal reaches it. See kill_timed_out.
+            start_new_session=True,
         )
         try:
             _, fetch_err = await asyncio.wait_for(proc.communicate(), timeout=30)
         except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            await proc.communicate()
+            await kill_timed_out(proc)
             logger.warning("git fetch timed out")
             return
         if proc.returncode != 0:
@@ -361,15 +361,14 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
                 *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # Own group: pip forks build backends / compilers / `git clone` for VCS
+                # specs, all inheriting these pipes. See kill_timed_out.
+                start_new_session=True,
             )
             try:
                 _, pip_err = await asyncio.wait_for(pip_up.communicate(), timeout=400)
             except asyncio.TimeoutError:
-                try:
-                    pip_up.kill()
-                except ProcessLookupError:
-                    pass
-                await pip_up.communicate()
+                await kill_timed_out(pip_up)
                 state.push_update_progress("error", "pip upgrade timed out")
                 return
             if pip_up.returncode != 0:
@@ -569,15 +568,14 @@ async def api_update_apply(request: web.Request) -> web.Response:
                 cwd=proj,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # Own group: `git pull` forks fetch's remote helper and a merge, both
+                # inheriting these pipes. See kill_timed_out.
+                start_new_session=True,
             )
             try:
                 await asyncio.wait_for(pull.communicate(), timeout=60)
             except asyncio.TimeoutError:
-                try:
-                    pull.kill()
-                except ProcessLookupError:
-                    pass
-                await pull.communicate()
+                await kill_timed_out(pull)
                 state.push_update_progress("error", "git pull timed out")
                 return
             if pull.returncode != 0:
@@ -601,15 +599,14 @@ async def api_update_apply(request: web.Request) -> web.Response:
                 cwd=pkg_root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # Own group: pip forks build backends / compilers, all inheriting these
+                # pipes. See kill_timed_out.
+                start_new_session=True,
             )
             try:
                 _, pip_err = await asyncio.wait_for(pip_install.communicate(), timeout=400)
             except asyncio.TimeoutError:
-                try:
-                    pip_install.kill()
-                except ProcessLookupError:
-                    pass
-                await pip_install.communicate()
+                await kill_timed_out(pip_install)
                 state.push_update_progress("error", "pip install timed out")
                 return
             if pip_install.returncode != 0:
