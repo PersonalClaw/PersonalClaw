@@ -219,8 +219,11 @@ _ABSORBED = {
 
 def test_absorbed_maintenance_jobs_registered():
     """Every maintenance pass retired from the heartbeat has a registered engine job in
-    the deterministic ($0) lane. If one of these disappears, the heartbeat's
-    `_legacy_maintenance` counterpart has nothing to hand off to."""
+    the deterministic ($0) lane.
+
+    Load-bearing since PR2-8 deleted `_legacy_maintenance`: the heartbeat no longer keeps a
+    duplicate copy of these passes, so if one disappears from this registry there is nothing
+    left running it and the loss is silent (an absent prune is invisible by nature)."""
     jobs = {j.id: j for j in rem.all_jobs()}
     for job_id, deficit_key in _ABSORBED.items():
         assert job_id in jobs, f"{job_id} is not registered"

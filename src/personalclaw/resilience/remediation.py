@@ -11,14 +11,20 @@ jobs, not a policy brain**. Deficit inputs are measured counts, ordering is decl
 ``after:`` edges, stopping is three plain caps, and per-job cooldowns are the "dumb
 cooldown".
 
-**Exclusive ownership of periodic maintenance (§4.4, PR2-11).** When this engine is
-enabled it OWNS the maintenance it absorbed — memory FTS reconciliation, the daily
-history and SEL prunes, skill-library aging — and the heartbeat does not run them.
-Disabling it (``resilience.remediation.enabled=false``) hands those same passes back to
-the heartbeat's own cadence (``HeartbeatService._legacy_maintenance``), so a user who
-distrusts the engine is never left with NO maintenance. Exactly one owner at a time,
-never both: that is what criterion #6 ("the old heartbeat maintenance no longer runs
-independently") means here.
+**SOLE ownership of periodic maintenance (§4.4, PR2-11 then PR2-8).** This engine owns the
+maintenance it absorbed — memory FTS reconciliation, the daily history and SEL prunes,
+skill-library aging — and it is the only implementation of each: the heartbeat's duplicate
+per-tick copies were deleted with the engine's re-homing, so there is no second cadence to
+fall back to and none to drift from. ``resilience.remediation.enabled=false`` therefore means
+what "disabled" means for every other automation: the pass does not run, and every job stays
+callable on demand through ``POST /api/doctor/remediation/run``. That is criterion #6 ("the
+old heartbeat maintenance no longer runs independently") at its literal strength.
+
+**How it is driven (§4.3, PR2-8).** As ONE adaptive-clock trigger, ``system:self-remediation``,
+``created_by: system``, visible and editable on the Triggers page like any other automation —
+NOT from a private scheduler inside the heartbeat loop. ``action_providers/remediation_provider``
+is the seam; this module knows nothing about triggers and is still callable directly (the Doctor
+panel's Run-now does exactly that).
 
 Cadence note: absorbed maintenance is now **deficit-driven, not clock-driven**. A job runs
 when its measured backlog drops the health score below ``target_score``, so the deficits
@@ -58,6 +64,15 @@ _LEDGER_CAP = 500  # trim at 2× (notifications.jsonl pattern)
 # ``max_penalty > _MIN_SCHEDULABLE_PENALTY``; ``test_resilience_remediation`` pins it.
 _DEFAULT_TARGET_SCORE = 90.0
 _MIN_SCHEDULABLE_PENALTY = 100.0 - _DEFAULT_TARGET_SCORE
+
+#: The score at or above which the adaptive clock takes its LONG sleep (§4.3's "Healthy (≥95)").
+#:
+#: Deliberately higher than ``_DEFAULT_TARGET_SCORE``: the target is "stop working", this is "stop
+#: watching closely". A store that was just brought back to exactly 90 has a deficit the engine
+#: chose not to spend more on, and looking again in five minutes is the right answer for it — so the
+#: two numbers must not be one number. Lived as a bare ``95.0`` literal inside the heartbeat job
+#: this replaced; named here because the trigger's provider is now the reader.
+HEALTHY_SCORE = 95.0
 
 
 def _doctor_dir() -> Path:

@@ -254,6 +254,24 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         ceiling=RUNG_AUTONOMOUS,
         providers=("notification-digest", "usage-recap", "triage-digest"),
     ),
+    # PLATFORM-RESILIENCE §4.3 (PR2-8): the health-scored remediation engine, driven by one
+    # adaptive-clock trigger. Its OWN key rather than sharing `action.digest`'s, on the same
+    # reasoning the sibling comments use in reverse: this is a different governed BEHAVIOR, not a
+    # second name for one. A digest writes one local row; this deletes aged history files, prunes
+    # the security event log and rebuilds search indexes.
+    #
+    # `autonomous` at the floor because the table's own rule forces it: the engine has run
+    # unattended on every tick since PR2-5 (as `HeartbeatService._maybe_remediate`), so a lower
+    # floor would not harden anything — it would stop the maintenance a live install depends on.
+    # The lesson cited at the top of this table, `enforcing a dead control is an outage`, is exactly
+    # this case. The ceiling is the same rung and `leaves_machine` is False: every job it runs
+    # writes local state and nothing escapes the machine.
+    ActionTypeSpec(
+        key="action.self_remediation",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("self-remediation",),
+    ),
     # PA-3's `inbox-op`. The ONE core provider that does not floor at `autonomous`, and the
     # reason is the paragraph at the top of this table read forwards instead of backwards: that
     # reasoning says an action which ALREADY runs unattended must declare the rung matching

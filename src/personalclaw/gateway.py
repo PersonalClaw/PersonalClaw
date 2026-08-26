@@ -1950,6 +1950,22 @@ class GatewayOrchestrator:
                 reconcile_source_digest_cron(_trigger_store)
             except Exception:
                 logger.warning("source-digest-cron reconcile failed", exc_info=True)
+            # 🔴 The health-scored remediation engine (PLATFORM-RESILIENCE §4.3 — PR2-8). THIS LINE
+            # IS THE RE-HOMING: the engine used to be driven by `HeartbeatService._maybe_remediate`,
+            # which carried its own private `_remediation_next_ts` scheduler; that job is deleted
+            # and this trigger is its only driver. Same else-branch as the recap and the source
+            # digest for the same reason — the engine prunes and re-indexes unattended, and a
+            # harness run must not do that. CONVERGED rather than created, like the digest: both
+            # cadences and the on/off switch are config, so an edit in Settings takes effect without
+            # the user knowing a trigger exists.
+            try:
+                from personalclaw.action_providers.remediation_provider import (
+                    reconcile_remediation_trigger,
+                )
+
+                reconcile_remediation_trigger(_trigger_store)
+            except Exception:
+                logger.warning("self-remediation trigger reconcile failed", exc_info=True)
             # 🔴 THE BOOT SWEEP (§3.1/§3.4, criterion 7 — S142). `service.boot` is what recovers
             # the exactly-one-upcoming invariant, STAGGERS an overdue population, and produces the
             # missed-fire review. It had **zero callers**: boot ran `migrate_and_arm`, which only
@@ -1986,8 +2002,12 @@ class GatewayOrchestrator:
             self._reaper_task = asyncio.create_task(self._trigger_reaper_loop())
 
     async def _init_heartbeat(self) -> None:
-        """Initialize and start the heartbeat service."""
-        memory = self.ctx_builder.memory if self.ctx_builder else MemoryStore()
+        """Initialize and start the heartbeat service.
+
+        No `MemoryStore` is resolved here any more (PR2-8): the only thing that ever wanted one was
+        `HeartbeatService._legacy_maintenance`, and with the remediation engine re-homed onto
+        its own trigger the engine's memory jobs open their own store.
+        """
 
         async def _heartbeat_task(task_text: str, deliver: str) -> str | None:
             assert self.sessions is not None
@@ -2139,7 +2159,6 @@ class GatewayOrchestrator:
                 state.push_sessions_update()
 
         self.heartbeat_svc = HeartbeatService(
-            memory=memory,
             on_task=_heartbeat_task,
             consolidator=self.consolidator,
             on_due_commitments=_deliver_due_commitments,

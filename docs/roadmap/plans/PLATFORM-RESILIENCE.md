@@ -1167,3 +1167,83 @@ present, `runner=None` present — that last assert is the load-bearing one.
 `doctorSimulateSurfacing` shipped in PR2-4 with ZERO frontend consumers — an inert control. This
 atom's criterion says "beside the surfacing simulator", which is unsatisfiable with nothing to sit
 beside, so ~50 lines build that surface too.
+
+## Execution log — PR2-8 (re-home the engine onto one adaptive-clock trigger, §4.3/§4.4)
+
+- **[2026-08-26][PR2-8] DONE.** S5's two scope DEVIATIONS are the whole of this atom, and both are
+  now closed: the engine no longer "hangs off the heartbeat, NOT the AUTOMATION-SUBSTRATE
+  adaptive-clock trigger form", and the "runs-inbox learned-overnight digest pickup" no longer
+  "awaits it". Startability re-established against code first, because both the plan header and
+  `dag.json` were stale on the substrate's readiness: `triggers.json` + the `Trigger` entity +
+  `created_by: user|agent|system` + the whole clock engine (`triggers/arm.py`, `service.tick`) are
+  all live, and `triggers/delivery.py` → `state.notify` → `notification_rules` is the shipped
+  run→digest route. What was genuinely absent was the **adaptive clock kind** — `CLOCK_KINDS` had
+  four members and no cadence that could change.
+
+- **The adaptive clock kind, and why it is a CLOCK kind.** `adaptive` joins
+  `cron|at|sequence|interval`; the spec carries `interval_secs_healthy`, `interval_secs_degraded`
+  and a run-written `health_state`, and `arm.cadence_next_fire` returns `now + <the live one>`.
+  Anchored on `now` rather than a creation grid — an adaptive clock is a SLEEP ("look again in 60
+  minutes"), which is exactly the arithmetic the deleted heartbeat job did — and **pure**: it reads
+  the spec and nothing else. A cadence that asked the engine "am I healthy?" would put
+  `measure_deficits` inside every wake computation, so the state is written onto the spec by the
+  engine's action provider instead. Pinned by a test that makes `measure_deficits` raise.
+
+- **The re-arm happens AFTER the run, deliberately, and that is a second `next_fire_at` writer.**
+  `service.tick` persists the next fire BEFORE dispatch (§3.1 crash safety), so it can only ever see
+  the PREVIOUS run's `health_state`. Left at that, a degradation observed at 12:00 would not shorten
+  the tick until the healthy 60-minute sleep elapsed — the cadence would be adaptive in name only.
+  So `remediation_provider._rearm` writes the verdict and recomputes the fire once the pass settles,
+  the way `reconcile_digest_cron` and `decisions.py` already write `next_fire_at` from outside the
+  tick. The tick's pre-fire arm remains the crash-safety floor.
+
+- **CLEAN BREAK: `_maybe_remediate` AND `_legacy_maintenance` are both deleted.** The first is the
+  atom's own clause. The second is the judgment worth recording: PR2-11 kept it as an
+  exclusive-ownership fallback ("`remediation.enabled=false` still yields full maintenance rather
+  than none"), gated on a config flag. That is a duplicate implementation of four passes the engine
+  already registers — `memory.rebuild-fts`, `memory.prune-history`, `sel.prune`, `skills.age` — and
+  PR2-11's own log proves each registered job does the work. Two implementations selected by a flag
+  is the dual path the tenet forbids, so `enabled=false` now means what "disabled" means for every
+  other automation (and every job stays callable through `POST /api/doctor/remediation/run`).
+  `remediation.py`'s docstring promise was rewritten in the same change rather than left false.
+  `_FTS_REBUILD_TICKS`/`_PRUNE_TICKS` went with it, and so did `HeartbeatService(memory=...)` —
+  with `_legacy_maintenance` gone the store was assigned and never read.
+
+- **Runtime import sweep after the deletion: 999/999 modules imported, 0 failures.** mypy cannot
+  catch a stranded first-party import under `ignore_missing_imports`, so every `personalclaw.*`
+  module was imported in a subprocess. The census also asked the deeper question — "would deleting
+  the caller be caught?" — and found three `monkeypatch.setattr(service, "_maybe_remediate", …,
+  raising=False)` lines in `test_session_search.py`: with `raising=False` they would have gone on
+  patching NOTHING and passing. Deleted rather than left.
+
+- **"On the Automations page" asserted at the CALL SITE, twice.** Backend: `_schedule_rows` — the
+  projection `api.schedules()` fetches — must list the row, with a populated name, cadence sentence
+  and provider; paired with a no-reconcile leg where the id must be ABSENT. Frontend:
+  `remediationTriggerListed.test.tsx` renders the real `TriggersSection` and asserts the row, its
+  cadence sentence and its action label, plus a filter leg and an empty-list vacuity leg. **NOTE ON
+  WORDING:** the page is titled "Triggers"; its filter *labelled* "Automations" means the
+  store-only kinds with no legacy backend, and every `kind: clock` row is projected as a SCHEDULE.
+  So the engine lists under All/Schedules on that page. Adding `clock` to `_STORE_ONLY_KINDS` to
+  land it under the literal filter label would double-list every schedule in the install.
+
+- **"Picked up by the digest like any other run" driven through the real selection.** Reported via
+  `GatewayOrchestrator._deliver_fire_outcome` — the single point every store-backed run reports
+  from — into a real `DashboardState.notify`, so `resolve_rule_for_legacy` → mode is the shipped
+  resolution. Three falsification legs: a `never` rule queues nothing, an `immediate` rule pushes
+  instead of queueing, and a FAILED run escalates past a `digest` rule (`build_delivery` picks the
+  kind per outcome). `delivery: inbox` on the trigger is load-bearing — `deliver` drops a `none`
+  destination before any rule is consulted, which is the one way this could have shipped inert.
+
+- **Falsifications (both directions, same invocation).** (1) drop `schedules.map(scheduleToTrigger)`
+  from the list memo → 4 failed/1 passed, restore → 5 passed. (2) trigger `delivery: inbox`→`none` →
+  5 failed/2 passed, restore → 7 passed. (3) re-add a `run_remediation` call to `_beat` → 1
+  failed/2 passed, restore → 3 passed. (4) make the adaptive branch always read
+  `interval_secs_healthy` → 2 failed/7 passed (`test_the_state_picks_the_cadence`,
+  `test_a_DEGRADED_run_shortens_the_cadence`), restore → green.
+
+- **The four-set rule honoured in one commit.** `self-remediation` is registered in
+  `action_providers/registry.py`, `validation.ALLOWED_HOOK_PROVIDERS`,
+  `triggers/screen.WRITE_CAPABLE_PROVIDERS` (it deletes history files and prunes the SEL — the
+  strictest side is the only honest one) and `guardrails/rungs.py` as its own
+  `action.self_remediation` class, floor and ceiling `autonomous` because the engine has run
+  unattended since PR2-5 and a lower floor would stop live maintenance rather than harden it.
