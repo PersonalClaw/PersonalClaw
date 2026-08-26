@@ -463,3 +463,42 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
   `test_supply_chain_gates.py` → **108 passed, 0 failed** (paths confirmed to exist first);
   `test_app_catalog.py` alone 54 passed; `make test` **26517 passed, 0 failed**;
   `scripts/gate_report.py` 6/6 PASS; probe sweep 16, 0 introduced. No `web/` changes.
+
+- [2026-08-26][ET-8] **PARTIAL — stays `todo`, and the reason is a PREMISE CORRECTION, not a gap in
+  the work.** The pages, cards, per-app pages, README fetch and the rebuild-picks-up-changes clause
+  all shipped in `personalclaw.dev#31` (rebase-merged, `3cc45c89`).
+  **The registry does not exist at the pinned core release.** `scratch/registry/registry.json`
+  **404s at `v0.1.3`** (2026-07-30); the registry tier landed on core `main` on 2026-08-18
+  (`24f3f5c9`, ET-3) and there is no newer tag. Verified independently of the implementation with
+  `git cat-file -e v0.1.3:scratch/registry/registry.json`. The briefing for this atom asserted the
+  file was simply tracked — true on `main`, false at the pin — so the implementation corrected the
+  premise rather than building against it, which was the right call.
+  Reading core `main` instead would **publish unreleased core state as released state**. So absence
+  is recorded as a state (`availability: "absent-at-pin"`) and the page says so; the loader renders
+  **three** states a card count cannot distinguish — `absent-at-pin`, `empty`, `listed`. `done_when`'s
+  **V4** ("a merged registry PR appears on the site after rebuild") is therefore unreachable. What is
+  proven instead is the mechanism: changing the input and rebuilding changes the output.
+  **The other unmet clause** — "card data matches the Store consent surface" — is unverified against
+  a live Store. What *is* asserted is that every consent value renders byte-equal and order-equal to
+  its registry field, so it cannot disagree with any other reader of the same field.
+  **Security shape, because this is a pre-install trust surface.** Only the exact string `clean` gets
+  `tone: "pass"`. An unrecognised verdict presents as **blocking**, never reassuring; "no scan on
+  record" is a distinct dashed treatment; permissions render `permissions_declared` verbatim and
+  order-preserved, never summarised. Anti-vacuity is explicit *because* the production registry is
+  empty — a generator over it renders a clean zero-card page while every test passes for the wrong
+  reason — so `validate-registry-render.mjs` fails when a registry with readable listings renders
+  zero cards. Re-verified at integration: the scope-valid mutation reds with
+  `ANTI-VACUITY: /registry rendered ZERO cards from a registry with 3 readable listings`, and
+  restoring returns green. (A first mutation attempt referenced an out-of-scope name and broke the
+  astro build — a collection error, not a falsification — and was discarded.)
+  **Two build-environment facts found while gating this.** `test:prepush` exits 1 with a GitHub
+  **403** in any shell without `GITHUB_TOKEN`, and unmodified `main` does the same on a different
+  URL — the shared `sync-sources.mjs` only sends an Authorization header when that variable is set,
+  so this is pre-existing, not ET-8's. And `validate:visual-baselines` reads **green locally with
+  stale Linux snapshots**, because it validates presence and metadata rather than Linux pixel
+  equality; the comparison only happens in the `ubuntu-latest` browser job. The `/apps` page grew
+  76px from the new registry link, so its two Linux baselines were refreshed through the documented
+  workflow — and every other PNG in the artifact was compared against its committed copy to prove
+  the refresh swept in no unrelated pixel churn (two differ, zero others).
+  **CLEARS WHEN:** core cuts a release containing `scratch/registry/registry.json` **and** a
+  community registry PR merges; re-point the pin and V4 becomes measurable.
