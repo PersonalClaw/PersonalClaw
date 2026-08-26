@@ -488,3 +488,53 @@ A desktop or mobile author can work from this list without deciding anything els
    the user override locally.
 
 If a wrapper needs something not on this list, that is a change to this document first.
+
+---
+
+## Bringing up a new platform
+
+Two shells exist today: the desktop app (`desktop/main.js`) and the phone, which installs the
+served SPA as a PWA. Neither of them is a port. That is the whole point, and it is the reason
+a third platform is a small job rather than a new product.
+
+The recipe is two steps, and there is no third:
+
+1. **Wrap the served UI.** Load an endpoint's `base_url` as an origin in whatever the platform
+   calls a web view, and stop. No forked UI, no per-platform screens, no second API. If you
+   find yourself designing a view, you are on the wrong side of the line — that view belongs
+   in `web/` where every platform gets it at once, including the two that already shipped.
+2. **Implement the client contract above.** All eight items, unchanged. The registry shape,
+   the per-endpoint namespacing, the switcher, the health rows, the socket-URL rule. A new
+   platform is not an occasion to re-decide any of them; if you disagree with one, argue with
+   this document, not with your own shell.
+
+What is legitimately yours, per platform: packaging and signing, the notification-permission
+prompt, safe areas and the hardware back button, and a secure place to keep the registry.
+That list is short on purpose. Everything not on it is either the SPA's job or the gateway's.
+
+What the gateway owes you is equally fixed: the pairing routes, the Devices registry, the
+discovery config, and a content-free push payload. It grows **no** per-platform backend — no
+platform-shaped endpoint, no server-side branch on your user agent, no fan-out service. A
+platform that cannot be brought up without one has found a gap in this contract; report it as
+a gap rather than closing it privately on the server.
+
+### The gate: nothing platform-specific ships before `PLATFORM-REACH`
+
+Which platforms are supported at all is `PLATFORM-REACH`'s call, not this contract's. Until it
+clears a platform, **no code for that platform lands in this repository** — and that includes
+the well-meant kind:
+
+- no platform SDK dependency, and no platform SDK identifier in `src/personalclaw` or
+  `web/src` (those two are the surfaces every platform shares; a native symbol appearing there
+  means a shell has leaked into the shared half);
+- no `if (platform === …)` branch reserving a slot for a shell that does not exist;
+- no empty directory, no scaffold, no stub "so the wiring is ready".
+
+This is the clean-break tenet applied to a platform: unused platform code is dead code, and
+dead code that names a platform is worse than dead — it reads as a promise. Between now and
+the gate clearing, a prospective platform's entire footprint here is this recipe. That is
+sufficient, because a shell that follows it needs nothing from us that is not already written
+down.
+
+When the gate does clear, the shell arrives as its own tree with its own build, and it earns
+its place by passing the eight-item list — not by being wired in ahead of time.
