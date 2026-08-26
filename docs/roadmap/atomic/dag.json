@@ -880,13 +880,14 @@
         {
           "id": "PR2-8",
           "title": "Re-home remediation engine onto AUTOMATION-SUBSTRATE adaptive-clock trigger + runs-inbox digest (\u00a74.3/\u00a74.4)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a74.3 Adaptive idle cadence; \u00a74.4 What it absorbs (disposition)",
           "done_when": "the remediation engine runs as ONE adaptive-clock trigger (created_by: system) on the Automations page instead of the heartbeat job, and its runs are picked up by the runs-inbox learned-overnight digest like any other run.",
           "deps": [
             "PR2-5",
             "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:triggers.json + adaptive-clock trigger kind + runs-inbox digest"
-          ]
+          ],
+          "pr": 2099
         },
         {
           "id": "PR2-9",
@@ -7822,11 +7823,6 @@
         "plan": "PP"
       },
       {
-        "id": "PR2-8",
-        "title": "Re-home remediation engine onto AUTOMATION-SUBSTRATE adaptive-clock trigger + runs-inbox digest (\u00a74.3/\u00a74.4)",
-        "plan": "PR2"
-      },
-      {
         "id": "PUBL-10",
         "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
         "plan": "PUBL"
@@ -9612,9 +9608,9 @@
         "code": "PR2",
         "plan": "PLATFORM-RESILIENCE",
         "total_atoms": 11,
-        "done": 10,
+        "done": 11,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {

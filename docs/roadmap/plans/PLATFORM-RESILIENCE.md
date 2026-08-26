@@ -1247,3 +1247,35 @@ beside, so ~50 lines build that surface too.
   strictest side is the only honest one) and `guardrails/rungs.py` as its own
   `action.self_remediation` class, floor and ceiling `autonomous` because the engine has run
   unattended since PR2-5 and a lower floor would stop live maintenance rather than harden it.
+
+- **2026-08-26 — `PR2-8` DONE (PR #2099).** The remediation engine now runs as ONE adaptive-clock
+  trigger (`created_by: system`, deterministic id `system:self-remediation`, `delivery: inbox`) instead
+  of the heartbeat job, and its runs travel the REAL delivery selection path
+  (`_deliver_fire_outcome` -> `DashboardState.notify` -> `resolve_rule_for_legacy` -> mode) into the
+  digest. This supersedes the two S5 DEVIATION entries above, which recorded the engine as hanging off
+  the heartbeat because the adaptive-clock substrate was "future infra": measured, the only genuinely
+  absent piece was the adaptive CLOCK_KIND itself -- `triggers.json`, `created_by`, the clock engine and
+  the delivery->digest route were all already live.
+  **Design point worth keeping:** the provider re-arms AFTER the run, because `service.tick` persists
+  `next_fire_at` BEFORE dispatch for crash safety (sec 3.1). Re-arming before would let a degradation
+  observed at 12:00 wait out the full healthy interval, making the cadence adaptive in name only.
+  **DEVIATION 1 -- `_legacy_maintenance` was DELETED, which is beyond this atom's letter and is a
+  BEHAVIOR CHANGE the owner should know about.** PR2-11 kept it as a config-flag-gated fallback, but it
+  is a second implementation of four passes the engine already registers (`memory.rebuild-fts`,
+  `memory.prune-history`, `sel.prune`, `skills.age`) -- the dual path the clean-break tenet forbids. So
+  `remediation.enabled=false` no longer yields fallback maintenance; it means what "disabled" means
+  everywhere else, and the jobs stay callable via `POST /api/doctor/remediation/run`. The engine's
+  docstring promise was rewritten in the same change rather than left false.
+  🔴 **The deletion sweep caught what a green suite would have hidden:** `test_session_search.py` held
+  three `monkeypatch.setattr(service, "_maybe_remediate", ..., raising=False)` lines that would have
+  gone on patching NOTHING and passing. Deleted, not left. Runtime import sweep 999/999 OK, 0 failures,
+  run twice -- mypy cannot see a stranded first-party import.
+  **DEVIATION 2 -- OWNER CALL ON THE CRITERION'S WORDING, not on the code.** `done_when` says "on the
+  Automations page". That page is titled **Triggers**, and its filter *labelled* "Automations" means
+  `_STORE_ONLY_KINDS` (store kinds with no legacy backend); every `kind: clock` row is projected through
+  `_schedule_rows` as a SCHEDULE. The engine therefore lists under All/Schedules on that page, and that
+  is asserted at the backend projection, the FE render and the filter leg. Satisfying the wording
+  literally would mean adding `clock` to `_STORE_ONLY_KINDS`, which would DOUBLE-LIST every schedule in
+  the install. The criterion should be reworded, not the code changed -- flagged, not decided away.
+  **Also fixed in passing (adjacent, deliberate):** an adaptive clock has no `interval_secs`, so
+  `_project_one` dropped it and the engine plotted nothing on the same page's Week view.
