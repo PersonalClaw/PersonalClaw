@@ -102,6 +102,7 @@ def render_digest(
     proposals: tuple[Proposal, ...],
     dropped_count: int,
     degraded: bool = False,
+    auto_lines: tuple[str, ...] = (),
 ) -> Digest:
     """Assemble the digest body from typed fields — no model call, no free-text passthrough.
 
@@ -109,6 +110,17 @@ def render_digest(
     inline), what needs you (ranked proposals with their enforced tier), then everything else
     as a ranked list. A window the gate emptied renders the "nothing needs you" line rather
     than an empty body, because a blank digest reads as a broken digest.
+
+    `auto_lines` is §1.6 bound 4's half of the first section: what the machine did WITHOUT
+    being asked, each line naming the rule that authorised it. It joins the run lane under one
+    heading rather than getting its own, because "what your machine did" is one question and
+    two headings would make the user read twice to answer it — and it is rendered FIRST inside
+    that section, since an action already taken outranks a run that merely finished.
+
+    **`proposals` must be the PENDING set, not the batch.** The caller auto-executes before
+    rendering (`pipeline.run_triage`), so anything that ran is in `auto_lines`; passing the
+    whole batch here would list an item under "needs you" that the machine had already handled
+    seconds earlier, which is the one thing a digest cannot get wrong.
     """
     ranked = rank_items(kept)
     ranked_proposals = rank_proposals(proposals, manifest)
@@ -117,8 +129,9 @@ def render_digest(
     sections: list[str] = []
 
     machine = [i for i in ranked if i.source == SOURCE_RUN]
-    if machine:
+    if machine or auto_lines:
         lines = ["What your machine did:"]
+        lines.extend(auto_lines)
         for item in machine:
             flag = " [needs you]" if item.materiality == MATERIALITY_ERROR else ""
             lines.append(f"{_line(item)}{flag}")

@@ -61,6 +61,12 @@ EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     # directly, so it is a real execution site. User-clicked, so it carries `manual_refusal`
     # — the same gate and the same documented exemption as the trigger Run path above.
     ("personalclaw.dashboard.handlers.research_reports", "the manual report Run path"),
+    # PA-3: §1.6's trivial-tier auto-execution dispatches a provider per approved proposal with
+    # nobody watching, so it is a real UNATTENDED execution site and joins the denylist seams
+    # below rather than claiming an exemption. Its providers are additionally narrowed to a
+    # frozen capability set (`autoexec.AUTO_CAPABLE_PROVIDERS`) and its actions bounded by a
+    # per-run cap and the NEW-1 budget floor — more fences, not a substitute for these gates.
+    ("personalclaw.proactive.autoexec", "the triage auto-execution path"),
 )
 
 
@@ -97,6 +103,7 @@ DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
     ("personalclaw.gateway", "clock / file / webhook / chained triggers"),
     ("personalclaw.event_triggers", "memory-event triggers"),
     ("personalclaw.dashboard.tile_refresh", "TTL dashboard tiles"),
+    ("personalclaw.proactive.autoexec", "trivial-tier triage auto-execution"),
 )
 
 #: The one execution site NOT required to carry the denylist, and why: it runs a trigger because a

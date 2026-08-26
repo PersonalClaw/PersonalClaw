@@ -11,8 +11,8 @@ from personalclaw.inbox import (
     InboxStore,
     ItemKind,
     ItemStatus,
+    redact_item,
 )
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
 if TYPE_CHECKING:
@@ -40,44 +40,10 @@ def _get_inbox(state: "DashboardState") -> tuple[InboxState, InboxStore]:
     return state._inbox_state, state._inbox_store
 
 
-def _redact_item(item: dict) -> dict:
-    """Redact LLM-generated fields before returning to dashboard."""
-    for key in ("message", "draft", "text", "context_summary"):
-        if item.get(key):
-            item[key], _ = redact_exfiltration_urls(item[key])
-            item[key], _ = redact_credentials(item[key])
-    for ctx in item.get("thread_context", []):
-        if ctx.get("text"):
-            ctx["text"], _ = redact_exfiltration_urls(ctx["text"])
-            ctx["text"], _ = redact_credentials(ctx["text"])
-    # Feedback producer meta (plan 58 T1.5, additive): each judgment field on the
-    # item names its producing artifact — the bound prompt ref — so the FE thumbs
-    # can attribute a verdict without a second lookup. Digest items are their own
-    # judgment (source == "digest").
-    try:
-        from personalclaw.providers.prompt_use_cases import active_prompt_ref
-
-        producers: dict[str, dict] = {}
-        if item.get("classification"):
-            producers["classification"] = {
-                "producer_kind": "prompt",
-                "producer_id": active_prompt_ref("inbox_classify"),
-            }
-        if item.get("draft"):
-            producers["draft"] = {
-                "producer_kind": "prompt",
-                "producer_id": active_prompt_ref("inbox_draft"),
-            }
-        if item.get("source") == "digest":
-            producers["digest"] = {
-                "producer_kind": "prompt",
-                "producer_id": active_prompt_ref("inbox_digest"),
-            }
-        if producers:
-            item["feedback_producers"] = producers
-    except Exception:  # noqa: BLE001 — meta must never break the inbox payload
-        logger.debug("feedback producer meta failed", exc_info=True)
-    return item
+#: The redaction+meta pass every writer of `inbox_item_updated` runs. Aliased rather than
+#: re-implemented: it moved DOWN to `personalclaw.inbox` so a core action provider can reach
+#: it without importing the HTTP surface (see `inbox.redact_item`).
+_redact_item = redact_item
 
 
 # ── P11 engagement ranking ──

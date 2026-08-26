@@ -175,6 +175,139 @@ def _record(result: Any, ctx: ActionContext) -> int:
     return written
 
 
+def _approval_rules(memory: Any = None) -> list[Any]:
+    """The user's taught approval rules, decoded. An exact prefix scan, never a vector search.
+
+    §1.4 is explicit that approval lookups are exact — a rule is policy, and a nearest-neighbour
+    match on policy would auto-execute against a pattern the user never taught. Undecodable rows
+    are dropped by `rules_from_rows` rather than guessed at; the rules-manager surface is where a
+    broken row gets reported, and a matcher that invented a verdict for one would be worse than
+    one that ignores it.
+
+    Returns `[]` on any failure, which degrades auto-execution to trivial-tier only. That is the
+    safe direction: a missing rule store can never manufacture an approve verdict, it can only
+    fail to find one, and the proposal then queues pending exactly as it did before PA-3.
+    """
+    from personalclaw.proactive.approval import APPROVAL_KEY_PREFIX, rules_from_rows
+
+    try:
+        if memory is None:
+            from personalclaw.embedding_providers.registry import get_active_embedding_dim
+            from personalclaw.memory_service import MemoryService
+            from personalclaw.vector_memory import VectorMemoryStore
+
+            store = VectorMemoryStore(embedding_dim=get_active_embedding_dim() or 384)
+            store.init()
+            memory = MemoryService.over_vector_store(store)
+        rows = [
+            (str(row.get("key") or ""), row.get("value_json"))
+            for row in memory.get_all_semantic()
+            if str(row.get("key") or "").startswith(APPROVAL_KEY_PREFIX)
+        ]
+    except Exception:  # noqa: BLE001 - no rule store → trivial tier only, never a free approve
+        logger.warning("triage: approval rules unreadable", exc_info=True)
+        return []
+    return rules_from_rows(rows)
+
+
+def _ledger_writer(ctx: ActionContext) -> Any:
+    """A `(kind, fields) -> None` writer bound to this run, or None when there is no run.
+
+    Same reason `_record` returns 0 rather than writing: a row stamped with a bare node id is
+    durably written and then INVISIBLE in the runs surface, because `inspect_node` slices a
+    run's ledger on the engine's instance key. An auto-execution the user cannot find in the
+    ledger is exactly the silent unattended write §1.6 exists to prevent, so the absence is
+    reported (`auto_ledger_rows: 0`) instead of faked.
+    """
+    run_id = str(ctx.payload.get("run_id", "") or "")
+    instance_path = str(ctx.payload.get("instance_path", "") or "")
+    if not run_id or not instance_path:
+        return None
+
+    from personalclaw.workflows.journal import Journal
+
+    journal = Journal(run_id=run_id)
+
+    def write(kind: str, fields: dict[str, Any]) -> None:
+        journal.write(
+            kind,
+            node_id=_NODE_ID,
+            instance_path=instance_path,
+            epoch=0,
+            actor="triage",
+            **fields,
+        )
+
+    return write
+
+
+def _capabilities(action_config: dict[str, Any]) -> frozenset[str]:
+    """The frozen set of providers this digest may DISPATCH (§1.6 bound 2).
+
+    Read off the node, defaulting to `AUTO_CAPABLE_PROVIDERS` (just `inbox-op`). This is a
+    second, narrower fence than the trigger-level one in `triggers/screen.py`: that one decides
+    whether the trigger may run `triage-digest` AT ALL, and it cannot express "and the digest
+    may then archive but not send", because the only provider it sees on the node is
+    `triage-digest` itself. A malformed declaration collapses to the default rather than to
+    everything — an unparseable capability list must never widen a fence.
+    """
+    from personalclaw.proactive.autoexec import AUTO_CAPABLE_PROVIDERS
+
+    raw = action_config.get("capabilities")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raw = None
+    if not isinstance(raw, (list, tuple)):
+        return AUTO_CAPABLE_PROVIDERS
+    names = frozenset(str(n).strip() for n in raw if str(n).strip())
+    return names or AUTO_CAPABLE_PROVIDERS
+
+
+def _auto_stage(action_config: dict[str, Any], ctx: ActionContext, cfg: Any) -> Any:
+    """The §1.6 stage, bound to this run's config, rules, budget and journal.
+
+    Built here rather than inside the pipeline because every input is a live handle the pipeline
+    deliberately does not hold — the config, the memory store, the run's journal. The pipeline
+    keeps the ORDER (auto-execute before render), this keeps the wiring.
+    """
+    from datetime import UTC, datetime
+
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+    from personalclaw.proactive.autoexec import auto_execute, default_budget_check
+
+    run_id = str(ctx.payload.get("run_id", "") or "")
+    trigger_id = str(ctx.payload.get("trigger_id", "") or "")
+    # A digest fire has no chat session by definition, so it gets the sessionless unattended
+    # identity — the same one the gateway's store-trigger seam uses. Threading it is what lets the
+    # run's `SafetyProfile.denylist_extra` layer onto the operator denylist instead of being
+    # silently skipped, and it is what makes a clamp in the SEL attributable to this automation
+    # rather than to "some action".
+    session_key = unattended_dispatch_key(f"trigger:{trigger_id or run_id or 'triage-digest'}")
+    rules = _approval_rules()
+    ledger = _ledger_writer(ctx)
+    capabilities = _capabilities(action_config)
+    enabled = bool(getattr(cfg, "auto_execute_enabled", False))
+    cap = int(getattr(cfg, "max_auto_actions_per_run", 0) or 0)
+
+    async def stage(proposals: Any, manifest: Any) -> Any:
+        return await auto_execute(
+            proposals,
+            manifest=manifest,
+            rules=rules,
+            now=datetime.now(UTC),
+            enabled=enabled,
+            cap=cap,
+            capabilities=capabilities,
+            session_key=session_key,
+            budget_check=default_budget_check(run_id),
+            ledger=ledger,
+        )
+
+    return stage
+
+
 class TriageDigestActionProvider(ActionProvider):
     @property
     def name(self) -> str:
@@ -243,6 +376,13 @@ class TriageDigestActionProvider(ActionProvider):
             # the trigger link rather than pointing at a run that does not exist.
             run_id=str(ctx.payload.get("run_id", "") or ""),
             trigger_id=str(ctx.payload.get("trigger_id", "") or ""),
+            # §1.6. Passed unconditionally, not behind `auto_execute_enabled`: the switch is
+            # enforced INSIDE the stage, where a refusal produces a reason per proposal
+            # (`auto_execute_disabled`) that the digest and the ledger can both show. Gating the
+            # wiring here instead would make "the switch is off" indistinguishable from "the
+            # stage was never wired", which is the failure PA-2's own `triage_enabled` refusal
+            # is written to avoid one layer up.
+            auto_execute=_auto_stage(action_config, ctx, cfg),
         )
 
         summary = result.summary()
