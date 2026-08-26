@@ -487,6 +487,12 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # text. That is both the untrusted-input boundary §8 fences and an unbounded unattended
         # spend, and either alone earns the opt-in.
         "browse",
+        # EI-7: the second-opinion handoff spawns a cataloged runner (or a subagent) one-shot
+        # with write access to a real workspace — the strictest side of this table is the only
+        # honest one for it. Note the disk re-diff that gates ACCEPTANCE is not a substitute for
+        # this opt-in: the proposer's edits are already on disk by the time the re-diff runs, so
+        # what the gate protects is whether we BELIEVE the result, not whether files were written.
+        "second-opinion",
     }
 )
 
