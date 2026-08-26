@@ -894,3 +894,126 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   `done_when` clauses are therefore satisfied. `LV-5` stays `todo` for one mechanical reason only —
   the implementation is on `feature-lv5-refinement-arm` and is **not on main**. Flip it when that
   branch lands; no owner input remains.
+## Execution log — `LV-7` (S4 benchmark implementation + publish) — 2026-08-26
+
+- [2026-08-26][LV-7] **PREMISE CORRECTION — `LV-6`'s BLOCKING FINDING (G1) has CLEARED, and the
+  atom's declared dep is still wrong in the other direction.** `LV-6` recorded "there is no way to
+  run a skills-off arm today" and that `arm_mask` "appears nowhere in `src/`, `harness/` or
+  `tests/`". At `ddaaefae` that is **false**: `evals/overlay.py` defines `ARM_AXIS = "arm_mask"`
+  with a closed `on`/`off`/`cheap` arm vocabulary, `skills/suppression.py` is the child-side choke
+  point, `evals/runner.py::_cell_overlay` reads the arm coordinate off each cell and hands the
+  overlay to the child on the env COPY, and `evals/skills_bench.py` already builds the paired
+  spec. So `ES-7`'s lever landed and G1 + G2 are closed. **G5 is also half-closed:** `run_matrix`
+  now has production callers (`ablation.py`, `skills_bench.py`, reached from
+  `personalclaw ablation`), so "no production caller" is stale — what was genuinely missing was a
+  caller for THIS benchmark. `LV-7`'s row still declares `EXT:EVALUATION-SUBSTRATE:S1-2` and
+  `dag.json` still maps that ext_ref to `ES-5`, whose row reads `todo` while `evals/studies.py`
+  (1750 lines) + `evals/study_arms.py` (709) + `GET /api/evals/studies` are on `main`. Row left
+  alone — the roadmap is owner-maintained.
+- [2026-08-26][LV-7] **BUILT, riding the existing machinery rather than cloning it.**
+  · **The ten scenario files** protocol §2.3 froze as a specification and left for this atom:
+  `src/personalclaw/evals/library/sk_*.json`, all `version: 1`, `fixture_home: "empty"`,
+  `dimensions: ["skill_impact"]`, deterministic assertions only. Verified installed in a fresh
+  home as `origin: shipped` with 64-char `sha256`s.
+  · **`src/personalclaw/evals/learning_bench.py`** — the frozen register, `task_set_fingerprint()`
+  read off the library manifest (§2.3's mechanical anchor), `preflight()`, report I/O and
+  `reproduction_check()`.
+  · **`harness/learning_verdict.py`** — §5's sanctioned "thin sibling importing the same
+  constants", and it goes further: it imports and CALLS `fanout_measure.compare()`, so the check
+  order has exactly one implementation. The only thing added is a directional relabel
+  (`fanout_wins`→`skills_on_wins`, `single_wins`→`skills_off_wins`); the three withheld verdicts
+  pass through byte-identical, so the closed set does not grow.
+  · **`scripts/learning_benchmark.py`** — THE one command, with `--preflight` / `--dry-run` /
+  `--run` / `--check-reproduction`. `k` is read from `EvalsConfig.study_default_k` (G5 asked for
+  exactly that) rather than hardcoded.
+  · **`GET /api/evals/learning-benchmark`** + **`web/src/pages/learning/BenchmarkPanel.tsx`**
+  rendered by `LearningPage` beside the ablation report, with the methodology link built from the
+  report's own `protocol_doc`.
+- [2026-08-26][LV-7] **G3 and G4 closed, both as the protocol described them.** G3: `tool_calls`
+  was captured per turn and dropped by both aggregation boundaries — `child.py::tool_call_count`
+  sums it into the payload. G4: `model_calls.jsonl` and the SEL log are written into the cell's
+  `TemporaryDirectory` home and died with it — `child.py::spend_from_home()` reads the audit rows
+  in the only process that can see them and folds them into the result. **Neither widened
+  `CellResult`**: the parent already persists the whole child payload verbatim into
+  `<artifact_ref>/result.json` under the real home, so the runner reads them from there. Widening a
+  frozen primitive used by six modules for two fields would have been the expensive way.
+- [2026-08-26][LV-7] **DESIGN RULE with teeth: the verdict is computed in `harness/` and WRITTEN
+  into the report; `src/` only reads it.** `harness` is a repo-root dev package deliberately absent
+  from the wheel (`pyproject.toml` packages `src` only), so a module under `src/` importing
+  `fanout_measure` would strand an import at install time — and `mypy`'s `ignore_missing_imports`
+  would not catch it. The consequence is the property the atom most needs: **no surface downstream
+  is able to synthesise a verdict or a score**, so an unmeasured task is `verdict: null` end to end
+  and renders "not measured". This is also why the runner is a `scripts/` entry point and not a
+  `personalclaw` subcommand.
+- [2026-08-26][LV-7] **"Stated variance" IS stated, and the citation ships with the payload.**
+  Protocol §8: a re-run reproduces "when it uses the same task-set version, produces the same
+  `scenario_sha256` set, records a pin whose `prompt_pack_sha256` and `config_snapshot_ref` match,
+  and lands a verdict of the same class." It is **categorical, not numeric** — five equalities, no
+  tolerance number anywhere. `REPRODUCTION_CONDITIONS` is that list verbatim and
+  `stated_variance_source` cites `…learning-benchmark-protocol.md §8`, so a tolerance the code
+  invented would be visibly missing its citation. Nothing here invents a number.
+- [2026-08-26][LV-7] **MEASURED, at the entry point a user types** (isolated homes throughout, real
+  home rail green): `python scripts/learning_benchmark.py --preflight` → **all 10 tasks runnable,
+  suppression VERIFIED for all ten skills** (the direct falsification of `LV-6`'s G1);
+  `--dry-run --trials 5` → **k=5 from `study_default_k`, 100 cells, `arms=['off','on']` on
+  `arm_mask`, `fixture=empty` ×10**, and nothing written under `evals/learning_bench/`;
+  `--run --task sk_grill --task sk_artifacts --trials 1` in an unbound home → both tasks SKIPPED
+  carrying `run_matrix`'s own `incomplete RunPin (missing: model_fingerprint)` sentence, report
+  written, `measured_tasks: 0`, stdout `NOTHING was measured`. The first `--run` attempt raised that
+  refusal as a traceback; fixed to a per-task skip so one unpinnable task cannot abort the other
+  nine.
+- [2026-08-26][LV-7] **NOT MEASURED, deliberately: no paired arm was executed against a model.**
+  The clause "paired runs are reproducible from one command against fixture homes" is met — the
+  command exists, runs, and plans/executes the paired cells — but **no number was produced**, for
+  two reasons stated rather than papered over. (1) An unbound home cannot record a benchmark result
+  at all; `append_result`/`run_matrix` refuse an incomplete pin, which §3 calls correct behaviour.
+  (2) The zero-cost way to bind a provider here is `llm/scripted.py`, and it replays
+  **byte-identical output for the same script regardless of prompt** — both arms would score
+  identically and the report would show a 0.0 delta. That is the precise fabricated comparison §1
+  exists to prevent, so it was not run. No model was called and no cost was incurred.
+- [2026-08-26][LV-7] **DISCOVERY — the §2.2 register's coverage claim is now stale (owner call, not
+  acted on).** The register was frozen against an enumeration of **14** bundled skills.
+  `src/personalclaw/skills/bundled/` now holds **16** (plus `__init__.py`): `document-authoring`,
+  `research-campaign` and `web-verify` appeared after the freeze. All ten register skills still
+  ship, so task set v1 is intact and every result stays comparable — but "one task per bundled skill
+  family with a deterministic observable" no longer describes the whole tree. Expanding the register
+  would mint **v2** and invalidate v1 for comparison (§2.3), so it was left alone;
+  `test_every_register_skill_ships_as_a_bundled_skill` pins the direction that actually breaks a run.
+- [2026-08-26][LV-7] **`V4` NOT MET, and it cannot be met by this session.** "An independent re-run
+  reproduces within stated variance" requires an **independent party** — the owner or a CI nightly.
+  The agent that produced the baseline cannot be that party, and re-running its own command twice
+  would measure determinism, not independence. What is BUILT is the machinery V4 needs:
+  `--reproduce <baseline_run_id>` judges a run against a baseline as it writes it,
+  `--check-reproduction --reproduce A --against B` judges two existing reports, and the panel prints
+  each condition with its citation. **Owner action to close V4:** run the command twice from
+  independent homes (or wire the CI nightly variant) and record the outcome — §8 is explicit that a
+  changed verdict class is a finding to publish, not a run to discard.
+- [2026-08-26][LV-7] **T4.3 half NOT DONE:** the dashboard results page ships with its methodology
+  link, but the **public site page** lives in the `personalclaw.dev` repository (outside this
+  worktree) and the **honest README one-liner** was deliberately not written — there is no number to
+  be honest about yet, and a README line announcing a benchmark with no result would be the
+  overclaim this plan's soul guardrail forbids. Both are owner/next-session work.
+- [2026-08-26][LV-7] **Falsifications — three, each RED with the mutation and GREEN after restoring
+  from a file copy in the SAME invocation.** (1) Deleted `<BenchmarkPanel …>` from `LearningPage`
+  (grep-back 0 hits) → `npm run test:web -- BenchmarkPanel` **1 failed / 12 passed** (only the
+  call-site rail; the twelve direct-mount cases stayed green — the exact inert-route signature) →
+  after restore **13 passed**. (2) `spend_from_home`'s absent-file branch returned
+  `{"observed": True, "tokens": 0}` (mutation `ast.parse`d) → **1 failed / 27 passed** → after
+  restore **28 passed**. (3) `conditions["same verdict class per task"] = True` → **2 failed / 26
+  passed** (the parametrized vacuity case AND the unmeasured-reproduces-unmeasured trap) → after
+  restore **28 passed**. Also recorded: `npx vitest run --config web/vite.config.ts <path>` reported
+  **13 failed** on unmutated code (`setup 0ms` — no setup file, `sessionStorage` undefined); the same
+  file under `npm run test:web -- BenchmarkPanel` is **13 passed**. Runner artifact, both numbers
+  reported.
+- [2026-08-26][LV-7] **Gate:** `make lint` clean (black 2099 files, isort, flake8, mypy **1031**
+  source files over `src/personalclaw` AND `harness`); `gate_report.py` **6/6 PASS** (including
+  `structural-duplication` — the sibling adds no second verdict implementation);
+  `test_evals_learning_bench.py` **28 passed**, `test_harness_learning_verdict.py` **17 passed**,
+  `test_evals_routes.py` **31 passed**, and `test_evals_{matrix_runner,pinning,harvest,study_arms,
+  skills_bench,ablation}.py` + `test_agent_reference.py` **201 passed**; `npm run typecheck:web`
+  green, `npm run test:web` **493 files / 5240 tests passed**, `npm run build` green.
+  `node_modules` was absent on entry and `npm ci` was run first — the initial `typecheck:web` exit
+  **127** was an UNRUN leg, not a pass. `reference/routes.md` + `index.md` regenerated via
+  `python -m personalclaw.manifest_reference` (one route added, nothing else moved).
+  `docs/design/consistency-audit.json` churned on the vitest run and was restored from a copy taken
+  before the run. Probe sweep 16, 0 introduced.
