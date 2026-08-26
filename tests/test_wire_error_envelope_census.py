@@ -94,7 +94,13 @@ EMITTER_SITE_BASELINE = 132
 #: `_reject_name` refusals in `handlers/files.py`. All four now emit `json_error`, so the
 #: population fell to 1504 and the ceiling follows it down: shrink-only means a shrink is
 #: LOCKED IN, not banked as slack a later flat envelope could spend.
-FLAT_BASELINE = 1504
+#: 🔁 RATCHETED 1504 -> 1499 on 2026-08-28, applying that same rule to somebody else's shrink.
+#: `b4bfdc5f6` ("give the hierarchy handler's malformed-body refusals a wire code") converted five
+#: refusals in `tasks/hierarchy_handlers.py` and left this ceiling untouched, so the population sat
+#: at 1499 against 1504. Five slack is not neutral: it is five future flat envelopes that can land
+#: green, which is precisely the "banked, not locked in" state the line above argues against. That
+#: file still carries 27 flat sites, so the next shrink there should ratchet this again.
+FLAT_BASELINE = 1499
 
 #: Flat sites reached through a WRAPPER (see the module docstring). A CEILING, measured
 #: on this tree the moment the scanner could see them at all. The first measurement was

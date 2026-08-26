@@ -390,7 +390,7 @@ def test_ordinal_bounds_need_a_digest_size():
 def test_every_proactive_field_is_patchable_or_deliberately_not():
     from dataclasses import fields
 
-    from personalclaw.config.loader import ProactiveConfig
+    from personalclaw.config.learning import ProactiveConfig
     from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     # The generic round-trip test covers dataclass/_meta + load() + to_dict(); it
@@ -402,7 +402,7 @@ def test_every_proactive_field_is_patchable_or_deliberately_not():
 
 
 def test_proactive_defaults_are_fail_closed():
-    from personalclaw.config.loader import ProactiveConfig
+    from personalclaw.config.learning import ProactiveConfig
 
     cfg = ProactiveConfig()
     assert cfg.triage_enabled is False
@@ -446,7 +446,7 @@ def test_unreadable_proactive_values_fail_in_the_safe_direction(tmp_path, monkey
 
 
 def test_a_negative_action_cap_clamps_to_zero_not_unbounded():
-    from personalclaw.config.loader import ProactiveConfig
+    from personalclaw.config.learning import ProactiveConfig
 
     assert ProactiveConfig(max_auto_actions_per_run=-1).max_auto_actions_per_run == 0
 

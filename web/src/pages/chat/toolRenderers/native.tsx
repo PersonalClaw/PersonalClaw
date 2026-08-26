@@ -113,7 +113,7 @@ function searchResultsOutput(seg: ToolSegment): ReactNode {
   const arr = Array.isArray(data) ? data : (asObj(data).results as unknown[]) || (asObj(data).items as unknown[])
   if (!Array.isArray(arr) || arr.length === 0) return undefined as unknown as ReactNode
   return (
-    <RawBlock label={`${arr.length} result(s)`}>
+    <RawBlock label={`${arr.length} result${arr.length === 1 ? '' : 's'}`}>
       <div className="flex flex-col gap-1.5">
         {arr.slice(0, 20).map((r, i) => {
           const o = asObj(r)

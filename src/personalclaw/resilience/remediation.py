@@ -543,16 +543,48 @@ def _job_reindex_embeddings() -> str:
     # embedder cost is negligible and not metered through the model-call chokepoint.
     # Only runs when an embedder is actually resolvable (the deficit's reachable gate
     # already ensured this, but re-check defensively).
-    from personalclaw.knowledge import get_knowledge_store
-    from personalclaw.skills.surfacing import _active_embedder
+    #
+    # 🔴 This job could not re-embed anything, and said so as a clean zero (#1782).
+    #
+    # 1. It passed `skills.surfacing._active_embedder()`'s bare `Callable[[str], vector]`.
+    #    `reembed_all` wants the EMBEDDER OBJECT: `active_batch_embed_fn` gates the batch
+    #    path on `isinstance(embedder, UnifiedEmbedder)`, and `_item_embed_one` looks for
+    #    `.embed` then `.embed_for_item`. A plain function has neither, so both resolved to
+    #    `None` and every item was left vector-less — a silent all-fail, no exception.
+    # 2. It read `report["embedded"]` / `report["count"]`. `reembed_all` returns
+    #    `reembedded` / `failed` / `total`, so `n` was 0 whatever happened and the message
+    #    always read "re-embedded 0 item(s)". `failed` was never inspected at all.
+    # 3. It re-embedded the WHOLE library. The deficit is `knowledge_missing_embeddings`
+    #    (`count_items_missing_embedding()`) and this job is titled "Backfill missing
+    #    knowledge embeddings", so `only_missing=True` is the scope both already promise.
+    #    `maintenance_passes` passes it for the same reason and says why: a whole-library
+    #    re-embed is the model-switch re-index's job, not a periodic one's.
+    #
+    # `get_knowledge_embedder()` is what the two working callers use, and it is keyed on the
+    # active embedding selection so a model switch rebuilds rather than writing vectors of
+    # the wrong model into the shared index.
+    from personalclaw.knowledge import get_knowledge_embedder, get_knowledge_store
 
-    embed_fn, _model = _active_embedder()
-    if embed_fn is None:
+    embedder = get_knowledge_embedder()
+    if embedder is None:
         return "no embedder bound — skipped"
     store = get_knowledge_store()
-    report = store.reembed_all(embed_fn)
-    n = report.get("embedded", report.get("count", 0)) if isinstance(report, dict) else 0
-    return f"re-embedded {n} item(s)"
+    report = store.reembed_all(embedder, only_missing=True)
+    reembedded = int(report.get("reembedded") or 0)
+    failed = int(report.get("failed") or 0)
+    # Raising is the only way to say "this did not work": the runner writes
+    # `last_success_ts` on any non-raising return, so a clean zero would take the 6h
+    # cooldown while the deficit it claims to fix stayed exactly where it was.
+    #
+    # Total failure only. A partial pass DID reduce the backlog, and raising over it would
+    # discard that progress from the record and re-run the same work on the next tick;
+    # `reembed_all` leaves a failed item vector-less rather than corrupt, so the remainder
+    # is simply still in the backlog for next time — which the message says out loud.
+    if failed and not reembedded:
+        raise RuntimeError(f"embedded none of {failed} item(s) missing a vector")
+    if failed:
+        return f"re-embedded {reembedded} item(s); {failed} still without a vector"
+    return f"re-embedded {reembedded} item(s)"
 
 
 def _job_rebuild_memory_fts() -> str:

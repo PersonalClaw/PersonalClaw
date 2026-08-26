@@ -412,6 +412,12 @@ async def start_dashboard(
 
     register_device_routes(app)
 
+    # Push subscriptions. Next to the device routes because a
+    # subscription is per-DEVICE state keyed on the same device id pairing writes.
+    from personalclaw.dashboard.handlers.push import register_push_routes
+
+    register_push_routes(app)
+
     # WebSocket (multiplexed real-time events)
     app.router.add_get("/api/ws", ws.api_ws)
 
@@ -1370,6 +1376,11 @@ async def start_dashboard(
     )
 
     register_security_credential_routes(app)
+    # The secrets vault — presence-only reads over the same credential store, plus the
+    # one-way write path. Owner-only for the same reason the two surfaces above are.
+    from personalclaw.dashboard.handlers.secrets import register_secrets_routes
+
+    register_secrets_routes(app)
     app.router.add_get("/api/approvals", handlers.api_approvals)
     app.router.add_post("/api/approvals/{id}/{action}", handlers.api_approval_resolve)
 

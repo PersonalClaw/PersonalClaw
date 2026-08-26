@@ -6,14 +6,14 @@ import { EvalsPanel } from './EvalsPanel'
 
 // ── The fifth point of the config round-trip contract, derived from the OTHER FOUR ───────────────
 //
-// `evals.*` had four of the five: the dataclass + `_meta` (`config/loader.py:EvalsConfig`),
+// `evals.*` had four of the five: the dataclass + `_meta` (`config/learning.py:EvalsConfig`),
 // `load()`, `to_dict()`, and five entries in the PATCH allowlist
 // (`dashboard/handlers/core.py:_EDITABLE_CONFIG`). It had no frontend control — measured,
 // `git grep -in evals -- web/src/pages/settings` returned **0** across 33 subpages — while
 // `#/learning` rendered four panels telling the user to turn the substrate on.
 //
 // 🔑 THIS RAIL DERIVES BOTH SIDES AND COMPARES THEM. It does not restate a list of five keys: it
-// PARSES the allowlist out of `core.py` and the labels/help/defaults out of `loader.py`, then asks
+// PARSES the allowlist out of `core.py` and the labels/help/defaults out of `learning.py`, then asks
 // the RENDERED panel whether each one is there, named with that label, described with that help,
 // and bounded by that min/max. So the failure modes it catches are the ones a hand-written
 // expectation cannot:
@@ -103,9 +103,12 @@ function balanced(src: string, from: number): string {
 
 /** `EvalsConfig`'s fields → their `_meta` label, `_meta` help, and literal default. */
 function evalsMeta(): Record<string, MetaField> {
-  const src = py('config/loader.py')
+  // PHF-14 moved this dataclass: the config sections were extracted out of `config/loader.py` into
+  // per-domain siblings, and `evals` is one of the six that `config/learning.py` now owns. The
+  // parse below is unchanged — only the file it reads moved.
+  const src = py('config/learning.py')
   const at = src.indexOf('class EvalsConfig:')
-  expect(at, 'EvalsConfig must exist in config/loader.py').toBeGreaterThan(-1)
+  expect(at, 'EvalsConfig must exist in config/learning.py').toBeGreaterThan(-1)
   const end = src.indexOf('\n@dataclass', at)
   const block = src.slice(at, end > -1 ? end : undefined)
   const out: Record<string, MetaField> = {}
@@ -137,10 +140,13 @@ describe('the derivation reads the real files', () => {
   })
 
   it('finds every EvalsConfig field with a non-empty label and help', () => {
-    expect(py('config/loader.py').length).toBeGreaterThan(50000)
-    // 🪤 THE CEILING PIN. `config/loader.py` has zero headroom, and this panel exists to surface
-    // fields that ALREADY existed — it must not have grown one. Six fields: the five editable ones
-    // plus the privacy-gated capture flag. A seventh is a deliberate decision, so it fails here.
+    // Vacuity floor on the file the block above was parsed OUT of, so a truncated/stubbed read
+    // cannot hand `META` an empty object. The number is scaled to `config/learning.py` (~22k
+    // chars); it was 50000 while these fields lived in the far larger `config/loader.py`.
+    expect(py('config/learning.py').length).toBeGreaterThan(15000)
+    // 🪤 THE FIELD-SET PIN, and the real vacuity guard. This panel exists to surface fields that
+    // ALREADY existed — it must not have grown one. Six fields: the five editable ones plus the
+    // privacy-gated capture flag. A seventh is a deliberate decision, so it fails here.
     expect(Object.keys(META).sort()).toEqual([...EDITABLE, 'bakeoff_capture_enabled'].sort())
     for (const [k, m] of Object.entries(META)) {
       expect(m.label.length, `${k} label`).toBeGreaterThan(3)

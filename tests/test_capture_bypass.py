@@ -87,8 +87,9 @@ def _request(path: str):
 
 def _enable_capture(monkeypatch, *, enabled=True, allow_remote=False, allowlist=()):
     """Point `AppConfig.load()` at an external-access config without writing config.json."""
-    from personalclaw.config.loader import AppConfig, ExternalAccessConfig
-    from personalclaw.config.loader import ExternalAccessSurfaceConfig as Surface
+    from personalclaw.config.external_access import ExternalAccessConfig
+    from personalclaw.config.external_access import ExternalAccessSurfaceConfig as Surface
+    from personalclaw.config.loader import AppConfig
 
     cfg = AppConfig()
     surface = Surface(enabled=enabled, allow_remote=allow_remote)

@@ -313,14 +313,16 @@ def spawn_env(
 
 #: Name shapes that mark a value as credential-bearing. Reuses the workflow secrets
 #: module's own hint
-#: list rather than a second one — two lists would disagree about `apiKey` eventually, and the one
-#: that disagreed would be the one deciding whether it reached a child.
+#: list AND its matcher rather than a second one — two lists would disagree about `apiKey`
+#: eventually. The matcher is shared for the same reason one indirection later: while each
+#: caller ran its own `any(hint in name)` loop there was nowhere to express "match `pat` as a
+#: WORD", so the boundary got hand-rolled into the LIST as `_pat`/`pat_` — which then matched
+#: every `..._PATH` and stripped a leaf's native-library search path.
 def looks_secret(name: str) -> bool:
     """Whether an env var name looks credential-bearing."""
-    from personalclaw.workflows.secrets import SECRET_KEY_HINTS
+    from personalclaw.workflows.secrets import matches_secret_hint
 
-    lowered = (name or "").lower()
-    return any(hint in lowered for hint in SECRET_KEY_HINTS)
+    return matches_secret_hint(name)
 
 
 def presence_flags(spec: WorkspaceSpec, granted: dict[str, str] | None = None) -> dict[str, Any]:

@@ -82,8 +82,8 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
           reading the whole journal. */}
       {hasContext && (
         <div className="flex flex-col gap-2xs text-on-surface-low text-[0.75rem]">
-          {!!handoff.checks_run?.length && <span>Already done: {handoff.checks_run.length} step(s)</span>}
-          {!!handoff.outstanding?.length && <span>Still to do: {handoff.outstanding.length} step(s)</span>}
+          {!!handoff.checks_run?.length && <span>Already done: {handoff.checks_run.length} step{handoff.checks_run.length === 1 ? '' : 's'}</span>}
+          {!!handoff.outstanding?.length && <span>Still to do: {handoff.outstanding.length} step{handoff.outstanding.length === 1 ? '' : 's'}</span>}
           {handoff.risks?.map((r) => <span key={r} className="text-warning">Risk: {r}</span>)}
         </div>
       )}

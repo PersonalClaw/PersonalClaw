@@ -258,47 +258,66 @@ def _receiver_is_loop_registry(recv: ast.AST) -> bool:
 
 
 def check_config_four_points(files: list[Path], root: Path) -> list[Finding]:
-    """A ``_meta``-carrying field on a config dataclass in loader.py must appear in
-    ``AppConfig.load()``'s mapping and in ``to_dict()`` output. Missing either → the
-    silent-drop / silent-revert bug. Exact presence → ERROR.
+    """A ``_meta``-carrying field on ANY config dataclass must appear in ``AppConfig.load()``'s
+    mapping and in ``to_dict()`` output. Missing either → the silent-drop / silent-revert bug.
+    Exact presence → ERROR.
 
     Static approximation: a field name declared with ``metadata=_meta(...)`` must appear
     somewhere in ``load()``'s body (as ``<field>=`` kwarg) — the load mapping is the point
     most often forgotten. to_dict() serializes whole sections via ``asdict`` so per-field
     presence there is covered by test_config_roundtrip; the scanner guards the load()
     mapping specifically (the harder-to-test half at diff time).
+
+    The DECLARATIONS are read from every module in ``config/``, not from ``loader.py`` alone,
+    and the load mapping is read from ``loader.py`` because that is where ``AppConfig`` lives.
+    Those two used to be the same file, and PHF-14 split them: the sections moved out to
+    sibling modules while ``AppConfig`` stayed. A scan pinned to ``loader.py`` would then have
+    kept passing while silently checking 280 of 367 fields — a gate that narrows without
+    redding is worse than one that is absent, because the green is read as coverage.
     """
-    loader = root / "src" / "personalclaw" / "config" / "loader.py"
-    if loader not in set(files):
-        return []
-    source = _read(loader)
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
+    config_dir_path = root / "src" / "personalclaw" / "config"
+    changed = set(files)
+    if not any(f.parent == config_dir_path and f.suffix == ".py" for f in changed):
         return []
 
-    load_kwargs = _load_body_kwarg_names(tree)
+    loader = config_dir_path / "loader.py"
+    loader_tree = _parse_or_none(loader)
+    if loader_tree is None:
+        return []
+    load_kwargs = _load_body_kwarg_names(loader_tree)
     if load_kwargs is None:
         return []
 
     findings: list[Finding] = []
-    for field_name, lineno in _meta_fields(tree):
-        if field_name not in load_kwargs:
-            findings.append(
-                Finding(
-                    check="config-four-points",
-                    level=ERROR,
-                    file=loader,
-                    line=lineno,
-                    what=f"config field {field_name!r} has _meta but is not set in "
-                    "AppConfig.load()'s mapping",
-                    why="a field absent from load()'s explicit mapping silently reverts to "
-                    "its default on every reload (the user's setting won't stick)",
-                    fix=f"map it in AppConfig.load(): {field_name}=...(<section>_data.get"
-                    f"({field_name!r}, <default>))",
+    for module in sorted(config_dir_path.glob("*.py")):
+        tree = loader_tree if module == loader else _parse_or_none(module)
+        if tree is None:
+            continue
+        for field_name, lineno in _meta_fields(tree):
+            if field_name not in load_kwargs:
+                findings.append(
+                    Finding(
+                        check="config-four-points",
+                        level=ERROR,
+                        file=module,
+                        line=lineno,
+                        what=f"config field {field_name!r} has _meta but is not set in "
+                        "AppConfig.load()'s mapping",
+                        why="a field absent from load()'s explicit mapping silently reverts to "
+                        "its default on every reload (the user's setting won't stick)",
+                        fix=f"map it in AppConfig.load(): {field_name}=...(<section>_data.get"
+                        f"({field_name!r}, <default>))",
+                    )
                 )
-            )
     return findings
+
+
+def _parse_or_none(path: Path) -> ast.Module | None:
+    """Parse ``path``, or ``None`` if it is unreadable or does not parse."""
+    try:
+        return ast.parse(_read(path))
+    except (SyntaxError, OSError):
+        return None
 
 
 def _meta_fields(tree: ast.Module) -> list[tuple[str, int]]:

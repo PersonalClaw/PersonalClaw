@@ -52,6 +52,41 @@ def test_knowledge_clear_and_reembed(tmp_path):
     assert all(r["embedding"] is not None for r in rows)
 
 
+def test_reembed_all_cannot_use_a_bare_callable(tmp_path):
+    """The contract a caller must not "simplify" away (#1782).
+
+    `reembed_all` needs the embedder OBJECT, not a plain embedding function:
+    `active_batch_embed_fn` gates the batch path on `isinstance(embedder, UnifiedEmbedder)`
+    and `_item_embed_one` looks for `.embed` then `.embed_for_item`. A function has none of
+    those, so both resolve to None and every item is left vector-less — with no exception
+    raised. The Doctor's backfill job passed exactly this and reported a clean zero for
+    however long it shipped.
+
+    Pinned here rather than only at the call site because the failure is SILENT: a future
+    caller handing over `get_active_embed_fn()` gets a plausible-looking report whose
+    `reembedded` is 0, and nothing else in the system objects.
+    """
+    from personalclaw.knowledge.embedder import UnifiedEmbedder
+
+    store = _kstore(tmp_path)
+    _add(store, "Title A", "content a")
+    _add(store, "Title B", "content b")
+
+    def embed(text):
+        return [0.1, 0.2, 0.3]
+
+    assert store.reembed_all(embed) == {"reembedded": 0, "failed": 2, "total": 2}
+    assert store.count_items_missing_embedding() == 2, "nothing was embedded"
+
+    # The same function, wrapped in the embedder the working callers pass.
+    assert store.reembed_all(UnifiedEmbedder(embed)) == {
+        "reembedded": 2,
+        "failed": 0,
+        "total": 2,
+    }
+    assert store.count_items_missing_embedding() == 0
+
+
 def test_count_items_missing_embedding_detects_interrupted_reindex(tmp_path):
     """The boot-time auto-resume signal: after clear_embeddings() (start of a re-index)
     but before reembed_all() finishes, text-bearing items report as missing so the

@@ -365,7 +365,7 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
       notify(
         kept > 0
           ? `${pack.name} updated. ${r.update.overwritten.length} replaced; ${kept} of your edited copies kept.`
-          : `${pack.name} updated — ${r.update.overwritten.length} component(s) replaced.`,
+          : `${pack.name} updated — ${r.update.overwritten.length} component${r.update.overwritten.length === 1 ? '' : 's'} replaced.`,
         'success',
       )
     }).catch((e) => notify(`Couldn't update ${pack.name}: ${String((e as Error)?.message || e)}`, 'error'))

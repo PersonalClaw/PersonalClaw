@@ -15,6 +15,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Notification rules can now deliver as real OS notifications.**
 
+- **Your phone can wake you when a run is blocked on your approval — and the notification carries nothing but two ids.**
 - **A reviewer's findings now get triaged by you before anything touches your code.**
 
 - **Your watched sources now write you a morning digest, without you scheduling anything.**
@@ -77,12 +78,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it had.**
+
 - **Two settings saved at the same moment could lose one of them.**
 - **Renaming an automation replaced what it does.**
 
 - **A too-long file or folder name reported a server error instead of telling you the name was too long.**
 
 - **When the model was unavailable, knowledge enrichment told you it had found nothing.**
+- **Anything named like a path was treated as a credential — which broke a bundled template and stripped native libraries out of a workflow's leaves.**
 
 - **Creating a knowledge intent could silently delete one you already had.**
 

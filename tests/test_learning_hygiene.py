@@ -201,7 +201,7 @@ def test_scoring_saturates_rather_than_growing_linearly():
 def test_the_evidence_floor_matches_the_config_default():
     """The claim is "ONE shared number". If the constant and the config default
     disagree, two consumers reading different sources silently diverge."""
-    from personalclaw.config.loader import LearningConfig
+    from personalclaw.config.learning import LearningConfig
 
     assert LearningConfig().min_evidence == MIN_EVIDENCE_DEFAULT == 3
 

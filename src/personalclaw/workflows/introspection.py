@@ -608,10 +608,18 @@ class BranchStats:
         chosen = [(label, count) for label, count in self.cases.items() if count > 0]
         if len(chosen) == 1 and chosen[0][1] == self.routed_runs:
             others = len(self.cases) - 1
+            # `others` is at least 1: the guard above requires two or more declared cases. So the
+            # singular is the COMMON shape here (a two-case branch), not an edge — which is why a
+            # `case(s)` hedge read worst on exactly the branch a reader is most likely to hit. The
+            # count is dropped when it is 1, because "its other 1 case" is worse than either plural.
+            alternatives = (
+                "its one other case is declared but never chosen"
+                if others == 1
+                else f"its other {others} cases are declared but never chosen"
+            )
             return (
                 f"`{self.path}` routed to `{chosen[0][0]}` in all {self.routed_runs} runs that "
-                f"reached it — its other {others} case(s) are declared but never chosen, so the "
-                "selector is doing no work"
+                f"reached it — {alternatives}, so the selector is doing no work"
             )
         return ""
 
@@ -900,8 +908,8 @@ def proof_section(stats: RunStats, *, evidence_files: list[str] | None = None) -
     """
     section = ProofSection(
         summary=(
-            f"{stats.steps_completed} step(s) completed, {stats.steps_failed} failed, "
-            f"{stats.steps_cached} served from cache"
+            f"{stats.steps_completed} step{'s' if stats.steps_completed != 1 else ''} "
+            f"completed, {stats.steps_failed} failed, {stats.steps_cached} served from cache"
         ),
         verified_steps=max(0, stats.steps_completed - stats.unverified_steps),
         total_steps=stats.steps_completed,
@@ -919,6 +927,7 @@ def proof_section(stats: RunStats, *, evidence_files: list[str] | None = None) -
         )
     if stats.steps_failed:
         section.warnings.append(
-            f"{stats.steps_failed} step(s) failed — check what the run did with their outputs"
+            f"{stats.steps_failed} step{'s' if stats.steps_failed != 1 else ''} failed — check "
+            f"what the run did with {'its output' if stats.steps_failed == 1 else 'their outputs'}"
         )
     return section

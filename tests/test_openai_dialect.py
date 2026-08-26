@@ -105,8 +105,9 @@ def test_isolated_home_binds(tmp_path):
 
 def _enable(monkeypatch, *, agents=("researcher", "writer"), enabled=True, master=True):
     """Point ``AppConfig.load()`` at an external-access config without writing files."""
-    from personalclaw.config.loader import AgentConfig, AppConfig, ExternalAccessConfig
-    from personalclaw.config.loader import ExternalAccessSurfaceConfig as Surface
+    from personalclaw.config.external_access import ExternalAccessConfig
+    from personalclaw.config.external_access import ExternalAccessSurfaceConfig as Surface
+    from personalclaw.config.loader import AgentConfig, AppConfig
 
     cfg = AppConfig()
     cfg.external_access = ExternalAccessConfig(

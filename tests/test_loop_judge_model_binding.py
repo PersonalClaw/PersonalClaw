@@ -261,7 +261,7 @@ class TestDegradedPathUnchanged:
 
 class TestConfigWiring:
     def test_point_1_dataclass_and_meta(self) -> None:
-        from personalclaw.config.loader import LoopsConfig
+        from personalclaw.config.learning import LoopsConfig
 
         f = {x.name: x for x in fields(LoopsConfig)}["judge_use_case"]
         assert f.default == "reasoning"

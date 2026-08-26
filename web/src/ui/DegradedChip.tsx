@@ -100,7 +100,18 @@ export function DegradedChip() {
     : down.length === 1 ? `${label(worst.surface)} degraded` : `${down.length} degraded`
   const detail = unknown
     ? 'Status unknown — the degraded-surfaces check could not be read, so this may be hiding a surface running without a model'
-    : `${summary} — ${down.length} surface(s) running without a model, click for detail`
+    // 🔑 ONE EXPRESSION GAVE TWO ANSWERS TO THE SAME QUESTION. `summary` on the line above already
+    // crosses this boundary — it names the single surface when `down.length === 1` — and then this
+    // line appended `surface(s)`. So at one degraded surface the tooltip read "Files degraded — 1
+    // surface(s) running without a model": hedged AND redundant, three words after the code had got
+    // the singular case right.
+    //
+    // 🪤 This is the `title` tooltip (see `title={detail}` below), NOT the accessible name. The name
+    // is `summary`, via `aria-label` on mobile only, and it was already correct — so the "a screen
+    // reader speaks the parenthesis" argument does NOT apply here and is not the reason to fix it.
+    // The reason is simpler: the chip lives in the shell of every surface, and a tooltip is text a
+    // user reads. (`title` can still reach AT as a *description*, which is a weaker claim.)
+    : `${summary} — ${down.length} surface${down.length === 1 ? '' : 's'} running without a model, click for detail`
   return (
     <div className="relative">
       <button ref={triggerRef} type="button" onClick={() => setOpen((o) => !o)}

@@ -357,3 +357,95 @@ def test_sel_prune_job_removes_exactly_what_it_measured(tmp_path, monkeypatch):
     assert log.count_prunable() == 0
     body = log._path.read_text(encoding="utf-8")
     assert "fresh" in body and '"event": "old"' not in body
+
+
+# ── knowledge.reindex-embeddings: the job could not work at all (#1782) ────────
+
+
+def _seeded_store(tmp_path, n=3):
+    from personalclaw.knowledge.store import KnowledgeStore
+
+    store = KnowledgeStore(tmp_path / "k.db")
+    for i in range(n):
+        store.create_typed_item(item_type="note", title=f"N{i}", content=f"body {i}")
+    assert store.count_items_missing_embedding() == n
+    return store
+
+
+def _bind(monkeypatch, store, embed):
+    """Bind what the job resolves: the store, and an embedder OBJECT.
+
+    The bug was that the job passed a bare `Callable[[str], vector]`, which `reembed_all`
+    cannot use — so these fakes are deliberately the real `KnowledgeStore` and a real
+    `UnifiedEmbedder`, not stubs. A stub accepting anything would have passed against the
+    broken code too.
+    """
+    from personalclaw.knowledge.embedder import UnifiedEmbedder
+
+    monkeypatch.setattr("personalclaw.knowledge.get_knowledge_store", lambda: store)
+    monkeypatch.setattr(
+        "personalclaw.knowledge.get_knowledge_embedder", lambda: UnifiedEmbedder(embed)
+    )
+
+
+def test_reindex_embeddings_actually_drains_the_backlog(tmp_path, monkeypatch):
+    """It reported "re-embedded 0 item(s)" in every install: the embedder it passed was
+    unusable AND the count it read was a key `reembed_all` does not return, so a job that
+    embedded nothing was indistinguishable from a library with nothing to embed."""
+    store = _seeded_store(tmp_path)
+    _bind(monkeypatch, store, lambda text: [0.1, 0.2, 0.3])
+
+    detail = rem._job_reindex_embeddings()
+
+    assert detail == "re-embedded 3 item(s)"
+    assert store.count_items_missing_embedding() == 0
+
+
+def test_reindex_embeddings_only_touches_items_missing_a_vector(tmp_path, monkeypatch):
+    """The deficit is `knowledge_missing_embeddings` and the job is titled "Backfill
+    missing knowledge embeddings", so a whole-library re-embed is the wrong scope — it
+    re-embeds every item the owner has on a 6-hourly cadence. The count in the message is
+    what proves the scope."""
+    store = _seeded_store(tmp_path)
+    _bind(monkeypatch, store, lambda text: [0.1, 0.2, 0.3])
+    assert rem._job_reindex_embeddings() == "re-embedded 3 item(s)"
+
+    store.create_typed_item(item_type="note", title="fresh", content="new body")
+
+    assert rem._job_reindex_embeddings() == "re-embedded 1 item(s)"
+
+
+def test_a_total_reindex_failure_raises_instead_of_reporting_zero(tmp_path, monkeypatch):
+    """Raising is the only way this job can say "it did not work": `run_remediation`
+    writes `last_success_ts` on any non-raising return, so a clean zero would take the
+    job's 6h cooldown while the deficit it claims to fix stayed exactly where it was."""
+    store = _seeded_store(tmp_path)
+    _bind(monkeypatch, store, lambda text: [])  # embeds nothing, corrupts nothing
+
+    with pytest.raises(RuntimeError, match="embedded none of"):
+        rem._job_reindex_embeddings()
+
+    assert store.count_items_missing_embedding() == 3
+
+
+def test_a_partial_reindex_reports_the_remainder_and_keeps_its_progress(tmp_path, monkeypatch):
+    """A partial pass DID reduce the backlog, so it must not raise — that would discard
+    the progress from the ledger and redo the same work next tick. `reembed_all` leaves a
+    failed item vector-less rather than corrupt, so the remainder is simply still in the
+    backlog, which the message says out loud rather than rounding to success."""
+    store = _seeded_store(tmp_path)
+    _bind(monkeypatch, store, lambda text: [] if "N1" in text else [0.1, 0.2, 0.3])
+
+    detail = rem._job_reindex_embeddings()
+
+    assert detail == "re-embedded 2 item(s); 1 still without a vector"
+    assert store.count_items_missing_embedding() == 1
+
+
+def test_reindex_embeddings_skips_cleanly_with_no_embedder(tmp_path, monkeypatch):
+    store = _seeded_store(tmp_path)
+    monkeypatch.setattr("personalclaw.knowledge.get_knowledge_store", lambda: store)
+    monkeypatch.setattr("personalclaw.knowledge.get_knowledge_embedder", lambda: None)
+
+    assert rem._job_reindex_embeddings() == "no embedder bound — skipped"
+    assert store.count_items_missing_embedding() == 3

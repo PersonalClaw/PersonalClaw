@@ -4717,7 +4717,7 @@ function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen: () =>
                 <label className="flex items-center gap-1">Max cycles
                   <input type="number" min={0} value={maxCycles} onChange={(e) => setMaxCycles(Number(e.target.value))} className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" /></label>
               </div>
-              {loop && <p className="text-[0.75rem] text-on-surface-low">Active · {loop.cycle_count} cycle(s) fired{loop.max_cycles ? ` / ${loop.max_cycles}` : ''}.</p>}
+              {loop && <p className="text-[0.75rem] text-on-surface-low">Active · {loop.cycle_count} cycle{loop.cycle_count === 1 ? '' : 's'} fired{loop.max_cycles ? ` / ${loop.max_cycles}` : ''}.</p>}
               <div className="flex justify-end gap-2 mt-1">
                 {loop && <Button variant="ghost" size="sm" onClick={stop} disabled={busy}><X size={14} /> Stop</Button>}
                 <Button size="sm" onClick={arm} disabled={busy || !msg.trim()}

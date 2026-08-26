@@ -62,7 +62,7 @@ function MaturityBadge({ maturity }: { maturity: WorkflowMaturity }) {
     <span
       className="inline-flex shrink-0 items-center rounded-pill px-2 py-0.5 text-[0.75rem]"
       style={{ background: `color-mix(in srgb, ${tone} 14%, transparent)`, color: tone }}
-      title={`Maturity L${maturity.level}: ${maturity.clean_runs} clean run(s)`
+      title={`Maturity L${maturity.level}: ${maturity.clean_runs} clean run${maturity.clean_runs === 1 ? '' : 's'}`
         + (maturity.evaluator_rejected ? ', gate has rejected a bad run' : ', gate not yet proven')}
     >
       {maturity.label} · L{maturity.level}

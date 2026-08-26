@@ -4,6 +4,7 @@ Tests the AppConfig loader validation logic using hypothesis for
 property-based testing.
 """
 
+import contextlib
 import json
 import logging
 import tempfile
@@ -113,8 +114,21 @@ def _load_from_raw_string(content: str) -> AppConfig:
         tmp.with_suffix(".json.bak").unlink(missing_ok=True)
 
 
+#: Every module `AppConfig.load()` can warn THROUGH. More than one because PHF-14 moved the
+#: JSON-Schema validation pass to `config/validation.py`, which owns its own `__name__` logger —
+#: so the enum/type/unknown-key warnings now come from `personalclaw.config.validation` while the
+#: credential and agent-resolution warnings still come from `personalclaw.config.loader`.
+#: Capturing only the loader made this helper return `[]` for warnings that WERE emitted, which
+#: reads as "the loader stopped warning" rather than "the test stopped listening". Add a name here
+#: when a config module starts warning; do not narrow it back to one.
+_WARNING_SOURCES = (
+    "personalclaw.config.loader",
+    "personalclaw.config.validation",
+)
+
+
 def _load_from_dict_with_logs(data: object) -> tuple[AppConfig, list[str]]:
-    """Load config and capture warning log messages."""
+    """Load config and capture warning log messages from every config module that emits them."""
     with tempfile.NamedTemporaryFile(
         mode="w",
         suffix=".json",
@@ -131,18 +145,23 @@ def _load_from_dict_with_logs(data: object) -> tuple[AppConfig, list[str]]:
             "personalclaw.config.loader.config_path",
             return_value=tmp,
         ):
-            logger_local = logging.getLogger("personalclaw.config.loader")
             messages: list[str] = []
-            original_warning = logger_local.warning
 
-            def capture_warning(msg: object, *args: object) -> None:
-                try:
-                    messages.append(str(msg) % args)
-                except Exception:
-                    messages.append(str(msg))
-                original_warning(msg, *args)
+            def _capturing(logger_local: logging.Logger):
+                original_warning = logger_local.warning
 
-            with unittest.mock.patch.object(logger_local, "warning", capture_warning):
+                def capture_warning(msg: object, *args: object) -> None:
+                    try:
+                        messages.append(str(msg) % args)
+                    except Exception:
+                        messages.append(str(msg))
+                    original_warning(msg, *args)
+
+                return unittest.mock.patch.object(logger_local, "warning", capture_warning)
+
+            with contextlib.ExitStack() as stack:
+                for name in _WARNING_SOURCES:
+                    stack.enter_context(_capturing(logging.getLogger(name)))
                 result = AppConfig.load()
             return result, messages
     finally:

@@ -17,7 +17,7 @@ import { TextLink } from '../../ui/TextLink'
  *  author can reach.
  *
  *  🔑 EVERY LABEL AND HINT BELOW IS THE FIELD'S OWN `_meta`, VERBATIM. `EvalsConfig` in
- *  `config/loader.py` already carries the sentence the owner wrote for each knob, so inventing a
+ *  `config/learning.py` already carries the sentence the owner wrote for each knob, so inventing a
  *  second wording here would mean two answers to "what does this do" — and the one the CLI prints
  *  (`personalclaw config get --describe`) would not be the one the UI shows. `evalsCopy.test.ts`
  *  reads `loader.py` and fails if any string here drifts from it. The one addition is the cost

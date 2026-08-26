@@ -364,6 +364,31 @@ class TestSecretDetection:
         }
         assert secrets.secret_keys_referenced(spec) == ["GH_TOKEN", "OPENAI_KEY"]
 
+    def test_every_BUNDLED_template_is_savable(self) -> None:
+        """`service.save_def` REFUSES a spec with any inline-secret finding, so a false
+        positive here is not a warning — it is a template a user cannot save.
+
+        Measured on the spec this ratchet was added for: `project-planning` declares an output
+        `config.schema` field named `critical_path`, and while `pat` was matched as a bare
+        character run that field read as a secret-NAMED key holding a literal. Saving the
+        bundled template was refused with "the spec contains literal credentials — use
+        {{secret:KEY}} instead", pointing at a schema entry whose value is the word `array`.
+        """
+        from personalclaw.workflows.bundled_defs import read_template, template_names
+
+        names = template_names()
+        assert names, "no bundled templates were discovered — this ratchet would be vacuous"
+        refused: dict[str, list[str]] = {}
+        for name in names:
+            definition = read_template(name)
+            if definition is None:
+                continue
+            spec = definition.to_dict() if hasattr(definition, "to_dict") else dict(definition)
+            findings = secrets.find_inline_secrets(spec)
+            if findings:
+                refused[name] = [f.key for f in findings]
+        assert not refused, f"bundled templates a user cannot save: {refused}"
+
 
 class TestStripAndReinject:
     def test_a_secret_value_strips_to_a_presence_flag(self) -> None:

@@ -580,21 +580,23 @@ def _real_counts() -> dict[str, int]:
 def test_an_ordinary_config_field_addition_to_the_largest_file_stays_green():
     """THE rail that keeps this gate a ratchet instead of an outage.
 
-    Simulates the repo's documented config round-trip on its most-touched file: six lines added to
-    ``config/loader.py`` in the shape of a real field (a dataclass field, a ``_meta`` row, a
-    ``load()`` mapping, a ``to_dict()`` line). Three of the contract's five points live in that
-    file, and it is also the largest module in the repo — so if the size ratchet cannot absorb
-    this, every config field addition in the project reds CI and the gate gets deleted.
+    Simulates the repo's documented config round-trip on the ceiling HOLDER — where headroom is
+    scarcest — by adding six lines in the shape of a real field (a dataclass field, a ``_meta``
+    row, a ``load()`` mapping, a ``to_dict()`` line). If the size ratchet cannot absorb that,
+    every config field addition in the project reds CI and the gate gets deleted.
+
+    The holder is DERIVED, never named. It used to be asserted equal to ``config/loader.py``,
+    and PHF-14 moved it: splitting the config sections out took that file from 5652 to ~4285 and
+    handed the ceiling to ``workflows/controller.py``. A hard-coded holder turns any legitimate
+    split into a red whose only cheap "fix" is editing this line — the same defect the band's own
+    docstring records for a hard-coded 2,600-line probe that fell below the 2800 band. The
+    band-member assertion below is what keeps the derivation honest: it must still be a giant.
 
     What it proves: ORDINARY MAINTENANCE OF AN EXISTING LARGE FILE IS NOT A VIOLATION. The
     companion test below proves the other half — a NEW large file is.
     """
     counts = _real_counts()
     biggest = max(counts, key=lambda rel: counts[rel])
-    assert biggest == "src/personalclaw/config/loader.py", (
-        f"the premise moved: the largest file is now {biggest}. Re-point this test — it has to "
-        "exercise the ceiling HOLDER, which is where headroom is scarcest."
-    )
     assert (
         biggest in _committed()[gen.RATCHET_SIZE]["watch_band_members"]
     ), "the largest file is not a band member, so this test no longer exercises a giant"
@@ -602,9 +604,9 @@ def test_an_ordinary_config_field_addition_to_the_largest_file_stays_green():
 
     failures = gen.regressions_size(_committed()[gen.RATCHET_SIZE], gen.size_block_from(counts))
     assert failures == [], (
-        "a six-line config-field addition to the repo's largest file REDS the size ratchet. That "
-        "is an outage, not a gate: it prices a boolean toggle at a 5,427-line split. Re-read the "
-        "SIZE_CEILING_LINES comment.\n  " + "\n  ".join(failures)
+        f"a six-line config-field addition to the repo's largest file ({biggest}) REDS the size "
+        "ratchet. That is an outage, not a gate: it prices a boolean toggle at a whole-file "
+        "split. Re-read the SIZE_CEILING_LINES comment.\n  " + "\n  ".join(failures)
     )
     # And the render is unchanged, so the byte-compare gate does not demand a regeneration
     # either — the other half of "ordinary maintenance is untaxed".

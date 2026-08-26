@@ -292,7 +292,10 @@ function SourceCard({ source, picked, onPick }: {
         {source.secrets_skipped > 0 && (
           <p className="mt-1 flex items-start gap-1.5 text-on-surface-var text-[0.75rem]">
             <ShieldCheck size={13} aria-hidden="true" className="mt-0.5 shrink-0 text-ok" />
-            {source.secrets_skipped} credential value(s) or file(s) will not be imported.
+            {/* A reassurance on the FIRST screen a new user sees, about credentials being left
+                behind. Both nouns take the same count — the sentence is one disjunction over one
+                number — so "1 credential value or file" and "3 credential values or files". */}
+            {source.secrets_skipped} credential value{source.secrets_skipped === 1 ? '' : 's'} or file{source.secrets_skipped === 1 ? '' : 's'} will not be imported.
           </p>
         )}
       </div>

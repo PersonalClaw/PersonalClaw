@@ -238,7 +238,7 @@ class TestOneVocabulary:
     def test_there_is_no_second_enable_flag_beside_the_cadence(self):
         from dataclasses import fields
 
-        from personalclaw.config.loader import LearningConfig
+        from personalclaw.config.learning import LearningConfig
 
         names = {f.name for f in fields(LearningConfig)}
         assert "identity_report_cadence" in names

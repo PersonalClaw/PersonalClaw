@@ -205,6 +205,87 @@ After `auth.lockout_threshold` failures (default 5) from one address, sign-in is
 form count too. Every attempt — success, failure, lockout — lands in the security event log
 (`personalclaw security events`).
 
+## Getting a push when a run needs your approval
+
+Remote access gets you *to* the dashboard. This gets the dashboard to *interrupt you* — which is
+the point, because the thing that actually caps how much your agent can do unattended is how long
+a blocked run waits for a decision.
+
+**Every push carries two ids and nothing else: `{"kind": "approval", "item_id": "<id>"}`.** Not the
+tool name, not its arguments, not the session, not a title. Your phone wakes up, and then it fetches
+the decision from *your* gateway over the link you set up above. A push service — Google's, Apple's,
+Mozilla's, or your own ntfy host — never sees what is being approved. That is not a nicety: it is the
+only claim that holds for both transports below, since one of them is not encrypted at all.
+
+Pick a transport in **Settings → Companion apps → Phone push**.
+
+### Web push (the default)
+
+Uses your browser's own push subscription. One-time setup on the gateway:
+
+```
+personalclaw push init          # generates a VAPID keypair into the credential store
+personalclaw push status        # backend, keypair, subscribed devices
+```
+
+Then, on the phone: open `#/companion`, tap **Turn on push**, and allow notifications. The
+subscription is stored per device, so each phone or browser you turn it on from gets its own row.
+
+Two real constraints, stated rather than discovered:
+
+- **iOS needs the PWA installed.** Safari will not hold a push subscription for an ordinary tab.
+  Add the dashboard to your home screen first (Share → Add to Home Screen), then turn push on from
+  the installed app. The companion screen says so instead of showing a button that cannot work.
+- **A service worker needs a secure context.** Over a tailnet hostname or a TLS tunnel you are
+  fine. Over plain `http://` at a LAN address there is no service worker, so no push and no install
+  — Settings → Companion apps → *Install & offline* names that as the reason.
+
+Rotating the keypair (`personalclaw push init --force`) invalidates every existing subscription,
+because each browser bound its subscription to the old public key. Only do it if a key leaked, and
+re-subscribe each device afterwards.
+
+### ntfy / UnifiedPush (fully self-hosted)
+
+If you would rather no third party were involved at all, run [ntfy](https://ntfy.sh/docs/install/)
+and point the gateway at a topic:
+
+1. Settings → Companion apps → **Push backend → ntfy**.
+2. Paste your topic's full **https** URL, e.g. `https://ntfy.example/personalclaw`. Plain `http` is
+   refused at both the settings field and the sender — an unencrypted ping would put the item id on
+   the wire in the clear.
+3. Subscribe to the same topic in the ntfy app on your phone.
+
+Nothing else to set up: no VAPID keys, no per-device subscription. The tradeoff is cosmetic and
+deliberate — the ntfy app shows the raw `{"kind":…,"item_id":…}` body, because the alternative is
+composing a human sentence and a sentence is content. A pretty notification is not worth putting
+the tool's arguments through someone else's server.
+
+Pick a topic name nobody can guess. An ntfy topic URL is a capability: anyone who knows it can
+publish to it, so a guessable topic means anyone can make your phone buzz. It still cannot approve
+anything — approving happens on your gateway, behind your session.
+
+### Checking it without a phone in your hand
+
+```
+personalclaw push test                        # one content-free ping to every subscribed device
+personalclaw push test --kind approval --item-id abc123
+```
+
+It prints the backend, how many devices took the ping, and the exact payload that was sent, so you
+can read the ids-only claim rather than take it on trust.
+
+### What a tap does
+
+The notification opens `#/companion?approval=<id>` and scrolls that specific card into view with
+the whole decision on screen — tool, full arguments, where it came from, how long it has been
+waiting. Approve or deny, and the run you were pinged about continues. If the approval timed out
+while your phone was in your pocket, the screen says so rather than leaving you hunting for a card
+that no longer exists.
+
+Which notifications reach the phone at all is **Settings → Notifications**: every kind has a row,
+and *Approval needed* ships with the phone among its targets. Turn it off there and nothing else
+changes.
+
 ## Anti-patterns — do not do these
 
 - **Never port-forward your router straight to the gateway.** Opening a port on your home router
