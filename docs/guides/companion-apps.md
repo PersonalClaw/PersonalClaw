@@ -431,6 +431,26 @@ duplicated catch-up fetches and a connection indicator that disagrees with the p
 legitimate job here is narrower: notice that the machine is unreachable at all (DNS or TCP
 failure against `base_url`), and say so on that endpoint's row in the switcher.
 
+#### If you open the socket yourself: two things a dying tunnel does
+
+A shell that hosts the SPA inherits all of the above and can stop reading here. A shell that
+opens the socket itself has no SPA to inherit from, and two behaviours were measured against a
+real TLS tunnel being killed under a live session
+(`tests/test_ca7_wss_tunnel_e2e.py`):
+
+- **The drop arrives in one of two shapes, and you must handle both.** The read either returns a
+  close/error message or it *raises* a connection-reset error — the latter when the client's
+  autoping tries to answer a ping on the transport that has just died. Handling only the message
+  shape turns an ordinary tunnel restart into an unhandled error. Neither shape is slow; if
+  neither arrives, you are looking at the hang this contract exists to prevent, not a quiet link.
+- **Your device session survives the drop — keep it.** Reconnecting does not mean re-pairing. The
+  session is cookie-borne, and the cookie path deliberately skips IP binding
+  (`src/personalclaw/dashboard/token_auth.py:1072` reads `if not from_cookie and not
+  check_token_ip(...)`), so the same session still authenticates after a tunnel restart has moved
+  your apparent address — which is exactly what happens when a phone changes network. This is the
+  concrete reason the guide forbids `?token=` for a companion: that path *is* IP-bound, so a shell
+  that authenticates with it will find each reconnect refused with an IP mismatch.
+
 ### No hub, ever
 
 This is an owner ruling, quoted from the plan of record rather than summarised, because it is
