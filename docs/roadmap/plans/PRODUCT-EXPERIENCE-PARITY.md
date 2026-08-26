@@ -774,3 +774,42 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
   `.doc.ts`, required by `uiDocs.drift`) and `ui/FilterMenu.tsx` now renders it, output unchanged.
   Forced by `design/primitiveAdoption`: the row was a copy of FilterMenu's private `Row`, so
   extraction removed a duplicate instead of buying ratchet slack.
+- [2026-08-25][PEP-5] DONE: SP3.3 + V3 — the onboarding import step and its two routes.
+  `dashboard/handlers/onboarding_import.py` owns `GET|POST /api/onboarding/import`, mounted from
+  `server.py` beside `/api/onboarding/state`. **The POST re-scans server-side and accepts only the two
+  SELECTION axes (source names, category names), never items** — an `ImportItem` carries a filesystem
+  `path`, so honouring a client-supplied one would be a way to have any directory copied into the home.
+  Both axes are validated against their closed registries (`list_sources()`, `ImportCategory`) before a
+  byte is read, and an explicitly EMPTY list is a 400 rather than a cheerful `0 imported`. The GET adds
+  two derived facts to `ScanResult.to_dict()`: `detected` (computed server-side by `engine.detected`, so
+  "did we find it" is decided once, not re-derived on the client) and a per-item `existing` from
+  `already_imported()`. `web/src/app/onboarding/ImportStep.tsx` rides the existing `StepRow` primitive
+  as ORDER slot 2 (`name → import → essentials → try → ready`); `StepRow`'s `index` is now derived from
+  `ORDER.indexOf(...)` at all five call sites, because the previous hardcoded integers were exactly the
+  kind of second source that drifts when a step is inserted.
+- [2026-08-25][PEP-5] DEVIATION: the import step is deliberately NOT a stored resume point. `STEPS` in
+  `onboarding.py` is unchanged (four values); committing the name now records nothing and LEAVING import
+  records `essentials`. Item identity is a fingerprint and the importer keeps a ledger, so a run that
+  reloads on the step redoes an idempotent screen and sees its own earlier work marked `already
+  imported` — the same reason `STEPS` has no id between `first_success` and `done`. A fifth stored value
+  would have to be tolerated by every older client for no gain.
+- [2026-08-25][PEP-5] DECISION: no fifth `WriteOutcome`. A writer that RAISES (unreadable destination,
+  full disk) answers `500 onboarding_import_failed` — one new append-only `HTTP_ERROR_CODES` row —
+  carrying the failure's own sentence run once through `floors.safe_text`, because an `OSError` names a
+  path and a path from a foreign root can itself look like a credential. Widening the four-value
+  vocabulary to carry "the write blew up" would have blurred a closed algebra to avoid one error code.
+- [2026-08-25][PEP-5] DISCOVERY: the step must exist on a machine with nothing to import.
+  `stepProgressAnnounced.test.ts` derives its "every row reads from TITLES" count from the `ORDER`
+  literal, so a conditionally-declared step would make that a11y rail vacuous (a dynamic `ORDER` regex-
+  matches nothing and the `> 1` floor fails). The step therefore always renders and answers honestly on
+  an empty machine — one line naming what it looked for, plus Continue — rather than being hidden.
+- [2026-08-25][PEP-5] DONE: V3 validation is the API suite, not a manual gateway drive:
+  `tests/test_onboarding_import_api.py` (18 tests) drives the REAL router through `TestClient` against a
+  fixture `~/.claude` bound by `CLAUDE_CONFIG_DIR` and a fixture home bound by `PERSONALCLAW_HOME`, with
+  BOTH redirects asserted to bind in the fixture. It covers the atom's clauses in order: a fresh home
+  shows the source with nothing `existing`; a planted secret appears in neither the scan response nor any
+  byte under the home; re-entry marks the imported category `existing` and only that one; a re-import
+  reports `existing` and imports nothing; a raising writer is a 500 whose message keeps the failure's
+  words and loses the secret. `web/src/app/onboarding/importStep.test.tsx` (19 tests) holds the UI half —
+  including that the POST payload contains neither the root path nor an item key (with the vacuity
+  assertion that the SCAN does).

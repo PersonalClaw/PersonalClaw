@@ -315,6 +315,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # up (`error_extra`), so a support log says WHICH automation vanished.
     "trigger_id_required": "A trigger id is required to describe what an automation would do.",
     "unknown_trigger": "No automation exists with that id.",
+    # ── onboarding import (handlers/onboarding_import.py — PEP-5) ──
+    # ONE code for both halves: a scan that could not read, and an import that stopped
+    # after a write raised. Both mean "the machinery failed", both carry the failure's own
+    # sentence, and both are safe to retry (the fingerprint ledger records each write as it
+    # lands). A `conflict` or `rejected` ITEM is not this — those are 200 rows of the report.
+    "onboarding_import_failed": "Scanning for or importing from another agent tool failed.",
 }
 
 

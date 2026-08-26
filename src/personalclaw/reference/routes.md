@@ -541,6 +541,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/notifications/settings` — _(no summary)_
 - `POST /api/notifications/unack` — mark a single notification as unread.
 - `GET /api/onboarding` — First-run onboarding signal — model readiness plus persisted flow progress.
+- `GET /api/onboarding/import` — what each source holds, and what is already ours.
+- `POST /api/onboarding/import` — import the picked categories and report outcomes.
 - `POST /api/onboarding/state` — Record first-run progress — a partial merge into the onboarding entity state.
 - `POST /api/optimizer/optimize` — rewrite a prompt using session context.
 - `GET /api/outbox` — list files in the outbox.

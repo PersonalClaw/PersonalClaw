@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { unavailableWhen } from '../ui/unavailable'
 import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
-import { ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check, Compass, Inbox, Waves, PanelLeft } from 'lucide-react'
+import { ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check, Compass, Inbox, Waves, PanelLeft, FolderInput } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { ClawMark } from '../ui/ClawMark'
 import { DotGlow } from '../ui/DotGlow'
@@ -19,16 +19,18 @@ import { APP_NAME } from './config'
 import { api, type OnboardingState, type OnboardingStatePatch } from '../lib/api'
 import { StepRow, type StepState } from './onboarding/StepStack'
 import { EssentialsStep } from './onboarding/EssentialsStep'
+import { ImportStep } from './onboarding/ImportStep'
 import { TryOneStep } from './onboarding/TryOneStep'
 import { setOnboardingExit } from './onboarding/exitTo'
 import { requestProductTour } from './onboarding/tourLaunch'
 
-type StepId = 'name' | 'essentials' | 'try' | 'ready'
-const ORDER: StepId[] = ['name', 'essentials', 'try', 'ready']
+type StepId = 'name' | 'import' | 'essentials' | 'try' | 'ready'
+const ORDER: StepId[] = ['name', 'import', 'essentials', 'try', 'ready']
 // One source for each step's title — used by both the StepRow headings and the live region that
 // announces progress, so the spoken step name can never drift from the visible one.
 const TITLES: Record<StepId, string> = {
-  name: 'Your name', essentials: 'Essential apps', try: 'Try one', ready: 'All set',
+  name: 'Your name', import: 'Bring your setup over', essentials: 'Essential apps',
+  try: 'Try one', ready: 'All set',
 }
 
 /** Where a re-entered flow picks up, from the persisted resume point (`STEPS` in
@@ -78,6 +80,8 @@ export function Onboarding() {
   const [readiness, setReadiness] = useState<OnboardingState | null>(null)
   const [modelDone, setModelDone] = useState<string>('')  // '' = not resolved, else summary
   const [triedSummary, setTriedSummary] = useState<string>('')
+  /** What the import step brought over, for its collapsed row. '' until it is left. */
+  const [importSummary, setImportSummary] = useState<string>('')
   /** The step a re-entered flow jumps to once the name is in, or null for a first visit. */
   const [resume, setResume] = useState<StepId | null>(null)
   /** How many "try one" cards this home has ALREADY completed, per the persisted flags. */
@@ -87,7 +91,8 @@ export function Onboarding() {
 
   // the active step's row drives the 3D glow focus (like the composer in chat)
   const rowRefs = {
-    name: useRef<HTMLDivElement>(null), essentials: useRef<HTMLDivElement>(null),
+    name: useRef<HTMLDivElement>(null), import: useRef<HTMLDivElement>(null),
+    essentials: useRef<HTMLDivElement>(null),
     try: useRef<HTMLDivElement>(null), ready: useRef<HTMLDivElement>(null),
   }
   const activeRef = rowRefs[step]
@@ -133,9 +138,23 @@ export function Onboarding() {
     // moved on must never yank them forward mid-step. It also never walks the stored point
     // BACKWARDS — recording `essentials` for a run already at `first_success` would lose a
     // step of progress on the next reload.
-    const target = resume ?? 'essentials'
+    const target = resume ?? 'import'
     setSavedName(n); setStep(target)
-    progress({ step: target === 'try' ? 'first_success' : 'essentials' })
+    // The import step is deliberately NOT a stored resume point (`STEPS` has no id for it,
+    // exactly as it has none between `first_success` and `done`). It does not need one: item
+    // identity is a fingerprint and the importer keeps a ledger of what it wrote, so a run
+    // that reloads there redoes an idempotent step and sees its own earlier work marked
+    // `already imported`. Inventing a fifth stored value to save re-reading one screen would
+    // buy nothing and add a value every older client would have to tolerate. So only a
+    // RESUMED run — one whose earlier visit got past import — records a point here.
+    if (target === 'essentials') progress({ step: 'essentials' })
+    else if (target === 'try') progress({ step: 'first_success' })
+  }
+  /** Leave the import step. Recording `essentials` here is what makes a later reload resume
+   *  PAST import rather than re-offering it: the point moves forward only once the user has
+   *  actually finished with it (imported, or skipped it on purpose). */
+  function leaveImport(summary: string) {
+    setImportSummary(summary); setStep('essentials'); progress({ step: 'essentials' })
   }
   function leaveEssentials(summary: string) {
     setModelDone(summary); setStep('try'); progress({ step: 'first_success' })
@@ -220,14 +239,25 @@ export function Onboarding() {
             <p role="status" aria-live="polite" className="sr-only">
               {`Step ${ORDER.indexOf(step) + 1} of ${ORDER.length}: ${TITLES[step]}`}
             </p>
-            <StepRow ref={rowRefs.name} index={0} icon={User} title={TITLES.name}
+            <StepRow ref={rowRefs.name} index={ORDER.indexOf('name')} icon={User} title={TITLES.name}
               subtitle="How the system addresses you. Saved on the server, so it follows you across devices."
               state={stateOf('name')} doneSummary={savedName ? `${savedName}` : undefined}
               onActivate={() => setStep('name')}>
               <NameStep value={name} onChange={setNameDraft} onSubmit={commitName} />
             </StepRow>
 
-            <StepRow ref={rowRefs.essentials} index={1} icon={Boxes} title={TITLES.essentials}
+            {/* PEP-5 — adopt another local agent tool's setup. It sits BEFORE essentials
+                because the work a user already did elsewhere is theirs before anything is
+                installed here, and because none of what it writes (memories, MCP entries,
+                skills) needs a model provider to land. */}
+            <StepRow ref={rowRefs.import} index={ORDER.indexOf('import')} icon={FolderInput} title={TITLES.import}
+              subtitle="Already use another local agent tool? Bring its instructions, MCP servers and skills across."
+              state={stateOf('import')} doneSummary={importSummary || undefined}
+              onActivate={() => setStep('import')}>
+              <ImportStep onDone={leaveImport} onSkip={() => leaveImport('Skipped')} />
+            </StepRow>
+
+            <StepRow ref={rowRefs.essentials} index={ORDER.indexOf('essentials')} icon={Boxes} title={TITLES.essentials}
               subtitle="Install what the agent needs to work. A model provider is required; the rest are optional."
               state={stateOf('essentials')} doneSummary={modelDone || undefined}
               onActivate={() => setStep('essentials')}>
@@ -241,7 +271,7 @@ export function Onboarding() {
                   </div>}
             </StepRow>
 
-            <StepRow ref={rowRefs.try} index={2} icon={Rocket} title={TITLES.try}
+            <StepRow ref={rowRefs.try} index={ORDER.indexOf('try')} icon={Rocket} title={TITLES.try}
               subtitle="Watch it actually do something. Each one runs for real — and none of them is required."
               state={stateOf('try')} doneSummary={triedSummary || undefined}
               onActivate={() => setStep('try')}>
@@ -249,7 +279,7 @@ export function Onboarding() {
                 onSkip={() => leaveTryOne('Skipped')} onExitTo={exitTo} />
             </StepRow>
 
-            <StepRow ref={rowRefs.ready} index={3} icon={Sparkles} title={TITLES.ready}
+            <StepRow ref={rowRefs.ready} index={ORDER.indexOf('ready')} icon={Sparkles} title={TITLES.ready}
               subtitle={`You're ready, ${firstNameOf(savedName)}.`}
               state={stateOf('ready')}>
               <DoneScreen name={savedName} modelSummary={modelDone} triedSummary={triedSummary}
