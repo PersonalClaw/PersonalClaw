@@ -1774,3 +1774,28 @@ the browser gate stays out of the unit run. `docs/roadmap/atomic/dag.json` delib
   adjacent hardening improvement filed here because it shares the plan's spawn/teardown surface, and
   it is tagged SH1.3 for locality only. No atom status changes — `SH1.3` is a plan task row, not an
   id in `docs/roadmap/atomic/dag.json` (0 occurrences), so there is nothing to flip.
+
+- **2026-08-26 — `PHF-7` DONE (PR #2092).** Three prior branches had already landed clauses 1-3;
+  this pass closed the two that were open and flipped the atom. **Clause 4** held as a property but
+  nothing named or pinned it: the existing suite pins the DETECTOR against synthetic trees, which
+  proves the detector can detect, not that the real census walk catches a real raw write. The new
+  rail splices a planted module into the census WALK so the walk, parse, detector, per-file census
+  and regression comparison all really run. Its justification is a measured result, not a claim:
+  neutering the detector AND regenerating `structural-baseline.json` (which that file's own
+  instructions invite when a counter "legitimately shrank") leaves `durable-write: 0`, at which
+  point the existing structural suite reports **31 passed, fully green** while raw writes sail
+  through — and the new rail reports 2 failed by name. **Clause 5** had never been run: measured
+  **484 passed / 8 skipped / 0 failed, 469s wall clock**, 118 a11y assertions, behind a dead proxy
+  with every provider credential unset. The vacuity check is what makes that number mean anything —
+  egress was **denied, not merely unused**: the update checker's `git fetch` was refused **537
+  times** and the gate stayed green.
+  **DEVIATION 1 — "network off" was egress-denied, not interface-down.** Four sibling agents share
+  this machine. The import-closure rail independently proves the scripted provider loads no
+  networking module at all.
+  **DEVIATION 2 — this section's prose names a "strict-mode env flag" that does not exist, and one
+  was NOT built.** No `PERSONALCLAW_STRICT*` flag is anywhere in the tree. The `done_when` clause it
+  serves is satisfied statically at every commit by shipping machinery; a runtime flag would be a
+  second enforcement path for one convention, against the clean-break tenet. The prose should be
+  corrected rather than the flag built.
+  **Not covered, so not claimed:** `target-size` — the shipped axe tags omit it, and the a11y gate
+  fails only on serious/critical.
