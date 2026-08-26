@@ -230,3 +230,13 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(KnowledgeReportActionProvider())
+    if "browse" not in _providers:
+        # BROWSE-AUTOMATION §9 (BA-3): the autonomous web-interaction provider. Registered
+        # unconditionally, like `source-digest` above and for the same reason — a workflow
+        # template or trigger naming `browse` must be dispatchable whenever it can run, and a
+        # registration that depended on config is one the run-start preflight cannot see. The
+        # provider itself refuses cheaply (a typed `ERR_BROWSE_NO_TARGET`) when no browser
+        # target is configured, so registering it costs nothing on a machine without one.
+        from personalclaw.action_providers.browse_provider import BrowseActionProvider
+
+        register_action_provider(BrowseActionProvider())

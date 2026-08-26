@@ -285,6 +285,28 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         leaves_machine=True,
         providers=("run-prompt", "invoke-agent", "run-workflow"),
     ),
+    # BROWSE-AUTOMATION §9 (BA-3): drives a real browser, so its effect is a click and a form
+    # POST on somebody else's site. `one_tap` at BOTH ends, which is the only spec here that
+    # is not `autonomous`, and deliberately so:
+    #   * not `autonomous` — a SUBMIT is an irreversible external write with no undo handle
+    #     (`reversal_kinds` is empty), so the silent rung would run it and leave nothing a user
+    #     would notice.
+    #   * not `draft_only` — that is BA-6's registration decision for a persisted browse PLAN;
+    #     applying it to the PROVIDER would withhold every browse dispatch at every trigger
+    #     seam before the atom that could promote it exists, which is a shipped-and-inert
+    #     capability wearing a control's clothes.
+    #   * ceiling equals the floor because widening it needs the reversal half BA-6 owns; a
+    #     ceiling of `auto_with_undo` above a provider that cannot undo would route a form
+    #     submission to "executes, then keeps a handle" and keep no handle.
+    # Workflow ACTION NODES are unaffected — `workflows.engine.dispatch_action` does not
+    # consult the ladder, which is why the engine path and the trigger path read differently.
+    ActionTypeSpec(
+        key="action.browse",
+        floor=RUNG_ONE_TAP,
+        ceiling=RUNG_ONE_TAP,
+        leaves_machine=True,
+        providers=("browse",),
+    ),
     # Executes author-supplied code: arbitrary shell / sandboxed Python. The denylist and
     # the capability fence are what license these; the ladder does not add a gate.
     ActionTypeSpec(

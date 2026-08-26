@@ -617,6 +617,23 @@ def _register_builtin_contracts() -> None:
             "not errored. Bind an STT model to turn it on.",
         )
     )
+    # browse — its own surface rather than `assistant_reasoning`, because the no-model shape
+    # is categorically different: every STEP of the loop is a model decision, so there is no
+    # reduced tier to fall back to. The run stops with `ok=False` and an error naming the
+    # decision call (`loop.py:479`), and the notes, visited and blocked URLs collected so far
+    # are PRESERVED on that result. That distinction is the whole floor: a browse run without
+    # a model is not a park (`parked` stays False — a park means "stopped early, notes kept,
+    # a human decides"), and it never guesses a navigation to keep moving.
+    register_contract(
+        DegradedContract(
+            surface="browse",
+            use_cases=("reasoning",),
+            floor="Browse automation is unavailable without a model — every step of the loop is a "
+            "model decision, so there is no reduced tier. A run that loses its model stops and "
+            "says so, keeping the notes and the pages it already visited; it never guesses a "
+            "navigation to keep going.",
+        )
+    )
     # the catch-all reasoning axis behind one_shot_completion — the background/reasoning
     # label collapses to the chat axis, so a surface with no dedicated contract that
     # calls one_shot_completion is covered here (the default 'skip + show degraded').

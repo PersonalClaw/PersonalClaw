@@ -898,6 +898,12 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # registry in the same commit as this line; a provider in one set but not the other
         # validates, saves, and then fails at run time.
         "artifact_inspect",
+        # BROWSE-AUTOMATION §9 (BA-3): the autonomous web-interaction provider. Registered in
+        # the action-provider registry in the SAME commit as this line, for the reason every
+        # comment above states — and here it is the load-bearing half of the atom's contract:
+        # without this entry a hook, trigger or workflow naming `browse` is rejected at
+        # create time, so the provider would be dispatchable by nothing at all.
+        "browse",
     }
 )
 

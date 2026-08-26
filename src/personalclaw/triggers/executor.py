@@ -93,6 +93,12 @@ STATUS_TO_OUTCOME: dict[str, str] = {
     # which means nothing durable happened — a queued start persisted a run record, and the
     # reason string below is what keeps the two DEFERRED cases distinguishable.
     "queued": Outcome.DEFERRED.value,
+    # `needs_input` → `DEFERRED` for the THIRD reading of that member: parked awaiting a human.
+    # BROWSE-AUTOMATION §7.2 — the fire produced a real partial result and stopped at a ceiling
+    # only a person can lift. Not `FAILED` (nothing broke, and a failure invites the retry
+    # machinery to re-pay for the whole task), and not `SKIPPED_NOOP` (something durable WAS
+    # produced — the notes are the deliverable so far).
+    "needs_input": Outcome.DEFERRED.value,
     "error": Outcome.FAILED.value,
     "failure": Outcome.FAILED.value,
     "timeout": Outcome.FAILED.value,
