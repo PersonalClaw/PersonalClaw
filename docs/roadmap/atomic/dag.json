@@ -801,7 +801,7 @@
     {
       "plan": "PLATFORM-RESILIENCE",
       "code": "PR2",
-      "status": "in_progress",
+      "status": "done",
       "summary": "6 sessions shipped (Doctor core, no-model degraded contract, mid-turn queue/cancel-replace, confirm-gated fixes + simulators + crash capture, health-scored remediation engine, mid-turn steering). 5 todo atoms capture the E6-deferred cross-plan integration remainders and one intra-plan cleanup (full heartbeat-maintenance retirement, success criterion #6).",
       "atoms": [
         {
