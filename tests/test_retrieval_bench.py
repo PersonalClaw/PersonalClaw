@@ -393,6 +393,120 @@ def test_mine_knowledge_qrels_keeps_named_intents_and_drops_unnamed(knowledge_st
     assert all(q.query.strip() for q in mined), "a blank-named intent was mined as a query"
 
 
+# ── §5.2 source (a): LEARN-R4's surfacing_events ──────────────────────────────
+
+
+def _record_surfacing(*events) -> None:
+    """Append events to ``surfacing_events``, PROVING the store resolved under the tmp home.
+
+    ``learning.db`` is a file this suite did not previously touch, so the assertion is not
+    ceremony: ``conftest``'s autouse redirect is what keeps this out of the owner's real
+    ``~/.personalclaw/learning.db``, and a redirect nobody checks is one that silently stops
+    working.
+    """
+    from personalclaw.config.loader import config_dir
+    from personalclaw.learning.surfacing_events import SurfacingEventStore
+
+    store_ = SurfacingEventStore()
+    try:
+        assert store_.path.parent == Path(config_dir()), (
+            f"surfacing_events resolved to {store_.path} — this test would have written to the "
+            "real home"
+        )
+        store_.record(list(events))
+    finally:
+        store_.close()
+
+
+def _event(**kwargs):
+    from personalclaw.learning.surfacing_events import SurfacingEvent
+
+    return SurfacingEvent(**kwargs)
+
+
+def test_mine_knowledge_qrels_reads_surfacing_events_as_source_a(knowledge_store):
+    """A used candidate whose entity IS an item in the corpus is a source-(a) positive."""
+    item_id = knowledge_store.db.execute("SELECT id FROM items ORDER BY title").fetchone()["id"]
+    _record_surfacing(
+        _event(kind="knowledge", entity=item_id, arm="keyword", used=True, query="how do I fuse?")
+    )
+
+    mined = {q.query: q for q in rb.mine_knowledge_qrels(knowledge_store)}
+    assert "how do I fuse?" in mined
+    assert mined["how do I fuse?"].relevant_ids == (item_id,)
+    assert mined["how do I fuse?"].source == rb.SOURCE_MINED_SURFACING
+
+
+def test_a_surfaced_but_unused_candidate_is_never_a_positive(knowledge_store):
+    """``used`` is the whole predicate. Precision is used ÷ SURFACED, so mining the offers
+    that LOST would make the denominator the numerator and label every arm perfect."""
+    rows = knowledge_store.db.execute("SELECT id FROM items ORDER BY title").fetchall()
+    _record_surfacing(
+        _event(kind="knowledge", entity=rows[0]["id"], arm="keyword", used=True, query="q"),
+        _event(kind="knowledge", entity=rows[1]["id"], arm="vector", used=False, query="q"),
+    )
+
+    mined = {q.query: q for q in rb.mine_surfacing_qrels(knowledge_store)}
+    assert mined["q"].relevant_ids == (rows[0]["id"],)
+
+
+def test_an_entity_the_store_does_not_contain_is_dropped_not_kept_as_a_miss(knowledge_store):
+    """The rail that keeps a foreign arm's label out of this store's ground truth.
+
+    ``surfacing_events`` is ONE log shared by every surfacing arm, and its ``entity`` is
+    whatever id that arm ranks. An unreachable positive left in ``relevant_ids`` would drive
+    ``P@k`` to ``0.0`` for every arm and every mask — the good ones included — and publish
+    "retrieval is broken" as a finding about the retriever rather than about the label.
+    """
+    item_id = knowledge_store.db.execute("SELECT id FROM items ORDER BY title").fetchone()["id"]
+    _record_surfacing(
+        _event(kind="knowledge", entity=item_id, arm="keyword", used=True, query="shared query"),
+        _event(kind="lesson", entity="lesson:not-an-item", arm="lessons", used=True, query="q2"),
+    )
+
+    mined = {q.query: q for q in rb.mine_surfacing_qrels(knowledge_store)}
+    assert mined["shared query"].relevant_ids == (item_id,)
+    assert "q2" not in mined, "a label naming an id this store cannot contain was mined anyway"
+    assert all(
+        "lesson:not-an-item" not in q.relevant_ids for q in mined.values()
+    ), "an unreachable positive would score every arm at P@k 0.0"
+
+
+def test_the_only_live_writer_contributes_no_knowledge_labels(knowledge_store):
+    """The measured fact behind ES-3's PARTIAL, railed so the gap cannot close by accident.
+
+    ``skills.allocation`` is the ONLY production writer of ``surfacing_events`` and it stores
+    ``kind="skill"`` with the SKILL NAME as ``entity``. A skill name is never a knowledge
+    ``item_id``, so source (a) contributes nothing to the knowledge store until a surfacing
+    arm that ranks knowledge ITEMS is instrumented. When one is, this test flips and says so.
+    """
+    _record_surfacing(
+        _event(kind="skill", entity="pdf-processing", arm="skill_surfaced", used=True, query="q"),
+        _event(kind="skill", entity="brazil", arm="skill_forced", used=True, query="q"),
+    )
+
+    assert rb.mine_surfacing_qrels(knowledge_store) == []
+
+
+def test_the_two_mined_sources_union_and_source_a_wins_a_shared_query(knowledge_store):
+    """Both sources are live and separately labelled; neither is a fallback for the other."""
+    rows = knowledge_store.db.execute("SELECT id FROM items ORDER BY title").fetchall()
+    surfaced_id, intent_id = rows[0]["id"], rows[1]["id"]
+    knowledge_store.record_intent_outcome("i-a", intent_name="shared", item_id=intent_id)
+    knowledge_store.record_intent_outcome("i-b", intent_name="intent only", item_id=intent_id)
+    knowledge_store.db.commit()
+    _record_surfacing(
+        _event(kind="knowledge", entity=surfaced_id, arm="keyword", used=True, query="shared")
+    )
+
+    mined = {q.query: q for q in rb.mine_knowledge_qrels(knowledge_store)}
+    assert mined["shared"].source == rb.SOURCE_MINED_SURFACING
+    assert mined["shared"].relevant_ids == (surfaced_id,), "the two id sets were merged"
+    assert mined["intent only"].source == rb.SOURCE_MINED_INTENT
+    bench = rb.RetrievalBenchmark(name="n", store=rb.STORE_KNOWLEDGE, queries=tuple(mined.values()))
+    assert bench.sources() == {rb.SOURCE_MINED_INTENT: 1, rb.SOURCE_MINED_SURFACING: 1}
+
+
 def test_an_empty_benchmark_refuses_rather_than_scoring_nothing(knowledge_store, bound_models):
     """A store with no labels has no P@k. Returning a zero here would file "retrieval is
     broken" as a finding about the retriever."""

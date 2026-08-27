@@ -1543,3 +1543,94 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   no legibility gain. `ES.md`'s file-level narrative ("entirely unstarted; all 11 atoms are todo")
   is also stale against the row marks; it is the free-text summary `test_roadmap_atomic_status_sync`
   deliberately does not rail, and correcting it is a tracking pass, not this atom.
+
+## Execution log — ES-3 (the `surfacing_events` blocker is CLOSED; source (a) is a real reader) — atom stays `todo`
+
+- **[2026-08-27][ES-3] The 2026-08-26 E6 escalation is RESOLVED by another plan, exactly as
+  escalating expected.** That entry recorded `surfacing_events` as appearing in the whole tree once,
+  as prose, with "no table, no schema, no reader and no writer", and refused to mint LEARNING-FLYWHEEL
+  §2.5's deliverable inside ES-3. `LEARN-R4` then landed it (`7a7877a5`):
+  `src/personalclaw/learning/surfacing_events.py` ships `SurfacingEvent` + `SurfacingEventStore` in
+  `learning.db`, with a writer reached from `skills.allocation.allocate_skills` and a 90d prune on the
+  curator tick. §5.2's source (a) for the knowledge store is now a REAL reader —
+  `mine_surfacing_qrels` — labelled `mined:surfacing_events` in every qrels row it produces.
+
+- **[2026-08-27][ES-3] 🔴 DEVIATION from the briefed change: source (a) is ADDED, `intent_outcomes`
+  is NOT deleted, and the two are not a fallback pair.** The instruction was to *switch* the knowledge
+  source from `intent_outcomes` to `surfacing_events`. Measured before writing: `surfacing_events` is
+  ONE log shared by every surfacing arm, and its `entity` is whatever id that arm ranks.
+  `git grep -n 'SurfacingEvent('` finds exactly ONE production writer — `skills/allocation.py:461`,
+  `kind="skill"` with the SKILL NAME as `entity` — while the knowledge target is
+  `HybridRetriever` over knowledge `item_id`s (`knowledge/retrieval.py:155` `store.get_item(item_id)`).
+  A skill name is never an `item_id`. So a literal switch would have put unreachable positives in
+  `relevant_ids` and driven `P@k` to **0.0 for every arm and every mask, the good ones included** —
+  publishing "retrieval is broken" as a finding about the retriever rather than about the label, which
+  is the same failure the owner's `RunPin` ruling forbids one level up. `intent_outcomes` is therefore
+  NOT a substitute awaiting replacement: it is the only label source in the knowledge `item_id` space,
+  it is non-circular (ingest-time, never consults retrieval), and deleting it would have traded a
+  working measurement (vector arm ΔP@5 **+0.2259** on the seeded dev home) for an empty one. The two
+  sources are unioned with distinct `source` labels, `RetrievalBenchmark.sources()` publishes the mix,
+  and a query labelled by both keeps the source-(a) row (an observation of what a real turn used
+  outranks an ingest-time guess; merging the id sets under one `source` would publish a provenance
+  true of neither). The false "SUBSTITUTE … switching this source over is ES-3's own remaining work"
+  prose in `sources()` and in the module header is deleted, not softened.
+
+- **[2026-08-27][ES-3] An unresolvable positive is DROPPED and COUNTED, never kept as a miss.**
+  `mine_surfacing_qrels` resolves every candidate `entity` through `handle.get_item` and excludes the
+  ones this store cannot contain, logging the count at INFO — because "source (a) mined nothing" and
+  "source (a) mined rows this store cannot contain" are different facts and only the second one names
+  its cause. Silently dropping them would make the empty result read as an uninstrumented home when
+  the truth is a foreign arm's labels.
+
+- **[2026-08-27][ES-3] What still does NOT hold, and it is upstream, not here.** Source (a)'s reader
+  is correct and its data is empty on the knowledge arm: with `skills.allocation` the only writer,
+  zero rows survive corpus resolution. `test_the_only_live_writer_contributes_no_knowledge_labels`
+  rails that measured fact so it cannot close by accident — when a surfacing arm that ranks knowledge
+  ITEMS is instrumented (LEARNING-FLYWHEEL §2.5's other three mechanical-`used` clauses: template run
+  started, run outcome, lesson cited by `after_turn_review`; plus the ambient render's
+  lesson/memory/persona candidates), that test flips and says so. **The atom stays `todo` and the row
+  stays ⬜:** a P@5 whose source-(a) contribution is zero rows is a rail that matches nothing, and
+  marking it 🟡 would spend the atom's own evidence.
+
+- **[2026-08-27][ES-3] Owner rulings applied, none re-litigated.** (i) The `RunPin`
+  embedding-fingerprint question: **do NOT invent a fingerprint** — an unpinnable run is unscored and
+  renders as such. Nothing in this session needed a new state: `run_retrieval_bench` already *raises*
+  `store.PinRequiredError` before any measurement on an incomplete pin, so no score, no `0.0` and no
+  missing row is ever published for one, and ES-11's `SCORE_SCORED`/`SCORE_UNSCORED`/
+  `SCORE_NO_CANDIDATES` vocabulary was deliberately NOT re-minted here (this harness's own absent-metric
+  vocabulary — `REASON_NO_CANDIDATES`/`REASON_NO_RELEVANT` + `VERIFIER_ABSENT` — already covers its
+  cells). Whether the pin should narrow to the embedding binding remains unanswered and is untouched.
+  (ii) Source (c) stays DECLINED on circularity. (iii) The memory arm is OUT OF SCOPE: `LEARN-R4`
+  recorded `mem_volunteer_events` as carrying no surface text, which is the second, still-open reason
+  the resolver arms are not a bench target. Recorded as a named, dated PARTIAL rather than half-built.
+
+- **[2026-08-27][ES-3] Read-only, re-verified rather than assumed.** `learning.db` is neither store
+  §5.1 guards, and `SurfacingEventStore.read` declares its table with `CREATE TABLE IF NOT EXISTS` on
+  a fresh home — recorded here so it is not re-found as a rail violation. The miner runs BEFORE
+  `run_retrieval_bench`'s `with stores_unchanged(...)` block, and the cross-store rail
+  (`test_a_knowledge_run_refuses_a_write_to_the_memory_store`) was re-run and re-falsified this
+  session; it still bites.
+
+- **Falsifications (each mutated the LIVE line, `git grep`'d back, then restored from a file copy at
+  the literal path — never `git checkout`).** (1) Collapsing `mine_knowledge_qrels` to
+  `return mine_intent_qrels(handle)` reds `…reads_surfacing_events_as_source_a` and
+  `…the_two_mined_sources_union_and_source_a_wins_a_shared_query` — **2 collected, 2 FAILED** (that
+  `-n0` run then wedged in teardown before printing its summary, so the counts are the evidence, not
+  the assertion text). Source (a) is genuinely read, not decoration. (2) Deleting the `get_item`
+  resolution so unresolvable entities are kept reds both drop-rail tests — **2 collected, 2 FAILED**
+  with `AssertionError: assert [QrelsQuery(…source='mined:surfacing_events')] == []` and
+  `AssertionError: a label naming an id this store cannot contain was mined anyway`. The second red is
+  the exact shape of the 0.0-for-every-arm failure a literal source switch would have shipped.
+  (3) Neutering `sibling_store_paths` to `return []` reds
+  `…a_knowledge_run_refuses_a_write_to_the_memory_store` — **1 collected, 1 FAILED,
+  `Failed: DID NOT RAISE StoreMutatedError`** — so the cross-store read-only rail still bites.
+
+- **Gate** (`PERSONALCLAW_HOME` unset): `make lint` clean (black 2164 files, isort, flake8, mypy
+  **1068 source files**); `scripts/gate_report.py` **6/6**; targeted `pytest --no-cov` over
+  `test_retrieval_bench.py` + `test_learning_surfacing_events.py` + `test_evals_routes.py` +
+  `test_evals_store.py` + `test_structural_baseline.py` + `test_roadmap_atomic_status_sync.py` +
+  `test_roadmap_dag_derived.py` — **174 collected, 174 passed, 0 failed**, with the conftest
+  real-home rail reporting `/Users/golani/.personalclaw unchanged by this run`. `web/` untouched, so
+  the npm legs were not run. `src/personalclaw/config/loader.py` is **5647 lines before and after** —
+  not touched. Probe residue: **0** in either diff-touched file; `git status --porcelain` empty apart
+  from `?? .venv`.

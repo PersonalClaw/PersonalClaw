@@ -60,6 +60,18 @@ a scenario turn yields two scenario hashes.
 
 **Done when:** arm-masked runner reports P@5/R@5 per arm-mask for BOTH knowledge (HybridRetriever FTS5/graph/vector) and memory recall, run separately and read-only, from a personal-scale qrels set mined from surfacing/volunteer events plus a hand-label card; per-arm marginal contribution is a number and a dark-shipped arm gets its offline verdict before enablement; reports land in matrices/ via scorer:qrels
 
+**PARTIAL (2026-08-27).** The `surfacing_events` blocker recorded on 2026-08-26 is CLOSED by
+`LEARN-R4` (`7a7877a5`), and §5.2's source (a) for the knowledge store is now a REAL reader:
+`mine_surfacing_qrels` takes a `used` candidate's `entity` as a positive and labels it
+`mined:surfacing_events`. What does not yet hold is the DATA, and it is upstream: the only
+production writer of `surfacing_events` is `skills.allocation`, which stores `kind="skill"` with a
+SKILL NAME as `entity` — never a knowledge `item_id` — so source (a) labels nothing on the
+knowledge arm until a surfacing arm that ranks knowledge ITEMS is instrumented
+(LEARNING-FLYWHEEL §2.5's remaining three mechanical-`used` clauses). The memory arm's source (a)
+is real (`mem_volunteer_events` via `volunteer_qrels`); its resolver arms stay out of scope
+(no stored surface text). Atom stays `todo` — a P@5 mined from zero source-(a) labels would be a
+rail that matches nothing.
+
 ### `ES-4` — Judge benchmark harness → tier-recommendation table
 
 **Status:** done

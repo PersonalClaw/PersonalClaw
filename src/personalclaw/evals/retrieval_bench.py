@@ -32,8 +32,9 @@ anything, the mask never reached the retriever and every per-arm delta in the re
 noise — so the run raises :class:`MaskNotAppliedError` instead of publishing.
 
 **Weak labels, and their bias, stated.** Qrels are mined from events, never synthesized
-from the arms' own inputs: knowledge from ``intent_outcomes`` (an ingest-time LLM match
-against an item's consolidated content — it does not consult retrieval, so it is not
+from the arms' own inputs: knowledge from LEARN-R4's ``surfacing_events`` (§5.2's source
+(a), retrieved-then-used at turn time) AND from ``intent_outcomes`` (an ingest-time LLM
+match against an item's consolidated content — it does not consult retrieval, so it is not
 circular), memory from ``mem_volunteer_events`` via
 :meth:`~personalclaw.memory_graph.MemoryGraph.volunteer_qrels` (retrieved-then-used).
 Deliberately NOT implemented: §5.2's source (c), synthetic entity queries from the alias
@@ -268,6 +269,7 @@ class QrelsQuery:
 # Qrels label provenance, recorded per query so a reader can weigh a mined weak label
 # against a hand label without re-deriving where it came from.
 SOURCE_MINED_INTENT = "mined:intent_outcomes"
+SOURCE_MINED_SURFACING = "mined:surfacing_events"
 SOURCE_MINED_VOLUNTEER = "mined:mem_volunteer_events"
 SOURCE_HAND_LABEL = "hand_label"
 
@@ -327,15 +329,13 @@ class RetrievalBenchmark:
 
         Every :class:`QrelsQuery` already carries its ``source``, but only inside
         ``benchmark.json``: the report and the panel showed P@5 with no visible statement
-        of which labels produced it. §5.2 names three sources and this harness mines a
-        SUBSTITUTE for one of them (``intent_outcomes`` stands in for LEARN-R4's
-        ``surfacing_events``), so a reader who cannot see the mix cannot judge the number.
-        The substitution was originally forced — that table had no schema and no writer —
-        and is now a CHOICE: LEARN-R4 landed it
-        (:mod:`personalclaw.learning.surfacing_events`), with ``query``/``entity``/``used``
-        columns carried precisely so :func:`mine_knowledge_qrels` can read them, and
-        switching this source over is ES-3's own remaining work rather than the table's.
-        Counted here rather than in the frontend for
+        of which labels produced it. §5.2 names three sources and the knowledge store mines
+        TWO of them with different biases — ``surfacing_events`` (source (a), turn-time
+        retrieved-then-used) and ``intent_outcomes`` (ingest-time topical match) — so a
+        reader who cannot see the mix cannot judge the number. A knowledge run whose census
+        shows no ``mined:surfacing_events`` row is reporting a real fact about this home:
+        no surfacing arm that ranks knowledge ITEMS is instrumented yet, so source (a)
+        labelled nothing here. Counted here rather than in the frontend for
         the reason :func:`latest_retrieval_view` states: a re-derived answer eventually
         disagrees with the runner's.
 
@@ -899,7 +899,69 @@ def corpus_drifted(benchmark: RetrievalBenchmark, current_ref: str) -> bool:
 # ── qrels mining (§5.2) ──────────────────────────────────────────────────────
 
 
-def mine_knowledge_qrels(handle) -> list[QrelsQuery]:
+def mine_surfacing_qrels(handle) -> list[QrelsQuery]:
+    """§5.2's source (a) for the knowledge store: LEARN-R4's ``surfacing_events``, retrieved-
+    then-used. The turn's ``query`` is the query, a ``used`` candidate's ``entity`` is a positive.
+
+    **Every positive is resolved against the measured corpus, and an unresolvable one is
+    DROPPED rather than kept as a miss.** ``surfacing_events`` is one log shared by every
+    surfacing arm, so its ``entity`` is whatever id that arm ranks — today
+    ``skills.allocation`` is the only writer and it stores a SKILL NAME, which the knowledge
+    retriever can never return. Keeping such a row would put an unreachable positive in
+    ``relevant_ids``: ``P@k`` would read ``0.0`` for every arm and every mask, including the
+    good ones, and the report would file "retrieval is broken" as a finding about the
+    retriever. A label whose id the store under test does not contain is not this store's
+    ground truth — it is another arm's, and it belongs to that arm's bench.
+
+    ``used`` is the only positive predicate: §2.5 derives it mechanically at the moment the
+    content reached the prompt. A surfaced-but-unused candidate is the DENOMINATOR of
+    precision, never a positive.
+    """
+    try:
+        from personalclaw.learning.surfacing_events import SurfacingEventStore
+    except Exception:  # noqa: BLE001 - no surfacing log is "no labels", not a crash
+        logger.debug("surfacing_events unavailable", exc_info=True)
+        return []
+    store_ = SurfacingEventStore()
+    try:
+        # `days=None` because a benchmark wants every label the 90d window still holds, not
+        # a recent slice; the store's own read caps the row count.
+        events = store_.read(days=None)
+    finally:
+        store_.close()
+    grouped: dict[str, list[str]] = {}
+    unresolved = 0
+    for event in events:
+        query = (event.query or "").strip()
+        entity = (event.entity or "").strip()
+        if not event.used or not query or not entity:
+            continue
+        try:
+            item = handle.get_item(entity)
+        except Exception:  # noqa: BLE001 - an unreadable id is an unresolvable one
+            logger.debug("get_item(%r) failed while mining surfacing_events", entity, exc_info=True)
+            item = None
+        if not item:
+            unresolved += 1
+            continue
+        bucket = grouped.setdefault(query, [])
+        if entity not in bucket:
+            bucket.append(entity)
+    if unresolved:
+        # Logged, not silent: "source (a) mined nothing" and "source (a) mined rows this store
+        # cannot contain" are different facts, and only the second one names its cause.
+        logger.info(
+            "surfacing_events: %d used candidate(s) name an entity the knowledge store does not "
+            "contain (a non-knowledge surfacing arm) — not mined as knowledge labels",
+            unresolved,
+        )
+    return [
+        QrelsQuery(query=q, relevant_ids=tuple(sorted(ids)), source=SOURCE_MINED_SURFACING)
+        for q, ids in sorted(grouped.items())
+    ]
+
+
+def mine_intent_qrels(handle) -> list[QrelsQuery]:
     """Weak labels from ``intent_outcomes``: the intent's goal is the query, the matched
     item is a positive.
 
@@ -929,6 +991,27 @@ def mine_knowledge_qrels(handle) -> list[QrelsQuery]:
         QrelsQuery(query=q, relevant_ids=tuple(sorted(ids)), source=SOURCE_MINED_INTENT)
         for q, ids in sorted(grouped.items())
     ]
+
+
+def mine_knowledge_qrels(handle) -> list[QrelsQuery]:
+    """The knowledge store's mined qrels: §5.2 source (a) FIRST, then the ingest-time label.
+
+    **Two sources, not a fallback.** ``surfacing_events`` is source (a) proper — a real
+    retrieved-then-used observation at turn time — and ``intent_outcomes`` is an ingest-time
+    topical match. They answer different questions over the same id space, both are live, and
+    each query carries its own ``source`` so :meth:`RetrievalBenchmark.sources` publishes the
+    mix. Neither stands in for the other: until LEARN-R4's writer covers a surfacing arm that
+    ranks knowledge ITEMS, source (a) contributes no knowledge labels, and dropping
+    ``intent_outcomes`` for that reason would trade a working non-circular label set for an
+    empty one and leave every arm's marginal contribution unmeasurable.
+
+    A query labelled by BOTH keeps the source-(a) row: an observation of what a real turn
+    actually used outranks an ingest-time guess about the same text, and merging the two id
+    sets under one ``source`` would publish a provenance that is true of neither.
+    """
+    surfacing = mine_surfacing_qrels(handle)
+    seen = {q.query for q in surfacing}
+    return surfacing + [q for q in mine_intent_qrels(handle) if q.query not in seen]
 
 
 def mine_memory_qrels(handle) -> list[QrelsQuery]:
@@ -1183,8 +1266,12 @@ def run_retrieval_bench(
         if not benchmark.queries:
             raise EmptyBenchmarkError(
                 f"no qrels for the {store_kind} store: nothing has been mined from "
-                f"{'intent_outcomes' if store_kind == STORE_KNOWLEDGE else 'mem_volunteer_events'}"
-                " and no hand labels exist. Run the hand-label card first."
+                + (
+                    "surfacing_events or intent_outcomes"
+                    if store_kind == STORE_KNOWLEDGE
+                    else "mem_volunteer_events"
+                )
+                + " and no hand labels exist. Run the hand-label card first."
             )
         retriever = retriever_for(store_kind, handle)
         current_ref = corpus_snapshot_ref(store_kind, handle)
