@@ -597,7 +597,7 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
       // cannot add a second stop, no role on the wrapper (a wrapper role containing the checkbox is
       // nested-interactive), and the ring drawn on the ROW keyed off the overlay's focus.
       tabIndex={-1}
-      className="group relative flex items-center gap-l rounded-lg bg-surface-container px-l py-m cursor-pointer transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50"
+      className="group relative flex items-center gap-l rounded-lg bg-surface-container px-l py-m cursor-pointer transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
       style={selected ? { outline: '1.5px solid var(--color-primary)', outlineOffset: -1.5 } : undefined}>
       {/* The row's tab stop and name, through the primitive that already owns this idiom.
           🪤 Hand-rolling a bespoke element here is what the primitive-adoption ratchet is for: it went
@@ -665,7 +665,7 @@ function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number;
       onClick={onOpen}
       // Same defect, same fix, in the Cards view: 30 cards, each openable by pointer only.
       tabIndex={-1}
-      className="group relative flex flex-col gap-m rounded-xl bg-surface-container p-l cursor-pointer transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50">
+      className="group relative flex flex-col gap-m rounded-xl bg-surface-container p-l cursor-pointer transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary">
       <RowHitTarget label={t.title} />
       <div className="flex items-start gap-s">
         <sm.icon size={18} className="shrink-0 mt-0.5" style={{ color: sm.tone }} />

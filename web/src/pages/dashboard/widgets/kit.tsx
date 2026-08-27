@@ -54,7 +54,7 @@ export function WidgetRow({
       className={cx(
         'flex items-center gap-s rounded-lg bg-surface-low px-m py-s',
         onClick && 'relative cursor-pointer transition-colors hover:bg-surface-high',
-        onClick && 'has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50',
+        onClick && 'has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary',
         className,
       )}
       onClick={onClick}

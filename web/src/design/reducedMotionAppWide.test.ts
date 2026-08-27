@@ -516,7 +516,7 @@ describe('a gated preset is never read at module scope', () => {
         // Negative: a scalar const, then an unrelated declaration that legitimately reads a
         // preset inside a render function. A window-based scan reports this; a balanced one must not.
         const innocent = moduleScopeInitializers(
-            "const OVERLAY_FOCUS = 'focus:ring-primary/50'\n\nfunction Clear() {\n" +
+            "const OVERLAY_FOCUS = 'focus:ring-primary'\n\nfunction Clear() {\n" +
                 "  return <m.div transition={physics.snappy} />\n}\n",
         ).filter((d) => GATED_READ.test(d.body))
         expect(innocent, 'a line window walked into the next declaration and called it an offender')

@@ -216,7 +216,7 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
             <input autoFocus aria-label="Rename this file or folder" value={draft} onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { cancelledRename.current = true; setRenaming(false) } }}
               onBlur={commitRename}
-              className="h-6 min-w-0 flex-1 rounded-md bg-surface-high px-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="h-6 min-w-0 flex-1 rounded-md bg-surface-high px-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           </div>
         ) : (
           <button onClick={toggle} type="button"
@@ -300,7 +300,7 @@ function TreeNode({ entry, depth, dirs, activePath, gitStatuses, onOpenFile, art
               <input autoFocus value={createDraft} onChange={(e) => setCreateDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') commitCreate(); if (e.key === 'Escape') { cancelledCreate.current = true; setCreating(null); setCreateDraft('') } }}
                 onBlur={commitCreate} placeholder={creating === 'file' ? 'new-file.ext' : 'new-folder'}
-                className="h-6 min-w-0 flex-1 rounded-md bg-surface-high px-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 placeholder:text-on-surface-low" />
+                className="h-6 min-w-0 flex-1 rounded-md bg-surface-high px-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary placeholder:text-on-surface-low" />
             </div>
           )}
           {kids.length === 0 && !creating

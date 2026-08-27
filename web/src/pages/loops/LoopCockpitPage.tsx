@@ -618,7 +618,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               {editingTitle ? (
                 <input autoFocus aria-label="Rename this loop" value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
                   onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') abortRename() }}
-                  className="min-w-[16rem] h-7 rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+                  className="min-w-[16rem] h-7 rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
               ) : (
                 <button type="button" onClick={startRename} title="Rename loop"
                   className="truncate text-on-surface text-[0.9375rem] leading-tight text-left hover:text-on-surface-var" style={fvs(600)}>
@@ -1207,7 +1207,7 @@ function PhaseGroup({ phase, index, active, minCycles, cycles, renderCycle, live
   // Cycles newest-first within the phase (mirrors the latest-first phase order).
   const orderedCycles = [...cycles].reverse()
   return (
-    <div className={`rounded-lg ${active ? 'ring-1 ring-primary/40' : ''}`} style={{ background: 'color-mix(in srgb, var(--color-surface-container) 55%, transparent)' }}>
+    <div className={`rounded-lg ${active ? 'ring-1 ring-primary' : ''}`} style={{ background: 'color-mix(in srgb, var(--color-surface-container) 55%, transparent)' }}>
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex items-center gap-s px-m py-2 text-left">
         <ChevronRight size={13} className={`shrink-0 text-on-surface-low transition-transform ${open ? 'rotate-90' : ''}`} />
         <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low text-[0.75rem] tabular-nums">{index + 1}</span>

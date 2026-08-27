@@ -1035,7 +1035,7 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
       // Motion mark the wrapper focusable, hence tabIndex={-1} rather than no attribute.
       tabIndex={-1}
       onClick={onOpen}
-      className="group relative flex min-h-[11rem] cursor-pointer flex-col overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50"
+      className="group relative flex min-h-[11rem] cursor-pointer flex-col overflow-hidden rounded-xl border border-outline-variant/40 bg-surface-container has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
       style={{ borderRadius: 'var(--radius-lg)' }}>
       {/* The name was carried by `title` on the wrapper before. */}
       <RowHitTarget label={`${item.displayName} — details`} />

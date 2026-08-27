@@ -40,7 +40,7 @@ export function PromptEditFields({ draft, onChange, Section }: {
   const updateVar = (i: number, patch: Partial<PromptVariable>) => set('variables', draft.variables.map((v, idx) => idx === i ? { ...v, ...patch } : v))
   const removeVar = (i: number) => set('variables', draft.variables.filter((_, idx) => idx !== i))
 
-  const inputCls = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+  const inputCls = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
 
   return (
     <div className="flex flex-col gap-l">
@@ -78,7 +78,7 @@ export function PromptEditFields({ draft, onChange, Section }: {
             so nothing here can claim one. Each control names itself after its section. */}
         <textarea ref={taRef} value={draft.content} onChange={(e) => set('content', e.target.value)} rows={12}
           aria-label="Prompt template" spellCheck={false} placeholder={'The prompt body. {{variable}} placeholders, {% if %}/{% for %} logic, {{ fn() }} functions, and {{> snippet}} includes.'}
-          className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono text-[0.8125rem] leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 resize-y" />
+          className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono text-[0.8125rem] leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-y" />
         {includes.length > 0 && (
           <div className="mt-2 rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 10%, transparent)' }}>
             <div className="flex items-center gap-1.5 text-on-surface-var text-[0.8125rem] mb-1.5"><Puzzle size={13} className="text-info" /> Includes snippets (their variables merge in):</div>

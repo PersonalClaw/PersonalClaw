@@ -478,13 +478,13 @@ function StageQualityGate({ stage, onPatch }: { stage: CodeStage; onPatch: (p: P
             <span className="text-on-surface-low">Pass ≥</span>
             <input type="number" min={0} max={5} step={0.5} value={pass}
               onChange={(e) => setPass(parseFloat(e.target.value))} aria-label="Quality pass score"
-              className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           </label>
           <label className="flex items-center gap-1.5">
             <span className="text-on-surface-low">Hold ≥</span>
             <input type="number" min={0} max={pass} step={0.5} value={hold}
               onChange={(e) => setHold(parseFloat(e.target.value))} aria-label="Quality hold floor"
-              className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           </label>
           <span className="text-on-surface-low text-[0.75rem]">score 0–5 · below hold rolls back</span>
         </div>
@@ -537,20 +537,20 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <input value={stage.title} onChange={(e) => onPatch({ title: e.target.value })} placeholder="Stage title"
-              className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
             {/* Stage type — the canonical SDLC id (drives capabilities + gate
                 tracking). Editable so a user can re-type a stage or fix an added
                 one; the SDLC ladder is the only valid set. */}
             <select value={SDLC_STAGES.includes(stage.stage as typeof SDLC_STAGES[number]) ? stage.stage : ''}
               onChange={(e) => onPatch({ stage: e.target.value })} aria-label="Stage type"
-              className="shrink-0 rounded-md bg-surface-high px-2 py-1.5 text-[0.75rem] text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
+              className="shrink-0 rounded-md bg-surface-high px-2 py-1.5 text-[0.75rem] text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
               {!SDLC_STAGES.includes(stage.stage as typeof SDLC_STAGES[number]) && <option value="">— type —</option>}
               {SDLC_STAGES.map((sg) => <option key={sg} value={sg}>{sg}</option>)}
             </select>
             <SquareIconButton icon={Trash2} iconSize={13} tone="danger" label="Remove stage" onClick={onRemove} className="shrink-0" />
           </div>
           <textarea value={stage.objective} onChange={(e) => onPatch({ objective: e.target.value })} rows={2} placeholder="What this stage accomplishes…"
-            className="mt-2 w-full resize-none rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface-var text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="mt-2 w-full resize-none rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface-var text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           {/* exit criteria */}
           <div className="mt-2 flex flex-col gap-1">
             <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Done when</span>
@@ -565,7 +565,7 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
             <input value={crit} onChange={(e) => setCrit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCrit() } }}
               onBlur={addCrit}
               placeholder="Add a concrete, checkable condition…"
-              className="rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 placeholder:text-on-surface-low" />
+              className="rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary placeholder:text-on-surface-low" />
           </div>
           {/* P6 quality gate — the per-stage metric bar (metric_pass/metric_hold). The
               exit criteria are the structural gate (met/not-met); the quality bar is the
@@ -585,12 +585,12 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
                 <div className="flex min-w-0 flex-1 flex-col">
                   <input value={t.title} onChange={(e) => patchTask(ti, { title: e.target.value })}
                     placeholder="Task…"
-                    className="min-w-0 flex-1 bg-transparent text-on-surface-var outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+                    className="min-w-0 flex-1 bg-transparent text-on-surface-var outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary" />
                   {/* the task's substance — visible + editable, not hidden in a hover
                       tooltip, so the user reviews WHAT each task does, not just its name. */}
                   <input value={t.description ?? ''} onChange={(e) => patchTask(ti, { description: e.target.value })}
                     placeholder="how / details (optional)…"
-                    className="min-w-0 flex-1 bg-transparent text-on-surface-low text-[0.75rem] outline-none placeholder:text-on-surface-low/60 focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+                    className="min-w-0 flex-1 bg-transparent text-on-surface-low text-[0.75rem] outline-none placeholder:text-on-surface-low/60 focus:ring-2 focus:ring-inset focus:ring-primary" />
                 </div>
                 <button type="button" onClick={() => removeTask(ti)} aria-label="Remove task" className="mt-1 shrink-0 text-on-surface-low hover:text-danger"><X size={12} /></button>
               </div>
@@ -600,7 +600,7 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
               <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTask() } }}
                 onBlur={addTask}
                 placeholder="Add a task…"
-                className="min-w-0 flex-1 bg-transparent text-[0.8125rem] text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+                className="min-w-0 flex-1 bg-transparent text-[0.8125rem] text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary" />
             </div>
           </div>
         </div>

@@ -52,7 +52,7 @@ export function FeedbackThumbs({ targetKind, targetId, producer, snapshot, class
     } catch { /* never break the host surface — the thumb stays optimistic */ }
   }
 
-  const btn = 'inline-flex size-6 items-center justify-center rounded-md transition-colors hover:bg-surface-high focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50'
+  const btn = 'inline-flex size-6 items-center justify-center rounded-md transition-colors hover:bg-surface-high focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary'
 
   return (
     <span className={cx('relative inline-flex items-center gap-0.5', className)}>
@@ -79,7 +79,7 @@ export function FeedbackThumbs({ targetKind, targetId, producer, snapshot, class
                 if (e.key === 'Enter') record('down', why)
                 if (e.key === 'Escape') { setWhyOpen(false); setWhy('') }
               }}
-              className="h-8 w-full rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="h-8 w-full rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
             <div className="mt-1 text-on-surface-low text-[0.6875rem]">Enter to send · Esc to cancel · click away to skip</div>
           </div>
         </>

@@ -216,7 +216,7 @@ function SchemeTile({ scheme, dark, active, custom, onPick, onDelete }: { scheme
         // keyboard focus with no indicator at all, and no `outline-none` class was involved for a
         // source scan to find. A `ring` is a box-shadow, orthogonal to `outline`, so it coexists
         // with the selection outline instead of fighting it.
-        className="w-full flex flex-col gap-2 rounded-xl p-2.5 transition-all text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50"
+        className="w-full flex flex-col gap-2 rounded-xl p-2.5 transition-all text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
         style={{ background: 'var(--color-surface-container)', outline: active ? '2px solid var(--color-primary)' : '1px solid var(--color-outline-variant)', outlineOffset: active ? '0' : '-1px' }}>
         <div className="h-12 w-full rounded-lg grid place-items-center text-[1.5rem]" style={{ background: `linear-gradient(135deg, ${sw} 55%, ${swAlt} 55%)` }}>
           {emoji && <span aria-hidden>{emoji}</span>}

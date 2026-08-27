@@ -138,7 +138,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
               <input ref={inputRef} value={q} onChange={(e) => { setQ(e.target.value); setActive(0) }} onKeyDown={onKey}
                 role="combobox" aria-expanded aria-controls={listId} aria-autocomplete="list"
                 aria-activedescendant={flat[active] ? optId(active) : undefined}
-                placeholder="Search…" className="w-full h-8 rounded-md bg-surface pl-8 pr-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+                placeholder="Search…" className="w-full h-8 rounded-md bg-surface pl-8 pr-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
             </div>
             {/* `role="listbox"` only while it HOLDS options: a container that claims the role and
                 contains one line of prose is the exact lie `popupItemRoles` was written about. When the
@@ -195,7 +195,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
           //    "outgoing" content (fades quickly as the shape opens).
           <motion.button layout="position" type="button" onClick={() => setOpen(true)} data-type="title-m"
             aria-haspopup="listbox" aria-expanded={open}
-            className="flex w-full items-center gap-s h-10 px-m text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50">
+            className="flex w-full items-center gap-s h-10 px-m text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary">
             <span className={`flex-1 truncate ${selected ? 'text-on-surface' : 'text-on-surface-low'}`}>{selected ? selected.label : placeholder}</span>
             <motion.span className="shrink-0 text-on-surface-low" animate={{ rotate: open ? 180 : 0 }} transition={physics.snappy}>
               <ChevronDown size={16} />
@@ -223,7 +223,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
       {!open && value !== '' && (
         <button type="button" aria-label="Clear selection" title="Clear selection"
           onClick={() => onChange('')}
-          className="absolute right-8 top-5 grid size-6 -translate-y-1/2 place-items-center rounded-md text-on-surface-low transition-colors hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+          className="absolute right-8 top-5 grid size-6 -translate-y-1/2 place-items-center rounded-md text-on-surface-low transition-colors hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
           <X size={14} />
         </button>
       )}

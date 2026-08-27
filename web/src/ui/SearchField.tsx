@@ -73,7 +73,7 @@ const INPUT_CHROME = 'text-on-surface placeholder:text-on-surface-low outline-no
 // carried by the modal context — the shipped palettes drew no per-input ring,
 // and an inset rectangle inside the round row would be new chrome (a redesign
 // of a hero surface), so inline keeps outline-none with no ring.
-const OVERLAY_FOCUS = 'focus:ring-2 focus:ring-inset focus:ring-primary/50'
+const OVERLAY_FOCUS = 'focus:ring-2 focus:ring-inset focus:ring-primary'
 
 /** A spring-pop clear-X (the owner-chosen canonical affordance): a soft circle that
  *  scale-pops in on the first keystroke and out on clear, with a whileTap squish.

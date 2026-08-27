@@ -275,7 +275,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
           <input autoFocus value={nudgeText} onChange={(e) => setNudgeText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') sendNudge() }}
             placeholder="Nudge the design loop — e.g. 'make the brand color warmer'"
-            className="flex-1 h-9 rounded-md bg-surface-high px-3 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="flex-1 h-9 rounded-md bg-surface-high px-3 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           <Button variant="primary" onClick={sendNudge}>Send</Button>
         </div>
       )}
@@ -723,7 +723,7 @@ function CanvasView({ artifacts, loopId }: { artifacts: Artifact[]; loopId: stri
         <div key={a.slug}
           onDragOver={(e) => { if (dragSlug) { e.preventDefault(); if (overSlug !== a.slug) setOverSlug(a.slug) } }}
           onDrop={(e) => { e.preventDefault(); onDrop(a.slug) }}
-          className={`rounded-lg transition-shadow ${overSlug === a.slug && dragSlug !== a.slug ? 'ring-2 ring-primary/50' : ''} ${dragSlug === a.slug ? 'opacity-50' : ''}`}>
+          className={`rounded-lg transition-shadow ${overSlug === a.slug && dragSlug !== a.slug ? 'ring-2 ring-primary' : ''} ${dragSlug === a.slug ? 'opacity-50' : ''}`}>
           <CanvasComponent a={a} draggable={ordered.length > 1}
             onDragStart={() => setDragSlug(a.slug)} onDragEnd={() => { setDragSlug(null); setOverSlug(null) }} />
         </div>

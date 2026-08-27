@@ -2724,7 +2724,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             <input autoFocus aria-label="Rename this chat" value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
               onBlur={commitRename}
               onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') setRenaming(false) }}
-              className="h-8 min-w-[200px] max-w-[420px] rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="h-8 min-w-[200px] max-w-[420px] rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           ) : (
             <div className="flex items-center gap-1.5 min-w-0">
               {/* Back to the chat history list — replaces the separate right-side
@@ -3525,7 +3525,7 @@ function UserEditor({ initial, onSubmit, onCancel }: { initial: string; onSubmit
           if (e.key === 'Escape') { e.preventDefault(); onCancel() }
           else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSubmit(v) }
         }}
-        className="w-full resize-none rounded-2xl bg-surface-container px-5 py-4 text-on-surface text-[1.0625rem] leading-relaxed outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
+        className="w-full resize-none rounded-2xl bg-surface-container px-5 py-4 text-on-surface text-[1.0625rem] leading-relaxed outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
         style={{ maxWidth: 452 }} />
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={onCancel} className="px-3 text-on-surface-low">Cancel</Button>
@@ -4709,12 +4709,12 @@ function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen: () =>
               <p className="text-[0.8125rem] text-on-surface-low">When a turn finishes and you're idle, this message is re-injected into this chat to keep it working on its own.</p>
               <textarea value={msg} onChange={(e) => setMsg(e.target.value)} rows={3} autoFocus
                 placeholder="e.g. Continue toward the goal; if done, write a summary and stop."
-                className="w-full rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+                className="w-full rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary" />
               <div className="flex items-center gap-3 text-[0.8125rem] text-on-surface-var">
                 <label className="flex items-center gap-1">Idle
-                  <input type="number" min={15} value={idle} onChange={(e) => setIdle(Number(e.target.value))} className="w-16 rounded bg-surface-high px-1.5 py-0.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />s</label>
+                  <input type="number" min={15} value={idle} onChange={(e) => setIdle(Number(e.target.value))} className="w-16 rounded bg-surface-high px-1.5 py-0.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />s</label>
                 <label className="flex items-center gap-1">Max cycles
-                  <input type="number" min={0} value={maxCycles} onChange={(e) => setMaxCycles(Number(e.target.value))} className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" /></label>
+                  <input type="number" min={0} value={maxCycles} onChange={(e) => setMaxCycles(Number(e.target.value))} className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" /></label>
               </div>
               {loop && <p className="text-[0.75rem] text-on-surface-low">Active · {loop.cycle_count} cycle(s) fired{loop.max_cycles ? ` / ${loop.max_cycles}` : ''}.</p>}
               <div className="flex justify-end gap-2 mt-1">

@@ -391,7 +391,7 @@ function StrListField({ label, hint, cfg, field, patch }: {
         <input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="Add path…"
           aria-label={`Add to ${label.toLowerCase()}`}
           onKeyDown={(e) => { if (e.key === 'Enter' && adding.trim()) { commit([...list, adding.trim()]); setAdding('') } }}
-          className="h-8 w-40 rounded-md bg-surface-high px-2 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="h-8 w-40 rounded-md bg-surface-high px-2 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         {adding.trim() && (
           <SquareIconButton icon={Plus} iconSize={15} label={`Add ${label.toLowerCase()}`} onClick={() => { commit([...list, adding.trim()]); setAdding('') }} />
         )}

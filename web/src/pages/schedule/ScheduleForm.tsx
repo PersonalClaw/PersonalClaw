@@ -115,7 +115,7 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly }: { draft:
         <div className="flex items-center gap-s">
           <input type="number" min={1} value={draft.intervalValue} onChange={(e) => set('intervalValue', Math.max(1, Number(e.target.value) || 1))}
             name="interval-value" aria-label="Run every — interval count"
-            className="w-24 h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="w-24 h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           <NativeSelect value={draft.intervalUnit} onChange={(v) => set('intervalUnit', v)} options={INTERVAL_UNITS.map((u) => ({ value: u.key, label: u.label }))} label="Run every — interval unit" name="interval-unit" />
         </div>
       )}
@@ -123,7 +123,7 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly }: { draft:
       {draft.kind === 'at' && (
         <input type="datetime-local" value={draft.at} onChange={(e) => set('at', e.target.value)}
           name="run-at" aria-label="Run once at date and time"
-          className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       )}
 
       {/* ── WHAT (omitted in triggerOnly — action is configured separately) ── */}
@@ -222,7 +222,7 @@ function NativeSelect({ value, onChange, options, label, name }: { value: string
   return (
     <div className="relative">
       <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} name={name}
-        className="h-10 appearance-none rounded-md bg-surface-container pl-m pr-9 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
+        className="h-10 appearance-none rounded-md bg-surface-container pl-m pr-9 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
       <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-low pointer-events-none" />
@@ -237,7 +237,7 @@ function CronField({ value, onChange }: { value: string; onChange: (v: string) =
     <div className="flex flex-col gap-s">
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="0 9 * * *"
         name="cron-expression" aria-label="Cron expression (minute hour day-of-month month day-of-week)"
-        className={`w-full h-10 rounded-md bg-surface-container px-m font-mono text-on-surface text-[0.8125rem] outline-none focus:ring-2 ${valid ? 'focus:ring-primary/40' : 'ring-1 ring-danger/50'}`} />
+        className={`w-full h-10 rounded-md bg-surface-container px-m font-mono text-on-surface text-[0.8125rem] outline-none focus:ring-2 ${valid ? 'focus:ring-primary' : 'ring-1 ring-danger/50'}`} />
       <div className="flex flex-wrap gap-1.5">
         {CRON_PRESETS.map((p) => (
           <button key={p.expr} type="button" onClick={() => onChange(p.expr)}

@@ -38,16 +38,22 @@ import { join } from 'node:path'
 // input is `bg-transparent` inside it — ringing the transparent child there would paint a rectangle
 // floating inside the visible field. That split follows the shape already established in this
 // codebase: 45 files use `focus:ring-2`, and `app/Onboarding.tsx`, `settings/bento.tsx` and
-// `ui/forms.tsx` all use exactly `focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50`
+// `ui/forms.tsx` all use exactly `focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary`
 // on the wrapper for the transparent-input idiom.
 
 const SRC = join(process.cwd(), 'src')
 
+// 🔁 THE MANDATED VALUE CHANGED, 2026-08-26. These two regexes used to end in `ring-primary\/50`, so
+// every control "fixed" into this rail — 17 of them — was fixed into a 2.30:1 indicator (measured live
+// on a real `:focus-visible` input; the floor is 3:1). The alpha was the defect, not the ring. Opaque
+// `ring-primary` measures 5.15:1 there and >= 4.00:1 across all 12 schemes x 2 modes x 6 surface tiers.
+// `\b` rather than a new alpha, so this rail can never again pin a specific transparency.
+// The NUMBER is asserted in `focusRingContrast.test.ts`; this file stays a per-site presence check.
 /** A control that is itself the visible box: the ring goes on the control. */
-const ELEMENT_RING = /focus:ring-2\s+focus:ring-inset\s+focus:ring-primary\/50/
+const ELEMENT_RING = /focus:ring-2\s+focus:ring-inset\s+focus:ring-primary\b/
 /** A transparent control inside a box-drawing container: the ring goes on the container. */
 const CONTAINER_RING =
-  /focus-within:ring-2\s+focus-within:ring-inset\s+focus-within:ring-primary\/50/
+  /focus-within:ring-2\s+focus-within:ring-inset\s+focus-within:ring-primary\b/
 
 /** Each entry: the file, a substring identifying the CONTROL, and which treatment its site must
  *  carry. `anchor` is always a distinctive run of the CONTROL's own utilities — never the

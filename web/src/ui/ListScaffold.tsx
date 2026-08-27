@@ -159,7 +159,7 @@ export function ListRow({ index = 0, onClick, children, accent, label }: {
       // `:has(> button:focus-visible)` is deliberately narrower than `focus-within`, which
       // would also light the row when the checkbox or a tag filter inside it takes focus
       // and double-ring with that control's own indicator.
-      className={`group relative flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50' : ''}`}
+      className={`group relative flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary' : ''}`}
     >
       {accent && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: accent }} />}
       {/* The row's tab stop and accessible name, as a real <button> SIBLING of the

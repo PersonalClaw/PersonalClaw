@@ -15,7 +15,7 @@ The canonical usage of each shared primitive + each interaction pattern. Every p
 The one shared single-line input (`TextField`) and multi-line input (`TextArea`). The S1 audit found **no** shared field primitive, so ~200 raw `<input>`s across the app re-rolled the same shape by hand — `TextField` is the canonical extraction of that exact shape (not a redesign).
 
 **Canonical shape (what it renders):**
-`rounded-md · bg-surface-{container|high|base} · h-{8|9|10} · px-3 · text-on-surface · placeholder:text-on-surface-low · outline-none · focus:ring-2 focus:ring-inset focus:ring-primary/50 · disabled:opacity-50`
+`rounded-md · bg-surface-{container|high|base} · h-{8|9|10} · px-3 · text-on-surface · placeholder:text-on-surface-low · outline-none · focus:ring-2 focus:ring-inset focus:ring-primary · disabled:opacity-50`
 
 Keyboard focus = the global `:focus-visible` ring (`design/tokens.css`) **plus** the established inset primary focus ring. Fully token-routed — no hardcoded colors/px.
 

@@ -254,7 +254,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                     // `tabIndex={-1}` retires that nameless stop and `RowHitTarget` puts a real,
                     // named button in its place.
                     tabIndex={-1}
-                    className={`group relative flex items-center gap-l rounded-lg px-l py-l text-left cursor-pointer transition-colors overflow-hidden has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50 ${peekId === c.id ? 'bg-surface-high ring-1 ring-primary/40' : 'bg-surface-container hover:bg-surface-high'}`}
+                    className={`group relative flex items-center gap-l rounded-lg px-l py-l text-left cursor-pointer transition-colors overflow-hidden has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary ${peekId === c.id ? 'bg-surface-high ring-1 ring-primary' : 'bg-surface-container hover:bg-surface-high'}`}
                   >
                     <RowHitTarget label={rowSubject([title])} />
                     {/* running: faint left glow accent */}

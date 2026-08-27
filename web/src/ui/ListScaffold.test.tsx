@@ -147,7 +147,7 @@ describe('ListRow', () => {
     const { container } = render(<ListRow onClick={() => {}} label="Row">Row</ListRow>)
     const have = classOf(container.firstElementChild)
     for (const t of ['has-[>button:focus-visible]:ring-2', 'has-[>button:focus-visible]:ring-inset',
-      'has-[>button:focus-visible]:ring-primary/50']) {
+      'has-[>button:focus-visible]:ring-primary']) {
       expect(have, `missing "${t}"`).toContain(t)
     }
   })
