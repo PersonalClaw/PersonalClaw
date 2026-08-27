@@ -592,6 +592,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   is no longer mistaken for a dead one: it used to be possible to restart work that was perfectly
   fine, which also silently reset the approval window you had granted it.
 
+- **Turning a tool off on the Tools page now turns it off everywhere.** It hid the tool from the agent,
+  which is what it said in the code and what it did. But PersonalClaw has a second way to run a tool,
+  and that one went straight to the provider without ever reading your preferences, so a tool showing a
+  "disabled" chip still ran when something invoked it directly.
+  **The path that mattered is scheduled work.** A cron script reaches its tools through exactly that
+  route, on purpose, so it gets the same set the agent has. It was getting the set *before* your
+  preferences were applied. The realistic version of this bug is a scheduled job quietly using a tool
+  you turned off weeks ago. It is refused now, with a message saying where to re-enable it.
+  **The primitives cannot be locked away by this.** `bash`, file reads and the platform provider are
+  never disableable, and the refusal reuses the same exemption the agent's side already had rather than
+  restating it — so a stray preference row cannot leave a scheduled script unable to run anything.
+
 - **Restarting PersonalClaw quietly moved a chat onto a different agent.** If you had pointed a chat
   at an external coding CLI, or put it in Ask or Plan mode, a restart threw both away and the next
   message you sent ran on the built-in agent instead — with a different set of tools and a different
