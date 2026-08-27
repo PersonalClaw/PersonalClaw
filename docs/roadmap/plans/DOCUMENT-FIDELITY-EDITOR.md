@@ -1177,3 +1177,164 @@ correct URL and returns `200 application/pdf`.
   `_settled_docx_bytes` was KEPT (19 call sites over two files) but its docstring corrected — one
   render is lossless now, so it no longer exists to dodge a margin loss, only to make a page setup
   an explicit fact of the model a test holds.
+
+---
+
+## Execution log — DFE-7 (sheets: styled SheetModel + xlsx parser + grid editor) — **DONE**
+
+- [2026-08-26][S4 · atom `DFE-7`] **DONE.** All three `done_when` clauses hold, each proved by
+  re-parsing the WRITTEN BYTES rather than round-tripping through our own writer. `SheetModel`
+  gained `SheetCell`/`Sheet` (per-cell format, column widths, merges, frozen header, formulas as
+  formulas), `documents/xlsx_parser.py` is the new read half, `documents/sheet_json.py` the strict
+  wire boundary, and `web/src/ui/content/SheetGrid.tsx` the grid editor. `_MODEL_KINDS = ("docx",)`
+  is deleted; `documents/model_codec.py` now owns the kind→(parse, to_dict, from_dict) table and
+  `MODEL_KINDS` is `("docx", "xlsx")`.
+
+- **THE DEFECT IS WORSE THAN THE ATOM SAYS, AND IT IS TWO-DIRECTIONAL — measured, not assumed.**
+  The atom says `"=SUM(A1)"` "is written as a string". Probed against openpyxl 3.1.5: it is not.
+  openpyxl SNIFFS any string starting with `=` into `data_type == "f"`, so the old writer's formula
+  survived *by accident*. The genuine defects were (a) **no parser existed at all**, so a formula
+  could never come back as a formula — `GET …/model` answered 415 for every .xlsx; and (b) the
+  mirror image, which corrupts user data: a LABEL somebody typed as `"=TBD"` was silently promoted
+  to a formula that Excel opens as `#NAME?`, and the model had no way to express it. Both directions
+  are now pinned, and they are each other's vacuity leg — `data_type == "s"` is forced for a literal
+  and `"f"` asserted for a declared formula, so neither guard can pass by coercing everything one way.
+
+- **`value` and `formula` are separate fields, and that separation IS the fix.** No leading-`=`
+  inspection happens anywhere on the server: the writer writes what the model declared, and the
+  parser reads the FILE's own `data_type`. `SheetCell.__post_init__` refuses a `formula` that does
+  not start with `=`, so the field cannot become a second hiding place for a plain label.
+
+- **DEVIATION — no shared loss-report abstraction, by owner ruling mid-session.** I had started
+  extracting `LossList` + the pre-edit gate out of `DocumentEditor.tsx` into a shared component, on
+  the "one lossy-edit contract, not two" reading of the tenets. Ruled against: `DFE-6` is editing
+  that exact file on a branch that is **not on main**, so a "shared" shape would be invented against
+  code nobody can read, and both branches being unmerged means nobody can reconcile it at review
+  time either. `SheetGrid` therefore carries its own `SheetLossList` and its own gate, consuming
+  main's `LossReport` unchanged. **Named so it is not lost: if a real divergence between the docx and
+  xlsx loss stories survives once both branches land, that is a follow-up coherence pass.**
+  `model_codec.py` was kept — it is the route's own per-kind dispatch replacing a hand-kept tuple,
+  not a cross-format loss abstraction.
+
+- **`MODEL_KINDS` is declared, not computed.** Deriving it by calling `get_codec` for every candidate
+  would import both document libraries at module import and throw away the laziness the route wants.
+  The drift it could carry (a kind advertised with no runtime behind it) is closed by
+  `test_every_declared_model_kind_resolves_to_a_codec` plus a vacuity leg asserting `get_codec`
+  can still say no — a capability claim asserted, rather than made true at a cost.
+
+- **FINDING — a date cell was unsaveable, and it is now an honest loss instead.** openpyxl converts a
+  date-formatted number into a real `datetime`, and `SheetCell.value` crosses the wire as JSON, which
+  has no date type — so `sheet_from_dict` would have refused a workbook containing a single date. The
+  parser reduces it to its ISO 8601 string and reports a new `date_value` loss naming the
+  degradation (a re-render writes text, so a reader can no longer sort or subtract it). Writing an
+  ISO-looking string back as a date was refused on principle: that is the same sniffing this atom
+  abolished, with a different pattern to match.
+
+- **`LossItem` gained ONE field, `location`.** A spreadsheet loss belongs at `Sales!C2`, and
+  "block 4" would be a lie. `where` prefers it when set, so every existing .docx loss is
+  byte-identical (empty default) and `to_dict()` is unchanged — zero frontend contract churn.
+  Five sheet kinds were appended to `LOSS_KINDS` (`sheet_feature`, `cell_style`,
+  `formula_cached_value`, `date_value`, `row_height`) rather than opening a second closed
+  vocabulary, because the editing surface renders ONE report for whatever it loaded.
+
+- **The grid follows DFE-5's ratified posture (option (c)) — no new frontend dependency.** A real
+  `<table>` of controlled `<input>`s over the `SheetModel`, no embedded spreadsheet widget, and **no
+  recalculation engine**: a cell showing `=SUM(B2:B9)` shows, edits and saves the expression. A grid
+  that displayed a cached number would be lying about what it is about to save. In the grid a leading
+  `=` DOES mean formula — that is the interface convention, not sniffing, and what makes it safe is
+  that it is overridable both ways from the inspector ("Treat as text" / "Treat as formula"), so
+  `=TBD` is reachable in one click rather than impossible.
+
+- **Two ratchets caught this and were satisfied, never exempted.** (1) The **disabled-reason census**
+  flagged `SheetGrid.tsx:252` — the Format `<Select>` was conditionally disabled with no reason
+  anyone could reach. This was a real defect of the same family a sibling atom found: `Select` was
+  the odd primitive out, lacking the `disabledReason` carrier `Button` has since `unavailable.ts`, so
+  a caller's only options were an unexplained dead control or a wrapper. Added `disabledReason` to
+  `ui/forms.tsx`'s `Select` (applied as `title` only WHILE disabled). (2) The **ui-docs
+  documentation-as-data guard** then failed on the undocumented prop, so `forms.doc.ts` gained its
+  entry plus a best-practice line. Also consumed rather than invented: `EmptyState` (ListScaffold),
+  `Segmented` for the sheet tabs, `MoreRow` for the truncated loss list, and a per-cell
+  `aria-label` of the cell's own ref — a visual column header is not a programmatic name, so without
+  it a screen reader announces an unlabelled text box with no way to say which cell it is on.
+
+- **CLEAN BREAK — `SheetModel.sheets` changed type** from `dict[str, list[list[object]]]` to
+  `list[Sheet]`, with `SheetModel.from_rows({name: rows})` as the plain constructor for callers that
+  have data and no opinion about presentation. Three production call sites in `mcp_artifacts.py`
+  moved; five test sites updated. `Sheet.rows` is a derived PROPERTY, not a stored mirror, so the
+  wire carries cells only — a stored copy is a second representation that goes stale on the first
+  edit. Row-0 bold + freeze moved from the writer into `from_rows`, because presentation the model
+  cannot see is presentation the editor shows as plain and saves as plain.
+
+- **DISCOVERY — the plan's `parsers/xlsx_parser.py` path is wrong, as DFE-4 already recorded for
+  its docx twin.** There is no `documents/parsers/` package; the shipped convention is
+  `documents/<fmt>_parser.py`. Followed the code, not the plan.
+
+- **Falsification.** Three live-line mutations, each grepped back to confirm it applied, red
+  observed, then restored from a file copy at the literal path (SHA-verified, never `git checkout`):
+  (1) `if cell.data_type == "f" and isinstance(...)` → `if False and …` ⇒ **5 reds**, including the
+  headline `test_a_formula_stays_a_formula_through_the_round_trip` and the route-level read-back
+  failing `assert 's' == 'f'` — the formula literally written back as a string, i.e. the atom's
+  defect reproduced; (2) the writer's `target.data_type = "s"` pin → a no-op ⇒
+  `test_a_label_that_looks_like_a_formula_stays_a_label` fails `assert 'f' == 's'`; (3)
+  `if cell.number_format:` → `if cell.number_format and False:` ⇒ **7 reds**, a set disjoint from
+  (1) except the shared route test, which fails on a DIFFERENT assertion
+  (`'General' == '#,##0.00'`). Tree clean after each; 67/67 green on restore.
+
+- **Gates.** `make lint` clean (black 2142 files, isort, flake8, **mypy 1057 source files**) · new
+  `tests/test_sheets.py` **33/33** · `tests/test_artifact_binary_write_api.py` **34/34** (5 new
+  xlsx route tests) · 10 targeted backend suites **263 passed / 0 failed** (incl.
+  `test_config_roundtrip.py` and `test_structural_baseline.py`) · `gate_report.py` **6/6 PASS** ·
+  `npm run typecheck:web` clean · full `npm run test:web` **5443 passed / 507 files / 0 failed**
+  (40 new: 23 `sheetModelEdit` + 17 `sheetGridContract`) · `npm run build` OK ·
+  `~/.personalclaw` unchanged by the run (the suite's own real-home rail reported it clean) ·
+  `config/loader.py` untouched at **5900 lines** (no config field needed — `dashboard.document_editing`
+  already gates this surface) · `docs/design/consistency-audit.json` regenerated by the build and
+  reverted, not committed · no new route, so the offline route reference is unchanged.
+
+- **For DFE-6's rebase.** No file `DFE-6` owns was restructured, but three shared files were touched
+  and all three are additive: `documents/model.py` (sheet dataclasses appended near `SheetModel`,
+  nothing above it changed), `documents/docx_parser.py` (5 kinds appended to the END of `LOSS_KINDS`,
+  plus `LossItem.location` and one `add()` kwarg), and `web/src/ui/content/documentEditing.ts` (an
+  `EDITORS` table; `pptx` still maps to `DocumentEditor`). `DocumentEditor.tsx`,
+  `documentModelEdit.ts` and `model_json.py` are **untouched**. New names are all sheet-prefixed
+  (`SheetCell`, `Sheet`, `sheet_json`, `xlsx_parser`, `model_codec`, `SheetGrid.tsx`,
+  `sheetModelEdit.ts`) so nothing can collide with `documentPage.ts` / `DocumentLayout.tsx`.
+
+- **NOT in this atom, by scope:** `pptx` still has no parser, so `PUT …/model` refuses it and the
+  deck editor is `DFE-8`; the V4 gate's DECK half is therefore still open. Charts, pivot tables,
+  conditional formatting, data validation, borders and row heights are reported, not carried — a
+  richer sheet model is a later decision, not a silent drop. No new runtime dependency: `openpyxl`
+  was already declared in `pyproject.toml` (`>=3.1,<4`) and used by both the xlsx writer and
+  `knowledge/readers.py`.
+
+- **A THIRD ratchet caught a real omission after the fact, and it was right.** CI red:
+  `tests/test_docx_parser.py::test_every_loss_kind_has_a_test`. Appending five kinds to `LOSS_KINDS`
+  broke `sorted(_COVERED_BY) == sorted(LOSS_KINDS)` — the rail whose whole point is that *a loss kind
+  nobody has shown fires is a loss the parser can silently stop reporting*. Satisfied, not weakened.
+  **Measured before fixing: four of the five kinds already had real tests** — `sheet_feature`,
+  `cell_style`, `formula_cached_value` and `date_value` are each asserted in `tests/test_sheets.py`
+  against genuine .xlsx bytes, with `test_a_plain_sheet_is_lossless` as their shared vacuity leg. The
+  rail could not see them because it resolves a name in its **own module's `globals()`**, and
+  `LOSS_KINDS` is one vocabulary spanning two parsers. **`row_height` was the only kind with zero
+  tests anywhere** (`git grep row_height` hit exactly two lines, both in `src/`) — reachable and
+  emitted at `xlsx_parser.py:113`, never exercised.
+  - Written: `test_an_explicit_row_height_is_reported_per_row_and_located_at_that_row` — a workbook
+    where row 1 sets `height = 42` and row 2 does not, asserting `[item.where …] == ["S!1"]`
+    (**one** item, the resized row, located in the sheet's own terms) — so a parser reporting every
+    row it walked fails the *count*, not just the location. Plus an explicit vacuity leg,
+    `test_a_sheet_whose_rows_were_never_resized_reports_no_row_height`, on two rows of real content.
+  - **DEVIATION — the rail's discovery was widened, deliberately, and it got stricter doing it.**
+    `_COVERED_BY` now names tests in either suite (`{**vars(_sheet_suite), **globals()}`, importing
+    `tests.test_sheets` the way `test_guardrails_query_class.py` already imports a sibling suite), and
+    a name must now resolve to a **callable** whose name starts with `test_` — where before a
+    same-named constant or stray import would have satisfied it. ONE registry asserted complete
+    against the whole tuple, rather than a second registry in the sheet suite that could leave a
+    future kind covered by neither. No kind is exempted and nothing is allowlisted.
+  - **Falsification of the two kinds this entry claims.** (1) `xlsx_parser.py:113`'s
+    `"row_height"` → `"sheet_feature"` (grepped back: zero `"row_height"` left in the file) ⇒
+    **exactly one red**, `test_an_explicit_row_height_…` (`assert [] == ['S!1']`); its vacuity leg
+    correctly stayed green, since it asserts absence. (2) `_json_scalar`'s date branch `"date_value"`
+    → `"cell_style"` (grepped back: 2 occurrences → 1) ⇒ **exactly one red**,
+    `test_a_date_format_survives_but_says_its_value_became_text` (`assert ['cell_style'] ==
+    ['date_value']`). Each restored from a file copy at the literal path, SHA-verified, never
+    `git checkout`. The two mutations red **disjoint single tests**, so the kinds discriminate.

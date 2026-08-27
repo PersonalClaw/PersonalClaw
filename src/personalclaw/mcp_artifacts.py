@@ -1098,19 +1098,22 @@ def _document_create(
         sheets = args.get("sheets")
         rows = args.get("rows")
         csv_text = str(args.get("csv") or "")
+        # ``from_rows`` rather than the constructor: the agent supplies DATA, and a raw
+        # value that looks like a formula stays a literal. A cell becomes a formula only
+        # when something declares it one - see SheetCell.
         if isinstance(sheets, dict) and sheets:
-            model = SheetModel(sheets={str(k): list(v or []) for k, v in sheets.items()})
+            model = SheetModel.from_rows({str(k): list(v or []) for k, v in sheets.items()})
         elif isinstance(rows, list) and rows:
-            model = SheetModel(sheets={"Sheet1": [list(r) for r in rows]})
+            model = SheetModel.from_rows({"Sheet1": [list(r) for r in rows]})
         elif csv_text.strip():
-            # Annotated as list[object] rows: SheetModel preserves cell TYPES, so its
+            # Annotated as list[object] rows: SheetCell preserves cell TYPES, so its
             # row type is invariant-unfriendly to a narrower list[str].
             parsed: list[list[object]] = [
                 [c.strip() for c in line.split(",")]
                 for line in csv_text.replace("\r\n", "\n").split("\n")
                 if line.strip()
             ]
-            model = SheetModel(sheets={"Sheet1": parsed})
+            model = SheetModel.from_rows({"Sheet1": parsed})
         else:
             _audit("denied", error="no sheet input")
             return "Error: provide sheets, rows, or csv."

@@ -14,7 +14,9 @@ The two claims this suite exists to hold:
    DIFFERENT order — without that companion the order assertion could pass vacuously.
 2. **Every unrepresentable construct is named.** `_COVERED_BY` maps every member of
    `LOSS_KINDS` to the test that exercises it, and `test_every_loss_kind_has_a_test`
-   reds when a kind is added without one.
+   reds when a kind is added without one. `LOSS_KINDS` is shared with the .xlsx parser,
+   so that registry names tests in `tests/test_sheets.py` too — one registry covering the
+   whole tuple, because two would let a kind fall between them.
 """
 
 from __future__ import annotations
@@ -42,6 +44,12 @@ from personalclaw.documents.model import (
     Run,
 )
 from personalclaw.documents.writers.docx_writer import render_docx
+
+# `LOSS_KINDS` is ONE vocabulary shared by the .docx and .xlsx parsers (see the comment on
+# the tuple itself), so the spreadsheet kinds are exercised by the spreadsheet suite. The
+# coverage rail below reads that module's namespace so a single registry can still be
+# asserted complete against the whole tuple — two registries could leave a kind in neither.
+from tests import test_sheets as _sheet_suite
 
 _W = nsdecls("w")
 #: VML is not in python-docx's namespace map, so a legacy shape's declaration is spelled
@@ -1029,10 +1037,24 @@ _COVERED_BY = {
     "heading_level_clamped": "test_a_heading_deeper_than_the_model_allows_is_reported",
     "multi_paragraph_cell": "test_table_hazards_each_add_their_own_item",
     "inline_page_break": "test_an_inline_page_break_is_reported",
+    # ── spreadsheet kinds — exercised in tests/test_sheets.py ──────────────────────────
+    "sheet_feature": "test_a_sheet_feature_the_model_cannot_hold_is_reported_not_dropped",
+    "cell_style": "test_a_cell_style_with_no_model_field_is_reported",
+    "formula_cached_value": "test_a_formula_reports_that_its_cached_result_is_not_carried",
+    "date_value": "test_a_date_format_survives_but_says_its_value_became_text",
+    "row_height": "test_an_explicit_row_height_is_reported_per_row_and_located_at_that_row",
 }
 
 
 def test_every_loss_kind_has_a_test():
     assert sorted(_COVERED_BY) == sorted(LOSS_KINDS)
-    missing = [name for name in set(_COVERED_BY.values()) if name not in globals()]
+    # A name must resolve to a callable in one of the two suites that own the vocabulary's
+    # producers — stricter than a bare namespace membership check, which a same-named
+    # constant or an accidental import would have satisfied.
+    known = {**vars(_sheet_suite), **globals()}
+    missing = [
+        name
+        for name in set(_COVERED_BY.values())
+        if not callable(known.get(name)) or not name.startswith("test_")
+    ]
     assert missing == [], f"_COVERED_BY names tests that do not exist: {missing}"

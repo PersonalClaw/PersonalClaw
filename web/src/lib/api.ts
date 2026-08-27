@@ -3985,6 +3985,44 @@ export interface DocumentModelResponse {
   model: DocumentModelJson; loss: DocumentLossReport
 }
 
+// ── the spreadsheet model (DOCUMENT-FIDELITY-EDITOR T4.1) ────────────────────
+// Mirrors `personalclaw/documents/model.py`'s sheet half field for field, and every
+// field is REQUIRED here for `DocumentModelJson`'s reason: this shape is posted BACK and
+// `sheet_from_dict` is strict, so a field the UI forgot to echo is a dropped format.
+//
+// `value` and `formula` are SEPARATE, and that is the fidelity: a cell holds either a
+// literal or an expression, and the file format distinguishes them. A single text field
+// would force a guess, and the guess is wrong in both directions — `"=SUM(A1)"` typed as
+// a label becomes a formula, and a label like `"=TBD"` becomes `#NAME?` in Excel.
+// `value` is the cached result when `formula` is set (usually null: the parse keeps
+// formulas rather than cached values, and says so in the loss report).
+export interface SheetCellJson {
+  value: string | number | boolean | null
+  formula: string
+  number_format: string
+  bold: boolean
+  italic: boolean
+  font_color: string
+  fill: string
+  align: string
+}
+/** One sheet. `column_widths` is dense and index-aligned (0 = the writer's default), and
+ *  `merges` are A1-notation refs because that is what the format and a person both use.
+ *  There is no `rows` here on purpose — the server derives the plain view from the cells,
+ *  so the wire carries one representation of a cell and it cannot go stale. */
+export interface SheetJson {
+  name: string
+  cells: SheetCellJson[][]
+  column_widths: number[]
+  merges: string[]
+  frozen_header: boolean
+}
+export interface SheetModelJson { sheets: SheetJson[] }
+export interface SheetModelResponse {
+  slug: string; kind: string; version: number; mime: string
+  model: SheetModelJson; loss: DocumentLossReport
+}
+
 /** One deployed artifact (PEP-8). `url` is the stable in-gateway path the artifact is
  *  served at — always `/artifacts/serve/<slug>/`, never a public URL: local-only
  *  deploy, so it is reachable exactly to whoever holds a dashboard session. */
@@ -6310,6 +6348,18 @@ export const api = {
   // so this is spelled out with `fetch` — the shared `put` helper carries no headers.
   artifactModel: (slug: string) => get<DocumentModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
   saveArtifactModel: (slug: string, version: number, model: DocumentModelJson) =>
+    fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },
+      body: JSON.stringify({ model }),
+    }).then(j<{ slug: string; version: number; mime: string }>),
+  // The SAME two routes for a spreadsheet — one endpoint pair, the kind decides which
+  // model shape crosses it (`documents/model_codec.py`). Separate accessors rather than a
+  // union return, so the caller that knows it opened an .xlsx is not made to narrow a type
+  // it already knows: a `DocumentModelJson | SheetModelJson` would push a `'blocks' in m`
+  // check into every editor, which is a discriminator the URL already carries.
+  artifactSheetModel: (slug: string) => get<SheetModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
+  saveArtifactSheetModel: (slug: string, version: number, model: SheetModelJson) =>
     fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },

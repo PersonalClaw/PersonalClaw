@@ -195,6 +195,15 @@ LOSS_KINDS = (
     "heading_level_clamped",
     "multi_paragraph_cell",
     "inline_page_break",
+    # ── spreadsheet kinds (documents/xlsx_parser.py) ──────────────────────────
+    # A sheet's losses share this vocabulary rather than opening a second one: the
+    # editing surface renders ONE loss report for whatever document it loaded, and two
+    # closed vocabularies would mean two report shapes for one component to branch on.
+    "sheet_feature",
+    "cell_style",
+    "formula_cached_value",
+    "date_value",
+    "row_height",
 )
 
 
@@ -216,6 +225,11 @@ class LossItem:
     #: paragraph-scoped. Kept alongside `block_index` because several paragraphs can
     #: collapse into one block, and "which bullet" is the answer a user needs.
     paragraph_ordinal: int = -1
+    #: A format-native locator for a document whose structure is not blocks-and-
+    #: paragraphs — a spreadsheet says ``"Sales!C2"``, and "block 4" would be a lie.
+    #: ``""`` means "use the block/paragraph indices", which is every .docx loss, so this
+    #: field changes nothing for the docx parser that has always been the only caller.
+    location: str = ""
 
     def __post_init__(self) -> None:
         if self.kind not in LOSS_KINDS:
@@ -223,6 +237,8 @@ class LossItem:
 
     @property
     def where(self) -> str:
+        if self.location:
+            return self.location
         parts = []
         if self.block_index >= 0:
             parts.append(f"block {self.block_index}")
@@ -247,6 +263,7 @@ class LossReport:
         *,
         block_index: int = -1,
         paragraph_ordinal: int = -1,
+        location: str = "",
     ) -> None:
         self.items.append(
             LossItem(
@@ -254,6 +271,7 @@ class LossReport:
                 detail=detail,
                 block_index=block_index,
                 paragraph_ordinal=paragraph_ordinal,
+                location=location,
             )
         )
 

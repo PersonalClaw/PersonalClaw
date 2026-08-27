@@ -346,12 +346,13 @@ async def api_artifact_raw(request: web.Request) -> web.Response:
 # last two are why the browser never constructs OOXML: the only thing that crosses the
 # wire for an edit is the model.
 
-#: Artifact kinds with a shipped bytes→model→bytes round trip. A kind joins this tuple
-#: when BOTH its parser and its writer exist — never before. Listing a kind whose parser
-#: is missing would answer ``GET …/model`` with an empty model, and an empty model reads
+#: Artifact kinds with a shipped bytes→model→bytes round trip. A kind is listed when BOTH
+#: its parser and its writer exist — never before. Advertising a kind whose parser is
+#: missing would answer ``GET …/model`` with an empty model, and an empty model reads
 #: exactly like an empty document, so the editor would offer to save the user's file away.
-#: DFE-3 shipped the .docx parser; xlsx/pptx/pdf have writers but no parser yet.
-_MODEL_KINDS = ("docx",)
+#: The list lives with the codecs (``documents/model_codec.py``) rather than here, so the
+#: route cannot claim a capability the documents package does not have. DFE-3 shipped the
+#: .docx parser and DFE-7 the .xlsx one; pptx/pdf have writers but no parser yet.
 
 
 def _binary_target(
@@ -591,15 +592,17 @@ def _model_target(
     request: web.Request, prov: Any, slug: str
 ) -> tuple[Artifact | None, web.Response | None]:
     """Resolve *slug* as an artifact with an editable document model, or the refusal."""
+    from personalclaw.documents.model_codec import MODEL_KINDS
+
     art, refusal = _binary_target(request, prov, slug)
     if refusal is not None or art is None:
         return None, refusal or json_error("not_found", status=404)
-    if art.kind not in _MODEL_KINDS:
+    if art.kind not in MODEL_KINDS:
         return None, json_error(
             "model_unavailable",
             message=f"no document model ships for kind {art.kind!r}",
             status=415,
-            error_extra={"kind": art.kind, "model_kinds": list(_MODEL_KINDS)},
+            error_extra={"kind": art.kind, "model_kinds": list(MODEL_KINDS)},
         )
     return art, None
 
@@ -608,9 +611,10 @@ async def api_artifact_model(request: web.Request) -> web.Response:
     """GET /api/artifacts/{slug}/model — the parsed document model + its loss report.
 
     The editor's READ half (§C4): the browser receives structure — blocks, runs, cells,
-    page setup — and never a byte of OOXML. The parse is the SAME shipped
-    ``documents.docx_parser.parse_docx`` that DFE-3's round-trip proof pins; a second
-    parser here would be a second fidelity story, and only one of them would be tested.
+    page setup; sheets, cells, formulas — and never a byte of OOXML. The parse is the SAME
+    shipped parser the round-trip proofs pin (``docx_parser.parse_docx`` /
+    ``xlsx_parser.parse_xlsx``, resolved by kind); a second parser here would be a second
+    fidelity story, and only one of them would be tested.
 
     Not redacted, unlike ``/extract``'s preview. This is an EDIT surface: whatever came
     back has to be what gets written again, and a redacted model saved back would
@@ -618,8 +622,7 @@ async def api_artifact_model(request: web.Request) -> web.Response:
     these same bytes to this same browser unredacted, so there is nothing withheld here
     that is not already available one route over.
     """
-    from personalclaw.documents.docx_parser import parse_docx
-    from personalclaw.documents.model_json import document_to_dict
+    from personalclaw.documents.model_codec import get_codec
 
     prov = _provider(request)
     if prov is None:
@@ -628,6 +631,13 @@ async def api_artifact_model(request: web.Request) -> web.Response:
     art, refusal = _model_target(request, prov, slug)
     if refusal is not None or art is None:
         return refusal or json_error("not_found", status=404)
+    codec = get_codec(art.kind)
+    if codec is None:  # unreachable while MODEL_KINDS agrees with the codec table
+        return json_error(
+            "model_unavailable",
+            message=f"no document model ships for kind {art.kind!r}",
+            status=415,
+        )
     try:
         result = prov.raw_bytes(slug)
     except ValueError:
@@ -638,7 +648,7 @@ async def api_artifact_model(request: web.Request) -> web.Response:
     try:
         # Parsing walks a zip + the whole document tree; off the event loop like every
         # other CPU-bound artifact operation.
-        model, loss = await asyncio.to_thread(parse_docx, data)
+        model, loss = await asyncio.to_thread(codec.parse, data)
     except Exception:  # noqa: BLE001 — an unparseable document is a 400, not a 500
         logger.info("artifact model parse failed for %s", slug, exc_info=True)
         return json_error(
@@ -652,7 +662,7 @@ async def api_artifact_model(request: web.Request) -> web.Response:
             "kind": art.kind,
             "version": art.version,
             "mime": mime,
-            "model": document_to_dict(model),
+            "model": codec.to_dict(model),
             "loss": loss.to_dict(),
         }
     )
@@ -676,7 +686,7 @@ async def api_artifact_model_write(request: web.Request) -> web.Response:
     off closes the path on the very next save rather than at the next restart.
     """
     from personalclaw.config import AppConfig
-    from personalclaw.documents.model_json import document_from_dict
+    from personalclaw.documents.model_codec import get_codec
     from personalclaw.documents.registry import get_writer
 
     state = request.app["state"]
@@ -711,7 +721,8 @@ async def api_artifact_model_write(request: web.Request) -> web.Response:
         _audit(request, "artifact.model_write", "denied", f"slug={slug} if_match")
         return refusal or json_error("if_match_required", status=428)
     writer = get_writer(art.kind)
-    if writer is None:
+    codec = get_codec(art.kind)
+    if writer is None or codec is None:
         return json_error(
             "model_unavailable",
             message=f"no writer is available for kind {art.kind!r} in this build",
@@ -724,7 +735,7 @@ async def api_artifact_model_write(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return json_error("invalid_body", status=400)
     try:
-        model = document_from_dict(body.get("model"))
+        model = codec.from_dict(body.get("model"))
     except ValueError as exc:
         return json_error("invalid_model", message=str(exc), status=400)
     try:

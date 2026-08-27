@@ -15,15 +15,28 @@
  *  ignores this — or an older bundle — still cannot reach the lossy re-render. This layer
  *  is what stops the UI from OFFERING an edit that would be refused.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ComponentType } from 'react'
 import { api } from '../../lib/api'
-import { getContentType, registerContentType } from './contentTypes'
+import { getContentType, registerContentType, type DocumentEditorProps } from './contentTypes'
 import { DocumentEditor } from './DocumentEditor'
+import { SheetGrid } from './SheetGrid'
 
-/** The types whose editor this flag governs. `xlsx`/`pptx` are listed because they are
- *  office documents the same switch is about — they mount the same editor, which shows
- *  their blocks and refuses to invent structure it cannot round-trip. DFE-7/DFE-8 replace
- *  it with a grid / slide editor. */
+/** The types whose editor this flag governs, each with the editor it mounts.
+ *
+ *  A spreadsheet is not a flowing document — it has no blocks to show — so `xlsx` mounts
+ *  the GRID (DFE-7) rather than the block editor. `pptx` is still listed because the same
+ *  switch is about it, and it keeps the document editor until `DFE-8` gives it a slide
+ *  editor; the server refuses its model writes anyway (`MODEL_KINDS` has no parser for it),
+ *  so the flag governing it here is the UI half of a refusal that already holds.
+ *
+ *  A table rather than a branch inside `setDocumentEditing`, so "which editor does this
+ *  type get?" has exactly one answer to read. */
+const EDITORS: Record<string, ComponentType<DocumentEditorProps>> = {
+  docx: DocumentEditor,
+  xlsx: SheetGrid,
+  pptx: DocumentEditor,
+}
+
 export const DOCUMENT_EDITING_TYPE_IDS = ['docx', 'xlsx', 'pptx'] as const
 
 let current = false
@@ -35,7 +48,7 @@ export function setDocumentEditing(on: boolean): void {
     const type = getContentType(id)
     if (!type) continue
     if (on && !type.edit) {
-      registerContentType({ ...type, edit: { language: 'plaintext', render: DocumentEditor } })
+      registerContentType({ ...type, edit: { language: 'plaintext', render: EDITORS[id] ?? DocumentEditor } })
     } else if (!on && type.edit) {
       const { edit: _dropped, ...rest } = type
       registerContentType(rest)

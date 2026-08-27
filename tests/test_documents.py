@@ -50,7 +50,7 @@ def test_format_lookup_is_case_insensitive():
 
 def test_a_writer_rejects_the_wrong_model_type():
     with pytest.raises(TypeError):
-        get_writer("docx")(SheetModel(sheets={"a": []}))
+        get_writer("docx")(SheetModel.from_rows({"a": []}))
     with pytest.raises(TypeError):
         get_writer("xlsx")(DocumentModel(title="x"))
 
@@ -193,7 +193,7 @@ def test_a_generated_xlsx_re_reads_with_numbers_still_numeric(tmp_path):
     point of generating one."""
     from openpyxl import load_workbook
 
-    model = SheetModel(sheets={"Sales": [["Region", "Q1"], ["EMEA", 120], ["APAC", 99.5]]})
+    model = SheetModel.from_rows({"Sales": [["Region", "Q1"], ["EMEA", 120], ["APAC", 99.5]]})
     path, _ = _write(tmp_path, "xlsx", model)
 
     text, meta = FileReader().read(str(path))
@@ -210,7 +210,7 @@ def test_xlsx_preserves_bool_distinctly_from_int(tmp_path):
     as 1 and lose the distinction the model preserves deliberately."""
     from openpyxl import load_workbook
 
-    path, _ = _write(tmp_path, "xlsx", SheetModel(sheets={"S": [["flag"], [True]]}))
+    path, _ = _write(tmp_path, "xlsx", SheetModel.from_rows({"S": [["flag"], [True]]}))
     assert load_workbook(path)["S"]["A2"].value is True
 
 
@@ -218,7 +218,7 @@ def test_xlsx_sanitizes_illegal_sheet_names_and_dedupes(tmp_path):
     """Excel refuses some names outright; a rejected name would fail the whole write."""
     from openpyxl import load_workbook
 
-    model = SheetModel(sheets={"a/b:c*d?e[f]": [["x"]], "x" * 40: [["y"]]})
+    model = SheetModel.from_rows({"a/b:c*d?e[f]": [["x"]], "x" * 40: [["y"]]})
     path, _ = _write(tmp_path, "xlsx", model)
 
     names = load_workbook(path).sheetnames
@@ -229,7 +229,7 @@ def test_xlsx_sanitizes_illegal_sheet_names_and_dedupes(tmp_path):
 def test_an_empty_sheet_model_still_produces_a_valid_workbook(tmp_path):
     from openpyxl import load_workbook
 
-    path, _ = _write(tmp_path, "xlsx", SheetModel(sheets={}))
+    path, _ = _write(tmp_path, "xlsx", SheetModel.from_rows({}))
     assert load_workbook(path).sheetnames  # a workbook with zero sheets is invalid
 
 

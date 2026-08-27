@@ -18,7 +18,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `DFE-4` | ✅ | Binary artifact write path + model read/render endpoints | `DFE-3` | a stale If-Match is refused 409; an oversized body is refused before buffering; a mime/kind mismatch is refused; an accepted write bumps exactly one version and logs one SEL row with byte count; GET /model returns parsed model + loss report and the render round trip is fully server-side (browser never sees OOXML); offline route reference regenerated. |
 | `DFE-5` | ✅ | Editing surface: non-Monaco renderer slot, the model editor, lossy-edit contract, config | `DFE-4` | every existing content type still renders Monaco (asserted); an office type mounts the new editor; a user bolds a word, saves, and the downloaded file opens bold in Word (read-back); a lossy doc warns before edit and at save-confirm and revert restores pre-edit bytes exactly (byte-compare); test_config_roundtrip green and document_editing=off restores today's read-only preview. V2 gate holds (incl. two-tab race → 409, not silent loss). |
 | `DFE-6` | 🟡 | Layout control: page setup, paragraph layout, headers/footers, page-geometry preview | `DFE-5` | A4 landscape with 2cm margins round-trips correctly on python-docx read-back; alignment/space-before-after/line-spacing/indents/keep-with-next each round-trip and the editor's controls reflect the loaded document's real values (not defaults); a header round-trips and one the model can't represent is reported not dropped; the geometry preview reflects configured size/margins and is labelled an approximation. V3 gate holds. |
-| `DFE-7` | ⬜ | Sheets: styled SheetModel + xlsx parser + grid editor (formulas stay formulas) | `DFE-5` | a formula stays a formula through the round trip (today "=SUM(A1)" is written as a string); a cell edit + a number format survive download/read-back. V4 gate (sheet half) holds. |
+| `DFE-7` | 🟡 | Sheets: styled SheetModel + xlsx parser + grid editor (formulas stay formulas) | `DFE-5` | a formula stays a formula through the round trip (today "=SUM(A1)" is written as a string); a cell edit + a number format survive download/read-back. V4 gate (sheet half) holds. |
 | `DFE-8` | ⬜ | Decks: DeckModel/Slide layout+geometry+bullet levels + pptx parser + slide editor | `DFE-5` | bullet depth round-trips (the writer hardcodes level=0 today); a slide edit survives download/read-back. V4 gate (deck half) holds. |
 
 ## Atom scopes
@@ -75,7 +75,7 @@ Session 3 T3.1–T3.4; PageSetup/ParagraphStyle model→docx writer→parser→e
 
 ### `DFE-7` — Sheets: styled SheetModel + xlsx parser + grid editor (formulas stay formulas)
 
-**Status:** todo
+**Status:** implementation landed (see the plan's execution log); `dag.json` still `todo`
 
 Session 4 T4.1–T4.2; SheetModel per-cell format (font/fill/number-format/alignment), column widths, merges, formulas-as-formulas; parsers/xlsx_parser.py; the sheet grid editor over the model
 
