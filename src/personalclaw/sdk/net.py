@@ -7,6 +7,13 @@ extraction pipeline: ``web_fetch``/``web_extract`` + ``record_seen_urls`` proven
 Generic, provider-agnostic infrastructure a web-capable app/tool builds on.
 """
 
+# EXTERNAL-ACCESS §5 (EA-8): the egress posture for an OUTBOUND A2A call, promoted here so
+# the `a2a-action` app can USE the policy without composing one. That split is deliberate and
+# is the whole reason this export exists: `outbound_policy` is `allow_only=True`
+# (deny-by-default — an empty allow-list reaches NOWHERE), which an app free to build its own
+# `EgressPolicy` could quietly relax to the additive `egress_policy_for(CONNECTOR)` shape that
+# reaches every public host. The app supplies a URL; core decides where a URL may point.
+from personalclaw.inbound.a2a import outbound_policy as a2a_outbound_policy  # noqa: F401
 from personalclaw.net import (  # noqa: F401
     CONNECTOR,
     SYNC,
@@ -51,4 +58,7 @@ __all__ = [
     "web_fetch",
     "web_extract",
     "record_seen_urls",
+    # EA-8: see the import comment above — exported so `a2a-action` consumes core's
+    # deny-by-default posture instead of composing its own.
+    "a2a_outbound_policy",
 ]

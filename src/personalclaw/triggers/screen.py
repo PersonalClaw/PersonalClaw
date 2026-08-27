@@ -515,6 +515,36 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # this opt-in: the proposer's edits are already on disk by the time the re-diff runs, so
         # what the gate protects is whether we BELIEVE the result, not whether files were written.
         "second-opinion",
+        # EA-8 (outbound half): `a2a-call` hands a task to an external agent over the network.
+        # Fail-closed already answers this one correctly — `provider_is_read_only` returns False
+        # for any unclassified name — but the classification is stated rather than inferred
+        # because the honest reason is specific: a delivered A2A task is IRREVERSIBLE in a way
+        # no local write is. There is no un-send, the remote side may bill and act on it, and the
+        # response is attacker-controlled text this fence exists to screen. Note `webhook`, the
+        # app-delivered precedent, is absent from both sets and rides the fail-closed default;
+        # naming this one is the house rule applied, not a behavior change.
+        "a2a-call",
+    }
+)
+
+
+# Classified ids whose provider ships in a first-party APP BUNDLE rather than core's
+# registry. `list_action_providers()` cannot see these — an app is installed separately, and
+# core's test suite installs none — so their absence from the registry is expected and is NOT
+# the "entry that fences nothing" the phantom-id rail exists to catch.
+#
+# This set exists because the rail was written for core-native providers and read every
+# unregistered classified id as misleading. Its motivating case really was misleading:
+# `knowledge-maintain` was a MODULE name that no provider answered to. An app-delivered id is
+# the opposite — a real provider, reachable the moment its bundle is installed. Conflating the
+# two would force app-delivered providers to stay UNCLASSIFIED to keep the rail green, which
+# is how `webhook` ended up in neither table: not a decision, just the only way to pass. That
+# leaves the most consequential providers as the only unreviewable ones, inverting the point
+# of a table whose whole value is being greppable in one place.
+APP_DELIVERED_PROVIDERS: frozenset[str] = frozenset(
+    {
+        # EA-8: the provider lives in PersonalClawApps as `a2a-action`.
+        "a2a-call",
     }
 )
 

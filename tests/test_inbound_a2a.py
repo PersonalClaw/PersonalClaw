@@ -734,12 +734,16 @@ class TestHookProviderAllowlist:
     """The clause is "or hook create/update rejects it", so both directions are asserted.
 
     ``webhook`` is the positive control and is exactly the precedent §5 names: an
-    APP-delivered provider whose NAME lives in core's allowlist. ``a2a-call`` is the
-    negative: it is deliberately NOT in the set on this branch, because the provider it
-    would name ships in the ``PersonalClawApps`` repo and a listed-but-undispatchable
-    name is worse than an absent one (a trigger that validates, saves, then fails at fire
-    time). This test is the executable statement of that state — when the app lands,
-    ``a2a-call`` moves from the reject list to the accept list and the assertion flips.
+    APP-delivered provider whose NAME lives in core's allowlist. ``a2a-call`` is now the
+    SECOND instance of that same shape: the ``a2a-action`` bundle ships in the
+    ``PersonalClawApps`` repo, so the name is on the accept side here.
+
+    🔴 The two repos cannot land in one commit, so this class encodes a MERGE ORDER, not
+    just a state: the apps bundle must merge FIRST. An app without the core line is merely
+    unreachable — inert, no user-visible failure. The core line without the app is a hook
+    that validates, saves, and then fails at fire time, which is the worse defect of the
+    two. The negative control below therefore uses a name nothing will ever register,
+    rather than borrowing a real provider that a later atom will ship.
     """
 
     @staticmethod
@@ -774,11 +778,33 @@ class TestHookProviderAllowlist:
         assert ok is True, error
         assert cleaned is not None and cleaned["provider"] == "webhook"
 
-    def test_an_unregistered_provider_is_rejected_by_name(self):
+    def test_a2a_call_is_accepted_now_that_the_app_ships_it(self):
+        """The flip this class's docstring promised: ``a2a-call`` is on the accept side.
+
+        It is now the same shape as ``webhook`` directly above — an app-delivered provider
+        whose NAME lives in core's allowlist — because the ``a2a-action`` bundle exists in
+        PersonalClawApps. This assertion is what makes the core half of EA-8 unsafe to land
+        alone: if it passes while the bundle is absent, a hook naming ``a2a-call`` validates,
+        saves, and then fails at fire time.
+        """
         from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
 
-        assert "a2a-call" not in ALLOWED_HOOK_PROVIDERS
-        ok, _cleaned, error = self._validate("a2a-call")
+        assert "a2a-call" in ALLOWED_HOOK_PROVIDERS
+        ok, cleaned, error = self._validate("a2a-call")
+        assert ok is True, error
+        assert cleaned is not None and cleaned["provider"] == "a2a-call"
+
+    def test_an_unlisted_provider_is_still_rejected_by_name(self):
+        """The reject side did not disappear when ``a2a-call`` moved off it.
+
+        Kept with a name nothing will ever register, so the negative control cannot be
+        invalidated a second time by a later atom shipping the provider it names — which is
+        exactly what just happened to the previous version of this test.
+        """
+        from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
+
+        assert "a2a-call-not-a-provider" not in ALLOWED_HOOK_PROVIDERS
+        ok, _cleaned, error = self._validate("a2a-call-not-a-provider")
         assert ok is False
         assert "provider" in error
 
@@ -790,15 +816,59 @@ class TestHookProviderAllowlist:
         allowlist. Same payload, same call, only the provider name differs, and the reject
         must cite the ``provider`` field specifically.
         """
-        accepted_ok, _c, _e = self._validate("webhook")
-        rejected_ok, _c2, reason = self._validate("a2a-call")
+        accepted_ok, _c, _e = self._validate("a2a-call")
+        rejected_ok, _c2, reason = self._validate("a2a-call-not-a-provider")
         assert accepted_ok is True and rejected_ok is False
         assert "provider" in reason
-        # Both payloads are otherwise IDENTICAL — proven, not asserted by eye.
-        a, b = self._payload("webhook"), self._payload("a2a-call")
+        # Both payloads are otherwise IDENTICAL — proven, not asserted by eye. The accepted
+        # name is a PREFIX of the rejected one on purpose: it proves the allowlist matches
+        # whole names, not substrings, so the reject is not an accident of spelling.
+        a, b = self._payload("a2a-call"), self._payload("a2a-call-not-a-provider")
         assert {k: v for k, v in a.items() if k != "provider"} == {
             k: v for k, v in b.items() if k != "provider"
         }
+
+
+class TestOutboundProviderIsClassifiedAndReachable:
+    """The two gates a NEW action provider trips that its own tests never see.
+
+    Both are full-suite-only in their usual homes, and both are cross-repo here: the
+    provider itself is in PersonalClawApps, so nothing in this repo can import it. What
+    core owns is the NAME's classification and the POLICY the app is required to use, and
+    those are what is asserted.
+    """
+
+    def test_a2a_call_is_write_capable_not_read_only(self):
+        """It delivers a task to somebody else's agent. There is no un-send."""
+        from personalclaw.triggers.screen import (
+            READ_ONLY_PROVIDERS,
+            WRITE_CAPABLE_PROVIDERS,
+            provider_is_read_only,
+        )
+
+        assert "a2a-call" in WRITE_CAPABLE_PROVIDERS
+        assert "a2a-call" not in READ_ONLY_PROVIDERS
+        assert provider_is_read_only("a2a-call") is False
+        # The disjointness the sibling fence asserts, restated for the name added here.
+        assert not (READ_ONLY_PROVIDERS & WRITE_CAPABLE_PROVIDERS)
+
+    def test_the_app_can_reach_the_policy_without_breaching_the_boundary(self):
+        """`a2a-action` may only import `personalclaw.sdk.*`, so the policy must be there.
+
+        Without this export the app's only options are to reach into
+        ``personalclaw.inbound.a2a`` (which the import-boundary lint rejects) or to compose
+        its own ``EgressPolicy`` — and a self-composed policy is free to be the permissive
+        ``egress_policy_for(CONNECTOR)`` shape that reaches every public host. The export is
+        what makes "core decides where a URL may point" enforceable rather than advisory.
+        """
+        from personalclaw.inbound.a2a import outbound_policy
+        from personalclaw.sdk.net import a2a_outbound_policy
+
+        assert a2a_outbound_policy is outbound_policy
+        policy = a2a_outbound_policy()
+        # Deny-by-default, restated at the surface the APP consumes — not just at core's.
+        assert policy.allow_only is True
+        assert policy.allow_hosts == ()
 
 
 # ── 5. deny-by-default egress ─────────────────────────────────────────────────
