@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { MoreRow } from '../../../ui/MoreRow'
-import { CalendarClock, ChevronDown, ChevronRight } from 'lucide-react'
+import { CalendarClock, ChevronDown, ChevronRight, Plus } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
 import { statusMeta, relPast, relFuture } from '../../schedule/scheduleMeta'
 import { epochSeconds } from '../../../lib/epoch'
-import { SlotEmptyState, WidgetRow, StatusDot } from './kit'
+import { SlotEmptyState, SlotAction, WidgetRow, StatusDot } from './kit'
 import { partitionRuns } from './scheduleFold'
 import { Button } from '../../../ui/Button'
 import type { RouteProps } from '../../../app/useQueryState'
@@ -37,7 +37,25 @@ export function ScheduleWidget({ navigate }: RouteProps) {
   const [showSuppressed, setShowSuppressed] = useState(false)
 
   if (schedule.length === 0) {
-    return <SlotEmptyState icon={CalendarClock}>No recent scheduled runs.</SlotEmptyState>
+    // 🔴 THE ONE SLOT ON THE FIRST SCREEN THAT TAUGHT NOTHING. Measured on a fresh install
+    // (`#/dashboard`, 1440×1000, empty home past onboarding): seven slot-empty states render, and
+    // six either name the mechanism that fills them — "Loops you launch appear here as they run",
+    // "Pin one from its page to keep it here", "One loads on its first use", "they build from your
+    // activity" — or are a finished verdict ("All clear — nothing waiting on you."). This one was a
+    // bare fact with no mechanism and no step, on the surface a newcomer sees first.
+    //
+    // Both halves are borrowed rather than invented: the sentence takes ActiveWork's shape and the
+    // product's own verb for a trigger run (`WeekGridView`'s "No fires this week", this file's
+    // "suppressed by a gate"), and the on-ramp takes the label shipped by `TriggersListPage`'s top
+    // bar and `TriggerCreatePage`'s title — "New trigger" — routed to the same `triggers/new` the
+    // Triggers empty state's own "Start from scratch" opens. The widget already navigates to
+    // `triggers`, so this adds no new destination.
+    return (
+      <SlotEmptyState
+        icon={CalendarClock}
+        action={<SlotAction icon={Plus} onClick={() => navigate('triggers/new')}>New trigger</SlotAction>}
+      >No recent scheduled runs. Triggers you set up appear here as they fire.</SlotEmptyState>
+    )
   }
 
   // 🔴 §1.3's ARCHIVE SPLIT as a FOLD (WF2AUT-10). The backend has returned `did_ids` since S132;

@@ -408,11 +408,29 @@ def test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen():
     assert not [s for s in inert if s.startswith("Lineage.")], sorted(inert)
 
 
+@pytest.mark.timeout(300)
 def test_the_enum_census_still_finds_a_nontrivial_population():
     """Vacuity guard. Clearing a whole class per iteration site is a broad clear, so a bug
     that over-cleared (or a detector that silently matched everything) would leave the enum
     census reporting nothing while every other kind still looked healthy. The census must
-    still SEE many enum classes and still REPORT some inert members."""
+    still SEE many enum classes and still REPORT some inert members.
+
+    🔴 The timeout is RAISED, not the work reduced, and the number is measured — the same
+    ruling `test_render_is_deterministic` records above, for the same reason and at the same
+    number. This is the file's second-heaviest test: it walks and parses every `src` file for
+    the `>50` claim, then `build_inventory()` walks the tree AGAIN. Measured through pytest at
+    load average 40: **19.2s** of call time alone, and **28.5s** running with the rest of this
+    file — second only to the 42.8s of `test_render_is_deterministic`, which is already at 300
+    for having crossed 120s in CI twice (#1205, #1222). CI starved this one past 120s the same
+    way. Both assertions are untouched; only the wall-clock budget moves.
+
+    Neither half of the work can be dropped without gutting the guard. The `>50` sweep is
+    what proves the walk still SEES the population, and the `>= 5` half has to read the real
+    census output — a stubbed or cached inventory would assert on the stub, which is exactly
+    the suspiciously-clean census this test exists to catch. `_parse()` is deliberately
+    uncached tree-wide (see `test_render_is_deterministic`: both builds have to be real), so
+    there is no memoization to lean on here either.
+    """
     files = _src_py_files()
     classes = {
         cls for f in files if (tree := _parse(f)) is not None for cls, _ in _enum_members(tree)

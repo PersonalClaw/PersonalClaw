@@ -4,7 +4,7 @@ import { AnimatePresence } from 'framer-motion'
 import { CheckCircle2, Circle, ListTodo, Plus } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { useDashboardLive } from '../DashboardLive'
-import { SlotEmptyState, WidgetRow, RowAction } from './kit'
+import { SlotEmptyState, SlotAction, WidgetRow, RowAction } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
 
 const PRIORITY_TONE: Record<string, string> = {
@@ -34,11 +34,7 @@ export function TasksWidget({ navigate }: RouteProps) {
     return (
       <SlotEmptyState
         icon={ListTodo}
-        action={
-          <button type="button" onClick={() => navigate('tasks/new')} className="inline-flex items-center gap-xs rounded-pill px-m py-xs text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface" data-type="label-m">
-            <Plus size={13} /> New task
-          </button>
-        }
+        action={<SlotAction icon={Plus} onClick={() => navigate('tasks/new')}>New task</SlotAction>}
       >No tasks ready to work.</SlotEmptyState>
     )
   }
