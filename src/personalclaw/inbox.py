@@ -335,6 +335,23 @@ class InboxStore:
     def pending(self) -> list[InboxItem]:
         return [i for i in self.items.values() if i.status == ItemStatus.PENDING]
 
+    def open_items(self) -> list[InboxItem]:
+        """Every item still awaiting a decision — PENDING **or** SEEN.
+
+        Distinct from :meth:`pending`, and both are needed. "How many are waiting for me" is a
+        count of `pending` (a badge should not keep counting a row you have read), but "clear
+        everything waiting for me" has to mean every OPEN row.
+
+        🔴 `POST /api/inbox/dismiss-all` used `pending()`, and the UI marks a row SEEN the moment
+        you open it — so merely LOOKING at an item permanently removed it from the reach of the
+        only bulk control, and a queue you had browsed could not be cleared except one row at a
+        time. Measured on an instance with 32 open proposal rows (#409).
+
+        The frontend already draws this distinction (`isOpen = pending | seen`); this is the same
+        predicate on the server, so the two agree about what "open" means.
+        """
+        return [i for i in self.items.values() if i.status in (ItemStatus.PENDING, ItemStatus.SEEN)]
+
     def cleanup_by_retention(self, retention_days: int = 90) -> int:
         """Delete items older than *retention_days*, regardless of status.
 

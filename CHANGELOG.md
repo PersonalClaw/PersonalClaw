@@ -604,6 +604,28 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   never disableable, and the refusal reuses the same exemption the agent's side already had rather than
   restating it — so a stray preference row cannot leave a scheduled script unable to run anything.
 
+- **The skill-proposal queue could fill up and never empty.** When PersonalClaw notices you doing
+  something repeatedly it writes up a skill and asks you to approve it. On a long-running install those
+  requests had become 89% of everything waiting for your attention, and **87% of them could not be
+  approved at all** — the button returned an error, permanently, and the request stayed in the list.
+  **Approving one is what broke the next.** A skill is written once and never twice, so the first
+  approval for a topic claimed the name and every later suggestion about that same topic was refused
+  forever. But a twenty-first suggestion about your loop workflow *is* a refinement of the skill you
+  already have, whatever the request is labelled — so it is applied as one now, as a small overlay
+  that leaves the original untouched and can be undone by deleting one file. Requests already stuck in
+  your queue become approvable again with nothing to run.
+  **PersonalClaw also stops mislabelling them.** A suggestion about a skill you already have is filed
+  as a refinement in the first place, so the list says "Refine a skill" instead of "New skill
+  proposed", which is the truth and is what you need to decide.
+  **The approved skills were invisible.** They live in a sub-folder, and the Skills page only ever
+  looked one level deep — so skills that were being loaded into every conversation did not appear
+  anywhere you could read or delete them. They do now.
+  **And the request that announced it never cleared.** Answering a request wrote to a copy of the
+  attention list rather than the live one, so the row stayed open forever, still asking for a decision
+  you had already made.
+  **"Dismiss all" now means all.** It skipped anything you had opened, because opening a row marks it
+  as read — so browsing your queue quietly put those rows beyond the reach of the only bulk control.
+
 - **Restarting PersonalClaw quietly moved a chat onto a different agent.** If you had pointed a chat
   at an external coding CLI, or put it in Ask or Plan mode, a restart threw both away and the next
   message you sent ran on the built-in agent instead — with a different set of tools and a different

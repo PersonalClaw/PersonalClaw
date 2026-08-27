@@ -283,7 +283,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/hooks/agent` — run an agent turn from an external webhook.
 - `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).
 - `GET /api/inbox/digest` — on-demand channel digest.
-- `POST /api/inbox/dismiss-all` — dismiss all pending items.
+- `POST /api/inbox/dismiss-all` — dismiss every OPEN item (pending or seen).
 - `GET /api/inbox/kinds` — item kinds present, with open counts, for the filter chips.
 - `GET /api/inbox/pending` — list pending items only (recency, optionally weighted).
 - `POST /api/inbox/proposals` — an APP raises a proposal (INU-7 T7.2).

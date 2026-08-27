@@ -26,6 +26,7 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.record_ids import record_path
@@ -260,6 +261,39 @@ def _surface_in_inbox(prop: SkillProposal) -> None:
         logger.debug("proposal inbox surface failed", exc_info=True)
 
 
+def _inbox_store_for_write() -> Any:
+    """The inbox store a writer in this module must use, or ``None``.
+
+    The RUNNING service's store when one is up, else a fresh file-backed `InboxStore` (headless: a
+    CLI accept, a test, a background pass with no gateway — there the file IS the truth).
+
+    🔴 This exists because both writers here constructed `InboxStore()` unconditionally, against
+    `inbox.live_store`'s own warning that a writer doing so "writes a row the API cannot see … and
+    that the service's next save silently overwrites". Measured on a live instance: three orphan
+    rows, each referencing a proposal already accepted, still open and un-clearable, because the
+    resolve wrote to a detached copy the service then overwrote (#336).
+
+    The right accessor was already in this file — `_surface_in_inbox`, the WRITE path, goes through
+    `get_dashboard_state()` + `emit_attention_item`. Only the RESOLVE path was left behind, which is
+    the one-sided shape: whoever fixed the writer did not fix the reader of the same rows.
+    """
+    from personalclaw.inbox import InboxStore, live_store
+
+    state = None
+    try:
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        state = get_dashboard_state()
+    except Exception:  # noqa: BLE001 — headless is normal, not an error
+        logger.debug("proposal inbox write: no dashboard state", exc_info=True)
+    live = live_store(state) if state is not None else None
+    if live is not None:
+        return live
+    store = InboxStore()
+    store.load()
+    return store
+
+
 def _resolve_inbox_item(pid: str, status: str) -> None:
     """Move the inbox item for *pid* to a terminal status once the user decides.
 
@@ -274,10 +308,7 @@ def _resolve_inbox_item(pid: str, status: str) -> None:
     """
     open_or_resolved = ("pending", "seen", "dismissed", "handled")
     try:
-        from personalclaw.inbox import InboxStore
-
-        store = InboxStore()
-        store.load()
+        store = _inbox_store_for_write()
         changed = False
         for item in store.items.values():
             if item.refs.get("skill_proposal") == pid and item.status in open_or_resolved:
@@ -348,10 +379,10 @@ def backfill_inbox_items(pending: "list[SkillProposal] | None" = None) -> int:
         return 0
 
     try:
-        from personalclaw.inbox import InboxStore
-
-        store = InboxStore()
-        store.load()
+        # The SAME store the resolve path writes: reading a detached copy would miss every row the
+        # running service holds in memory, and the backfill would re-surface a duplicate for a
+        # proposal that already has a live row.
+        store = _inbox_store_for_write()
         # Any item referencing the pid counts as "has one", INCLUDING a resolved one —
         # otherwise every read would re-raise items for proposals the user has answered.
         seen = {
@@ -432,42 +463,73 @@ def accept(
     if prop is None:
         raise AcceptError(f"no proposal {pid!r}")
     from personalclaw.skills import overlays
-    from personalclaw.skills.loader import AutoSkillProvenance, SkillsLoader
+    from personalclaw.skills.loader import (
+        AUTO_SKILL_NAMESPACE,
+        AutoSkillProvenance,
+        SkillsLoader,
+    )
 
     loader = SkillsLoader(install_builtins=False)
     eff_description = description or prop.description
     eff_procedure = procedure_md or prop.procedure_md
 
-    # ── refine: overlay the named target rather than minting a new skill ──
-    # This is issue #303: accept() used to route EVERY proposal through
-    # create_auto_skill(slug), so a refine-of-existing (slug already present)
-    # returned falsy and 409'd forever. We branch on kind here.
+    # ── overlay an EXISTING skill, or mint a new one ──
+    #
+    # ONE decision, asked once: is there already a skill this proposal is about?
+    #
+    #   * `kind="refine"` names its target explicitly. This is #303, fixed earlier: accept() used to
+    #     route EVERY proposal through `create_auto_skill(slug)`, so a refine of an existing skill
+    #     returned falsy and 409'd forever.
+    # * `kind="new"` for a slug that ALREADY EXISTS is the same situation without the label, and it
+    #     was still 409ing (#323). The generator files `kind="new"` by default and its only
+    # duplicate guard is `find_similar(description)` — a similarity check on the DESCRIPTION, not
+    #     on whether the slug exists — so a differently-worded proposal for an installed skill sails
+    #     through and then cannot be accepted, ever. Measured on a live instance: 26 of 30 pending
+    #     proposals targeted an already-installed slug, 20 of them the same one.
+    #
+    # A 21st proposal for `loop-worker` IS a refinement of `loop-worker`, whatever the row is
+    # labelled, so it overlays. That is also the recovery path for a queue the bug already filled:
+    # no generator fix can reach a proposal already on disk.
+    target = ""
     if prop.kind == "refine" and prop.refine_target:
         if loader.load_skill(prop.refine_target) is not None:
-            try:
-                version = overlays.apply_overlay(
-                    prop.refine_target,
-                    description=eff_description,
-                    procedure_md=eff_procedure,
-                    created_at=prop.created_at,
-                    trigger=prop.trigger,
-                )
-            except (OSError, ValueError) as exc:
-                raise AcceptError(f"could not overlay skill {prop.refine_target!r}: {exc}") from exc
-            name = prop.refine_target
-            reject(pid)  # clear the now-accepted proposal
-            _resolve_inbox_item(pid, "handled")
-            logger.info("Accepted refine proposal %s → overlaid %s v%d", pid, name, version)
-            return AcceptResult(name, version)
-        # Target vanished (deleted since proposal) — fall through to create-new
-        # rather than 500'ing, so the Accept button still resolves the proposal.
-        logger.info(
-            "refine target %r for proposal %s no longer exists; creating new skill",
-            prop.refine_target,
-            pid,
-        )
+            target = prop.refine_target
+        else:
+            # Target vanished (deleted since proposal) — create instead of 500'ing, so the Accept
+            # button still resolves the proposal.
+            logger.info(
+                "refine target %r for proposal %s no longer exists; creating new skill",
+                prop.refine_target,
+                pid,
+            )
+    if not target:
+        implied = f"{AUTO_SKILL_NAMESPACE}/{prop.slug}"
+        if loader.load_skill(implied) is not None:
+            logger.info(
+                "proposal %s is labelled %r but %s already exists; overlaying it",
+                pid,
+                prop.kind,
+                implied,
+            )
+            target = implied
 
-    # ── new (or refine whose target is gone): create a fresh auto/ skill ──
+    if target:
+        try:
+            version = overlays.apply_overlay(
+                target,
+                description=eff_description,
+                procedure_md=eff_procedure,
+                created_at=prop.created_at,
+                trigger=prop.trigger,
+            )
+        except (OSError, ValueError) as exc:
+            raise AcceptError(f"could not overlay skill {target!r}: {exc}") from exc
+        reject(pid)  # clear the now-accepted proposal
+        _resolve_inbox_item(pid, "handled")
+        logger.info("Accepted proposal %s → overlaid %s v%d", pid, target, version)
+        return AcceptResult(target, version)
+
+    # ── nothing to refine: create a fresh auto/ skill ──
     prov = AutoSkillProvenance(session_key=prop.session_key, created_at=prop.created_at)
     created = loader.create_auto_skill(
         prop.slug,
