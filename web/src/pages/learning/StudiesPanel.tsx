@@ -5,6 +5,7 @@ import { QuietButton } from '../../ui/QuietButton'
 import { useQuery } from '../../lib/data'
 import { api, type StudyPair, type StudyRow, type StudyView } from '../../lib/api'
 import { studyDetailKey } from './proposalCache'
+import { EvalsOffNotice, evalsCode } from './evalsOff'
 
 /** Pre-registered template A/B studies (EVALUATION-SUBSTRATE §2 / ES-5).
  *
@@ -41,6 +42,20 @@ export function StudiesPanel({ studies, error, onRetry }: {
   // Any other failure is surfaced, because "no studies" and "we could not read the studies"
   // send a user to two different places.
   if (studies === undefined && error) {
+    // "Off" is NOT "empty", and this panel used to answer both with the empty state. A user
+    // who has never switched the substrate on was told "No study has been registered" — true
+    // but useless, since registering one would not have helped. The two states name two
+    // different next actions, so they get two renderings.
+    if (evalsCode(error, 'evals_disabled')) {
+      return (
+        <section className="flex flex-col gap-s" aria-labelledby="studies-heading">
+          <Heading />
+          <EvalsOffNotice>
+            graduate a template change on evidence rather than on a hunch
+          </EvalsOffNotice>
+        </section>
+      )
+    }
     if (isAbsent(error)) return <Empty />
     return <LoadError what="studies" error={error} onRetry={onRetry} />
   }
@@ -302,10 +317,15 @@ function versionRange(study: StudyRow): string {
 }
 
 /** "No study has been registered" is a 404 the panel EXPECTS. Matched on the backend's
- *  stable `code`, never on prose — the message is human copy and may be reworded. */
+ *  stable `code`, never on prose — the message is human copy and may be reworded.
+ *
+ *  `evals_disabled` used to be folded in here and is now its own rendering above: it is the
+ *  one 404 that registering a study would not fix. Note that the LIST route this panel reads
+ *  answers 200 + `[]` for an empty registry (`handlers/evals.py:api_evals_studies`) and mints
+ *  `study_absent` only on the per-study route, so this arm is the shape a caller passing a
+ *  single-study rejection would land in — the same sentence, so the same rendering. */
 function isAbsent(error: unknown): boolean {
-  const text = error instanceof Error ? error.message : String(error ?? '')
-  return text.includes('study_absent') || text.includes('evals_disabled')
+  return evalsCode(error, 'study_absent')
 }
 
 /** A rate. `null` is UNMEASURED — the one value that must never render as 0%, because an

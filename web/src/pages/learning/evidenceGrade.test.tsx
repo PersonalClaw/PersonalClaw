@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { invalidateKeys } from '../../lib/data'
 import { evidenceLabel } from './learningMeta'
 import { LearningPage } from './LearningPage'
-import type { LearningInbox, LearningRow, StagingWeek } from '../../lib/api'
+import { ApiError, type LearningInbox, type LearningRow, type StagingWeek } from '../../lib/api'
 
 // ── ES-7 §3.1: the evidence TIER is read, not merely stamped ──────────────────
 //
@@ -46,7 +46,13 @@ const evalStudies = vi.fn<() => Promise<never>>()
 const retrievalBench = vi.fn<() => Promise<never>>()
 const ablation = vi.fn<() => Promise<never>>()
 
-vi.mock('../../lib/api', () => ({
+vi.mock('../../lib/api', async (importActual) => ({
+  // 🪤 The REAL `ApiError`. The four eval panels branch on `instanceof ApiError && .code === …`
+  // (see `evalsOff.tsx`), so a factory without the class makes `instanceof` throw — and a
+  // factory with a FAKE one makes every such branch silently miss, which is exactly how these
+  // codes shipped inert. `api` below stays a CLOSED partial on purpose: an unmocked call must
+  // throw "not a function" rather than reach the network.
+  ApiError: (await importActual<typeof import('../../lib/api')>()).ApiError,
   api: {
     learningProposals: () => learningProposals(),
     learningStagingWeek: () => learningStagingWeek(),
@@ -109,10 +115,10 @@ describe('LearningPage RENDERS the grade (the call site)', () => {
     // Each of the side panels rejects with its own ORDINARY absent code: they own their own
     // rendering, and this suite's subject is the proposal row.
     learningHealth.mockRejectedValue(new Error('not under test'))
-    judgeBench.mockRejectedValue(new Error('judge_bench_absent'))
-    evalStudies.mockRejectedValue(new Error('study_absent'))
-    retrievalBench.mockRejectedValue(new Error('retrieval_absent'))
-    ablation.mockRejectedValue(new Error('ablation_absent'))
+    judgeBench.mockRejectedValue(new ApiError('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.', 404, 'judge_bench_absent'))
+    evalStudies.mockRejectedValue(new ApiError("No study 'tpl-1' is registered.", 404, 'study_absent'))
+    retrievalBench.mockRejectedValue(new ApiError('No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores.', 404, 'retrieval_absent'))
+    ablation.mockRejectedValue(new ApiError('No ablation has run yet. Register a component in `evals/ablation_registry.json` and run `personalclaw ablation --force`.', 404, 'ablation_absent'))
   })
 
   /** 🔑 THE RAIL THAT KEEPS THE TIER READ.

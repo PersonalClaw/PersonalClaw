@@ -6,6 +6,7 @@ import { Checkbox } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { fvs } from '../../design/fontWeight'
 import { api, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalLabelCard, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
+import { EvalsOffNotice, evalsCode } from './evalsOff'
 
 /** Per-arm P@k/R@k for both retrieval stores (EVALUATION-SUBSTRATE §5 / ES-3).
  *
@@ -30,6 +31,20 @@ export function RetrievalBenchPanel({ bench, error, onRetry }: {
   // A 404 is the ordinary state — no benchmark has run — so it renders as guidance plus the
   // labelling card, which is the one thing a user CAN do before a run exists.
   if (bench === undefined && error) {
+    // A switched-off substrate is a THIRD state, and the labelling card is deliberately absent
+    // from it: `POST /api/evals/retrieval/labels` is behind the same switch, so offering the one
+    // action would offer an action that 404s. Before this branch existed the whole panel fell
+    // through to `LoadError` and its Retry — measured on a live gateway with evals off.
+    if (evalsCode(error, 'evals_disabled')) {
+      return (
+        <section className="flex flex-col gap-s" aria-labelledby="retrieval-bench-heading">
+          <Heading />
+          <EvalsOffNotice>
+            score both retrieval stores against hand-labelled queries
+          </EvalsOffNotice>
+        </section>
+      )
+    }
     if (isAbsent(error)) {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="retrieval-bench-heading">
@@ -381,8 +396,7 @@ function Warn({ children }: { children: React.ReactNode }) {
 /** "No benchmark has run" is a 404 the panel EXPECTS. Matched on the backend's stable
  *  `code`, not on prose: the message is human copy and may be reworded, the code may not. */
 function isAbsent(error: unknown): boolean {
-  const text = error instanceof Error ? error.message : String(error ?? '')
-  return text.includes('retrieval_absent')
+  return evalsCode(error, 'retrieval_absent')
 }
 
 function fmt(value: number | undefined): string {

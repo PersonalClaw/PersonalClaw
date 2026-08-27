@@ -129,10 +129,24 @@ describe('one owner', () => {
     expect(decls, 'errText must have exactly one home').toEqual(['lib/errText.ts'])
   })
 
+  it('nor errEnvelope, which reads the body for it', () => {
+    // Same rule, extended to the sibling export. `errText` is now defined AS the envelope's
+    // message, so a second declaration of either would fork the one funnel again.
+    const decls = walk(SRC)
+      .filter((f) => /function errEnvelope\b|const errEnvelope\s*=/.test(readFileSync(f, 'utf8')))
+      .map((f) => f.slice(SRC.length + 1))
+    expect(decls, 'errEnvelope must have exactly one home').toEqual(['lib/errText.ts'])
+  })
+
   it('both former copy-holders now import it', () => {
+    // The named import is what is asserted, not the exact brace contents: `api.ts` legitimately
+    // takes `errEnvelope` from the same module (it needs the code to populate `ApiError.code`),
+    // so pinning the whole specifier list would fail on a change that keeps the property intact.
+    // The requirement is unchanged — each file must take the funnel FROM `./errText` and, per the
+    // two cases above, may not declare its own.
     for (const rel of ['lib/api.ts', 'lib/chunkedUpload.ts']) {
       expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} must use the shared helper`)
-        .toMatch(/import \{ errText \} from '\.\/errText'/)
+        .toMatch(/import \{[^}]*\berrText\b[^}]*\} from '\.\/errText'/)
     }
   })
 })

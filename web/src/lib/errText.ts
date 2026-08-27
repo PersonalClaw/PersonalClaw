@@ -25,18 +25,46 @@
 /** Beyond this, a body is a document rather than a message. A `FieldError` is one line. */
 const MAX_INLINE = 200
 
-export async function errText(r: Response): Promise<string> {
+/** A failed response, split into the two things a caller needs from it.
+ *
+ *  🔴 THE CODE WAS PARSED AND THEN THROWN AWAY. The envelope below already reaches into
+ *  `{"error": {"code", "message"}}` to lift the sentence out; the sibling `code` sat one
+ *  property away and no caller could ever see it, because the only export returned a bare
+ *  string. So four learning panels re-derived it from the sentence
+ *  (`error.message.includes('evals_disabled')`) — and the sentence the backend actually
+ *  sends is "The eval substrate is off. Turn on `evals.enabled` …", which does not contain
+ *  `evals_disabled`. Measured on a live gateway: SIX such branches never once fired, and
+ *  `#/learning` answered a switched-off substrate with four "Couldn't load your …" blocks,
+ *  each offering a Retry that cannot succeed.
+ *
+ *  `code` is `''` whenever the body carried none — a caller compares it to a literal, so
+ *  the empty string is simply "no code", never a match. */
+export interface ErrEnvelope {
+  /** The sentence a user reads. Identical to what `errText` has always returned. */
+  message: string
+  /** The backend's STABLE `error.code` (`http_errors.py`'s closed vocabulary), or `''`. */
+  code: string
+}
+
+/** The body-reading pass. `errText` is this, minus the code — one read of `r.text()`, so a
+ *  caller that wants both must get both from here rather than reading the body twice. */
+export async function errEnvelope(r: Response): Promise<ErrEnvelope> {
   const text = (await r.text().catch(() => '')).trim()
   let wasJson = false
+  let message = ''
+  let code = ''
   try {
     const parsed = JSON.parse(text)
     wasJson = true
     if (parsed && typeof parsed === 'object') {
       // `error` is what this gateway sends (239 sites); `detail` is the Starlette/FastAPI
       // default that a handful of routes still return. Both are the backend talking to a user.
+      // FIRST wins for each field independently: `message` keeps the pre-existing precedence
+      // (an `error` string beats a `detail` object), and `code` is taken wherever it appears
+      // even when the sentence came from the other key.
       for (const key of ['error', 'detail'] as const) {
         const v = (parsed as Record<string, unknown>)[key]
-        if (typeof v === 'string' && v.trim()) return v.trim()
+        if (typeof v === 'string' && v.trim()) { if (!message) message = v.trim(); continue }
         // 🔴 THE ENVELOPE THE PLATFORM DECLARES WAS THE ONE SHAPE THIS DROPPED. `errors.py` states the
         // wire contract — "`AGENTS.md` §"Shared conventions" owns the *wire* shape for API-route errors —
         // `{"error": {"code": "<lowercase_snake>", "message": ...}}`" — and 115 sites return it. Because
@@ -49,14 +77,26 @@ export async function errText(r: Response): Promise<string> {
         // "HTTP 502" — so this widens the funnel by exactly the sentence a human wrote, and nothing else.
         if (v && typeof v === 'object' && !Array.isArray(v)) {
           const msg = (v as Record<string, unknown>).message
-          if (typeof msg === 'string' && msg.trim()) return msg.trim()
+          if (typeof msg === 'string' && msg.trim() && !message) message = msg.trim()
+          // The code is reported even when the message was NOT usable. A code-only body still
+          // reads as "HTTP 502" to a human (unchanged), and a caller still gets to branch on it —
+          // those are two independent questions and collapsing them is what made this inert.
+          const c = (v as Record<string, unknown>).code
+          if (typeof c === 'string' && c.trim() && !code) code = c.trim()
         }
       }
     }
   } catch { /* not JSON — the plain-text rules below decide */ }
+  if (message) return { message, code }
   // A body that PARSED as JSON but carried no usable message must not be printed: serialized
   // JSON is never a sentence, and `{"error": {"code": 7}}` read aloud is worse than the status.
   // Only genuinely non-JSON text may pass through, and only if it is short and not markup.
-  if (wasJson || !text || text.startsWith('<') || text.length > MAX_INLINE) return `HTTP ${r.status}`
-  return text
+  if (wasJson || !text || text.startsWith('<') || text.length > MAX_INLINE) {
+    return { message: `HTTP ${r.status}`, code }
+  }
+  return { message: text, code }
+}
+
+export async function errText(r: Response): Promise<string> {
+  return (await errEnvelope(r)).message
 }

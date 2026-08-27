@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { invalidateKeys } from '../../lib/data'
 import { AblationPanel } from './AblationPanel'
 import { LearningPage } from './LearningPage'
-import type { AblationArmAggregate, AblationView, LearningInbox, StagingWeek } from '../../lib/api'
+import { ApiError, type AblationArmAggregate, type AblationView, type LearningInbox, type StagingWeek } from '../../lib/api'
 
 /** ES-7's keep/remove/lighten report — and, first, the fact that anything reads it at all.
  *
@@ -40,7 +40,13 @@ const retrievalBench = vi.fn<() => Promise<never>>()
 const identityReport = vi.fn<() => Promise<never>>()
 const ablation = vi.fn<() => Promise<AblationView>>()
 
-vi.mock('../../lib/api', () => ({
+vi.mock('../../lib/api', async (importActual) => ({
+  // 🪤 The REAL `ApiError`. The four eval panels branch on `instanceof ApiError && .code === …`
+  // (see `evalsOff.tsx`), so a factory without the class makes `instanceof` throw — and a
+  // factory with a FAKE one makes every such branch silently miss, which is exactly how these
+  // codes shipped inert. `api` below stays a CLOSED partial on purpose: an unmocked call must
+  // throw "not a function" rather than reach the network.
+  ApiError: (await importActual<typeof import('../../lib/api')>()).ApiError,
   api: {
     learningProposals: () => learningProposals(),
     learningStagingWeek: () => learningStagingWeek(),
@@ -109,9 +115,9 @@ describe('the ablation report is CONSUMED, not merely served', () => {
     // Each of these rejects with its own ORDINARY 404 code: their panels own their own
     // rendering, and this suite's subject must not depend on any of them loading.
     learningHealth.mockRejectedValue(new Error('not under test'))
-    judgeBench.mockRejectedValue(new Error('judge_bench_absent'))
-    evalStudies.mockRejectedValue(new Error('study_absent'))
-    retrievalBench.mockRejectedValue(new Error('retrieval_absent'))
+    judgeBench.mockRejectedValue(new ApiError('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.', 404, 'judge_bench_absent'))
+    evalStudies.mockRejectedValue(new ApiError("No study 'tpl-1' is registered.", 404, 'study_absent'))
+    retrievalBench.mockRejectedValue(new ApiError('No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores.', 404, 'retrieval_absent'))
     // LV-4's identity report: the page reads it, so a double that omits it throws inside a
     // passive effect — exactly the failure mode the note above the declarations describes.
     identityReport.mockRejectedValue(new Error('not under test'))
@@ -222,7 +228,7 @@ describe('the ablation report is CONSUMED, not merely served', () => {
   // ── EMPTY vs BROKEN vs OFF: three codes, three answers ─────────────────────────────
 
   it('renders "no ablation yet" as guidance rather than as a load failure', () => {
-    render(<AblationPanel view={undefined} error={new Error('ablation_absent')} onRetry={() => {}} />)
+    render(<AblationPanel view={undefined} error={new ApiError('No ablation has run yet. Register a component in `evals/ablation_registry.json` and run `personalclaw ablation --force`.', 404, 'ablation_absent')} onRetry={() => {}} />)
     expect(screen.getByText(/personalclaw ablation --force/)).toBeTruthy()
     expect(screen.queryByText(/Retry/)).toBeNull()
   })
@@ -236,7 +242,7 @@ describe('the ablation report is CONSUMED, not merely served', () => {
   })
 
   it('points at the SWITCH when the substrate is off, not at the registry', () => {
-    render(<AblationPanel view={undefined} error={new Error('evals_disabled')} onRetry={() => {}} />)
+    render(<AblationPanel view={undefined} error={new ApiError('The eval substrate is off. Turn on `evals.enabled` to publish ablation reports.', 404, 'evals_disabled')} onRetry={() => {}} />)
     expect(screen.getByText(/evals.enabled/)).toBeTruthy()
     // Turning on a setting and registering a component send a user to two different places.
     expect(screen.queryByText(/ablation_registry.json/)).toBeNull()
