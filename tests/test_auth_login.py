@@ -20,6 +20,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.auth import credentials as creds
+from personalclaw.config import credentials as cred_store
 from personalclaw.dashboard import token_auth
 from personalclaw.dashboard.handlers import auth as auth_h
 from personalclaw.http_errors import HTTP_ERROR_CODES
@@ -331,9 +332,8 @@ def test_the_tracked_ip_table_is_capped() -> None:
 
 @pytest.mark.asyncio
 async def test_totp_required_but_missing_returns_its_own_code(_isolated, monkeypatch) -> None:
-    import personalclaw.config.loader as loader
 
-    monkeypatch.setattr(loader, "save_credential", lambda k, v: None, raising=False)
+    monkeypatch.setattr(cred_store, "save_credential", lambda k, v: None)
     creds.set_password("jordan", GOOD_PASSWORD)
     creds.set_totp_secret("JBSWY3DPEHPK3PXP")
     monkeypatch.setenv(creds.TOTP_SECRET_KEY, "JBSWY3DPEHPK3PXP")
@@ -349,10 +349,9 @@ async def test_totp_required_but_missing_returns_its_own_code(_isolated, monkeyp
 
 @pytest.mark.asyncio
 async def test_a_valid_totp_code_completes_the_login(_isolated, monkeypatch) -> None:
-    import personalclaw.config.loader as loader
     from personalclaw.auth import totp
 
-    monkeypatch.setattr(loader, "save_credential", lambda k, v: None, raising=False)
+    monkeypatch.setattr(cred_store, "save_credential", lambda k, v: None)
     secret = totp.new_secret()
     creds.set_password("jordan", GOOD_PASSWORD)
     creds.set_totp_secret(secret)
@@ -373,10 +372,9 @@ async def test_a_valid_totp_code_completes_the_login(_isolated, monkeypatch) -> 
 
 @pytest.mark.asyncio
 async def test_a_wrong_totp_code_is_refused_and_counted(_isolated, monkeypatch) -> None:
-    import personalclaw.config.loader as loader
     from personalclaw.auth import totp
 
-    monkeypatch.setattr(loader, "save_credential", lambda k, v: None, raising=False)
+    monkeypatch.setattr(cred_store, "save_credential", lambda k, v: None)
     secret = totp.new_secret()
     creds.set_password("jordan", GOOD_PASSWORD)
     creds.set_totp_secret(secret)

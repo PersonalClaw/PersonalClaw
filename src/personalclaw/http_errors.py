@@ -112,6 +112,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "invalid_limit": "The limit parameter is out of range or not an integer.",
     "invalid_time_filter": "A since/until filter is not a recognized timestamp.",
     "unknown_filter": "The request names a filter this endpoint does not support.",
+    # ── credential store (handlers/security_credentials.py) ──
+    "credentials_owner_only": "The credential store is owner-only; an app-scoped token may "
+    "neither read where secrets live nor move them.",
+    "migration_refused": "The keychain is not the active credential backend, so moving "
+    "secrets out of .env would leave them nowhere. Nothing was changed.",
+    "rollback_refused": "There is no pre-migration .env snapshot to roll back to.",
     # ── evals (handlers/evals.py) ──
     "evals_disabled": "The evals surface is switched off in config.",
     "learning_disabled": "Learning is switched off in config, so there is nothing learned to "

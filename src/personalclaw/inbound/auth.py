@@ -65,7 +65,7 @@ def load_surface_token(surface: str) -> str | None:
     if from_env:
         return from_env
     try:
-        from personalclaw.config.loader import get_credential
+        from personalclaw.config.credentials import get_credential
 
         return (get_credential(env_key) or "").strip() or None
     except Exception:  # noqa: BLE001 — an unreadable store means "no token", i.e. no mount
@@ -84,7 +84,7 @@ def create_surface_token(surface: str) -> str:
     what makes `--rotate` meaningful.
     """
     token = secrets.token_urlsafe(48)  # ~64 chars, well past MIN_TOKEN_BYTES
-    from personalclaw.config.loader import save_credential
+    from personalclaw.config.credentials import save_credential
 
     save_credential(token_env_key(surface), token)
     return token

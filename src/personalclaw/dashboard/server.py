@@ -1357,6 +1357,13 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.security_audit import register_security_audit_routes
 
     register_security_audit_routes(app)
+    # SH-2: where credentials are stored, plus the consented snapshot-backed move between
+    # stores. Owner-only for the same reason the audit surface is.
+    from personalclaw.dashboard.handlers.security_credentials import (
+        register_security_credential_routes,
+    )
+
+    register_security_credential_routes(app)
     app.router.add_get("/api/approvals", handlers.api_approvals)
     app.router.add_post("/api/approvals/{id}/{action}", handlers.api_approval_resolve)
 

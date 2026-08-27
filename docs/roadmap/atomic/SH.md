@@ -11,7 +11,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | Atom | Status | Title | Depends on | Done when |
 |---|---|---|---|---|
 | `SH-1` | ✅ | Keychain credential backend selector behind save_credential/read, keyring optional extra, headless fail-closed to .env 0600, doctor reports active backend | — | reads are backend-transparent; headless fixture (no keyring) falls back to .env 0600 with a doctor warning (never plaintext-elsewhere); doctor reports the active backend; unit tests cover both backends; keyring added as optional extra in pyproject.toml |
-| `SH-2` | ⬜ | credential_keychain gate (class B) + m_*_credentials_to_keychain migration (snapshot-backed, rollback restores .env) + Settings 'move to keychain' action | `SH-1` | migration fixture (fake keyring) moves .env secrets to keychain and removes the keys, idempotent + verify passes; rollback restores .env; portability export still excludes secrets; Settings action runs the migration with a visible snapshot-confirm step; macOS migrate/rollback + headless .env-fallback validation both recorded |
+| `SH-2` | 🟡 impl landed | credential_keychain gate (class B) + m_*_credentials_to_keychain migration (snapshot-backed, rollback restores .env) + Settings 'move to keychain' action | `SH-1` | migration fixture (fake keyring) moves .env secrets to keychain and removes the keys, idempotent + verify passes; rollback restores .env; portability export still excludes secrets; Settings action runs the migration with a visible snapshot-confirm step; macOS migrate/rollback + headless .env-fallback validation both recorded |
 | `SH-3` | ✅ | Signing scheme decision + scripts/sign_app.py + in-tree public key; Store verifies signature at install; ScanReport/consent payload gains signature {state,signer}; unsigned stays community-tier installable | — | signing scheme doc records rationale (minisign recommended); signing+verifying a sample bundle round-trips locally; signed first-party bundle shows 'signed by PersonalClaw'; tampered signature refused with reason; unsigned bundle installs at community tier; consent UI renders the signature state |
 | `SH-4` | ⬜ | Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing | `SH-3`, `EXT:CI-RELEASE-ENGINEERING:release.yml pipeline to sign artifacts (present/done)`, `EXT:ECOSYSTEM-TOOLING:registry.json listings record signer identity` | released bundles carry valid signatures verified in CI; registry validation script records signer per listing |
 | `SH-5` | ✅ | Adversarial corpus harness (archive/integrity-race/verdict-evasion/invisible-char/degenerate-manifest) against SkillScanner/install_guarded + scanned==installed race invariant + nightly CI job + published methodology doc | — | each of the five attack classes has >=1 asserting test; a swap-after-scan race fixture proves scanned-bytes==installed-bytes holds; nightly job in full.yml runs the corpus; docs/security/scanner-testing.md lets an outsider reproduce; a deliberate scanner weakness on a branch turns the corpus red |
@@ -84,6 +84,37 @@ chokepoint (clean break, no shim).
 Session 1 T1.2/T1.3/V1; Contracts C1 migration m_*_credentials_to_keychain; owner task 1 (macOS Keychain validation)
 
 **Done when:** migration fixture (fake keyring) moves .env secrets to keychain and removes the keys, idempotent + verify passes; rollback restores .env; portability export still excludes secrets; Settings action runs the migration with a visible snapshot-confirm step; macOS migrate/rollback + headless .env-fallback validation both recorded
+
+**🟡 IMPL LANDED (2026-08-26) — every `done_when` clause met; the row waits on `dag.json`,**
+which is the driver's to flip (the mark here is derived from it, so ✅ before the flip reds
+`test_roadmap_atomic_status_sync`). Same shape as `DC-3`.
+
+**The one property everything else serves:** no key leaves `.env` until its
+value has been read back out of the keychain.** `config/credential_migration.py` snapshots
+`.env`'s exact bytes to `.env.pre-keychain` (0600, atomic) *before* the first keychain write, moves
+each key, re-READS it, and only then removes it — and on a read-back mismatch **deletes the bad
+keychain entry too**, because reads are the union with the keychain preferred, so a wrong entry
+there would shadow the good `.env` copy that survived. `rollback_credentials_to_keychain` writes
+the snapshot bytes back verbatim (byte comparison, not a re-serialisation) and clears exactly the
+keys the snapshot named. A second migrate finds `.env` empty, returns `moved=[]` and **does not
+re-snapshot** — re-snapshotting is the idempotency hazard, since it would replace the
+pre-migration `.env` with the post-migration one and make rollback restore nothing.
+
+**The gate is `security.credential_keychain`**, wired through all five config points (dataclass +
+`_meta`, `load()`, `to_dict()` via `asdict`, the `_EDITABLE_CONFIG` PATCH allowlist, and the
+generated `SCHEMA_REGISTRY`) plus a Settings toggle. `PERSONALCLAW_CREDENTIAL_BACKEND` now wins in
+**both** directions so an explicit `dotenv` is the recovery lever for a machine whose secret
+service stopped answering.
+
+**Not a lifecycle gate/migration pair** — see the DEVIATION in the plan's execution log.
+`.env.pre-keychain` is a `secret=True` inventory entry (so `portability.EXPORT_EXCLUDE`, a
+projection of that set, excludes it) *and* a literal in `_inventory_secrets()`'s fallback, because
+that fallback exists for when the inventory cannot be imported and that is exactly when a file
+whose whole content is credentials must not become exportable.
+
+`config/loader.py` was **5900 lines against a 6000-line absolute ceiling with a 100-line minimum
+headroom assertion**, so the credential store moved to `config/credentials.py` (no re-export shim;
+importers updated) — same reasoning as `agents/native/decision_tool_defs.py`. loader is now 5643.
 
 ### `SH-3` — Signing scheme decision + scripts/sign_app.py + in-tree public key; Store verifies signature at install; ScanReport/consent payload gains signature {state,signer}; unsigned stays community-tier installable
 

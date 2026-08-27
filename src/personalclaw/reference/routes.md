@@ -617,6 +617,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/search/providers` — registered providers + capabilities + availability.
 - `GET /api/security/audit` — a cursor-paginated page of filtered security events.
 - `GET /api/security/audit/verify` — HMAC-chain verification over the audit log.
+- `GET /api/security/credentials` — where the instance's secrets are stored.
+- `POST /api/security/credentials/migrate` — move ``.env`` secrets into the keychain.
+- `POST /api/security/credentials/rollback` — restore the pre-migration ``.env``.
 - `GET /api/security/denied-commands` — the bash denylist for the Security panel.
 - `GET /api/security/egress` — the operator's outbound-egress overrides for the
 - `GET /api/security/stats` — live security feature counts.

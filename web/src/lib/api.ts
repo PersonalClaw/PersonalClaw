@@ -3071,6 +3071,32 @@ export interface DeniedCommands {
   user_additions: number
 }
 export interface EgressPolicyConfig { allow_hosts: string[]; deny_hosts: string[]; allow_private: boolean }
+/** Where this instance's credentials live, and whether the move is reversible (SH-2).
+ *
+ *  `backend` is the RESOLVED outcome; `requested` is the intent. `blocked` is the mismatch
+ *  named once on the server — a box that asked for a keychain it does not have must not
+ *  render as ready to migrate, and deriving that in TypeScript is how the two surfaces
+ *  disagree. **No field here ever carries a secret value** — `pending_keys` is names only. */
+export interface CredentialStoreState {
+  migration: string
+  backend: 'keychain' | 'dotenv'
+  requested: 'keychain' | 'dotenv'
+  blocked: boolean
+  pending_keys: string[]
+  pending: number
+  keychain_keys: number
+  rollback_available: boolean
+  snapshot_name: string
+  verified: boolean
+  verification: { checked: number; missing: string[]; still_in_dotenv: string[] }
+}
+export interface CredentialMoveResult extends CredentialStoreState {
+  ok: boolean
+  reason: string
+  moved: string[]
+  already: string[]
+  failed: string[]
+}
 // User-teachable tool-output projection rule (TokenJuice OP6): output matching
 // match_regex is projected with `strategy` (a builtin content type).
 export type ProjectionStrategy = 'log' | 'diff' | 'json' | 'test' | 'csv' | 'code'
@@ -5931,6 +5957,16 @@ export const api = {
   deniedCommands: () => get<DeniedCommands>('/api/security/denied-commands'),
   setUserDeniedCommands: (patterns: string[]) => patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.denied_commands', value: patterns }),
   securityEgress: () => get<EgressPolicyConfig>('/api/security/egress'),
+  // SH-2 — the credential store. Both writes send `confirm: true`: the flag is the
+  // protocol-level record that the user was shown the snapshot step, and the backend
+  // refuses without it independently, so this client cannot skip the consent.
+  credentialStore: () => get<CredentialStoreState>('/api/security/credentials'),
+  migrateCredentialsToKeychain: () =>
+    post<CredentialMoveResult>('/api/security/credentials/migrate', { confirm: true }),
+  rollbackCredentialsToKeychain: () =>
+    post<CredentialMoveResult>('/api/security/credentials/rollback', { confirm: true }),
+  setCredentialKeychain: (on: boolean) =>
+    patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.credential_keychain', value: on }),
   // DC-2. The desktop shell's pushed capability manifest. In a browser tab this is
   // `{connected: false, capabilities: {}}` — an EMPTY map, not the capability names
   // with a placeholder state, so no surface can render a grant control for something

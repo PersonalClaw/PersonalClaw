@@ -875,6 +875,20 @@ INVENTORY: tuple[StateEntry, ...] = (
         secret=True,
         help="provider credentials",
     ),
+    # SH-2's rollback snapshot: the pre-migration `.env`, kept only while the
+    # `credentials_to_keychain` move is still reversible. Claimed here for two reasons —
+    # `audit_home()` fails on any unclaimed path, and `secret=True` is what puts it in
+    # `portability.EXPORT_EXCLUDE` (a projection of this set), so the one file that holds a
+    # second plaintext copy of every credential cannot ride out in an export.
+    StateEntry(
+        id="env_pre_keychain",
+        kind=KIND_TREE,
+        path=".env.pre-keychain",
+        domain=DOMAIN_SECURITY,
+        merge=MERGE_REPLACE_ONLY,
+        secret=True,
+        help="pre-migration .env snapshot (rollback source for the keychain move)",
+    ),
     StateEntry(
         id="credentials",
         kind=KIND_TREE,

@@ -200,7 +200,7 @@ def set_totp_secret(secret: str) -> None:
     Deliberately NOT in credentials.json: a TOTP secret is a second factor, and putting it
     beside the password hash in a file the snapshot set may sweep would make one leak two.
     """
-    from personalclaw.config.loader import save_credential
+    from personalclaw.config.credentials import save_credential
 
     save_credential(TOTP_SECRET_KEY, secret)
     _set_flag("totp_enabled", True)

@@ -1433,6 +1433,12 @@
     "type": "list[dict]"
   },
   {
+    "default": false,
+    "path": "security.credential_keychain",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": [],
     "path": "security.denied_commands",
     "sensitive": false,
