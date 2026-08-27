@@ -11,8 +11,16 @@ avoids is a bespoke "browse runner" beside the dispatch path, governed by nothin
 
     {"goal": "…", "start_url": "https://…",
      "max_steps": 20,              # optional; plan §7.2 default
+     "target": "gateway",          # optional; "gateway" (default) | "user_browser"
      "cdp_url": "ws://127.0.0.1:9222/devtools/page/…",   # the page target to drive
      "screenshot_dir": "/path"}    # optional; capture-to-PATH, never base64
+
+**Two execution targets, one selector** (BA-7, plan §(a)/§(d)). ``target`` picks WHICH browser:
+``gateway`` (the default, and the only behaviour before BA-7) drives the ``cdp_url`` on this
+config under the gateway's own profile; ``user_browser`` drives the operator's own browser
+through the connector. The vocabulary, the connector and both refusals live in
+:mod:`personalclaw.browse.target` — read its module docstring for why an unconnected
+``user_browser`` task SKIPS instead of falling back, and why it can never run unattended.
 
 **Where the guards are.** The budget is checked inside
 :func:`~personalclaw.browse.loop.run_browse_loop`, immediately before each model call, and the
@@ -53,6 +61,11 @@ PROVIDER_NAME = "browse"
 #: action-node dispatch maps it to a WAITING instance, which the controller surfaces as
 #: ``needs_input`` — see :func:`personalclaw.workflows.engine.dispatch_action`.
 OUTCOME_NEEDS_INPUT = "needs_input"
+
+#: ``ActionResult.outcome`` for a task that did not run and left nothing behind. The engine maps
+#: it to ``NO_CHANGE`` (``workflows.engine.dispatch_action``) — a skip is not a failure, so the
+#: retry machinery must not hammer a connector that simply is not attached.
+OUTCOME_SKIP = "skip"
 
 #: The model use-case axis the loop's decisions route through. ``reasoning`` rather than
 #: ``background``: choosing the next action on an adversarial page is the reasoning axis's job,
@@ -137,6 +150,30 @@ class BrowseActionProvider(ActionProvider):
                 started=started,
             )
 
+        from personalclaw.browse.target import (
+            TARGET_USER_BROWSER,
+            UnknownBrowseTarget,
+            connector_status,
+            disconnected_skip,
+            permits_unattended,
+            resolve_cdp_url,
+            resolve_target,
+            unattended_origin,
+            unattended_refusal,
+            unknown_target_error,
+        )
+
+        try:
+            target = resolve_target(action_config)
+        except UnknownBrowseTarget as exc:
+            typed = unknown_target_error(exc.raw)
+            return ActionResult(
+                success=False,
+                error=typed.what,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                agent_error=typed,
+            )
+
         from personalclaw.guardrails.incident import incident_active
 
         if incident_active():
@@ -154,6 +191,40 @@ class BrowseActionProvider(ActionProvider):
                 ),
             )
 
+        # ── BA-7: the two gates the `user_browser` target carries, at the call site ──
+        #
+        # Here and not only at registration, because a registration check protects rows in the
+        # trigger store and NOTHING else: a workflow action node, an app route and a lifecycle
+        # hook all reach this method without passing through `triggers.tools`. A gate one level
+        # away from the work is bypassed by the next caller that brings its own plumbing.
+        if not permits_unattended(target):
+            origin = unattended_origin()
+            if origin:
+                typed = unattended_refusal(target, origin=origin)
+                return ActionResult(
+                    success=False,
+                    error=typed.what,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    agent_error=typed,
+                )
+
+        cdp_url = resolve_cdp_url(target, action_config)
+        if target == TARGET_USER_BROWSER:
+            status = connector_status()
+            if not status.connected:
+                # SKIPPED, not failed, and above all NOT re-pointed at `action_config["cdp_url"]`:
+                # `resolve_cdp_url` never reads that key on this branch, so the gateway profile is
+                # unreachable from here rather than merely unused.
+                typed = disconnected_skip(status)
+                return ActionResult(
+                    success=True,
+                    outcome=OUTCOME_SKIP,
+                    stdout=json.dumps({"skipped": True, "target": target, "reason": status.reason}),
+                    stderr=f"{typed.what}. {status.fix}.",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    agent_error=typed,
+                )
+
         try:
             max_steps = int(action_config.get("max_steps") or MAX_STEPS_DEFAULT)
         except (TypeError, ValueError):
@@ -162,7 +233,7 @@ class BrowseActionProvider(ActionProvider):
 
         session, page, closer = None, None, None
         try:
-            session, page, closer = await self._open(action_config, ctx)
+            session, page, closer = await self._open(action_config, ctx, cdp_url=cdp_url)
         except BrowseUnavailable as exc:
             return self._error(
                 str(exc),
@@ -205,10 +276,15 @@ class BrowseActionProvider(ActionProvider):
     # ── plumbing ─────────────────────────────────────────────────────────────
 
     async def _open(
-        self, action_config: dict[str, Any], ctx: ActionContext
+        self, action_config: dict[str, Any], ctx: ActionContext, *, cdp_url: str
     ) -> tuple[Any, Any, Any]:
-        """Connect to the configured page target and wrap it in the gated session + driver."""
-        cdp_url = str(action_config.get("cdp_url") or "").strip()
+        """Connect to the RESOLVED page target and wrap it in the gated session + driver.
+
+        ``cdp_url`` arrives resolved (``browse.target.resolve_cdp_url``) rather than being read
+        from ``action_config`` here: which browser a task drives is the ONE decision BA-7 owns,
+        and a second read of the config key at the connect site is how a `user_browser` task
+        would end up on the gateway's profile after all.
+        """
         if not cdp_url:
             raise BrowseUnavailable("no `cdp_url` is configured, so there is no browser to drive")
 

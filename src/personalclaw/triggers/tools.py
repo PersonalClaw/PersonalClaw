@@ -118,6 +118,59 @@ class ToolResult:
         return {"ok": self.ok, "text": self.text, "data": dict(self.data)}
 
 
+#: The one provider whose action config carries an execution target, as a LITERAL rather than an
+#: import of `browse_provider.PROVIDER_NAME`.
+#:
+#: 🔴 Measured: importing that module costs ~1.0s and drags in `personalclaw.browse` →
+#: `browse.compress` → `browse.extraction` → `knowledge.connectors.web_url`. Paying that on EVERY
+#: `create`/`update` — a `notify` cron included — to learn a five-character string is the opposite
+#: of what this function's docstring promises. `test_browse_target.py` asserts this equals
+#: `browse_provider.PROVIDER_NAME`, so the literal cannot drift; that rail is the right price for
+#: keeping a cold dependency off a hot registration path.
+_BROWSE_PROVIDER = "browse"
+
+
+def unattended_action_refusal(workflow: Any) -> ToolResult | None:
+    """Refuse AT REGISTRATION an action whose execution target can never run unattended.
+
+    Every trigger in this store fires with no human present by construction — the dispatch seam
+    resolves its identity as `unattended_dispatch_key("trigger:<id>")` and wraps the whole fire
+    in the `background` writing surface (`gateway._background_write_surface`). So a
+    `user_browser` browse action on a trigger is not a run-time hazard to be caught later, it is
+    a CONFIGURATION ERROR: the row could never fire successfully, and letting it save would give
+    the user a green automation that refuses on every tick until they read a log.
+
+    Returns `None` for every action that is not this one, so the cost on the normal path is one
+    provider-name comparison. The typed `AgentError` rides in `data["error"]` — `ToolResult.text`
+    is the sentence, and a surface that wants to branch reads the code.
+    """
+    inline = workflow if isinstance(workflow, dict) else {}
+    # Two shapes reach here: the migrated `{"inline": {...}}` form the API and CLI build, and the
+    # bare `{"provider": …, "config": …}` form `create`'s `message` branch builds.
+    if isinstance(inline.get("inline"), dict):
+        inline = inline["inline"]
+    if str(inline.get("provider") or "").strip() != _BROWSE_PROVIDER:
+        return None
+    config = inline.get("config")
+    from personalclaw.browse.target import (
+        UnknownBrowseTarget,
+        permits_unattended,
+        resolve_target,
+        unattended_refusal,
+        unknown_target_error,
+    )
+
+    try:
+        target = resolve_target(config if isinstance(config, dict) else {})
+    except UnknownBrowseTarget as exc:
+        typed = unknown_target_error(exc.raw)
+        return ToolResult(False, f"Error: {typed.what}. {typed.fix}.", {"error": typed.to_dict()})
+    if permits_unattended(target):
+        return None
+    typed = unattended_refusal(target, origin="a scheduled automation")
+    return ToolResult(False, f"Error: {typed.what}. {typed.fix}.", {"error": typed.to_dict()})
+
+
 def slug_for(name: str, kind: str) -> str:
     """A stable, human-recognizable trigger id.
 
@@ -218,6 +271,13 @@ def create(
         workflow = {"provider": "run-prompt", "config": {"message": message}}
     if not workflow:
         return ToolResult(False, "Error: give a message or a workflow for the automation to run.")
+
+    # BA-7: refused HERE, before the row exists, not on its first tick. A saved automation that
+    # refuses forever is worse than a rejected form — the user gets a green row and a silent
+    # failure loop instead of a sentence naming the mistake while they are still editing it.
+    refusal = unattended_action_refusal(workflow)
+    if refusal is not None:
+        return refusal
 
     trigger = Trigger(
         id=_unique_id(store, slug_for(name, resolved_kind)),
@@ -359,6 +419,13 @@ def update(store: Any, *, trigger_id: str, patch: dict[str, Any]) -> ToolResult:
             f"Error: nothing to update. Not settable here: {', '.join(rejected) or 'none given'}.",
             {"rejected": rejected},
         )
+    # BA-7: the same registration refusal as `create`. Without it the update path is the hole —
+    # save a `gateway` browse automation, then patch its `workflow` to `user_browser`, and the
+    # create-time check has been walked around.
+    if "workflow" in applied:
+        refusal = unattended_action_refusal(applied["workflow"])
+        if refusal is not None:
+            return refusal
     trigger = row.trigger
     for key, value in applied.items():
         setattr(trigger, key, value)

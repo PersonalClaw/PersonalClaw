@@ -19,11 +19,17 @@ type CompanionCfg = Record<string, unknown>
  *  without a typed URL; instance name is the friendly label a client shows for it. */
 export function CompanionPanel() {
   const [cfg, setCfg] = useState<CompanionCfg | null>(null)
+  // BA-7's connector toggle lives in the `browse.*` section, not `companion.*`, so it needs its
+  // own optimistic copy — one state object holding two config sections would PATCH the wrong path.
+  const [browseCfg, setBrowseCfg] = useState<CompanionCfg | null>(null)
   const [nameDraft, setNameDraft] = useState('')
   const [nameSaved, setNameSaved] = useState(false)
 
   const { data, error: loadErr, refresh } = useQuery('settings:companion', () =>
-    api.personalclawConfig().then((c) => (c.companion ?? {}) as CompanionCfg),
+    api.personalclawConfig().then((c) => ({
+      companion: (c.companion ?? {}) as CompanionCfg,
+      browse: (c.browse ?? {}) as CompanionCfg,
+    })),
     { persist: true },
   )
 
@@ -35,13 +41,17 @@ export function CompanionPanel() {
   )
 
   useEffect(() => {
-    if (data) { setCfg(data); setNameDraft(String(data.instance_name ?? '')) }
+    if (data) {
+      setCfg(data.companion)
+      setBrowseCfg(data.browse)
+      setNameDraft(String(data.companion.instance_name ?? ''))
+    }
   }, [data])
 
   // A settings panel must not present fabricated values as saved state — a failed read
   // renders the failure, not controls at their fallback (mirrors AmbientPanel).
   if (!data && loadErr) return <LoadError what="settings" error={loadErr} onRetry={refresh} />
-  if (!data || !cfg) return <FormSkeleton sections={1} what="settings" />
+  if (!data || !cfg || !browseCfg) return <FormSkeleton sections={1} what="settings" />
 
   // Optimistic single-field PATCH; a rejected save rolls back and surfaces the error.
   const patch = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
@@ -54,6 +64,18 @@ export function CompanionPanel() {
       refreshDiscovery()
     }).catch((e) => {
       setCfg((c) => ({ ...c, [key]: prev }))
+      notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
+    })
+  }
+
+  // The same optimistic shape against the `browse.*` section (BA-7). A separate function rather
+  // than a section parameter on the one above: that one also re-reads the mDNS advertiser, which
+  // this toggle has nothing to do with.
+  const patchBrowse = (key: string, value: unknown, onSaved?: () => void, label?: string) => {
+    const prev = browseCfg[key]
+    setBrowseCfg((c) => ({ ...c, [key]: value }))
+    api.patchConfig(`browse.${key}`, value).then(() => onSaved?.()).catch((e) => {
+      setBrowseCfg((c) => ({ ...c, [key]: prev }))
       notify(`Couldn't save ${label ?? key}: ${String((e as Error)?.message || e)}`, 'error')
     })
   }
@@ -128,6 +150,20 @@ export function CompanionPanel() {
           </div>
         </Section>
       ) : null}
+
+      {/* BROWSER CONTROL (BROWSE-AUTOMATION BA-7). This panel rather than a new surface: the
+          connector is a companion client — BA-8 pairs it through the same device-session
+          machinery the section above advertises for — so the switch belongs beside the other
+          "what may attach to this gateway" decisions.
+          The limits are stated in the hint, not left to be discovered: a scheduled run can never
+          use this target, and with the switch off a browse task that asks for your browser is
+          SKIPPED rather than quietly run on the gateway's own profile. */}
+      <Section title="Browser control" hint="Whether a browse task may drive your own browser, with the sites you are already signed in to.">
+        <RowGroup>
+          <ToggleRow label="Let tasks drive my browser" cfg={browseCfg} field="user_browser_enabled" patch={patchBrowse}
+            hint="Off by default. When off, a task that asks for your browser is skipped with a reason — it is never switched to this machine's own browser profile, which has different logins. Scheduled and unattended runs can never use your browser at all." />
+        </RowGroup>
+      </Section>
 
       {/* INSTALL & OFFLINE (MOBILE-COMPANION T3.1). `serviceWorkerBlockedReason` was written to be
           said out loud — its own docstring argues that "saying so out loud beats an install button
