@@ -406,3 +406,115 @@ it is not lost. Separately: `role="list"` was NOT added to the Devices rows — 
 its `Section` `<h2>` ("Paired devices (N)"), which is the house idiom, and a census found `role="list"`
 in **0 of the ~60 settings panels** (only `ui/WindowedList.tsx`), so adding it would invent a pattern
 rather than match one.
+
+### 2026-08-26 — `MC-6` (S3.5 T3.5.1) — **PARTIAL**: the four sections are DONE, the SW sound/badge mapping is not
+
+**Clause 1 — the loops/tasks/inbox/notifications sections — landed.** `#/companion` is now the
+whole attention path in one column: **Approvals → Running → Tasks → Inbox → Recent**, in that
+order, asserted by test. The order is the priority order and is not cosmetic — a blocked run is
+the only row on this page another person is waiting on, so it stays at the top however much the
+companion grows. `MC-3`'s "Not on the phone yet" stub list is **deleted**, not hidden behind a
+flag, and the test that asserted its presence was replaced (not weakened — its subject no longer
+exists) by one asserting approvals stay first.
+
+**RESOLVED ROUTE MAP (T2.2, the half `MC-3` deferred).** Every action is the owning surface's own
+route. Nothing was invented, reshaped, or wrapped — `PP-16` is unifying Loops into WorkflowRuns
+concurrently, so the loop API is consumed strictly read-only.
+
+| Action | Endpoint wired | Client |
+|---|---|---|
+| list steerable loops | `GET /api/loops` | `api.uLoops()`, filtered to `running/paused/needs_input/stagnant/blocked` |
+| pause / resume / stop | `PATCH /api/loops/{id}` `{action}` | `api.uLoopAction(id, action)` |
+| nudge | `POST /api/loops/{id}/nudge` `{text}` | `api.uLoopNudge(id, text)` |
+| list open tasks | `GET /api/tasks?status=…&limit=20`, **twice** | `api.tasks({status})` per open status |
+| task state transition | `PUT /api/tasks/{id}` `{status}` | `api.updateTask` |
+| list pending inbox | `GET /api/inbox/pending` | `api.inboxPending()` |
+| inbox resolve | `PUT /api/inbox/{id}` `{status: handled\|dismissed}` | `api.updateInboxItem` — plan 42's own lifecycle vocabulary (`PENDING → SEEN → HANDLED \| DISMISSED`); no second notion of "dealt with" was minted |
+| recent notifications | `GET /api/notifications` | `api.notifications()` |
+| mark one read | `POST /api/notifications/ack` `{ts}` | `api.ackNotification` — keyed on `ts` because the log has no id and every ack/unack/delete route takes the timestamp |
+
+**Tasks is read TWICE on purpose.** `GET /api/tasks` takes a single `status` plus a `limit`, so one
+unfiltered read lets a project's DONE history fill the window — and the phone would then say "no
+open tasks" while open tasks existed. Both legs share one query key, so a failure in either paints
+ONE `LoadError`, not two.
+
+**DISCOVERY — the optimistic contract is TWO mechanisms, and the first draft could not tell them
+apart.** T2.2 asks for "optimistic UI reverts on failure". `useCompanionAction` owns both halves
+once, rather than four sections re-deriving them:
+
+1. **REVERT on failure** — the patch is withdrawn immediately and the gateway's own sentence is
+   toasted.
+2. **RECONCILE against the server** — on every fetch, every patch whose POST has SETTLED is
+   dropped, so the fetched list is authoritative. This is `MC-3`'s trap generalized: its
+   optimistic hide was never pruned, so a queue the backend was still serving rendered as
+   "nothing waiting on you". Four more sections of the same shape is four more chances to remake
+   it.
+
+Then the measurement that changed the test file: **deleting the revert entirely left all 33 tests
+GREEN.** The post-action collection bust triggers a refetch and the reconcile drops the patch
+anyway, so the three "REVERTS" tests only proved that *one of the two* worked. The revert's real
+job is LATENCY — on cell data the refetch is exactly what is slow, and until it lands a withdrawn
+action must not sit on screen looking like it succeeded. So a fourth test holds the refetch open
+(`data` unchanged ⇒ the reconcile cannot fire) and asserts the row is already back, with a
+vacuity assertion that the refetch is genuinely still in flight.
+
+**DISCOVERY — a reader-shaped cache key, and a rail that a constant hides from.** The four keys
+were first written `companion:loops|tasks|inbox|notifications`, which is exactly the defect
+`web/src/lib/splitCollectionBusts.test.ts` exists for: a key named after its READER sits in a
+namespace the collection's own invalidation can never reach. `#/tasks` busts with
+`invalidateKeys('tasks', true)`, so `companion:tasks` would have been dropped by nothing, ever.
+Two consequences were fixed, not one:
+
+* The keys became `loops-companion` / `tasks-companion` / `inbox-companion` /
+  `notifications-companion` — hyphen-suffixed so they sit in the COLLECTION's namespace (the same
+  shape as the existing `tasks-all`), each declared in `lib/data/keys.ts` with the policy of the
+  collection it projects.
+* Every action busts the **collection prefix** instead of calling its own `refresh()`. That is
+  the direction that actually matters: a task finished on the phone must staleten `#/tasks` and
+  the dependency picker's `persist: true` copy, or the next desktop mount repaints the row as
+  still open. Nothing tested that, so a test now writes sibling keys, drives the action, and
+  asserts both are dropped while an unrelated collection survives (the vacuity floor).
+
+🪤 **And the near-miss worth recording: hoisting those keys to module constants made the rail stop
+seeing them.** That census matches a LITERAL first argument to `useQuery`, so with the keys behind
+`TASKS_KEY` etc., reverting one to `companion:tasks` left the whole suite **green** — the "fix"
+would have consisted of hiding from the rail that caught the mistake. The literals are written
+inline at each call site for that reason, with the reason in the source.
+
+**Gate:** `make lint` rc 0 (black/isort/flake8 clean, mypy 1043 files) · `npm run typecheck:web`
+clean (app + `tsconfig.sw.json`) · full `npm run test:web` **506 files / 5422 tests passed** ·
+`npm run build` rc 0 · `scripts/gate_report.py` **6/6 PASS** · `tests/test_structural_baseline.py`
+**31 passed** · `config/loader.py` **5900 lines, unchanged** (no config field: the per-kind sound
+belongs in `entity_settings/notification_rules.json`, and that clause is deferred anyway).
+Zero Python files changed. Probe sweep: 0 diff-introduced hits.
+
+Four house rails caught real work and were satisfied rather than exempted: the split-collection
+census (above), `ui/disabledReason*` (the Send-nudge button was disabled with no stated reason),
+`pages/emptyStateRollout` (the new file needed a PEP-2 verdict — `derived`, because all four
+sections are projections of collections owned by `#/loops`, `#/tasks`, `#/inbox`, `#/notifications`
+and the on-ramps belong to those surfaces), and `lib/data/dataLayerAdoption` §2 (every namespace
+declared).
+
+**Clause 2 — the SW per-kind sound/badge mapping — UNMET, and it is a dependency gate, not a code
+gap.** The done-when's call site is `MC-5`'s: `web/src/sw.ts`'s `push` handler and
+`web/src/app/pushPolicy.ts`'s `notificationFor()`, which compose the whole notification from the
+payload's `kind`. Both exist only on the unmerged `feature-mc5-push-approval` (`dbc96b5f`) and are
+**absent at this atom's branch point** (`908c7ed1`). Building them here would ship a second push
+handler and a second notification composer into the same file `MC-5` already edits — the duplicate
+mechanism the tenets forbid — and adding the rules field with no reader would ship an inert
+control. So neither half was started. Two measured findings for whoever executes it:
+
+* **plan 42's rules field has no `sound` key.** `notification_rules.Rule` is
+  `mode`/`targets`/`conditions`/`verify`; `MC-5` extended that module (`ensure_target`) without
+  adding one. So the `EXT:` dep is genuinely unbuilt upstream and clause 2 owes the field itself
+  — dataclass + `_coerce_rule` + `rules_document()` + the `PUT /api/notifications/rules` guard +
+  a control in `NotificationRulesMatrix.tsx`. It is `entity_settings/notification_rules.json`
+  state, **not** `config.json`, so the config round-trip contract does not apply and
+  `config/loader.py` does not grow.
+* **the sound vocabulary already exists and must be consumed, not invented.**
+  `web/src/design/soundCues.ts` is a closed set of synthesised earcons (zero audio assets, ratcheted
+  by `design/noAudioAssets.test.ts`) with cue POINTS split from VOICES precisely so a caller can
+  re-voice one. A per-kind rule should name a voice from that set. Note the platform constraint:
+  a service worker cannot play audio, so "a distinct sound fires" means `silent`/`vibrate` on the
+  notification plus a message to an open client that plays the voice — worth stating in the atom
+  rather than discovering late.
