@@ -518,3 +518,180 @@ control. So neither half was started. Two measured findings for whoever executes
   a service worker cannot play audio, so "a distinct sound fires" means `silent`/`vibrate` on the
   notification plus a message to an open client that plays the voice — worth stating in the atom
   rather than discovering late.
+
+### 2026-08-26 — `MC-8` (S4 T4.2, QR half) — **PARTIAL**: the screen ships and its payload is proven scannable; the shell leg is device-gated
+
+**Premise check first, and it moved the scope.** The pairing routes were already there and already
+consumed: `POST /api/devices/pair/start|complete` at `handlers/devices.py:159/228`, registered at
+`:498-505` together with the `GET /pair` door the URL points at, and `api.ts::devicePairStart` called
+from `DevicesPanel.tsx`. So `MC-8` invented nothing. What was missing was exactly one thing, and
+`CA-2` had recorded it twice as a deliberate gap — 2026-08-19 and again 2026-08-21:
+
+> **"shows a QR" is still UNMET for the IMAGE.** … `qrcode`, `segno` and `pyqrcode` are all absent
+> from the Python side … adding one is a dependency decision, and hand-rolling Reed-Solomon +
+> masking to render a *wrong* QR would be worse than the labelled placeholder.
+
+That is an owner call, and `MC-8` is where it gets made. **The call: encode it in the repo, and
+answer the "wrong QR" risk with a decoder instead of with confidence.** No dependency was added to
+either ecosystem. The reasoning is not thrift — the npm packages that do this arrive with a
+transitive tree (image writers, arg parsers, terminal renderers) for a product whose posture is a
+legible supply chain, and the requirement is one pure function over a fixed published specification
+that cannot drift out from under us.
+
+**What shipped.** `web/src/lib/qr.ts` (444 lines, half of it the reasoning) encodes byte mode at error-correction level M,
+versions 1-40 — one mode and one level, so there is no `ecl` argument for a call site to get wrong.
+`web/src/pages/settings/PairingQr.tsx` renders the matrix as ONE `<path>` of 1×1 squares inside a
+`viewBox` that includes the mandatory 4-module quiet zone, on a fixed light plate: **contrast
+polarity is part of the barcode format, not a surface style**, so this is the one thing on the page
+that deliberately does not follow the colour scheme. `DevicesPanel.tsx` replaces its labelled
+placeholder with it and keeps the code and the link beside it, because a camera that will not focus
+must not be the only way in.
+
+**Proof that the symbol is a symbol, in three independent layers** (`web/src/lib/qr.test.ts`, 13
+tests) — none of which re-reads the encoder:
+
+1. **A DECODER.** `readBack()` recovers the payload from the DRAWN MATRIX with its own function-module
+   map (built from a literal alignment-position table, *not* from `qr.ts`, so the two cannot agree
+   about a wrong layout), its own un-mask, zigzag walk, de-interleave and byte-mode parse. Asserted
+   over 11 payload sizes chosen to cross every structural boundary in versions 1-10 — no alignment
+   pattern (v1), two blocks (v4-5), four blocks and the arrival of the version field (v6-8), five
+   blocks with UNEQUAL lengths and the 16-bit character count (v9-10) — plus a non-ASCII host name,
+   because the payload is UTF-8 bytes and not characters.
+2. **A SYNDROME CHECK** on the codewords that decoder pulled back out: every block must evaluate to
+   zero at α^0…α^(n-1). A wrong remainder, a mis-split block or a mis-ordered interleave cannot
+   satisfy that by accident.
+3. **BCH by division, not by comparison.** Each of the 8 format fields is checked to divide by 0x537
+   with level-M data bits, and all 34 version fields by 0x1F25 — brute-forced against every legal
+   alternative, so nothing passes by being compared to a copy of itself. The second format copy is
+   asserted identical to the first.
+
+**And then the leg that actually settles it: the OPERATING SYSTEM read it.** The rendered symbol was
+rasterized to PNG and handed to `VNDetectBarcodesRequest` — Apple's Vision barcode detector, the
+same decoder an iPhone camera runs. Three symbols, three exact payloads returned, including a
+64-character host name (v6) and a 213-byte payload (v10).
+
+**Then the exchange, end to end, against a REAL gateway** (isolated `PERSONALCLAW_HOME`, removed
+after; the real `~/.personalclaw` was confirmed untouched):
+
+| Leg | Result |
+|---|---|
+| `POST /api/devices/pair/start` as the owner | `{"code": "UD33-49ET", "pairing_url": "http://127.0.0.1:56515/pair?code=UD33-49ET", "expires_in": 300}` |
+| encode that URL → PNG → **Vision decoder** | `http://127.0.0.1:56515/pair?code=UD33-49ET` — byte-identical |
+| `GET /pair?code=…` with NO session (what the scan opens) | `200`, the redeem form |
+| `POST /api/devices/pair/complete` with the code **read off the scan** | `200`, `device_id fddcb13ef94e108f`, `Set-Cookie pc_token_…` |
+| `GET /api/devices` as the owner | one row, `issuer: "pair"` |
+| the same scanned code, again | `401 device_pair_code_invalid` — single-use, verified through the scanned payload |
+| `GET /pair` holding a session (already paired) | `302 → /`, so a self-pair cannot silently overwrite the owner's own session |
+| the plaintext code in `gateway.log` | **0 occurrences** |
+
+**Driven as a user, in the real dashboard.** The gateway was started from THIS worktree's code
+(`PYTHONPATH` at the worktree `src`, `src/personalclaw/static/dist → web/dist`, isolated
+`PERSONALCLAW_HOME`, removed after — the first attempt silently served the MAIN checkout's SPA
+through the shared `.venv`, which rendered the OLD placeholder and is exactly how a frontend change
+gets validated against someone else's bundle). Settings → Devices → **Pair a device**:
+
+* The QR renders at **176×176** beside the code and the link, and **the browser's rendered pixels
+  were handed back to the OS decoder** — `VNBarcodeSymbologyQR http://127.0.0.1:10847/pair?code=3PAS-ZL6Y`,
+  the exact string the route had just minted. Not the unit test's matrix: the screenshot.
+* **Expiry, driven.** With the clock pushed past the deadline, the QR became "Nothing left to scan.",
+  the code and the link were gone, and the row read "This code has expired — generate another." Three
+  places, three different sentences, nothing redeemable left on screen.
+* **Polarity is scheme-independent, measured rather than argued.** `getComputedStyle` on the plate and
+  the module path: `rgb(255,255,255)` / `rgb(0,0,0)` under `data-mode="dark"` **and** under
+  `data-mode="light"`. That is the point of not using tokens here — a QR that inverted with the theme
+  would stop being a QR for any scanner that does not try both polarities.
+* **Zero console errors and zero page errors** across the run.
+
+**The security half, which is a change in behaviour and not just an image.** An expired payload is now
+**withdrawn at the presenting end**, not dimmed: the QR, the code, the link and both copy buttons all
+go, replaced by a sentence saying the gateway refuses an expired code. Leaving them on screen hands
+the owner a string guaranteed to fail on the far device, where the failure reads as "pairing is
+broken" rather than "that code ran out". Two other refusals are legible for the same reason a blank
+square is not: `pairing_url: ""` (the gateway could not resolve its own address — the code still
+works, so it stays) and a payload too long for version 40. The **vacuity leg** for all three is the
+same component drawing a real symbol on the accepting path, asserted in `devicesPanel.test.tsx`.
+
+**DISCOVERY — the QR payload assertion was pointed at a URL the gateway cannot emit.**
+`devicesPanel.test.tsx`'s fixture read `http://…/#/pair?code=…`. The gateway composes
+`{base}/pair?code=…` (`_pair_base_url`, `handlers/devices.py:182`), and the `#` form would not work
+if it did: `/pair` is a standalone document whose script reads the code out of `location.search`, and
+a code parked behind a `#` lands in the fragment. Corrected — a fixture that cannot happen is a QR
+payload nobody ever checked.
+
+**DISCOVERY — "TTL 5min verified" was verified by a tautology.** The only assertion on the window was
+`data["expires_in"] == pairing.PAIR_CODE_TTL_SECS`, which holds for any value the constant has,
+including an hour. A pairing code's whole security argument is the SIZE of the window (32^8 over
+300s, ≤5 live), so the number is the property. `test_the_pairing_ttl_is_five_minutes_and_the_deadline_honours_it`
+now pins 300 **and** that the minted deadline is actually that far out.
+
+**DISCOVERY — a global census rail false-positived, and its author had asked for exactly this case.**
+`pages/knowledge/graphMarkContrast.test.ts` enrols any `.tsx` emitting a node mark *and* an edge mark,
+and its own note said: *"If a future icon-bearing file false-positives, the failure names the file and
+the condition can be added then, against a real case."* `PairingQr.tsx` is that case — a `<rect>`
+plate plus a `<path>` of modules is node∧edge to a text scan and a graph to nobody, and SC 1.4.11 has
+nothing to say about a monochrome barcode whose polarity is fixed by the format. **Not exempted:** the
+census now requires the marks to be emitted ONE PER DATUM (inside a `.map(` body), which is what
+separates a graph from a bitmap and which all three hand-verified graphs satisfy
+(`graph.edges.map → <line>`, `nodes.map → <circle>`/`<rect>`). The new condition carries its own
+**load-bearing proof** — a test that shows the barcode satisfies the OLD signal and has no iteration
+at all, so the knob cannot become decoration that silently excludes a real graph. **This rail is the
+one file in the diff a design-system session might also be holding.** Note this was invisible to every
+path-scoped run and only reds unscoped.
+
+**Falsification** (each mutation `git grep`-ed back to confirm it APPLIED — a no-op mutation proves
+nothing — then the red observed, then restored from a file copy at the literal path, never
+`git checkout`):
+
+1. `lib/qr.ts:414` `push(0b0100, 4)` → `push(0b0010, 4)`: declare alphanumeric mode while emitting
+   bytes. This is the encoder bug that still draws a plausible, well-formed symbol, so no amount of
+   looking at it helps. **3 of 13 red**, all three round-trip tests, on the DECODER:
+   `expected '<mode 2>' to be 'http://192.168.1.5:10000/pair?code=…'`.
+2. `lib/qr.ts:112` `if (j + 1 < degree) result[j] ^= result[j + 1]` DELETED from `rsDivisor`: a wrong
+   generator polynomial, so every ECC byte is wrong and every module is still drawn. **3 of 13 red**,
+   and this is the pair that matters: the failing assertion is
+   `every block must be a valid RS codeword: expected false to be true`, which sits AFTER the text
+   assertion in each test — so the payload round-tripped fine and only the syndrome layer could see
+   it. Mutations 1 and 2 fail on disjoint layers in both directions, which is the evidence that
+   neither is redundant.
+3. `PairingQr.tsx:49` `if (expired)` → `if (false && expired)`: present a scannable dead payload.
+   **1 of 21 red** in `devicesPanel.test.tsx` — `expected SVGSVGElement to be null`, i.e. the QR came
+   back — while the accepting-path test stayed green, so the guard distinguishes the two states
+   rather than hiding the surface.
+4. `DevicesPanel.tsx:206` `{expired ? (` → `{false && expired ? (`: the OTHER half of the withdrawal,
+   which lives in the panel and not in the component. **1 of 21 red**:
+   `the code is gone: expected <code …> to be null`. Two mutations because the withdrawal is two
+   decisions in two files, and mutation 3 leaves this one passing.
+5. `DevicesPanel.tsx:200` `url={pairing.pairing_url}` → `url={pairing.code}`: encode the bare
+   eight-character code, which a phone camera resolves to a string with nowhere to go — and which is
+   indistinguishable from correct on a screenshot. **2 of 21 red**: the payload assertion
+   (`the QR encodes the pairing URL`, with its `not.toBe(qrPath(encodeQr(code)))` counter-leg holding,
+   so the assertion is on the payload and not on "some path was drawn") AND the no-address test, since
+   a code-encoding QR keeps drawing when `pairing_url` is empty.
+6. **The rail I sharpened, falsified as a rail.** `KnowledgeGraph.tsx:400`'s node
+   `stroke={active ? 'var(--color-primary)' : 'var(--color-on-surface-low)'}` → two CSS colour names.
+   **1 of 20 red** in `graphMarkContrast.test.ts`:
+   `the entity mark still names the neutral outright: expected +0 to be 1`. So the per-datum condition
+   did not stop a real graph from being enrolled or its clauses from firing — the guard still guards.
+
+**Gate** (from the worktree root, `PERSONALCLAW_HOME` unset): `make lint` rc 0 (black 2145 files,
+isort, flake8, mypy 1059 files) · `pytest --no-cov tests/test_device_pairing.py
+tests/test_structural_baseline.py tests/test_mc2_device_session_consumption.py
+tests/test_companion_single_pairing_mechanism.py` **108 passed** (was 107; +1 is the TTL rail) ·
+`scripts/gate_report.py` **6/6 PASS** · `npm ci` + `npm run typecheck:web` clean + **UNSCOPED**
+`npm run test:web` **506 files / 5418 tests passed** (+2 from this atom; the unscoped run is what
+caught the census false positive below — every path-scoped run stayed green) ·
+`npm run build` clean. `config/loader.py` is **5900 lines, unchanged by this diff** — no config field
+was needed. `docs/design/consistency-audit.json` regenerates on a suite run and was reverted, not
+committed. No new route, so `src/personalclaw/reference/routes.md` is unchanged.
+
+**PARTIAL — the one leg a human must do, and it is the plan's recorded environment gate.** The
+`done_when` says *"the shell scans and exchanges it for a device session end to end"*. **The shell
+does not exist yet** — that is `MC-7` (the Capacitor wrapper), still `todo` — and a camera scan needs
+a second physical device, which is the same gate `MC-2`/`CA-2` already carry. What was driven is
+everything one machine allows, with the scan performed by the platform's real barcode decoder rather
+than simulated. **To close the clause, the owner needs to:** open `Settings → Devices → Pair a
+device` on the desktop dashboard bound to a LAN address (not loopback — `_pair_base_url` returns
+whatever `Host` it was reached on, so a loopback dashboard hands out a `127.0.0.1` URL the phone
+cannot resolve), point a phone camera at the QR, and confirm the phone lands on `/pair`, pairs, and
+appears in the Devices list. Nothing in the code path is waiting on that; it is the physical
+confirmation of a path already proven leg by leg.

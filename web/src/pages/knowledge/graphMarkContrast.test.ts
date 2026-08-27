@@ -124,7 +124,24 @@ function blankComments(src: string): string {
   return out.join('')
 }
 
-/** Every `.tsx` under `root` that emits both a node mark and an edge mark, comments blanked. */
+const MARK_TAG = (tag: string) => new RegExp(`<(?:motion\\.)?${tag}[\\s>]`)
+
+/** The callback body of every `.map(` in `src`, so a mark can be tested for being PER-DATUM. */
+function mapBodies(src: string): string[] {
+  return [...src.matchAll(/\.map\s*\(/g)].map((m) => balanced(src, m.index + m[0].length - 1))
+}
+
+/** Every `.tsx` under `root` that emits both a node mark and an edge mark ONE PER DATUM.
+ *
+ *  🔑 THE MARKS MUST COME FROM AN ITERATION. Node∧edge alone was the signal until `MC-8` produced
+ *  the real false positive its author asked for: `settings/PairingQr.tsx` renders a QR code as one
+ *  `<rect>` plate and one `<path>` of modules, which is node∧edge to a text scan and is not a graph
+ *  by any reading — there are no nodes, no connections, and no boundary to paint (SC 1.4.11 has
+ *  nothing to say about a monochrome barcode, whose contrast polarity is fixed by the *format*).
+ *  A graph draws one mark per node and one per edge, so requiring the mark tags to sit inside a
+ *  `.map(` body separates the two on the RULE rather than on a name or an exception list. All three
+ *  hand-verified graphs pass it (`graph.edges.map → <line>`, `nodes.map → <circle>/<rect>`), and
+ *  the condition is proven to be load-bearing rather than decorative in its own test below. */
 function graphMarkCensus(root: string): string[] {
   const found: string[] = []
   const walk = (dir: string) => {
@@ -134,9 +151,10 @@ function graphMarkCensus(root: string): string[] {
       const p = join(dir, e.name)
       if (e.isDirectory()) { walk(p); continue }
       if (!e.name.endsWith('.tsx') || e.name.includes('.test.')) continue
-      const src = blankComments(readFileSync(p, 'utf8'))
-      const emits = (tags: string[]) => tags.some((t) => new RegExp(`<(?:motion\\.)?${t}[\\s>]`).test(src))
-      if (emits(NODE_MARKS) && emits(EDGE_MARKS)) found.push(relative(process.cwd(), p))
+      const bodies = mapBodies(blankComments(readFileSync(p, 'utf8')))
+      const perDatum = (tags: string[]) =>
+        bodies.some((b) => tags.some((t) => MARK_TAG(t).test(b)))
+      if (perDatum(NODE_MARKS) && perDatum(EDGE_MARKS)) found.push(relative(process.cwd(), p))
     }
   }
   walk(root)
@@ -286,7 +304,24 @@ describe('every file that renders graph marks is under the contrast rail', () =>
       'src/ui/composer/controls.tsx',
       'src/pages/tasks/TaskGraph.tsx',
       'src/ui/content/InfographicView.tsx',
+      // The case the author of this rail asked for by name: a QR code, whose `<rect>` plate and
+      // `<path>` of modules are node∧edge to a text scan and a graph to nobody.
+      'src/pages/settings/PairingQr.tsx',
     ]) expect(census, `${f} does not render graph marks`).not.toContain(f)
+  })
+
+  it('the per-datum condition is LOAD-BEARING — the old signal enrolled the barcode', () => {
+    // Without this, "one mark per datum" would be an unexercised knob that could silently exclude
+    // a real graph. So: prove the barcode satisfies node∧edge ANYWHERE in the file (the previous
+    // signal, which is why it turned this rail red), and that only the iteration keeps it out.
+    const src = blankComments(
+      readFileSync(join(process.cwd(), 'src/pages/settings/PairingQr.tsx'), 'utf8'),
+    )
+    const anywhere = (tags: string[]) => tags.some((t) => MARK_TAG(t).test(src))
+    expect(anywhere(NODE_MARKS), 'a <rect> plate').toBe(true)
+    expect(anywhere(EDGE_MARKS), 'a <path> of modules').toBe(true)
+    expect(mapBodies(src), 'and no iteration to hang them on').toEqual([])
+    expect(census).not.toContain('src/pages/settings/PairingQr.tsx')
   })
 
   it('reads a boundary token out of every censused file — the per-file scan is not vacuous', () => {
