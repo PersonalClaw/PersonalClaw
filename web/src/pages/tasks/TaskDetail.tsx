@@ -8,6 +8,7 @@ import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { FormFooter } from '../../ui/FormFooter'
 import { TextLink } from '../../ui/TextLink'
+import { Meter } from '../../ui/Meter'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirm, confirmDelete } from '../../ui/dialog'
@@ -191,7 +192,19 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
 
       {exit.length > 0 && (
         <SectionLabel label={`Exit criteria · ${exitDone}/${exit.length}`}>
-          <div className="mb-2 h-1.5 rounded-pill bg-surface-high overflow-hidden"><div className="h-full rounded-pill" style={{ width: `${exit.length ? (exitDone / exit.length) * 100 : 0}%`, background: 'var(--color-ok)' }} /></div>
+          {/* 🔑 THE LAST PIXEL-NEUTRAL MEMBER OF THE METER FAMILY. The `ui/Meter` adoption pass took
+              seven of eleven hand-rolled determinate bars and deferred four as pixel-moving — but its
+              own author recorded that the reason was FALSE for this one: `mb-2 h-1.5 rounded-pill
+              bg-surface-high overflow-hidden` is `Meter`'s default track EXACTLY, and `mb-2` is now
+              expressible through the `className` that pass added. So this is a one-line adoption, not
+              a redesign, and it is the reason `Meter` took a `className` at all.
+              What it buys: the bar had no `role`, no name and no `aria-valuenow`, so a screen-reader
+              user got nothing from it while the heading beside it said "Exit criteria · 2/5". The
+              remaining three (ModelsPanel's 6px `bg-surface-container`, genui's 8px, and RunProgress,
+              whose only conveyance is fill width plus a `title` on a non-interactive div) genuinely
+              move pixels or need a shape decision, and stay the owner's call. */}
+          <Meter label="Exit criteria" pct={exit.length ? (exitDone / exit.length) * 100 : 0}
+            tone="var(--color-ok)" className="mb-2" />
           <ul className="flex flex-col gap-1">
             {exit.map((e, i) => { const m = isExitComplete(e); return <li key={i} className="flex items-start gap-s text-[0.8125rem]">
               <button type="button" disabled={readOnly} onClick={() => toggleExit(i)} aria-label={m ? 'Mark criterion incomplete' : 'Mark criterion complete'}
