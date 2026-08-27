@@ -5,7 +5,8 @@ import { Button } from '../../ui/Button'
 import { Checkbox } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { fvs } from '../../design/fontWeight'
-import { api, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalLabelCard, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
+import { api, hasApiCode, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalLabelCard, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
+import { EvalsOff } from './EvalsOff'
 
 /** Per-arm P@k/R@k for both retrieval stores (EVALUATION-SUBSTRATE §5 / ES-3).
  *
@@ -27,10 +28,20 @@ export function RetrievalBenchPanel({ bench, error, onRetry }: {
   error: unknown
   onRetry: () => void
 }) {
-  // A 404 is the ordinary state — no benchmark has run — so it renders as guidance plus the
-  // labelling card, which is the one thing a user CAN do before a run exists.
+  // A 404 is the ordinary state — the substrate is off, or no benchmark has run — so both render
+  // as guidance rather than as a failure. Only the second offers the labelling card: hand labels
+  // are read BY a run, so collecting them while the substrate is off would bank work for a
+  // machine that has been told not to start.
   if (bench === undefined && error) {
-    if (isAbsent(error)) {
+    if (hasApiCode(error, 'evals_disabled')) {
+      return (
+        <section className="flex flex-col gap-s" aria-labelledby="retrieval-bench-heading">
+          <Heading />
+          <EvalsOff what="retrieval benchmark" />
+        </section>
+      )
+    }
+    if (hasApiCode(error, 'retrieval_absent')) {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="retrieval-bench-heading">
           <Heading />
@@ -376,13 +387,6 @@ function Warn({ children }: { children: React.ReactNode }) {
       <span>{children}</span>
     </p>
   )
-}
-
-/** "No benchmark has run" is a 404 the panel EXPECTS. Matched on the backend's stable
- *  `code`, not on prose: the message is human copy and may be reworded, the code may not. */
-function isAbsent(error: unknown): boolean {
-  const text = error instanceof Error ? error.message : String(error ?? '')
-  return text.includes('retrieval_absent')
 }
 
 function fmt(value: number | undefined): string {

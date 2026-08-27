@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { invalidateKeys } from '../../lib/data'
 import { evidenceLabel } from './learningMeta'
 import { LearningPage } from './LearningPage'
+import { ApiError } from '../../lib/api'
 import type { LearningInbox, LearningRow, StagingWeek } from '../../lib/api'
 
 // ── ES-7 §3.1: the evidence TIER is read, not merely stamped ──────────────────
@@ -46,27 +47,36 @@ const evalStudies = vi.fn<() => Promise<never>>()
 const retrievalBench = vi.fn<() => Promise<never>>()
 const ablation = vi.fn<() => Promise<never>>()
 
-vi.mock('../../lib/api', () => ({
-  api: {
-    learningProposals: () => learningProposals(),
-    learningStagingWeek: () => learningStagingWeek(),
-    learningHealth: () => learningHealth(),
-    acceptLearningProposal: () => Promise.resolve({ ok: true }),
-    rejectLearningProposal: () => Promise.resolve(undefined),
-    judgeBench: () => judgeBench(),
-    evalStudies: () => evalStudies(),
-    retrievalBench: () => retrievalBench(),
-    ablation: () => ablation(),
-    // LV-4's identity report is fetched by the same LearningPage this file renders. A partial
-    // `api` mock does not fail on the missing key — it throws `api.identityReport is not a
-    // function` from inside the render, so BOTH call-site tests below died before asserting
-    // anything. Neither PR could see it alone: LV-4 added the call, this file mocks only its own
-    // reads, and the break exists only in the union. Rejecting is the honest stub — the page must
-    // paint the ablation grade whether or not the identity report resolves, and if it ever grows a
-    // dependency on that payload these tests should say so rather than silently pass.
-    identityReport: () => Promise.reject(new Error('not under test')),
-  },
-}))
+// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError`/`hasApiCode` are kept. The four eval
+// panels branch on `hasApiCode(error, '<code>')`, so a factory that returned only `api` made the
+// mocked module throw "No \"hasApiCode\" export is defined" from inside the render — and a fixture
+// that rejected with a bare `Error` would carry no `.code`, so the branch under test would never
+// fire and the test would pass by rendering the generic failure instead.
+vi.mock('../../lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/api')>()
+  return {
+    ...actual,
+    api: {
+      learningProposals: () => learningProposals(),
+      learningStagingWeek: () => learningStagingWeek(),
+      learningHealth: () => learningHealth(),
+      acceptLearningProposal: () => Promise.resolve({ ok: true }),
+      rejectLearningProposal: () => Promise.resolve(undefined),
+      judgeBench: () => judgeBench(),
+      evalStudies: () => evalStudies(),
+      retrievalBench: () => retrievalBench(),
+      ablation: () => ablation(),
+      // LV-4's identity report is fetched by the same LearningPage this file renders. A partial
+      // `api` mock does not fail on the missing key — it throws `api.identityReport is not a
+      // function` from inside the render, so BOTH call-site tests below died before asserting
+      // anything. Neither PR could see it alone: LV-4 added the call, this file mocks only its own
+      // reads, and the break exists only in the union. Rejecting is the honest stub — the page must
+      // paint the ablation grade whether or not the identity report resolves, and if it ever grows a
+      // dependency on that payload these tests should say so rather than silently pass.
+      identityReport: () => Promise.reject(new Error('not under test')),
+    },
+  }
+})
 
 describe('the evidence clause names the tier, not only the count', () => {
   it('distinguishes a measured ablation from a co-occurrence', () => {
@@ -109,10 +119,10 @@ describe('LearningPage RENDERS the grade (the call site)', () => {
     // Each of the side panels rejects with its own ORDINARY absent code: they own their own
     // rendering, and this suite's subject is the proposal row.
     learningHealth.mockRejectedValue(new Error('not under test'))
-    judgeBench.mockRejectedValue(new Error('judge_bench_absent'))
-    evalStudies.mockRejectedValue(new Error('study_absent'))
-    retrievalBench.mockRejectedValue(new Error('retrieval_absent'))
-    ablation.mockRejectedValue(new Error('ablation_absent'))
+    judgeBench.mockRejectedValue(new ApiError('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.', 404, 'judge_bench_absent'))
+    evalStudies.mockRejectedValue(new ApiError('No study is registered under that id.', 404, 'study_absent'))
+    retrievalBench.mockRejectedValue(new ApiError('No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores.', 404, 'retrieval_absent'))
+    ablation.mockRejectedValue(new ApiError('No ablation has run yet. Register a component in `evals/ablation_registry.json` and run `personalclaw ablation --force`.', 404, 'ablation_absent'))
   })
 
   /** 🔑 THE RAIL THAT KEEPS THE TIER READ.

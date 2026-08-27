@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { JudgeBenchPanel } from './JudgeBenchPanel'
+import { ApiError } from '../../lib/api'
 import type { JudgeBenchRow, JudgeBenchView } from '../../lib/api'
 
 /** ES-4's judge tier table, on the two things a table of measurements gets wrong.
@@ -104,7 +105,7 @@ describe('the judge tier-recommendation table', () => {
   })
 
   it('renders "no benchmark yet" as guidance rather than as a load failure', () => {
-    render(<JudgeBenchPanel bench={undefined} error={new Error('judge_bench_absent')} onRetry={() => {}} />)
+    render(<JudgeBenchPanel bench={undefined} error={new ApiError('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.', 404, 'judge_bench_absent')} onRetry={() => {}} />)
     expect(screen.getByText(/personalclaw judge-bench/)).toBeTruthy()
     expect(screen.queryByText(/Retry/)).toBeNull()
   })

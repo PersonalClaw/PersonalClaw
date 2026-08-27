@@ -120,19 +120,27 @@ describe('one owner', () => {
       return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
     })
 
-  it('no file re-declares errText', () => {
+  it('no file re-declares errText — nor the envelope reader underneath it', () => {
     // It lived in two files, byte-identical, which is how a fix to the funnel misses the upload
-    // paths. The consumers import it; nobody redefines it.
-    const decls = walk(SRC)
-      .filter((f) => /function errText\b|const errText\s*=/.test(readFileSync(f, 'utf8')))
-      .map((f) => f.slice(SRC.length + 1))
-    expect(decls, 'errText must have exactly one home').toEqual(['lib/errText.ts'])
+    // paths. The consumers import it; nobody redefines it. `errEnvelope` is held to the same rule
+    // because it is now the one that actually parses: a second copy of THAT is how a caller ends
+    // up branching on a code some other parse spelled differently.
+    for (const name of ['errText', 'errEnvelope'] as const) {
+      const decls = walk(SRC)
+        .filter((f) => new RegExp(`function ${name}\\b|const ${name}\\s*=`).test(readFileSync(f, 'utf8')))
+        .map((f) => f.slice(SRC.length + 1))
+      expect(decls, `${name} must have exactly one home`).toEqual(['lib/errText.ts'])
+    }
   })
 
   it('both former copy-holders now import it', () => {
+    // A NAME LIST is allowed now, and only that: `api.ts` takes `errEnvelope` too, because the
+    // body is a one-shot stream and the typed code has to come out of the same read as the
+    // sentence. What stays forbidden is the thing that actually broke — a private copy of the
+    // parse, which the declaration test above owns for both entry points.
     for (const rel of ['lib/api.ts', 'lib/chunkedUpload.ts']) {
       expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} must use the shared helper`)
-        .toMatch(/import \{ errText \} from '\.\/errText'/)
+        .toMatch(/import \{[^}]*\berrText\b[^}]*\} from '\.\/errText'/)
     }
   })
 })
