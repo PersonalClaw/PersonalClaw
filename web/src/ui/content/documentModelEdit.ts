@@ -12,7 +12,13 @@
  *  either format text the user did not select or invent a second representation of
  *  formatting that the writer does not read.
  */
-import type { DocumentBlock, DocumentModelJson, DocumentRun } from '../../lib/api'
+import type {
+  DocumentBlock,
+  DocumentModelJson,
+  DocumentPageSetup,
+  DocumentParagraphStyle,
+  DocumentRun,
+} from '../../lib/api'
 
 /** The character marks a run can carry. `link` is deliberately absent: it needs a URL,
  *  i.e. a dialog, and this atom's contract is the formatting round trip. */
@@ -155,9 +161,55 @@ export function withBlock(model: DocumentModelJson, index: number, block: Docume
   return { ...model, blocks: model.blocks.map((b, i) => (i === index ? block : b)) }
 }
 
+// ── layout (DFE-6) ───────────────────────────────────────────────────────────
+
+/** An all-unset page setup. Every zero means "the writer's template decides", which is
+ *  why the controls must show a document's REAL values rather than these — a control
+ *  showing Letter for a document that named no size would write Letter on the first save. */
+export const EMPTY_PAGE: DocumentPageSetup = {
+  size: '', orientation: '',
+  margin_top_pt: 0, margin_bottom_pt: 0, margin_left_pt: 0, margin_right_pt: 0,
+  header_text: '', footer_text: '', page_numbers: false,
+}
+
+/** An all-unset paragraph style, for a block the parser gave none. */
+export const EMPTY_STYLE: DocumentParagraphStyle = {
+  align: '', space_before_pt: 0, space_after_pt: 0, line_spacing: 0,
+  indent_left_pt: 0, indent_right_pt: 0, first_line_indent_pt: 0, keep_with_next: false,
+}
+
+/** The page setup as something a control can bind to — the document's own values when it
+ *  has them, all-unset when it does not. Never a guessed default. */
+export function pageOf(model: DocumentModelJson): DocumentPageSetup {
+  return model.page ?? EMPTY_PAGE
+}
+
+export function styleOf(block: DocumentBlock): DocumentParagraphStyle {
+  return block.style ?? EMPTY_STYLE
+}
+
+/** Patch the model's page setup, returning a new model. */
+export function withPage(
+  model: DocumentModelJson,
+  patch: Partial<DocumentPageSetup>,
+): DocumentModelJson {
+  return { ...model, page: { ...pageOf(model), ...patch } }
+}
+
+/** Patch one block's paragraph style, returning a new model. */
+export function withStyle(
+  model: DocumentModelJson,
+  index: number,
+  patch: Partial<DocumentParagraphStyle>,
+): DocumentModelJson {
+  const block = model.blocks[index]
+  if (!block) return model
+  return withBlock(model, index, { ...block, style: { ...styleOf(block), ...patch } })
+}
+
 /** Blocks this editor can edit as text. A table / image / pagebreak has no single text
  *  body, and inventing one would let a save flatten it — those blocks are shown, named,
- *  and left exactly as parsed (DFE-6/7 own their real controls). */
+ *  and left exactly as parsed (DFE-7/8 own their real controls). */
 export const TEXT_BLOCK_KINDS: ReadonlyArray<DocumentBlock['kind']> = ['heading', 'paragraph', 'code']
 
 export function isTextBlock(block: DocumentBlock): boolean {

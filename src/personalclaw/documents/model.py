@@ -29,6 +29,24 @@ ALIGNMENTS = ("", "left", "center", "right", "justify")
 #: Page orientations. `""` means "the writer's default" for the same reason.
 ORIENTATIONS = ("", "portrait", "landscape")
 
+#: Named page sizes. `""` means "the writer's default" for the same reason as ALIGNMENTS —
+#: a template with a house page size keeps it when the author expressed no preference.
+PAGE_SIZES = ("", "letter", "a4", "legal", "tabloid")
+
+#: PORTRAIT (width, height) in inches for each named size. Landscape is the same pair
+#: swapped, so orientation stays one fact rather than doubling the table.
+#:
+#: The metric sizes are kept as exact divisions rather than rounded decimals: 914400 EMU
+#: per inch divided by 25.4 is exactly 36000 EMU per mm, so `210 / 25.4` inches converts
+#: to A4's width in whole EMU with no drift, while a rounded `8.2677` is 11 EMU short and
+#: would make an A4 round trip fail an exact comparison.
+PAGE_SIZE_IN: dict[str, tuple[float, float]] = {
+    "letter": (8.5, 11.0),
+    "a4": (210 / 25.4, 297 / 25.4),
+    "legal": (8.5, 14.0),
+    "tabloid": (11.0, 17.0),
+}
+
 
 @dataclass
 class Run:
@@ -55,6 +73,13 @@ class ParagraphStyle:
     #: 0.0 means "writer default", NEVER "zero spacing" — a document asking for literally
     #: no line spacing would be unreadable, so that reading of 0.0 is never the one wanted.
     line_spacing: float = 0.0
+    indent_left_pt: float = 0.0
+    indent_right_pt: float = 0.0
+    #: NEGATIVE is meaningful here and only here: a hanging indent pulls the first line
+    #: LEFT of the body. So this field's "unset" test is `== 0.0`, never `> 0.0` — the
+    #: reading every other numeric on this dataclass uses would silently drop it.
+    first_line_indent_pt: float = 0.0
+    keep_with_next: bool = False
 
     def __post_init__(self) -> None:
         if self.align not in ALIGNMENTS:
@@ -63,16 +88,46 @@ class ParagraphStyle:
 
 @dataclass
 class PageSetup:
-    """Optional page-level presentation. Zero values mean "unset", as in ParagraphStyle."""
+    """Optional page-level presentation. Zero values mean "unset", as in ParagraphStyle.
 
+    **Margins are per edge, not one number.** A single margin could not express the
+    asymmetric top/bottom vs. left/right geometry that Word's own default template ships,
+    so every document built from it parsed as lossy — the loss report fired on documents
+    this project generated itself. Four fields make that geometry representable.
+    """
+
+    size: str = ""
     orientation: str = ""
-    margin_in: float = 0.0  # 0.0 means "writer default"
+    margin_top_pt: float = 0.0
+    margin_bottom_pt: float = 0.0
+    margin_left_pt: float = 0.0
+    margin_right_pt: float = 0.0
+    #: Plain text only, per §C1's declared scope. A header carrying a table, an image or
+    #: several paragraphs is NOT squeezed into this field — the parser reports it.
+    header_text: str = ""
+    footer_text: str = ""
+    #: A page-number field in the footer. Separate from `footer_text` because a page
+    #: number is computed per page, which no static string can express.
+    page_numbers: bool = False
 
     def __post_init__(self) -> None:
         if self.orientation not in ORIENTATIONS:
             raise ValueError(
                 f"unknown orientation {self.orientation!r}; expected one of {ORIENTATIONS}"
             )
+        if self.size not in PAGE_SIZES:
+            raise ValueError(f"unknown page size {self.size!r}; expected one of {PAGE_SIZES}")
+
+    def size_in(self) -> tuple[float, float]:
+        """The page's (width, height) in inches, orientation applied.
+
+        `(0.0, 0.0)` when no size is named — the writer's template decides, and inventing
+        Letter here would silently reformat a document that never asked for one.
+        """
+        if not self.size:
+            return (0.0, 0.0)
+        width, height = PAGE_SIZE_IN[self.size]
+        return (height, width) if self.orientation == "landscape" else (width, height)
 
 
 @dataclass

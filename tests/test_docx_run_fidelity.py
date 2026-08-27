@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Inches, Pt
+from docx.shared import Inches, Mm, Pt
 
 from personalclaw.documents.from_markup import document_from_markdown
 from personalclaw.documents.model import (
@@ -38,6 +38,10 @@ from personalclaw.knowledge.readers import FileReader
 _MONOSPACE = "Courier New"
 _URL = "https://example.invalid/docs"
 
+#: One twentieth of a point, in EMU. `w:pgSz` stores twips, so a named page size cannot
+#: read back at exact EMU however precisely the writer computes it.
+_ONE_TWIP_EMU = 635
+
 
 @dataclass
 class _Run:
@@ -54,6 +58,10 @@ class _Style:
     space_before_pt: float = 0.0
     space_after_pt: float = 0.0
     line_spacing: float = 0.0
+    indent_left_pt: float = 0.0
+    indent_right_pt: float = 0.0
+    first_line_indent_pt: float = 0.0
+    keep_with_next: bool = False
 
 
 @dataclass
@@ -66,8 +74,24 @@ class _Cell:
 
 @dataclass
 class _Page:
+    size: str = ""
     orientation: str = ""
-    margin_in: float = 0.0
+    margin_top_pt: float = 0.0
+    margin_bottom_pt: float = 0.0
+    margin_left_pt: float = 0.0
+    margin_right_pt: float = 0.0
+    header_text: str = ""
+    footer_text: str = ""
+    page_numbers: bool = False
+
+    def size_in(self) -> tuple[float, float]:
+        """The writer calls this, so the double has to answer it.
+
+        Duplicating the shipped logic would make the double a second implementation, so it
+        delegates to the real one — the point of these doubles is that the writer only
+        READS off them, not that they re-derive anything.
+        """
+        return PageSetup(size=self.size, orientation=self.orientation).size_in()
 
 
 def _block(kind: str, *, runs=(), cells=(), style=None, **kw) -> Block:
@@ -310,12 +334,15 @@ def _section(page) -> object:
 
 def test_zero_margin_means_writer_default_and_never_a_zero_margin():
     default = _section(None)
-    declared = _section(_Page(margin_in=0.75))
+    declared = _section(_Page(margin_left_pt=54.0, margin_top_pt=54.0))
 
     assert _section(_Page()).left_margin == default.left_margin
     assert declared.left_margin == Inches(0.75)
     assert declared.top_margin == Inches(0.75)
     assert declared.left_margin != default.left_margin
+    # The edges nobody set keep the template's own values — per-edge means per edge, not
+    # "one number spread over four".
+    assert declared.right_margin == default.right_margin
 
 
 def test_landscape_swaps_the_page_and_portrait_is_a_no_op_on_a_portrait_template():
@@ -325,6 +352,18 @@ def test_landscape_swaps_the_page_and_portrait_is_a_no_op_on_a_portrait_template
     assert landscape.page_width == default.page_height
     assert landscape.page_height == default.page_width
     assert _section(_Page(orientation="portrait")).page_width == default.page_width
+
+
+def test_a_named_size_decides_the_page_rather_than_swapping_the_templates():
+    """The bug per-edge margins alone would not have caught: swapping the template's own
+    width/height can only ever yield landscape LETTER, whatever size the model asked for."""
+    a4 = _section(_Page(size="a4", orientation="landscape"))
+
+    # Within one twip: `w:pgSz` is stored in twentieths of a point, so the exact EMU width
+    # cannot survive the file. 130 EMU is a five-thousandth of a millimetre.
+    assert abs(a4.page_width - Mm(297)) <= _ONE_TWIP_EMU
+    assert abs(a4.page_height - Mm(210)) <= _ONE_TWIP_EMU
+    assert a4.page_width != _section(_Page(orientation="landscape")).page_width
 
 
 # ----------------------------------------------------------------------- richer  tables

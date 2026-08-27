@@ -29,6 +29,7 @@ a leak into the real ``~/.personalclaw`` fails conftest's own rail.
 
 from __future__ import annotations
 
+import io
 import json
 from unittest.mock import MagicMock, patch
 
@@ -75,20 +76,45 @@ def _authored(bold_word: str = "bold") -> DocumentModel:
 
 
 def _docx_bytes(model: DocumentModel | None = None) -> bytes:
-    """One render of *model*. NOT lossless when parsed back: python-docx's default
-    template ships asymmetric page margins (1.00in top/bottom, 1.25in left/right) and
-    the model holds a single ``margin_in``, so the parse honestly reports one
-    ``page_property`` loss. That is the report doing its job, and
-    ``test_the_loss_report_names_what_did_not_fit`` pins it."""
+    """One render of *model*, and it IS lossless when parsed back.
+
+    It was not before DFE-6: python-docx's default template ships asymmetric page margins
+    (1.00in top/bottom, 1.25in left/right) which a single ``margin_in`` could not hold, so
+    a document this repo generated itself reported a ``page_property`` loss. ``PageSetup``
+    now carries a margin per edge, so that geometry is representable and the report on a
+    freshly generated document is empty."""
     return render_docx(model if model is not None else _authored())
 
 
 def _settled_docx_bytes(model: DocumentModel | None = None) -> bytes:
-    """*model* rendered, parsed and re-rendered, so its page setup is explicit and a
-    further parse is lossless. This is the fixture for every test about the write path
-    itself, where an incidental margin loss would be noise."""
+    """*model* rendered, parsed and re-rendered, so its page setup is EXPLICIT in the model
+    rather than inherited from the template.
+
+    Since DFE-6 one render already parses losslessly, so this no longer exists to dodge a
+    margin loss — it exists for the tests that need the page setup to be a stated fact of
+    the model they hold."""
     parsed, _ = parse_docx(_docx_bytes(model))
     return render_docx(parsed)
+
+
+def _lossy_docx_bytes() -> bytes:
+    """A document carrying a construct the model genuinely CANNOT hold: a two-paragraph
+    header, against ``PageSetup.header_text``'s one string.
+
+    Until DFE-6 the vehicle here was the template's asymmetric page margins. Those are
+    representable now, so a test that still used them would assert `lossless is False`
+    about a lossless document — the vacuity leg needs a construct that is honestly
+    unrepresentable, not one that used to be.
+    """
+    from docx import Document as _Docx
+
+    doc = _Docx(io.BytesIO(_settled_docx_bytes()))
+    header = doc.sections[0].header
+    header.paragraphs[0].text = "line one"
+    header.add_paragraph("line two")
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
 
 
 @pytest.fixture
@@ -602,7 +628,7 @@ async def test_the_loss_report_names_what_did_not_fit(patched_native) -> None:
     """VACUITY for the clause above: ``lossless`` can be False, and when it is, the
     report names the construct and where it was. A report that only ever says "no
     losses" would let §C5's warning surface stay silent for a lossy document."""
-    art = _docx_artifact(patched_native, data=_docx_bytes())  # ONE render: margins differ
+    art = _docx_artifact(patched_native, data=_lossy_docx_bytes())
     client = await _client()
     try:
         body = await (await client.get(f"/api/artifacts/{art.slug}/model")).json()
@@ -610,11 +636,11 @@ async def test_the_loss_report_names_what_did_not_fit(patched_native) -> None:
         await client.close()
     loss = body["loss"]
     assert loss["lossless"] is False
-    assert loss["kinds"] == ["page_property"]
-    assert loss["summary"] == "page_property×1"
+    assert loss["kinds"] == ["header_footer"]
+    assert loss["summary"] == "header_footer×1"
     (item,) = loss["items"]
-    assert item["kind"] == "page_property" and item["where"] == "document"
-    assert "margins differ" in item["detail"]
+    assert item["kind"] == "header_footer" and item["where"] == "document"
+    assert "2 non-empty paragraphs" in item["detail"]
 
 
 @pytest.mark.asyncio

@@ -131,9 +131,9 @@ def test_zero_floats_are_distinguishable_from_an_explicit_small_value() -> None:
     # that distinction and make "tight" unrequestable.
     assert not unset.line_spacing
     assert tight.line_spacing
-    assert PageSetup().margin_in == 0.0
-    assert PageSetup(margin_in=0.25).margin_in == 0.25
-    assert PageSetup(margin_in=0.25).margin_in != PageSetup().margin_in
+    assert PageSetup().margin_left_pt == 0.0
+    assert PageSetup(margin_left_pt=18.0).margin_left_pt == 18.0
+    assert PageSetup(margin_left_pt=18.0).margin_left_pt != PageSetup().margin_left_pt
 
 
 # --- enum-ish validation: unknown values RAISE, matching Block's `kind` ------------------

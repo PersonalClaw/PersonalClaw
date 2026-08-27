@@ -26,7 +26,7 @@
  *  TOLD — with its draft intact — instead of silently overwriting the first.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Bold, Code, FileWarning, Italic, Loader2, Save } from 'lucide-react'
+import { AlertTriangle, Bold, Code, FileWarning, Italic, Loader2, Ruler, Save } from 'lucide-react'
 import { api, ApiError, type DocumentBlock, type DocumentLossReport, type DocumentModelJson } from '../../lib/api'
 import { Button } from '../Button'
 import { Centered } from '../Centered'
@@ -37,11 +37,16 @@ import {
   applyMark,
   blockText,
   isTextBlock,
+  pageOf,
   selectionHasMark,
   setBlockText,
+  styleOf,
   withBlock,
+  withPage,
+  withStyle,
   type RunMark,
 } from './documentModelEdit'
+import { PageSetupControls, ParagraphLayoutControls } from './DocumentLayout'
 import type { DocumentEditorProps } from './contentTypes'
 
 /** A live text selection inside one block's field, in that block's own characters. */
@@ -87,6 +92,11 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
   const [saving, setSaving] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
   const [sel, setSel] = useState<Selection | null>(null)
+  // Which panels are open. Layout is per-block and opt-in: eight controls under every
+  // paragraph at once buries the text the user came to edit, and the block a control
+  // belongs to has to be unambiguous.
+  const [pageOpen, setPageOpen] = useState(false)
+  const [layoutOpen, setLayoutOpen] = useState<number | null>(null)
   const fields = useRef(new Map<number, HTMLTextAreaElement>())
 
   useEffect(() => {
@@ -253,6 +263,24 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
       {/* ── the blocks ── */}
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
         <div className="mx-auto flex w-full max-w-[46rem] flex-col gap-3">
+          {/* ── page layout (DFE-6 T3.1/T3.3/T3.4) ── */}
+          <div className="rounded-lg border border-outline/40 bg-surface-container/30">
+            <Button size="xs" variant="ghost" className="w-full justify-start"
+              ariaExpanded={pageOpen}
+              onClick={() => setPageOpen(!pageOpen)}>
+              <Ruler size={13} aria-hidden="true" /> Page layout
+            </Button>
+            {pageOpen && (
+              <div className="border-t border-outline/30 p-3">
+                <PageSetupControls
+                  page={pageOf(model)}
+                  readOnly={!editing}
+                  disabledReason={blockedReason}
+                  onChange={(patch) => setModel(withPage(model, patch))} />
+              </div>
+            )}
+          </div>
+
           {blocks.map((block, index) => {
             const label = KIND_LABEL[block.kind] ?? block.kind
             if (!isTextBlock(block)) {
@@ -263,11 +291,21 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
               )
             }
             const fieldId = `doc-block-${index}`
+            const open = layoutOpen === index
             return (
               <div key={index}>
-                <label htmlFor={fieldId} className="block text-[0.75rem] uppercase tracking-wide text-on-surface-low">
-                  {label}{block.kind === 'heading' ? ` ${block.level}` : ''}
-                </label>
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor={fieldId} className="block text-[0.75rem] uppercase tracking-wide text-on-surface-low">
+                    {label}{block.kind === 'heading' ? ` ${block.level}` : ''}
+                  </label>
+                  <Button size="xs" variant="ghost" shape="squircle"
+                    ariaExpanded={open}
+                    ariaLabel={`Layout for this ${label.toLowerCase()}`}
+                    title="Alignment, spacing and indents for this paragraph"
+                    onClick={() => setLayoutOpen(open ? null : index)}>
+                    <Ruler size={12} aria-hidden="true" />
+                  </Button>
+                </div>
                 <textarea id={fieldId} rows={block.kind === 'paragraph' ? 3 : 2}
                   ref={(el) => { if (el) fields.current.set(index, el); else fields.current.delete(index) }}
                   className="mt-1 w-full resize-y rounded-lg border border-outline/40 bg-surface px-3 py-2 text-[0.875rem] text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60"
@@ -279,6 +317,14 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
                   onKeyUp={(e) => onFieldSelect(index, e.currentTarget)}
                   onMouseUp={(e) => onFieldSelect(index, e.currentTarget)}
                   onChange={(e) => setModel(withBlock(model, index, setBlockText(block, e.target.value)))} />
+                {open && (
+                  <ParagraphLayoutControls
+                    block={block}
+                    style={styleOf(block)}
+                    readOnly={!editing}
+                    disabledReason={blockedReason}
+                    onChange={(patch) => setModel(withStyle(model, index, patch))} />
+                )}
               </div>
             )
           })}
