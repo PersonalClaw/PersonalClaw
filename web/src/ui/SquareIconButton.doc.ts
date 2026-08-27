@@ -5,7 +5,7 @@ import type { UiDoc } from './uiDoc'
 // from SquareIconButton.tsx at build time — never restate them here.
 const doc: UiDoc = {
   name: 'SquareIconButton',
-  keywords: ['icon', 'button', 'square', 'dense', 'compact', 'toggle', 'danger', 'toolbar', 'list-row'],
+  keywords: ['icon', 'button', 'square', 'dense', 'compact', 'toggle', 'danger', 'toolbar', 'list-row', 'loading', 'busy', 'spinner'],
   description:
     'The dense square icon button — the compact sibling of the round IconButton. A 28px (size-7) rounded-md hit area with a small glyph, for tight action clusters in list rows, card headers, and content toolbars where the 40px round pill is too large. Idle at ink-low; hover fills surface-high and brightens; the on (selected) state carries the coral tint, and tone="danger" gives a restrained red-on-hover destructive variant.',
   props: [
@@ -18,6 +18,7 @@ const doc: UiDoc = {
     { name: 'ariaExpanded', description: 'This button reveals adjacent content, and that content is currently shown — announces aria-expanded and carries the same coral tint as on. Same prop name Button and QuietButton use, deliberately. Passing it suppresses aria-pressed: a disclosure and a toggle answer different questions, and a control claiming both claims one of them falsely. Six of this primitive\u2019s ten state-bearing call sites are disclosures (a config form, a models list, two edit forms, an iteration rail, a menu); four are true toggles (pin, bookmark, word-wrap) and keep on.' },
     { name: 'disabled', description: 'Action currently unavailable: 40% opacity, not-allowed cursor, onClick suppressed — kept distinct from a busy state so it reads as inert rather than a dead-click.' },
     { name: 'disabledReason', description: 'WHY it is unavailable, when disabled is true; appended to the tooltip after an em dash. This button keeps its tab stop (disabled maps to aria-disabled, never the native attribute), so a keyboard user lands on it and would otherwise hear only the label — and being icon-only, it has no visible text to carry the reason either. Omit it when the gate is self-evident or transient; pass it only for the branch it describes when the gate is compound.' },
+    { name: 'loading', description: 'The action is IN FLIGHT — the opposite claim from disabled, which says "unavailable". Sets aria-busy, cross-fades the glyph out under a centered spinner (Button’s treatment), refuses the click through the same off = disabled || loading guard, and stands the press spring down; it deliberately does NOT dim and does NOT set aria-disabled. Five call sites used to hand-roll this as disabled={testing} plus {testing ? <Loader2 className="animate-spin"/> : <Wifi/>} — a spinner inside a 40%-dimmed not-allowed button, which is what a missing primitive state looks like. Keep disabled for a gate the user must satisfy, and split a compound one (disabled={pinned} loading={pinPending}).' },
     { name: 'tone', description: "'neutral' (default) or 'danger'; danger tints the glyph red on hover with no fill (the restrained destructive treatment). Ignored while on." },
     { name: 'iconSize', description: 'Glyph size for the icon form (default 14); the children form sizes itself.' },
     { name: 'className', description: 'Extra classes (tokens only — no raw hex/px).' },
@@ -27,11 +28,12 @@ const doc: UiDoc = {
     { guidance: true, description: 'Pass exactly one of icon or children — icon for a static glyph, children for a state-swapping glyph (spinner⇄wifi, rotating chevron).' },
     { guidance: true, description: 'Use tone="danger" for delete/remove actions and on for a selected/toggled state; always provide a label since there is no visible text.' },
     { guidance: true, description: 'Ask what the button DOES before choosing the state prop: if clicking it reveals adjacent content, it is a disclosure and wants ariaExpanded; if it flips a state that reveals nothing (pinned, saved, word-wrap), it wants on.' },
+    { guidance: true, description: 'Pass loading for an async click, never disabled — and pass your idle glyph as usual: the spinner belongs to the primitive, so no caller ships its own {busy ? <Loader2/> : <Icon/>} swap again.' },
     { guidance: false, description: 'Do not pass on and ariaExpanded together — the primitive suppresses aria-pressed when ariaExpanded is present, and a control announcing both states announces one of them falsely.' },
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
     { guidance: false, description: 'Do not combine on with tone="danger" — a selected destructive button is not an app pattern, so danger is ignored while on.' },
   ],
-  anatomy: ['motion.button (size-7 rounded-md, press spring)', 'icon glyph or children (state tint: idle ink-low / hover / on-or-expanded coral)'],
+  anatomy: ['motion.button (size-7 rounded-md, press spring)', 'icon glyph or children (state tint: idle ink-low / hover / on-or-expanded coral)', 'loading spinner overlay (absolute, aria-hidden, cross-fades over the glyph)'],
 }
 
 export default doc

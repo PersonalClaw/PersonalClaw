@@ -624,17 +624,19 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
                     <HealthDot provider={provider} health={health} />
                     <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.8125rem]">{id}</span>
                     {provider && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{provider}</span>}
-                    {/* The reason names the BOUNDARY branch only: while `saving` the gate is
-                        transient and the row's own save state carries it, so a reason there
-                        would explain the wrong cause. */}
+                    {/* Two different claims, so two different props. The BOUNDARY (`i === 0`,
+                        last row) is genuine unavailability and keeps `disabled` + the reason that
+                        names it. `saving` is the chain PUT in flight, so it is `loading`: OR-ing
+                        it into `disabled` made all three arrows announce "unavailable" for the
+                        length of a request they had just started. */}
                     <IconButton icon={ArrowUp} label={`Move ${id} up`} size={24} iconSize={13}
-                      disabled={saving || i === 0} onClick={() => move(i, -1)}
+                      disabled={i === 0} loading={saving} onClick={() => move(i, -1)}
                       disabledReason={i === 0 ? 'Already the default' : undefined} />
                     <IconButton icon={ArrowDown} label={`Move ${id} down`} size={24} iconSize={13}
-                      disabled={saving || i === activeModels.length - 1} onClick={() => move(i, 1)}
+                      disabled={i === activeModels.length - 1} loading={saving} onClick={() => move(i, 1)}
                       disabledReason={i === activeModels.length - 1 ? 'Already the last fallback' : undefined} />
                     <IconButton icon={X} label={`Remove ${id} from chain`} size={24} iconSize={13}
-                      disabled={saving} onClick={() => setActive(activeModels.filter((m) => m !== ref))} />
+                      loading={saving} onClick={() => setActive(activeModels.filter((m) => m !== ref))} />
                   </div>
                 )
               })}

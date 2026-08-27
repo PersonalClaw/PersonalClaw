@@ -64,11 +64,15 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
             <KeyRound size={12} /> Sign in
           </button>
         )}
-        {/* Manual availability re-check — forces a fresh readiness probe. */}
+        {/* Manual availability re-check — forces a fresh readiness probe. `loading`, not
+            `disabled`: a probe in flight is working, not unavailable, and the primitive's own
+            spinner replaces spinning this button's RefreshCw by hand.
+            🪤 Same trap as the comment above: this sits BEFORE the conditional, not after its
+            `&& (` — a JSX comment in an EXPRESSION position is an object literal. */}
         {runtime && runtime.type !== 'native' && !unavailable && onRecheck && (
-          <SquareIconButton label={`Check availability: ${who}`} title="Check availability" disabled={rechecking} className="shrink-0"
+          <SquareIconButton label={`Check availability: ${who}`} title="Check availability" loading={rechecking} className="shrink-0"
             onClick={async () => { setRechecking(true); try { await onRecheck() } finally { setRechecking(false) } }}>
-            <RefreshCw size={14} className={rechecking ? 'animate-spin' : ''} />
+            <RefreshCw size={14} />
           </SquareIconButton>
         )}
         {/* Managed app provider → install/uninstall toggle. Native built-in →

@@ -1,7 +1,7 @@
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import type { LucideIcon } from 'lucide-react'
+import { Loader2, type LucideIcon } from 'lucide-react'
 import { cx } from './cx'
-import { physics, expr, exprHeavy } from '../design/motion'
+import { spring, physics, expr, exprHeavy } from '../design/motion'
 
 /** Round icon button — pill hit area, rounded outline icon (ROND feel).
  *  Redesign-v2: expressiveness-scaled press/hover + a soft hover halo (bold only)
@@ -9,7 +9,7 @@ import { physics, expr, exprHeavy } from '../design/motion'
  *  and success `bloom` moments. Yields to reduced-motion; halo drops below the
  *  heavy-effect threshold. */
 export function IconButton({
-  icon: Icon, label, title, onClick, active, filled, size = 40, iconSize = 20, className, disabled, disabledReason, iconKey, bloom,
+  icon: Icon, label, title, onClick, active, filled, size = 40, iconSize = 20, className, disabled, disabledReason, loading = false, iconKey, bloom,
 }: {
   icon: LucideIcon
   label: string
@@ -44,6 +44,20 @@ export function IconButton({
   // Omit it when the gate is self-evident or transient (an in-flight save already reads as
   // busy); a compound gate should pass it only for the branch it actually describes.
   disabledReason?: string
+  // The action is IN FLIGHT. Distinct from `disabled` on purpose — they are opposite claims:
+  // `disabled` says "unavailable", `loading` says "working". Measured before this prop existed:
+  // 16 async icon controls (10 of them the whole in-flight population of the two icon tiers)
+  // passed `disabled={busy}` mid-flight, so they dimmed to 40% with `cursor: not-allowed` and
+  // announced `aria-disabled` — a false state, and to a screen-reader user indistinguishable
+  // from a gate they can never satisfy. `Button` has said this in prose since cycle 37 and ships
+  // the cross-fade; the two icon tiers never got it, and they are the ones that need it most
+  // because they have no LABEL to swap — the glyph is the whole button.
+  //
+  // What it does: `aria-busy`, the glyph cross-fades under a centered spinner (Button's
+  // treatment), the click is refused by the same `off = disabled || loading` guard, and the
+  // press/hover springs and the hover halo stand down. It deliberately does NOT dim or set
+  // `aria-disabled`: a busy button is not unavailable, and it will be live again shortly.
+  loading?: boolean
   // When set, the icon cross-fades/scales in whenever iconKey changes (a shape
   // morph, e.g. send arrow → success check). Without it the icon swaps instantly.
   iconKey?: string
@@ -53,11 +67,14 @@ export function IconButton({
   bloom?: boolean
 }) {
   const reduce = useReducedMotion()
+  // One guard for both inert reasons, exactly as `Button` spells it (`off = !!disabled || loading`).
+  // Without it, `loading` would trade a false "unavailable" for a double-fire.
+  const off = !!disabled || loading
   const pressScale = reduce ? 1 : 1 - expr(0.08, 0.5)
   const hoverScale = reduce ? 1 : 1 + expr(0.06, 0.35)
-  // Soft hover halo — non-filled + enabled buttons at bold intensity only (filled
+  // Soft hover halo — non-filled + live buttons at bold intensity only (filled
   // buttons carry their own emphasis; refined mode stays flat).
-  const showHalo = !disabled && !filled && !reduce && exprHeavy(0.5)
+  const showHalo = !off && !filled && !reduce && exprHeavy(0.5)
   return (
     <motion.button
       type="button"
@@ -67,10 +84,14 @@ export function IconButton({
       // and mic buttons are its two `active` callers, and "recording" vs "not recording" is exactly the
       // state a screen-reader user cannot infer from a tint. `undefined` unless a caller opts in.
       aria-pressed={active}
+      // "Working", not "unavailable" — the state `disabled` was standing in for at every async
+      // site. It is the ONLY signal a screen-reader user gets here: the glyph swap is decorative
+      // (`aria-hidden`) and the name never changes, by design, so the action stays findable.
+      aria-busy={loading || undefined}
       title={disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
-      onClick={disabled ? undefined : onClick}
-      whileTap={disabled ? undefined : { scale: pressScale }}
-      whileHover={disabled ? undefined : { scale: hoverScale }}
+      onClick={off ? undefined : onClick}
+      whileTap={off ? undefined : { scale: pressScale }}
+      whileHover={off ? undefined : { scale: hoverScale }}
       animate={bloom ? { scale: [1, 1.18, 1] } : undefined}
       transition={bloom ? physics.playful : physics.snappy}
       className={cx(
@@ -88,6 +109,9 @@ export function IconButton({
             : active
               ? 'bg-surface-high text-on-surface'
               : 'text-on-surface-var hover:bg-surface-high hover:text-on-surface',
+        // In flight keeps its full ink and its colour — only the cursor changes, because "wait"
+        // is the honest thing to say. Dimming here is what made a working button read as dead.
+        loading && !disabled && 'cursor-progress',
         className,
       )}
       style={{ width: size, height: size }}
@@ -100,22 +124,45 @@ export function IconButton({
           style={{ background: 'radial-gradient(circle at center, color-mix(in srgb, var(--color-primary) 16%, transparent), transparent 70%)' }}
         />
       )}
-      {iconKey ? (
-        <AnimatePresence mode="wait" initial={false}>
+      {/* Glyph — cross-fades out under the spinner while loading, `Button`'s treatment carried
+          across. On a labelled button the label is what fades; here the glyph IS the content, so
+          the swap has to happen to the icon itself. The wrapper is always mounted (never keyed on
+          `loading`), so the two directions cross-fade instead of remounting. */}
+      <motion.span
+        className="relative inline-flex"
+        animate={{ opacity: loading ? 0 : 1, scale: loading ? 0.6 : 1 }}
+        transition={spring.effects}
+      >
+        {iconKey ? (
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span
+              key={iconKey}
+              initial={{ scale: 0.4, opacity: 0, rotate: -30 }}
+              animate={{ scale: 1, opacity: 1, rotate: 0 }}
+              exit={{ scale: 0.4, opacity: 0, rotate: 30 }}
+              transition={physics.snappy}
+              className="inline-flex"
+            >
+              <Icon size={iconSize} strokeWidth={2} absoluteStrokeWidth />
+            </motion.span>
+          </AnimatePresence>
+        ) : (
+          <Icon size={iconSize} strokeWidth={2} absoluteStrokeWidth />
+        )}
+      </motion.span>
+      <AnimatePresence>
+        {loading && (
           <motion.span
-            key={iconKey}
-            initial={{ scale: 0.4, opacity: 0, rotate: -30 }}
-            animate={{ scale: 1, opacity: 1, rotate: 0 }}
-            exit={{ scale: 0.4, opacity: 0, rotate: 30 }}
-            transition={physics.snappy}
-            className="relative inline-flex"
+            aria-hidden
+            className="absolute inset-0 grid place-items-center"
+            initial={{ opacity: 0, scale: 0.6 }}
+            animate={{ opacity: 1, scale: 1, transition: physics.snappy }}
+            exit={{ opacity: 0, scale: 0.6, transition: spring.effects }}
           >
-            <Icon size={iconSize} strokeWidth={2} absoluteStrokeWidth />
+            <Loader2 size={iconSize} className="animate-spin" />
           </motion.span>
-        </AnimatePresence>
-      ) : (
-        <Icon size={iconSize} strokeWidth={2} absoluteStrokeWidth className="relative" />
-      )}
+        )}
+      </AnimatePresence>
     </motion.button>
   )
 }
