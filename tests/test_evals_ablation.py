@@ -324,11 +324,16 @@ def test_a_clean_failure_propagates_unchanged(eval_home):
             raise RuntimeError("cell exploded")
 
 
-def test_the_configs_own_normalization_is_not_reported_as_a_mutation(eval_home):
-    """Found by driving the real CLI: ``AppConfig.load()`` rewrites an un-normalized
-    ``config.json`` in full (defaults + a ``meta.lastTouchedAt`` stamp) on its FIRST load, and
-    the pin loads config INSIDE the guarded block. Without normalizing first, the very first
-    ablation in a fresh home accused itself of mutating live config.
+def test_loading_config_inside_the_block_is_not_reported_as_a_mutation(eval_home):
+    """The pin loads config INSIDE the guarded block, and that must not accuse the runner.
+
+    History: ``AppConfig.load()`` used to rewrite an un-normalized ``config.json`` in full
+    (defaults + a ``meta.lastTouchedAt`` stamp) on its FIRST load, so the very first ablation
+    in a fresh or hand-edited home raised ``LiveStateMutatedError`` over a rewrite the config
+    loader did on its own. ``live_state_unchanged`` carried a ``_normalize_config_before_
+    snapshot()`` pre-step to absorb it. PHF-15 made ``load()`` a pure read, so the pre-step
+    was deleted rather than kept as a no-op — and this is the rail that says the deletion
+    was safe. If ``load()`` ever writes again, this reds first.
     """
     from personalclaw.config.loader import AppConfig
 
@@ -338,10 +343,11 @@ def test_the_configs_own_normalization_is_not_reported_as_a_mutation(eval_home):
     with ablation.live_state_unchanged():
         AppConfig.load()  # the pin does exactly this
 
-    # The normalization DID happen (vacuity floor — otherwise this test proves nothing) …
-    normalized = (eval_home / "config.json").read_text(encoding="utf-8")
-    assert normalized != hand_edited
-    # … and a real mutation on top of a normalized config is still caught.
+    assert (eval_home / "config.json").read_text(encoding="utf-8") == hand_edited, (
+        "AppConfig.load() rewrote a hand-edited config.json. It is a pure read; the "
+        "persisting counterpart is config.migrations.load_and_persist_migrations()."
+    )
+    # And a real mutation is still caught — the vacuity floor for the assertion above.
     with pytest.raises(ablation.LiveStateMutatedError, match="config.json"):
         with ablation.live_state_unchanged():
             (eval_home / "config.json").write_text('{"evals": {"enabled": false}}\n', "utf-8")

@@ -116,20 +116,30 @@ def test_the_probe_can_see_a_write(tmp_path: Path) -> None:
     """VACUITY LEG — the rail above is a same/same comparison, so it would pass if the probe
     were blind (wrong home, unwritable seed, a subprocess that silently no-ops).
 
-    This drives the exact write the rail forbids, through the exact mechanism the defect used
-    (`AppConfig.load()` on a pre-migration config), and requires it to be OBSERVED. If this
+    This drives the exact write the rail forbids and requires it to be OBSERVED. If this
     fails, the parametrized rail above is not evidence of anything.
+
+    RE-POINTED by PHF-15. It used to drive `AppConfig.load()`, which was the mechanism the
+    original defect used — but `load()` is now a pure read, so driving it here would assert
+    that a write happens which no longer does, and this leg would fail for the very reason the
+    fix is correct. It now drives `load_and_persist_migrations()`, the explicit entry point
+    that PHF-15 made the ONLY writer. The leg's purpose is unchanged: a real write, observed.
     """
     home = _seed_home(tmp_path)
     before = _config_state(home)
-    proc = _run_snippet(home, "from personalclaw.config.loader import AppConfig; AppConfig.load()")
+    proc = _run_snippet(
+        home,
+        "from personalclaw.config.migrations import load_and_persist_migrations; "
+        "load_and_persist_migrations()",
+    )
     assert proc.returncode == 0, f"the positive control itself failed:\n{proc.stderr[-3000:]}"
     after = _config_state(home)
     assert after != before, (
-        "AppConfig.load() on a PRE-MIGRATION config did NOT rewrite config.json, so this "
-        "probe cannot observe the write it is meant to detect and the rail above is vacuous. "
-        "Either the seed is no longer pre-migration (check the conditions load() repairs) or "
-        "the subprocess is not resolving PERSONALCLAW_HOME."
+        "load_and_persist_migrations() on a PRE-MIGRATION config did NOT rewrite "
+        "config.json, so this probe cannot observe the write it is meant to detect and the "
+        "rail above is vacuous. Either the seed is no longer pre-migration (check the "
+        "conditions the migration repairs) or the subprocess is not resolving "
+        "PERSONALCLAW_HOME."
     )
 
 

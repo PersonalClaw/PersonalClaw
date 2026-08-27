@@ -887,9 +887,15 @@ class TestEdgeCases:
 
     def test_retired_system_agent_pruned_and_persisted(self, tmp_path: Path) -> None:
         """A retired system agent left in an existing config.json is pruned on load
-        (backend-cleanup §4) AND the prune is persisted via write-back — a genuine
-        one-time migration, not a load-time-only mask. A user-created agent and the
-        reserved system agents are untouched."""
+        (backend-cleanup §4) AND the prune is persisted — a genuine one-time migration, not
+        a load-time-only mask. A user-created agent and the reserved system agents are
+        untouched.
+
+        The two halves happen at different entry points: ``load()`` prunes in memory and
+        writes nothing, ``load_and_persist_migrations()`` (gateway boot) commits it. Both
+        are asserted here, because either alone is a half-truth — pruning without persisting
+        masks the key forever, persisting from a read rewrites the user's file on import.
+        """
         cfg_file = tmp_path / "config.json"
         cfg_file.write_text(
             json.dumps(
@@ -903,16 +909,24 @@ class TestEdgeCases:
                 }
             )
         )
+        from personalclaw.config.migrations import load_and_persist_migrations
+
+        original = cfg_file.read_text()
         with unittest.mock.patch("personalclaw.config.loader.config_dir", return_value=tmp_path):
             cfg = AppConfig.load()
 
-        # In-memory: retired gone, user + default kept, reserved seeded.
-        assert "personalclaw-autonomous" not in cfg.agents
-        assert "my-helper" in cfg.agents
-        assert "PersonalClaw" in cfg.agents
+            # In-memory: retired gone, user + default kept, reserved seeded.
+            assert "personalclaw-autonomous" not in cfg.agents
+            assert "my-helper" in cfg.agents
+            assert "PersonalClaw" in cfg.agents
+            # …and reading it changed NOTHING on disk. load() is a pure read (PHF-15).
+            assert cfg_file.read_text() == original
 
-        # Persisted: the retired key is gone from disk (write-back ran), not just
-        # filtered in memory — reloading a fresh config must not resurrect it.
+            # Persisting is a separate, explicit act, and the gateway boot path is its only
+            # caller. Through it, the retired key really is gone from disk rather than
+            # filtered in memory — a reload must not resurrect it.
+            load_and_persist_migrations()
+
         on_disk = json.loads(cfg_file.read_text())
         assert "personalclaw-autonomous" not in on_disk["agents"]
         assert "my-helper" in on_disk["agents"]

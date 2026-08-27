@@ -1855,3 +1855,134 @@ the browser gate stays out of the unit run. `docs/roadmap/atomic/dag.json` delib
   rail to see a planted `copy2`, with `ALLOWED_RESIDUE` staying `frozenset()`.
   **Deliberately NOT in scope:** deleting the migration (load-bearing for real upgrades) and
   redesigning the rail's single-walk performance choice. No deps; startable immediately.
+
+## Execution log — `PHF-15` (`AppConfig.load()` is a pure read; the real-home rail sees a metadata-preserving write) — 2026-08-26 — DONE
+
+**Both defects reproduced on `origin/main` (`c9fff2f3`) before any change.** A 10,024-byte
+pre-migration `config.json` seed, read once by `AppConfig.load()`, became **23,667 bytes plus a
+`config.json.bak` carrying the seed's mtime** — the same 23,667 the red CI run on PR #2111
+reported. And the real-home detector, driven against a fake root with a planted `shutil.copy2`,
+returned `[]`: the `.bak` was **completely invisible**, because `copy2` back-dates mtime and the
+`.bak` sits directly under the root, whose own mtime the walk never inspects.
+
+**What shipped.**
+- `config/migrations.py` (new, 192 lines) owns both halves. `apply_config_migrations(cfg) -> bool`
+  is the migration, moved verbatim, mutating the parsed object in memory and reporting whether
+  anything changed. `load_and_persist_migrations() -> AppConfig` is the **only** writing entry
+  point: `copy2` the original aside, then `save()`, best-effort, never blocking startup.
+- `config/loader.py` **5900 → 5799** (−101; ceiling 6000 with a `>= 100` headroom assertion, so
+  headroom went from exactly 100 to 201). `load()` is now a documented one-line delegate over a
+  new `load_with_migration_state() -> tuple[AppConfig, bool]`. The flag is not re-derivable by
+  diffing the dump against the file — `to_dict()` emits every default, so a perfectly current
+  config still differs from its own on-disk form; without the flag the write would fire on every
+  boot for every user.
+- `cli_server._boot_config()` is the startup seam and the only caller of the writer. It is a named
+  function precisely so a test can point `config_dir` at `tmp_path` and drive the real boot step
+  instead of asserting on a string in `_gateway`'s body.
+- `tests/real_home_guard.py` compares `max(mtime, ctime)` and names the new shape
+  `metadata-preserving-write`. **`ALLOWED_RESIDUE` is still `frozenset()`** — fixed at the seam,
+  which is the rail's own instruction. Cost documented in the module docstring: ctime is *precision*,
+  not performance (`entry.stat()` already returns it, so the walk stays single-pass), but it is
+  **broader** — chmod/chown/rename report too. Deliberate: re-permissioning the developer's config
+  is not leaving their home alone. Reads move atime, never ctime, so walking or reading the real
+  home cannot red the rail (railed by `test_reading_the_tree_does_not_red_the_rail`).
+
+**Rails, and the pairing that makes them mean anything.** `tests/test_config_load_purity.py` (10
+tests) seeds a genuinely pre-migration config and asserts `(mtime_ns, contents)` unchanged **and no
+`.bak`** — in a fresh-interpreter subprocess, because the original write ran during pytest
+**collection** where no fixture exists, and because the property must hold with no conftest in play
+(which also makes it deterministic rather than xdist-dependent). "`load()` writes nothing" is
+trivially satisfiable by deleting the migration, so it ships with
+`test_the_gateway_boot_path_persists_the_migration` (a pre-migration config IS migrated on disk at
+boot, and the `.bak` holds the *pre*-migration bytes) and `test_load_still_applies_the_migration_in_memory`.
+`test_load_does_not_call_save_even_when_a_migration_applies` detonates `save()` rather than scanning
+text for `cfg.save()` — a text scan reads comments and dies at a rename.
+
+**Caller audit — 259 `AppConfig.load()` call sites in `src/` across 147 files (plus 239 in
+`tests/`).** RUNTIME import sweep: **1029 first-party modules imported in a fresh interpreter,
+0 failures**, against a seeded **pre-migration** config that was byte- and mtime-unchanged
+afterwards with no `.bak` and no other entry created in the home. That is the anti-stranding proof
+`mypy` cannot give (`ignore_missing_imports` hides a missing sibling module).
+
+**Four sites depended on the write-back. None needed persistence; all four were consuming the
+impurity as a fact about the world.** Recorded as DEVIATIONs because each is a behaviour change a
+reviewer will otherwise read as a regression:
+1. **DEVIATION — deleted `evals/ablation.py::_normalize_config_before_snapshot()` and its call
+   site.** It existed only to absorb `load()`'s write-back: the ablation pin loads config *inside*
+   the guarded block, so the first ablation in a fresh home used to accuse itself of mutating live
+   config. With `load()` pure the helper is dead code; clean break deletes it. Its test is now the
+   rail that says the deletion was safe.
+2. **DISCOVERY — `dashboard/handlers/core.py::api_personalclaw_config_patch` was silently
+   normalizing the user's config on every Settings edit.** The handler read-modify-writes the *raw*
+   JSON, deliberately, so a key the dataclasses do not model survives an edit — but a later
+   `AppConfig.load()` in the same handler rewrote the whole file behind it. Its test asserted
+   `len(data) > 20` and called that "pre-existing behaviour of the PATCH path"; it was the
+   write-back's footprint. Post-fix the file keeps exactly its own top-level keys (5, not 22 KB), so
+   unmodelled keys now genuinely survive. The assertion states the true property.
+3. `test_config_loader.py::test_retired_system_agent_pruned_and_persisted` now asserts **both**
+   halves at their real entry points — pruned in memory by `load()` with the file untouched,
+   committed by `load_and_persist_migrations()`.
+4. `test_config_write_paths_..._validated_mutator.py::test_the_cli_cannot_write_past_the_bounds...`
+   read a key back and compared it to the default, which only worked because the write-back
+   materialised every field. Now a section snapshot. The file's own `_unchanged()` helper docstring
+   (which cited the 22 KB rewrite as the reason it exists) was corrected; the snapshot shape stays,
+   because it states the real property regardless of what is materialised.
+
+**DISCOVERY — two AST detectors were anchored on the literal method name `load`, and the
+not-found branch of one meant "everything is inert".** `scripts/generate_inert_surface_baseline.py`
+returned `set()` when it could not find `AppConfig.load`, so splitting `load()` made the
+`inert-surface` gate report **295 bogus inert config surfaces** — a wall of output that reads like a
+real regression and buries the one-line cause. Both it and `harness/scanner.py` now anchor on a
+named `_LOAD_MAPPING_METHODS` set, and the gate script **raises a sentence naming the fix** instead
+of failing 295 times. Probed both ways: the real tree resolves 336 kwarg names; a stub `AppConfig`
+with no anchor raises. This fragility predated PHF-15 — any rename of `load()` would have triggered it.
+
+**DISCOVERY — two stale citations in the atom brief, corrected by grep; neither contradicts the
+atom.** (a) `tests/test_import_time_config_writes.py` **does not exist on `main`** — it was added by
+`9488acaa` on the unmerged `feature-pp16-loop-as-workflowrun` branch, which is not an ancestor of
+`c9fff2f3`. Its shape was read from that commit and reused. (b) The brief states the `mcp_core`
+delivery mechanism "is already fixed on main (the constant became a call-time `_api_base()`)". It is
+**not**: `src/personalclaw/mcp_core.py:111` still reads `_API = _resolve_api_base()` at module scope,
+calling `AppConfig.load()` at import time. That fix is also only on the PP-16 branch. `mcp_core.py`
+was left untouched — this atom closes the hazard at the seam, which is the correct fix and makes the
+call-time workaround unnecessary. Both `mcp_core` and `mcp_artifacts` are parametrized legs of the
+new purity rail, so the actual CI entry path is pinned.
+
+**⚠️ CROSS-BRANCH COLLISION the driver must reconcile — surfaced, not decided.**
+`feature-pp16-loop-as-workflowrun` carries `tests/test_import_time_config_writes.py`, whose
+`test_the_probe_can_see_a_write` asserts that `AppConfig.load()` on a pre-migration config **DOES**
+rewrite `config.json`. This atom makes that assertion **false**. Whichever branch lands second, that
+test reds. It is a two-line re-point (drive `load_and_persist_migrations()` instead of
+`AppConfig.load()`, exactly as this atom's own vacuity leg does), but nothing forces it: a separate
+filename was chosen here rather than colliding on a file this atom does not own, so the sibling's
+leg will red **silently at merge** unless re-pointed. PP-16's `mcp_core._api_base()` change remains
+correct and complementary.
+
+**Falsification (each: live line mutated, `git grep`-confirmed applied, red observed, restored from a
+file copy at the literal path — never `git checkout`).**
+- Reinstated `shutil.copy2` + `cfg.save()` inside `load_with_migration_state` → **5 red**:
+  `test_load_writes_nothing_on_a_pre_migration_config`, both
+  `test_importing_a_module_that_reads_config_writes_nothing[mcp_core|mcp_artifacts]`,
+  `test_the_gateway_boot_path_persists_the_migration` (the `.bak` stopped holding pre-migration
+  bytes), and the ablation rail. The vacuity leg stayed green, as it must.
+- Reverted `_touched_ns` to `st.st_mtime_ns` (the pre-fix detector) → `test_a_metadata_preserving_
+  copy_is_caught` red with "a copy2'd backup went unreported". Paired with the standalone
+  before/after probe: pre-fix report `[]`, post-fix `[('config.json.bak',
+  'metadata-preserving-write')]`. That is the proof the rail was **blind**, not merely quiet.
+- Neutered `_boot_config()` to `return AppConfig.load()` → `test_the_gateway_boot_path_persists_the_
+  migration` red with "the gateway booted and left a pre-migration config.json on disk", proving the
+  vacuity pairing is load-bearing rather than decorative.
+
+**Gate.** `make lint` clean (black/isort/flake8 + mypy, 1060 source files). `python scripts/gate_report.py`
+**all 6 gates PASS** (`inert-surface` returned to PASS only after the anchor fix). Targeted: 23
+existence-checked paths, **615 collected — 605 passed, 1 skipped, 9 xfailed, 0 failed**. Full suite:
+**27,596 collected — 27,554 passed, 30 skipped, 12 xfailed**, and the real-home rail reported
+verbatim: `real-home rail: /Users/golani/.personalclaw unchanged by this run.` The single failure in
+the first full run was mine and root-caused, not a flake:
+`test_surface_layers_safe_mode.py::TestTheCliFlag::test_the_entrypoint_latches_before_it_boots_anything`
+does `src.index("AppConfig.load()")` on `_gateway`'s source to prove the safe-surfaces latch precedes
+the first config read; the anchor moved to `_boot_config()`. Re-pointed, with an explicit
+presence assertion so the next move fails with a sentence instead of `ValueError: substring not found`.
+24 passed at `-n0`.
+
+**Every `done_when` clause met.** `loader.py` ends **below** its starting count (5799 vs 5900).

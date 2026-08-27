@@ -4337,21 +4337,38 @@ class AppConfig:
 
     @classmethod
     def load(cls) -> "AppConfig":
-        """Load config from ~/.personalclaw/config.json, falling back to defaults."""
+        """Load config from ~/.personalclaw/config.json, falling back to defaults.
+
+        A PURE READ. Pending migrations are applied to the returned object in memory and
+        nothing is written, so importing a module that reads config cannot rewrite the
+        user's file. ``config.migrations.load_and_persist_migrations()`` is the counterpart
+        that persists them, and only the gateway's boot path calls it.
+        """
+        return cls.load_with_migration_state()[0]
+
+    @classmethod
+    def load_with_migration_state(cls) -> tuple["AppConfig", bool]:
+        """``load()``, plus whether the parsed config actually needed migrating.
+
+        The flag exists so the single writing caller can tell an already-current config
+        from an upgraded one. It cannot be re-derived by diffing the dump against the
+        file: ``to_dict()`` emits every default, so a config that is perfectly current
+        still differs from its own on-disk form.
+        """
         path = config_path()
         if not path.exists():
-            return cls()
+            return cls(), False
 
         try:
             data = json.loads(path.read_text())
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load config from %s: %s", path, e)
-            return cls()
+            return cls(), False
 
         # Must be a dict to proceed
         if not isinstance(data, dict):
             logger.warning("Config is not a JSON object, using defaults")
-            return cls()
+            return cls(), False
 
         # Validate against JSON Schema (advisory — never fatal)
         _validate_config_data(data)
@@ -5301,141 +5318,23 @@ class AppConfig:
             observe_ttl_hours=max(0.0, float(data.get("observe_ttl_hours", 168.0))),
         )
 
-        # Write-back: ensure a default agent exists; back up the original and
-        # save the canonical version.  One-shot — subsequent loads skip.
+        # Bring the parsed config up to the current shape. IN MEMORY ONLY: `load()` is a
+        # pure read, so a module that merely reads config — including one imported during
+        # pytest collection, before any fixture exists — can never rewrite the user's
+        # `config.json`. The PERSISTING counterpart is
+        # `personalclaw.config.migrations.load_and_persist_migrations()`, called from the
+        # gateway's own boot path (`cli_server._boot_config`).
         try:
-            needs_migration = False
+            from personalclaw.config.migrations import apply_config_migrations
 
-            # The in-process native loop is the default runtime; ACP must be
-            # opted into explicitly with an ``acp:<cli>`` provider. When the
-            # global default is ``acp``, flip it to native and clear the
-            # ``personalclaw`` modeId on empty-provider agents (which would
-            # otherwise route them to an external CLI). Only applied to an
-            # ``acp``-default config — an already-native config is left
-            # untouched, since "personalclaw" may be a real ACP modeId there.
-            if getattr(cfg.agent, "provider", "") == "acp":
-                cfg.agent.provider = "native"
-                needs_migration = True
-                for _prof in (cfg.agents or {}).values():
-                    if (
-                        not getattr(_prof, "provider", "")
-                        and getattr(_prof, "provider_agent", "") == "personalclaw"
-                    ):
-                        _prof.provider = "native"
-                        _prof.provider_agent = ""
+            migrated = apply_config_migrations(cfg)
+        except Exception as e:  # noqa: BLE001
+            # A failed migration degrades to "read the config as written"; it never
+            # blocks a read.
+            logger.warning("Config migration failed: %s", e)
+            migrated = False
 
-            # Create default agent when none exists. The default is the
-            # in-process NATIVE PersonalClaw agent (governed by Settings →
-            # Models) — no external CLI required for first-run chat. ACP agents
-            # are created only when the user explicitly adds an acp:<cli> one.
-            if not cfg.agents:
-                from personalclaw.agents.defaults import (
-                    DEFAULT_NATIVE_AGENT_NAME,
-                    make_default_native_profile,
-                )
-
-                cfg.agents[DEFAULT_NATIVE_AGENT_NAME] = make_default_native_profile(AgentProfile)
-                needs_migration = True
-
-            # Seed the built-in goal-loop worker if absent. Idempotent
-            # (add-if-missing, never overwrite a user edit) so it ships with the
-            # package whenever the gateway runs — inert until a loop invokes it.
-            # Kept out of the `if not cfg.agents` block so existing configs gain
-            # it on next load.
-            from personalclaw.agents.defaults import (
-                CODE_PLANNER_AGENT_NAME,
-                CODER_AGENT_NAME,
-                LITE_AGENT_NAME,
-                LOOP_PLANNER_AGENT_NAME,
-                LOOP_WORKER_AGENT_NAME,
-                TEMPLATE_REFINER_AGENT_NAME,
-                make_code_planner_profile,
-                make_coder_profile,
-                make_lite_agent_profile,
-                make_loop_planner_profile,
-                make_loop_worker_profile,
-                make_template_refiner_profile,
-            )
-
-            if LOOP_WORKER_AGENT_NAME not in cfg.agents:
-                cfg.agents[LOOP_WORKER_AGENT_NAME] = make_loop_worker_profile(AgentProfile)
-                needs_migration = True
-
-            # Seed the built-in Code worker (the SDLC engine) if absent. Same
-            # idempotent add-if-missing contract — ships with the package, inert
-            # until a code project invokes it.
-            if CODER_AGENT_NAME not in cfg.agents:
-                cfg.agents[CODER_AGENT_NAME] = make_coder_profile(AgentProfile)
-                needs_migration = True
-
-            # Seed the built-in Code DEEP PLANNER (agentic intake planner, C163) if
-            # absent. Tool-equipped so it investigates real context before planning;
-            # inert until a code project requests a deep plan.
-            if CODE_PLANNER_AGENT_NAME not in cfg.agents:
-                cfg.agents[CODE_PLANNER_AGENT_NAME] = make_code_planner_profile(AgentProfile)
-                needs_migration = True
-
-            # Seed the built-in goal-planner (intake brain) if absent. Same
-            # idempotent add-if-missing contract — ships with the package, inert
-            # until intake invokes it.
-            if LOOP_PLANNER_AGENT_NAME not in cfg.agents:
-                cfg.agents[LOOP_PLANNER_AGENT_NAME] = make_loop_planner_profile(AgentProfile)
-                needs_migration = True
-
-            # Seed the built-in lite background worker if absent. Same idempotent
-            # add-if-missing contract as the loop worker — the background chores
-            # (titles/suggestions/consolidation) resolve a real profile instead
-            # of falling through to an unnamed default.
-            if LITE_AGENT_NAME not in cfg.agents:
-                cfg.agents[LITE_AGENT_NAME] = make_lite_agent_profile(AgentProfile)
-                needs_migration = True
-
-            # Seed the built-in propose-only template refiner (WF2LEA-6) if absent. Same
-            # idempotent add-if-missing contract — ships with the package, inert until the
-            # `refine-template` workflow runs it over a template's run ledger.
-            if TEMPLATE_REFINER_AGENT_NAME not in cfg.agents:
-                cfg.agents[TEMPLATE_REFINER_AGENT_NAME] = make_template_refiner_profile(
-                    AgentProfile
-                )
-                needs_migration = True
-
-            # Prune retired system agents left behind in an existing config.json.
-            # These pre-rename system agents have no profile in source anymore, so an
-            # orphaned key just resolves to nothing. Scoped to the reserved
-            # `personalclaw-` namespace (RETIRED_AGENT_NAMES) so a user-created agent is
-            # never touched. One-time: the key is gone after the first write-back.
-            from personalclaw.agents.defaults import RETIRED_AGENT_NAMES
-
-            for _retired in RETIRED_AGENT_NAMES & set(cfg.agents):
-                del cfg.agents[_retired]
-                logger.info("Config migration: pruned retired system agent %r", _retired)
-                needs_migration = True
-
-            if not cfg.default_agent or cfg.default_agent not in cfg.agents:
-                # Prefer "default" if it exists, otherwise use first available agent
-                if "default" in cfg.agents:
-                    cfg.default_agent = "default"
-                elif cfg.agents:
-                    cfg.default_agent = next(iter(cfg.agents))
-                else:
-                    cfg.default_agent = "default"
-                needs_migration = True
-
-            if needs_migration:
-                backup = path.with_suffix(".json.bak")
-                import shutil
-
-                shutil.copy2(path, backup)
-                logger.info(
-                    "Config migrated — backup saved to %s",
-                    backup,
-                )
-                cfg.save()
-        except Exception as e:
-            # Migration write-back is best-effort; never block startup.
-            logger.warning("Config write-back failed: %s", e)
-
-        return cfg
+        return cfg, migrated
 
     def to_dict(self) -> dict:
         """Serialize config to the JSON structure used by config.json."""

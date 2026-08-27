@@ -143,12 +143,19 @@ async def test_the_patch_still_persists_the_value(tmp_config, seen_writes) -> No
     data = json.loads(tmp_config.read_text(encoding="utf-8"))
     assert data["local_models"]["pressure_warn_pct"] == 70
     assert data["default_agent"] == "personalclaw"
-    # This handler writes the NORMALIZED document (the loaded config re-serialized), so the file
-    # gains every defaulted section and drops keys the dataclasses do not model. That is
-    # pre-existing behaviour of the PATCH path and independent of which writer it uses —
-    # asserted here only so a future reader does not mistake the rewrite for a regression
-    # introduced by routing through the seam.
-    assert len(data) > 20, "the PATCH writes the full normalized config, not a narrow patch"
+    # The handler writes a NARROW patch: it read-modify-writes the raw JSON document, so the
+    # file keeps exactly the top-level keys it had — no defaulted sections added, and no keys
+    # the dataclasses do not model silently dropped.
+    #
+    # This assertion used to read `len(data) > 20`, i.e. "the PATCH writes the full normalized
+    # config". That was never the PATCH path's doing: `AppConfig.load()` further down the
+    # handler used to rewrite the whole file as a migration write-back side effect, and the
+    # normalization was ITS footprint. PHF-15 made `load()` a pure read, so what lands on disk
+    # is now only what this handler actually wrote.
+    assert sorted(data) == sorted(_seed_config()), (
+        "the PATCH added or dropped a top-level key. It read-modify-writes the raw document "
+        "precisely so a config key the dataclasses do not model survives an edit."
+    )
 
 
 @pytest.mark.asyncio

@@ -332,28 +332,37 @@ def _calls_field_with_meta(value: ast.AST | None) -> bool:
     return False
 
 
+#: The ``AppConfig`` methods that may hold the load mapping. ``load()`` is a one-line
+#: delegate; the mapping lives in ``load_with_migration_state()`` (PHF-15 split them so
+#: ``load()`` could stop writing the config it reads). Mirrored in
+#: ``scripts/generate_inert_surface_baseline.py``.
+_LOAD_MAPPING_METHODS = frozenset({"load", "load_with_migration_state"})
+
+
 def _load_body_kwarg_names(tree: ast.Module) -> set[str] | None:
-    """All keyword-argument names used anywhere inside ``AppConfig.load()``.
+    """All keyword-argument names used anywhere in ``AppConfig``'s load mapping.
 
     Covers the nested-constructor idiom ``legibility=LegibilityConfig(discover_tips=...)``
-    — we collect every kwarg name at any depth of load()'s body, which is exactly the set
-    of field names the load mapping assigns.
+    — we collect every kwarg name at any depth of the mapping's body, which is exactly the
+    set of field names it assigns. ``None`` means the anchor is gone, which callers treat as
+    "cannot tell" rather than "nothing is mapped".
     """
+    names: set[str] = set()
+    found = False
     for cls in ast.walk(tree):
         if isinstance(cls, ast.ClassDef) and cls.name == "AppConfig":
             for item in cls.body:
                 if (
                     isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and item.name == "load"
+                    and item.name in _LOAD_MAPPING_METHODS
                 ):
-                    names: set[str] = set()
+                    found = True
                     for call in ast.walk(item):
                         if isinstance(call, ast.Call):
                             for kw in call.keywords:
                                 if kw.arg:
                                     names.add(kw.arg)
-                    return names
-    return None
+    return names if found else None
 
 
 # ── Check: app-sdk-boundary (ERROR) ─────────────────────────────────────────────
