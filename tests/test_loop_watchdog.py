@@ -1,6 +1,6 @@
 """Unified Loop watchdog (Slice 2c.iii) — the kind-agnostic supervisor poll loop.
-Drives _poll_once against fake state/svc; done-ness is delegated to the kind
-strategy's is_done_signal."""
+Drives _poll_once against fake state/svc; done-ness is read off the loop's DECLARED
+`SupervisorPolicy` by the one evaluator in `loop/supervisor.py` (`PP-16` seam 3)."""
 
 from __future__ import annotations
 
@@ -161,11 +161,15 @@ class TestVerifiableMultiSubGoalGate:
             },
         )
 
-    def _kind(self):
-        from personalclaw.loop import kinds
+    def _signal(self, loop, findings):
+        """The done-ness signal through the SHIPPED path: resolve the declared policy exactly as
+        `loop/watchdog.py` does, then evaluate it with the one kind-agnostic evaluator."""
+        from personalclaw.loop import supervisor
+        from personalclaw.workflows.supervisor_policy import policy_for_kind
 
-        kinds.ensure_loaded()
-        return kinds.get("goal")
+        return _run(
+            supervisor.done_signal(loop, findings, policy_for_kind(loop.kind, loop.kind_config))
+        )
 
     def test_green_check_but_judge_fails_does_not_complete(self, monkeypatch):
         # Command passes, but only the engine is built → judge FAILs → NOT done.
@@ -175,7 +179,7 @@ class TestVerifiableMultiSubGoalGate:
         monkeypatch.setattr(gates, "judge_verdict", lambda *a, **k: _coro("FAIL"))
         loop = self._loop()
         findings = [{"cycle": 1, "summary": "Phase 1/3 engine complete; AI/UI/proof remain"}]
-        assert _run(self._kind().is_done_signal(loop, findings)) is False
+        assert self._signal(loop, findings) is False
 
     def test_green_check_and_judge_passes_completes(self, monkeypatch):
         import personalclaw.loop.gates as gates
@@ -186,7 +190,7 @@ class TestVerifiableMultiSubGoalGate:
         findings = [
             {"cycle": 9, "summary": "engine+AI+UI+never-lose proof all built; all tests green"}
         ]
-        assert _run(self._kind().is_done_signal(loop, findings)) is True
+        assert self._signal(loop, findings) is True
 
     def test_judge_unavailable_defers_not_false(self, monkeypatch):
         # Empty/unrendered verdict (provider down) → None (defer), not a clean pass/fail.
@@ -195,10 +199,7 @@ class TestVerifiableMultiSubGoalGate:
         monkeypatch.setattr(gates, "run_verify_command", lambda *a, **k: _coro(True))
         monkeypatch.setattr(gates, "judge_verdict", lambda *a, **k: _coro(""))
         loop = self._loop()
-        assert (
-            _run(self._kind().is_done_signal(loop, [{"cycle": 1, "summary": "engine only"}]))
-            is None
-        )
+        assert self._signal(loop, [{"cycle": 1, "summary": "engine only"}]) is None
 
     def test_single_sub_goal_keeps_pure_command_behavior(self, monkeypatch):
         # 0/1 sub-goal → the command IS the whole goal; no judge required.
@@ -214,7 +215,7 @@ class TestVerifiableMultiSubGoalGate:
                 "sub_goals": ["all tests pass"],
             },
         )
-        assert _run(self._kind().is_done_signal(loop, [{"cycle": 1, "summary": "green"}])) is True
+        assert self._signal(loop, [{"cycle": 1, "summary": "green"}]) is True
 
 
 def _coro(v):
@@ -226,7 +227,7 @@ def _coro(v):
 
 class TestNewKindsRunEndToEnd:
     """general + design have no legacy engine behind them — drive each through the poll
-    to lock in that they run on the unified engine (is_done_signal defers → budget caps,
+    to lock in that they run on the unified engine (the declared signal defers → budget caps,
     no on_new_cycle hook). A regression here would only surface in production."""
 
     @pytest.mark.parametrize("kind", ["general", "design"])
@@ -314,7 +315,7 @@ class TestTrustTtl:
 class TestCycleHook:
     """A kind with multi-cycle orchestration (code stage-advance, design steps)
     implements on_new_cycle, which OWNS the cycle's done-ness — the watchdog skips
-    its generic is_done_signal path when the hook returns a bool."""
+    the policy's declared done-signal path when the hook returns a bool."""
 
     def test_hook_completing_completes_the_loop(self, monkeypatch):
         from personalclaw.loop import kinds
@@ -425,13 +426,13 @@ class TestJudgeErrorOnlyWhenACheckExists:
         return wd, events
 
     def test_general_without_verify_command_does_not_flag_judge_error(self):
-        # has_done_check is False → None is normal, not degraded.
+        # the declared policy says the check is optional and unset → None is normal, not degraded.
         c = _running(kind="general", kind_config={}, max_cycles=20)
         wd, events = self._captured_wd()
         wd._state._sessions[manager.session_key(c.id)] = _FakeSession(manager.session_key(c.id))
         _run(wd._poll_once())  # seed liveness
         _write_finding(c.id, 1)
-        _run(wd._poll_once())  # is_done_signal → None, but no check exists
+        _run(wd._poll_once())  # declared signal → None, but no check exists
         assert "judge_error" not in {e for e, _ in events}
         assert store.get(c.id).status == LoopStatus.RUNNING.value
 

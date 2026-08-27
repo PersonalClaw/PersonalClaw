@@ -1468,6 +1468,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   is only a file copy; create one of each by hand if a screenshot needs them.
 
 ### Changed
+- **What finishes a loop is now written down in one place instead of decided in five.** Every loop
+  kind — general, goal, code, design, research — used to carry its own Python answer to "is this
+  loop done?", so there was no way to read the rule without reading five modules, and two of the
+  five turned out to answer nothing at all. Each kind now *declares* its convergence: which
+  mechanism decides done-ness (a command it runs, a judge it commissions, its own per-cycle
+  orchestration, or never), whether reaching the cycle budget counts as a clean finish, and whether
+  the stall detector applies. One supervisor reads that declaration for every kind. Behaviour is
+  unchanged — same commands, same judges, same skeptic pass, same calibration canary, same
+  budget and stall handling — but the rule is now inspectable, and a new loop kind gets convergence
+  by declaring a row rather than by shipping code the engine has to trust.
 - **PersonalClaw no longer writes anything into your coding CLI's own config, and an ACP agent app can
   no longer ask it to.** A CLI-side config seeder existed for a coding CLI that ignored the tool list
   we hand it when a session opens. Driven end to end against all three shipped CLIs, no such CLI

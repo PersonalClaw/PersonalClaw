@@ -3,9 +3,10 @@
 Owns the kind-agnostic lifecycle, polling RUNNING loops and deciding each cycle
 whether to keep going, complete, stall, fail, or pause for the user. The
 done-ness *signal* is always produced by something OTHER than the worker — it's
-delegated to the loop's :class:`LoopKindStrategy` ``is_done_signal`` (a verify
-command, a judge subagent, all-phases-gated). The watchdog *decides*; the
-strategy only *advises*. This upholds the tenet that no agent certifies its own
+read from the loop's DECLARED :class:`~personalclaw.workflows.supervisor_policy.\
+SupervisorPolicy` by the one evaluator in :mod:`personalclaw.loop.supervisor` (a
+verify command, a judge subagent, an orchestration hook). The watchdog *decides*;
+the policy only *advises*. This upholds the tenet that no agent certifies its own
 work.
 
 Shared lifecycle (all kinds): trust-TTL expiry → NEEDS_INPUT, attended/unattended
@@ -25,8 +26,9 @@ from typing import Any
 
 from personalclaw import concurrency, notification_kinds, shutdown_event
 from personalclaw.config.loader import AppConfig
-from personalclaw.loop import instrument, kinds, manager, store
+from personalclaw.loop import instrument, kinds, manager, store, supervisor
 from personalclaw.loop.loop import Loop, LoopStatus
+from personalclaw.workflows.supervisor_policy import policy_for_kind
 
 logger = logging.getLogger(__name__)
 
@@ -974,59 +976,60 @@ class LoopWatchdog:
                 # the gate; design: advance the design step) runs its on_new_cycle
                 # hook, which OWNS the cycle's done-ness (and its own side effects:
                 # stage-advance, provisioning, publish). A kind without one falls
-                # through to the generic point-in-time is_done_signal.
+                # through to the policy's declared point-in-time done-signal.
                 strat = kinds.get_or_none(loop.kind)
+                # PP-16 seam 3: the convergence decision is a DECLARED policy, not pluggable
+                # Python. `policy_for_kind` resolves the kind (+ its goal_type variant) to the ONE
+                # SupervisorPolicy the ONE evaluator reads, so this branch no longer asks the
+                # strategy anything about done-ness, budget or stalling.
+                policy = policy_for_kind(loop.kind, loop.kind_config)
                 done = False
+                hooked = None
                 if strat is not None:
                     hooked = await kinds.run_cycle_hook(strat, loop, findings, self._cycle_ctx())
-                    if hooked is not None:
-                        # The kind's orchestration owns done-ness this cycle.
-                        if hooked:
-                            continue  # the hook already completed the loop
+                if hooked is not None:
+                    # The kind's orchestration owns done-ness this cycle.
+                    if hooked:
+                        continue  # the hook already completed the loop
+                else:
+                    try:
+                        signal = await supervisor.done_signal(loop, findings, policy)
+                    except Exception:
+                        logger.warning("loop %s: done signal errored", cid, exc_info=True)
+                        signal = None
+                    if signal is None:
+                        # None has TWO meanings: (a) a loop that HAS a point-in-time
+                        # done-check genuinely couldn't assess (judge errored / verify
+                        # un-runnable) → degraded, surface it; (b) a loop whose policy
+                        # declares NO such check for this config (e.g. a General loop with
+                        # no verify_command) → deferring to budget BY DESIGN, not a failure.
+                        # Only flag (a), so we don't false-alarm "Done-ness check
+                        # unavailable" on a loop that never had one.
+                        if supervisor.has_done_check(loop, policy):
+                            # P4: distinguish a transient judge failure from a CONFIRMED
+                            # BLIND judge (the canary proved it can't tell good from empty).
+                            # A blind judge won't recover by retrying, so halt the loop to
+                            # NEEDS_INPUT with judge_blind rather than spinning on judge_error.
+                            fresh = store.get(cid)
+                            blind = (
+                                bool((fresh.kind_config or {}).get("judge_calibrated") is False)
+                                if fresh
+                                else False
+                            )
+                            if blind:
+                                store.update_status(cid, LoopStatus.NEEDS_INPUT)
+                                self._publish(cid, "judge_blind", {"loop_id": cid, "cycle": count})
+                            else:
+                                self._publish(cid, "judge_error", {"loop_id": cid, "cycle": count})
                     else:
-                        try:
-                            signal = await strat.is_done_signal(loop, findings)
-                        except Exception:
-                            logger.warning("loop %s: is_done_signal errored", cid, exc_info=True)
-                            signal = None
-                        if signal is None:
-                            # None has TWO meanings: (a) a kind that HAS a point-in-time
-                            # done-check genuinely couldn't assess (judge errored / verify
-                            # un-runnable) → degraded, surface it; (b) a kind that has NO
-                            # such check for this loop's config (e.g. a General loop with no
-                            # verify_command) → deferring to budget BY DESIGN, not a failure.
-                            # Only flag (a), so we don't false-alarm "Done-ness check
-                            # unavailable" on a loop that never had one.
-                            has_check = getattr(strat, "has_done_check", lambda _l: True)(loop)
-                            if has_check:
-                                # P4: distinguish a transient judge failure from a CONFIRMED
-                                # BLIND judge (the canary proved it can't tell good from empty).
-                                # A blind judge won't recover by retrying, so halt the loop to
-                                # NEEDS_INPUT with judge_blind rather than spinning on judge_error.
-                                fresh = store.get(cid)
-                                blind = (
-                                    bool((fresh.kind_config or {}).get("judge_calibrated") is False)
-                                    if fresh
-                                    else False
-                                )
-                                if blind:
-                                    store.update_status(cid, LoopStatus.NEEDS_INPUT)
-                                    self._publish(
-                                        cid, "judge_blind", {"loop_id": cid, "cycle": count}
-                                    )
-                                else:
-                                    self._publish(
-                                        cid, "judge_error", {"loop_id": cid, "cycle": count}
-                                    )
-                        else:
-                            # A non-None signal means the kind ran a third-party assessment
-                            # and persisted whatever it produced. Publish the verdict it just
-                            # wrote for THIS cycle (+ a ratchet_regression flag) so the ROI
-                            # rail / verdict panel / judge-degraded indicator update live —
-                            # the FE listens for these. Kind-agnostic: a kind that writes no
-                            # verdict (verifiable/monitor) yields none here, so nothing emits.
-                            self._publish_cycle_verdict(cid, count)
-                        done = signal is True
+                        # A non-None signal means the supervisor ran a third-party assessment
+                        # and persisted whatever it produced. Publish the verdict it just
+                        # wrote for THIS cycle (+ a ratchet_regression flag) so the ROI
+                        # rail / verdict panel / judge-degraded indicator update live —
+                        # the FE listens for these. Kind-agnostic: a policy that writes no
+                        # verdict (verifiable/monitor) yields none here, so nothing emits.
+                        self._publish_cycle_verdict(cid, count)
+                    done = signal is True
                 if done:
                     await self._complete(cid, reason="done-ness signal met")
                     continue
@@ -1038,15 +1041,11 @@ class LoopWatchdog:
                 # Budget cap — max_cycles > 0 always bounds a finite loop. Reaching it
                 # is NON-genuine by default (the goal may not be met → "stopped on
                 # budget"), EXCEPT where the budget IS the intended stopping condition
-                # (a monitor's watch window): the kind says so via budget_stop_genuine,
+                # (a monitor's watch window): the POLICY says so via its convergence spec,
                 # so the cockpit shows a clean completion rather than an error-flavored
                 # "stopped before done" for an inherently-ongoing loop that ran its course.
                 if loop.max_cycles > 0 and count >= loop.max_cycles:
-                    genuine = (
-                        bool(getattr(strat, "budget_stop_genuine", lambda _l: False)(loop))
-                        if strat is not None
-                        else False
-                    )
+                    genuine = supervisor.budget_stop_is_genuine(policy)
                     await self._complete(cid, reason="cycle budget reached", genuine=genuine)
                     continue
 
@@ -1120,9 +1119,10 @@ class LoopWatchdog:
                     self._publish(cid, "failed")
 
     def _stagnation_disabled(self, loop) -> bool:
-        """Monitor goals never stagnate (a quiet cycle is a valid no-op). Other
-        kinds use the stall signal."""
-        return loop.kind == "goal" and str((loop.kind_config or {}).get("goal_type")) == "monitor"
+        """Whether the stall signal is off for this loop — read off the DECLARED policy
+        (`PP-16` seam 3) rather than a hard-coded kind name. A monitor goal's quiet cycle is a
+        valid no-op; every other declared row keeps the stall signal."""
+        return not supervisor.stagnation_enabled(policy_for_kind(loop.kind, loop.kind_config))
 
     def _clear_liveness(self, cid: str) -> None:
         self._last_count.pop(cid, None)

@@ -17,7 +17,9 @@ from personalclaw.loop import (
     LoopKind,
     LoopStatus,
     kinds,
+    supervisor,
 )
+from personalclaw.workflows.supervisor_policy import DONE_SIGNALS, policy_for_kind
 
 
 class TestLoopEntity:
@@ -97,14 +99,22 @@ class TestKindRegistry:
         assert isinstance(s.default_kind_config(), dict)
         # phase_key is pure + string-returning for a representative phase
         assert isinstance(s.phase_key({"stage": "implementation", "title": "Impl"}), str)
-        # is_done_signal is async + returns the tristate (bool | None); with no
-        # config (no verify command) every kind defers (None), never raises.
+        # PP-16 seam 3: done-ness is NOT part of the strategy contract any more — the kind
+        # declares a convergence spec and one evaluator reads it. Both halves are asserted:
+        # the strategy must NOT carry a supervisor member, and the kind must resolve to a
+        # declared policy whose signal is in the closed vocabulary and whose evaluation
+        # returns the tristate (bool | None) without raising on a bare loop.
+        for retired in ("is_done_signal", "has_done_check", "budget_stop_genuine"):
+            assert not hasattr(s, retired), (
+                f"{kind} strategy still carries {retired!r} — the supervisor was retired from "
+                f"the plugin seam by PP-16 seam 3; a kind that re-grows one ships two paths."
+            )
         loop = Loop(id="x", name="n", kind=kind, task="t")
-        assert asyncio.get_event_loop().run_until_complete(s.is_done_signal(loop, [])) in (
-            True,
-            False,
-            None,
-        )
+        policy = policy_for_kind(kind, loop.kind_config)
+        assert policy.convergence.signal in DONE_SIGNALS
+        assert asyncio.get_event_loop().run_until_complete(
+            supervisor.done_signal(loop, [], policy)
+        ) in (True, False, None)
 
     def test_code_phase_key_prefers_stage_then_title(self):
         kinds.ensure_loaded()

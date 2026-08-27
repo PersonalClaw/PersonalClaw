@@ -6,7 +6,20 @@ from __future__ import annotations
 
 import pytest
 
+from personalclaw.loop import supervisor
 from personalclaw.loop.gates import run_verify_command
+from personalclaw.loop.loop import Loop as _Loop
+from personalclaw.workflows.supervisor_policy import policy_for_kind
+
+
+async def _signal(loop: "_Loop", findings: list[dict]) -> bool | None:
+    """The done-ness signal through the SHIPPED path (`PP-16` seam 3): resolve the loop's kind
+    (+ goal_type variant) to its declared `SupervisorPolicy` exactly as `loop/watchdog.py` does,
+    then evaluate it with the one kind-agnostic evaluator. Deliberately not a direct call into a
+    private helper — these tests pin the mechanism the watchdog actually reaches."""
+    return await supervisor.done_signal(
+        loop, findings, policy_for_kind(loop.kind, loop.kind_config)
+    )
 
 
 @pytest.mark.asyncio
@@ -104,7 +117,7 @@ class TestOpenEndedJudgePath:
                 )
             ),
         )
-        assert await kinds.get("goal").is_done_signal(loop, [{"cycle": 1, "summary": "x"}]) is True
+        assert await _signal(loop, [{"cycle": 1, "summary": "x"}]) is True
         assert store.get_verdicts(loop.id)[0]["done"] is True
         assert store.get_marginal_scores(loop.id) == [3.0]
 
@@ -118,7 +131,7 @@ class TestOpenEndedJudgePath:
         loop = self._loop()
         monkeypatch.setattr("personalclaw.loop.judge.assess_cycle", AsyncMock(return_value=None))
         # None (defer) — NOT a clean False — so the watchdog can flag degradation.
-        assert await kinds.get("goal").is_done_signal(loop, [{"cycle": 1}]) is None
+        assert await _signal(loop, [{"cycle": 1}]) is None
 
     @pytest.mark.asyncio
     async def test_monitor_never_completes(self):
@@ -126,7 +139,7 @@ class TestOpenEndedJudgePath:
 
         kinds.ensure_loaded()
         loop = self._loop(goal_type="monitor")
-        assert await kinds.get("goal").is_done_signal(loop, [{"cycle": 1}]) is False
+        assert await _signal(loop, [{"cycle": 1}]) is False
 
 
 @pytest.mark.asyncio
@@ -135,7 +148,6 @@ async def test_verifiable_goal_kind_runs_the_command():
     from personalclaw.loop.loop import Loop
 
     kinds.ensure_loaded()
-    s = kinds.get("goal")
     ok = Loop(
         id="abcd1234",
         name="g",
@@ -143,7 +155,7 @@ async def test_verifiable_goal_kind_runs_the_command():
         task="t",
         kind_config={"goal_type": "verifiable", "verify_command": "true"},
     )
-    assert await s.is_done_signal(ok, []) is True
+    assert await _signal(ok, []) is True
     bad = Loop(
         id="abcd1234",
         name="g",
@@ -151,12 +163,12 @@ async def test_verifiable_goal_kind_runs_the_command():
         task="t",
         kind_config={"goal_type": "verifiable", "verify_command": "false"},
     )
-    assert await s.is_done_signal(bad, []) is False
+    assert await _signal(bad, []) is False
     # open_ended defers (judge not yet wired here)
     oe = Loop(
         id="abcd1234", name="g", kind="goal", task="t", kind_config={"goal_type": "open_ended"}
     )
-    assert await s.is_done_signal(oe, []) is None
+    assert await _signal(oe, []) is None
 
 
 class TestJudgeIndependence:
@@ -321,7 +333,7 @@ class TestJudgeIndependence:
             return_value=JudgeVerdict(verdict=verdict_for_cycle(True, False), done_reason="ok")
         )
         monkeypatch.setattr("personalclaw.loop.judge.assess_cycle", spy)
-        await kinds.get("goal").is_done_signal(loop, [{"cycle": 1, "summary": "x"}])
+        await _signal(loop, [{"cycle": 1, "summary": "x"}])
         _, kwargs = spy.call_args
         assert kwargs["verify_command"] == "true"
         assert kwargs["workspace"] == str(tmp_path)
@@ -364,7 +376,7 @@ class TestJudgeIndependence:
             return_value=JudgeVerdict(verdict=verdict_for_cycle(False, False), done_reason="")
         )
         monkeypatch.setattr("personalclaw.loop.judge.assess_cycle", spy)
-        await kinds.get("goal").is_done_signal(loop, [{"cycle": 1, "summary": "x"}])
+        await _signal(loop, [{"cycle": 1, "summary": "x"}])
         _, kwargs = spy.call_args
         # the judge got the project context dir, NOT None (which would skip the read)
         assert kwargs["workspace"] == str(ctx)

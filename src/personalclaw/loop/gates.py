@@ -1,7 +1,8 @@
 """Shared done-ness gate primitives for the unified loop watchdog.
 
-These are the kind-agnostic checks a :class:`personalclaw.loop.kinds.LoopKindStrategy`
-calls from ``is_done_signal`` — the supervisor's own verification, never the
+These are the kind-agnostic checks the one supervisor evaluator
+(:mod:`personalclaw.loop.supervisor`) runs for a policy that declares them — the
+supervisor's own verification, never the
 worker's self-report (the tenet: no agent certifies its own work). The watchdog
 owns the lifecycle decision; these only supply the signal.
 """
