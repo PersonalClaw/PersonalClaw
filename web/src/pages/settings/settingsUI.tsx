@@ -5,9 +5,38 @@ import type { LucideIcon } from 'lucide-react'
 import { spring, physics } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
+import { Surface } from '../../ui/Surface'
 import { FieldHintProvider, FieldLabelProvider, NumberField } from '../../ui/forms'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
+
+/** The container-surface slab that a run of `Row`/`Field`/`ToggleRow`/`NumberRow` sits on — one
+ *  tonal step, one radius, one padding, for the whole `Section > RowGroup > Row` hierarchy.
+ *
+ *  Measured before this: `rounded-lg bg-surface-container px-4 py-1` appeared **43 times verbatim**
+ *  — 42 across `pages/settings/**` and a 43rd mirroring it in `ui/ListScaffold.tsx`'s `FormSkeleton`
+ *  — as a bare `<div>` with no other class at any of the 42 settings sites. Four more sites were the
+ *  same shape (a group whose only child is a self-padding row) at a different vertical padding:
+ *  `GuardrailsPanel:70` (`py-3`, wrapping one `Field`), `AgentDefaultsPanel:165` (`py-2`),
+ *  `PacksPanel:262` and `:394` (`py-3`). `GuardrailsPanel` carried both spellings **26 lines apart**
+ *  in one file, which is the tightest available proof this was drift rather than intent.
+ *
+ *  🪤 WHY THE PADDING MOVES TO TOKENS. `px-4 py-1` are Tailwind's own defaults, so they are FROZEN
+ *  against the user's density and space-scale sliders (`system.md` trap 3). Measured on
+ *  `#/settings/agent`: those groups stayed 16px/4px at comfortable AND dense AND cli AND at
+ *  `--space-scale: 1.4`, while the token-spelled sibling in the same subtree moved 24 → 19.2 →
+ *  16.32 → 33.6px. `--spacing-l` is `16px * --space-scale` and `--spacing-xs` is `4px * --space-scale`,
+ *  so `px-l py-xs` is byte-for-byte the same 16px/4px at default and starts tracking the sliders
+ *  everywhere else. 43 of the 47 adopted sites are therefore ZERO-pixel changes; the four near-misses
+ *  converge onto the 42-site majority.
+ *
+ *  NO `pad` / `className` / `tone` PROP, deliberately. All 42 exact sites pass only children, and the
+ *  ~38 remaining `py-3` groups in this tree are a genuinely different shape — free-form content
+ *  (a paragraph, a `Loading…` line, a flex cluster) where nothing inside pads itself, so 12px is
+ *  doing real work there. A variant with no adopter would be speculative API. */
+export function RowGroup({ children }: { children: ReactNode }) {
+  return <Surface tone="container" radius="lg" className="px-l py-xs">{children}</Surface>
+}
 
 /** A settings sub-route's page title, and therefore the TOP-LEVEL heading of that page — an `h1`.
  *  Measured before this: every `#/settings/*` route had **ZERO** `h1`s and its outline began at `h2`

@@ -4,7 +4,7 @@ import { unavailableWhen } from '../../ui/unavailable'
 import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check, X, Wand2 } from 'lucide-react'
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { PanelHeader, Section, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ChipInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -145,7 +145,7 @@ function HandsFreeSection() {
 
   return (
     <Section title="Hands-free voice" hint="Keep listening and send only when you say a confirmation phrase. The mic button stays push-to-talk; these settings shape the hands-free loop beside it.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <ChordRow
           value={typeof cfg.push_to_talk_chord === 'string' && cfg.push_to_talk_chord
             ? cfg.push_to_talk_chord
@@ -164,7 +164,7 @@ function HandsFreeSection() {
           cfg={cfg} field="clean_for_speech_enabled" patch={patch} />
         <ToggleRow label="Voice-origin disclaimer" hint="Tell the model a message was dictated so it self-corrects misheard words instead of confidently misreading them."
           cfg={cfg} field="voice_disclaimer_enabled" patch={patch} />
-      </div>
+      </RowGroup>
     </Section>
   )
 }
@@ -308,7 +308,7 @@ function UseCaseVoiceSection({
 
   return (
     <Section title={title} hint={hint}>
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <Row label={enableLabel} hint={bound ? undefined : 'No model bound for this use case — bind one in Models to use this.'}>
           <div className="flex items-center gap-2">
             <AvailChip available={bound} okLabel="model bound" missLabel="no model" />
@@ -325,7 +325,7 @@ function UseCaseVoiceSection({
         </Row>
 
         {enabled && bound && extras?.(settings, saveSettings, boundModel)}
-      </div>
+      </RowGroup>
 
       <ManageLink kind={useCase.toUpperCase()} go={go} />
       <SavedToast show={saved} />

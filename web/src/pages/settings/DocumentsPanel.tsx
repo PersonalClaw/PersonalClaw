@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type DashboardConfig } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Toggle, SavedToast } from './settingsUI'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { setDocumentEditing } from '../../ui/content/documentEditing'
 
@@ -51,7 +51,7 @@ export function DocumentsPanel() {
       <PanelHeader title="Documents" hint="How generated Word, Excel and PowerPoint files behave. Download-only by default — editing one re-creates it, which is a trade worth choosing deliberately." />
 
       <Section title="Editing" hint="Whether an office document opens in an editor or stays download-only.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <Row label="Edit documents in place"
             hint="Opens a generated Word document in a structural editor instead of download-only. Saving RE-CREATES the file from the structure PersonalClaw could parse, so constructs its document model cannot hold (comments, footnotes, embedded objects, exact styling) are not in the saved copy. The editor lists them before your first edit and repeats them in the save confirmation, and the version you started from is always restorable from the document's Details › Versions. With this off, office documents are read-only previews and the server refuses a document save outright.">
             <div className="flex items-center gap-2">
@@ -59,7 +59,7 @@ export function DocumentsPanel() {
               <Toggle on={cfg.document_editing} onChange={(v) => save({ document_editing: v })} label="Edit documents in place" />
             </div>
           </Row>
-        </div>
+        </RowGroup>
       </Section>
     </div>
   )

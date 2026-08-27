@@ -3,7 +3,7 @@ import { api, type DashboardConfig, type SessionTemplate } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName } from '../../lib/agents'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { PanelHeader, Section, Row, Toggle, SegPills, SavedToast } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Toggle, SegPills, SavedToast } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { NumberField } from '../../ui/forms'
 import { IconButton } from '../../ui/IconButton'
@@ -112,7 +112,7 @@ function StartersSection() {
 
   return (
     <Section title="Chat starters" hint="Reusable setups — agent, model and reasoning effort. Save one from a chat's header; they appear on the new-chat screen.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         {items === null ? (
           <p className="py-3 text-[0.8125rem] text-on-surface-low">Loading…</p>
         ) : items.length === 0 ? (
@@ -124,7 +124,7 @@ function StartersSection() {
             <IconButton icon={Trash2} label={`Delete ${t.name}`} iconSize={16} size={32} onClick={() => remove(t)} />
           </Row>
         ))}
-      </div>
+      </RowGroup>
     </Section>
   )
 }
@@ -153,7 +153,7 @@ function MidTurnSection({ resilience, setResilience }: {
   }
   return (
     <Section title="Mid-turn messages" hint="What happens when you send something while an answer is still being written.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <Row label="Default handling"
           hint="Queue: deliver it as the next turn. Steer: fold it into the answer being written, where the running agent supports that — otherwise it queues. Replace: stop the current answer and start over with the new message. Unattended work (loops, cron, subagents) always queues.">
           <div className="flex items-center gap-2">
@@ -168,7 +168,7 @@ function MidTurnSection({ resilience, setResilience }: {
             instead — either way it appears above the composer, never dropped.
           </p>
         )}
-      </div>
+      </RowGroup>
     </Section>
   )
 }
@@ -187,7 +187,7 @@ function RoutingSection({ routing, setRouting }: { routing: Record<string, unkno
   const enabled = routing.enabled !== false
   return (
     <Section title="Agent routing" hint="Suggest a better-fit specialist agent when a message matches one — you always confirm before it re-targets the chat.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <Row label="Suggest specialists" hint="When a message in a default-agent chat fits an installed specialist, show a one-click 'route to <agent>?' chip. Never routes silently.">
           <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={enabled} onChange={(v) => patch('enabled', v)} label="Suggest specialists" /></div>
         </Row>
@@ -197,7 +197,7 @@ function RoutingSection({ routing, setRouting }: { routing: Record<string, unkno
         {enabled && (
           <NumberRow label="Dismiss cooldown" hint="After you dismiss a suggestion for an agent, suppress it for this long (three dismissals mute it until you re-enable)." value={Number(routing.cooldown_hours ?? 24)} min={0} max={720} step={1} suffix="h" onCommit={(n, l) => patch('cooldown_hours', n, undefined, l)} saved={saved} />
         )}
-      </div>
+      </RowGroup>
     </Section>
   )
 }
@@ -223,7 +223,7 @@ function SessionsSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
   }
   return (
     <Section title="Sessions" hint="What happens to your chats on restart, and while the agent is busy.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         {/* Same WCAG 2.5.3 fix as `NotificationsPanel`: the name was a truncation of the visible label. */}
         <Row label="Restore sessions on startup" hint="Re-open recently active sessions when the app starts.">
           <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={cfg.restore_sessions} onChange={(v) => save({ restore_sessions: v })} label="Restore sessions on startup" /></div>
@@ -239,7 +239,7 @@ function SessionsSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
         <Row label="Auto-tag new chats" hint="When a chat's title is generated, also propose and assign tags in the same pass. Never touches chats you've tagged yourself, or incognito/temporary chats.">
           <Toggle on={cfg.auto_tag_sessions} onChange={(v) => save({ auto_tag_sessions: v })} label="Auto-tag new chats" />
         </Row>
-      </div>
+      </RowGroup>
     </Section>
   )
 }
@@ -265,7 +265,7 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
   }
   return (
     <Section title="Messages" hint="How messages and tool activity render in the chat.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <Row label="Send on Enter" hint={cfg.send_on_enter ? 'Enter sends · Shift+Enter for a newline.' : 'Enter inserts a newline · Cmd/Ctrl+Enter sends.'}>
           <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={cfg.send_on_enter} onChange={(v) => save({ send_on_enter: v })} label="Send on Enter" /></div>
         </Row>
@@ -306,7 +306,7 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
         <Row label="Confirm before closing a session" hint="Ask for confirmation when closing a session from the sidebar.">
           <Toggle on={cfg.confirm_close_session} onChange={(v) => save({ confirm_close_session: v })} label="Confirm before closing a session" />
         </Row>
-      </div>
+      </RowGroup>
     </Section>
   )
 }
@@ -333,7 +333,7 @@ function CheckpointsSection({ checkpoints, setCheckpoints }: {
   const on = checkpoints.enabled !== false
   return (
     <Section title="File checkpoints" hint="Before the agent's first write to a file in a turn, its current bytes are saved so /rewind-to-turn can restore them. Files only — never the conversation. Credential files (.env, keys) are never copied, so they are never restored either.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <Row label="Back up files before an edit" hint={on ? 'A wrong edit is recoverable with /rewind-to-turn N.' : 'Off — a wrong edit is gone. Nothing is being recorded.'}>
           <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={on} onChange={(v) => patch('enabled', v)} label="Back up files before an edit" /></div>
         </Row>
@@ -344,7 +344,7 @@ function CheckpointsSection({ checkpoints, setCheckpoints }: {
             <NumberRow label="Largest file backed up" hint="A file bigger than this is noted but not copied, so a rewind reports it as not captured instead of restoring it. Keeps one big write from filling the whole store. 0 = no limit." value={Number(checkpoints.max_file_mb ?? 8)} min={0} max={10000} step={1} suffix="MB" onCommit={(n, l) => patch('max_file_mb', n, undefined, l)} saved={saved} />
           </>
         )}
-      </div>
+      </RowGroup>
     </Section>
   )
 }
@@ -366,7 +366,7 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
   const poolSize = Number(session.pool_size ?? 0)
   return (
     <Section title="Context & lifecycle" hint="Keep long sessions productive and control how warm sessions are kept ready.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <NumberRow label="Auto-compact threshold" hint="Context-usage % that triggers compaction. Lower = more frequent." value={Number(session.autocompact_pct ?? 90)} min={5} max={90} step={1} suffix="%" onCommit={(n, l) => patch('autocompact_pct', n, undefined, l)} saved={saved} />
         <NumberRow label="Idle timeout" hint="Auto-close an idle session after this long. 0 = never." value={Number(session.timeout_secs ?? 0)} min={0} max={86400} step={60} suffix="s" onCommit={(n, l) => patch('timeout_secs', n, undefined, l)} saved={saved} />
         <AutoArchiveRow days={Number(session.auto_archive_days ?? 30)} onCommit={(n, l) => patch('auto_archive_days', n, undefined, l)} saved={saved} />
@@ -389,7 +389,7 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
             <NumberRow label="Warm pool TTL" hint="Recycle a warm session after this long unused." value={Number(session.pool_ttl_secs ?? 1800)} min={0} max={7200} step={60} suffix="s" onCommit={(n, l) => patch('pool_ttl_secs', n, undefined, l)} saved={saved} />
           </>
         )}
-      </div>
+      </RowGroup>
     </Section>
   )
 }

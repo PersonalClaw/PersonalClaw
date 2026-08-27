@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, type BundledPackRec, type InstalledPackRec, type PackProposalRec, type PackUpdateRec } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { invalidateKeys, useQuery } from '../../lib/data'
-import { PanelHeader, Section, Row, Field, SavedToast, ToggleRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Field, SavedToast, ToggleRow } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -63,18 +63,18 @@ export function PacksPanel() {
       <PanelHeader title="Packs" hint="Importable capability bundles — skills, templates, agents and connector declarations one user can hand to another." />
 
       <Section title="Discovery" hint="How packs get proposed for a project. Fingerprinting only ever proposes — it never installs anything on its own.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <ToggleRow label="Project fingerprinting" cfg={cfg} field="fingerprint_enabled" patch={patch}
             hint="Let the zero-LLM scanner propose matching packs for a project (e.g. a Terraform-shaped dir). Off stops scanning." />
-        </div>
+        </RowGroup>
       </Section>
 
       <Section title="Connector catalog" hint="An optional published catalog the local connector set refreshes from. Fetched under the CONNECTOR egress profile; empty keeps the seeded bundled set only.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <TextRow label="Connector catalog URL" cfg={cfg} field="connector_catalog_url" patch={patch}
             placeholder="https://example.com/connector_catalog.json"
             hint="Leave empty to use only the bundled starter catalog." />
-        </div>
+        </RowGroup>
       </Section>
 
       <ProposalsSection onInstalled={onInstalled} />
@@ -259,13 +259,13 @@ export function PackStoreSection({ installed, onInstalled }: {
       {error ? <LoadError what="pack catalog" error={error} onRetry={refresh} /> : null}
       <div className="flex flex-col gap-2">
         {(bundled ?? []).map((p) => (
-          <div key={p.name} className="rounded-lg bg-surface-container px-4 py-3">
+          <RowGroup key={p.name}>
             <Row label={`${p.displayName} ${p.version}`.trim()} hint={p.description}>
               {have.has(p.name)
                 ? <span className="text-[0.75rem] text-on-surface-low">Installed</span>
                 : <Button variant="primary" size="sm" disabled={busy === p.name} onClick={() => install(p.name, p.displayName)}>Install</Button>}
             </Row>
-          </div>
+          </RowGroup>
         ))}
       </div>
     </Section>
@@ -391,7 +391,7 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
   const parsed = pack.installed_at ? new Date(pack.installed_at) : null
   const installedOn = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toLocaleDateString() : ''
   return (
-    <div className="rounded-lg bg-surface-container px-4 py-3">
+    <RowGroup>
       <Row label={`${pack.name} ${pack.version}`.trim()}
         hint={connectorWarning(pack.connector_markers)}>
         <div className="flex items-center gap-2">
@@ -433,7 +433,7 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
           )}
         </div>
       )}
-    </div>
+    </RowGroup>
   )
 }
 
