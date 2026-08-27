@@ -216,7 +216,16 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
         </div>}
         right={def ? (
           <HeaderActions>
-            <QuietButton onClick={refine} title="Propose an improvement to this template from its run history">
+            {/* 🪤 Same shape OutboxPanel had: `refine` opens with `if (refining) return`, so a second
+                click through the whole refine round-trip was a silent no-op while the button stayed
+                lit — and it sits beside a `Button` that DOES carry `loading`+`disabled`, so the two
+                halves of one header row disagreed about what "in flight" looks like. */}
+            <QuietButton
+              onClick={refine}
+              title="Propose an improvement to this template from its run history"
+              disabled={refining}
+              disabledReason="A refinement is already in flight"
+            >
               <Sparkles size={13} /> {refining ? 'Refining…' : 'Refine now'}
             </QuietButton>
             <Button onClick={start} loading={starting} disabled={starting}>
