@@ -1,12 +1,19 @@
 import type { ReactNode } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 import { cx } from './cx'
+import { spring, expr } from '../design/motion'
 
 /** A block-level clickable CARD/TILE — the kit's home for "the whole card is one
  *  click target" (library grids, gallery tiles). Distinct from {@link Button}
  *  (an inline CTA pill) and {@link QuietButton} (a compact toolbar action): a
  *  TileButton is a bordered container whose CHILDREN are the content (preview,
  *  title rows); it owns only the card chrome — border, radius, hover, the
- *  active ring — and the accessible button semantics. `active` marks selection. */
+ *  active ring — and the accessible button semantics. `active` marks selection.
+ *
+ *  Press springs in (expressiveness-scaled, yielding to reduced motion) — the
+ *  same spring the rest of the button family uses. The tile was the LARGEST
+ *  target in the kit with no press feedback at all: a click on a card that only
+ *  changes colour on hover gives no acknowledgement that the press landed. */
 export function TileButton({ children, onClick, active, title, ariaLabel, className }: {
   children: ReactNode
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
@@ -22,12 +29,16 @@ export function TileButton({ children, onClick, active, title, ariaLabel, classN
   ariaLabel?: string
   className?: string
 }) {
+  const reduce = useReducedMotion()
+  const pressScale = reduce ? 1 : 1 - expr(0.05, 0.4)
   return (
-    <button
+    <motion.button
       type="button"
       onClick={onClick}
       title={title}
       aria-label={ariaLabel}
+      whileTap={{ scale: pressScale }}
+      transition={spring.spatialFast}
       // `active` is the selection, and until now it was PAINT ONLY: a border colour. Measured in the
       // AX tree on `#/settings/design`, 3 of 89 buttons exposed any state — the Mode row — while the
       // selected personality card announced exactly like the other two. `aria-pressed` is this app's
@@ -42,6 +53,6 @@ export function TileButton({ children, onClick, active, title, ariaLabel, classN
       )}
     >
       {children}
-    </button>
+    </motion.button>
   )
 }

@@ -256,10 +256,18 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
               <>
                 {/* The real file picker below is the control; this button only forwards to it. The
                     picker keeps its own accessible name and stays keyboard-reachable, because this
-                    is the one affordance in the panel that must work without a mouse. */}
+                    is the one affordance in the panel that must work without a mouse.
+
+                    🪤 …and the picker it forwards to is `disabled={dropBusy}`, so for the whole
+                    hand-over window this button was fully lit, fully clickable, and did NOTHING:
+                    `.click()` on a disabled input is a no-op that fires no event and says nothing.
+                    The label swapping to "Handing over…" says what is happening, not that the
+                    control is inert. `disabled` here mirrors the input's own gate. */}
                 <QuietButton
                   onClick={() => fileInputRef.current?.click()}
                   title="Choose files to hand to this run"
+                  disabled={dropBusy}
+                  disabledReason="A hand-over is already in flight"
                 >
                   <Upload size={13} /> {dropBusy ? 'Handing over…' : 'Choose files'}
                 </QuietButton>
