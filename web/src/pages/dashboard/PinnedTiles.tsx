@@ -10,6 +10,7 @@ import { GenUiWidget } from '../../ui/genui/GenUiWidget'
 import { GenUiHostCtx } from '../../ui/genui/actions'
 import { findGenUiBlock } from '../../ui/widget/blocks'
 import { LiquidShape } from '../../ui/motion'
+import { safeMode } from '../../ui/surfaces/layers'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { costLabel, isLive, lastRefreshFailed, sourceChips } from './tileFreshness'
 
@@ -55,6 +56,14 @@ export function PinnedTiles() {
   // Empty registry ⇒ render nothing (the page stays byte-identical to today).
   if (tiles.length === 0) return null
 
+  // Safe mode (AMBIENT-SURFACES §6): the band renders as INERT LINKS. The tile band is L0
+  // code, so the recovery route was never compromised — but a tile's BODY is a generated
+  // artifact that may itself be a genui tree, it polls a refresh endpoint, and it carries
+  // controls that re-fire a workflow. None of that belongs on the surface someone reached
+  // BECAUSE the app was misbehaving. A link keeps the one thing recovery needs (you can
+  // still find what you pinned) and drops everything that could re-break the page.
+  const safe = safeMode()
+
   return (
     <section className="flex min-w-0 flex-col gap-s" data-testid="pinned-tiles">
       <div className="flex items-center gap-s">
@@ -64,12 +73,49 @@ export function PinnedTiles() {
         <h2 data-type="label-l" className="text-on-surface-var">Pinned</h2>
         <span className="h-px flex-1 bg-outline-variant/40" />
       </div>
-      <div className="grid grid-cols-1 gap-l lg:grid-cols-2">
-        {tiles.map((t) => (
-          <PinnedTile key={t.ref} tile={t} onResolve={resolve} />
-        ))}
-      </div>
+      {safe ? (
+        <>
+          {/* Said out loud, not inferred from missing controls: a band that quietly stopped
+              working is indistinguishable from the breakage the user came here to escape. */}
+          <p data-type="body-s" className="text-on-surface-low" data-testid="pinned-tiles-safe-note">
+            Safe mode — tiles are links only. Nothing is fetched, refreshed or re-run.
+          </p>
+          <ul className="flex min-w-0 flex-col gap-xs">
+            {tiles.map((t) => (
+              <InertTile key={t.ref} tile={t} />
+            ))}
+          </ul>
+        </>
+      ) : (
+        <div className="grid grid-cols-1 gap-l lg:grid-cols-2">
+          {tiles.map((t) => (
+            <PinnedTile key={t.ref} tile={t} onResolve={resolve} />
+          ))}
+        </div>
+      )}
     </section>
+  )
+}
+
+/** One tile in safe mode: a link to the artifact and nothing else.
+ *
+ *  A separate component rather than a branch inside `PinnedTile` on purpose — `PinnedTile`
+ *  opens with `useQuery` and `useVisiblePoll`, and hooks cannot be skipped by a conditional,
+ *  so an early return there would still have fetched and polled. The point of the inert
+ *  treatment is that NOTHING is fetched. */
+function InertTile({ tile }: { tile: DashboardTile }) {
+  const slug = tile.ref.slice('artifact:'.length)
+  return (
+    <li className="min-w-0">
+      <a
+        href={`#/artifacts/${encodeURIComponent(slug)}`}
+        data-testid="pinned-tile-inert"
+        data-type="body-m"
+        className="block truncate rounded-lg border border-outline-variant/40 bg-surface-low/60 px-s py-xs text-on-surface underline decoration-dotted underline-offset-2"
+      >
+        {slug}
+      </a>
+    </li>
   )
 }
 

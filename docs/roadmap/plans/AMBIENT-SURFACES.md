@@ -890,3 +890,120 @@ picture; `web/src/pages/dashboard/world/` renders it ("Orbit", a new dashboard b
   chat-bubble leg is the weakest: `ChatPage.tsx` is not mountable in this suite, so the live-send
   wiring is asserted on its SOURCE (four call sites) while the RELOAD path is asserted through the
   real `hydrateTurns` with a vacuity leg.
+- [2026-08-26][AS-6] ✅ **REMAINDER CLOSED — all six `done_when` clauses now hold.** The two `UNMET`
+  entries above are built, and the third open item was decided rather than built (see the ChatPage
+  note below). **The `⬜`→`✅` flip is NOT made here:** `docs/roadmap/atomic/AS.md`'s marks are DERIVED
+  from `dag.json` (`test_roadmap_atomic_status_sync.py::test_every_row_mark_agrees_with_the_dag_status`
+  reddens on any disagreement) and `dag.json` is the driver's to tick at ship time. Flipping the
+  derived file alone would hand over a red gate, so the mark stays `todo` and this entry is the
+  evidence the tick should act on. What landed: `personalclaw/surface_overlay.py` (the L2 producer — the
+  loader, the containment gate and the DATA shape), `GET /api/surfaces/overlays`
+  (`dashboard/handlers/surfaces.py`, read-only), three `ERROR_CODES` rows, `ui/surfaces/overlay.tsx`
+  (fetch → validate → register at L2) + `ui/surfaces/SurfaceOverlay.tsx` (the band), the
+  `<SurfaceOverlay surface="dashboard" />` call site on `DashboardPage`, and the safe-mode inert-link
+  treatment in `PinnedTiles`. Gate: `make lint` 0 (mypy 1056 files), `scripts/gate_report.py` 6/6,
+  179 targeted pytest, `npm run typecheck:web` 0, **507 web test files / 5425 tests**, `npm run build` 0.
+  `config/loader.py` untouched at 5900 lines (no config field was needed — the presence of the
+  directory is the switch).
+- [2026-08-26][AS-6] **The L2 producer is built to the OWNER'S threat argument (given 2026-08-26),
+  which is quoted in full in `surface_overlay.py`'s module docstring.** Six clauses, each with a
+  refusal AND a vacuity leg: (1) an overlay is DATA — the genui DSL body plus a closed key set, no
+  eval/import/JSX/expression language; (2) an unknown component name is REFUSED at load, and the
+  refusal names it; (3) shadowing goes through the SAME `registerLayerComponent` an app's L1 module
+  uses — one rule, both producers; (4) props are host-schema validated by `validateInvocation`;
+  (5) path containment through one `resolve_overlay_path` gate, asserted with a really PLANTED
+  symlink; (6) the existing ceiling/`LayerBoundary` are fed, not paralleled, and safe mode
+  (`maxLayer=0`) does not even fetch.
+- [2026-08-26][AS-6] **DESIGN — an overlay refuses WHOLE where the chat renderer DROPS one line, and
+  the contrast is a test.** `GenUiWidget` drops a bad line so the rest of a model's answer still
+  paints; a transcript is disposable. An overlay is a saved artifact someone authored on purpose, so
+  half of it rendering is worse than a named refusal. Both legs are asserted in
+  `overlay.test.tsx` — if the chat path ever refused whole too, the overlay test would be measuring a
+  global rule rather than this one.
+- [2026-08-26][AS-6] **DEVIATION — clause 3 needed a producer that can REGISTER, so an overlay may
+  `define` composites.** An overlay that only referenced components could not shadow anything, which
+  would have made the owner's clause 3 vacuous — the exact shape this remainder exists to fix. So an
+  overlay may declare named data sub-trees (`define: [{name, description?, body}]`) that register at
+  L2 through `registerLayerComponent`, inheriting its `shadows-core` / `shadows-layer` /
+  `layer-disabled` refusals unchanged. Two consequences follow from "data, never code" and are stated
+  in the module docstring: a composite takes **no args** (substitution would be an expression
+  language, so `args: []` and `validateInvocation` reports any arg as `excess-args`), and it has **no
+  `group`** (duplicating the FE `GROUPS` enum across the wire would buy a drift risk for a knob
+  nobody needs — every composite registers in `Layout`).
+- [2026-08-26][AS-6] **DEVIATION — `OVERLAYABLE_SURFACES` is a CLOSED set, refused at load.** An
+  overlay naming a surface no band renders would be an invisible failure, so an unknown id is refused
+  server-side rather than silently matching nothing. `dashboard` is the only member today, and
+  `test_every_overlayable_surface_has_a_frontend_call_site` fails if a member has no
+  `<SurfaceOverlay surface="…" />` — so the set cannot grow into a declared-with-no-consumer shape.
+  Surface-less (backend) refusals render on the `dashboard` band for the same reason: L0 owns it, so a
+  refusal is always reachable.
+- [2026-08-26][AS-6] **DEVIATION — `GenUiNodes` extracted from `GenUiWidget`.** The band and an
+  overlay composite both render a genui tree, and a second tree renderer would have been a parallel
+  path. `GenUiWidget` is now `Surface` chrome + the action provider + `GenUiNodes`; `renderLine` and
+  its `LayerBoundary` wrap stay in the same file, so `layers.test.tsx`'s source guard on that wrap is
+  untouched. A composite rendered inside a widget inherits that widget's `GenUiActionCtx` through
+  React context, so a `Form` inside a composite still routes to the host's producer with no plumbing.
+- [2026-08-26][AS-6] **DESIGN — no write endpoint, and refusals ride a 200.** An overlay is authored
+  with the ordinary file tools under `$PERSONALCLAW_HOME/surfaces/`; an HTTP writer would be a second
+  producer with a second set of refusals. Refusals come back as `AgentError` envelopes alongside the
+  accepted overlays — the same call the tile-action refusal makes, because the FE renders the refusal
+  beside the surface it belongs to and a 4xx would make "your overlay names a component that does not
+  exist" indistinguishable from a broken request.
+- [2026-08-26][AS-6] **Safe-mode inert tiles: a SEPARATE component, because the claim is that nothing
+  is fetched.** `PinnedTiles` branches to `InertTile` rather than early-returning inside `PinnedTile`
+  — that component opens with `useQuery` + `useVisiblePoll` and hooks cannot be skipped by a
+  conditional, so a branch there would still have fetched and polled. The test's load-bearing
+  assertion is therefore `api.artifact`/`api.refreshTile` NOT being called (the DOM alone cannot tell
+  an inert tile from a live one whose body has not landed), with the safe-mode-off leg asserting both
+  ARE called. The band also says "tiles are links only" out loud: a band that quietly stopped working
+  is indistinguishable from the breakage the user came here to escape.
+- [2026-08-26][AS-6] **ACCEPTED (owner, 2026-08-26) — ChatPage's four live-send call sites stay
+  SOURCE-asserted.** A 4k-line component owning a socket and a composer is not mountable in vitest and
+  forcing it would produce a fake test. The RELOAD path still goes through the real `hydrateTurns`
+  with a vacuity leg. Recorded so the acceptance does not widen: splitting `ChatPage` would be its own
+  atom, not this one.
+- [2026-08-26][AS-6] **DISCOVERY — §6's REPLACE half is prose, not code, and is outside this atom's
+  `done_when`.** §6 describes resolution as replace-vs-compose: registrations COMPOSE, while "tile
+  skins and artifact skeletons REPLACE (highest layer wins, versioned like artifacts)". This atom
+  builds the COMPOSE half (L2 component registrations + a genui layout band). No L2 skin/skeleton
+  override exists — and, importantly, none is DECLARED in code either (`layers.ts`'s docstring is the
+  only place the replace rule appears), so there is no inert mechanism, just unbuilt §6 prose. The six
+  `done_when` clauses do not name it; a future atom that wants it should carry its own threat argument
+  the way this one did.
+- [2026-08-26][AS-6] **Falsification runs (mutate the live line, confirm the mutation applied, observe
+  the red, restore from a file copy).** Six: (1) neutering the containment comparison in
+  `resolve_overlay_path` ACCEPTED the escaping symlink while the inside-symlink control stayed green;
+  (2) neutering the closed-key-set check accepted a document carrying `onLoad: "alert(1)"`;
+  (3) blanking `validateOverlayBody`'s error return reddened 6 tests (clauses 2 + 4 + both composite
+  legs) and left the 14 accepting legs green; (4) making the register refusal unreachable reddened
+  both shadow tests; (5) neutering the safe-mode `maxSurfaceLayer` gate reddened the no-fetch test
+  alone; (6) neutering `const safe = safeMode()` in `PinnedTiles` reddened the inert-link test while
+  its live-mode control stayed green. Also falsified the call-site rail itself: replacing
+  `<SurfaceOverlay surface="dashboard" />` with a dead `surface="elsewhere"` reddened
+  `test_every_overlayable_surface_has_a_frontend_call_site`. Honest limits: the "no dynamic-code path"
+  check and the DashboardPage call-site check are TEXT scans an alias would evade, and both say so in
+  their own test bodies.
+- [2026-08-26][AS-6] **STILL UNVERIFIED — not driven in a live browser.** Same standing caveat as the
+  first session: every clause is asserted in jsdom against real components with `api` mocked, and the
+  backend half against a real (tmp-redirected) home. No live gateway drive of an overlay was done.
+- [2026-08-26][AS-6] **Two gates caught real omissions in this commit; both satisfied, neither
+  weakened.** (1) `tests/test_wire_error_envelope_census.py`'s `UNRESOLVED_PAYLOAD_CEILING` reddened
+  `assert 214 <= 213`: the new `GET /api/surfaces/overlays` handler returns
+  `web.json_response(overlay_payload())`, a composer's return value the scanner cannot resolve to a
+  literal. Re-measured MAIN-RELATIVE rather than assumed — `origin/main` (c9fff2f3) measures 213
+  unresolved / 1507 flat, this branch 214 / 1507, and the single added site is
+  `dashboard/handlers/surfaces.py:28`. The ceiling went to 214 with a row documenting the route, why
+  spelling the loader's `{overlays, refusals, dir}` schema out at the call site would duplicate it
+  (this handler "owns nothing but the JSON"), and that `FLAT_BASELINE` stays 1507 because this route
+  has NO flat refusal at all — its refusals ride the same 200 by design. (2)
+  `tests/test_url_navigation_doctrine.py` reddened on two raw `location.hash =` writes in
+  `pinnedTilesSafeMode.test.tsx`: only `web/src/app/useHashRoute.ts` may own hash/history mechanics,
+  and the sibling suites that set the hash freely pass ONLY because they live outside `web/src/pages`.
+  Fixed by driving safe mode through the reader the component actually calls — a `vi.mock` of
+  `ui/surfaces/layers` that spreads the real module and overrides `safeMode` (plus `maxSurfaceLayer`
+  from the same flag, so the mock cannot describe a state the real module could never be in). Not
+  exempted, not moved out of `pages/` to escape the scanner, and the regex was not loosened.
+  `setServerSafeSurfaces(true)` was rejected as the seam because it is deliberately ONE-WAY, so the
+  latch would leak out of the safe-mode leg and silently make the live control leg safe too. The
+  falsification above (neuter `const safe = safeMode()`) was re-run against the rewritten test and
+  still separates the legs: 1 failed (inert-link) + 1 passed (live control).

@@ -669,6 +669,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/status` — _(no summary)_
 - `POST /api/stt/transcribe` — transcribe uploaded audio via the active STT model.
 - `GET /api/suggestions` — return pre-computed contextual suggestions.
+- `GET /api/surfaces/overlays` — the user/agent (L2) overlays, plus named refusals.
 - `GET /api/system` — System information endpoint with live CPU, memory, network metrics.
 - `POST /api/system/restart` — bounce the gateway to apply committed backend
 - `GET /api/task-lists` — _(no summary)_

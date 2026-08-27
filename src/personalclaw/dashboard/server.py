@@ -879,6 +879,12 @@ async def start_dashboard(
 
     # Generative-UI component catalog (AMBIENT-SURFACES §5.2) — read-only.
     app.router.add_get("/api/genui/library", api_genui_library)
+    # The L2 user/agent surface overlays (AMBIENT-SURFACES §6 / AS-6). Read-only by
+    # design: an overlay is authored with the ordinary file tools, so an HTTP writer here
+    # would be a second producer with a second set of refusals.
+    from personalclaw.dashboard.handlers.surfaces import api_surface_overlays
+
+    app.router.add_get("/api/surfaces/overlays", api_surface_overlays)
     app.router.add_get("/api/dashboard/views", api_dashboard_views)
     app.router.add_post("/api/dashboard/views", api_dashboard_views)
     app.router.add_post(
