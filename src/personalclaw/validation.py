@@ -930,6 +930,17 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # action, so it goes through this same validation — registered in the action-provider
         # registry in the same commit as this line, for the reason stated above.
         "second-opinion",
+        # EXTERNAL-ACCESS §5 (EA-8, outbound half): sends ONE A2A task to an external agent.
+        # Unlike every name above it, the provider behind this one is NOT in core's registry —
+        # it is delivered by the `a2a-action` first-party app, exactly as `webhook` is. So the
+        # usual "same commit as the registry entry" rule cannot apply and the cross-repo form
+        # of it does: this line is only correct while the `a2a-action` bundle exists in
+        # PersonalClawApps, because the name resolves through the app provider registry at
+        # dispatch. Land the bundle FIRST — an app without this line is merely unreachable,
+        # while this line without the app is a hook that validates, saves, and then fails at
+        # fire time, which is strictly worse. Classified write-capable in `triggers/screen.py`
+        # in the same commit: an A2A task POSTed to somebody else's agent cannot be recalled.
+        "a2a-call",
     }
 )
 

@@ -22,6 +22,14 @@ inverse: a REAL provider that neither table classifies. That one is not merely u
 it silently inherits the fail-closed default, so a genuinely read-only provider added
 without a line here becomes un-auto-fireable and its triggers stop working for a reason
 nobody can grep.
+
+One exemption, added by `EA-8`: an id whose provider ships in a first-party APP BUNDLE is
+real but invisible to `list_action_providers()`, because an app is installed separately and
+this suite installs none. Read as a phantom, that forces app-delivered providers to stay
+UNCLASSIFIED just to keep this module green — which is how `webhook` came to sit in neither
+table. So `APP_DELIVERED_PROVIDERS` names them explicitly, and two further tests keep the
+exemption from becoming a hole: it may only excuse ids the tables actually carry, and it
+expires by itself if core ever starts serving the name.
 """
 
 from __future__ import annotations
@@ -31,6 +39,7 @@ from personalclaw.action_providers.registry import (
     list_action_providers,
 )
 from personalclaw.triggers.screen import (
+    APP_DELIVERED_PROVIDERS,
     READ_ONLY_PROVIDERS,
     WRITE_CAPABLE_PROVIDERS,
 )
@@ -49,13 +58,55 @@ def test_registry_is_actually_populated() -> None:
 
 
 def test_no_phantom_ids_in_the_capability_tables() -> None:
-    """Every classified id names a provider the registry serves."""
+    """Every classified id names a provider the registry serves, or a declared app-delivered one.
+
+    App-delivered ids are exempt because core's registry cannot see them — an app bundle is
+    installed separately and this suite installs none — so their absence is expected rather
+    than misleading. They must still be DECLARED, which is what keeps this an exemption and
+    not a hole; the two tests below hold that declaration honest.
+    """
     registered = _registered()
     classified = READ_ONLY_PROVIDERS | WRITE_CAPABLE_PROVIDERS
-    phantom = sorted(classified - registered)
+    phantom = sorted(classified - registered - APP_DELIVERED_PROVIDERS)
     assert not phantom, (
         "These ids are classified in triggers/screen.py but no provider answers to them, so "
-        "the line fences nothing and misleads anyone auditing the table:\n  " + "\n  ".join(phantom)
+        "the line fences nothing and misleads anyone auditing the table:\n  "
+        + "\n  ".join(phantom)
+        + "\n\nIf the provider ships in a first-party app bundle, add it to "
+        "APP_DELIVERED_PROVIDERS instead of removing the classification."
+    )
+
+
+def test_every_app_delivered_id_is_actually_classified() -> None:
+    """The exemption may only excuse ids the tables really carry.
+
+    An entry naming nothing classified is dead weight that silently widens the exemption for
+    whoever adds the id later — the same "line that looks like a decision and is not" this
+    module exists to prevent, one level up.
+    """
+    assert (
+        APP_DELIVERED_PROVIDERS
+    ), "the exemption set is empty — delete it rather than keeping a stub"
+    classified = READ_ONLY_PROVIDERS | WRITE_CAPABLE_PROVIDERS
+    unused = sorted(APP_DELIVERED_PROVIDERS - classified)
+    assert not unused, (
+        "APP_DELIVERED_PROVIDERS names ids that neither capability table classifies, so the "
+        "exemption excuses nothing and only pre-authorises a future phantom:\n  "
+        + "\n  ".join(unused)
+    )
+
+
+def test_no_app_delivered_id_is_secretly_core_native() -> None:
+    """If core starts serving the name itself, the exemption must go.
+
+    Left in place it would mask a genuine phantom for that id forever, which is precisely the
+    failure the phantom rail catches — so the exemption has to expire on its own.
+    """
+    still_absent = APP_DELIVERED_PROVIDERS - _registered()
+    assert still_absent == APP_DELIVERED_PROVIDERS, (
+        "these ids are now served by core's own registry, so they are no longer app-delivered "
+        "— drop them from APP_DELIVERED_PROVIDERS so the phantom rail covers them again:\n  "
+        + "\n  ".join(sorted(APP_DELIVERED_PROVIDERS - still_absent))
     )
 
 

@@ -1207,3 +1207,75 @@ Both clauses then hold, and neither has to be relaxed:
 The `blocked_reason` in `dag.json` never carried this BLOCKED at all (it lived only in this log), which is
 why `EA-7` fell into the untriaged cross-plan bucket in the first place. Mirroring it into `dag.json`
 follows in the next tracking batch.
+- [2026-08-27][EA-8] **The outbound half is BUILT; the atom is 🟡 pending TWO merges, not one.** Closes the
+  `blocked_reason` above by doing what it said would clear it — with one correction to its premise: the two
+  changes cannot be "the same commit", because they are in different repositories. So the guarantee is
+  restated as a **merge ORDER**, and the order is `PersonalClawApps` FIRST.
+  **Why that direction.** The two failure modes are not symmetric. The bundle without core's allowlist entry
+  is *unreachable*: no trigger can name `a2a-call`, so the app sits installed and inert and no user can
+  reach a failure at all. Core's entry without the bundle is a hook that validates, saves, and then fails at
+  fire time — the shape `validation.py`'s own comments warn about three times, and the one this atom was
+  parked to avoid. Apps-first makes the intermediate window inert; core-first makes it a live defect.
+  **Apps repo** — `a2a-action/` (`app.json`, `provider.py`, `test_provider.py`, `README.md`, `LICENSE`),
+  following the `webhook-action` precedent §5 names: `provider.type: action`, `entity: a2a`,
+  `create_provider` → `ActionProvider`. One request per `execute`, in A2A's canonical `message/send` shape
+  (`metadata.skillId` + `message.parts[].text` + a per-FIRING `messageId`) — one spelling, and the one
+  core's own inbound `_skill_id_of` already reads, so two PersonalClaw instances interoperate through this
+  provider with no special-casing. `messageId` is generated per `execute`, not per config: it becomes core's
+  idempotency key, so a per-config id would make every firing after the first adopt the first one's run and
+  silently do nothing. The remote reply goes through `sdk.security.fence_untrusted(..., source="a2a:<url>")`
+  before it reaches `stdout`, because `stdout` is read by a model downstream. Manifest declares
+  `permissions.network` and nothing else, plus an autonomy floor AND ceiling of `one_tap` — a delivered A2A
+  task cannot be recalled, so there is no undo to justify `auto_with_undo`.
+  **Core repo** — three lines and a test flip. `a2a-call` into `ALLOWED_HOOK_PROVIDERS`; into
+  `triggers/screen.WRITE_CAPABLE_PROVIDERS` (the capability-class house rule — fail-closed already answered
+  correctly, but the reason is specific enough to state: an outbound delivery is irreversible in a way no
+  local write is); and `sdk.net.a2a_outbound_policy`.
+  🔴 **`outbound_policy()` shipped in #2086 as an INERT control — it had no production caller, only tests.**
+  Its own docstring says it lives in core "so the *policy* decision is in core … while the app supplies only
+  the URL", but the app boundary forbids `personalclaw.inbound.*`, so the app it was written for could not
+  actually reach it. The intended design was one SDK export short of working. `sdk/net.py` now exports it,
+  which is what makes "core decides where a URL may point" enforceable instead of advisory: without the
+  export the app's only options were to breach the import lint or compose its own `EgressPolicy` — and a
+  self-composed policy is free to be exactly the additive `egress_policy_for(CONNECTOR)` shape this plan's
+  §5 prose names and #2086 measured to be permissive.
+  **Citation correction.** `validation.py:555` is cited in §5, §11 and the `done_when` row.
+  `ALLOWED_HOOK_PROVIDERS` is at **`validation.py:812`** on `origin/main`, and still `:812` after this
+  change (the new name goes INSIDE the frozenset, so the declaration does not move) —
+  and it is `src/personalclaw/validation.py`, NOT `workflows/validation.py`. Worth stating explicitly
+  because a sibling atom is editing `workflows/validation.py` concurrently and the two files are unrelated
+  here; this change touches **zero** lines of `workflows/validation.py`.
+  **The two-directional allowlist test flips, and its negative control is repaired.** The previous reject
+  side was `a2a-call` itself, which this atom invalidates — so the control moved to
+  `a2a-call-not-a-provider`, a name nothing will ever register, and chosen as a PREFIX-extension of the
+  accepted name so the pair also proves the allowlist matches whole names rather than substrings. That is
+  the second time a negative control here was a real-provider-in-waiting; a name reserved as un-registrable
+  cannot be invalidated a third time.
+  **Falsifications (2, each mutated on the LIVE line, `git grep`-ed back to confirm the mutation applied,
+  then restored from a `cp` copy at the literal path — never `git checkout`).**
+  (i) Removing `a2a-call` from `ALLOWED_HOOK_PROVIDERS`: **2 of 6 selected red** —
+  `test_a2a_call_is_accepted_now_that_the_app_ships_it` and
+  `test_the_two_directions_use_the_same_validator`. The clause is worded as a rejection and behaves as one.
+  (ii) Replacing the app's `a2a_outbound_policy()` with a self-composed `egress_policy_for(CONNECTOR)` —
+  precisely the permissive shape §5's prose names: **3 of 25 red, and a DIFFERENT set** —
+  `test_a_non_allowlisted_public_host_is_refused`, `test_allowlisting_one_host_does_not_open_the_others`
+  and `test_the_provider_uses_cores_policy_and_composes_none_of_its_own`, the last of them reporting
+  `allow_only=False` off the policy object actually handed to `fetch`. A different red on the second
+  mutation is the point of running it: had nothing changed, the provider would be reaching the network
+  outside the guarded seam and the egress tests would be measuring the fake transport instead of the guard.
+  Both restores verified `git diff --stat HEAD` EMPTY against their own commits, not by eye.
+  **Gate:** core `make lint` clean (black 2169 files, isort, flake8, mypy 1071 source files);
+  `config/loader.py` **5647 lines, unchanged** (353 of headroom, re-measured, not inherited); `TOOL_META`
+  untouched so `reference/tools.md` is not stale; apps `python -m personalclaw.apps.quality .` clean across
+  **52 apps**; the bundle's own suite **25 passed / 25 collected**; core suites `test_inbound_a2a` **39**,
+  `test_triggers_capability_fence` **35**, `test_sdk_surface_is_public` **7**, `test_app_routes` **19**,
+  `test_sdk_import_cycle` **4**, `test_sdk_deps` **4**, `test_structural_baseline` **31** (at `-n 0
+  --timeout=900`; it hits the committed 120s timeout under parallel load, which is starvation and not a
+  failure); `test_apps_import_boundary` **125**; `scripts/gate_report.py` **6/6 PASS**.
+  🔴 **`test_apps_import_boundary` SKIPS in a `/private/tmp` worktree, and a skip reads as a pass.**
+  `_APPS_DIR` is `parents[2]/"apps"`, which resolves only in the real workspace layout — from
+  `/private/tmp/<wt>/tests/` it points at `/private/tmp/apps`, so the module hits
+  `pytest.skip(allow_module_level=True)` and a targeted run reports green having linted NOTHING. It was made
+  to run by symlinking the apps checkout to that path (then removed — sibling worktrees under
+  `/private/tmp` resolve the SAME path, so leaving it would silently change their gate too).
+  Probe sweep 0 introduced in either repo; `git status` clean apart from `?? .venv`.
