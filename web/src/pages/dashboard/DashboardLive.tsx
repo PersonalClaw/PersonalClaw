@@ -40,6 +40,12 @@ export interface DashboardLiveData {
   /** The curated Discover tips for the dashboard section + hub (§6), or an empty
    *  feed when everything's been explored / the kill switch is off. Polled on SLOW_POLL. */
   discover: DiscoverResponse | null
+  /** The tips read's own failure. Distinct from `discover: null`, which also means "not polled
+   *  yet" — and critically distinct from `enabled: false`, because the slot's off-branch names a
+   *  SETTING. Without this the consumer cannot tell a dead endpoint from a user's own choice, and
+   *  the only sentence it has to say is about the choice. Same shape and same reason as
+   *  `doctorErr` below. */
+  discoverErr: unknown
   /** The doctor health rollup (PLATFORM-RESILIENCE §1) — cached 30s server-side, so
    *  polled on SLOW_POLL. Powers the SystemHealth widget's one-line health signal. */
   doctor: DoctorReport | null
@@ -82,6 +88,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [system, setSystem] = useState<SystemInfo | null>(null)
   const [discover, setDiscover] = useState<DiscoverResponse | null>(null)
+  const [discoverErr, setDiscoverErr] = useState<unknown>(null)
   const [doctor, setDoctor] = useState<DoctorReport | null>(null)
   const [doctorErr, setDoctorErr] = useState<unknown>(null)
 
@@ -113,7 +120,15 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const loadStatus = useCallback(() => { api.status().then(guard(setStatus)).catch(() => {}) }, [])
   const loadNotifications = useCallback(() => { api.notifications().then((d) => guard(setNotifications)(d.notifications ?? [])).catch(() => {}) }, [])
   const loadSystem = useCallback(() => { api.system().then(guard(setSystem)).catch(() => {}) }, [])
-  const loadDiscover = useCallback(() => { api.discover().then(guard(setDiscover)).catch(() => {}) }, [])
+  // 🔴 `catch(() => {})` left `discover` null, and the dashboard's Discover slot renders
+  // "Discover tips are off." for `!discover` — so a dead endpoint (and every millisecond before
+  // the first read lands) impersonated a SETTING THE USER NEVER TOUCHED. Measured on an empty home
+  // with the read aborted: the slot said "Discover tips are off." while `#/discover`, on the very
+  // same rejection, said "Couldn't load your tips" with a Retry. Same story as `loadDoctor` below.
+  const loadDiscover = useCallback(() => {
+    api.discover().then((d) => { guard(setDiscover)(d); guard(setDiscoverErr)(null) })
+      .catch((e) => guard(setDiscoverErr)(e))
+  }, [])
   // 🔴 `catch(() => {})` left `doctor` null, and the SystemHealth strip surfaces its health row
   // ONLY when `!doctor.ok` — its own comment says "a healthy system stays quiet". So a failed
   // PROBE impersonated health on the dashboard's health surface. `#/settings/doctor` already says
@@ -181,7 +196,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const value: DashboardLiveData = {
     approvals, inbox, proposals, loops, tasks, schedule, scheduleDidIds, scheduleSuppressed,
     status, notifications, system,
-    discover, doctor, doctorErr, dismissDiscoverTip, refreshAll,
+    discover, discoverErr, doctor, doctorErr, dismissDiscoverTip, refreshAll,
   }
   return <DashboardLiveContext.Provider value={value}>{children}</DashboardLiveContext.Provider>
 }
