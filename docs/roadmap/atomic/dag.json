@@ -610,7 +610,8 @@
           "deps": [
             "WF2KNO-6",
             "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:dispatchable net.fetch action provider (HTTP egress chokepoint)"
-          ]
+          ],
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 5 of 11). Q: which atom owns the dispatchable HTTP-egress action provider? None of the 20 providers is a network fetch, and EA-8 is the wrong home. RULED: a NEW atom under this plan owns it, not EA-8. Reasoning: EA-8 is the INBOUND A2A gateway; an outbound HTTP-egress action provider is a knowledge/fetch capability and must ride net/guard.py's egress chokepoint under a SOURCE policy. Putting an egress capability inside an inbound atom would place the two directions of the trust boundary in one place. Note the house rule that a new action provider needs a capability class -- so this is not a thin wrapper over net.fetch, it is a provider with a declared class, and that is why it deserves its own atom rather than a clause."
         },
         {
           "id": "WF2KNO-10",
@@ -1779,7 +1780,7 @@
             "EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R9 retirement proposal kind + proposal queue",
             "EXT:WORKFLOWS-V2:WF2-R13 consulted ledger event (for \u00a73.3)"
           ],
-          "blocked_reason": "PARTIAL \u2014 ~90% was ALREADY on main and well railed: run_cadence has a real call site in durability/service.py's periodic loop gated on evals.enabled; pick_component round-robins with a cursor that advances only after a component ran; the on-vs-off measurement really spawns `python -m personalclaw.evals.child` with the overlay on the env COPY and apply_in_child refusing when PERSONALCLAW_HOME is the real home; live_state_unchanged sha256s config.json, active_models.json, use_case_settings/* and declared spec refs in a finally, WITH a leg proving the guard fires; the skills bench refuses an unverified suppression BEFORE spending a run; and the watchdog emits exactly one digest per rebind. An unmeasured arm was already None, printed n/a, and rendered 'not measured' -- never a zero. GAP FOUND AND CLOSED: evidence_strength was stamped by TEN write sites across TEN modules with ZERO frontend references (measured on main), so the row a human decides a RETIREMENT on read '2 evidence ref(s)' whether the null result was measured on/off or merely co-occurred. Closed as a READER, not a gate: the tier now renders as 'measured on/off' / 'correlated' / 'measured (controlled study)', and an ungraded or unknown tier renders 'ungraded' rather than falling back to a grade. UNMET, and it is an OWNER SCOPE CALL: SEC 3.3's 'replays consulted runs' is PLURAL, but MatrixSpec carries exactly one `subject` and that field's own comment enumerates template id / retrieval-arm set / judge fixture set / use-case -- 'skill' is not in the list. The bench therefore scores the newest harvested case and honestly reports the subject_candidates it did not score. Closing it needs a per-skill MatrixSpec subject form, which is a scope decision this atom did not make. ALSO OPEN (plan-body, recorded 2026-08-23): SEC 3.2 names four watched bindings but eval_judge is not in providers.use_cases.VALID_USE_CASES, so only three are watchable."
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 1 of 11). Q: does MatrixSpec grow a per-skill `subject`, and does eval_judge become a real member of providers/use_cases.USE_CASES, or does the plan drop to three watched bindings? RULED: DROP TO THREE WATCHED BINDINGS. Do NOT add a per-skill subject and do NOT mint an eval_judge use case. Reasoning: MatrixSpec.subject's own comment enumerates template id / retrieval-arm set / judge fixture set / use-case, and 'skill' is not in that list -- widening a SHARED contract for one consumer is how a schema stops meaning anything. And eval_judge is not a use case the router serves; making it one purely to satisfy a watchdog's count would be inventing a member to satisfy a test, which is the inert-control shape this plan itself keeps finding. Re-word SEC 3.2 to three bindings and record the fourth as deliberately out of scope. The bench continues to score the newest harvested case and honestly report the subject_candidates it did not score."
         },
         {
           "id": "ES-8",
@@ -1794,7 +1795,8 @@
             "EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R11 maturity + LEARN-R16 verdicts + LEARN-R10 nodding-loop + proposal queue",
             "EXT:WORKFLOWS-V2-UNIVERSAL-PLANNING:UP-R6 approval gate reads the trust record",
             "EXT:WORKFLOWS-V2:Run Ledger attention events (gate_rejected, user_edited_mid_flight, needs-input continuation)"
-          ]
+          ],
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 2 of 11). Q: mint a maturity/L3 computation -- a SECOND rung vocabulary beside guardrails/autonomy.py -- or narrow the gate to inputs that exist? RULED: NARROW THE GATE TO INPUTS THAT EXIST. One rung vocabulary, and it is guardrails/autonomy.py. Reasoning: this program has already paid for a duplicate vocabulary once (WF2LOO-16 reconciled a THIRD verdict dialect, and the recorded hazard is that doing downstream work first mints a FIFTH). A second rung ladder beside the autonomy one is that hazard with a different noun. Re-scope the trust-graduation ladder to consume guardrails/autonomy.py's rungs. ALSO: this atom needs decomposing -- four SEC 4 sub-scopes (trust record, ladder rungs, graduation/revocation, attention accounting + Learning trend) in one atom is ~4 sessions."
         },
         {
           "id": "ES-9",
@@ -2397,7 +2399,7 @@
             "WF2UNI-6",
             "EXT:LOOPS-EVOLUTION:loop drain / retirement before planning-module deletion"
           ],
-          "blocked_reason": "PARTIAL \u2014 clause 1 is already MET (plan_memory was RENAMED not deleted; the format half shipped as plan_format.py and was then deleted with its test, and history.py / chat_title.py are clean: `git grep -c plan_format -- src/ tests/` is 0). Clause 2 is BLOCKED on the precondition it names itself, EXT:LOOPS-EVOLUTION loop-drain: the replacement has ZERO reach (`workflows.intent` has 0 importers under loop/ or dashboard/, non-vacuous because the same pattern matches 4 other src files), while planning/ and the loop plan-brief modules still have 15 live importers plus five registered routes (server.py:1232-1234) with three frontend consumers. Deleting today is a regression, not a clean break. Also note planning/__init__.py re-exports twelve symbols from planning.session, so deleting session.py would break the KEPT planning.scratchpad import that gateway.py performs. One done_when sub-clause is unsatisfiable as written: 'example intents already seeding the eval fixtures' has no source material -- neither classifier holds an example collection and nothing under evals/ mentions intake_rigor or clarifying_questions."
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 6 of 11). Q: split 12a (already met, flip now) from 12b (fires after loop drain) and drop the unsatisfiable eval-fixture sub-clause? RULED: YES to all three. 12a -- plan_memory / plan_format retirement -- is already MET and verifiable now (plan_memory was RENAMED not deleted; the format half shipped as plan_format.py and was then deleted with its test; `git grep -c plan_format -- src/ tests/` is 0), so it flips on its own evidence. 12b -- the planning/ retirement -- fires only after the loop drain, which is PP-16's store seam; planning/ still has live importers and five registered routes, so deleting today is a regression rather than a clean break. The eval-fixture sub-clause is dropped as unsatisfiable: its example intents were to seed fixtures that the atom does not own."
         },
         {
           "id": "WF2UNI-13",
@@ -3793,7 +3795,8 @@
           "deps": [
             "WF2AUT-3",
             "EXT:LOOPS-EVOLUTION:Phase 4 loop-ticker before autonudge deletion"
-          ]
+          ],
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 7 of 11). Q: the atom as scoped deletes a 358-line module, but autonudge.py is still the LIVE loop tick engine -- so deleting it breaks rather than retires. RULED: RE-SCOPE to 'port the driver, THEN delete', and file the port under LOOPS-EVOLUTION Phase 4, which owns the loop cycle driver. Reasoning: a retirement atom whose named thing is still load-bearing is mis-labelled work, not ready work -- the same shape the landed-atom census flags when a RETIREMENT atom's target still exists on the ref (that is evidence AGAINST completion, not for it). The deletion stays in this atom and becomes trivially true once the port lands."
         },
         {
           "id": "WF2AUT-12",
@@ -3805,7 +3808,8 @@
             "WF2AUT-5",
             "EXT:MCP-READONLY-INBOUND:fail-closed inbound HTTP substrate",
             "EXT:EXTERNAL-ACCESS:generalized inbound surface + owner E4 decision"
-          ]
+          ],
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 8 of 11). Q (E4): does the webhook fire path ride the landed src/personalclaw/inbound/ substrate, or does EXTERNAL-ACCESS mint a new inbound surface? RULED: RIDE THE LANDED inbound/ SUBSTRATE. It already ships auth, capabilities, audit, mcp_http and tools. A second inbound surface would be two doors into the same house, each with its own auth and its own audit -- and the one that gets less attention becomes the way in. The scoped-token verification this atom needs is a capability on the existing door, not a new door. This also removes the EXT dependency the atom carried: nothing in EXTERNAL-ACCESS needs to land first."
         },
         {
           "id": "WF2AUT-13",
@@ -5064,7 +5068,8 @@
           "deps": [
             "SV-9",
             "EXT:AUTOMATION-SUBSTRATE:AUTO-R12 vcs trigger preset (file kind watching .git/refs/heads/*)"
-          ]
+          ],
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 4 of 11). Q: file a vcs-preset atom under AUTOMATION-SUBSTRATE (no atom owns AUTO-R12 today) or descope SV-11 to its vacuously-passing conditional rule? RULED: FILE THE VCS-PRESET ATOM under AUTOMATION-SUBSTRATE; SV-11 stays open pointing at it. Reasoning: a conditional rule that passes vacuously IS an inert control -- a declared mechanism with no reachable trigger -- and this session has spent most of its time closing exactly that shape (capture_store.prune with no caller, UsageStore.record with no writer, surfacing_events with no table). Descoping SV-11 to the vacuous rule would ship a fifth one deliberately. The retirement this atom describes is real work that belongs to whoever owns AUTO-R12, so it gets an atom."
         }
       ]
     },
@@ -5493,7 +5498,8 @@
           "deps": [
             "DC-1",
             "EXT:PLATFORM-REACH:non-mac backend proven on the target OS"
-          ]
+          ],
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 3 of 11). Q: ship an electron-builder Linux AppImage/deb target now, or write the dated DEFERRED note citing windows-native-audit.md:302? RULED: SHIP THE LINUX TARGET NOW; WINDOWS STAYS DEFERRED with the dated note. Reasoning: the Linux target needs no Apple signing -- it is one release.yml job -- so it is buildable today, and a whole platform should not wait behind an audit it does not depend on. Windows genuinely does wait: it needs the native audit plus signing secrets neither of which exists. This splits a blocked atom into a shippable half and an honestly-parked half instead of parking both."
         }
       ]
     },
@@ -6098,14 +6104,15 @@
         },
         {
           "id": "DL-7",
-          "title": "S4 T4.1: comparison data file + peer-product /compare pages",
+          "title": "S4 T4.1: released-version capability matrix at /compare",
           "status": "todo",
           "scope": "Session 4 \u2014 Comparison + listing program (T4.1)",
-          "done_when": "src/data/comparisons.json holds every competitor claim with source_url + retrieved ISO date; /compare/{peer-product} and /compare/hermes-agent render from it with a 'choose them if' section each",
+          "done_when": "A /compare page publishes a capability matrix about PersonalClaw ONLY \u2014 what it does and does not do, with every row sourced to the PINNED/RELEASED core version (verified at the tag, not against main) and the 'does not do' rows included; the page is registered in the site contract and the sitemap, held to the metadata, runtime, axe WCAG A/AA and Lighthouse contracts, and carries an anti-vacuity check that FAILS when the matrix data is non-empty but the page renders no rows; peer/competitor columns are deliberately OUT of scope at pre-1.0 (owner taste call 2026-08-27 \u2014 see blocked_reason).",
           "deps": [
             "DL-1",
             "EXT:LEARNING-VISIBILITY:benchmark results for matrix rows"
-          ]
+          ],
+          "blocked_reason": "OWNER TASTE CALL 2026-08-27 -- DO NOT PUBLISH PEER COMPARISONS AT PRE-1.0. The done_when as written names a peer product that is on this project's own public-repo keep-out list, so the clause is UNEXECUTABLE rather than merely awkward -- which forced the wider question. RULED: drop the peer columns entirely and re-scope DL-7 to a capability matrix about PersonalClaw ONLY -- what it does and does not do, every row sourced to the RELEASED version. Reasoning: a comparison page makes public claims about named third parties and is the highest-liability page a project can ship. DL-6 just found TEN claim families in our own launch draft that hold on main and are FALSE at v0.1.3 (including on_violation 'warn', declared with ZERO consumers at the tag). A project that has just discovered it was about to overclaim about itself has no standing to grade competitors. The honest and more useful half is an accurate statement of our own scope, INCLUDING the 'does not do' rows. The done_when is to be reworded here and in DL.md."
         },
         {
           "id": "DL-8",
@@ -6466,7 +6473,7 @@
             "EXT:INBOX-NOTIFICATIONS-UNIFICATION:emit_attention_item kind=report (pre-42 source=learning InboxItem fallback)",
             "PHF-14"
           ],
-          "blocked_reason": "OWNER RULING 2026-08-26 on the config-headroom question this atom raised. compose/render/narrate/deliver + both routes + FE panel are shipped and railed; counts, zero-writes, no-model floor, inbox item and quiet-hours are MET. UNMET: the clock job firing, cadence monthly|weekly|off, and 'off' disables cleanly \u2014 all three need a learning.identity_report_* config field, which cannot be added because config/loader.py is 5900 lines against an ABSOLUTE 6000-line ceiling with a >=100 headroom rail (tests/test_structural_baseline.py::test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance). The owner was offered three options \u2014 compress loader.py, split LearningConfig out, or raise the ceiling. RULED: SPLIT, and generalised beyond LearningConfig. Raising the ceiling defeats the rail whose own docstring predicted this exact arrival; compressing buys one field. The split is now PHF-14, added as a dep. LV-4 is unblocked the moment PHF-14 lands and needs no further owner input."
+          "blocked_reason": "ABSORBED INTO PHF-14, no separate session (recorded 2026-08-27). PHF-14's own done_when already requires 'a NEW config field is added end-to-end in the same change ... LV-4's learning.identity_report_* field, wired through all four round-trip points plus its frontend control, which also closes LV-4's only unmet clause.' So LV-4 flips when PHF-14 lands and must not be scheduled as its own atom -- an independent audit double-booked it and would have spent a session twice. Everything else in LV-4 (compose/render/narrate/deliver, both routes, the FE panel, counts, zero-writes, the no-model floor, the inbox item, quiet hours) is already shipped and railed."
         },
         {
           "id": "LV-5",
@@ -6811,7 +6818,8 @@
           "deps": [
             "EI-1",
             "EI-5"
-          ]
+          ],
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 11 of 11). Q: accept the DEVIATION and move the in-sandbox observation into EI-2's done_when so EI-7 can flip? RULED: ACCEPT. The in-sandbox observation (pclaw-tool reaching memory_recall while ss/netstat show zero listening sockets, no credential material present, a research-profile sandbox refused write-class tools host-side) genuinely belongs with the atom that OWNS the sandbox -- EI-2's docker provider -- not with the second-opinion handoff that merely runs inside one. EI-7's own deliverable (ProposerBackend + the different-cataloged-runner one-shot accepted only on a confirming disk re-diff, SEL-audited) is complete and green as PR #2079. Move the clause to EI-2's done_when and flip EI-7 on merge."
         },
         {
           "id": "EI-8",
@@ -7059,7 +7067,8 @@
             "DCU-3",
             "EXT:PLATFORM-HARDENING-FLOORS:ceilinged driver subprocess",
             "EXT:AUTONOMY-GUARDRAILS:approval ladder in dispatch"
-          ]
+          ],
+          "blocked_reason": "NOT IMPLEMENTATION-BLOCKED -- VALIDATION-GATED (recorded 2026-08-27). Its code is on main: 05b2ca79 is an ancestor of origin/main. The row reads todo only because its own as-a-user validation needs the macOS Accessibility (TCC) grant, which is SIP-protected and cannot be granted by code. IMPORTANT for anyone reading the dep graph: DCU-5, DCU-6 and DCU-7 all list DCU-4 as a dep and therefore look blocked, but they are NOT -- DCU-6 was built and shipped against the landed code as PR #2137 while this row still said todo. So the dep is nominal for implementation purposes. The deps are deliberately NOT rewritten: editing a dep graph to make a frontier look better is the wrong fix, and the honest record is this note."
         },
         {
           "id": "DCU-5",
@@ -7370,7 +7379,8 @@
           "done_when": "Each app ships as its own validated PR, is listed in the Store, and is recorded as a platform exemplar; the suite is delivered app-by-app in leverage order with reuse (docs ride document-handling, spec builder rides the workflow engine, meetings extends minutes) rather than rebuilt backends.",
           "deps": [
             "EXT:ECOSYSTEM-TOOLING:exemplar-scaffold"
-          ]
+          ],
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 10 of 11). Q: file PEP-11a..i, one app per PR? RULED: YES -- one app, one atom, one PR, per this plan's own scope text ('each app finishes and ships before the next; do not batch'). An independent audit measured the atom at ~12 sessions for nine apps. An atom that cannot finish in one session is not an atom; it is a programme wearing an atom's label, and it reads as permanently in-flight. The nine ids are to be authored so each has its own done_when and can flip independently."
         }
       ]
     },
@@ -7552,7 +7562,8 @@
             "PP-15",
             "PP-5",
             "PP-13"
-          ]
+          ],
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 9 of 11) -- the six-way decomposition is APPROVED, and two seams have already shipped under it. An independent audit measured this atom at ~6 sessions across EIGHT distinct convergences (status vocabulary, adoption/reaping, attention, ledger, tasks projection, cockpit contract, the store row, the five-kind validation), which is why bolting it on as one atom failed twice. Seam 1 landed as 9829f2d4; seam 2 (one boot-adoption path) is PR #2111; seam 3 (the supervisor becomes a declared policy, retiring pluggable Python for all five kinds) is PR #2135. FOUR clauses remain: one status vocabulary (LoopStatus 13 vs RunStatus 8), one projection to tasks, one cockpit contract, and loop/store.py's parallel row -- plus the five-kind as-a-user validation. The remaining seams are to be filed as real atom ids so the roadmap tracks closable units instead of one unclosable capstone. The still-open WorkflowRun.task_list_id question (2026-08-22) is NOT resolved by this ruling and remains owner-gated."
         }
       ]
     }
@@ -7661,7 +7672,7 @@
       },
       {
         "id": "DL-7",
-        "title": "S4 T4.1: comparison data file + peer-product /compare pages",
+        "title": "S4 T4.1: released-version capability matrix at /compare",
         "plan": "DL"
       },
       {

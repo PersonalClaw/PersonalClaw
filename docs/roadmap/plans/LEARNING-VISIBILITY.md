@@ -1181,3 +1181,9 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   `dashboard/chat_runner.py`, `dashboard/chat_handlers.py`, `dashboard/handlers/mcp.py`,
   `tests/test_durability_conflicts.py`). Pinned to **8.0.1** to match the repo's working venv and
   the whole leg goes clean. That unpinned floor is a latent CI hazard worth its own fix.
+- **[2026-08-27] `LV-4` is ABSORBED INTO `PHF-14` — do not schedule it as its own session.** `PHF-14`'s `done_when`
+  already requires *"a NEW config field is added end-to-end in the same change — `LV-4`'s `learning.identity_report_*`
+  field, wired through all four round-trip points plus its frontend control, which also closes `LV-4`'s only unmet
+  clause."* So `LV-4` flips when `PHF-14` lands. An independent audit double-booked it into a later wave and would
+  have spent a session on it twice. Everything else in `LV-4` — compose/render/narrate/deliver, both routes, the FE
+  panel, counts, zero-writes, the no-model floor, the inbox item and quiet hours — is already shipped and railed.

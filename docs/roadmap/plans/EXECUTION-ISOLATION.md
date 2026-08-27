@@ -1345,3 +1345,9 @@ nothing describes it, it gets **filed** — not left as a dep. Either way it sto
 
 Two atoms this week were parked exactly this way (`MC-6`, which owes its own `sound` field, and this one).
 Four more were found by a read-only audit of the 29 `EXT:`-only atoms.
+- **[2026-08-27] OWNER RULING — `EI-7`: DEVIATION accepted; the in-sandbox observation moves to `EI-2`'s
+  `done_when`.** SC7 (`pclaw-tool memory_recall` succeeding while `ss`/`netstat` show zero listening sockets, no
+  credential material present, and a research-profile sandbox refused write-class tools host-side) belongs with the
+  atom that **owns** the sandbox — `EI-2`'s `docker` provider — not with the second-opinion handoff that merely runs
+  inside one. `EI-7`'s own deliverable (`ProposerBackend` plus the different-cataloged-runner one-shot, accepted only
+  when the disk re-diff confirms the edits, SEL-audited) is complete and green as PR **#2079**. Flip `EI-7` on merge.

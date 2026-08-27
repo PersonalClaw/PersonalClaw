@@ -1278,3 +1278,11 @@ session. It lands there now.
   yours.** The fix was deliberately kept out of this atom's own commit — it is an SDK-boundary change unrelated
   to the nine planning modules — but it is not deferred to a later atom, and this note is corrected here rather
   than left to become a stale number that silently excuses a real regression.
+
+- **[2026-08-27] OWNER RULING — `WF2UNI-12`: split 12a from 12b and drop the eval-fixture sub-clause.**
+  **12a** (`plan_memory` / `plan_format` retirement) is already MET and verifiable now — `plan_memory` was RENAMED not
+  deleted, the format half shipped as `plan_format.py` and was then deleted with its test, and
+  `git grep -c plan_format -- src/ tests/` is **0** — so it flips on its own evidence. **12b** (the `planning/`
+  retirement) fires only after the loop drain, which is `PP-16`'s store seam: `planning/` still has live importers and
+  five registered routes, so deleting today is a regression, not a clean break. The eval-fixture sub-clause is dropped
+  as unsatisfiable — it asks this atom to seed fixtures it does not own.

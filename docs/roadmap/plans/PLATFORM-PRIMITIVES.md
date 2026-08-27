@@ -1676,3 +1676,14 @@ remains open — nothing here touches `loop_run_map`'s destinations or the homel
 It does not fall out of this work — `_poll_once` iterates RUNNING rows and a PLANNING pass needs its
 own budget/attention/stagnation coverage plus a classifier-advance path, which is a separate
 completable slice against files seam 2 currently owns. Left for a later seam.
+
+- **[2026-08-27] OWNER RULING — `PP-16`'s six-way decomposition is APPROVED, and three seams have now shipped under
+  it.** An independent 98-atom audit measured this capstone at ~6 sessions across **eight** distinct convergences
+  (status vocabulary, adoption/reaping, attention, ledger, tasks projection, cockpit contract, the store row, the
+  five-kind validation) — which is why bolting it on as one atom failed twice and produced two `BLOCKED` entries.
+  Shipped: seam 1 `9829f2d4`; seam 2 (one boot-adoption path) PR **#2111**; seam 3 (the supervisor becomes a declared
+  policy, retiring pluggable Python across all five kinds) PR **#2135**. **Four clauses remain:** one status
+  vocabulary (`LoopStatus` 13 vs `RunStatus` 8), one projection to tasks, one cockpit contract, and `loop/store.py`'s
+  parallel row — plus the five-kind as-a-user validation. The remaining seams are to be authored as real atom ids so
+  the roadmap tracks closable units rather than one unclosable capstone. **The `WorkflowRun.task_list_id` question
+  (open since 2026-08-22) is NOT resolved by this ruling** and remains owner-gated.

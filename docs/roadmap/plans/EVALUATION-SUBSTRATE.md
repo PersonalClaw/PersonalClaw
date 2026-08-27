@@ -1842,3 +1842,14 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   `security_events.jsonl`, which is **three foreign `personalclaw gateway` processes** alive on this
   machine, not this diff — the 43-test and 403-test targeted runs that exercise the new
   `gate._sel_log` writer both reported the rail clean, and so did the rebased full run.
+- **[2026-08-27] OWNER RULINGS — `ES-7` and `ES-8`, two of eleven one-line scope calls that together gated 20+ atoms.**
+  `ES-7`: **drop to three watched bindings.** No per-skill `subject` on `MatrixSpec` and no `eval_judge` member in
+  `providers/use_cases.USE_CASES`. `subject`'s own comment enumerates template id / retrieval-arm set / judge fixture
+  set / use-case — "skill" is not in that list, and widening a **shared** contract for one consumer is how a schema
+  stops meaning anything. `eval_judge` is not a use case the router serves; minting one to satisfy a watchdog's count
+  would be inventing a member to satisfy a test — the inert-control shape this plan itself keeps finding.
+  `ES-8`: **narrow the gate to inputs that exist.** One rung vocabulary, and it is `guardrails/autonomy.py`. This
+  program has already paid for a duplicate vocabulary once (`WF2LOO-16` reconciled a THIRD verdict dialect, with the
+  recorded hazard that downstream work first mints a FIFTH); a second rung ladder is that hazard with a different noun.
+  `ES-8` also needs decomposing — four §4 sub-scopes in one atom measures ~4 sessions. Full reasoning in each atom's
+  `blocked_reason`.

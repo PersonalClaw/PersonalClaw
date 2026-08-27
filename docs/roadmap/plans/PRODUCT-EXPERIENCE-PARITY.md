@@ -903,3 +903,9 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
   scope-shape choices recorded above, not unmet clauses — and the second is deliberately left as an owner
   security-posture call, since a declared build command is arbitrary command execution from artifact
   metadata and the rlimit ceiling bounds resources, not semantics.
+
+- **[2026-08-27] OWNER RULING — `PEP-11`: file `PEP-11a..i`, one app per atom, one atom per PR.** This plan's own
+  scope text already says it: *"each app finishes and ships before the next; do not batch."* An independent audit
+  measured the atom at ~12 sessions for nine apps. **An atom that cannot finish in one session is not an atom** — it
+  is a programme wearing an atom's label, and it reads as permanently in-flight on every dashboard that counts atoms.
+  Each of the nine gets its own `done_when` and flips independently.
