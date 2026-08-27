@@ -24,9 +24,17 @@ def mock_sel():
 
 
 @pytest.mark.asyncio
-async def test_reveal_path_no_crash(mock_sel, tmp_path):
+async def test_reveal_path_no_crash(mock_sel, tmp_path, monkeypatch):
     """Given a valid file path, when POST /api/reveal is called with action="reveal",
-    then response status is 200 (not 500 TypeError)."""
+    then response status is 200 (not 500 TypeError).
+
+    `tmp_path` is declared as a dashboard root. It did not need to be before #655, because this
+    endpoint accepted any path at all — which was the bug. The test's subject is unchanged: that
+    the full path through to the SEL call executes without a TypeError.
+    """
+    import personalclaw.dashboard.handlers.files as files_mod
+
+    monkeypatch.setattr(files_mod, "_dashboard_roots", lambda: [("Tmp", str(tmp_path))])
     f = tmp_path / "hello.txt"
     f.write_text("hi")
     # Mock xdg-open as available so the full code path (including SEL) executes

@@ -63,6 +63,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "invalid_json": "The request body is not valid JSON.",
     "invalid_body": "The request body is valid JSON but not the expected object.",
     "invalid_id": "A record id is not a single path segment (separators, '..' or over-long).",
+    # ── dashboard file I/O (handlers/files.py) ──
+    # The refusal `_validate_dashboard_path` produces: not a path under any root the dashboard
+    # surfaces, or a blocked basename inside one. 400 rather than 403/404 deliberately — the answer
+    # must not confirm whether the path exists. `files.py`'s six other sites emit this same sentence
+    # FLAT today; this is the code they convert to, and the census ratchet is what moves them.
+    "invalid_path": "The path is not one the dashboard may touch.",
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
