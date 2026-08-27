@@ -6095,7 +6095,7 @@
           "deps": [
             "EXT:SECURITY-LEGIBILITY:threat model + scanner gate + egress chokepoint narrative"
           ],
-          "blocked_reason": "OWNER SIGN-OFF GIVEN 2026-08-26 on the launch-post draft at docs/launch/launch-post-draft.md (threat model, scanner gate, runtime egress chokepoint, zero telemetry, honest limitations) \u2014 that clause is closed. ONE clause remains and it is CROSS-REPO, not an owner call: done_when names src/content/blog/launch.md, a path that exists in NEITHER repo \u2014 core has no src/content/ at all, and personalclaw.dev's content.config.ts defines exactly one collection (docs, Starlight) with no blog collection. Publishing needs a personalclaw.dev change: define the blog collection, add the route, add a listing, then place the post. A file dropped at that path today would not build. Ordinary implementable work in the website repo."
+          "blocked_reason": "READY TO FLIP, unmerged only (2026-08-27). Both clauses are closed. Owner sign-off on the draft was given 2026-08-26. The cross-repo clause is closed in personalclaw.dev@36fe0f0 (branch feature-dl6-launch-post, base 3cc45c8): the blog collection is defined, /blog and /blog/launch build and are contracted as a third differently-held tier (metadata + runtime + axe WCAG A/AA + Lighthouse, deliberately no pixel baseline), and the post is at src/content/blog/launch.md \u2014 the exact path done_when names. Full local gate green under Node 22.12.0: test:prepush exit 0, 112 Playwright passed, Lighthouse 100/100/100 on both new routes, 30 visual baselines unchanged. Flip when that website branch merges. NOTE: ten claim families in the core draft were TRUE ON MAIN AND FALSE AT v0.1.3 and were cut from the published post with the cut list published on the page \u2014 see the plan's 2026-08-27 DISCOVERY entry. /blog has no in-site inbound link yet, deliberately, to avoid invalidating the Linux shell baselines; that is a named follow-up."
         },
         {
           "id": "DL-7",
@@ -7244,6 +7244,14 @@
           "scope": "The floor that PHF-5's and PHF-8's own rails predicted and that has now arrived. config/loader.py is 5900 lines against the ABSOLUTE 6000-line SIZE_CEILING_LINES, and tests/test_structural_baseline.py::test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance asserts ceiling - max_file_lines >= 100. Headroom is exactly 100, so ONE added line reds the gate \u2014 and that test's own docstring names this file and this exact scenario ('adding one boolean toggle would red CI and demand a 5,427-line split as its price'). The file was 5427 when that rail was written; it has since grown 473 lines and spent all of it. Because the config round-trip contract (dataclass + _meta, load(), to_dict(), a write path, a frontend control) touches loader.py on EVERY new field, the whole remaining roadmap is blocked from adding user-facing configuration. Extract cohesive per-domain config sections into sibling modules under src/personalclaw/config/ and update their importers, following the src/personalclaw/agents/native/decision_tool_defs.py precedent created for this same rail at the 2800-line watch band. Clean break: no re-export shim. NOT in scope: raising the ceiling, widening the watch band, or regenerating the structural baseline to make the red go away \u2014 each of those retires the rail instead of paying it.",
           "done_when": "config/loader.py is at most 5400 lines (>= 600 lines of ceiling headroom, i.e. room for several ordinary config fields rather than one) with the extracted sections living in sibling modules under src/personalclaw/config/ and every importer updated \u2014 no re-export shim, proven by a RUNTIME import sweep with a stated count, not by mypy (ignore_missing_imports=true cannot see a stranded first-party import); tests/test_structural_baseline.py green including test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance and test_the_watch_band_is_not_sitting_on_a_cliff, with the ceiling and the watch band UNCHANGED and structural-baseline.json regenerated only for the moved-file rows; tests/test_config_roundtrip.py green and the committed config-schema baseline (PHF-5) shows ZERO schema drift, proving the split moved code without changing one observable config key; and a NEW config field is added end-to-end in the same change as the proof that headroom was really restored \u2014 LV-4's learning.identity_report_* field, wired through all four round-trip points plus its frontend control, which also closes LV-4's only unmet clause.",
           "deps": []
+        },
+        {
+          "id": "PHF-15",
+          "title": "AppConfig.load() must be a pure read \u2014 and the real-home rail must be able to see a metadata-preserving writer",
+          "status": "todo",
+          "scope": "Two defects found together on 2026-08-27 while root-causing a CI-only real-home-rail failure, where the second is what hid the first. (1) AppConfig.load() IS NOT A PURE READ: when needs_migration is true it does shutil.copy2(path, path.with_suffix('.json.bak')) then cfg.save() (config/loader.py, inside load()'s try, best-effort with a warning on failure). So ANY caller that merely reads config mutates the user's config.json and drops a .bak beside it \u2014 including a module imported for an unrelated reason. That delivery mechanism was fixed separately (mcp_core's module-level _API constant became a call-time _api_base(), the 4th instance of the import-time-constant shape tests/conftest.py::_isolate_real_home_writers documents as beyond a fixture's reach), but the impurity itself remains and any future reader re-arms it. (2) THE REAL-HOME RAIL UNDER-REPORTS AGAINST copy2: the walk detects changes by mtime-since-session-start, and shutil.copy2 preserves the SOURCE mtime, so the .bak the migration writes looks older than the session and is invisible. That is why CI reported '1 entries changed' when two things changed, and it is a general blind spot for any metadata-preserving writer, not a quirk of this one. Both are invisible on a developer machine: the write only fires when config.json exists AND is pre-migration, and a developer's config is already migrated, so the rail is green locally however broken the code is. NOT in scope: deleting the migration itself (it is load-bearing for real upgrades) or redesigning the rail's single-walk performance choice.",
+          "done_when": "AppConfig.load() performs NO write under any input \u2014 proven by a fresh-interpreter subprocess rail (the shape tests/test_import_time_config_writes.py establishes) that seeds a genuinely pre-migration config.json, calls load(), and asserts (mtime_ns, contents) unchanged AND no .bak created, with a vacuity leg that observes the write when the migration is invoked through its new explicit entry point; the migration still runs for real upgrades through that explicit call from a startup path that a test can point at tmp_path, with a regression proving a pre-migration config IS migrated when the gateway boots and IS NOT when a library reader imports; every existing load() caller audited by a RUNTIME import sweep with a stated count (mypy cannot see a stranded first-party import) and none left depending on the write-back side effect; the real-home rail additionally detects a metadata-preserving write \u2014 a planted shutil.copy2 of a tracked file is REPORTED, proven by a probe that reds before the fix and passes after, with ALLOWED_RESIDUE still frozenset() and tests/real_home_guard.py's cost documented; and config/loader.py ends at or below its starting line count, since the 6000-line ceiling rail leaves it 100 lines of headroom (see PHF-14).",
+          "deps": []
         }
       ]
     },
@@ -7828,6 +7836,11 @@
         "plan": "PHF"
       },
       {
+        "id": "PHF-15",
+        "title": "AppConfig.load() must be a pure read \u2014 and the real-home rail must be able to see a metadata-preserving writer",
+        "plan": "PHF"
+      },
+      {
         "id": "PP-16",
         "title": "A Loop becomes a WorkflowRun (retire the second work-unit noun)",
         "plan": "PP"
@@ -8300,6 +8313,7 @@
       "PHF-13",
       "PHF-14",
       "LV-4",
+      "PHF-15",
       "PL-1",
       "PL-2",
       "PL-3",
@@ -10158,10 +10172,10 @@
       {
         "code": "PHF",
         "plan": "PLATFORM-HARDENING-FLOORS",
-        "total_atoms": 14,
+        "total_atoms": 15,
         "done": 12,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 3,
         "blocked": 0
       },
       {
