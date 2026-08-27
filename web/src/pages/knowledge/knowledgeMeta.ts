@@ -1,4 +1,4 @@
-import { FileText, StickyNote, BookMarked, Bookmark, Code2, Image, Music, Video, FileType2, FileSpreadsheet, Presentation, File, Shapes } from 'lucide-react'
+import { FileText, StickyNote, BookMarked, Bookmark, Code2, Image, Music, Video, FileType2, FileSpreadsheet, Presentation, File, Shapes, Gavel } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { KnowledgeItem, KnowledgeType } from '../../lib/api'
 
@@ -32,11 +32,28 @@ export function isArtifactItem(it: Pick<KnowledgeItem, 'type' | 'item_type'>): b
   return it.type === 'artifact' || (it.item_type || '').toLowerCase() === 'artifact'
 }
 
+/** PROACTIVE-ASSISTANT §2.2's decision. Out of `TYPES` for the same reason as `ARTIFACT_TYPE`
+ *  and a DIFFERENT missing half: `log_decision` also mints the one-shot review trigger, so a
+ *  decision authored from the create picker would be a decision that never comes back — which is
+ *  why `handlers/knowledge.py` refuses to create one and points at the chat tool instead.
+ *
+ *  It still needs a label/icon/tone, because a library or search result CAN be one. Without this
+ *  entry `resolveType` fell through to `note` and every decision in the library read "Note". */
+export const DECISION_TYPE: TypeMeta = {
+  key: 'decision', label: 'Decision', icon: Gavel, tone: 'var(--color-secondary)', group: 'text',
+}
+
+/** Is this item a logged decision? */
+export function isDecisionItem(it: Pick<KnowledgeItem, 'type' | 'item_type'>): boolean {
+  return it.type === 'decision' || (it.item_type || '').toLowerCase() === 'decision'
+}
+
 /** Resolve an item's visual type. Prefer the vision `type`; else infer from the
  *  backend's free `item_type` string / mime_type / url, falling back to note. */
 export function resolveType(it: Pick<KnowledgeItem, 'type' | 'item_type' | 'mime_type' | 'url'>): TypeMeta {
-  // Checked before the `TYPES` lookups because it is deliberately absent from them.
+  // Checked before the `TYPES` lookups because they are deliberately absent from them.
   if (isArtifactItem(it)) return ARTIFACT_TYPE
+  if (isDecisionItem(it)) return DECISION_TYPE
   const explicit = it.type && TYPES.find((t) => t.key === it.type)
   if (explicit) return explicit
   const raw = (it.item_type || '').toLowerCase()

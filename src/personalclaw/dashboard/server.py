@@ -716,6 +716,12 @@ async def start_dashboard(
     app.router.add_post("/api/proactive/digest/reply", handlers.api_proactive_reply)
     app.router.add_post("/api/proactive/install", handlers.api_proactive_install)
 
+    # The Decision Journal (PROACTIVE-ASSISTANT §2.5/§5.3 — PA-6). Under `/api/knowledge/`
+    # rather than `/api/proactive/` because a decision IS a knowledge item and §5.3's view is a
+    # lens on the library, not a new destination — the path is the IA. A literal segment, so it
+    # cannot be shadowed by `/api/knowledge/items/{id}`.
+    app.router.add_get("/api/knowledge/decisions", handlers.api_decision_journal)
+
     # Vector Memory (Semantic)
     app.router.add_get("/api/memory/approval-rules", handlers.api_memory_approval_rules)
     app.router.add_post("/api/memory/approval-rules", handlers.api_memory_approval_rule_add)

@@ -314,6 +314,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/knowledge/collections/{id}/items` — shelve one or many items.
 - `DELETE /api/knowledge/collections/{id}/items/{item_id}` — unshelve one item.
 - `GET /api/knowledge/conflicts` — every recorded disagreement in the store.
+- `GET /api/knowledge/decisions` — §5.3's journal view and §2.5's calibration strip.
 - `POST /api/knowledge/embedding/generate` — - embed all unembedded items (or re-embed all).
 - `GET /api/knowledge/embedding/status` — - embedding config and progress.
 - `GET /api/knowledge/entities` — _(no summary)_

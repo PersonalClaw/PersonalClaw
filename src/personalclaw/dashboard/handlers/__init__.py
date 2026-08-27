@@ -118,6 +118,9 @@ from personalclaw.dashboard.handlers.core import (  # noqa: E402, F401
     manifest_webmanifest,
     service_worker,
 )
+from personalclaw.dashboard.handlers.decisions import (  # noqa: E402, F401
+    api_decision_journal,
+)
 
 # ── Desktop shell capability seam (handlers/desktop.py) ──
 from personalclaw.dashboard.handlers.desktop import (  # noqa: E402, F401

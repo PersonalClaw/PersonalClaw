@@ -65,6 +65,12 @@ RESOLUTION_GRADES: tuple[str, ...] = (
 #: the user declined to give.
 CALIBRATED_GRADES: tuple[str, ...] = ("better", "as_expected", "worse")
 
+#: Resolved decisions per domain below which a rate is reported as not-yet-meaningful
+#: (§2.5's "7 decisions — too few to mean much"). Named rather than left as a bare default
+#: because the HTTP surface forwards the threshold to the view: two spellings of ten and the
+#: strip could caveat a bucket the backend had already called honest.
+CALIBRATION_MIN_N = 10
+
 #: How many times a ``too_early`` may re-arm the review before the item goes stale-pending.
 #: Two, then the journal view surfaces it — the alternative is nagging forever.
 MAX_DEFERRALS = 2
@@ -782,7 +788,7 @@ def _is_overdue(p: dict, ref: datetime) -> bool:
         return False
 
 
-def calibration(*, store: Any = None, min_n: int = 10) -> dict:
+def calibration(*, store: Any = None, min_n: int = CALIBRATION_MIN_N) -> dict:
     """Per-domain stated-confidence vs realized-outcome rates. Computed, never stored.
 
     One pass over the resolved decision items: no new store, no LLM call, and

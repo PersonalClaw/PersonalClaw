@@ -158,6 +158,19 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "triage_digest_unreadable": "The triage digest could not be read.",
     "triage_digest_expired": "That digest is no longer the current one, so its item numbers no longer address the items it listed.",  # noqa: E501
     "triage_schedule_write_failed": "The triage digest schedule could not be written.",
+    # ── the decision journal (handlers/decisions.py — PROACTIVE-ASSISTANT §2.5/§5.3) ──
+    # A 500, and the code is the whole reason it is not a 200 with an empty list: ONE payload
+    # carries the rows AND the calibration strip aggregated from them, so a read that raised has
+    # no honest partial answer to give. An empty journal would say "you have never logged a
+    # decision" — the most confident possible way to say the opposite of what is known, on the
+    # one surface whose entire value is not overclaiming. The `message` carries the raiser's own
+    # type and text, so the sentence the user reads names the real fault.
+    "decision_journal_unreadable": (
+        "The decision journal could not be read, so neither your decisions nor the calibration "
+        "strip are shown. This is a failed read, NOT an empty journal — nothing you logged was "
+        "lost, and the read changes nothing, so retrying is safe. Fix: the message names the "
+        "underlying fault; `personalclaw doctor` checks the sqlite build the store needs."
+    ),
     # ── research reports (handlers/research_reports.py) ──
     "research_reports_unavailable": "Scheduled research reports are not available in this build.",
     # ── voice profiles (handlers/voice_profiles.py) — VoiceProfileError.reason ──

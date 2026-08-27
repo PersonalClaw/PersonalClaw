@@ -685,3 +685,119 @@ Where each new piece plugs into the pluggable-provider architecture — nothing 
   The second unmet item in the 2026-08-25 entry — "no frontend" — was never `PA-4`'s scope: it is
   `PA-6`, and `calibration()` already computes the strip, so `PA-6` is frontend-only. The §2.3
   to-chat linked-session mechanism stays unbuilt and unscoped; it is not a condition on this atom.
+
+- [2026-08-27][PA-6] **DONE (🟡) — Decision Journal view + calibration strip, and it was NOT
+  frontend-only.** The 2026-08-26 `PA-4` entry directly above concluded *"`calibration()` already
+  computes the strip, so `PA-6` is frontend-only."* `calibration()` does compute it, but
+  `decision_list`/`decision_resolve` are **chat tools**: `git grep` found three tool handlers in
+  `agents/native/builtin_tools.py` and **zero** HTTP routes, so a browser had no way to read a
+  decision at all. (`handlers/learning.py`'s `calibration` is judge-calibration —
+  `workflows/judge_calibration.calibration_summary` — a different subject.) So this atom built one
+  read route, `GET /api/knowledge/decisions`, and the FE on top of it.
+- [2026-08-27][PA-6] **One route, one payload, one definition of the numbers.** The strip is an
+  aggregate of the rows beside it, so two endpoints would let a client render eleven resolved
+  decisions above a rate computed from ten — two answers to one question from two fetches that
+  raced. Both reads happen in ONE `asyncio.to_thread` hop against one store handle. The handler
+  forwards `list_decisions`/`calibration` and computes nothing;
+  `test_the_payload_is_the_owning_modules_own_answer` compares the payload to
+  `calibration(store=…)`/`list_decisions(store=…)` **by value**, which a handler that re-aggregated
+  could not satisfy forever. `CALIBRATION_MIN_N` was named in `decisions.py` (previously a bare
+  `min_n: int = 10` default) so the threshold the view quotes has one spelling, with a static test
+  that the handler carries no literal `10`.
+- [2026-08-27][PA-6] **Placement decisions.** Path `/api/knowledge/decisions`, not
+  `/api/proactive/…`: §5.3 says a decision IS a knowledge item and the view is a lens on the
+  library, so the path is the IA. The handler is a NEW 111-line module rather than more lines in
+  `handlers/knowledge.py`, because that file is a **shrink-only watch-band member** at 3666 lines
+  (`structural-baseline.json`) and additions there would have reddened the size ratchet. In the FE
+  the view sits AHEAD of `KnowledgeListPage`'s item-list gates, for the reason the `home` branch
+  documents beside it: it owns its own read, so a failed item-list fetch must not blank a surface
+  that does not depend on it. `config/loader.py` untouched — 5900 → 5900, headroom exactly 100.
+- [2026-08-27][PA-6] **The three calibration states are the substance of the atom.**
+  `'calibrated'` / `'too-few'` / `'no-data'`, derived from the backend's own `count_honest` and
+  never from n against a locally-spelled threshold. Below the threshold the strip renders the count
+  and its distance from the threshold and **draws no bar at all**: a 0%-width track is a lie in the
+  shape of a chart, visually identical to "0% as expected", which sits next to "flawless".
+  `as_expected_rate` rides the payload precisely so the view can decline to draw it. Same rule as
+  `learningMeta.evidenceLabel`'s `ungraded` (ES-7) and `optimize.SCORE_UNSCORED` (ES-11), applied
+  twice more: an unknown `outcome_grade` reads `ungraded` and never falls through to `as_expected`
+  (the tempting default and the worst one — it turns "nobody said" into the claim that the user
+  called it right), and a null confidence reads "no stated confidence", never 0%.
+  **The discrimination leg is deliberately not a count:** `new Set(said).size === 3` over the three
+  rendered captions plus a per-state assertion that each names its own condition, because a count of
+  states passes while two of them render identically — which is the actual bug, since the reader
+  gets one sentence for two different truths. The wire carries the same leg:
+  `test_the_three_states_are_three_DIFFERENT_payloads` serializes the strip at 0/3/10 resolved.
+- [2026-08-27][PA-6] **🔴 Two defects caught only by driving it, invisible to any unit test written
+  first.** (1) A stale-pending decision's horizon is usually in the **future** — each `too_early`
+  deferral pushes it out by half the original span, so the row goes stale on the deferral COUNT
+  while its date still sits ahead (measured live: `deferrals=2, stale_pending=True,
+  review_horizon=2026-11-02`). The label read the sign off `Math.abs` and announced "Review lapsed
+  67 days ago" for a horizon 67 days away; it now states the fact true in both directions (no
+  reminder is coming) and calls the date lapsed only when it has. (2) The resolved row rendered
+  `outcome_grade` verbatim, so the screen read `as_expected` — a raw wire token in the one place the
+  user is being told what their own judgement was worth.
+- [2026-08-27][PA-6] **Validated as a user** against an isolated `PERSONALCLAW_HOME=./.dev-home` on
+  :10126 (own Playwright instance — the chrome-devtools MCP profile was held by a sibling session),
+  driving a real browser through all three states with real persisted rows: `no-data` ("1 decision
+  still open and none resolved yet"), `too-few` (3 resolved across 3 domains, **0 bars drawn**,
+  per-domain "1 of 10 decisions — too few to mean much"), `calibrated` (career at n=10, **exactly 1
+  bar**, the two under-threshold domains still barless beside it). Both non-counting pending states
+  rendered on one screen. Zero console errors on every pass.
+- [2026-08-27][PA-6] **PARTIAL — the in-gateway chat-tool round trip was NOT driven.**
+  `log_decision`/`decision_resolve` reach the journal only through a chat turn and the dev home has
+  no model provider, so rows were created and resolved by calling the same `decisions` module
+  functions out-of-process. The *rendering* of every clause is validated against real persisted
+  data; the **tool → journal path is not re-validated here** (it is `PA-4`'s surface, already `done`
+  with its own tests). **DISCOVERY worth a follow-up: a running gateway does not see another
+  process's write to `knowledge.db`** — its cached store handle kept serving `status: pending` for a
+  row the DB had recorded as `resolved`, so every seeding step needed a gateway restart. Whether
+  that is a snapshot artifact of the long-lived connection or something a real out-of-process writer
+  (a workflow subprocess) would hit is **not** established here and is outside this atom's scope.
+- [2026-08-27][PA-6] **Gate:** `make lint` clean (black 2155 files, isort, flake8, mypy 1062 source
+  files). `python scripts/gate_report.py` **6/6 PASS**. Targeted pytest, existence-checked in the
+  same command, `-n 0`: `test_decision_journal_view` · `test_decision_journal` ·
+  `test_structural_baseline` · `test_wire_error_envelope_census` · `test_agent_reference` ·
+  `test_knowledge_typed_items` — **205 collected**. Real-home rail clean on every run.
+  `test_unclassifiable_payloads_do_not_grow` reddened at 215 vs ceiling 214 and the fix was the one
+  its own message names FIRST, not a ceiling raise: the response body is now a dict **literal at the
+  `json_response` call site** (`read()` returns a tuple) instead of a variable the census cannot
+  resolve statically — which also puts the wire shape where it becomes the wire. Web:
+  `npm run typecheck:web` clean, `npm run build` clean, `decisionJournal.test.tsx` **21 passed**.
+- [2026-08-27][PA-6] **Falsified, not asserted — two mutations, two DIFFERENT reds,** each grepped
+  back to confirm it applied and restored from a file copy at the literal path (never
+  `git checkout`), verified by an empty `git diff` afterwards. Collapsing `calibrationState`'s
+  `'too-few'` onto `'calibrated'` → **3 vitest failures** including the discrimination leg
+  (`expected 'Calibration across 0 domains with at …' to match /too few to mean much/` — the
+  collapse also produces a nonsense sentence). Neutralising the handler's `calibration()` read to
+  `{}` → **6 pytest failures** in a different suite (`two states serialize identically:
+  ['{}', '{}', '{}']`). Disjoint sets, so the FE state machine and the backend read are pinned
+  separately rather than by one over-broad assertion.
+- [2026-08-27][PA-6] **The unscoped `npm run test:web` earned its keep: 5 global ratchets, and
+  two were real defects rather than baseline entries.** A path-scoped run would have missed all
+  five. Sorted from noise by re-running the 13 failing files at the BASE commit (`90fc2a2d`,
+  detached) on a quiet machine: **11 of 18 fail on main too** (`schemeInheritance`'s color-scheme
+  pin, `surfaceEntranceAdoption`'s regionStagger consumer, `productTour`'s anchor walk,
+  `documentEditorSlot` ×2 — DFE-8's live area — and four `LoadError`/empty-state timeouts), so only
+  the remaining 7 were mine, and 2 of those were the same 20s hang in files already red at base.
+  · **`discoverHeadingLevel` — a REAL a11y defect.** My three section headings were h3 while
+  `PageTitle` renders this page's h1 and nothing sits between, i.e. exactly the h1-to-h3 skip
+  (WCAG 1.3.1) that ratchet exists to prevent. Promoted to h2, matching `LibraryHome`, the peer lens
+  on the same page. Not a baseline update — the census list is unchanged.
+  · **`emptyStateRollout` — a REAL product gap.** The empty state named chat in prose and offered no
+  control, which is the precise defect the census had already flagged on Knowledge › Intents. Now an
+  "Open chat" action, with `onOpenChat` threaded from `KnowledgeSection` as a **required** prop (the
+  `ArtifactGrid` rule: a call site must not be able to ship the fact without the way in). Chat is the
+  only possible on-ramp — logging a decision also mints its review trigger, so
+  `handlers/knowledge.py` refuses to create a `decision` from the library picker.
+  · **`disabledReasonCensus` + `disabledReasonForms`** — one **line-anchored** entry
+  (`KnowledgeListPage.tsx:941`) that my 12-line insertion pushed to 953; both failures traced to
+  that single stale anchor.
+  · **`libraryHomeReachable`** — the view strip asserts its exact option list; `Decisions` appended,
+  so Home keeps the first slot the test is actually about.
+  · 🪤 **A text scanner reads comments.** After every real heading was promoted, the file was STILL
+  on the h3 list: the JSDoc explaining the fix wrote the tag out in angle brackets, and that census
+  is a text scan. The comment now names the rung without the token, and says why.
+- [2026-08-27][PA-6] **The heading fix is measured, not asserted.** Read back off the live page
+  with Playwright after the promotion: `H1 "Knowledge"` → `H2 "Calibration"` → `H2 "Open (2)"` →
+  `H2 "Resolved (12)"`. No skipped rung, which is the claim the ratchet actually cares about — the
+  file-level census can only see that the token is gone.
