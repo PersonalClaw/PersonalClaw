@@ -577,6 +577,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Knowledge search's keyword fallback never returned anything, in any install.** When the smarter
+  search is unavailable — no embedding model configured, or it fails — searching your knowledge is
+  meant to fall back to plain keyword matching. That fallback matched two database columns that can
+  never be equal, so it found nothing, ever, and the answer was reported as a successful search with
+  no results rather than as a search that could not run.
+  **Fixing that alone would not have been enough**, which is worth saying because the obvious fix
+  looks complete. The search text was handed to the database as an *expression*, so anything but a
+  single bare word was a syntax error that the same code quietly turned back into "no results". A
+  hyphen was enough: searching `cold-start` failed. Both halves are fixed, and the query now goes
+  through the same quoting the rest of the knowledge store already used — so the two agree instead of
+  disagreeing on every input.
+  **And the last-resort search took `%` and `_` as wildcards.** Searching `a_b` matched `axb`, which
+  is a result you cannot explain, on the fallback that runs when everything cleverer has failed.
+  Those characters are searched for literally now.
+
 - **A loop interrupted by a restart could stay stuck "running" forever, with nothing working on it.**
   Bringing loops back after a crash or a restart was a one-shot step during startup, and if anything
   at all went wrong in it the failure was written to the log and startup carried on. There was no
