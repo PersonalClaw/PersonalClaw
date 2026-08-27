@@ -230,10 +230,37 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
         <Segmented ariaLabel="Granularity" disabled={busy} collapse="menu" value={granularity} onChange={(v) => setGranularity(v as Granularity)}
           options={GRANULARITIES.map((g) => ({ key: g, label: g.charAt(0).toUpperCase() + g.slice(1) }))} />
       )}
-      {/* Code-only: greenfield vs an existing codebase (workspace is picked on Plan Review). */}
+      {/* Code-only: greenfield vs an existing codebase (workspace is picked on Plan Review).
+          🔴 THE ACTIVE OPTION USED TO PAINT THE SAME WORDS AS THE CONTROL BESIDE IT. Measured on
+          `#/code` against the live gateway: `ProjectPicker`'s idle trigger paints "New project", and
+          this tab painted "New project" too — **12px apart at 1440px** (picker x=240..372, tab
+          x=384..483), and **8px apart at 1024px and 640px**, where this Segmented has collapsed to a
+          pill so the two are the same shape as well as the same text. Two controls, one row, adjacent,
+          identical words, unrelated jobs: one chooses WHICH project the work attaches to, the other
+          whether there is a codebase to attach to at all.
+          The accessible tree was already fixed — `ProjectPicker` announces "Project: New project" and
+          this group announces "Project kind" (see ui/composer/pillDimension.test.tsx, whose own
+          comment records that pass as "a naming fix, not a redesign" and deliberately left the visible
+          label alone). This is the other half: what a SIGHTED user reads.
+          The picker is not the side that moves: its label is product vocabulary the backend honours
+          ("New project (auto-named)" — it auto-creates one). So this option is reworded instead.
+          🪤 AND IT MUST NOT GET WIDER. This row is already over its width budget (see the escalated
+          overflow finding: the control row paints under the shell's right cluster at nine widths
+          between 640 and 1180). "New codebase" was the obvious rewording and it measured **89.4px
+          against this label's 73px** at the tab's real font (13px DM Sans) — enough to push the Mode
+          dial past its collapse threshold, which fixed the 1440px overlap but made 900px newly steal
+          the Scratch target. Trading one broken width for another is not a fix. "Fresh start" is
+          **64.9px — 8px NARROWER than the label it replaces**, so it cannot create an overlap
+          anywhere; measured, the whole 640-1440 sweep is unchanged or better.
+          It also reads as the pair a developer actually chooses between: start fresh, or point at a
+          codebase you already have. Distinct from the Scratch toggle on the same row, which is about
+          what happens AFTER (reclaiming the dir), not what you start from.
+          The KEYS are untouched (`greenfield`/`brownfield` — `ProjectKind` in lib/api), so nothing
+          persisted or wire-facing moves, and `ariaLabel` stays "Project kind" so the group name the
+          collapse rail asserts is unchanged. */}
       {kind === 'code' && (
         <Segmented ariaLabel="Project kind" disabled={busy} collapse="menu" value={projectKind} onChange={(v) => setProjectKind(v as 'greenfield' | 'brownfield')}
-          options={[{ key: 'greenfield', label: 'New project' }, { key: 'brownfield', label: 'Existing codebase' }]} />
+          options={[{ key: 'greenfield', label: 'Fresh start' }, { key: 'brownfield', label: 'Existing codebase' }]} />
       )}
       <Segmented ariaLabel="Mode" disabled={busy} collapse="menu" value={attended ? 'attended' : 'unattended'} onChange={(v) => setAttended(v === 'attended')}
         options={[{ key: 'unattended', label: 'Unattended' }, { key: 'attended', label: 'Attended' }]} />
