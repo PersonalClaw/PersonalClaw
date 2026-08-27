@@ -28,6 +28,7 @@ from personalclaw.sel import sel
 from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for dashboard callers (chat_runner, tests)
     is_read_only_bash,
     resolve_effective_risk,
+    shell_command,
 )
 
 if TYPE_CHECKING:

@@ -38,6 +38,8 @@ import json
 import re
 from collections import deque
 
+from personalclaw.task_modes import SHELL_TOOL_NAMES
+
 # ── Thresholds (graduated verdicts over one run) ─────────────────────────────
 #: ≥ this many identical failures → warn the model, still allow the call.
 WARN_THRESHOLD = 3
@@ -80,7 +82,13 @@ POLL_TOOLS = frozenset(
 )
 #: Shell-family tools whose repetition is a wait only when the COMMAND is a status probe —
 #: `bash` itself is not pollable, `bash("systemctl is-active x")` is.
-SHELL_TOOLS = frozenset({"bash", "shell", "run-script", "execute_bash", "terminal"})
+#:
+#: Imported rather than restated: "which tools run a shell" is one question, and it is
+#: :mod:`personalclaw.task_modes`' to answer because the approval gate turns on it. This
+#: module held a second copy that had already drifted (it was missing ``run_script``), and
+#: a second copy of a security-relevant set is a set that gets tightened in one place —
+#: which is how #443 happened.
+SHELL_TOOLS = SHELL_TOOL_NAMES
 #: Substrings that make a shell command a status probe rather than an action.
 _POLL_COMMAND_HINTS = (
     "is-active",
