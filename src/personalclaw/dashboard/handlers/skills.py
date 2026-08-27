@@ -150,13 +150,25 @@ async def api_skills_list(request: web.Request) -> web.Response:
         if not base.is_dir():
             continue
         is_bundled = base_str == bundled_path
-        for entry in sorted(base.iterdir()):
-            if not entry.is_dir():
-                continue
-            skill_md = entry / _SKILL_FILENAME
+        # 🔴 RECURSIVE, matching `SkillsLoader._iter`'s own `base.rglob("SKILL.md")`. This walked
+        # ONE level with `iterdir()`, so a NAMESPACE directory — `auto/`, which holds every
+        # accepted skill proposal and has no `SKILL.md` of its own — was skipped whole. Measured on
+        # a live instance: three `auto/*` skills were loaded into every agent's context while
+        # `GET /api/skills` reported none of them, so they were un-inspectable and un-deletable from
+        # the UI (#302). The loader and the listing must agree about what a skill is; they were two
+        # answers to that question and only one of them decided what the user could see.
+        #
+        # `name` is the path RELATIVE to the base, so `auto/loop-worker` keeps its namespace — which
+        # is what `SkillsLoader` calls it, what the delete route takes, and what
+        # `_loaded_by_agents` matches on. A bare `entry.name` would collide `auto/x` with a
+        # top-level `x` and make the dedup set drop one of them.
+        for skill_md in sorted(base.rglob(_SKILL_FILENAME)):
             if not skill_md.is_file():
                 continue
-            name = entry.name
+            entry = skill_md.parent
+            if entry == base:
+                continue  # a SKILL.md at the root names no skill
+            name = entry.relative_to(base).as_posix()
             if name in seen:
                 continue
             seen.add(name)

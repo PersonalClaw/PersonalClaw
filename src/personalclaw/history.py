@@ -1820,8 +1820,27 @@ class HistoryConsolidator:
                     # from the Skill-proposals inbox. No auto-install path exists.
                     from personalclaw.skills import proposals as _proposals
 
+                    # 🔴 A proposal for a slug that ALREADY EXISTS is a REFINEMENT, and it has to
+                    # say so. `find_similar` above compares DESCRIPTIONS, so a differently-worded
+                    # synthesis for an installed skill passes that guard — and then went out as
+                    # `kind="new"` (the `enqueue` default), which accept() could not apply because
+                    # `create_auto_skill` refuses an existing slug. Measured on a live instance:
+                    # 26 of 30 pending proposals named an already-installed slug, 20 of them the
+                    # same one, and every accept answered 409 permanently.
+                    #
+                    # accept() now infers this too (a proposal labelled `new` whose slug exists is
+                    # overlaid), which is what recovers a queue the bug already filled. Labelling
+                    # it HERE is what stops the queue filling again — and it makes the inbox row
+                    # say "Refine a skill" instead of "New skill proposed", which is the truth.
+                    from personalclaw.skills.loader import AUTO_SKILL_NAMESPACE
+
+                    _existing = f"{AUTO_SKILL_NAMESPACE}/{slug}"
+                    _is_refine = self._skills_loader.load_skill(_existing) is not None
+
                     prop = _proposals.enqueue(
                         slug=slug,
+                        kind="refine" if _is_refine else "new",
+                        refine_target=_existing if _is_refine else "",
                         description=description,
                         triggers=triggers,
                         procedure_md=procedure_md,
