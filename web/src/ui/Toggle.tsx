@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { spring } from '../design/motion'
+import { useFieldHintId } from './forms'
 
 /** The ONE canonical on/off switch for the whole app. A pill track + a knob that
  *  springs across on toggle (bounce-tier settle). Track = primary when on, neutral
@@ -34,6 +35,25 @@ export function Toggle({
    *  surface as a second, unnamed switch node duplicating the button. */
   decorative?: boolean
 }) {
+  // ── THE SENTENCE BESIDE THE SWITCH BECOMES THE SWITCH'S DESCRIPTION ─────────────────────────
+  //
+  // `Row`, `settingsUI`'s `Field` and `ui/forms`' `Field` all publish the id of the hint they
+  // render, exactly so the control inside can claim it (`Row`'s own comment says so). Six
+  // form-family primitives already claim it — `TextInput`, `TextArea`, `NumberField`, `DateInput`,
+  // `Select`, `ChipInput`. Toggle was the family's one non-consumer.
+  //
+  // 🔴 Measured on a demo-seeded home across all 34 `#/settings/*` subpages: 61 switches render, 58
+  // of them sit inside a wrapper that publishes a hint id, and **0 carried any `aria-describedby`** —
+  // so every one of those 58 visible sentences was sighted-only. A screen-reader user heard
+  // "Timestamps, switch, off" and none of "Display a time on each message." After this, 53 of the 58
+  // resolve `aria-describedby` to the hint's exact text; the other 5 are soft-off and keep their
+  // reason instead (below). Nothing else changed: the switch, hint and row `getBoundingClientRect`
+  // are byte-identical before and after on all 18 panels that render a hinted switch.
+  //
+  // axe cannot see this: a paragraph that happens to sit beside a switch is valid HTML with no
+  // rule to violate. It is SC 1.3.1 (Info and Relationships) — a relationship conveyed only by
+  // proximity. It is NOT 4.1.2: the name, role and state were all present and correct.
+  const hintId = useFieldHintId()
   const sm = size === 'sm'
   const knob = sm ? 14 : 16
   const travel = sm ? 16 : 18
@@ -50,9 +70,11 @@ export function Toggle({
   if (readOnly || !onChange) {
     // Decorative: no switch role/aria — the wrapping labeled control is the a11y
     // node. Otherwise a standalone display switch keeps role+state+label.
+    // `decorative` stays undescribed on purpose — it is `aria-hidden`, so an `aria-describedby` on
+    // it would point out of the a11y tree from a node the tree does not contain.
     return decorative
       ? <span aria-hidden className={trackCls} style={trackStyle}>{knobEl}</span>
-      : <span role="switch" aria-checked={on} aria-label={label} className={trackCls} style={trackStyle}>{knobEl}</span>
+      : <span role="switch" aria-checked={on} aria-label={label} aria-describedby={hintId} className={trackCls} style={trackStyle}>{knobEl}</span>
   }
   // 🪤 THE `sm` TRACK IS 20px TALL, AND A TARGET MUST BE 24px (WCAG 2.2 SC 2.5.8).
   //
@@ -76,9 +98,30 @@ export function Toggle({
   // `aria-disabled` element, so a soft-off switch would look fully enabled while refusing to
   // toggle. Both selectors are named below (cycle 111 hit this exact trap on `Button`).
   const softOff = disabled && !!disabledReason
+  // 🪤 `aria-describedby` OUTRANKS `title`, so claiming the hint unconditionally would DELETE the
+  // soft-off reason from what a screen reader announces. A soft-off switch carries its reason in
+  // `title` — the kit's convention, ruled cycle 37 and re-confirmed on `Button`, which measured an
+  // sr-only describedby target being concatenated into the accessible NAME instead. `title` is the
+  // only carrier here, and per accname a resolved `aria-describedby` wins outright.
+  //
+  // Measured: 7 call sites pass a `disabledReason` to a switch, and 5 of the 58 hinted switches were
+  // soft-off in the seeded state — soft-off is a STATE, not a call site, so that 5 moves with the
+  // precondition while the 7 does not. On 3 of the 5 the row hint and the reason say the same thing
+  // ("No model bound for this use case — bind one in Models to use this." vs "No model is bound for
+  // this use case — bind one in Models first"), so pointing at the hint would have traded a sentence
+  // for its own paraphrase. On 2 — account's "Require a 2FA code" and inbox's "Auto-execute the
+  // trivial tier" — the hint genuinely adds what the reason omits (the 2FA row's hint carries the
+  // extra "verify a code works before requiring it", and the inbox row's the entire undo contract).
+  //
+  // The reason still wins there, and deliberately: it is the blocking fact, and the loss is
+  // transient and self-healing — clear the precondition, the switch stops being soft-off, and the
+  // hint becomes its description on the same render. Announcing why a control is unusable beats
+  // describing what it would do if it were.
+  const describedBy = softOff ? undefined : hintId
   return (
     <button
       type="button" role="switch" aria-checked={on} aria-label={label}
+      aria-describedby={describedBy}
       disabled={disabled && !softOff}
       aria-disabled={softOff || undefined}
       title={softOff ? disabledReason : undefined}

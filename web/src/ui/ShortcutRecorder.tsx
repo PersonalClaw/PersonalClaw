@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useFieldHintId } from './forms'
 
 /**
  * A keyboard-shortcut recorder: click it, press the combination, done.
@@ -47,6 +48,17 @@ export function ShortcutRecorder({
    *  name so several recorders on one page are not identically named. */
   label: string
 }) {
+  // Its one call site — `VoicePanel`'s "Push-to-talk shortcut" — sits inside a `ui/forms` Field
+  // whose hint is the ONLY place the mechanism is explained. The Field writes one of two sentences:
+  // in the desktop shell, "Press it to start capturing your microphone, press it again to stop and
+  // transcribe into the composer at your cursor… a capture indicator stays in the menu bar the whole
+  // time"; in a browser tab, "Used by the desktop app for global push-to-talk. A browser tab has no
+  // global shortcuts, so this is saved for when you run the desktop app." That second one is the
+  // load-bearing case — it is the only thing that explains why the control appears to do nothing.
+  // Measured before this, in a browser: `aria-describedby` was null, so a screen-reader user got
+  // "Push-to-talk shortcut: ⌘⇧Space — activate to change" and no idea what pressing it does. After:
+  // it resolves to that sentence.
+  const hintId = useFieldHintId()
   const [recording, setRecording] = useState(false)
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -70,6 +82,7 @@ export function ShortcutRecorder({
       aria-label={recording
         ? `Press the new ${label.toLowerCase()}, or Escape to cancel`
         : `${label}: ${format(value)} — activate to change`}
+      aria-describedby={hintId}
       className={`inline-flex h-9 min-w-32 items-center justify-center rounded-md px-3 font-mono text-[0.8125rem] transition-colors ${
         recording
           ? 'bg-surface-high text-on-surface-low ring-2 ring-inset ring-primary'
