@@ -8,12 +8,12 @@
 
 Chat, autonomous goal loops, long-term memory, a knowledge base, skills, scheduled
 automation, and channel integrations — all behind one gateway process and one web
-dashboard you own. Local-first, provider-agnostic, zero telemetry, MIT.
+dashboard you own. Local-first, provider-agnostic, no analytics, MIT.
 
 [![CI](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/ci.yml/badge.svg)](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
-[![Zero telemetry](https://img.shields.io/badge/telemetry-none-brightgreen.svg)](#privacy)
+[![No analytics](https://img.shields.io/badge/analytics-none-brightgreen.svg)](#privacy)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-local--first-ff6b5b.svg)](#)
 [![Pre-1.0](https://img.shields.io/badge/status-pre--1.0%20%C2%B7%20breaking%20changes%20expected-orange.svg)](#-pre-10-heads-up)
 
@@ -202,9 +202,20 @@ and not verified by us. Details and the `[models]`-extra per-arch reality:
 
 ## <a name="privacy"></a>Privacy
 
-**Zero telemetry.** PersonalClaw sends no usage data anywhere. It's single-user and
-self-hosted; your conversations, memory, and knowledge never leave your machine unless
-*you* wire up a remote provider app. Exports exclude credentials by design.
+**No analytics, no crash reporting, no usage tracking.** PersonalClaw collects nothing about
+how you use it and sends no usage data anywhere. It's single-user and self-hosted; your
+conversations, memory, and knowledge never leave your machine unless *you* wire up a remote
+provider app. Exports exclude credentials by design.
+
+**One outbound call you should know about.** PersonalClaw asks GitHub whether a newer release
+exists, at most once every 12 hours (`_UPDATE_CHECK_INTERVAL`, `dashboard/handlers/updates.py`),
+identifying itself with a `personalclaw-update-check` User-Agent. It sends no usage data — but it
+is a network request, so GitHub sees your IP, as it would for any HTTP call.
+
+**There is currently no setting that turns that check off.** `auto_update` gates whether an
+update is *applied*, not whether the check happens — its own description says so: "update checks
+always run; this gates the unattended pull + rebuild + restart." If you need a host that never
+reaches out, block the egress; a config switch for it is not shipped yet.
 
 ## Supply chain
 
