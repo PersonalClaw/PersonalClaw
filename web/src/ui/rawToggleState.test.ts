@@ -10,7 +10,7 @@ import { join } from 'node:path'
 // different right answers:
 //
 //   10  DISCLOSURES → `aria-expanded={state}`
-//        ChatPage's turn-context strip · ArtifactViewer's Details · CockpitPromptBar's Prompt ·
+//        chat's turn-context strip (`ContextLedger`) · ArtifactViewer's Details · CockpitPromptBar's Prompt ·
 //        LoopCockpitPage's Prompt + phase row · AuditPanel's event row · MemoryPanel's digest ·
 //        ModelsPanel + SearchPanel accordions · ToolOutput's JSON expander
 //    1  MODE → `aria-pressed={autoscroll}`  (`DiagnosticsPanel`)
@@ -47,7 +47,9 @@ const read = (rel: string) => readFileSync(join(PAGES, rel), 'utf8')
 
 /** [file, the flag its content is gated on, an anchor unique to that button] */
 const DISCLOSURES: [string, string, string][] = [
-  ['ChatPage.tsx', 'open', 'aria-expanded={open}\n        className="flex items-center gap-1.5 rounded-pill'],
+  // The chat turn-context strip is the `ContextLedger`, extracted out of `ChatPage.tsx` (LV-2) so
+  // its one-action reach could be mounted and proved; the census follows the code, not the address.
+  ['chat/ContextLedger.tsx', 'open', 'aria-expanded={open}\n        className="flex items-center gap-1.5 rounded-pill'],
   ['artifacts/ArtifactViewer.tsx', 'metaOpen', 'setMetaOpen((v) => !v)} aria-expanded={metaOpen}'],
   ['loops/CockpitPromptBar.tsx', 'open', 'aria-expanded={open} className="flex w-full items-center gap-s text-left min-w-0"'],
   ['loops/LoopCockpitPage.tsx', 'promptOpen', 'setPromptOpen(!promptOpen)} aria-expanded={promptOpen}'],

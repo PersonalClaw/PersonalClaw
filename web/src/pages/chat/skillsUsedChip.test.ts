@@ -258,6 +258,9 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
   const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
   const chatPage = read('../ChatPage.tsx')
   const cockpit = read('../loops/LoopCockpitPage.tsx')
+  // The ledger moved out of `ChatPage.tsx` so its one-action reach could be mounted and proved
+  // (`contextLedgerReach.test.tsx`); these scans follow the code rather than the old address.
+  const ledger = read('./ContextLedger.tsx')
 
   it('the chat run panel renders the label + the names on hover', () => {
     expect(chatPage).toContain('title={skillsUsedTitle(skills)}')
@@ -286,11 +289,23 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
     // every chip degrades, which would look exactly like "old messages" forever.
     expect(chatPage).toContain('stampActivityOrigin(segs, insertActivity(')
     expect(chatPage).toContain("ledger.learnedOrigin = (s as ActivitySegment).origin")
-    expect(chatPage).toContain('learnedSurface(learnedOrigin)')
-    expect(chatPage).toContain('<TextLink href={surface.href}>')
+    expect(ledger).toContain('learnedSurface(learnedOrigin)')
+    expect(ledger).toContain('<TextLink href={surface.href}>')
     // Vacuity floor for this whole block: the pre-LV-2 hardcoded link must be GONE. Without
     // this, the three positive scans above pass while the old unconditional Memory link is
     // still what actually renders.
-    expect(chatPage).not.toContain('<TextLink href="#/settings/memory">Manage in Memory')
+    expect(ledger).not.toContain('<TextLink href="#/settings/memory">Manage in Memory')
+  })
+
+  it('the extracted ledger is still MOUNTED by the page (extraction is not deletion)', () => {
+    // Moving `ContextLedger` into its own module made it mountable in a test; it must also
+    // still be rendered in production, with the origin the WS handler stamped handed through.
+    // Without this, `contextLedgerReach.test.tsx` could stay green over a component no surface
+    // renders — the exact inert-control shape this block exists to catch.
+    expect(chatPage).toContain('<ContextLedger fed={ledger.fed}')
+    expect(chatPage).toContain('learnedOrigin={ledger.learnedOrigin}')
+    expect(chatPage).toContain("import { ContextLedger } from './chat/ContextLedger'")
+    // And ChatPage no longer carries a second, private copy of it.
+    expect(chatPage).not.toContain('function ContextLedger(')
   })
 })
