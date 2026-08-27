@@ -41,14 +41,17 @@ import pathlib
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
-#: The three functions `DCU-2` ships as the chain's steps 2, 4 and 5.
-_SCREENS = frozenset({"check_app", "check_input_target", "require_computer_use"})
+#: The three functions `DCU-2` ships as the chain's steps 2, 4 and 5, plus `DCU-5`'s step 4b.
+#: One census for all four: "how many places decide whether this drive may happen" is a single
+#: question, and a screen kept out of it would be the one that silently grows a second caller.
+_SCREENS = frozenset({"check_app", "check_input_target", "check_autonomy", "require_computer_use"})
 
 #: Where each screen is DEFINED. A definition is not a call site, and ``ast.Call`` already
 #: excludes it — these are named only so the failure message can point at the owner.
 _DEFINED_IN = {
     "check_app": "computer_use/policy.py",
     "check_input_target": "computer_use/policy.py",
+    "check_autonomy": "computer_use/policy.py",
     "require_computer_use": "computer_use/gate.py",
 }
 
@@ -101,9 +104,15 @@ def _production_call_sites() -> dict[str, list[str]]:
 #: exit that stops calling ``_audit`` at all — that is covered behaviourally by
 #: ``test_computer_use_dispatch.py::test_every_attempt_writes_exactly_one_row`` plus the three
 #: tests that assert the allowed, refused and keystone-refused rows separately.
+#: `DCU-5`'s ``check_autonomy`` appears once and UNCONDITIONALLY, which is the difference worth
+#: pinning next to its siblings: the other screens sit behind a ``spec.screen_*`` flag because
+#: they are about the TARGET, and a tool with no app argument has no app to screen. This one is
+#: about the CALLER, so there is no tool it does not apply to — including ``computer_list_apps``,
+#: whose enumeration of somebody's open windows is the reconnaissance half of driving them.
 _EXPECTED_CALL_SITES: dict[str, list[str]] = {
     "computer_use/service.py": [
         "check_app",
+        "check_autonomy",
         "check_input_target",
         "require_computer_use",
     ],

@@ -69,6 +69,27 @@ def _unavailable(error) -> web.Response:
     )
 
 
+def _caller_identity(request: web.Request) -> str:
+    """The guardrail identity for this request — and NEVER the empty string (`DCU-5`).
+
+    An absent ``X-Session-Key`` is not "unknown, assume a human": it is a caller that is not a
+    dashboard chat session, which ``guardrails.policy`` already classifies as *unattended by
+    definition*. Passing ``""`` through resolved to the INTERACTIVE profile, and the approval
+    ladder then read "a human is watching" for a script, an ACP CLI or any authenticated client
+    that simply did not send the header — the one fail-open direction that matters on a
+    capability that posts real keystrokes into the operator's applications.
+
+    So a headerless request is minted into a sessionless unattended identity by the SAME helper
+    the trigger and hook seams use (``unattended_dispatch_key``, PHF-8), rather than by a special
+    case inside :func:`~personalclaw.computer_use.policy.check_autonomy`. This seam is the only
+    party that knows the header was missing; the screen downstream should read one contract.
+    """
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+
+    key = str(request.headers.get("X-Session-Key") or "").strip()
+    return key or unattended_dispatch_key("computer_use:no-session-header")
+
+
 async def api_computer_use_dispatch(request: web.Request) -> web.Response:
     """POST /api/computer-use/dispatch — run one computer-use tool through the chain.
 
@@ -96,7 +117,7 @@ async def api_computer_use_dispatch(request: web.Request) -> web.Response:
             tool.strip(),
             params,
             source=str(body.get("source") or ""),
-            caller_identity=str(request.headers.get("X-Session-Key") or ""),
+            caller_identity=_caller_identity(request),
         )
     except enable_state.ComputerUseDisabled as exc:
         return _refused(exc.error)

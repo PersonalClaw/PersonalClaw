@@ -528,18 +528,30 @@ def test_the_packages_public_surface_is_pinned():
             "parse_enable_document",
             "require_enabled",
             "reset_enable_state",
+            # `DCU-5`'s third grant: which tools an UNATTENDED run may invoke. An accessor
+            # beside `allowed_apps`, with the same one-reader rail on the field behind it, and
+            # NOT named `computer_*` for the same reason nothing else here is — the prefix marks
+            # "this can dispatch", and reading a grant cannot.
+            "unattended_tools",
         ],
         # DCU-2's two modules. `policy` DECIDES (steps 2 and 4 of the dispatch chain) and
         # `gate` only RECORDS (step 5) — neither is named `computer_*`, deliberately: that
         # prefix is what the keystone ratchet above binds to `require_enabled()`, and a
         # second keystone reader inside the chain is the drift `require_enabled`'s own
         # docstring was written about.
+        # `DCU-5` adds step 4b here, beside DCU-2's two: `check_autonomy` is the only screen in
+        # the package about WHO is calling rather than what they aimed at, and
+        # `unattended_not_granted_error` is its WHAT/WHY/FIX constructor — public for the reason
+        # its two siblings are, so a surface that renders an envelope instead of raising gets the
+        # identical three lines.
         "policy.py": [
             "ComputerUsePolicyRefusal",
             "app_not_allowed_error",
             "check_app",
+            "check_autonomy",
             "check_input_target",
             "input_target_error",
+            "unattended_not_granted_error",
         ],
         "gate.py": ["require_computer_use"],
         # DCU-4's three modules. `service` COMPOSES the chain and owns the package's ONE

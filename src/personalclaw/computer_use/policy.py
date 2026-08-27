@@ -1,26 +1,30 @@
-"""TARGET POLICY for desktop computer use (DESKTOP-COMPUTER-USE §3.3, `DCU-2`).
+"""TARGET POLICY for desktop computer use (DESKTOP-COMPUTER-USE §3.3 `DCU-2`, §3.4 `DCU-5`).
 
-Steps 2 and 4 of the dispatch chain the plan fixes:
+Steps 2, 4 and 4b of the dispatch chain the plan fixes:
 
 1. :func:`personalclaw.computer_use.enable_state.is_enabled` — the keystone
 2. :func:`check_app`                                         — **here**
 3. index freshness (TTL) + fingerprint re-walk
 4. :func:`check_input_target`                                — **here**
+4b. :func:`check_autonomy`                                   — **here** (the approval ladder)
 5. ``gate.require_computer_use``                             — SEL audit
 6. the platform driver
 
-**This module DECIDES; the gate only RECORDS.** Both functions raise, and nothing downstream
+**This module DECIDES; the gate only RECORDS.** Every screen raises, and nothing downstream
 is allowed to be the thing that says no. A policy that returned a verdict for step 5 to act
 on would make the audit trail load-bearing for enforcement, and an audit sink that fails
 open — the correct posture for an audit sink — would then fail the *policy* open too. So the
 refusal is raised at the decision point, and the SEL records what already happened.
 
-**Two screens, two questions.** :func:`check_app` answers *may this application be driven at
-all* — an allowlist a human wrote, where the empty list means nothing may be driven.
+**Three screens, three questions.** :func:`check_app` answers *may this application be driven
+at all* — an allowlist a human wrote, where the empty list means nothing may be driven.
 :func:`check_input_target` answers *may keystrokes land in this specific element* — a
 password field, or a field already holding something credential-shaped, is refused even
 inside an allowlisted app. The second is not redundant: an allowlisted browser or mail client
 contains login forms, and "the app is approved" was never a statement about every field in it.
+:func:`check_autonomy` answers *may THIS CALLER drive it right now* — the first question here
+that is about who is asking rather than about what they aimed at, and the one that consumes the
+earned-autonomy ladder (``guardrails.rungs``) rather than the enable document alone.
 
 **No implicit self-allowance, deliberately.** The plan calls the mechanism a "self-plus-
 operator allowlist". PersonalClaw's own windows are NOT implicitly drivable here: the one
@@ -40,9 +44,11 @@ readers has the same failure available to it — and a module-level alias IS a s
 which is also why this module follows the package's documented
 ``from personalclaw.computer_use import enable_state`` convention instead.
 
-**No second keystone reader either.** Neither function consults ``is_enabled()``. Step 1 owns
+**No second keystone reader either.** No screen here consults ``is_enabled()``. Step 1 owns
 that decision, and a policy that re-checked it would be a second answer to a question already
 answered — plus it would let a caller that skipped step 1 look gated when it is not.
+:func:`check_autonomy` reads a DIFFERENT field of the same document
+(``enable_state.unattended_tools()``), which is a third grant rather than a second answer.
 """
 
 from __future__ import annotations
@@ -64,6 +70,32 @@ ERR_APP_NOT_ALLOWED = "ERR_COMPUTER_USE_APP_NOT_ALLOWED"
 #: :class:`~personalclaw.computer_use.enable_state.EnableState` uses for "off" versus "off
 #: because your JSON has a typo".
 ERR_SECURE_FIELD = "ERR_COMPUTER_USE_SECURE_FIELD"
+
+#: A run with nobody watching asked to drive the desktop, and the operator never granted it.
+#: `DCU-5`'s refusal, and the one screen here that is about WHO is calling rather than about
+#: what they aimed at.
+ERR_UNATTENDED_NOT_GRANTED = "ERR_COMPUTER_USE_UNATTENDED_NOT_GRANTED"
+
+#: The ``SafetyProfile.approval`` postures under which the ladder's ASK can actually be
+#: answered, so no standing grant is needed.
+#:
+#: Read off the one profile field that describes how much a run may decide alone — the same
+#: field :func:`~personalclaw.guardrails.policy.rung_ceiling_for_profile` reads, and with the
+#: same meanings it documents:
+#:
+#: * ``ask`` — a human is watching this run and sees the result as it lands, so the approval
+#:   prompt the tool layer already raises IS the ``one_tap`` ask. Nothing to add here.
+#: * ``auto`` — the operator pre-approved this posture out loud (the dashboard trust toggle,
+#:   ``--approval yolo``, an explicit ``approval_mode``). The ask was answered in advance.
+#: * ``hook_based`` — the UNATTENDED posture: no human to ask and nobody watching. The ask
+#:   cannot be answered at all, so the only thing that can license the drive is a grant the
+#:   operator wrote before the run started.
+#:
+#: Resolved through :func:`~personalclaw.guardrails.policy.profile_for_session`, which is
+#: already ceiling-intersected — so an operator who pins ``{"scopes": {"approval": {"value":
+#: "hook_based"}}}`` in ``governance/ceiling.json`` makes EVERY desktop drive on the machine
+#: grant-required, interactive ones included. That is the ceiling doing its job, not a bug.
+_ASKABLE_APPROVALS = frozenset({"ask", "auto"})
 
 #: The key an operator adds to the enable document to list drivable applications. Named once
 #: so the refusal's FIX line and the reader agree; the document's shape is owned by
@@ -393,3 +425,109 @@ def check_input_target(target: dict, *, tool: str) -> None:
                 "the element already holds credential-shaped text, so typing here would "
                 "overwrite or expose a secret"
             )
+
+
+def unattended_not_granted_error(
+    *, tool: str, profile_name: str, granted: tuple[str, ...]
+) -> AgentError:
+    """The WHAT/WHY/FIX for an unattended drive the operator never granted.
+
+    Public for the reason its siblings are: a surface that renders an envelope instead of
+    raising needs the identical three lines, and two spellings of a message whose FIX names an
+    out-of-band file is precisely how "edit this file" drifts into "open Settings".
+    """
+    path = enable_state.enable_file_path()
+    census = (
+        "no tool is granted to unattended runs"
+        if not granted
+        else f"the unattended grant holds {', '.join(repr(t) for t in granted)}"
+    )
+    return AgentError(
+        code=ERR_UNATTENDED_NOT_GRANTED,
+        what=(
+            f"{tool} refused: nothing is watching this run (the {profile_name!r} safety "
+            f"profile), and driving the desktop unattended was not granted — {census}."
+        ),
+        why=(
+            "This capability asks before it acts, and an unattended run has nobody to ask. "
+            "There is also nothing to undo afterwards: a press, a keystroke or a scroll in "
+            "somebody else's application cannot be reversed by this build, so a run that acted "
+            "silently would leave real effects and no trace a person would notice. The "
+            "operator arming the machine and the operator agreeing that a cron fire, a channel "
+            "message or an inbound caller may drive it while they are asleep are two different "
+            "decisions, and only the second one licenses this."
+        ),
+        fix=(
+            f'A human must add "{tool}" to the "{enable_state.UNATTENDED_KEY}" list in {path} '
+            f"(or in the file {enable_state.ENABLE_PATH_ENV} points at), then restart "
+            "PersonalClaw so the document is re-read at boot. Names are matched exactly and "
+            "must be tools this build declares. There is no in-band path: no tool call, "
+            "prompt, or setting grants this, including this one. To run it right now instead, "
+            "drive it from a session a human is present in — an interactive run gets the "
+            "approval prompt rather than this refusal."
+        ),
+        suggestions=granted,
+    )
+
+
+def check_autonomy(tool: str, *, caller_identity: str = "") -> None:
+    """Refuse an unattended drive without the operator's standing grant (`DCU-5`).
+
+    Step 4b of the dispatch chain — the LAST screen before the approved audit row, deliberately
+    after ``check_app`` and ``check_input_target`` so a refusal is still recorded against the
+    app and element it was aimed at. A refusal with no target is a worse audit row than one
+    with, and the ordering costs nothing: every screen before it already refused the calls that
+    should never reach any of them.
+
+    **Two reads, and neither is a new vocabulary.**
+
+    1. :func:`~personalclaw.guardrails.rungs.route_action_type` on
+       :data:`~personalclaw.guardrails.rungs.COMPUTER_USE_DRIVE` — the earned-autonomy ladder's
+       own answer. The declaration ceilings at ``one_tap`` ("asks first"), which is *why* an
+       unattended run needs a standing grant at all, and the route it returns is what
+       :func:`~personalclaw.guardrails.rungs.announce_withheld` turns into the durable inbox row
+       the clause's "and notifies" names. The rung, its user-facing label and this key all come
+       from :mod:`~personalclaw.guardrails.autonomy`; nothing here mints a second ladder.
+    2. ``profile_for_session(...).approval`` — whether anybody is there to answer that ask.
+       See :data:`_ASKABLE_APPROVALS` for the three postures and what each means.
+
+    The ladder cannot make read 2 for us, and that is a property of the ladder rather than an
+    omission here: ``rung_ceiling_for_profile`` narrows an unattended run to ``auto_with_undo``,
+    which is ABOVE ``one_tap``, so the composed rung is ``one_tap`` for an interactive run and
+    ``one_tap`` for a cron fire alike. One rung, two consequences — asked-and-answered versus
+    asked-with-nobody-home — and the seam is where that difference is known.
+
+    Raises :class:`ComputerUsePolicyRefusal` so the whole chain keeps one exception type and one
+    rendered envelope; the code discriminates. Returns None when the drive may proceed.
+    """
+    from personalclaw.guardrails import policy as guardrails_policy
+    from personalclaw.guardrails import rungs
+
+    profile = guardrails_policy.profile_for_session(caller_identity)
+    if profile.approval in _ASKABLE_APPROVALS:
+        return
+    granted = enable_state.unattended_tools()
+    if tool in granted:
+        return
+    error = unattended_not_granted_error(tool=tool, profile_name=profile.name, granted=granted)
+    # 🔴 MEASURED: without this, `route_action_type` answers `draft_only`/``ROUTE_DRAFT``, not
+    # `one_tap`/``ROUTE_ASK``. `resolve_rung` fails closed for a DECLARED key with no
+    # registration, and the gateway registers the core declarations from the action-provider
+    # seam — a path a computer-use dispatch does not travel. The refusal would still refuse, so
+    # nothing here would look broken; it would just file a "here is what it would have done"
+    # proposal instead of the "decide" request the clause asks for, and say the wrong sentence.
+    # ``route_provider_action`` calls this for the same reason, in the same position.
+    rungs.ensure_core_action_types()
+    route = rungs.route_action_type(rungs.COMPUTER_USE_DRIVE, session_key=caller_identity)
+    # Deduped per TOOL rather than per attempt: a trigger that fires every thirty seconds must
+    # not stack a hundred identical rows, and a held drive is one standing request however many
+    # times it was tried. Per tool rather than per action type because "let it snapshot" and
+    # "let it click" are different grants a person answers differently.
+    rungs.announce_withheld(
+        route,
+        title=f"A background run wanted to drive {tool.removeprefix('computer_')}",
+        body=error.what,
+        refs={"tool": tool, "caller": caller_identity},
+        dedup_key=f"computer_use_hold:{tool}",
+    )
+    raise ComputerUsePolicyRefusal(error)

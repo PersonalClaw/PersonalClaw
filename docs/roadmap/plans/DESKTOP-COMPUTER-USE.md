@@ -756,3 +756,42 @@ the platforms to validate on) — Session 1–2 ship macOS + honest refusals, pe
   `DRIVER_MODULES["Linux"]` pointed at a module that does not exist, reproducing the exact
   pre-atom state → **4 red**, one through the real spawn. In all four the **Darwin twins stayed
   GREEN**, so the refusal is a platform check and not a driver that refuses everything.
+
+- [2026-08-27][DCU-5] DONE: the approval ladder now gates desktop drive at step **4b** of the
+  dispatch chain (`policy.check_autonomy`, called once and unconditionally from
+  `service.computer_dispatch` between `check_input_target` and the approved SEL row — exactly the
+  insertion point `DCU-4`'s log reserved). **No new rung name was minted:** `guardrails/autonomy.py`
+  keeps its four, and this adds ONE declaration, `rungs.COMPUTER_USE_DRIVE` (`computer_use.drive`),
+  at the existing `one_tap` with ceiling == floor and `leaves_machine=True`, in a third
+  `_CAPABILITY_SPECS` tuple beside `_AFFORDANCE_SPECS` (same "no `providers`, named directly"
+  precedent, because this is a TOOL surface rather than an action provider). `one_tap` → `ROUTE_ASK`
+  is load-bearing twice over: it is what makes an unattended drive need a standing grant, and
+  `announce_withheld` files an `agent_request` for `ask`/`draft` and **nothing** for a route that
+  executes — so widening the spec would silently delete the clause's "and notifies" half. A rail
+  pins it instead of trusting it. The grant is a fourth key in `DCU-1`'s out-of-band enable
+  document (`"unattended": ["computer_snapshot", …]`), absent = fail closed, parsed by one shared
+  `_parse_name_list` with `apps` so neither list can grow a normalisation the other refuses; unlike
+  `apps` its entries are checked against the CLOSED tool surface, so a typo refuses the document
+  rather than failing closed invisibly. `config/loader.py` untouched at 5647 lines.
+  DISCOVERY: **the ladder cannot tell an attended run from an unattended one at this rung, and
+  that is the ladder's shape rather than a gap here** — `rung_ceiling_for_profile` narrows an
+  unattended run to `auto_with_undo`, which is ABOVE `one_tap`, so `route_action_type` answers
+  `one_tap`/`ROUTE_ASK` for `dashboard:…` and `cron:…` identically (measured). Hence the seam's
+  second read, `profile_for_session(...).approval`: `ask`/`auto` mean the ask can be answered
+  (the tool layer's prompt, or a posture the operator pre-approved), `hook_based` means it cannot.
+  DISCOVERY: **a measured fail-open at the HTTP seam.** `caller_identity=""` — any authenticated
+  client that did not send `X-Session-Key`, e.g. a script or an ACP CLI — resolved to the
+  **INTERACTIVE** profile, so the ladder read "a human is watching" for a caller with nobody
+  present. Closed in `handlers/computer_use.py::_caller_identity` by minting a sessionless identity
+  through the same `unattended_dispatch_key` helper the trigger/hook seams use (PHF-8), at the one
+  seam that knows the header was absent — not by a special case inside `check_autonomy`.
+  DISCOVERY: **the rung registry is lazy and a miss is silent.** Without `ensure_core_action_types()`
+  at the seam, `resolve_rung` answers `draft_only` for a declared-but-unregistered key, and a
+  computer-use dispatch never travels the provider-registration path. The refusal still refuses —
+  nothing looks broken — but the user gets a *proposal* instead of an *agent request*. The rail
+  clears the registry and asserts that premise before measuring, so it cannot go vacuous.
+  `ERR_COMPUTER_USE_UNATTENDED_NOT_GRANTED` appended to `ERROR_CODES` and deliberately kept OUT of
+  `_CHILD_CODES` — the inverse of `DCU-3`/`DCU-6`: their codes had to be added because only the
+  child can determine them; this one is a parent verdict reached before any child exists, so a
+  child able to name it could dress a crash up as a policy answer. Proved by a real-spawn leg where
+  a child naming it comes back as `ERR_COMPUTER_USE_DRIVER_FAILED`.

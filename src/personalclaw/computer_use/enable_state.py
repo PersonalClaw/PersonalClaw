@@ -21,8 +21,9 @@ positive shape fails the other way, which is the only acceptable direction here.
 
 **Fail closed, in every direction.** Absent file, unreadable file, non-JSON bytes, wrong
 root type, unknown version, unknown key, ``enabled`` that is not the literal ``true``, a
-malformed ``apps`` entry → the capability is OFF and :func:`require_enabled` refuses with
-WHAT/WHY/FIX. Nothing in this module can raise its way into an enabled state, and a parse
+malformed ``apps`` or ``unattended`` entry → the capability is OFF and :func:`require_enabled`
+refuses with WHAT/WHY/FIX. Nothing in this module can raise its way into an enabled state, and a
+parse
 problem is never reported as "probably fine". Unknown keys are refused rather than ignored
 for a specific reason: an operator writing ``{"enabled": true, "windows": ["Inbox"]}`` means
 *"on, for that window"*, and a build that honoured the flag while dropping the scope would
@@ -77,6 +78,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from personalclaw.computer_use.tools import TOOL_NAMES
 from personalclaw.errors import AgentError
 from personalclaw.guardrails.ceiling import GOVERNANCE_DIRNAME
 
@@ -120,9 +122,19 @@ ENABLE_DOCUMENT = '{"version": 1, "enabled": true, "apps": ["TextEdit"]}'
 #: deliberate act and must arrive together with the parser branch that enforces the new key —
 #: an allowed-but-unparsed key would be a scope an operator writes and this module ignores,
 #: which is the exact widening the refusal exists to prevent. The vacuity floor in
-#: ``test_computer_use_app_allowlist.py`` pins the membership so a fourth key cannot be added
+#: ``test_computer_use_app_allowlist.py`` pins the membership so a fifth key cannot be added
 #: quietly.
-_ALLOWED_KEYS = ("version", "enabled", "apps")
+_ALLOWED_KEYS = ("version", "enabled", "apps", "unattended")
+
+#: The key an operator adds to name the computer-use tools an UNATTENDED run may invoke
+#: (`DCU-5`). Absent is the fail-closed default: an unattended run drives nothing.
+#:
+#: It lives in THIS document rather than in ``config.json`` or a ceiling scope for the reason
+#: the module docstring gives for the keystone itself — a grant the agent's own process can
+#: write is a grant the agent can give itself, and "may I drive the desktop with nobody
+#: watching" is the last question that should be answerable in-band. The ceiling can only
+#: narrow a profile, so it cannot express this grant either; the out-of-band document can.
+UNATTENDED_KEY = "unattended"
 
 #: The stable code every computer-use refusal carries, for callers that branch on the code
 #: rather than the prose.
@@ -148,6 +160,13 @@ class EnableState:
     ``apps`` is the operator's target allowlist, resolved from the same out-of-band document
     and read ONLY through :func:`allowed_apps`. Empty is the fail-closed default and means no
     app may be driven; it never means "all".
+
+    ``unattended`` is the third grant (`DCU-5`): the computer-use tools a run with no human
+    watching may invoke. Read ONLY through :func:`unattended_tools`, empty by default, and
+    empty means no unattended run drives anything. It is a THIRD act rather than a widening of
+    the other two on the same reasoning ``apps`` is separate from ``enabled``: "on", "on for
+    Mail" and "on for Mail while I am asleep" are three different things a human may want to
+    say, and the last one is the one that cannot be taken back by watching the screen.
     """
 
     enabled: bool = False
@@ -155,6 +174,7 @@ class EnableState:
     digest: str = ""
     detail: str = ""
     apps: tuple[str, ...] = ()
+    unattended: tuple[str, ...] = ()
 
 
 class ComputerUseDisabled(Exception):
@@ -181,6 +201,84 @@ def enable_file_path() -> Path:
     from personalclaw.config.loader import config_dir
 
     return Path(config_dir()) / GOVERNANCE_DIRNAME / ENABLE_FILENAME
+
+
+def _parse_name_list(
+    data: dict,
+    key: str,
+    *,
+    noun: str,
+    source: str,
+    digest: str,
+    known: frozenset[str] | None = None,
+) -> tuple[tuple[str, ...], EnableState | None]:
+    """Resolve one exact-match name list from the document, or the OFF state it refuses to.
+
+    ONE validator for every list this document carries (``apps``, ``unattended``), because two
+    copies of it is how one list grows a normalisation the other refuses — and a normalisation
+    here is always a widening. Returns ``(names, None)`` on success and ``((), refusal)`` on a
+    malformed list; the caller returns the refusal unchanged.
+
+    **An absent key and an explicit ``[]`` land here identically**, by construction rather than
+    by two branches: both are the empty grant. There is no third meaning to give either one —
+    neither can mean "everything" without inverting the narrowest of the operator's grants into
+    the widest one — so the only way to make them differ would be to make one fail open. Note
+    also that ``[]`` is NOT a parse refusal: "armed, targets not chosen yet" is a coherent thing
+    for a human to have written, and reporting it as a malformed document is the same collapse
+    of distinct failures that :attr:`EnableState.detail` exists to prevent.
+
+    **Entries are matched by EXACT string equality later**, so this is the one place a malformed
+    entry can be caught, and it is REFUSED rather than normalised. Every normalisation available
+    here widens the list past the bytes a human wrote: case-folding lets ``"textedit"`` reach a
+    differently-cased app they never named (and app names are case-sensitive on the platforms
+    this drives), stripping lets a padded entry reach a target, and substring or
+    display-name<->bundle-id equivalence would let ``"Mail"`` reach ``"Mailbox"`` or
+    ``"TextEdit"`` reach ``"com.apple.TextEdit"``. The operator writes the identifier their
+    driver reports; this module refuses to guess which namespace they meant, because guessing in
+    the permissive direction is the only mistake that matters. Same choice the ``enabled`` check
+    makes when it rejects the string ``"true"``.
+
+    ``known`` is the closed vocabulary a key's entries must come from, when one exists. Only
+    ``unattended`` has one (the seven declared tools); an unknown name there refuses the whole
+    document rather than failing closed silently, because a grant that quietly matches nothing
+    is a grant an operator believes they wrote.
+    """
+    raw = data.get(key, [])
+
+    def refuse(detail: str) -> tuple[tuple[str, ...], EnableState]:
+        return (), EnableState(source=source, digest=digest, detail=detail)
+
+    if not isinstance(raw, list):
+        return refuse(f'the enable file\'s "{key}" is {raw!r}, not a list of {noun}')
+    names: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            return refuse(f'the enable file\'s "{key}" carries {entry!r}, which is not a string')
+        if not entry.strip():
+            return refuse(
+                f'the enable file\'s "{key}" carries an empty name; an entry that can '
+                "match nothing is a stray comma, not a target"
+            )
+        if entry != entry.strip():
+            return refuse(
+                f'the enable file\'s "{key}" carries {entry!r}, which is padded with '
+                "whitespace; names are matched exactly, so write it without the padding"
+            )
+        if entry in names:
+            return refuse(
+                f'the enable file\'s "{key}" names {entry!r} twice; a duplicate means the '
+                "list is not the one whoever wrote it thinks they wrote"
+            )
+        if known is not None and entry not in known:
+            return refuse(
+                f'the enable file\'s "{key}" names {entry!r}, which is not one of this '
+                f"build's computer-use tools ({', '.join(sorted(known))})"
+            )
+        names.append(entry)
+    # Sorted, so two documents naming the same targets in different orders resolve to the same
+    # tuple: a grant is a set, the typing order carries no meaning, and a stable order stops a
+    # caller (or a test) from passing on incidental document order.
+    return tuple(sorted(names)), None
 
 
 def parse_enable_document(raw: str, *, source: str) -> EnableState:
@@ -230,77 +328,34 @@ def parse_enable_document(raw: str, *, source: str) -> EnableState:
             digest=digest,
             detail=f'the enable file\'s "enabled" is {flag!r}, not the literal true',
         )
-    apps = data.get("apps", [])
-    # An absent "apps" and an explicit [] land here identically, by construction rather than
-    # by two branches: both are the empty allowlist. There is no third meaning to give
-    # either one — neither can mean "all apps" without inverting the narrower of the
-    # operator's two grants into the widest one — so the only way to make them differ would
-    # be to make one of them fail open. Note also that [] is NOT a parse refusal: "armed,
-    # targets not chosen yet" is a coherent thing for a human to have written, and reporting
-    # it as a malformed document is the same collapse of distinct failures that
-    # ``EnableState.detail`` exists to prevent.
-    #
-    # Entries are matched by EXACT string equality later, so this is the one place a
-    # malformed entry can be caught, and it is REFUSED rather than normalised. Every
-    # normalisation available here widens the allowlist past the bytes a human wrote:
-    # case-folding lets "textedit" reach a differently-cased app they never named (and app
-    # names are case-sensitive on the platforms this drives), stripping lets a padded entry
-    # reach a target, and substring or display-name<->bundle-id equivalence would let "Mail"
-    # reach "Mailbox" or "TextEdit" reach "com.apple.TextEdit". The operator writes the
-    # identifier their driver reports; this module refuses to guess which namespace they
-    # meant, because guessing in the permissive direction is the only mistake that matters.
-    # Same choice the ``enabled`` check above makes when it rejects the string "true".
-    if not isinstance(apps, list):
-        return EnableState(
-            source=source,
-            digest=digest,
-            detail=f'the enable file\'s "apps" is {apps!r}, not a list of app names',
-        )
-    names: list[str] = []
-    for entry in apps:
-        if not isinstance(entry, str):
-            return EnableState(
-                source=source,
-                digest=digest,
-                detail=f'the enable file\'s "apps" carries {entry!r}, which is not a string',
-            )
-        if not entry.strip():
-            return EnableState(
-                source=source,
-                digest=digest,
-                detail=(
-                    'the enable file\'s "apps" carries an empty name; an entry that can '
-                    "match nothing is a stray comma, not a target"
-                ),
-            )
-        if entry != entry.strip():
-            return EnableState(
-                source=source,
-                digest=digest,
-                detail=(
-                    f'the enable file\'s "apps" carries {entry!r}, which is padded with '
-                    "whitespace; names are matched exactly, so write it without the padding"
-                ),
-            )
-        if entry in names:
-            return EnableState(
-                source=source,
-                digest=digest,
-                detail=(
-                    f'the enable file\'s "apps" names {entry!r} twice; a duplicate means the '
-                    "list is not the one whoever wrote it thinks they wrote"
-                ),
-            )
-        names.append(entry)
-    # Sorted, so two documents naming the same targets in different orders resolve to the
-    # same tuple: an allowlist is a set, the typing order carries no meaning, and a stable
-    # order stops a caller (or a test) from passing on incidental document order.
-    allowed = tuple(sorted(names))
+    allowed, refusal = _parse_name_list(
+        data, "apps", noun="app names", source=source, digest=digest
+    )
+    if refusal is not None:
+        return refusal
+    # `DCU-5`'s third grant, parsed by the SAME validator as `apps` so both lists refuse the
+    # same malformed shapes rather than one of them growing a normalisation the other refuses.
+    # The one extra rule is `known=`: the computer-use tool surface is a CLOSED vocabulary, so
+    # a name outside it can be caught here instead of silently matching nothing at the seam —
+    # a typo'd grant that fails closed is safe but invisible, and an operator who wrote it is
+    # entitled to be told the document is wrong rather than left wondering why their job never
+    # runs. `apps` gets no such rule because no closed set of application names exists.
+    unattended, refusal = _parse_name_list(
+        data,
+        UNATTENDED_KEY,
+        noun="computer-use tool names",
+        source=source,
+        digest=digest,
+        known=TOOL_NAMES,
+    )
+    if refusal is not None:
+        return refusal
     return EnableState(
         enabled=True,
         source=source,
         digest=digest,
         apps=allowed,
+        unattended=unattended,
         detail=(
             f"enabled out-of-band by {source} for {len(allowed)} allowlisted app(s)"
             if allowed
@@ -378,6 +433,21 @@ def allowed_apps() -> tuple[str, ...]:
     from this one, and the divergence would only be visible on the day it mattered.
     """
     return active_enable_state().apps
+
+
+def unattended_tools() -> tuple[str, ...]:
+    """The tools an UNATTENDED run may invoke — the ONE reader of ``EnableState.unattended``.
+
+    Empty means no unattended run drives anything, and it never means "all", for the reason
+    :func:`allowed_apps` gives at length: the unset list resolving to everything would turn the
+    strictest of the three grants into the widest. An armed machine with an allowlisted app and
+    no ``unattended`` entry is the ordinary posture — the agent drives that app while a human is
+    watching the session, and a cron fire is refused (`DCU-5`).
+
+    Single reader for the same measured reason ``apps`` has one: while ``enabled`` briefly had
+    two, forcing one of them to return True left every refusal test GREEN.
+    """
+    return active_enable_state().unattended
 
 
 def disabled_error(tool: str, state: EnableState | None = None) -> AgentError:

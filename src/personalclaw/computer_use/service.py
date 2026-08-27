@@ -86,6 +86,13 @@ ERR_PLATFORM_UNSUPPORTED = "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED"
 #: never imports a driver, so it cannot know). A child naming one of these can only cause a
 #: refusal, never an approval, and the "approved" audit row is already written before the child
 #: runs — so honouring them cannot alter a decision, only explain it.
+#:
+#: `DCU-5`'s ``ERR_COMPUTER_USE_UNATTENDED_NOT_GRANTED`` is deliberately ABSENT, and the absence
+#: is the rule working rather than an oversight: that refusal is decided in the parent, at step
+#: 4b, before any child exists. A child able to name it could dress a driver crash up as a
+#: policy verdict the parent never reached — the exact substitution this allowlist exists to
+#: prevent — so it stays out, and a child that names it anyway is flattened to
+#: ``ERR_COMPUTER_USE_DRIVER_FAILED`` like any other code it has no standing to claim.
 _CHILD_CODES = (
     ERR_DRIVER_UNAVAILABLE,
     ERR_DRIVER_FAILED,
@@ -560,6 +567,12 @@ async def computer_dispatch(
             element = await _require_fresh_element(tool, snap, args)  # step 3b — re-walk
         if spec.screen_input_target:
             policy.check_input_target(element, tool=tool)  # step 4
+        # Step 4b — the approval ladder (`DCU-5`). LAST screen before the approved row, and
+        # unconditional: it is the only screen that is about the CALLER rather than the target,
+        # so there is no tool for which it does not apply. `computer_list_apps` is deliberately
+        # included — enumerating somebody's open windows is the reconnaissance half of driving
+        # them, and it is the one call an unattended run would make first.
+        policy.check_autonomy(tool, caller_identity=caller_identity)
     except (
         enable_state.ComputerUseDisabled,
         policy.ComputerUsePolicyRefusal,
