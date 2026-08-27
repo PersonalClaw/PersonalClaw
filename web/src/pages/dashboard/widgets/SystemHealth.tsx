@@ -7,18 +7,34 @@ import { useDashboardLive } from '../DashboardLive'
 import { RowAction } from './kit'
 import type { RouteProps } from '../../../app/useQueryState'
 
-/** One rail metric — icon + value, with the word-label shed responsively. The
- *  rail is a `@container` (DashboardPage), so the label hides below a container
- *  width where the full-label strip would wrap (icon + value keep carrying the
- *  reading; the full "value label" stays on the title tooltip so nothing is
- *  lost). `shrink-0` keeps a metric from being squeezed mid-word before the
- *  strip decides to wrap. */
+/** One rail metric — icon + value + its word-label, always.
+ *
+ *  🪤 The label used to be `hidden @min-[1520px]:inline`, and that container
+ *  threshold is never met on the laptops this product is written for. Measured
+ *  against a seeded gateway: at a 1440px viewport the rail container is 1210px
+ *  and the load metric's `innerText` is the bare number `"24.70"`; at 1728px
+ *  (16" MacBook) it is 1498px and still `"25.20"`. The whole strip read
+ *  `… 285/926GB · 18.21 · 4 · 0` — nine unlabelled numbers. Labels only ever
+ *  appeared at ≥1920.
+ *
+ *  The claimed fallback ("the full 'value label' stays on the title tooltip so
+ *  nothing is lost") is not one: `title` on a non-interactive `<div>` with no
+ *  `role` and no `aria-label` is not an accessible name, is not reachable by
+ *  keyboard, and does not exist on touch. All nine dumped as
+ *  `{tag:"DIV", aria:null}`. So the tooltip was not a fallback for an edge case —
+ *  it WAS the shipped default at every real width.
+ *
+ *  The strip is `flex-wrap` (see the container below), so at a width where the
+ *  labelled metrics no longer fit the strip wraps to a second line instead of
+ *  truncating. A second line of legible metrics beats one line of anonymous
+ *  numbers. `shrink-0` still keeps a metric from being squeezed mid-word before
+ *  the strip decides to wrap. */
 function Metric({ icon: Icon, value, label, tone }: { icon: LucideIcon; value: string | number; label: string; tone?: string }) {
   return (
     <div className="flex shrink-0 items-center gap-s" title={`${value} ${label}`}>
       <Icon size={15} className="shrink-0" style={{ color: tone ?? 'var(--color-on-surface-low)' }} />
       <span data-type="title-m" className="tabular-nums text-on-surface">{value}</span>
-      <span data-type="body-m" className="hidden text-on-surface-low @min-[1520px]:inline">{label}</span>
+      <span data-type="body-m" className="text-on-surface-low">{label}</span>
     </div>
   )
 }
@@ -99,10 +115,12 @@ export function SystemHealth({ navigate }: RouteProps) {
   return (
     // `w-full` so the trailing `ml-auto` group can push "Details" to the rail's
     // right edge (without it the strip is content-width and ml-auto has no slack).
-    // Gaps tighten as the container narrows, and word-labels/sparkline shed
-    // (see Metric + the Spark wrapper) so the strip stays one line as long as it
-    // fits — the container is the rail island, tracking --content-width. The
-    // island owns symmetric vertical padding now, so the strip just centers.
+    // Gaps tighten as the container narrows and the decorative sparkline sheds
+    // (see the Spark wrapper); the metric word-labels do NOT shed — `flex-wrap`
+    // carries the overflow onto a second line instead, because an unlabelled
+    // number is not a smaller version of a labelled one (see Metric). The
+    // container is the rail island, tracking --content-width. The island owns
+    // symmetric vertical padding now, so the strip just centers.
     <div className="flex h-full w-full flex-wrap items-center gap-x-l gap-y-s @6xl:gap-x-xl">
       <Metric icon={Clock} value={status.uptime ?? '—'} label="uptime" />
       <Metric icon={Tag} value={`v${status.version ?? '?'}`} label={status.platform ?? ''} />
