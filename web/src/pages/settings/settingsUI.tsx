@@ -351,13 +351,23 @@ export function ToggleRow({ label, hint, cfg, field, patch, danger }: {
  *  than something a dedup decides quietly. AgentDefaults' `NumberRow` is cfg-driven too but adds
  *  `suffix` + optional min/max/step and uses `Row` rather than `Field`; it is left alone here for
  *  the same reason — its shape is a superset, and folding it in would mean changing its layout. */
-export function NumberRow({ label, hint, cfg, field, min, max, patch }: {
+export function NumberRow({ label, hint, cfg, field, min, max, step = 1, patch }: {
   label: string
   hint?: string
   cfg: Record<string, unknown>
   field: string
   min: number
   max: number
+  /** Stepper increment. Defaults to 1, so every existing adopter is byte-identical — this exists
+   *  because a FRACTIONAL field cannot use this row otherwise. `evals.judge_agreement_floor` is a
+   *  rate in 0…1 whose default is 0.6: at step 1 the only reachable values are 0 and 1, so the
+   *  control could not express the value it was displaying. That is the same class of defect as a
+   *  min/max that disagrees with the backend allowlist — an offer the save path refuses.
+   *
+   *  Deliberately NOT the `suffix` prop `AgentDefaultsPanel`'s private NumberRow also carries: that
+   *  one uses `Row` rather than `Field`, so folding it in here would change this row's layout for
+   *  its two existing adopters. The step is layout-neutral; the suffix is not. */
+  step?: number
   /** `(key, value, onSaved, label)` — the panel's own config PATCH, typed at its widest shape. The
    *  label travels so a rejected save can name the control rather than its config key; see
    *  `ToggleRow` for the measurement. */
@@ -372,7 +382,7 @@ export function NumberRow({ label, hint, cfg, field, min, max, patch }: {
   return (
     <Field label={label} hint={hint}>
       <div className="flex items-center gap-2">
-        <NumberField value={value} min={min} max={max} step={1} onChange={(n) => patch(field, n as never, flash, label)} ariaLabel={label} />
+        <NumberField value={value} min={min} max={max} step={step} onChange={(n) => patch(field, n as never, flash, label)} ariaLabel={label} />
         <SavedToast show={saved} />
       </div>
     </Field>
