@@ -5,7 +5,7 @@ it takes.
 
 ## What delisting does, and what it cannot do
 
-Removing a row from `registry.json` stops **new** discovery: the app disappears from
+Removing a row from `app-registry.json` stops **new** discovery: the app disappears from
 the registry source, from the Store listing that reads it, and from the registry pages
 on personalclaw.dev.
 

@@ -49,7 +49,7 @@ jobs:
         # job does not touch the data. A stale last_validated is a fact worth seeing.
         run: |
           set +e
-          uv run python validate_registry.py registry.json \
+          uv run python validate_registry.py app-registry.json \
             --report registry-report.json \
             --markdown registry-report.md
           code=$?

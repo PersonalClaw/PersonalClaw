@@ -16,7 +16,7 @@ is green, it gets merged.
 ### What gets listed
 
 1. **Anyone may propose a listing.** Open a pull request that adds one row to
-   `registry.json`. There is no invitation, no waiting list, and no identity check.
+   `app-registry.json`. There is no invitation, no waiting list, and no identity check.
 2. **The app must be a PersonalClaw app in a public repository.** `repo` is a plain
    `https://` git URL — no credentials in the URL, no explicit port — and the
    default branch must carry an `app.json` at its root that PersonalClaw's own
@@ -76,7 +76,7 @@ PR; anything you put there is overwritten with what the run actually found.
 ## How to open a listing PR
 
 1. Fork this repository.
-2. Add one object to `apps` in `registry.json`:
+2. Add one object to `apps` in `app-registry.json`:
 
    ```json
    {
@@ -101,7 +101,7 @@ To run the same validation locally before pushing:
 
 ```bash
 pip install -r requirements.txt
-python validate_registry.py registry.json --base <(git show origin/main:registry.json)
+python validate_registry.py app-registry.json --base <(git show origin/main:app-registry.json)
 ```
 
 Exit codes: `0` every changed row is listable · `1` something is blocked · `2` the

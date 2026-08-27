@@ -29,6 +29,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -459,6 +460,30 @@ def test_the_ci_workflow_never_passes_the_file_repo_flag() -> None:
         assert flag not in workflow.read_text(encoding="utf-8"), workflow.name
 
 
+def test_the_ci_workflows_name_the_index_core_actually_reads() -> None:
+    """`ET-4a`. The published workflows must spell the index exactly as core does.
+
+    This rail exists because the failure mode is UNDETECTABLE BY THE PUBLISHED REPO'S OWN
+    CI. `validate-listings.yml` names the index in a `paths:` filter, so a stale name does
+    not fail the workflow — it stops the workflow from firing at all, which reads as green.
+    A registry whose validation silently never runs is strictly worse than one that reds.
+    Measured before this rail existed: reverting all four references to the pre-`ET-4a`
+    `registry.json` left the whole core suite green (98 passed), so nothing pinned them.
+    """
+    from personalclaw.apps.catalog import _REGISTRY_FILENAME
+
+    workflows = sorted((STAGED / ".github" / "workflows").glob("*.yml"))
+    bare = re.compile(r"(?<![-\w])registry\.json")
+    naming = 0
+    for workflow in workflows:
+        body = workflow.read_text(encoding="utf-8")
+        # Any spelling other than core's means the index is not the file being validated.
+        assert not bare.search(body), f"{workflow.name} names an index core does not read"
+        naming += _REGISTRY_FILENAME in body
+    # Vacuity: a rule about how the workflows name the index is empty if none of them do.
+    assert naming >= 2, f"only {naming} workflow(s) name {_REGISTRY_FILENAME}"
+
+
 @pytest.mark.parametrize(
     ("url", "code"),
     [
@@ -627,9 +652,9 @@ def test_write_never_stamps_a_blocked_row(fixture_repos: Path, tmp_path: Path) -
 
 
 def test_the_published_schema_matches_the_python_authority() -> None:
-    """``registry.schema.json`` is generated. Regenerate with
-    ``python validate_registry.py --emit-schema > registry.schema.json``."""
-    committed = json.loads((STAGED / "registry.schema.json").read_text(encoding="utf-8"))
+    """``app-registry.schema.json`` is generated. Regenerate with
+    ``python validate_registry.py --emit-schema > app-registry.schema.json``."""
+    committed = json.loads((STAGED / "app-registry.schema.json").read_text(encoding="utf-8"))
     assert committed == validator.build_schema()
 
 
@@ -647,7 +672,7 @@ def test_the_allowed_types_derive_from_cores_provider_registry() -> None:
 
 
 def test_every_row_in_the_live_registry_satisfies_the_schema(fixture_repos: Path) -> None:
-    document = json.loads((STAGED / "registry.json").read_text(encoding="utf-8"))
+    document = json.loads((STAGED / "app-registry.json").read_text(encoding="utf-8"))
     assert isinstance(document.get("apps"), list)
     # The live file is empty until ET-6 lists the exemplars, so the fixture row rides
     # along: without it this rail would pass over zero rows and prove nothing.
@@ -662,8 +687,8 @@ def test_the_staged_content_is_complete() -> None:
         "README.md",
         "CONTRIBUTING.md",
         "DELISTING.md",
-        "registry.json",
-        "registry.schema.json",
+        "app-registry.json",
+        "app-registry.schema.json",
         "requirements.txt",
         "validate_registry.py",
         "fixtures/README.md",

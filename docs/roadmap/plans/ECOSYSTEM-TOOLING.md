@@ -29,10 +29,10 @@ The original design record is kept below — execution logs, measured findings a
 
 - **Scaffold:** `personalclaw app new <name> --type <capability>` — interactive when flags absent; emits `app.json` (valid, incl. plan-32 fields), provider stub for the chosen type (each type's stub = minimal compilable implementation of its ABC with one TODO-free example method), `test_provider.py` (passing, stub-based like the first-party pattern), `README.md` (front-matter template), `LICENSE` (MIT prefilled). Types map to real sdk contracts — the generator's type table is **derived from the provider registry**, not hardcoded (self-description tenet). Also `--from-template` fetching the template repo for fork-and-go users.
 - **Template repo (`personalclaw/app-template`):** the scaffold's `--type tool` output committed + apps-repo CI preconfigured + a README walking the author from clone to installed-in-Store in minutes.
-- **Registry (`personalclaw/registry`):** `registry.json` — `[{name, repo, types, permissions_declared, license, maintainer, added, last_validated}]`; PR-based listing; CI validation on PRs: manifest fetch+parse, repo exists, license present, scanner dry-run verdict recorded into the PR (never auto-blocking listing on `warning` — the verdict is *displayed*; `dangerous` blocks listing). Store integration: the registry repo URL ships as a default git source (config seed + Settings toggle to remove it); listings render with the same consent surface as any source.
+- **Registry (`personalclaw/registry`):** `app-registry.json` — `[{name, repo, types, permissions_declared, license, maintainer, added, last_validated}]`; PR-based listing; CI validation on PRs: manifest fetch+parse, repo exists, license present, scanner dry-run verdict recorded into the PR (never auto-blocking listing on `warning` — the verdict is *displayed*; `dangerous` blocks listing). Store integration: the registry repo URL ships as a default git source (config seed + Settings toggle to remove it); listings render with the same consent surface as any source.
 - **Exemplars (org repos, scaffold-generated):** `watched-source-github` (a watched-source provider — coordinates with WATCHED-SOURCES contract timing), `action-home-assistant` (action provider calling HA webhooks), `inbox-github-notifications` (inbox source), `channel-null` (the guide's teaching channel, conformance-kit-passing). Each: small, real, forkable, listed in the registry.
 - **Bounty board:** labeled issues (`bounty`) per wanted app (channels from plan 40 T7.3, providers, sources) with the scaffold + guide + conformance links; showcase channel in the community surface.
-- **Registry surface (S4):** static generation on personalclaw.dev from `registry.json` — cards show name, types, **declared permissions and last scan verdict pre-install** (publishing the consent surface).
+- **Registry surface (S4):** static generation on personalclaw.dev from `app-registry.json` — cards show name, types, **declared permissions and last scan verdict pre-install** (publishing the consent surface).
 
 ## Contracts & Interfaces (conventions per [AGENTS.md](../../../AGENTS.md))
 
@@ -52,7 +52,7 @@ The original design record is kept below — execution logs, measured findings a
 ```
 PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liveness, license present, scanner dry-run verdict recorded; `dangerous` blocks listing, `warning` lists-with-display. The registry repo URL ships as a **default git source** (existing `/api/apps/sources` mechanism, §3.8 — no new install path; scanner gate unchanged at install).
 
-**AS BUILT (`ET-3`, 2026-08-18) — `scratch/registry/`, three deltas from the sketch above.** (1) The row schema is **closed** (`additionalProperties: false`) and `last_validated`/`last_scan_verdict` are **CI-owned**: a listing PR omits them and anything it does supply is overwritten from the run that actually happened. (2) `registry.schema.json` is **generated** from the Python constants (`validate_registry.py --emit-schema`) rather than hand-maintained, so its `types` enum tracks core's `PROVIDER_TYPES` on regeneration; `test_registry_validation.py` reds on drift. (3) Two checks were added beyond the four listed: the row's `types`/`permissions_declared` must equal what the fetched manifest declares (those two fields ARE the pre-install consent surface S4 publishes, so a row that under-declares lies on the user's behalf), and a symlink resolving outside the clone blocks before anything reads the tree (the validator quotes matched evidence into a public PR comment).
+**AS BUILT (`ET-3`, 2026-08-18) — `scratch/registry/`, three deltas from the sketch above.** (1) The row schema is **closed** (`additionalProperties: false`) and `last_validated`/`last_scan_verdict` are **CI-owned**: a listing PR omits them and anything it does supply is overwritten from the run that actually happened. (2) `app-registry.schema.json` is **generated** from the Python constants (`validate_registry.py --emit-schema`) rather than hand-maintained, so its `types` enum tracks core's `PROVIDER_TYPES` on regeneration; `test_registry_validation.py` reds on drift. (3) Two checks were added beyond the four listed: the row's `types`/`permissions_declared` must equal what the fetched manifest declares (those two fields ARE the pre-install consent surface S4 publishes, so a row that under-declares lies on the user's behalf), and a symlink resolving outside the clone blocks before anything reads the tree (the validator quotes matched evidence into a public PR comment).
 
 ### Integration points
 - **Calls:** provider registry (type table), `apps/manifest.py` (validation), `SkillScanner` dry-run (verdict), the sources-seeding path.
@@ -75,7 +75,7 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
-| T2.1 | `registry.json` schema + validation script (manifest fetch/parse, repo liveness, license, scanner dry-run verdict capture) + PR workflow running it | `personalclaw/registry` repo content (schema, script, CI, CONTRIBUTING-for-listings, delisting policy per Design) | a valid sample PR passes; a dangerous-verdict fixture blocks with the reason |
+| T2.1 | `app-registry.json` schema + validation script (manifest fetch/parse, repo liveness, license, scanner dry-run verdict capture) + PR workflow running it | `personalclaw/registry` repo content (schema, script, CI, CONTRIBUTING-for-listings, delisting policy per Design) | a valid sample PR passes; a dangerous-verdict fixture blocks with the reason |
 | T2.2 | Default-source seeding: registry URL ships as a default git source (seed into `app-sources.json` on first run behind a config flag; Settings shows it as removable-default) | sources seeding site (locate first-run seeding in `apps/` bootstrapping), Settings sources UI | fresh home lists registry apps in Store; removing the source persists |
 | T2.3 | Store card provenance line: for registry-sourced apps, show maintainer + last_validated from registry metadata (data already in the catalog payload path — extend the git-source catalog listing) | `apps/source.py`/catalog path, Store card component | registry cards show provenance; local/first-party cards unchanged |
 | V2 | Validation: list→install→use a registry app end to end; verify the scan gate still runs at install (deliberate warning-fixture app shows consent) | — | holds |
@@ -92,7 +92,7 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
 
 | ID | Task | Files | Done when |
 |---|---|---|---|
-| T4.1 | Static registry pages on personalclaw.dev generated from `registry.json` (cards: name/types/permissions/verdict/maintainer; per-app page with README fetch) | site repo (plan 36's sync pipeline extension) | site lists registry; permissions + verdict visible pre-install; rebuild picks up registry changes |
+| T4.1 | Static registry pages on personalclaw.dev generated from `app-registry.json` (cards: name/types/permissions/verdict/maintainer; per-app page with README fetch) | site repo (plan 36's sync pipeline extension) | site lists registry; permissions + verdict visible pre-install; rebuild picks up registry changes |
 | V4 | Validation: a registry PR merge appears on the site after rebuild; card data matches Store consent surface | — | holds |
 
 ## Owner tasks (real world)
@@ -502,3 +502,92 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
   the refresh swept in no unrelated pixel churn (two differ, zero others).
   **CLEARS WHEN:** core cuts a release containing `scratch/registry/registry.json` **and** a
   community registry PR merges; re-point the pin and V4 becomes measurable.
+  *(Path superseded 2026-08-27 by `ET-4a`: the file is now `scratch/registry/app-registry.json`. The
+  `v0.1.3` measurements above are left verbatim — at that tag the name really was `registry.json`, so
+  rewriting the recorded `git cat-file` command would falsify it.)*
+
+## Execution log — `ET-4a` (registry index filename) — 2026-08-27
+
+- **2026-08-27 — DONE (`ET-4a`, carved out of `ET-4`): `scratch/registry/registry.json` →
+  `scratch/registry/app-registry.json`, so the staged registry publishes under the ONE filename core
+  reads.** `catalog._REGISTRY_FILENAME` is `app-registry.json` (`apps/catalog.py:197`) and is the sole
+  index name enumerated for every git and local source. `ET-3` had staged the file as `registry.json`,
+  which the 2026-08-25 `ET-4` entry above measured as the whole of the remaining distance to that
+  atom's 'a fresh dev home lists registry apps in the Store' clause: one schema-valid row lists **1**
+  app under core's name and **0** under `ET-3`'s. This closes it by renaming the published file — the
+  direction the 2026-08-25 entry chose over widening core, which would have changed listing behaviour
+  for every source.
+  **ORDERING IS THE POINT, not a nicety.** `scratch/registry/` is copied verbatim to the root of the
+  public `github.com/PersonalClaw/registry` repo (`scratch/registry/README.md` "Owner steps to
+  publish"). Renamed now it is a private cleanup; renamed after publication it is a breaking change on
+  a public repo that contributors may already have cloned, forked, or scripted against — and
+  `registry.schema.json`'s `$id` is already a `raw.githubusercontent.com/personalclaw/registry` URL.
+  The repo did not exist when this landed (`git ls-remote` → "Repository not found"), so the window was
+  still open.
+  **`git mv`, so history follows the file** (rename detected at 100% similarity). Reference sweep:
+  eight files inside `scratch/` (both validation workflows, `CONTRIBUTING.md`, `DELISTING.md`,
+  `README.md`, `fixtures/README.md`, `validate_registry.py`, plus `scratch/README.md`) and two core
+  tests (`tests/test_registry_validation.py`, `tests/test_app_catalog.py`). The CI temp artifact
+  `base-registry.json` was renamed to `base-app-registry.json` in the same workflow so a contributor
+  reading it does not read two different files; `validate_registry.py`'s argparse error regained its
+  article (`an app-registry.json path`). **Zero source changes** — `apps/catalog.py` already read the
+  new name, which is why the whole atom is a rename plus references.
+  **THE SCHEMA WAS RENAMED IN THE SAME COMMIT — `registry.schema.json` →
+  `app-registry.schema.json` (owner ruling, 2026-08-27).** It was first left out as scope discipline
+  (nothing functional depends on its name and the atom's scope line names the data file), and the
+  ruling reversed that on the ground that **half a one-way door is worse than either end**: the file
+  table in `scratch/registry/README.md` would have read `app-registry.json` beside
+  `registry.schema.json`, i.e. as two unrelated files, and every future contributor reads that table.
+  After publication it is a breaking change **plus a dead public URL**, because the `$id` is
+  `raw.githubusercontent.com/personalclaw/registry/main/…`. `ET-4a` exists to spend the cheap moment,
+  so including it serves the scope line rather than violating it. 30 references across 12 files;
+  **the `$id` was updated in BOTH places in lockstep** — the committed mirror and `build_schema()`'s
+  literal in `validate_registry.py` — because `test_the_published_schema_matches_the_python_authority`
+  compares them byte-for-byte, so changing only one reds. The four `fixtures/registries/*.json`
+  `$schema` pointers and `app-registry.json`'s own moved too; a dangling relative `$schema` is exactly
+  the silent breakage this atom is about.
+  **DELIBERATELY LEFT.** (1) The `### C2 — registry.json schema` heading above: `dag.json`'s `ET-3`
+  scope string cites it verbatim and `dag.json` is fenced, so renaming the heading would strand a
+  citation the fenced file cannot follow. **The schema rename created no second stranded citation** —
+  `dag.json` mentions `registry.schema.json` only inside `ET-4`'s `blocked_reason` prose, which the
+  owner is rewriting anyway. (2) Every dated measurement in the logs above, for the reason given in the
+  note directly above this section. (3) The `registry.json` at the durability **sync root**
+  (`durability/registry.py` `REGISTRY_KEY`, `sync_transports/base.py`, `DURABILITY-AND-SYNC.md`) and
+  `evals/ablation_registry.json` are unrelated files that merely share a substring — zero of those 20
+  hits were touched.
+  **`ET-4` stays `⬜`.** One of three measured blockers cleared; the other two are outside core — the
+  public repo does not exist (owner task 1) and the index is `{"apps": []}` until `ET-6`.
+  **RAILS.** `tests/test_registry_validation.py::test_the_staged_content_is_complete` pins the
+  published filename in a hardcoded manifest, and `::test_every_row_in_the_live_registry_satisfies_the_schema`
+  reads the file by name — both red on `FileNotFoundError`/`AssertionError` if the rename is reverted
+  halfway. That second test's anti-vacuity leg is pre-existing and load-bearing: the live index is
+  empty, so it appends one fixture row (`assert len(rows) >= 1`) rather than passing over zero rows.
+  `tests/test_app_catalog.py::test_the_seeded_registry_lists_only_under_cores_index_filename` keeps
+  both directions — an index under core's name lists `probe-app`, an index under the old
+  `registry.json` name lists nothing — so it now also pins the rename rather than describing a gap.
+
+- **2026-08-27 — DISCOVERY (`ET-4a`): the published CI workflows were pinned by NOTHING, and the
+  failure mode they carry is invisible to the published repo's own CI.** Found by falsification, not by
+  reading. Reverting **all four** index references in
+  `scratch/registry/.github/workflows/validate-listings.yml` to the pre-`ET-4a` `registry.json` —
+  mutation confirmed by `git grep` — left the core suite **green: 98 passed, 0 failed**. The only
+  pre-existing test that reads the workflows,
+  `test_the_ci_workflow_never_passes_the_file_repo_flag`, asserts the *absence* of
+  `--allow-file-repos` and nothing else. So had the workflow sweep been missed, core would have stayed
+  green through review and merge, and the break would have surfaced on the first contributor listing PR
+  **in the public repo** — the most expensive place available.
+  **What makes it worse than an ordinary missing rail:** the name appears in a `paths:` filter. A stale
+  `paths:` filter does not fail the workflow, it stops the workflow from **firing at all**, which
+  presents as a green PR. A registry whose listing validation silently never runs is strictly worse
+  than one that reds, because the whole point of the tier is that no human reviews listings.
+  **RAIL ADDED, in core, deliberately — `test_the_ci_workflows_name_the_index_core_actually_reads`.**
+  Judgment, since this could have been handed to whoever owns the public repo's CI: it **cannot** live
+  there. The failure mode is CI *not firing*, and no CI can self-detect its own non-execution — a
+  green from a workflow that never ran is indistinguishable from a green from a workflow that passed.
+  Core is also the right home on ownership grounds: `scratch/registry/` is core-tracked content, core
+  already owns two rails over it, and the seam already existed (the pre-existing workflow test), so
+  this is an assertion added to a file that was already being read, not new machinery. The rail
+  imports `catalog._REGISTRY_FILENAME` rather than a literal, so it reds if core's index name ever
+  changes without the published workflows following, and it carries a vacuity assertion
+  (`naming >= 2`) because a rule about how the workflows spell the index is empty if none of them
+  spell it — the third workflow, `comment-listing-verdict.yml`, legitimately never names the index.
