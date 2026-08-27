@@ -1075,3 +1075,111 @@ Owner rulings, mapped onto the existing sessions honestly:
   here: `find_dead_links` runs on text with inline code spans blanked, so a **backticked** path is
   invisible to that gate while a markdown link is enforced — the kit uses markdown links for exactly
   this reason.
+- [2026-08-27][OU-9] **DONE — the core half was ALREADY ON `main`; this session built only the
+  missing apps-repo renderer.** Premise check first, because the landed-atom census had this branch
+  down as fully drained with "78 plan-log/dag lines never landed" — **that census line is wrong in
+  both halves.** `git log origin/main -S'request_approval' -- src/` names `bc530ccd` "feat(channels):
+  OU-9 structured approval brief as additive request_approval meta", `git merge-base --is-ancestor`
+  confirms it on `main`, and its own `--stat` includes `docs/roadmap/plans/ONBOARDING-UX.md | 78 +`
+  — i.e. the plan log DID land (the 2026-08-25 entries above). What never landed was one character:
+  the `OU-9` row in `docs/roadmap/atomic/OU.md`, still `⬜` while the code shipped two days earlier.
+  Nothing in `src/` was re-implemented. Read the 2026-08-25 entries above for the core design; they
+  are accurate as-built and this entry does not restate them.
+- [2026-08-27][OU-9] **Per-clause adjudication of the `done_when`.** (1) *"the same brief fields
+  (tool + blast-radius line) flow through `ChannelDelivery.request_approval` payloads as additive
+  meta"* — **already met.** `gateway.py:591` calls `attach_approval_brief(event)` immediately before
+  the channel call; `channel_delivery.py:158+` documents the `tool_meta["approval_brief"]` shape and
+  its two renderer rules on the seam's own docstring. (2) *"apps-repo slack renderer minimally
+  updated to show what it can today"* — **was UNMET, built here.** `git grep -c tool_meta --
+  slack-channel/` returned **zero matches** on apps `origin/main`: the payload carried the brief and
+  nobody read it, which is the textbook shipped-but-inert control. (3) *"dashboard remains the rich
+  surface"* — **met, and preserved.** `established_facets` (the per-facet form carrying each facet's
+  `detail` sentence) still has no non-test caller; `ApprovalCard.tsx` remains the only surface that
+  renders facets individually. The channel gets ONE line and never a `detail`.
+- [2026-08-27][OU-9] **The renderer (apps repo, `slack-channel`).** New `_approval_brief_line(event)`
+  in `slack_runtime/handler.py` reads `event.tool_meta["approval_brief"]` and returns one plain
+  string — `"Can: writes files, runs a command · Risk: destructive"` — which
+  `_build_approval_blocks` posts as a `context` block **above** the actions block (the reason to
+  press a button must be met before the buttons), and which `delivery.py`'s `request_approval`
+  appends to the `post_blocks` notification fallback. Same string on both surfaces, so the lock-screen
+  push and the prompt cannot disagree about the blast radius — and the push is often the only thing
+  read. Both `_build_approval_blocks` call sites (`handler.py` manual-approval and `delivery.py`
+  channel-approval) inherit it from the one function.
+- [2026-08-27][OU-9] **Why the app reads a literal key instead of importing one.** The SDK does not
+  export `approval_brief` (`git grep approval_brief -- src/personalclaw/sdk/` → no match), and apps
+  may import core only via `personalclaw.sdk.*`. Adding an export would couple this renderer to an
+  unreleased core: apps CI installs `$CORE_SPEC`, so a bundle importing a symbol newer than the
+  installed core reds on `ImportError` at collection. The literal is what the seam's docstring
+  prescribes and it degrades correctly by construction — an older core simply leaves the key absent
+  and the channel prompts exactly as before. **Nothing was added to core for this**; the core commit
+  in this session is the two tracking lines only.
+- [2026-08-27][OU-9] **The renderer names no facet LABEL, so there is no third vocabulary to drift.**
+  It passes core's composed `blastRadiusLine` through verbatim; the only core names it knows are the
+  three brief field names and `readOnly`. Frame choice is deliberately expressed as *"everything
+  except the one read claim is a consequence"* rather than as a list of the three consequence facets:
+  a fifth facet core adds later then reads as a consequence automatically instead of silently landing
+  in the reassurance branch. Pinned by `test_a_facet_core_adds_later_reads_as_a_consequence`, which
+  feeds an invented `sendsOnYourBehalf` facet through and asserts the `Can:` frame.
+- [2026-08-27][OU-9] **Copy is product copy, asserted as whole strings.** A server-composed sentence
+  on a decision surface is UI, so the tests assert `"Can: uses the network · Risk: caution"` entire,
+  not substrings. Two honesty rules carried over from the seam and each given its own leg: an ABSENT
+  `blastRadius` renders **no line at all** (a brief with only a `risk` still renders nothing — "nothing
+  was established" reads to a person as "nothing happens"), and a pure read claim is stated flat
+  (`"Reads only · Risk: safe"`) rather than framed as something the call *"can"* do. A missing `risk`
+  is omitted, never defaulted — a guessed risk on an approval prompt is an invention.
+- [2026-08-27][OU-9] **The refusal path is asserted alongside the approve path, each with a vacuity
+  twin.** `test_both_decisions_stay_offered_in_dm_and_in_a_group_channel` asserts the exact
+  `action_id` order for both variants (DM keeps Approve/Trust/Reject; a group channel keeps
+  Approve/Reject with Trust still withheld) with the line present in both — the brief informs the
+  prompt without reshaping it. On the delivery path both outcomes are driven through the REAL
+  `request_approval` (resolving `pending.future` via the `on_prompted` hook), asserting
+  `verdict is True` / `verdict is False` and the same blast-radius clause on the notification either
+  way: refusing is as much a decision as approving and needs the same facts. Vacuity twins:
+  `test_no_brief_renders_no_blast_radius_line` pins the exact four-block shape of a briefless prompt,
+  and `test_no_brief_leaves_the_notification_untouched` (parametrized over both outcomes) pins the
+  fallback byte-for-byte at `"🔐 [cron] Approve: bash?"`. Without those, the suite would pass on a
+  renderer that hard-codes a line — falsification 2 below proves they bite.
+- [2026-08-27][OU-9] **The owner's 2026-08-26 DRAFT-default ruling does not bind here, checked
+  deliberately.** That ruling governs *replies sent outward on the user's behalf*. This path sends
+  the OWNER a prompt in their own DM asking them to authorize something; it originates no outbound
+  message to a third party and grants no send capability. No second posture was introduced. The
+  ruling's spirit is honored in the copy instead: every facet is a positive claim about what the call
+  can touch, and the renderer never advocates approval.
+- [2026-08-27][OU-9] **`config/loader.py` untouched — 5900 lines before and after** (`wc -l`), so the
+  6000-line ceiling's `>= 100` headroom assertion is unmoved. `docs/roadmap/atomic/dag.json` untouched
+  (owner-fenced), which is why the row is `🟡` and not `✅`, and why the Design section's
+  `**Status:**` stays `todo` — the same convention `DCU-3`/`DFE-6` already use.
+- [2026-08-27][OU-9] **Gate.** Core (`PERSONALCLAW_HOME` unset): `make lint` clean;
+  `pytest tests/test_approval_brief.py tests/test_structural_baseline.py tests/test_channel_delivery*.py
+  tests/test_channel_conformance_kit.py tests/test_gateway.py tests/test_approval_threading.py` —
+  paths `ls`-checked in the same command so a typo could not zero the run; `scripts/gate_report.py`
+  6/6. Apps repo: full `pytest slack-channel/` **522 passed, 1 xfailed** (508 before — 13 new test
+  functions, 14 items with one parametrized ×2), and `python -m personalclaw.apps.quality .` clean
+  across 51 apps. No `web/` change, so no npm legs.
+- [2026-08-27][OU-9] **Falsified four times, each mutation grepped back before running and each
+  restored from a file copy at the literal path (never `git checkout --`).** (1) *The landed core
+  claim itself:* replaced the shipped `attach_approval_brief(event)` at `gateway.py:591` with `pass`
+  → **6 red**, all `KeyError: 'approval_brief'` at the seam, reproducing the 2026-08-25 entry's
+  count exactly — the core half is genuinely WIRED, not merely present. (2) *Hard-code the line*
+  (return a constant before reading `tool_meta`) → **15 red**, including the pre-existing
+  `test_approval_blocks_omit_code_when_no_tool_input`, which proves the line really enters the block
+  list and that the existing suite is itself a guard on the vacuity twins. (3) *Break the absence
+  rule* (`blastRadiusLine` empty → render "nothing established") → **2 red**, the absent-radius and
+  malformed-brief legs. (4) *Drop the fallback append* (short-circuited its guard) → **2 red**, both
+  notification legs. Full apps suite re-run after restore: 522 passed, 1 xfailed; probe sweep
+  (`FALSIFY|FALSIFICATION|if False and|# PROBE`) clean in both repos; `git status --porcelain` empty
+  apart from `?? .venv`.
+- [2026-08-27][OU-9] **For the driver — this atom's completion spans TWO repos.** The core commit is
+  tracking-only (this log + the `OU.md` row). The renderer is a separate, unpushed commit on
+  `feature-ou9-slack-brief-renderer` in `PersonalClawApps`, subject
+  `feat(slack-channel): OU-9 render the approval brief's blast-radius line`, touching
+  `slack_runtime/handler.py`, `slack_runtime/delivery.py`, `tests/test_slack_handler.py`,
+  `tests/test_delivery.py`. **The row is `🟡` and not `✅` for two independent reasons** — `dag.json`
+  is owner-fenced, and clause 2's evidence is that unmerged sibling commit. Land both or the atom is
+  still inert. There is no core→apps ordering constraint: the payload has carried the brief since
+  2026-08-25, so the renderer can merge on its own schedule.
+- [2026-08-27][OU-9] **CHANGELOG entry deliberately still absent, and the reason has now changed.**
+  The 2026-08-25 entry deferred it to "the renderer session, which is the first point a user sees a
+  blast-radius line on their phone" — that session is this one, but the renderer lives in the apps
+  repo, which keeps its own release notes. Core's CHANGELOG has nothing to announce: no core behavior
+  changed here. The user-visible line belongs in the `slack-channel` bundle's notes when it ships.
