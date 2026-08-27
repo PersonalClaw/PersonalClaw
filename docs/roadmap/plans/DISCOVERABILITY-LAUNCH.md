@@ -556,3 +556,55 @@ does read this file's citations, and really would red on a broken one.
   Starlight) with no blog collection. A file dropped at that path today would not build. Publishing
   needs a `personalclaw.dev` change: define the blog collection, add the route, add a listing, then
   place the post. Ordinary implementable work in the website repo. `DL-6` stays `todo` on that.
+
+- **[2026-08-27] T3.4 / `DL-6` — both remaining clauses CLOSED.** (1) Owner sign-off recorded
+  2026-08-26. (2) The CROSS-REPO clause is closed in the **website** repo, where it always belonged:
+  `personalclaw.dev` had no `blog` collection, so a file at the `done_when` path would not have built.
+  `personalclaw.dev@36fe0f0` (branch `feature-dl6-launch-post`, base `3cc45c8`) defines the collection,
+  adds `/blog` + `/blog/launch`, and publishes the post at `src/content/blog/launch.md`. Contracted as a
+  **third differently-held tier** in `tests/support/site-contract.mjs` — full metadata, runtime, axe
+  WCAG A/AA and Lighthouse coverage, and deliberately **no pixel baseline** (a post's height tracks
+  prose length and a listing's tracks post count, so a screenshot there is refreshed by *publishing
+  writing* rather than by a design change; `validate:blog` makes the assertion the screenshot would
+  have made). Full local gate green under Node 22.12.0: `test:prepush` exit 0, **112 Playwright passed
+  / 11 skipped**, Lighthouse **100/100/100** on both new routes, and **30 committed visual baselines
+  unchanged, 0 refreshed** — no shared-shell edit, so no Linux dispatch was needed.
+  The atom stays `todo` on one mechanical point only: the implementation is unmerged in the website
+  repo. Flip it when that lands.
+
+- **[2026-08-27] DISCOVERY (product truth, `DL-6`) — TEN claim families in this plan's draft hold on
+  core `main` and NOT at the pinned release `v0.1.3` (`bc185c02`).** All were cut from the published
+  post, and the cut list is published on the page itself, which is the honest projection. Verified with
+  `git cat-file` / `git grep` **at the tag**, not against `main`:
+  the build-time egress host census (`docs/architecture/network-egress-hosts.txt` + its sweep — absent);
+  the exclusive `allow_only` egress tier (absent — `egress_policy_for_tier` returns `STRICT` for both
+  `all` and `listed`, so at this release there is **no** exclusive allow-list at all);
+  `on_violation: "warn"` as an operator escape hatch (**declared on `EgressPolicy` with ZERO consumers
+  at the tag — one grep hit, the declaration**, so publishing it would have been an inert control sold
+  as a security feature, the exact overclaim the post is about);
+  the remembered last-known-deny fail-open window (absent — what exists is `egress_policy_for`'s
+  `except: return base`); the `security-corpus` merge job, `tests/security/` and
+  `docs/security/scanner-testing.md` (absent — `full.yml`'s jobs are `matrix`/`audit`/`coverage`, so
+  the receipt was rebuilt around `matrix` running the full suite with no `continue-on-error`, versus the
+  `audit` job's own comment that it is "visibility, not a merge gate");
+  `cli_run.py`'s headless one-shot (absent); `apps/messaging.py`'s app-to-app 403 (absent);
+  "nineteen provider types" (**fourteen** at the tag); "54 of 70 plan files carry a falsification note"
+  (**7 of 70** at the tag — published with the released number and the command to reproduce it);
+  and "three non-enforcements" on `limitations.md` (**two** at the tag).
+  Same class as `ET-8`'s premise correction. **No pin move is required** — nothing unreleased was
+  published. If the census, the exclusive tier and the `security-corpus` gate should appear on the
+  site, that is a pin move to the next release, not an edit to the post.
+
+- **[2026-08-27] DISCOVERY (website gate gap, `DL-6`).** Lighthouse caught `heading-order` (a11y 98)
+  on the post that the **axe WCAG A/AA scan cannot see** — `heading-order` is best-practice, not AA.
+  The cause was a real authoring defect (an `### Receipts` block before the first `##`, so the outline
+  skipped h1 → h3); fixed by restoring the draft's `## The pitch, in one paragraph` heading, then 100.
+  No rule was weakened.
+
+- **[2026-08-27] NOTE (deliberate, needs a follow-up decision, `DL-6`).** `/blog` has **no in-site
+  inbound link** yet — it is reachable by URL and present in the sitemap. A header or footer entry edits
+  the shared shell and invalidates the **Linux** halves of the marketing baselines, which only
+  `.github/workflows/visual-baselines.yml` can regenerate and which needs a pushed branch. A launch
+  post's distribution channel is an external link, so this ships usefully as-is. Recommended follow-up:
+  after the push, dispatch that workflow and land the nav entry with the refreshed shell baselines in
+  one commit.

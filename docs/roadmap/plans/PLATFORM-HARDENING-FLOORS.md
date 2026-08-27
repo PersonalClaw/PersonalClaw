@@ -1,6 +1,6 @@
 # PLATFORM-HARDENING-FLOORS
 
-**Status:** DECOMPOSED — the executable work now lives in [`../atomic/PHF.md`](../atomic/PHF.md) as 13 atomic plan(s).
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/PHF.md`](../atomic/PHF.md) as 15 atomic plan(s).
 
 This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
 
@@ -1823,3 +1823,35 @@ the browser gate stays out of the unit run. `docs/roadmap/atomic/dag.json` delib
   `PHF-5`'s schema baseline at ZERO drift as the proof that no observable config key moved, and
   `LV-4`'s `learning.identity_report_*` field landed in the same change as the proof that headroom was
   really restored. No deps; startable immediately.
+
+- [2026-08-27][PHF-15] **NEW ATOM — a read that mutates the user's config, and the rail that could not
+  see it.** Found while root-causing a CI-only `real-home rail FAILED` on `PP-16`'s branch (#2111).
+  Every one of the ~27k tests passed; the run failed on the session rail with `modified config.json
+  (23667 bytes)`. Two defects, and **the second is what hid the first**.
+  **(1) `AppConfig.load()` is not a pure read.** When `needs_migration` is true it does
+  `shutil.copy2(path, path.with_suffix(".json.bak"))` and then `cfg.save()`, best-effort inside
+  `load()`'s `try`. So *any* caller that merely reads config **mutates the user's `config.json`** and
+  drops a `.bak` beside it — including a module imported for an entirely unrelated reason. The
+  delivery mechanism in this instance was fixed in #2111 (`mcp_core._API = _resolve_api_base()` at
+  module level became a call-time `_api_base()`, the **fourth** instance of the import-time-constant
+  shape `tests/conftest.py::_isolate_real_home_writers` documents as beyond a fixture's reach — and
+  fixing it also closed a product bug, since the API base was pinned to first-import config so a port
+  change was invisible to every MCP tool call until restart). But **the impurity itself remains**, and
+  the next module-level reader re-arms it.
+  **(2) The real-home rail under-reports against a metadata-preserving writer.** It detects change by
+  mtime-since-session-start, and `copy2` preserves the SOURCE mtime — so the `.bak` looks older than
+  the session and is invisible. That is why the rail said "1 entries changed" when two things changed.
+  General blind spot, not a quirk of this writer.
+  **Both are invisible on a developer machine**, which is why this needs a rail and not just a fix:
+  the write only fires when `config.json` exists AND is pre-migration, and a developer's config is
+  already migrated, so `needs_migration` is `False` and the rail reads green however broken the code
+  is. Reproduced deliberately: a 10,024-byte pre-migration seed became **24k plus a `.bak` carrying
+  the seed's mtime** — the same transformation CI reported.
+  **Scoped in `atomic/PHF.md`** as: an explicit migration entry point called from startup only, with
+  `load()` returning the migrated object in memory and persisting nothing; a runtime import sweep over
+  every `load()` caller with a stated count; a fresh-interpreter subprocess rail that `load()` writes
+  nothing, paired with a boot rail that the migration **does** still run (that pairing is the vacuity
+  leg — "no write" is otherwise satisfiable by deleting the migration); and teaching the real-home
+  rail to see a planted `copy2`, with `ALLOWED_RESIDUE` staying `frozenset()`.
+  **Deliberately NOT in scope:** deleting the migration (load-bearing for real upgrades) and
+  redesigning the rail's single-walk performance choice. No deps; startable immediately.
