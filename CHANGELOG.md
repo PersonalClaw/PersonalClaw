@@ -626,6 +626,27 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   **"Dismiss all" now means all.** It skipped anything you had opened, because opening a row marks it
   as read — so browsing your queue quietly put those rows beyond the reach of the only bulk control.
 
+- **Scheduled automations now actually run.** Every trigger on a clock was deciding it was due,
+  writing that down, and advancing its next run time — and then doing nothing. No action ever ran. The
+  dashboard showed the trigger enabled with a next-run time ticking forward the whole time, which is
+  the worst possible version of this: a promise kept on screen and nowhere else. Measured on a real
+  install, every run in the history had been started by hand or replayed; not one had come from a
+  schedule.
+  **Why nothing was visible.** A fire was being handed to a mailbox belonging to a chat session that
+  nothing ever opens, so it was delivered to nobody and quietly discarded. A fire does not need a chat
+  session — it needs somewhere to go — so one with no mailbox now runs directly.
+  **A trigger no longer jams itself for an hour.** Each fire takes out a marker saying "this one is
+  busy", released when the run finishes. A fire that never ran never released it, so the trigger sat
+  showing as running for a full hour, skipped every slot in between, and refused the Run button with
+  "already running". Anything that ends without running now hands the marker back — including the
+  deliberate case where a trigger is skipped because you happen to be mid-conversation with it.
+  **Everything downstream was alive and unreachable.** Run history, the automatic pausing of a
+  repeatedly failing automation, and the notification when one fails were all already built and all
+  waiting on a fire that never arrived. They start working with no further change.
+  **And a trigger attached to a conversation was being delivered to one place and collected from
+  another.** Two pieces of code worked out where a fire should go and only one of them accounted for
+  the conversation it was bound to.
+
 - **Restarting PersonalClaw quietly moved a chat onto a different agent.** If you had pointed a chat
   at an external coding CLI, or put it in Ask or Plan mode, a restart threw both away and the next
   message you sent ran on the built-in agent instead — with a different set of tools and a different

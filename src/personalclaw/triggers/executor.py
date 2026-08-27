@@ -129,6 +129,26 @@ def _release_claim(trigger_id: str, *, base_dir: Any = None) -> bool:
     return release_claim(trigger_id, base_dir=base_dir)
 
 
+def release_claim_for(trigger_id: str, *, base_dir: Any = None) -> bool:
+    """Release the claim for a fire that will NOT run. Never raises.
+
+    The public peer of `run_one`'s `finally` release, for the loop's non-executing dispositions: a
+    fire dropped because its session is mid-turn never reaches `run_one`, so nothing gave the claim
+    back and the trigger reported `is_running` for the claim's full 3600s — recording
+    `skipped_overlap` on every later tick and refusing a manual Run with `409 already running`.
+
+    Deliberately in this module rather than the loop importing `claims` directly: `_release_claim`'s
+    docstring makes the point that a claim and its release belong in one place, and the `base_dir`
+    discipline (a release is a NO-OP without an explicit root, so a run over a temp store can never
+    reach the user's home) has to hold for BOTH releases or it holds for neither.
+    """
+    try:
+        return _release_claim(trigger_id, base_dir=base_dir)
+    except Exception:  # noqa: BLE001 - a failed release must not crash the tick
+        logger.debug("claim release failed for %s", trigger_id, exc_info=True)
+        return False
+
+
 @dataclass
 class RunOutcome:
     """What running one queued payload produced."""
