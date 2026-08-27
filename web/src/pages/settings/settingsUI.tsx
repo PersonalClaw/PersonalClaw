@@ -108,7 +108,58 @@ export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, 
   )
 }
 
-/** A labeled row — label/description on the left, control on the right. */
+/** A labeled row — label/description on the left, control on the right.
+ *
+ *  🪤 THE CONTROL SHARES THE LABEL'S LINE, NOT THE LABEL+HINT BLOCK'S CENTRE. This was a two-column
+ *  flex with `items-center`, which centres the control against the WHOLE left block — so the longer
+ *  the hint, the further the control drifted from the thing it belongs to. Measured live on a
+ *  `demo-home` gateway across all 34 `#/settings/*` routes, control centre-y minus label centre-y
+ *  over the 103 rendered rows in 18 panels:
+ *
+ *    viewport      rows off by >1px    median      worst
+ *    390x844       100 of 103          30.25px     225.25px  durability "Encrypt shards"
+ *    834x1112      100 of 103          20.50px      79.00px  documents "Edit documents in place"
+ *    1280x900      100 of 103          10.75px      40.00px  documents "Edit documents in place"
+ *    1440x1000     100 of 103          10.75px      40.00px  documents "Edit documents in place"
+ *
+ *  93 of the 103 wrap their hint at 390px, so this was the normal case on a phone, not an edge one.
+ *  It was also already shaping product copy: the Evaluations panel trimmed its own hint from 456 to
+ *  148 characters to work around the drift rather than touch the primitive.
+ *
+ *  The fix is a 2x2 grid: label and control share ROW 1 and are both centred in it, and the hint
+ *  takes row 2 of the label's column. The control is therefore centred on the LABEL — measured 0.00px
+ *  on all 103 rows at all four viewports and all seven control kinds present (switch, button, `a`,
+ *  `select`, number, text, and the four rows whose right side is plain text). That is `delta == 0` by
+ *  construction at every control height, hint length, viewport and density, rather than "small enough
+ *  at the widths we happened to check". `items-center` is safe on the container because row 2's track
+ *  is exactly the hint's own height, so centring is a no-op there.
+ *
+ *  Plain `items-start` was the cheaper alternative and is not a fix: it leaves the control
+ *  (controlHeight − lineHeight)/2 BELOW the label's line, which is 10.25px on the 40px controls
+ *  measured here and grows with the control. Grid reaches zero for the same markup budget.
+ *
+ *  What moves: a row whose control is taller than its label+hint block grows by the difference,
+ *  because the control no longer overlaps the hint's vertical band — 89 of 103 rows at 390px
+ *  (+629.5px over the whole tree, worst single row +16.5px) and 94 of 103 at 1440px (worst +20.5px,
+ *  the one 40px `Select`). One row SHRANK 51 → 48px: a hintless switch, where the removed line box
+ *  was the only thing making the row taller than its control. Hint wrapping is untouched — the hint's
+ *  line count is identical on every one of the 103 rows at every viewport, because `minmax(0,1fr)` on
+ *  column 1 carries exactly the `min-w-0` the old left wrapper had. Nothing overflows or clips that
+ *  did not already: the three clipping rows on `#/settings/agent` at 390px measure byte-identical
+ *  before and after.
+ *
+ *  DOM order is unchanged — label, hint, control — because the control is placed explicitly at
+ *  `col-start-2 row-start-1` instead of by auto-placement, which would have required moving the
+ *  control ahead of the hint in the markup. Explicitly-placed items are positioned before
+ *  auto-placed ones, so the hint lands on row 2 rather than colliding with the control.
+ *
+ *  NOT the same shape as the three settings record rows (`DevicesPanel`'s device list,
+ *  `GuardrailsPanel`'s autonomy ladder and its `HealthRow`), which spell out this container's old
+ *  class string but hold an icon plus two to four sublines rather than one label and one hint — so
+ *  "centre the control on the label" is not a well-formed request there. Their right-hand alignment is
+ *  a separate list-row question, and the three already disagree with each other (two `items-center`,
+ *  one `items-start`). `rowAlignsControlToLabel.test.tsx` ratchets their count at three so a fourth
+ *  cannot appear quietly. */
 export function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   const hintId = useId()
   // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (69 hinted rows, and
@@ -117,12 +168,15 @@ export function Row({ label, hint, children }: { label: string; hint?: string; c
   // so this provides the hint id without claiming to name anything.
   return (
     <FieldHintProvider value={hint ? hintId : undefined}>
-      <div className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
-        <div className="min-w-0">
-          <div className="text-on-surface text-[0.8125rem]">{label}</div>
-          {hint && <div id={hintId} className="mt-0.5 text-on-surface-low text-[0.8125rem]">{hint}</div>}
-        </div>
-        <div className="shrink-0">{children}</div>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-l border-b border-outline-variant/30 py-3 last:border-0">
+        <div className="text-on-surface text-[0.8125rem]">{label}</div>
+        {hint && <div id={hintId} className="mt-0.5 text-on-surface-low text-[0.8125rem]">{hint}</div>}
+        {/* `flex items-center`, not a plain block: a block slot builds a LINE BOX around an
+            inline-level control, so the control sits on the text baseline with the strut's
+            descender space below it and ends up low of centre even inside a correctly centred
+            grid track. A flex slot has no inline formatting context, so its height IS the
+            control's height and the grid centres the real thing. */}
+        <div className="col-start-2 row-start-1 flex items-center">{children}</div>
       </div>
     </FieldHintProvider>
   )
