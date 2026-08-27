@@ -2,13 +2,22 @@
 
 The unified engine (store/manager/watchdog) is kind-agnostic. Everything that
 varies by :class:`personalclaw.loop.loop.LoopKind` — how a task is classified,
-how the problem is phased, how done-ness is gated, which capabilities load, how
-the worker brief is framed, which planning-walkthrough config is used — is
-supplied by a :class:`LoopKindStrategy` registered here.
+how the problem is phased, which capabilities load, how the worker brief is
+framed, which planning-walkthrough config is used — is supplied by a
+:class:`LoopKindStrategy` registered here.
 
 A new kind = a new strategy module + one ``register()`` call. No engine edits, no
 entity columns. This is the seam that lets all kinds share loop + project features
 while keeping rich, type-specific behavior.
+
+**The SUPERVISOR is no longer part of that seam** (`PP-16` seam 3). How done-ness
+is gated, whether a budget stop is genuine, and whether the stall signal applies
+are DECLARED in
+:data:`personalclaw.workflows.supervisor_policy.KIND_CONVERGENCE` and evaluated by
+the one kind-agnostic evaluator in :mod:`personalclaw.loop.supervisor`. A kind may
+not supply a convergence mechanism in Python — the closed
+:data:`~personalclaw.workflows.supervisor_policy.DONE_SIGNALS` vocabulary is the
+whole contract. What remains here is intake, worker framing and projection keys.
 """
 
 from __future__ import annotations
@@ -27,7 +36,7 @@ class CycleContext:
     A kind whose done-ness is more than a point-in-time signal — code advances
     SDLC stages + provisions tasks each cycle, design advances design steps — uses
     ``on_new_cycle`` (below) to run that orchestration and report completion. Most
-    kinds (goal/general) don't need it; their ``is_done_signal`` suffices.
+    kinds (goal/general) don't need it; their declared done-signal suffices.
     """
 
     svc: Any  # the AutoNudgeService (worker loops)
@@ -80,16 +89,6 @@ class LoopKindStrategy(Protocol):
         """The stable key for a plan phase — what ``phase_status`` /
         ``task_list_ids`` are keyed by. Goal/general: title; code: stage-or-title;
         design: step id. Must match how the kind's planner emits phases."""
-        ...
-
-    async def is_done_signal(self, loop: Loop, findings: list[dict]) -> bool | None:
-        """The kind's done-ness read for the CURRENT state, produced by something
-        other than the worker (verify command, judge verdict, all-phases-gated).
-        ``True`` = complete, ``False`` = keep going, ``None`` = can't tell (defer).
-        The watchdog owns the lifecycle decision; this only supplies the signal.
-
-        Async: the supervisor's own checks (running a verify command, a judge
-        subagent pass) are I/O. The watchdog awaits it each cycle."""
         ...
 
     async def classify(
@@ -161,9 +160,9 @@ async def run_cycle_hook(strategy, loop: Loop, findings: list, ctx: CycleContext
     ``async on_new_cycle(loop, findings, ctx) -> bool`` — return True iff the loop
     COMPLETED this cycle. The watchdog calls this on each new finding BEFORE its
     own budget/stall checks: a hook that returns a bool owns the cycle's done-ness
-    (the watchdog skips its generic is_done_signal path); returning ``None`` (no
+    (the watchdog skips the declared done-signal path); returning ``None`` (no
     hook) means "this kind has no per-cycle orchestration — fall through to the
-    generic signal + budget". Never raises into the poll loop — errors → None."""
+    policy's declared signal + budget". Never raises into the poll loop — errors → None."""
     hook = getattr(strategy, "on_new_cycle", None)
     if hook is None:
         return None

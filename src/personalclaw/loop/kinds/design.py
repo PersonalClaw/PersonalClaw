@@ -81,11 +81,6 @@ class DesignKind(LoopKindStrategy):
         REPORT.md takes; without this a finished design loop's DESIGN.md is stranded."""
         return "DESIGN.md"
 
-    async def is_done_signal(self, loop: Loop, findings: list[dict]) -> bool | None:
-        # Design done-ness is owned by on_new_cycle (advances phase_status, completes on
-        # the last step). Defer the watchdog's generic signal to it.
-        return None
-
     async def on_new_cycle(self, loop: Loop, findings: list[dict], ctx) -> bool:
         """Advance the phase trail from the worker's self-reported step. Each finding
         carries a `step` (the cycle_nudge asks for {cycle, step, …}); match it to a plan

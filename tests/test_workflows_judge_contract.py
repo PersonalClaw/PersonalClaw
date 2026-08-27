@@ -732,8 +732,8 @@ class TestThirdVocabularyAbsorbed:
 
     def test_verdict_for_cycle_maps_every_corner(self):
         """All four corners, including the overlap. `done` DOMINATES a regression because that is
-        what the supervisor does (`goal._assess_open_ended` completes on `done` without reading
-        `regressed`); a projection stricter than the routing it labels would be a lie."""
+        what the supervisor does (`loop/supervisor._judge_assessment_signal` completes on `done`
+        without reading `regressed`); a projection stricter than the routing it labels is a lie."""
         assert verdict_for_cycle(True, False) is Verdict.PASS
         assert verdict_for_cycle(True, True) is Verdict.PASS
         assert verdict_for_cycle(False, True) is Verdict.REJECT

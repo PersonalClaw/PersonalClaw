@@ -232,12 +232,6 @@ class CodeKind(LoopKindStrategy):
         # stageless row — matching the legacy store's `_stage_of` keying exactly.
         return str(phase.get("stage", "")).strip() or str(phase.get("title", "")).strip()
 
-    async def is_done_signal(self, loop: Loop, findings: list[dict]) -> bool | None:
-        # The full code signal is "every stage's gate passed" (verify/test command
-        # exit codes + a conservative judge over exit criteria) — the multi-stage
-        # gate orchestration lands in 2c.iii. None = defer for now.
-        return None
-
     def active_stage_index(self, loop: Loop) -> int:
         """Index of the stage the UPCOMING cycle belongs to — the first not-done
         stage, staying on the last once all are done; -1 with no plan. Keyed by the

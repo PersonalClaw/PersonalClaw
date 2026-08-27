@@ -144,6 +144,71 @@ class BreakerLimits:
     max_tokens: int = 0
 
 
+# ── PP-16 seam 3: the loop supervisor's done-ness decision, DECLARED ──
+#
+# The five loop kinds used to answer "is this loop done?" in pluggable Python: a
+# ``LoopKindStrategy.is_done_signal`` per kind, plus two satellite hooks (``has_done_check``,
+# ``budget_stop_genuine``) the watchdog reached for with ``getattr``. Measured, those five
+# implementations used exactly FOUR mechanisms between them — and two of the five were a bare
+# ``return None``. So the pluggability bought nothing a declaration could not carry, while making
+# the supervisor's rule un-inspectable: you could not read "what completes a monitor goal?" off
+# anything, you had to read five modules.
+#
+# The vocabulary below is that closed set of four. It is a vocabulary, NOT a fifth verdict dialect:
+# a done-signal names WHICH MECHANISM produces the signal, where `judge_contract.JudgeVerdict`
+# carries WHAT the judge decided. The evaluator (`loop.supervisor`) is the one place that maps a
+# mechanism to a call, so a kind can no longer smuggle in a mechanism of its own.
+
+#: The kind's own multi-cycle orchestration hook owns done-ness this cycle — there is no
+#: point-in-time signal to read (`code`, `design`, and any kind with no registered strategy).
+DONE_ORCHESTRATED = "orchestrated"
+#: The loop NEVER self-completes; only a user Stop (or its budget) ends it (`monitor` goals).
+DONE_NEVER = "never"
+#: The supervisor RUNS a declared command and reads its exit code (`general`, verifiable goals).
+DONE_VERIFY_COMMAND = "verify_command"
+#: A separate judge subagent scores the latest cycle; the deterministic granularity dial decides
+#: returns-exhaustion (open-ended goals, deep research).
+DONE_JUDGE_ASSESSMENT = "judge_assessment"
+
+#: The closed set. `loop.supervisor.done_signal` raises on anything outside it, so a typo in the
+#: table below is a failure rather than a silently-deferring loop.
+DONE_SIGNALS: frozenset[str] = frozenset(
+    {DONE_ORCHESTRATED, DONE_NEVER, DONE_VERIFY_COMMAND, DONE_JUDGE_ASSESSMENT}
+)
+
+
+@dataclass(frozen=True)
+class ConvergenceSpec:
+    """How ONE loop kind (or kind variant) converges — the declaration that replaced the
+    per-kind ``is_done_signal`` plugin.
+
+    Every field is a fact the old Python read out of ``loop.kind_config`` anyway; naming the KEY
+    rather than reading it here is what keeps this a declaration instead of a second engine.
+    """
+
+    #: One of the ``DONE_*`` mechanisms above.
+    signal: str = DONE_ORCHESTRATED
+    #: The ``kind_config`` key holding the command a ``DONE_VERIFY_COMMAND`` loop runs, and the
+    #: ground-truth command a ``DONE_JUDGE_ASSESSMENT`` loop hands its judge. "" = none.
+    command_key: str = ""
+    #: The ``kind_config`` key holding the criteria list that, when it names MORE THAN ONE
+    #: criterion, makes a passing command necessary-but-not-sufficient — a second judge must
+    #: confirm every criterion is met. "" = the command IS the whole goal.
+    criteria_key: str = ""
+    #: The document deliverable a ``DONE_JUDGE_ASSESSMENT`` judge may read as ground truth when
+    #: the loop declares no explicit ``primary_deliverable``. "" = transcript-only.
+    ground_truth_deliverable: str = ""
+    #: Whether reaching the cycle budget is a CLEAN completion (a monitor's watch window) rather
+    #: than the error-flavoured "stopped before the goal was met".
+    budget_stop_is_genuine: bool = False
+    #: Whether the stall signal applies. A monitor goal's quiet cycle is a valid no-op.
+    stagnation_enabled: bool = True
+    #: Whether the point-in-time check EXISTS only when ``command_key`` is configured. True for a
+    #: kind that defers to budget by design, so a ``None`` signal must not raise
+    #: "done-ness check unavailable" on a loop that never had one.
+    done_check_optional: bool = False
+
+
 @dataclass(frozen=True)
 class SupervisorPolicy:
     """The full convergence policy a loop node declares — parsed, not yet wired.
@@ -199,6 +264,13 @@ class SupervisorPolicy:
     trust_ttl_secs: int = 86_400
     #: Knob 13 — the idle-stall cutoff for a loop cycle (``loop.loop.Loop``).
     idle_secs: int = 120
+    # ── PP-16 seam 3: the done-ness half ──
+    #
+    #: HOW this loop's done-ness is produced. Set by :func:`policy_for_kind` from the declared
+    #: table below, read by ``loop.supervisor`` — the ONE evaluator. Not part of
+    #: :data:`POLICY_FIELDS`: like the five AG-13 knobs above it, this field is DERIVED, not
+    #: parsed out of a template's ``supervisor:`` block, so no authoring surface changes.
+    convergence: ConvergenceSpec = field(default_factory=ConvergenceSpec)
 
 
 def _parse_rubric(raw: Any) -> tuple[RubricCriterion, ...]:
@@ -514,3 +586,105 @@ def tick_config(policy: SupervisorPolicy, *, steps: tuple[StepConfig, ...] = ())
         ladder=policy.escalation_ladder or DEFAULT_LADDER,
         failure_mutations=dict(policy.failure_mutations),
     )
+
+
+# ── PP-16 seam 3: the five kinds' declared convergence, as DATA ──
+#
+# `loop_aliases.KIND_TO_TEMPLATE` already resolves every kind to a bundled template — the
+# NOUN-level half of the atom's "the five kinds are bundled templates plus policies" clause. This
+# table is the POLICY half, and it is deliberately here rather than inside each bundled template's
+# `supervisor:` block: measured, `deep-research` and `code-project` ship NO `loop` node at all
+# (their graphs are a `branch`/`sequence` and a `foreach` respectively), so two of the five kinds
+# would have had nowhere to declare and the seam would have shipped three-fifths done. A template
+# JSON is also a per-poll disk read whose absence would silently remove a loop's supervisor; a
+# declared table cannot go missing.
+#
+# Keyed `kind` or `kind:goal_type`, because goal-type IS the variant axis the old Python branched
+# on. Flat and greppable on purpose: "what completes a monitor goal?" is now one line.
+
+#: The kinds whose convergence varies by ``kind_config['goal_type']``.
+_VARIANT_KINDS: frozenset[str] = frozenset({"goal", "research"})
+
+#: The goal type the old ``GoalKind.is_done_signal`` fell through to for an unknown value.
+_DEFAULT_GOAL_TYPE = "open_ended"
+
+#: One row per (kind, variant). Every value is the behaviour the deleted plugin had — see
+#: ``tests/test_pp16_supervisor_policy_dispatch.py``, which drives the real watchdog poll for each
+#: of the five kinds and asserts the mechanism this table names is the one that runs.
+KIND_CONVERGENCE: dict[str, ConvergenceSpec] = {
+    # code + design own done-ness through their per-cycle orchestration hook (advance the SDLC
+    # stage and run its gate / advance the design step), so there is no point-in-time signal.
+    "code": ConvergenceSpec(signal=DONE_ORCHESTRATED),
+    "design": ConvergenceSpec(signal=DONE_ORCHESTRATED),
+    # general: a deterministic check IF the user configured one, else deferring to budget BY
+    # DESIGN — which is why `done_check_optional` exists (a None here is normal, not degraded).
+    "general": ConvergenceSpec(
+        signal=DONE_VERIFY_COMMAND,
+        command_key="verify_command",
+        done_check_optional=True,
+    ),
+    # goal/verifiable: the command decides, EXCEPT that a command can point at a subset of a
+    # multi-sub-goal goal (observed live: goal b7abd778 completed after phase 1/3), so >1 sub-goal
+    # makes a passing command necessary-but-not-sufficient.
+    "goal:verifiable": ConvergenceSpec(
+        signal=DONE_VERIFY_COMMAND, command_key="verify_command", criteria_key="sub_goals"
+    ),
+    "goal:open_ended": ConvergenceSpec(
+        signal=DONE_JUDGE_ASSESSMENT,
+        command_key="verify_command",
+        ground_truth_deliverable="REPORT.md",
+    ),
+    "goal:monitor": ConvergenceSpec(
+        signal=DONE_NEVER, budget_stop_is_genuine=True, stagnation_enabled=False
+    ),
+    # research is always open-ended in practice (its default_kind_config pins goal_type), but the
+    # deleted Python inherited GoalKind's full goal_type branch, so all three variants are declared
+    # — dropping the two unreachable ones would be a behaviour change disguised as tidying.
+    "research:verifiable": ConvergenceSpec(
+        signal=DONE_VERIFY_COMMAND, command_key="verify_command", criteria_key="sub_goals"
+    ),
+    "research:open_ended": ConvergenceSpec(
+        signal=DONE_JUDGE_ASSESSMENT,
+        command_key="verify_command",
+        ground_truth_deliverable="RESEARCH.md",
+    ),
+    # DISCOVERY, preserved verbatim rather than tidied: a research MONITOR loop stagnates where a
+    # goal monitor does not. `budget_stop_genuine` lived on GoalKind and read only `goal_type`
+    # (so research inherited it), while the watchdog's `_stagnation_disabled` required
+    # `loop.kind == "goal"` AND monitor. Two hooks, two different keys, one concept. The table
+    # makes the inconsistency visible instead of spreading it over two modules; converging it is a
+    # behaviour change and therefore not this seam's call.
+    "research:monitor": ConvergenceSpec(
+        signal=DONE_NEVER, budget_stop_is_genuine=True, stagnation_enabled=True
+    ),
+}
+
+
+def convergence_key(kind: str, kind_config: Any = None) -> str:
+    """The :data:`KIND_CONVERGENCE` key for a loop, i.e. its kind plus its variant axis.
+
+    An unknown ``goal_type`` resolves to ``open_ended`` because that is what the deleted
+    ``GoalKind.is_done_signal`` did — it tested ``verifiable`` and ``monitor`` explicitly and fell
+    through to the open-ended assessment for everything else.
+    """
+    normalized = str(kind or "").strip().lower()
+    if normalized not in _VARIANT_KINDS:
+        return normalized
+    raw = kind_config if isinstance(kind_config, dict) else {}
+    goal_type = str(raw.get("goal_type", _DEFAULT_GOAL_TYPE) or _DEFAULT_GOAL_TYPE)
+    if f"{normalized}:{goal_type}" not in KIND_CONVERGENCE:
+        goal_type = _DEFAULT_GOAL_TYPE
+    return f"{normalized}:{goal_type}"
+
+
+def policy_for_kind(kind: str, kind_config: Any = None) -> SupervisorPolicy:
+    """The :class:`SupervisorPolicy` a loop of ``kind`` runs under (PP-16 seam 3).
+
+    This is the call that replaced ``kinds.get(loop.kind)`` for every convergence decision the
+    loop watchdog makes. A kind with no row — an unregistered kind, which the watchdog used to
+    handle with ``strat is None`` — gets the default policy, whose ``ORCHESTRATED`` signal means
+    "no point-in-time check": exactly the "publish nothing, complete nothing" behaviour that
+    branch had.
+    """
+    spec = KIND_CONVERGENCE.get(convergence_key(kind, kind_config))
+    return SupervisorPolicy() if spec is None else SupervisorPolicy(convergence=spec)

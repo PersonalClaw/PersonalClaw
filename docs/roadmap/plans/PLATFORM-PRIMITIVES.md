@@ -1583,3 +1583,96 @@ explicit PID; the official normal-`HOME` full suite completed cleanly in 450s, s
 harness's own (relocated `HOME`), not the new test's. Under the relocated `HOME`,
 `test_triggers_pathguard::test_it_expands_a_tilde` also fails by construction — it asserts tilde
 expansion against the real home — which is likewise a harness artifact and not a finding.
+
+### `PP-16` — PARTIAL (seam 3 of 6: the pluggable supervisor became a policy), 2026-08-26
+
+**Owner scope decision applied.** The 2026-08-25 `BLOCKED` asked for `PP-16` to be split into the
+six seams it named; the owner took that decision and this session executed **seam 3: "the five
+`loop/kinds/` modules become bundled templates carrying a `SupervisorPolicy`"**. Seam 1 landed as
+`9829f2d4`; seam 2 (one adoption/reaping path) is open as PR #2111 and was ABSENT at this branch
+point (`origin/main` = `c9fff2f3`), so nothing here touches `concurrency.py`,
+`workflows/watchdog.py`, `gateway.py`'s boot adoption, or `loop/watchdog._boot_sweep` /
+`_rearm_running` / `_rekick_planning`. **`PP-16` stays `todo`** — a PARTIAL atom does.
+
+**What the seam actually was, measured before designing.** The `LoopKindStrategy` protocol has
+twelve members across 3,507 lines of per-kind Python, but exactly **four** of its dispatch sites are
+the SUPERVISOR, and all four are in `loop/watchdog.py`: `is_done_signal` (`:843`), `has_done_check`
+(`:855`), `budget_stop_genuine` (`:901`), and `_stagnation_disabled` (`:977`, which was not even a
+strategy hook — it was `loop.kind == "goal"` hard-coded in the watchdog). Every other member is
+intake (`classify`), worker framing (`build_brief`/`cycle_nudge`), planning (`walkthrough`), the
+multi-cycle orchestration hook (`on_new_cycle`) or a projection key. That census is what made a
+clean one-session slice possible: **the boundary is by CONCERN, not by kind.** All five kinds'
+supervisor moved; zero kinds retain a supervisor method. No dual path exists in the supervisor.
+
+**The five implementations used four mechanisms, and two of the five were `return None`.**
+`design.is_done_signal` and `sdlc.is_done_signal` were bare `return None` (design deferred to its
+hook; sdlc carried a stale *"the multi-stage gate orchestration lands in 2c.iii"* comment).
+`general` ran a `verify_command`. `goal` branched on `goal_type` over 204 lines, and `research`
+inherited it. So the pluggability bought nothing a declaration could not carry — which is the whole
+argument for the closed `DONE_SIGNALS` vocabulary (`orchestrated` | `never` | `verify_command` |
+`judge_assessment`) rather than a fifth per-kind hook.
+
+**Shipped.** `workflows/supervisor_policy.py` (516 → 690) gains `ConvergenceSpec`, the closed
+vocabulary, `SupervisorPolicy.convergence`, the nine-row `KIND_CONVERGENCE` table (five kinds; goal
+and research carry all three `goal_type` variants) and `convergence_key`/`policy_for_kind`. New
+`loop/supervisor.py` (304) is the ONE evaluator — the moved bodies of `general.is_done_signal`,
+`goal.is_done_signal`, `goal._all_sub_goals_met` and `goal._assess_open_ended`, verbatim including
+the P4 calibration canary, the adversarial-skeptic pass and the variance-aware exhaustion band.
+`loop/watchdog.py` reads it at all four sites. Deleted: `is_done_signal` from the protocol and all
+four declaring kinds, `general.has_done_check`, `goal.budget_stop_genuine`,
+`goal._all_sub_goals_met`, `goal._assess_open_ended` (goal.py 699 → 495, sdlc 1602 → 1596, design
+551 → 546, general 150 → 133).
+
+**Deliberately NOT in the bundled template JSON, and this is a measured finding.** The clause says
+"bundled templates plus policies", and the natural reading is a `supervisor:` block on each
+template's `loop` node — the mechanism already exists (`controller._supervisor_policy` parses it,
+`validator._validate_supervisor` lints it). **It does not fit: two of the five kinds ship no `loop`
+node at all.** `deep-research`'s root is a `sequence` of `infer`/`branch`/`infer`, and
+`code-project`'s is a `sequence` whose iteration is a `foreach`. Only `general-project`,
+`goal-pursuit-verifiable` and `design-project` have a `loop` node. Declaring there would have
+shipped three-fifths of the seam and left `research` and `code` on the plugin — the exact
+half-migration the clean-break tenet refuses. A template JSON is also a per-poll disk read whose
+absence would silently remove a loop's supervisor; a declared table cannot go missing. So the
+POLICY half is a table beside `KIND_TO_TEMPLATE`'s alias, and the atom's own census already recorded
+the NOUN half (every kind resolves to a bundled template) as satisfied before this session.
+
+**DISCOVERY, preserved rather than tidied: two hooks answered one question with different keys.**
+`GoalKind.budget_stop_genuine` read only `goal_type == "monitor"`, so `research` inherited it and a
+research monitor loop's budget stop was GENUINE. The watchdog's `_stagnation_disabled` required
+`loop.kind == "goal"` **and** monitor, so a research monitor loop *did* stagnate. Same concept, two
+keys, one of them a hard-coded kind name. Both are reproduced exactly in the table
+(`research:monitor` is `budget_stop_is_genuine=True, stagnation_enabled=True`), with the asymmetry
+commented at the row. Converging it is a behaviour change and therefore not this seam's call — but
+it is now visible in one place instead of spread over two modules, which is the point of the table.
+
+**Import sweep for the deletions: 25 modules imported at RUNTIME, all clean** (`mypy` cannot see a
+stranded first-party import — `ignore_missing_imports=true`), plus a live assertion that none of the
+five registered strategies retains `is_done_signal` / `has_done_check` / `budget_stop_genuine`.
+Importer count for `personalclaw.loop.kinds` is unchanged at **32 files** before and after
+(18 `src/`, 12 `tests/`, 1 script, plus `loop/kinds/__init__.py` itself) — this seam removed members, not the module, because `LoopKindStrategy` legitimately
+survives as the intake / worker-framing / projection seam.
+
+**The old census row could not have caught this, which is worth recording.**
+`test_pp16_convergence_census.py`'s "pluggable supervisor" row pinned `class LoopKindStrategy`
+against `class SupervisorPolicy` — and `LoopKindStrategy` still exists, so the census **passed
+unchanged** after the supervisor was retired. A row keyed on a CLASS name cannot measure a
+per-METHOD retirement. The row is re-homed into the converged-ratchet group and re-keyed on the
+retired MEMBERS plus a "every kind resolves to a declared row" vacuity floor.
+
+**Still open on `PP-16`** — four clauses, unchanged by this seam: one status vocabulary
+(`LoopStatus` 13 vs `RunStatus` 8), one adoption/reaping path (seam 2, PR #2111), one projection to
+tasks, one cockpit contract; plus `loop/store.py`'s parallel row (1,253 lines) and the five-kind
+user validation. What remains PLUGGABLE in `loop/kinds/` after this seam, named so the next slice
+inherits a measurement: `classify`, `build_brief`, `cycle_nudge`, `walkthrough`, `on_new_cycle`,
+`phase_key`, `default_kind_config`, `deliverable_name`, `launch_blocker`, `provisions_tasks`,
+`validate_config`, `turn_capabilities`/`turn_directive`, `default_phases`, and the four metadata
+attributes. Those are a bundled template's node prompts and graph, not the supervisor.
+
+**The `WorkflowRun.task_list_id` owner decision (2026-08-22) was NOT reached by this seam** and
+remains open — nothing here touches `loop_run_map`'s destinations or the homeless-field set.
+
+**NOT taken, and named rather than forced:** the seam-2 agent handed over the idea that
+`_poll_once` should grow a PLANNING pass so `_rekick_planning`'s boot-path model call can retire.
+It does not fall out of this work — `_poll_once` iterates RUNNING rows and a PLANNING pass needs its
+own budget/attention/stagnation coverage plus a classifier-advance path, which is a separate
+completable slice against files seam 2 currently owns. Left for a later seam.

@@ -186,7 +186,7 @@ class TickConfig:
     # A loop with no steps (a plain point-in-time open-ended/monitor loop) has steps=()
     # and evaluate() degrades to the budget/dwell-free path (EXECUTE until an external
     # done-signal completes it) — this engine governs *stepwise* loops (SDLC/design/plan
-    # walkthroughs); point-in-time loops keep their existing is_done_signal path.
+    # walkthroughs); point-in-time loops keep their declared done-signal path (PP-16).
 
     # ── PP-15: the convergence half, from a SupervisorPolicy (see
     # ``supervisor_policy.tick_config``). Every default reproduces the thresholds
