@@ -58,6 +58,7 @@ from personalclaw.dashboard.state import (
     _ChatSession,
     is_read_only_bash,
     resolve_effective_risk,
+    shell_command,
 )
 from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,
@@ -3485,7 +3486,10 @@ async def run_chat(
                         continue
                     _pre_tool_hooks_fired = True
                     # Hooks passed — fall through to trust-reads/trust/yolo/interactive
-                cmd = _extract_bash_command(event.tool_input) if event.tool_input else ""
+                # SCOPED: this feeds the card's "read-only" indicator below. Reading a
+                # `command` key off a non-shell tool labelled a destructive call as a
+                # read to the human deciding on it — the presentational half of #443.
+                cmd = shell_command(event.title, event.tool_kind, event.tool_input)
                 yolo_active = state.is_yolo_active()
                 # Effective risk of THIS call (per-invocation): the tool's declared
                 # risk downgraded to safe when it's a read-only invocation. The

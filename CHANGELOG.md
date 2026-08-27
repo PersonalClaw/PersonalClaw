@@ -1611,6 +1611,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   **What changes for you:** an id containing a `/`, a `\`, a `..`, or more than 200 characters is
   refused. No id PersonalClaw has ever generated looks like that, so ordinary use is unaffected.
 
+- **An argument a tool call carries can no longer lower that call's risk.** `command` is an ordinary
+  argument name, and the approval gate read it out of *any* tool's arguments to answer "what shell
+  command is this call going to run?". So a destructive tool that happened to carry one was judged by a
+  string that was never going to be executed: deleting a workflow definition, with `command: "ls"`
+  alongside it, resolved to **safe** and was auto-approved with no prompt under "trust reads".
+  **The same string also unlocked Ask and Plan mode**, whose entire promise is that nothing is
+  executed. That half was not in the report; it turned up because a test asserting "this tool is
+  denied in Ask mode" is a different assertion from "this tool needs approval", and both were wrong.
+  **One question, asked in one place.** "Is this call a shell invocation?" now has a single answer that
+  every gate consults, recognising all three ways a shell call actually arrives — the agent's declared
+  kind, the tool's own name, and the `Running: <command>` title an agent sends when the command rides
+  inline. Anything else is a tool whose arguments are data.
+  **Your read-only `bash` still doesn't prompt.** That is what "trust reads" is for, and the shell path
+  is unchanged: `ls` is still safe, `rm -rf` is still destructive, and both still reach the same gate.
+  What changed is that a tool which runs no shell can no longer borrow the answer.
+  **One thing got stricter on the way:** a shell call whose command text never reached PersonalClaw
+  used to be treated as a read, because "bash" carries no dangerous-sounding word in its name. It is
+  now treated as a command nobody has read, which means it is shown to you rather than assumed safe.
+
 - **Ways *in* now share one gate instead of each inventing their own.** The read-only MCP endpoint
   used to be the only inbound surface, and it carried its own answer to "am I allowed to serve
   this?". Four more surfaces are on the way, so that answer moved into one place they all pass
