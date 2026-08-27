@@ -1,7 +1,7 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
-  MonitorSmartphone, Plug2, FileType2,
+  MonitorSmartphone, Plug2, FileType2, FlaskConical,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { notify } from '../../app/appSdk'
@@ -129,6 +129,11 @@ const useVoice = () => useQuery('settings:voice', async () => {
 // The tile can now fail, so it carries the failure line the other four tiles got in #1194.
 const useLegibility = () => useQuery('settings:legibility', () =>
   api.personalclawConfig().then((c) => (c.legibility ?? {}) as Record<string, unknown>), { persist: true })
+// Shares its key with `EvalsPanel`, so the hub tile and the panel are one read. NO `.catch` here
+// either, for the reason the legibility key records below: this tile carries a live SWITCH, and a
+// substituted `{}` would render its "off" position as saved state on a config that never loaded.
+const useEvals = () => useQuery('settings:evals', () =>
+  api.personalclawConfig().then((c) => (c.evals ?? {}) as Record<string, unknown>), { persist: true })
 // The `.catch(() => null)` here resolved the fetcher, so `loading` (`d === undefined`) went false
 // and the card rendered `{d && …}` = NOTHING: a blank health card, which on a health surface reads
 // as "nothing to report". Let the rejection through and say we could not check.
@@ -376,6 +381,42 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={FileText} title="Prompts" query={query} onClick={() => go('prompts')} loading={b === undefined} stale={bStale}>
           {b && (rows.length ? <KVList query={query} rows={rows} /> : <div className="text-on-surface-low text-[0.8125rem]">All contexts use the default prompt.</div>)}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'evals', group: 'AI & Models', label: 'Evaluations', icon: FlaskConical, size: 'sm',
+    description: 'Paired A/B studies over prompt templates, retrieval and judge benchmarks, and monthly ablations — the substrate that says whether a change actually helped.',
+    // 🔑 THE HUB IS THE ONLY NAVIGATION. `#/settings` renders `SETTINGS_WIDGETS` and nothing else
+    // (`SettingsHome` has no second list), so a subpage without a widget here is reachable only by
+    // typing its URL — and invisible to the settings search, which reads `label`/`description`/
+    // `useSearchText`. That is why "Evaluations" is spelled out in the search text alongside the
+    // "evals" the config key uses: a user searching for either word must find this.
+    useSearchText() {
+      const { data: e } = useEvals()
+      const on = e ? `${e.enabled ? 'on enabled' : 'off disabled'} k ${e.study_default_k} budget ${e.default_budget_usd} agreement ${e.judge_agreement_floor} ablation every ${e.ablation_cadence_days} days` : ''
+      return `evals evaluations eval substrate study studies a/b ab test template judge benchmark retrieval benchmark ablation bake-off budget agreement floor ${on}`
+    },
+    render(query, go) {
+      const { data: e, error: evalErr, refresh, stale: eStale } = useEvals()
+      const save = (value: boolean) => mutate(
+        () => api.patchConfig('evals.enabled', value).then(refresh), 'settings:evals',
+      )
+      return (
+        <BentoCard icon={FlaskConical} title="Evaluations" query={query} onClick={() => go('evals')} loading={e === undefined && !evalErr} stale={eStale}>
+          {!e && Boolean(evalErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your evaluation settings.</div>}
+          {e && <><KVList query={query} rows={[
+            { k: 'Evals enabled', control: true, v: <Switch on={!!e.enabled} label="Evals enabled" onToggle={save} /> },
+          ]} />
+            {/* Off is the default and the interesting state: it is why `#/learning`'s four eval
+                panels are empty, so the tile says where the results would appear rather than
+                repeating the switch's own label back at the reader. */}
+            <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
+              {e.enabled
+                ? `k=${Number(e.study_default_k) || 5} per arm · ablation every ${Number(e.ablation_cadence_days) || 30} days`
+                : 'Off — the four eval panels on Learning stay empty'}
+            </div></>}
         </BentoCard>
       )
     },
