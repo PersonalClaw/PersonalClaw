@@ -798,27 +798,50 @@ def test_the_driver_argv_names_the_child_module_and_this_interpreter():
     assert service.DRIVER_CHILD_MODULE == driver_host.__name__
 
 
-def test_the_real_spawn_answers_with_a_typed_platform_refusal(tmp_path):
-    """The end-to-end proof that the ceilinged spawn is a LIVE path today, not scaffolding for
-    `DCU-3`: no driver is monkeypatched here, so the dispatch really starts the child through
-    the ceiling helper, really reads its answer, and really turns it into a typed refusal. §3
-    floor 6 requires exactly this shape — an honest refusal, *"never a silent no-op or a
-    simulated success"*."""
+def test_the_real_spawn_answers_in_the_typed_envelope(tmp_path):
+    """The end-to-end proof that the ceilinged spawn is a LIVE path: no driver is monkeypatched
+    here, so the dispatch really starts the child through the ceiling helper and really reads
+    its answer.
+
+    **Re-scoped by `DCU-3`.** This asserted ``ERR_DRIVER_UNAVAILABLE`` specifically, which was
+    only true while no platform driver module existed; a macOS driver now does. The clause §3
+    floor 6 actually states is platform-independent — the answer is either a real result or a
+    typed refusal naming a reason, and *"never a silent no-op or a simulated success"* — and that
+    is what is asserted here. The macOS-specific end states (the accessibility-permission refusal
+    on an ungranted machine, a real indexed tree on a granted one) are owned by
+    ``test_computer_use_macos_driver.py``, so neither file duplicates the other's clause.
+    """
     _arm(tmp_path, ARMED_APP)
-    with pytest.raises(service.ComputerUseRefusal) as excinfo:
-        _run(service.computer_dispatch("computer_snapshot", {"app": ARMED_APP}))
-    assert excinfo.value.error.code == service.ERR_DRIVER_UNAVAILABLE
-    assert "driver" in excinfo.value.error.what.lower()
-    assert "nothing was clicked" in excinfo.value.error.fix.lower()
+    try:
+        answer = _run(service.computer_dispatch("computer_snapshot", {"app": ARMED_APP}))
+    except service.ComputerUseRefusal as refusal:
+        assert refusal.error.code in service._CHILD_CODES, refusal.error.code
+        assert refusal.error.what and refusal.error.why and refusal.error.fix
+    else:
+        assert answer.get("elements") is not None and answer.get("snapshot_id")
 
 
-def test_the_driver_child_refuses_every_operation_while_no_driver_exists():
-    """The child's own contract, driven directly. Every one of the seven operations refuses
-    with the same typed code — so when `DCU-3` lands, what changes is one importable module and
-    not the containment story."""
+def test_the_driver_child_answers_every_operation_in_the_typed_envelope():
+    """The child's own contract, driven directly: every one of the seven operations answers a
+    non-empty dict that is either a result or an error carrying a REGISTERED code — never a
+    raise, and never an empty answer, which reads to a model as "it worked".
+
+    **Re-scoped by `DCU-3`.** "All seven refuse with one code" was the honest statement only
+    while ``resolve_driver`` found nothing. On macOS ``list_apps`` now legitimately SUCCEEDS — it
+    needs no accessibility grant, by design, so an operator can discover the app name to
+    allowlist before granting anything — so a test demanding a refusal from every op would now be
+    asserting a bug. The envelope invariant is the durable one and it is what keeps a future
+    driver from answering with a silent empty dict.
+    """
+    from personalclaw.errors import ERROR_CODES
+
     for spec in ct.TOOL_SURFACE:
         answer = driver_host.run_op({"op": service._driver_op(spec)})
-        assert answer["error"]["code"] == driver_host.ERR_DRIVER_UNAVAILABLE, spec.name
+        assert isinstance(answer, dict) and answer, spec.name
+        error = answer.get("error")
+        if error:
+            assert error["code"] in ERROR_CODES, (spec.name, error["code"])
+            assert error["why"] and error["fix"], spec.name
 
 
 def test_the_child_resolves_a_driver_when_one_is_importable(monkeypatch):

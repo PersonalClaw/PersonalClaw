@@ -581,3 +581,98 @@ the platforms to validate on) — Session 1–2 ship macOS + honest refusals, pe
   yet ("a central-dispatch rail has no dispatch to bind to yet"). `DCU-4` supplied the dispatch, and
   `test_computer_use_call_sites.py` is now that rail. `done_when` names exactly three behavioural clauses
   and none of them mentions it.
+
+- [2026-08-26][DCU-3] PARTIAL: the macOS accessibility driver ships as `types.py` (the
+  platform-neutral element/fingerprint/error vocabulary every driver will share),
+  `macos_ffi.py` (the ONLY module in the package containing `ctypes`) and `macos_driver.py`
+  (the `op_<name>` layer, containing no `ctypes` at all — asserted by AST). The call site this
+  atom exists to land: `driver_host.resolve_driver("Darwin")` returned `None` on every commit
+  before this one and now returns the module, so the seven ops the dispatch derives from
+  `TOOL_SURFACE` all resolve. **One `done_when` clause is unmet and it is an environment gate,
+  not a code gap** — see the dated PARTIAL entry below. Row left `todo`, marked 🟡 on the
+  precedent `test_roadmap_atomic_status_sync.py` documents for `DC-3` ("implementation landed,
+  atom still open for its on-device walk-through").
+
+- [2026-08-26][DCU-3] DECISION: **ctypes FFI, and therefore NO new dependency — not even an
+  optional extra.** §3.2 already specified ctypes and it is also the cheaper answer: every symbol
+  the driver needs (`AXUIElementCreateApplication`, `AXUIElementCopyAttributeValue`,
+  `AXUIElementPerformAction`, `AXValueGetValue`, `CGEventPostToPid`, `CGEventCreateScrollWheelEvent2`,
+  `CGWarpMouseCursorPosition`, `proc_listpids`) resolves from a system framework present on every
+  macOS install, verified by binding all of them on this machine. A `pyobjc-framework-*` extra
+  would have added a compiled wheel, an install step, and an absent-import refusal path in front of
+  a feature whose real gate is a TCC permission granted by hand. Two ctypes specifics are
+  load-bearing and recorded so nobody "simplifies" them: **every signature is bound** in `_bind`
+  because ctypes defaults return/args to `int`, which on arm64 truncates a 64-bit
+  `AXUIElementRef` to 32 bits and crashes undebuggably; and **`CGEventCreateScrollWheelEvent2`** is
+  used instead of the variadic `CGEventCreateScrollWheelEvent`, which cannot be called correctly
+  through ctypes on arm64 (variadic arguments follow a different register discipline).
+  DISCOVERY: no framework load happens at import time and that is a rail, not a habit — the driver
+  is imported inside the gateway's own process via `resolve_driver`, so a module-level
+  `LoadLibrary` would turn "this machine has no desktop capability" into "this machine has no
+  gateway". `test_importing_the_ffi_touches_no_framework` asserts it by AST.
+
+- [2026-08-26][DCU-3] DEVIATION: added `ERR_COMPUTER_USE_AX_PERMISSION` to `errors.ERROR_CODES`
+  **and to a `_CHILD_CODES` allowlist extracted in `service._run_driver`**, which the atom's file
+  list does not name. Reason, and it is a real defect found rather than a preference: `_run_driver`
+  honoured exactly two codes from the child and rewrote everything else as
+  `ERR_COMPUTER_USE_DRIVER_FAILED`. The driver's two new refusals are both ones only the child can
+  determine — it alone asks the OS whether input access is granted, and it alone re-walks the tree
+  at the moment of acting — so without this the operator-fixable "tick this box in System Settings"
+  FIX was flattened into "the driver failed", which is the one message that cannot be acted on. It
+  remains an ALLOWLIST, and the reasoning is recorded at the constant: every member is a REFUSAL, so
+  a child naming one can only cause a refusal and never an approval, and the `approved` SEL row is
+  already written before the child runs — so honouring them cannot alter a decision, only explain
+  it. `ERR_COMPUTER_USE_APP_NOT_ALLOWED` is asserted ABSENT from the set to pin that.
+
+- [2026-08-26][DCU-3] DEVIATION: re-scoped two `DCU-4` tests whose premise this atom retires, in
+  the same commit. `test_the_real_spawn_answers_with_a_typed_platform_refusal` and
+  `test_the_driver_child_refuses_every_operation_while_no_driver_exists` both asserted
+  `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE` from all seven ops — true only while `resolve_driver` found
+  nothing, and `DCU-4`'s own docstring predicted the change ("when `DCU-3` lands, what changes is
+  one importable module"). Kept as the platform-independent clause §3 floor 6 actually states — the
+  answer is a real result or a typed refusal naming a reason, *never* a silent no-op. Notably
+  "every operation refuses" is now FALSE by design: `op_list_apps` succeeds without any
+  accessibility grant, deliberately, so an operator can discover the app name to allowlist before
+  granting anything. A test demanding a refusal from every op would now be asserting a bug.
+
+- [2026-08-26][DCU-3] DISCOVERY: the structural-duplication ratchet caught a real re-derivation and
+  changed the design for the better. A module-level `error_envelope(code, message, why, fix)`
+  helper returning `{"error": {...}}` matched `http-error-envelope-helper` — the family PL-8 deleted
+  thirteen clones of, where each clone is a place the envelope drifts silently because every
+  caller's test asserts against its own copy. Fixed by making it a typed value
+  (`types.DriverError` with one `to_dict()`) rather than a dict-builder function, which is what
+  `AgentError` already is for the agent layer. NOT regenerated to bless the higher number, which the
+  ratchet explicitly forbids. Also removed two functions this atom had declared with **zero**
+  callers (`macos_ffi.available`, `macos_ffi.advertised_actions`) — the second was redundant with
+  the actions the walk already reports. `pointer_position` is kept although its only caller is a
+  rail, and the reason is recorded at the function: the alternative is `ctypes` inside a test file,
+  which would break the property the module exists to hold.
+
+- [2026-08-26][DCU-3] DISCOVERY (falsification, including one that did NOT red): six mutations were
+  run on the live lines, each verified applied by `git grep` before the run and restored from a file
+  copy after. (1) Route the `auto` click onto `ffi.click_located` → 1 red. (2) Fingerprint compare
+  fails open (`actual = expected`) → 2 red, and the fresh-index VACUITY case stayed GREEN, which is
+  what makes the refusal mean something. (3) `fingerprint` argument made optional → **stayed GREEN,
+  and the reason is a real finding**: an empty expected fingerprint can never equal a real digest,
+  so the comparison itself already refuses it — the fail-closed property has two independent
+  guards. Re-falsified with the true fail-open shape (`if expected and actual != expected`) → 1 red
+  with `an unverifiable tree was acted on`. (4) `ERR_COMPUTER_USE_AX_PERMISSION` dropped from
+  `_CHILD_CODES` → 2 red, the end-to-end one showing the exact flattening to `..._DRIVER_FAILED`
+  through the real spawn, which is the proof that change is load-bearing. (5)
+  `DRIVER_MODULES["Darwin"]` pointed at a module that does not exist → 3 red, reproducing exactly
+  the pre-atom state (`resolve_driver` → `None`). (6) `Element.to_dict` emitting `None` for an
+  absent title → 1 red; `policy.check_input_target` refuses a screened key that is not a string, so
+  a `None` there would make every element a malformed target.
+
+- [2026-08-26][DCU-3] BLOCKED-BY-ENVIRONMENT (not an escalation — everything buildable is built):
+  the `done_when`'s "snapshotting a TextEdit window then AXPress-ing a button by index and typing
+  into a field **succeeds**" was NOT observed. Measured, not assumed: `AXIsProcessTrusted()` returns
+  False and a real `AXUIElementCopyAttributeValue(AXWindows)` against Finder returns
+  `kAXErrorAPIDisabled` (-25211). macOS gates the AX API behind TCC, whose database is
+  SIP-protected, so no code path can grant it and no amount of implementation closes this clause.
+  **What a human must click:** System Settings → Privacy & Security → Accessibility → `+` → add the
+  python binary running the gateway (the interpreter itself, NOT the terminal hosting it) → restart
+  the gateway. Deliberately never prompted for from code: `AXIsProcessTrustedWithOptions` can raise
+  the system dialog, and an agent-triggered permission prompt is a consent surface the agent chose
+  the timing of, so `is_process_trusted()` only ever REPORTS. Two tests are already written to flip
+  branch with no code change once granted, so the walk-through is a run, not a work item.

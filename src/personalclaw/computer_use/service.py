@@ -74,6 +74,16 @@ ERR_BAD_ARGUMENT = "ERR_COMPUTER_USE_BAD_ARGUMENT"
 ERR_STALE_INDEX = "ERR_COMPUTER_USE_STALE_INDEX"
 ERR_DRIVER_UNAVAILABLE = "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE"
 ERR_DRIVER_FAILED = "ERR_COMPUTER_USE_DRIVER_FAILED"
+ERR_AX_PERMISSION = "ERR_COMPUTER_USE_AX_PERMISSION"
+
+#: The codes the driver child may name for itself. An allowlist, still — the reasoning in
+#: :func:`_run_driver` is that a child able to pick any code could dress a failure up as a
+#: verdict the policy never reached. Every member is a REFUSAL the child is the only party able
+#: to determine: it alone re-walked the tree at the moment of acting (stale index) and it alone
+#: asked the OS whether input access is granted (accessibility permission). A child naming one of
+#: these can only cause a refusal, never an approval, and the "approved" audit row is already
+#: written before the child runs — so honouring them cannot alter a decision, only explain it.
+_CHILD_CODES = (ERR_DRIVER_UNAVAILABLE, ERR_DRIVER_FAILED, ERR_AX_PERMISSION, ERR_STALE_INDEX)
 
 #: How long a snapshot's element indices stay actable, in seconds.
 #:
@@ -391,18 +401,14 @@ async def _run_driver(op: str, payload: dict[str, Any], *, tool: str) -> dict[st
         )
     err = answer.get("error")
     if err:
-        # The child's code is honoured only when it is one of the two this module owns.
+        # The child's code is honoured only when it is one of the refusals in _CHILD_CODES.
         # Anything else is reported as a driver failure rather than forwarded: a child able to
         # name an arbitrary code could dress a failure up as, say, a policy refusal, and the
         # audit row would then record a verdict the policy never reached.
         detail = str(err.get("message") or err) if isinstance(err, dict) else str(err)
         raw_code = str(err.get("code") or "") if isinstance(err, dict) else ""
         _refuse(
-            (
-                raw_code
-                if raw_code in (ERR_DRIVER_UNAVAILABLE, ERR_DRIVER_FAILED)
-                else (ERR_DRIVER_FAILED)
-            ),
+            raw_code if raw_code in _CHILD_CODES else ERR_DRIVER_FAILED,
             what=f"{tool} could not run: {detail}",
             why=str(err.get("why") or "") if isinstance(err, dict) else "",
             fix=str(err.get("fix") or "See the gateway log.") if isinstance(err, dict) else "",
