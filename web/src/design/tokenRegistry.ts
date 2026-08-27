@@ -85,14 +85,23 @@ export const TOKENS: Token[] = [
   c('--color-outline-variant', 'Outline subtle', 'Content', '#444746', '#e1e3e1'),
 
   // ── Semantic ──
-  // Light values sit at ≥4.5:1 (WCAG AA small text) BOTH as text on white and
-  // as text on their own 14–16% color-mix tint — the two ways every status
-  // chip/badge renders them. Verified numerically; don't lighten without
-  // re-checking both (e2e/a11y.spec.ts enforces).
+  // Every value here sits at ≥4.5:1 (WCAG AA small text) BOTH as text on the bare surface and as
+  // text on its own tint — the two ways a status chip/badge renders it. Don't move one without
+  // re-checking both; `design/statusChipContrast.test.ts` sweeps the tint dimension for all 12
+  // schemes × 2 modes, which is the population axe cannot reach (it only ever drives the default).
+  //
+  // 🪤 THIS COMMENT USED TO CLAIM THE TINT WAS ALREADY VERIFIED, AND IT WAS NOT. It said the light
+  // values were checked "as text on their own 14–16% color-mix tint … Verified numerically
+  // (e2e/a11y.spec.ts enforces)". Measured: `--color-info` was 4.4992 over its own 16% tint on
+  // `surface-container` in the DEFAULT scheme, which axe reports as a `color-contrast` violation on
+  // `#/tasks?view=cards`, and it was under 4.5 in 13 of 24 scheme × mode combos. The three global
+  // tones did hold (worst 4.52) — only the scheme-retinted one drifted, because a scheme supplies
+  // its own `info` and nothing swept that value on a tinted ground. Both `info` values below are
+  // the nudged ones; the derivation is in `tokens.css` beside `--color-info`.
   c('--color-ok', 'Success', 'Semantic', '#0ebc5f', '#076e37'),
   c('--color-warn', 'Warning', 'Semantic', '#ff8d41', '#954c19'),
   c('--color-danger', 'Danger', 'Semantic', '#f66c66', '#af2f29'),
-  c('--color-info', 'Info', 'Semantic', '#5e99f9', '#145cbf'),
+  c('--color-info', 'Info', 'Semantic', '#629efe', '#1059bc'),
 
   // ── Glow & gradient (the wave surface + spark + ring) ──
   c('--grad-1', 'Gradient 1', 'Glow & gradient', '#c85a48', '#c85a48'),
