@@ -5,6 +5,10 @@ Two loopback-only routes another agent on this machine points its API base URL a
 * ``POST /capture/v1/chat/completions`` — the OpenAI dialect
 * ``POST /capture/v1/messages``        — the Anthropic dialect
 
+plus §8's one non-proxy route, mounted here so it shares the admission gate:
+
+* ``POST /capture/import``             — stage an exported log (:func:`handle_import`)
+
 The agent sets ``OPENAI_BASE_URL=http://127.0.0.1:10000/capture/v1`` and puts the
 **capture surface bearer** (§1.1) in ``OPENAI_API_KEY``. Two consequences fall out of
 that single choice, and both are the point:
@@ -76,6 +80,12 @@ DIALECT_ANTHROPIC = "anthropic"
 
 ROUTE_OPENAI = "/capture/v1/chat/completions"
 ROUTE_ANTHROPIC = "/capture/v1/messages"
+
+#: §8's telemetry import, over the wire. Mounted HERE rather than beside the adapters in
+#: ``capture_import`` so that every capture route passes through the one :func:`_admit` —
+#: a second module registering a ``/capture/*`` path is a second place the loopback and
+#: bearer rails would have to be restated, and restated rails drift.
+ROUTE_IMPORT = "/capture/import"
 
 #: Passthrough mode (§7.1): an agent PClaw has no ProviderEntry for supplies its OWN
 #: upstream key here. A *second* header rather than reusing ``Authorization`` because
@@ -638,8 +648,115 @@ async def handle_anthropic_messages(request: web.Request) -> web.StreamResponse:
     return await _handle(request, DIALECT_ANTHROPIC, ROUTE_ANTHROPIC)
 
 
+def _screened(exc: BaseException) -> str:
+    """The failure's own words, screened ONCE and clamped to a line.
+
+    Screened at the boundary where an exception BECOMES a user-visible string, and
+    screened *before* composition rather than after: ``redact_credentials`` is not
+    idempotent over a composed ``field: value`` line — screening the assembled sentence
+    is what eats the field name it was never shown.
+    """
+    try:
+        from personalclaw.security import redact_credentials
+
+        cleaned, _found = redact_credentials(str(exc))
+    except Exception:  # noqa: BLE001 — an unscreenable message is reported as its type
+        return type(exc).__name__
+    return f"{type(exc).__name__}: {cleaned}"[:200]
+
+
+async def handle_import(request: web.Request) -> web.StreamResponse:
+    """POST /capture/import — §8's telemetry import for agents that cannot be proxied.
+
+    Body: ``{"file": "<name>", "format": "jsonl"|"json"|"sse", "source": "<label>"}``.
+    Answers the SAME report ``personalclaw capture import`` prints — ``{imported,
+    skipped, reasons, duplicate, content_hash, format, source}`` — with ``200`` even
+    when nothing was staged: "0 imported, here is why" is a result the caller renders,
+    not a request failure. Exactly one dialect of that report exists, because this
+    route calls the same :func:`~personalclaw.inbound.capture_import.import_capture_file`
+    the CLI does; redaction, fencing, the ``capture`` staging source and the
+    content-hash ledger are therefore inherited, never re-implemented.
+
+    What is NOT inherited from the CLI is the path: ``file`` names a file in
+    :func:`~personalclaw.inbound.capture_import.imports_dir` and nothing else. See
+    that resolver for why a caller-chosen path would be a file-read oracle.
+
+    Runs in a worker thread. The import reads a file and writes both the store and the
+    ledger; doing that on the event loop would stall every other surface for the length
+    of somebody's 40MB session export.
+    """
+    refusal, _reason, client_id = _admit(request, ROUTE_IMPORT)
+    if refusal is not None:
+        return refusal
+
+    from personalclaw.inbound.capture_import import import_capture_file, resolve_import_file
+
+    bytes_in = int(request.content_length or 0)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — an unparsable body is a 400, never a 500
+        audit(
+            CAPTURE_SURFACE,
+            route=ROUTE_IMPORT,
+            status=400,
+            refused="body is not JSON",
+            client_id=client_id,
+        )
+        return json_error("invalid_json", status=400)
+    if not isinstance(body, dict):
+        audit(
+            CAPTURE_SURFACE,
+            route=ROUTE_IMPORT,
+            status=400,
+            refused="body is not an object",
+            client_id=client_id,
+        )
+        return json_error("invalid_body", status=400)
+
+    path, why = resolve_import_file(str(body.get("file", "") or ""))
+    if path is None:
+        audit(CAPTURE_SURFACE, route=ROUTE_IMPORT, status=400, refused=why, client_id=client_id)
+        return json_error("invalid_request", message=why, status=400)
+
+    fmt = str(body.get("format", "") or "jsonl")
+    source = str(body.get("source", "") or "import")
+    started = time.monotonic()
+    try:
+        report = await asyncio.to_thread(import_capture_file, path, fmt=fmt, source=source)
+    except Exception as exc:  # noqa: BLE001 — a store fault is reported, never swallowed
+        logger.warning("capture: import of %s failed", path.name, exc_info=True)
+        failure = _screened(exc)
+        audit(
+            CAPTURE_SURFACE,
+            route=ROUTE_IMPORT,
+            status=500,
+            refused=failure,
+            bytes_in=bytes_in,
+            client_id=client_id,
+        )
+        return json_error(
+            "capture_import_failed",
+            message=(
+                f"Staging {path.name} stopped after the capture store failed: {failure}. "
+                "Nothing is recorded in the import ledger until a record lands, so "
+                "importing the same file again is safe."
+            ),
+            status=500,
+        )
+
+    audit(
+        CAPTURE_SURFACE,
+        route=ROUTE_IMPORT,
+        status=200,
+        bytes_in=bytes_in,
+        duration_ms=int((time.monotonic() - started) * 1000),
+        client_id=client_id,
+    )
+    return web.json_response(report)
+
+
 def register_routes(app: web.Application) -> None:
-    """Mount both dialects.
+    """Mount both dialects and §8's import route.
 
     Registered UNCONDITIONALLY, unlike `mcp_http.mount`'s enablement-gated mount, and
     the difference matters: a mount-time gate freezes the decision at startup, so
@@ -648,9 +765,13 @@ def register_routes(app: web.Application) -> None:
     the moment of the request — and a disabled surface still answers 404 (aiohttp's own
     answer for an unmounted path), so nothing is disclosed by the route existing.
 
-    Both paths are fully literal, so ordering against the `{...}` patterns in
+    All three paths are fully literal, so ordering against the `{...}` patterns in
     `dashboard/server.py` cannot shadow them; they are registered early regardless,
     beside the other inbound surfaces and outside the dashboard's cookie-auth world.
+    `/capture/import` is not under `/capture/v1` on purpose: `v1` names the *vendor
+    wire protocol* an agent's SDK speaks, and the import report is this project's own
+    shape, versioned with the gateway rather than with OpenAI.
     """
     app.router.add_post(ROUTE_OPENAI, handle_openai_chat_completions)
     app.router.add_post(ROUTE_ANTHROPIC, handle_anthropic_messages)
+    app.router.add_post(ROUTE_IMPORT, handle_import)

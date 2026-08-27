@@ -22,6 +22,12 @@ Three deliberate boundaries:
   and it short-circuits into the same report shape.
 * **Idempotence is by file content.** Re-importing the same export is a no-op,
   keyed on a SHA-256 of the file's bytes recorded in a per-home ledger.
+* **The two entry points do not share an admissible path set.** ``personalclaw
+  capture import <path>`` takes any path — a human at a shell can already read
+  that file as themselves. ``POST /capture/import`` (mounted beside the proxy in
+  ``capture_proxy``) reads only :func:`imports_dir`, because its bearer is a
+  capture-surface token and not the shell user. Both then run the *same*
+  :func:`import_capture_file`, so there is one pipeline and one hygiene path.
 
 Reporting shape (§8): ``{imported, skipped, reasons}``, plus the content hash and
 a ``duplicate`` flag so a caller can tell "already imported" from "imported
@@ -33,6 +39,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +47,8 @@ from typing import Any, Callable, Iterable
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import config_dir
+
+logger = logging.getLogger(__name__)
 
 #: The formats §8 names. Kept as a tuple so the CLI's ``choices`` and the
 #: library's dispatch cannot drift apart.
@@ -53,6 +62,11 @@ ARGS_CLIP_CHARS = 400
 
 LEDGER_FILENAME = "import_ledger.json"
 CAPTURE_DIRNAME = "capture"
+
+#: The one directory ``POST /capture/import`` will read from. See
+#: :func:`resolve_import_file` for why the HTTP half does not inherit the CLI's
+#: any-path freedom.
+IMPORTS_DIRNAME = "imports"
 
 # Path attribution. §7.2's "injected/available ≠ used" property means only an
 # actual read or write counts as evidence, so paths are harvested from tool-call
@@ -687,6 +701,73 @@ def _remember(content_hash: str, entry: dict[str, Any], home: Path | str | None 
     ledger = load_ledger(home)
     ledger[content_hash] = entry
     atomic_write(path, json.dumps(ledger, indent=2, sort_keys=True), mode=0o600)
+
+
+# ── The drop directory (the HTTP half's only readable root) ──
+
+
+def imports_dir(home: Path | str | None = None) -> Path:
+    """``<home>/capture/imports`` — the ONE directory a network caller may import from.
+
+    Created ``0700``, matching the recordings beside it (``capture_store._DIR_MODE``):
+    an exported transcript is exactly as sensitive as a captured one.
+    """
+    path = _home(home) / CAPTURE_DIRNAME / IMPORTS_DIRNAME
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        os.chmod(path, 0o700)
+    except OSError:  # pragma: no cover - an unwritable home is the caller's problem
+        logger.debug("capture import: could not prepare %s", path, exc_info=True)
+    return path
+
+
+def resolve_import_file(name: str, home: Path | str | None = None) -> tuple[Path | None, str]:
+    """Resolve ``name`` inside :func:`imports_dir`, or return ``(None, why)``.
+
+    🔴 **This is a security boundary, not a convenience.** The CLI takes any path
+    because a human at a shell can already read that file as themselves. The HTTP half
+    cannot inherit that: its bearer is a *capture-surface token* held by an external
+    agent, which is far less privileged than the shell user — so a caller-chosen path
+    would turn the gateway into a file-read oracle that stages any readable file
+    (``~/.ssh/id_rsa``, another project's secrets) into the learning tier. Confinement
+    is the same ruling ``handlers/onboarding_import`` already made for the same shape:
+    "read from the root under the request, never taken from the caller".
+
+    Three refusals, in the order that leaks least:
+
+    1. **Not a bare file name.** ``../``, ``a/b`` and ``/etc/passwd`` never become a
+       candidate at all — checked textually first, so nothing is stat'ed on a path the
+       caller had no business naming.
+    2. **Resolves out of the directory.** A *symlink* placed in the drop directory is
+       the escape a name check alone cannot see, so the resolved parent is compared
+       against the resolved root. Both sides are resolved because the home itself may
+       sit under a symlink (``/tmp`` → ``/private/tmp`` on macOS), where comparing a
+       resolved path to an unresolved root would refuse every legitimate file.
+    3. **Not a file.** Reported last, and by name: "nothing dropped here yet" is the
+       operator's own mistake to fix, not a hint about the filesystem.
+    """
+    raw = str(name or "").strip()
+    root = imports_dir(home)
+    if not raw:
+        return None, f"a file name is required — name a file you have placed in {root}"
+    if "/" in raw or "\\" in raw or raw != Path(raw).name:
+        return None, (
+            f"{raw!r} is not a bare file name: this route reads only files placed "
+            f"directly in {root}, never a path of the caller's choosing"
+        )
+    try:
+        resolved = (root / raw).resolve()
+        root_resolved = root.resolve()
+    except OSError as exc:  # pragma: no cover - a resolve fault is not a valid name
+        return None, f"cannot resolve {raw!r}: {exc.strerror or exc}"
+    if resolved.parent != root_resolved:
+        return None, (
+            f"{raw!r} resolves outside {root} (it is a link out of the drop "
+            "directory) and is refused"
+        )
+    if not resolved.is_file():
+        return None, f"no file named {raw!r} in {root}"
+    return resolved, ""
 
 
 # ── The pipeline ──

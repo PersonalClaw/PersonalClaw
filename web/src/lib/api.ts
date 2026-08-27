@@ -220,6 +220,9 @@ export interface ExternalAccess {
     rate_concurrent?: number
     auto_disable_after_breaches?: number
     capture_retention_days?: number
+    /** Hosts the capture proxy may forward to. EMPTY DENIES EVERYTHING — it is an
+     *  exclusive allow-list, so this is the one cap whose default breaks its surface. */
+    capture_upstream_allowlist?: string[]
   }
   surfaces: ExternalAccessSurface[]
   clients: ExternalAccessClient[]

@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { X, Plus } from 'lucide-react'
 import { api, type RunnerRow } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName, type AgentOption } from '../../lib/agents'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, RowGroup, Row, Field, SegPills, SavedToast, ToggleRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, SegPills, SavedToast, StrListField, ToggleRow } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { FieldError, NumberField, TextInput } from '../../ui/forms'
-import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { accentChip } from '../../design/accent'
@@ -114,7 +112,7 @@ export function AgentDefaultsPanel() {
           <NumberRow label="Max turns per subagent" cfg={cfg} field="subagent_max_turns" patch={patch} min={1} max={200} />
           <NumberRow label="Subagent timeout" cfg={cfg} field="subagent_timeout_secs" patch={patch} min={60} max={7200} suffix="s" />
           <NumberRow label="Min free memory to spawn" cfg={cfg} field="spawn_min_memory_gb" patch={patch} min={0} max={64} step={0.5} suffix="GB" />
-          <StrListField label="Allowed working directories" hint="Roots a subagent may run in." cfg={cfg} field="subagent_cwd_allowed_roots" patch={patch} />
+          <StrListField label="Allowed working directories" hint="Roots a subagent may run in." cfg={cfg} field="subagent_cwd_allowed_roots" patch={patch} placeholder="Add path…" />
         </RowGroup>
       </Section>
 
@@ -369,34 +367,3 @@ function NumberRow({ label, hint, cfg, field, patch, min, max, step, suffix }: {
   )
 }
 
-function StrListField({ label, hint, cfg, field, patch }: {
-  label: string; hint?: string; cfg: AgentCfg; field: string; patch: (k: string, v: unknown, cb: () => void) => void
-}) {
-  const [saved, flash] = useSavedFlash()
-  const list = Array.isArray(cfg[field]) ? (cfg[field] as string[]) : []
-  const [adding, setAdding] = useState('')
-  const commit = (next: string[]) => patch(field, next, flash)
-  return (
-    <Field label={label} hint={hint}>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {list.map((v) => (
-          <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface text-[0.75rem] font-mono">
-            {v}
-            <button type="button" onClick={() => commit(list.filter((x) => x !== v))} aria-label={`Remove ${v}`} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
-          </span>
-        ))}
-        {/* A RAW input inside settingsUI's Field cannot claim the Field's published label — only the
-            form-family components read FieldLabelCtx. So it names itself, from `label`, which keeps
-            it correct if this component gains a second call site. */}
-        <input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="Add path…"
-          aria-label={`Add to ${label.toLowerCase()}`}
-          onKeyDown={(e) => { if (e.key === 'Enter' && adding.trim()) { commit([...list, adding.trim()]); setAdding('') } }}
-          className="h-8 w-40 rounded-md bg-surface-high px-2 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
-        {adding.trim() && (
-          <SquareIconButton icon={Plus} iconSize={15} label={`Add ${label.toLowerCase()}`} onClick={() => { commit([...list, adding.trim()]); setAdding('') }} />
-        )}
-        <SavedToast show={saved} />
-      </div>
-    </Field>
-  )
-}

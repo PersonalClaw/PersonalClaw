@@ -1,7 +1,8 @@
 import { useId, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Plus, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { SquareIconButton } from '../../ui/SquareIconButton'
 import { spring, physics } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Toggle } from '../../ui/Toggle'
@@ -318,6 +319,59 @@ export function NumberRow({ label, hint, cfg, field, min, max, patch }: {
     <Field label={label} hint={hint}>
       <div className="flex items-center gap-2">
         <NumberField value={value} min={min} max={max} step={1} onChange={(n) => patch(field, n as never, flash, label)} ariaLabel={label} />
+        <SavedToast show={saved} />
+      </div>
+    </Field>
+  )
+}
+
+/** A labelled list-of-strings config field — chips you can remove, one input that appends. The
+ *  `ToggleRow`/`NumberRow` sibling for `_EDITABLE_CONFIG`'s `str_list` type.
+ *
+ *  Declared HERE rather than a second time in a second panel: `AgentDefaultsPanel` had the only
+ *  copy, module-private, and `panelFieldNames.test.tsx` already anticipated "a second call site".
+ *  Every edit commits the WHOLE list — the PATCH allowlist takes a `str_list`, not a delta — so a
+ *  removed chip and an added one travel the same way and neither can half-apply.
+ *
+ *  `placeholder` is a prop because the add input is the only vendor-specific pixel: "Add path…"
+ *  and "Add host…" are the same control over different nouns. The `aria-label` is NOT a prop —
+ *  it derives from `label`, so a raw input inside a `Field` (which cannot claim the Field's
+ *  published label; only the form-family components read `FieldLabelCtx`) still names itself
+ *  correctly at every call site. */
+export function StrListField({ label, hint, cfg, field, patch, placeholder = 'Add…' }: {
+  label: string
+  hint?: string
+  cfg: Record<string, unknown>
+  field: string
+  /** `(key, value, onSaved, label)` — the panel's own config PATCH, typed at its widest shape. */
+  patch: (k: string, v: never, cb: () => void, label?: string) => void
+  placeholder?: string
+}) {
+  const [saved, setSaved] = useState(false)
+  const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+  const list = Array.isArray(cfg[field]) ? (cfg[field] as string[]) : []
+  const [adding, setAdding] = useState('')
+  const commit = (next: string[]) => patch(field, next as never, flash, label)
+  const add = () => { commit([...list, adding.trim()]); setAdding('') }
+  return (
+    <Field label={label} hint={hint}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {list.map((v) => (
+          <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface text-[0.75rem] font-mono">
+            {v}
+            <button type="button" onClick={() => commit(list.filter((x) => x !== v))} aria-label={`Remove ${v}`} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
+          </span>
+        ))}
+        {/* A RAW input inside this module's Field cannot claim the Field's published label — only the
+            form-family components read FieldLabelCtx. So it names itself, from `label`, which keeps
+            it correct across every call site. */}
+        <input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder={placeholder}
+          aria-label={`Add to ${label.toLowerCase()}`}
+          onKeyDown={(e) => { if (e.key === 'Enter' && adding.trim()) add() }}
+          className="h-8 w-40 rounded-md bg-surface-high px-2 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        {adding.trim() && (
+          <SquareIconButton icon={Plus} iconSize={15} label={`Add ${label.toLowerCase()}`} onClick={add} />
+        )}
         <SavedToast show={saved} />
       </div>
     </Field>

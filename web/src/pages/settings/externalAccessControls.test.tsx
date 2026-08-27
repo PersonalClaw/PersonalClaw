@@ -39,6 +39,7 @@ const STATE: ExternalAccess = {
     rate_concurrent: 4,
     auto_disable_after_breaches: 10,
     capture_retention_days: 30,
+    capture_upstream_allowlist: ['api.openai.com'],
   },
   surfaces: [
     {
@@ -79,6 +80,60 @@ describe('the external-access controls reach the backend', () => {
     expect(
       (screen.getByLabelText('Keep captured sessions for (days)') as HTMLInputElement).value,
     ).toBe('30')
+  })
+
+  // ── The upstream allow-list: the cap whose ABSENCE was user-facing ──────────────────────────
+  //
+  // Backend round-trip was 4-of-5 (dataclass + _meta, load(), to_dict, PATCH allowlist) with no
+  // control, and the default is EMPTY while the list is exclusive — so enabling capture produced a
+  // blanket 502 with nothing in the UI to fix. These three tests are the fifth point: the value
+  // arrives, an edit PATCHes the NESTED key `_EDITABLE_CONFIG` actually accepts, and it round-trips.
+
+  it('renders the upstream allow-list the endpoint reports', async () => {
+    render(<ExternalAccessPanel />)
+    await waitFor(() => expect(screen.getByLabelText('Add to capture upstream allow-list')).toBeTruthy())
+    // The VALUE, not just the control: a chipped list bound to nothing renders an input and
+    // no chips, which is exactly what a dead control looks like.
+    expect(screen.getByText('api.openai.com')).toBeTruthy()
+    expect(screen.getByLabelText('Remove api.openai.com')).toBeTruthy()
+  })
+
+  it('adding a host PATCHes external_access.capture.upstream_allowlist with the WHOLE list', async () => {
+    render(<ExternalAccessPanel />)
+    await waitFor(() => expect(screen.getByLabelText('Add to capture upstream allow-list')).toBeTruthy())
+    await userEvent.type(
+      screen.getByLabelText('Add to capture upstream allow-list'),
+      'api.anthropic.com{Enter}',
+    )
+    // The nested spelling is the assertion. `external_access.capture_upstream_allowlist` — the flat
+    // form the neighbouring retention knob uses — is NOT in the PATCH allowlist, so a control that
+    // wrote it would move on screen and 400 on the wire.
+    await waitFor(() =>
+      expect(patchConfig).toHaveBeenCalledWith('external_access.capture.upstream_allowlist', [
+        'api.openai.com',
+        'api.anthropic.com',
+      ]),
+    )
+    // VACUITY / cross-wiring floor: editing the allow-list must not write a neighbouring cap.
+    expect(
+      patchConfig.mock.calls.filter((c) => c[0] === 'external_access.capture_retention_days'),
+    ).toEqual([])
+  })
+
+  it('removing a host PATCHes the remaining list, and the value round-trips back into the pane', async () => {
+    externalAccess.mockResolvedValueOnce(STATE).mockResolvedValue({
+      ...STATE,
+      caps: { ...STATE.caps, capture_upstream_allowlist: [] },
+    })
+    render(<ExternalAccessPanel />)
+    await waitFor(() => expect(screen.getByLabelText('Remove api.openai.com')).toBeTruthy())
+    await userEvent.click(screen.getByLabelText('Remove api.openai.com'))
+    await waitFor(() =>
+      expect(patchConfig).toHaveBeenCalledWith('external_access.capture.upstream_allowlist', []),
+    )
+    // Round-trip: the panel refetches after a save, so the emptied list must be what it repaints
+    // from. A control that only mutated local state would still show the chip here.
+    await waitFor(() => expect(screen.queryByText('api.openai.com')).toBeNull())
   })
 
   it('the MASTER switch PATCHes external_access.enabled', async () => {

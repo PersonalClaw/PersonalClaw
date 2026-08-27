@@ -868,6 +868,80 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   `inbound.capture_proxy`/`inbound.clients` plus the new file → **260 passed, 0 failed**; the new file alone
   **10 passed**; `gate_report.py` 6/6 PASS; probe sweep 16. No `web/` files.
 
+- **[2026-08-26][`EA-5`] BOTH parked clauses are CLOSED. Atom still `todo` — on two clauses nobody had
+  looked at.** `POST /capture/import` ships and `upstream_allowlist` has a control. What that cost, and
+  what it uncovered:
+  **The route is 60 lines because it delegates.** `capture_proxy.handle_import` runs `_admit` (the SAME
+  gate the two dialects use — not a restatement beside it) and then `asyncio.to_thread(import_capture_file,
+  …)`, i.e. the function the CLI calls. So redaction, fencing, the content-hash ledger and §8's
+  skipped-and-counted all arrive inherited: there is one pipeline and one report dialect, and the response
+  is the CLI's own `{imported, skipped, reasons, duplicate, content_hash, format, source}` verbatim.
+  Mounted in `capture_proxy`, not in `capture_import`, because a second module registering a `/capture/*`
+  path is a second place the loopback and bearer rails would have to be restated.
+  🔴 **SECURITY RULING — the route does NOT inherit the CLI's any-path file argument.** `file` names a bare
+  filename inside a new drop directory (`<home>/capture/imports`, 0700) and nothing else. The CLI can take
+  any path because a human at a shell can already read that file as themselves; the route's bearer is a
+  *capture-surface token* held by an external agent, which is far less privileged — so a caller-chosen path
+  would make the gateway a file-read oracle that stages any readable file (`~/.ssh/id_rsa`) into the
+  learning tier, fenced but read. This is the ruling `handlers/onboarding_import` already made for the same
+  shape ("read from the root under the request, never taken from the caller", `onboarding_import.py:183`).
+  `resolve_import_file` refuses on THREE axes, and the third is the one a name check cannot see: a
+  **symlink** dropped in the directory is resolved and its parent compared against the resolved root (both
+  sides resolved, because `/tmp` → `/private/tmp` on macOS would otherwise refuse every legitimate file).
+  **The FE control is a `str_list`, so it needed a `str_list` control — and there was exactly one, private.**
+  `StrListField` moved from `AgentDefaultsPanel` into `settingsUI.tsx` beside `ToggleRow`/`NumberRow` rather
+  than being copied; `panelFieldNames.test.tsx` had already predicted this ("if StrListField gains a second
+  call site") and its scan now reads the shared module. `placeholder` became a prop ("Add path…" / "Add
+  host…"); the `aria-label` did NOT, because it must derive from `label` — a placeholder is not an
+  accessible name. Backend side: `caps` now reports `capture_upstream_allowlist` from the NESTED
+  `ea.capture.upstream_allowlist`, and the control PATCHes `external_access.capture.upstream_allowlist` —
+  the only spelling `_EDITABLE_CONFIG` accepts for it. Reading under one name and writing under another is
+  how a control renders a value it cannot save.
+  **One new wire code**, `capture_import_failed`, for the store failing UNDER an import — never for a file
+  that parsed badly, which stays a 200 whose `reasons` name each loss. Its message is screened once at the
+  boundary (`_screened`), before composition, because `redact_credentials` is not idempotent over a
+  composed `field: value` line.
+  🔴 **UNMET clause 3 — there is NO `capture` staging source in `learning.db`.** `git grep -rn capture_store
+  -- src/` finds importers only inside `inbound/`; `StagingEntry` (`learning/staging.py:76`) carries
+  `cadence`/`kind` and no capture row is ever written. §8's "records durably even if flywheel steps 1-3
+  absent — hookup is one adapter" therefore has neither the adapter nor the row. The durable artifact today
+  is `capture/<id>.jsonl` alone.
+  🔴 **UNMET clause 4 — `capture_store.prune()` is an inert control.** Its docstring says "Called from the
+  curator tick" (`capture_store.py:734`), and the 2026-08-24 entry above records the retention semantics in
+  detail — but the maintenance block in `history.py:1347` prunes volunteer events only, and nothing outside
+  `inbound/` imports the module. So `capture.retention_days` governs a function no schedule reaches.
+  **Both left as DISCOVERY, not built.** Clause 4 is ~5 lines in a shared maintenance tick; clause 3 is a
+  learning-area integration with its own contracts. Neither was in the briefed scope and both are cleaner
+  as one deliberate change than as a tail-of-session improvisation (E6).
+  ✅ **SUPERSEDED — both were built by `a0bc0bf9`**, the "DONE — the two clauses the last session recorded
+  as DISCOVERY" entry earlier in this log, which landed on `main` before this PR rebased onto it. The two
+  🔴 clauses above are the DISCOVERY that entry answers; they are history, not current state.
+  **Corrected citations:** the CLI half is `cli.py:639-655`, not `:621-628` (`:625` is the inbound-confirm
+  parser). `upstream_allowlist`'s dataclass `_meta` is `loader.py:3904`, its `load()` wiring `:5191`, and
+  the PATCH allowlist row `core.py:723` — each a few lines off the parked numbers.
+  **`loader.py` UNCHANGED at 5900 lines** (100 of headroom under the 6000 ceiling): every backend
+  round-trip point for `upstream_allowlist` already existed, so this was a UI control, not a config field.
+  **Falsifications, all four restored from file copies:** (1) `_fence` dropped from
+  `capture_store._build_record`'s sidecar → the route test reds with *"imported content is not fenced"*,
+  which is the point of running the REAL store on the route path rather than a double. (2) the FE control's
+  `commit` neutralised to `flash()` only → the two PATCH/round-trip tests red while *"renders the upstream
+  allow-list"* stays GREEN — the exact inert-control shape this clause existed to fix, and the reason the
+  read assertion alone would not have been enough. (3) both branches of `resolve_import_file`'s fence made
+  dead → the traversal test reds. (4) `handle_import`'s `if refusal is not None` made dead → the gate test
+  reds `200 == 404`, so the 404/403/401 assertions are not vacuous.
+  **Gate:** `make lint` clean (black/isort/flake8, mypy **1054** source files); `gate_report.py` 6/6 PASS;
+  backend **332 passed, 0 failed** across `test_ea5_capture_import.py` (25, +7 new), the three other EA-5
+  suites, `test_config_roundtrip.py`, `test_structural_baseline.py`, both error-code append-only rails,
+  `test_external_access_seam.py`, `test_agent_reference.py`, `test_server_route_handlers_exist.py` and
+  `test_ea2_openai_dialect.py`; `web/` full suite **5406 passed / 505 files, 0 failed** after `npm ci` at
+  the root, `typecheck:web` clean, `npm run build` clean. Two `web/` ratchets moved WITH the code and are
+  named here because they are text scans: `panelFieldNames`'s `MUST_KEEP` row retargeted to
+  `settingsUI.tsx` (+ added to its own non-vacuity list), and `saveFailureNamesTheControl`'s
+  shared-row-signature count 2 → 3 with the third row asserted BY NAME, so a fourth row arriving without
+  the label argument cannot go green on the count alone. `docs/design/consistency-audit.json` regenerated
+  by the FE build and deliberately NOT committed (pre-existing drift on `main`). Probe sweep: zero new
+  `FALSIFICATION`/`if False and`/`# PROBE` hits.
+
 ## Execution log — `EA-2` (§2 Dialect 1: the OpenAI-compatible `/v1` doorway, Session 2)
 
 - [2026-08-25][EA-2] **DONE — `/v1/*` mounted.** New `inbound/openai_dialect.py` registered from
@@ -1060,3 +1134,18 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   passed**; error-code + census rails **57 passed** with `test_inbound_a2a`; `gate_report.py` **6/6 PASS**;
   `npm run typecheck:web` clean, `npm run test:web` **487 files / 5180 tests passed**, `npm run build` OK.
   Probe sweep 16 (0 introduced); `git status` clean.
+- [2026-08-26][EA-5] **The wire-census ceiling caught a real omission in this commit; satisfied, not
+  weakened.** `tests/test_wire_error_envelope_census.py` reddened `assert 214 <= 213`: the new
+  `POST /capture/import` success path answers with `web.json_response(report)` where `report` is
+  verbatim `capture_import.import_capture_file`'s `dict[str, Any]` return, which the scanner refuses to
+  resolve to a literal (LOUD by construction, exactly as intended). Re-measured MAIN-RELATIVE rather
+  than assumed: `origin/main` (c9fff2f3) measures 213 unresolved / 1507 flat, this branch 214 / 1507,
+  and the single added site is `inbound/capture_proxy.py:755`. `UNRESOLVED_PAYLOAD_CEILING` went to 214
+  with a row in the documented style naming the route and body, why spelling the importer's report
+  schema out at the call site would make the proxy the second author of a shape the importer owns, and
+  confirming the slack is not spendable on an error envelope — every refusal on this route already goes
+  through `json_error` (`capture_import_failed` 500 immediately above the site, plus the admission
+  refusals), so no flat `{"error": …}` body was added and `FLAT_BASELINE` stays shrink-only at 1507.
+  **Merge-order note:** the sibling AS-6 branch carries its own independent 213 → 214 step, so whichever
+  of the two lands second will measure 215 and must re-measure at that rebase; the ceiling was NOT
+  pre-set to 215, because a ceiling above the measured value is what this rail exists to prevent.
