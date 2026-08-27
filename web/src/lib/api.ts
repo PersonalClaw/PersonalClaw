@@ -2636,6 +2636,10 @@ export interface AuditFilters {
 // checked (the default; `full` walks the whole chain).
 export interface SelVerify {
   ok: boolean; checked: number; valid?: number; tampered?: number; windowed?: boolean
+  /** The entry cap the server applied (`null` for an exhaustive check). `windowed` says a cap was
+   *  SET; this says how big it was — the only way a consumer can tell "stopped at 5000" from
+   *  "5000 is the whole log". */
+  window?: number | null
   error?: string
 }
 // An archived chat session file (read-only browse). `key`=session key, `stamp`=
