@@ -8,7 +8,7 @@ import type { DeviceRec, DevicePairStart } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section } from './settingsUI'
+import { PanelHeader, Section, RowGroup } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { EmptyState, FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { relPast, absTime } from '../schedule/scheduleMeta'
@@ -291,7 +291,7 @@ export function DevicesPanel() {
             action={{ label: 'Pair your first device', onClick: startPairing, icon: QrCode }}
           />
         ) : (
-          <div className="rounded-lg bg-surface-container px-4 py-1">
+          <RowGroup>
             {data.map((d) => {
               const kind = KINDS[d.kind] ?? KINDS.unknown
               const KindIcon = kind.icon
@@ -327,7 +327,7 @@ export function DevicesPanel() {
                 </div>
               )
             })}
-          </div>
+          </RowGroup>
         )}
       </Section>
     </div>

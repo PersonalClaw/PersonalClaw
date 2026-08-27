@@ -3,7 +3,7 @@ import { AlertTriangle, KeyRound, Plug2, ShieldOff, Trash2 } from 'lucide-react'
 import { api, type ExternalAccessClient, type ExternalAccessSurface } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { Button } from '../../ui/Button'
-import { PanelHeader, Section, Row, Toggle, NumberRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Toggle, NumberRow } from './settingsUI'
 
 // Named `CACHE_KEY`, not `KEY`. `dataLayerAdoption.test.ts` resolves an identifier
 // handed to `useQuery` by matching `const <NAME> = '…'` across the WHOLE tree, so a
@@ -129,7 +129,7 @@ export function ExternalAccessPanel() {
       <Section
         title="Master switch"
         hint="One switch over all five surfaces. Off unmounts every one of them on the next request — no restart needed.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <Row
             label="Allow inbound access"
             hint="While this is off, nothing below can serve, whatever its own switch says.">
@@ -139,7 +139,7 @@ export function ExternalAccessPanel() {
               disabled={busy === 'external_access.enabled'}
               label="Allow inbound access" />
           </Row>
-        </div>
+        </RowGroup>
       </Section>
 
       <Section
@@ -150,7 +150,7 @@ export function ExternalAccessPanel() {
             Couldn’t read the surface configuration.
           </div>
         ) : (
-          <div className="rounded-lg bg-surface-container px-4 py-1">
+          <RowGroup>
             {surfaces.map((s) => (
               <SurfaceRow
                 key={s.surface}
@@ -159,14 +159,14 @@ export function ExternalAccessPanel() {
                 busy={busy}
                 onToggle={(v) => patchFlag(`external_access.${s.surface}.enabled`, v)} />
             ))}
-          </div>
+          </RowGroup>
         )}
       </Section>
 
       <Section
         title="Limits"
         hint="Applied per client, not per surface, so one busy integration cannot spend another one’s allowance. A request over the rate gets a 429 and is recorded; a client that keeps going over is switched off and you are notified.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <NumberRow
             label="Requests per second"
             hint="Sustained rate for each client. Fractional rates are legal but need a config.json edit — this stepper works in whole requests."
@@ -207,7 +207,7 @@ export function ExternalAccessPanel() {
             min={0}
             max={3650}
             patch={patchNumber} />
-        </div>
+        </RowGroup>
         <div className="mt-3 rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">
           <div>
             <span className="text-on-surface">Public URL:</span>{' '}

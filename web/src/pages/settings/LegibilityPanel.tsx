@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, ToggleRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, ToggleRow } from './settingsUI'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { AlwaysOnConventions } from './AlwaysOnConventions'
 
@@ -58,17 +58,17 @@ export function LegibilityPanel() {
       <AlwaysOnConventions />
 
       <Section title="Discover" hint="A curated tour of the parts of PersonalClaw you haven't tried yet, on the dashboard and the Discover hub.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <ToggleRow label="Discover tips" cfg={cfg} field="discover_tips" patch={patch}
             hint="Show the dashboard Discover section and the Discover hub — hand-picked tips that guide you to features like Chat, Tasks, Projects, Knowledge, and Automation, each a deep link to try it. A tip auto-hides once you've used that feature; dismiss hides one forever. Nothing is ever enabled on your behalf." />
-        </div>
+        </RowGroup>
       </Section>
 
       <Section title="Context for external agents" hint="Write your rules and scored context into project files that other AI tools read.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <ToggleRow label="Context files" cfg={cfg} field="context_adapters" patch={patch}
             hint="Let PClaw render a marker-fenced block into an opted-in project's CLAUDE.md / AGENTS.md / .cursorrules. Only content inside the PCLAW markers is managed; the rest of the file is never touched. Regeneration is manual per project." />
-        </div>
+        </RowGroup>
       </Section>
     </div>
   )

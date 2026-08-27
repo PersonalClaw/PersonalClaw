@@ -63,8 +63,13 @@ describe('a settings Row labels exactly one control', () => {
     // function pushed `{label}` past the window — the guard failed while Row's shape was untouched. A
     // character count is not a scope: slice to the next top-level declaration instead, which is what
     // "Row's body" actually means.
+    // 🪤 And the anchor needs the OPEN PAREN. `'export function Row'` is a PREFIX of
+    // `export function RowGroup`, so once settingsUI grew that sibling this guard silently sliced
+    // RowGroup's body instead of Row's and failed while Row was untouched — the same
+    // character-window-is-not-a-scope mistake one level up. `Row(` names exactly one declaration.
     const ui = readFileSync(join(SRC, 'pages/settings/settingsUI.tsx'), 'utf8')
-    const start = ui.indexOf('export function Row')
+    const start = ui.indexOf('export function Row(')
+    expect(start, 'Row must exist, and must not be shadowed by a prefix sibling').toBeGreaterThan(-1)
     const next = ui.indexOf('\nexport ', start + 1)
     const row = ui.slice(start, next > start ? next : undefined)
     expect(row).toMatch(/\{label\}/)

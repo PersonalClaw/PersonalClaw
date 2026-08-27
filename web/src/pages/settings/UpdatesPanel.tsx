@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { DownloadCloud, CheckCircle2, RefreshCw } from 'lucide-react'
 import { api, type UpdateCheck } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { PanelHeader, Section, Row, Toggle, SavedToast } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Toggle, SavedToast } from './settingsUI'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Markdown } from '../../ui/Markdown'
@@ -176,7 +176,7 @@ export function UpdatesPanel() {
       </Section>
 
       <Section title="Automatic updates">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <Row label="Auto-update" hint="Download and apply updates automatically when available.">
             <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={info.auto_update} onChange={toggleAuto} label="Auto-update" /></div>
           </Row>
@@ -186,7 +186,7 @@ export function UpdatesPanel() {
               <div className="flex items-center gap-2"><Toggle on={!!info.update_dev_mode} onChange={toggleDevMode} label="Developer update mode" /></div>
             </Row>
           )}
-        </div>
+        </RowGroup>
       </Section>
 
       <Section title="Changelog" hint="What's changed recently.">

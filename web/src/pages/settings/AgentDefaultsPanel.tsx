@@ -4,7 +4,7 @@ import { api, type RunnerRow } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName, type AgentOption } from '../../lib/agents'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, Row, Field, SegPills, SavedToast, ToggleRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Field, SegPills, SavedToast, ToggleRow } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { FieldError, NumberField, TextInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -96,30 +96,30 @@ export function AgentDefaultsPanel() {
       </Section>
 
       <Section title="Defaults" hint="Baseline behavior for every session.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <EnumRow label="Approval mode" hint="When the agent must ask before running a tool." cfg={cfg} field="approval_mode" patch={patch}
             options={[{ key: 'auto', label: 'Auto' }, { key: 'interactive', label: 'Ask each time' }, { key: 'trust_reads', label: 'Trust reads' }]} />
           <EnumRow label="Sandbox" hint="Sandbox mode for the ACP provider." cfg={cfg} field="sandbox" patch={patch}
             options={[{ key: 'auto', label: 'Auto' }, { key: 'off', label: 'Off' }]} />
           <ToggleRow label="YOLO mode" cfg={cfg} field="yolo" patch={patch}
             hint="Skip every tool-approval confirmation — overrides approval mode. Only inside a sandbox or for trusted automation." danger />
-        </div>
+        </RowGroup>
       </Section>
 
       <RunnersSection />
 
       <Section title="Subagents" hint="Limits for helper agents the main agent spawns.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <NumberRow label="Max concurrent subagents" hint="0 = auto-size from this host's CPU and memory." cfg={cfg} field="max_subagents" patch={patch} min={0} max={16} />
           <NumberRow label="Max turns per subagent" cfg={cfg} field="subagent_max_turns" patch={patch} min={1} max={200} />
           <NumberRow label="Subagent timeout" cfg={cfg} field="subagent_timeout_secs" patch={patch} min={60} max={7200} suffix="s" />
           <NumberRow label="Min free memory to spawn" cfg={cfg} field="spawn_min_memory_gb" patch={patch} min={0} max={64} step={0.5} suffix="GB" />
           <StrListField label="Allowed working directories" hint="Roots a subagent may run in." cfg={cfg} field="subagent_cwd_allowed_roots" patch={patch} />
-        </div>
+        </RowGroup>
       </Section>
 
       <Section title="Advanced" hint="Delegation, safety enforcement, and diagnostics.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <ToggleRow label="Orchestrator skill" cfg={cfg} field="orchestrator_skill" patch={patch}
             hint="Enable agent delegation — loads the orchestrator skill with the agent roster." />
           <ToggleRow label="Concurrent ACP sessions" cfg={cfg} field="acp_concurrent_sessions" patch={patch}
@@ -132,13 +132,13 @@ export function AgentDefaultsPanel() {
             hint="Seconds to wait for a cooperative cancel before hard-killing a session." />
           <NumberRow label="Runner health check interval" cfg={cfg} field="runner_health_check_secs" patch={patch} min={60} max={86400} step={60} suffix="s"
             hint="How long a runner's measured health stays current. Past this, its row under Runners is marked check overdue rather than presenting an old reading as the present state. Nothing is probed automatically — use Re-check runners." />
-        </div>
+        </RowGroup>
         {/* multi-agent space concurrency (max_spaces / max_space_agents) lives in
             Settings → Spaces, not here. */}
       </Section>
 
       <Section title="Self-QA companion" hint="Watch a repository and QA each user-impacting commit as a user would — driving the real UI, then filing an Inbox item and a Task when a scenario fails. Off by default: it spends model calls and drives your browser unattended.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <ToggleRow label="Enable the companion" cfg={selfQa} field="enabled" patch={patchSelfQa}
             hint="Off means the commit watcher stays idle. A commit only gets a scenario when the change could actually be noticed by a user — test-only and docs-only commits are recorded as skips, with the reason, and cost nothing." />
           <TextRow label="Watched repository" cfg={selfQa} field="watched_repo" patch={patchSelfQa}
@@ -148,7 +148,7 @@ export function AgentDefaultsPanel() {
             hint="Ceiling on scenarios generated from one push. Every commit still gets a verdict; this bounds how many browser sessions one push can start." />
           <ToggleRow label="Propose fix branches" cfg={selfQa} field="fix_branch_enabled" patch={patchSelfQa} danger
             hint="On a confirmed failure, open a pclaw/selfqa-<sha> branch carrying a proposed diff. Never merged and never pushed — the branch name lands in the Task for you to review." />
-        </div>
+        </RowGroup>
       </Section>
     </div>
   )
@@ -162,7 +162,7 @@ function DefaultAgentRow({ options, value, onChange }: { options: AgentOption[];
     ? options
     : [{ value, label: value, group: 'Current' }, ...options]
   return (
-    <div className="rounded-lg bg-surface-container px-4 py-2">
+    <RowGroup>
       <Row label="Default agent" hint="Used for every new session.">
         <div className="flex items-center gap-2">
           <SavedToast show={saved} />
@@ -172,7 +172,7 @@ function DefaultAgentRow({ options, value, onChange }: { options: AgentOption[];
           </div>
         </div>
       </Row>
-    </div>
+    </RowGroup>
   )
 }
 
