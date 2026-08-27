@@ -1022,3 +1022,158 @@ correct URL and returns `200 application/pdf`.
   re-litigates it: **the editor is STRUCTURAL** (per-block fields plus select-and-mark), not WYSIWYG.
   Every `done_when` clause was already met and gated green. Flipped in `dag.json` and `DFE.md`.
   Consequence: `DFE-6`, `DFE-7` and `DFE-8` all depended only on `DFE-5` and are now startable.
+
+---
+
+## Execution log — DFE-5 owner ratification + DFE-6 (layout control) — **DONE**
+- [2026-08-26][DFE-5] **Ratification RE-VERIFIED at implementation time, not taken on trust.**
+  (The ruling itself is the entry above; this records what was checked before accepting it.)
+  `4ec8209c` is an ancestor of `origin/main`; **54 backend tests** green across
+  `test_document_editing_gate.py` (8), `test_config_roundtrip.py` and
+  `test_artifact_binary_write_api.py`; **42 frontend tests** green across
+  `documentEditorSlot`/`documentEditorContract`/`documentModelEdit`; `make lint` clean and
+  `gate_report.py` 6/6. Each of the six clause-groups was located as a real assertion, not prose —
+  including the python-docx read-back of STORED bytes (`test_a_bolded_word_is_bold_in_the_stored_
+  document`) and the byte-compare revert (`restored == original`, with `edited != original` as its
+  vacuity leg). Two falsifications: `if not …document_editing` → `if False and not …` reds
+  `test_a_model_write_is_refused_while_document_editing_is_off` with `assert 200 == 403` while the
+  other 7 stay green; `e.status === 409` → `499` reds exactly "a 409 says what happened and leaves
+  the draft saveable" (1 of 13). Both restored from a file copy at the literal path.
+
+- [2026-08-26][S3 · atom `DFE-6`] **DONE.** All four `done_when` clauses met (T3.1-T3.4).
+
+- **This atom closes a defect DFE-4 recorded and could not fix.** DFE-4's log states: "a freshly
+  generated document is lossless is **false**, and §C5's editor warning will fire on every
+  `.docx` until `PageSetup` grows per-edge margins — `T3.1`'s territory". That was the real cost of
+  a single `margin_in`: python-docx's default template ships 1.00in top/bottom and 1.25in
+  left/right, so **every document this project generated itself parsed as lossy** and the editor
+  warned the user that editing their own new file would lose formatting. Four per-edge fields make
+  that geometry representable, and the report on a generated document is now empty
+  (`test_the_tool_generated_document_reports_exactly_its_one_honest_loss` inverted to assert
+  `report.items == []`). Teaching people to click through a warning that sometimes matters was the
+  larger bug.
+
+- **`PageSetup` grew a named SIZE, and swapping the template's dimensions was never equivalent.**
+  The writer's old landscape path swapped `section.page_width`/`page_height`, which can only ever
+  yield a landscape version of *the template's* paper — so a model asking for A4 landscape got
+  landscape **Letter** and the size was dropped silently. `size` is a closed set
+  (`letter`/`a4`/`legal`/`tabloid`, `""` = template decides) validated in `__post_init__` like
+  `align`/`orientation`, and `size_in()` applies orientation so orientation stays ONE fact rather
+  than doubling the table. `w:orient` is now declared from the RESULTING geometry rather than the
+  model's string, because a reader that trusts the attribute over the dimensions must agree with
+  the paper it prints on.
+
+- **DEVIATIONS from §C1, both deliberate.** (1) §C1 spells margins `margin_pt: dict[str, float]`;
+  shipped as four named floats (`margin_top_pt`…`margin_right_pt`). The model has no other
+  dict-typed field, `model_json._object()` validates payloads by dataclass FIELD NAME (a dict would
+  need its own key validation), and the frontend would need string-keyed lookups — four floats get
+  all of that for free and read the same as the neighbouring `space_before_pt`. (2) §C1 defaults
+  `size="letter"` / `orientation="portrait"`; shipped `""` for both, matching the shipped model's
+  own stated doctrine that `""` means "the writer's template decides, and a template with a house
+  page size keeps it". Concrete defaults would have made every existing caller start writing Letter
+  into files that never asked for one.
+
+- **`first_line_indent_pt` is the one field where NEGATIVE is meaningful** — a hanging indent pulls
+  the first line left of the body. So its unset test is `!= 0`, not the `> 0` every sibling numeric
+  uses, and both the writer census row and the round-trip row measure it with **-18pt**: a
+  positive-only measurement would have reported "emitted" for a field that silently dropped every
+  hanging indent. Falsified (`!= 0` → `> 0`): 3 reds, all of them the `first_line_indent_pt` rows,
+  with the other seven layout fields green — so the parametrized rail discriminates per field.
+
+- **Headers/footers are plain text, and what does not fit is REPORTED rather than flattened.**
+  `header_text`/`footer_text` hold one line; a part carrying a table, several non-empty paragraphs,
+  an image, or a field other than `PAGE` raises a `header_footer` item and is left out of the model
+  entirely. Squeezing a two-paragraph header with a logo into one string would claim a fidelity the
+  re-render does not have, and keeping only the first paragraph would lose the second without
+  saying so. `page_numbers` is its own flag writing a real `w:fldSimple PAGE` field, because a page
+  number is computed per page and no static string can express it — both spellings are read back
+  (`fldSimple`, and the `instrText` sequence Word writes), since checking only ours would read a
+  Word-authored footer as plain text and then drop its numbering.
+
+- **A LINKED header declares nothing of its own.** python-docx reports the inherited definition for
+  a section whose header is linked to the previous one, so the first draft raised a `header_footer`
+  loss for content already captured. Skipped — a report that cries wolf is one nobody reads, which
+  is the same reasoning `_RUN_PROPS`' docstring already gives for being a denylist.
+
+- **`_PARA_PROPS` lost two entries, and the rail that pinned them was rewritten rather than
+  deleted.** `ind` and `keepNext` are modelled now, so they moved out of the "cannot hold" map;
+  `test_an_unmodelled_paragraph_property_is_reported` used `w:ind` as its example and would have
+  become a rail that could no longer fail, so it now uses `w:pBdr` and gained a companion
+  (`test_indentation_is_READ_not_reported`) asserting the other direction.
+
+- **`_kinds()` was DELETED, not left in place.** That helper filtered `page_property` out of every
+  assertion in `test_docx_parser.py` because every fixture carried one. With the margin loss gone it
+  filtered nothing — and a filter that no longer filters would have masked the next real
+  `page_property` regression across 36 call sites. All 36 now call `report.kinds()` directly.
+
+- **Two loss kinds needed new owner tests.** `_COVERED_BY` maps every `LOSS_KINDS` member to a test,
+  and `test_every_loss_kind_has_a_test` reds when the named test does not exist. `header_footer`'s
+  owner asserted a header IS reported, which this atom inverts, so it moved to
+  `test_a_header_the_model_cannot_hold_is_reported` (a table in the header); `page_property`'s moved
+  to `test_a_page_size_the_model_cannot_hold_is_reported` (A5 is genuinely unnameable).
+
+- **The writer census grew from 27 rows to 38 and stayed measured.** `test_docx_writer_coverage.py`
+  re-derives every verdict from freshly rendered bytes and `test_the_census_covers_every_model_field`
+  makes a new model field unaddable without a measurement — so all twelve new fields (four
+  `ParagraphStyle`, eight `PageSetup`) carry a live measurement, and `CENSUS_SHAPE` moved to
+  `{emitted: 28, partial: 10, dropped: 0}`.
+
+- **MEASURED FINDING — an exact-EMU page comparison can never pass.** `Inches(210/25.4)` is exactly
+  7560000 EMU (914400/25.4 = 36000 exactly, so the metric sizes are kept as unrounded divisions —
+  a rounded `8.2677` is 11 EMU short). But `w:pgSz`/`w:pgMar` are stored in TWIPS, so A4 saves as
+  11906 twips and reads back **10692130** against `Mm(297)`'s 10692000. That is a property of the
+  file format, not of this writer, so every page-dimension assertion compares within one twip
+  (635 EMU ≈ five-thousandths of a millimetre) and says why. Margins are exact (1pt = 20 twips).
+
+- **The frontend mirrors the size table, and a cross-language rail pins it.** The preview needs page
+  dimensions in the browser and cannot import Python, so `ui/content/documentPage.ts` duplicates
+  `PAGE_SIZE_IN`; `test_the_frontends_page_size_table_matches_the_models` reads that file and
+  asserts every model size name appears, with a vacuity floor (`a5:` must be ABSENT) so the rail
+  cannot pass against a file listing every plausible paper. A drift is either a preview drawing the
+  wrong paper or a size the editor offers and the server refuses with a 400.
+
+- **"Controls reflect the loaded document, not defaults" is asserted with a foil for every control.**
+  Each positive case (A4/landscape/2cm/real header/page-numbers ON) is paired with a VACUITY leg
+  mounting a Letter-portrait-1in document and reading every one of those controls differently —
+  1in shows as `2.54`, which cannot be the `2` the other document showed. A third case pins the
+  real trap: a document with `page: null` shows the UNSET option, not Letter, because `PageSetup`'s
+  zeros mean "the template decides" and rendering them as Letter would write Letter into the file
+  on the first unrelated save. Falsified (`pageOf` → always `EMPTY_PAGE`): 7 reds, while the
+  unset-state test correctly stayed GREEN — so the positive tests are the discriminating ones.
+
+- **The preview is a labelled approximation, and the label is prose beside the shape** rather than a
+  tooltip: it has to be readable at the moment the shape is, or the shape reads as a rendering. Its
+  insets are per-axis percentages (2cm of a 210mm height is 9.5%; of a 297mm width, 6.7% — the test
+  asserts they DIFFER, or the preview would be drawing one margin share on both axes) and it renders
+  nothing at all when no size is named. `aspect` is mirrored to `data-aspect` because jsdom does not
+  model the `aspect-ratio` CSS property, so a test can only read the drawn proportion from there.
+  Falsified (the share calculation → a constant): exactly the 2 geometry tests red, 15 green.
+
+- **THREE existing design ratchets caught this change and were fixed, not exempted**, and one was a
+  real a11y defect. (1) `toggleLabelInName` — WCAG 2.5.3: the visible label "Keep with next" was not
+  contained in the switch's accessible name "Keep this paragraph with the next", so voice control
+  could not act on what the user reads; renamed to "Keep with next paragraph". (2)
+  `disabledReasonCensus` + (3) `toggleDisabledReason` — three `Select`s and two `Toggle`s were
+  conditionally disabled with no reachable reason (`Select` carries no `disabledReason` prop). Fixed
+  by making the controls **ABSENT rather than dead** on a read-only host, which is the call DFE-5
+  already recorded for the editor itself ("a disabled editor would have been the wrong shape") —
+  a sentence saying why beats a row of dead dropdowns, and the geometry PREVIEW still renders,
+  because reading a historical version's layout is not editing it. Header/footer moved from raw
+  `<input>` to the shared `TextInput` in the same pass.
+
+- **`config/loader.py` is UNTOUCHED at 5900 lines.** This atom needs no config field —
+  `dashboard.document_editing` already gates the whole editing surface — so the 100-line headroom
+  the structural ceiling demands is unchanged. `test_structural_baseline.py` green.
+
+- **Gates.** `make lint` clean (black 2125 files, isort, flake8, **mypy 1043 source files**) ·
+  targeted backend **399 passed / 0 failed** across 12 suites (new `test_document_layout.py` 42) ·
+  `gate_report.py` **6/6 PASS** · `npm run typecheck:web` clean · full `npm run test:web`
+  **5420 passed / 506 files / 0 failed** · `npm run build` OK · probe sweep 0 diff-introduced ·
+  `docs/design/consistency-audit.json` reverted after the build regenerated it (its drift is
+  pre-existing on `main`).
+
+- **NOT in this atom, by scope:** the grid and slide editors are `DFE-7`/`DFE-8`; `PUT …/model`
+  still refuses non-docx kinds (`_MODEL_KINDS`), which is DFE-4's deliberate parser-gated design.
+  `_settled_docx_bytes` was KEPT (19 call sites over two files) but its docstring corrected — one
+  render is lossless now, so it no longer exists to dodge a margin loss, only to make a page setup
+  an explicit fact of the model a test holds.

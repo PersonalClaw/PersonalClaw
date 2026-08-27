@@ -96,17 +96,6 @@ def _numbered_doc(
     return _bytes(doc)
 
 
-def _kinds(report: LossReport) -> list[str]:
-    """Loss kinds excluding `page_property`.
-
-    python-docx's default template has 1.00in top/bottom and 1.25in left/right margins,
-    which `PageSetup.margin_in` genuinely cannot hold — so EVERY document built from that
-    template reports one honest `page_property` item. Filtering it here keeps each test
-    about its own construct; `test_default_template_margins_are_reported` owns that item.
-    """
-    return [kind for kind in report.kinds() if kind != "page_property"]
-
-
 # --------------------------------------------------------------------------------------
 # document order — the claim that a two-sequence parser cannot make
 # --------------------------------------------------------------------------------------
@@ -145,7 +134,7 @@ def test_interleaved_paragraph_and_table_order_is_preserved():
         [["a"], ["b"]],
         [["c"], ["d"]],
     ]
-    assert _kinds(report) == []
+    assert report.kinds() == []
 
 
 def test_the_two_sequence_reading_would_reorder_that_fixture():
@@ -213,7 +202,7 @@ def test_consecutive_list_paragraphs_group_into_one_block():
         ("numbered", ["1", "2"]),
         ("bullets", ["c"]),
     ]
-    assert _kinds(report) == []
+    assert report.kinds() == []
 
 
 def test_a_word_shaped_bulleted_list_is_read_from_its_numbering():
@@ -221,7 +210,7 @@ def test_a_word_shaped_bulleted_list_is_read_from_its_numbering():
     model, report = parse_docx(_numbered_doc("a", "b", num_id="1"))
 
     assert [(block.kind, block.items) for block in model.blocks] == [("bullets", ["a", "b"])]
-    assert _kinds(report) == []
+    assert report.kinds() == []
 
 
 def test_a_word_shaped_numbered_list_is_read_from_its_numbering():
@@ -279,7 +268,7 @@ def test_an_all_monospace_paragraph_reads_as_a_code_block():
     assert [(block.kind, block.text, block.runs) for block in model.blocks] == [
         ("code", "f(1)", [])
     ]
-    assert _kinds(report) == []
+    assert report.kinds() == []
 
 
 def test_a_partly_monospace_paragraph_stays_a_paragraph_with_a_code_run():
@@ -311,7 +300,7 @@ def test_the_image_placeholder_paragraph_reads_back_as_an_image_block():
     )
 
     assert [(block.kind, block.artifact_slug) for block in model.blocks] == [("image", "hero-shot")]
-    assert _kinds(report) == []
+    assert report.kinds() == []
 
 
 def test_a_page_break_paragraph_reads_back_as_a_pagebreak_block():
@@ -328,7 +317,7 @@ def test_a_page_break_paragraph_reads_back_as_a_pagebreak_block():
     )
 
     assert [block.kind for block in model.blocks] == ["paragraph", "pagebreak", "paragraph"]
-    assert _kinds(report) == []
+    assert report.kinds() == []
 
 
 def test_an_empty_paragraph_is_kept_not_dropped():
@@ -383,7 +372,7 @@ def test_run_formatting_and_hyperlink_position_survive():
     ]
     # The link's colour + underline are the writer's own decoration and are consumed by
     # `link`; reporting them would make every link this repo writes look lossy.
-    assert _kinds(report) == []
+    assert report.kinds() == []
 
 
 def test_adjacent_runs_with_identical_formatting_are_merged():
@@ -407,7 +396,7 @@ def test_a_textless_run_is_dropped_without_a_loss_item():
 
     (block,) = model.blocks
     assert block.text == "only"
-    assert _kinds(report) == []
+    assert report.kinds() == []
 
 
 def test_paragraph_style_alignment_and_spacing_are_read():
@@ -438,7 +427,7 @@ def test_paragraph_style_alignment_and_spacing_are_read():
         block.style.space_after_pt,
         block.style.line_spacing,
     ) == ("center", 6.0, 3.0, 1.5)
-    assert _kinds(report) == []
+    assert report.kinds() == []
 
 
 def test_an_unstyled_paragraph_has_no_style_object():
@@ -462,21 +451,24 @@ def test_table_cells_are_read_with_the_header_bold_on_the_runs():
     assert [(cell.text, cell.bold) for cell in header] == [("h1", False), ("h2", False)]
     assert all(run.bold for cell in header for run in cell.runs)
     assert [(cell.text, cell.runs) for cell in body] == [("a", []), ("b", [])]
-    assert _kinds(report) == []
+    assert report.kinds() == []
 
 
 def test_page_setup_orientation_and_margins_are_read():
+    page = PageSetup(
+        size="letter",
+        orientation="landscape",
+        margin_top_pt=54.0,
+        margin_bottom_pt=54.0,
+        margin_left_pt=54.0,
+        margin_right_pt=54.0,
+    )
     model, report = parse_docx(
-        render_docx(
-            DocumentModel(
-                page=PageSetup(orientation="landscape", margin_in=0.75),
-                blocks=[Block(kind="paragraph", text="x")],
-            )
-        )
+        render_docx(DocumentModel(page=page, blocks=[Block(kind="paragraph", text="x")]))
     )
 
-    assert model.page == PageSetup(orientation="landscape", margin_in=0.75)
-    assert _kinds(report) == []
+    assert model.page == page
+    assert report.kinds() == []
 
 
 def test_page_setup_is_always_populated():
@@ -558,13 +550,13 @@ def test_footnote_and_endnote_references_are_reported():
         )
     )
 
-    assert _kinds(report) == ["footnote", "endnote"]
+    assert report.kinds() == ["footnote", "endnote"]
 
 
 def test_a_comment_reference_is_reported():
     _, report = parse_docx(_paragraph_doc(f'<w:commentReference {_W} w:id="1"/>'))
 
-    assert _kinds(report) == ["comment"]
+    assert report.kinds() == ["comment"]
 
 
 def test_a_text_box_is_reported_once_and_not_also_as_an_image():
@@ -577,7 +569,7 @@ def test_a_text_box_is_reported_once_and_not_also_as_an_image():
         )
     )
 
-    assert _kinds(report) == ["text_box"]
+    assert report.kinds() == ["text_box"]
 
 
 def test_an_embedded_image_is_reported():
@@ -586,7 +578,7 @@ def test_an_embedded_image_is_reported():
         _paragraph_doc(f'<w:r {_W}><w:drawing><wp:inline {nsdecls("wp")}/></w:drawing></w:r>')
     )
 
-    assert _kinds(report) == ["embedded_image"]
+    assert report.kinds() == ["embedded_image"]
 
 
 def test_an_embedded_ole_object_is_reported():
@@ -598,7 +590,7 @@ def test_an_embedded_ole_object_is_reported():
         )
     )
 
-    assert _kinds(report) == ["embedded_object"]
+    assert report.kinds() == ["embedded_object"]
 
 
 def test_a_tracked_insertion_is_reported():
@@ -606,7 +598,7 @@ def test_a_tracked_insertion_is_reported():
         _paragraph_doc(f'<w:ins {_W} w:id="9" w:author="a"><w:r><w:t>new</w:t></w:r></w:ins>')
     )
 
-    assert _kinds(report) == ["tracked_change"]
+    assert report.kinds() == ["tracked_change"]
 
 
 def test_a_field_is_reported():
@@ -617,19 +609,19 @@ def test_a_field_is_reported():
         )
     )
 
-    assert _kinds(report) == ["field"]
+    assert report.kinds() == ["field"]
 
 
 def test_a_bookmark_is_reported():
     _, report = parse_docx(_paragraph_doc(f'<w:bookmarkStart {_W} w:id="0" w:name="anchor"/>'))
 
-    assert _kinds(report) == ["bookmark"]
+    assert report.kinds() == ["bookmark"]
 
 
 def test_an_equation_is_reported():
     _, report = parse_docx(_paragraph_doc(f'<m:oMath {nsdecls("m")}/>'))
 
-    assert _kinds(report) == ["math"]
+    assert report.kinds() == ["math"]
 
 
 def test_a_block_level_content_control_is_reported_and_its_content_kept():
@@ -644,7 +636,7 @@ def test_a_block_level_content_control_is_reported_and_its_content_kept():
 
     model, report = parse_docx(_bytes(doc))
 
-    assert _kinds(report) == ["content_control"]
+    assert report.kinds() == ["content_control"]
     # The wrapper is unrepresentable; its TEXT is not, and dropping it would be the one
     # failure a loss report must never cover for.
     assert [block.text for block in model.blocks] == ["inside"]
@@ -655,7 +647,7 @@ def test_an_internal_anchor_link_is_reported_and_its_text_kept_unlinked():
         _paragraph_doc(f'<w:hyperlink {_W} w:anchor="top"><w:r><w:t>up</w:t></w:r></w:hyperlink>')
     )
 
-    assert _kinds(report) == ["internal_link"]
+    assert report.kinds() == ["internal_link"]
     assert model.blocks[0].text == "bodyup"
     assert all(not run.link for run in model.blocks[0].runs)
 
@@ -677,7 +669,7 @@ def test_an_internal_anchor_link_is_reported_and_its_text_kept_unlinked():
 def test_a_character_property_outside_the_model_is_reported(fragment, expected):
     _, report = parse_docx(_paragraph_doc(f"<w:r {_W}><w:rPr>{fragment}</w:rPr><w:t>x</w:t></w:r>"))
 
-    assert _kinds(report) == ["run_property"]
+    assert report.kinds() == ["run_property"]
     (item,) = report.of_kind("run_property")
     assert expected in item.detail
 
@@ -688,7 +680,7 @@ def test_an_explicitly_disabled_toggle_is_reported():
         _paragraph_doc(f'<w:r {_W}><w:rPr><w:b w:val="0"/></w:rPr><w:t>x</w:t></w:r>')
     )
 
-    assert _kinds(report) == ["explicit_off_toggle"]
+    assert report.kinds() == ["explicit_off_toggle"]
 
 
 def test_the_writers_own_link_colour_and_underline_are_not_reported_outside_a_link():
@@ -708,30 +700,72 @@ def test_the_writers_own_link_colour_and_underline_are_not_reported_outside_a_li
 
 
 def test_an_unmodelled_paragraph_property_is_reported():
-    _, report = parse_docx(_pPr_doc(f'<w:ind {_W} w:left="720"/>'))
+    """A border, not an indent: `w:ind` and `w:keepNext` are MODELLED now, so using either
+    here would have quietly turned this rail into one that can no longer fail."""
+    _, report = parse_docx(_pPr_doc(f'<w:pBdr {_W}><w:top {_W} w:val="single"/></w:pBdr>'))
 
-    assert _kinds(report) == ["paragraph_property"]
-    assert "indentation" in report.of_kind("paragraph_property")[0].detail
+    assert report.kinds() == ["paragraph_property"]
+    assert "paragraph border" in report.of_kind("paragraph_property")[0].detail
+
+
+def test_indentation_is_READ_not_reported():
+    """The other half of the rail above: the properties that moved into the model."""
+    model, report = parse_docx(
+        _pPr_doc(f'<w:ind {_W} w:left="720" w:right="360" w:firstLine="240"/>')
+    )
+
+    assert report.kinds() == []
+    style = model.blocks[0].style
+    assert style is not None
+    # 720 twips = 0.5in = 36pt; 360 = 18pt; 240 = 12pt.
+    assert (style.indent_left_pt, style.indent_right_pt, style.first_line_indent_pt) == (
+        36.0,
+        18.0,
+        12.0,
+    )
+
+
+def test_keep_with_next_is_READ_not_reported():
+    model, report = parse_docx(_pPr_doc(f"<w:keepNext {_W}/>"))
+
+    assert report.kinds() == []
+    assert model.blocks[0].style is not None
+    assert model.blocks[0].style.keep_with_next is True
+
+
+def test_a_header_the_model_cannot_hold_is_reported():
+    """`header_footer`'s owner. Plain text fits `PageSetup.header_text`; a TABLE does not,
+    and flattening it into that string would claim a fidelity the re-render lacks."""
+    doc = Document()
+    doc.add_paragraph("body")
+    doc.sections[0].header.add_table(rows=1, cols=2, width=Inches(6))
+
+    model, report = parse_docx(_bytes(doc))
+
+    assert "header_footer" in report.kinds()
+    assert "table" in report.of_kind("header_footer")[0].detail
+    # Reported, and therefore NOT silently half-kept.
+    assert model.page is not None and model.page.header_text == ""
 
 
 def test_an_explicit_zero_spacing_is_reported():
     """0.0 means "unset" in `ParagraphStyle`, so a deliberate zero is unrepresentable."""
     _, report = parse_docx(_pPr_doc(f'<w:spacing {_W} w:after="0"/>'))
 
-    assert _kinds(report) == ["paragraph_property"]
+    assert report.kinds() == ["paragraph_property"]
     assert "explicit zero after" in report.of_kind("paragraph_property")[0].detail
 
 
 def test_an_absolute_line_spacing_rule_is_reported():
     _, report = parse_docx(_pPr_doc(f'<w:spacing {_W} w:line="360" w:lineRule="exact"/>'))
 
-    assert _kinds(report) == ["line_spacing_exact"]
+    assert report.kinds() == ["line_spacing_exact"]
 
 
 def test_a_named_paragraph_style_the_model_cannot_hold_is_reported():
     model, report = parse_docx(_paragraph_doc(style="Quote"))
 
-    assert _kinds(report) == ["paragraph_style"]
+    assert report.kinds() == ["paragraph_style"]
     assert "'Quote'" in report.of_kind("paragraph_style")[0].detail
     assert [block.kind for block in model.blocks] == ["paragraph"]
 
@@ -747,13 +781,13 @@ def test_a_second_title_styled_paragraph_is_demoted_to_a_heading_and_reported():
     assert [(block.kind, block.level, block.text) for block in model.blocks] == [
         ("heading", 1, "impostor")
     ]
-    assert _kinds(report) == ["paragraph_style"]
+    assert report.kinds() == ["paragraph_style"]
 
 
 def test_a_heading_deeper_than_the_model_allows_is_reported():
     model, report = parse_docx(_paragraph_doc(style="Heading 7"))
 
-    assert _kinds(report) == ["heading_level_clamped"]
+    assert report.kinds() == ["heading_level_clamped"]
     assert [(block.kind, block.level) for block in model.blocks] == [("heading", 6)]
 
 
@@ -765,14 +799,14 @@ def test_a_formatted_list_item_is_reported():
 
     model, report = parse_docx(_bytes(doc))
 
-    assert _kinds(report) == ["list_item_formatting"]
+    assert report.kinds() == ["list_item_formatting"]
     assert [(block.kind, block.items) for block in model.blocks] == [("bullets", ["shouted"])]
 
 
 def test_a_nested_list_level_is_reported():
     _, report = parse_docx(_numbered_doc("deep", num_id="1", level="2"))
 
-    assert _kinds(report) == ["nested_list_level"]
+    assert report.kinds() == ["nested_list_level"]
 
 
 def test_table_hazards_each_add_their_own_item():
@@ -786,7 +820,7 @@ def test_table_hazards_each_add_their_own_item():
 
     model, report = parse_docx(_bytes(doc))
 
-    assert set(_kinds(report)) == {"nested_table", "merged_cells", "multi_paragraph_cell"}
+    assert set(report.kinds()) == {"nested_table", "merged_cells", "multi_paragraph_cell"}
     # Short rows are padded to the widest, exactly as the writer normalizes on the way
     # out — otherwise a merged table would parse ragged and re-parse padded, and the
     # round trip would disagree with itself.
@@ -800,7 +834,7 @@ def test_a_table_style_other_than_the_writers_is_reported():
 
     _, report = parse_docx(_bytes(doc))
 
-    assert _kinds(report) == ["table_style"]
+    assert report.kinds() == ["table_style"]
 
 
 def test_an_inline_page_break_is_reported():
@@ -810,7 +844,7 @@ def test_an_inline_page_break_is_reported():
 
     model, report = parse_docx(_bytes(doc))
 
-    assert _kinds(report) == ["inline_page_break"]
+    assert report.kinds() == ["inline_page_break"]
     assert [block.kind for block in model.blocks] == ["paragraph"]
 
 
@@ -830,9 +864,9 @@ def test_a_break_inside_a_hyperlink_is_reported(character, kind):
     plain_model, plain_report = parse_docx(render_docx(plain))
     _, linked_report = parse_docx(render_docx(linked))
 
-    assert _kinds(plain_report) == []
+    assert plain_report.kinds() == []
     assert plain_model.blocks[0].text == f"a{character}b"
-    assert _kinds(linked_report) == [kind]
+    assert linked_report.kinds() == [kind]
 
 
 def test_multiple_sections_and_a_header_are_reported():
@@ -842,29 +876,41 @@ def test_multiple_sections_and_a_header_are_reported():
     doc.add_paragraph("two")
     doc.sections[0].header.paragraphs[0].text = "confidential"
 
-    _, report = parse_docx(_bytes(doc))
+    model, report = parse_docx(_bytes(doc))
 
     assert "multi_section" in report.kinds()
-    assert "header_footer" in report.kinds()
-    assert "confidential" in report.of_kind("header_footer")[0].detail
+    # The header itself is no longer a loss — it is plain text in the first section, which
+    # `PageSetup.header_text` holds. The SECTION COUNT is still reported, because the model
+    # holds one page setup and the second section's geometry really is dropped.
+    assert "header_footer" not in report.kinds()
+    assert model.page is not None and model.page.header_text == "confidential"
 
 
-def test_default_template_margins_are_reported():
-    """python-docx's default template really is 1.00in/1.25in — an honest loss.
+def test_the_default_templates_asymmetric_margins_are_now_REPRESENTED():
+    """The inverse of what this file asserted before per-edge margins existed.
 
-    `PageSetup.margin_in` is one number, so the parser keeps the left margin and says so.
-    This item is filtered out of every other test by `_kinds`, which is why it needs an
-    owner here.
+    python-docx's default template ships 1.00in top/bottom and 1.25in left/right. A single
+    `margin_in` could not hold that, so **every document this repo generated parsed as
+    lossy** — the editor's §C5 warning fired on our own output, which is the fastest way to
+    teach people to click through a warning that sometimes matters. Four fields make the
+    template's own geometry representable, so the report is now EMPTY.
     """
     model, report = parse_docx(_paragraph_doc())
 
-    assert report.kinds() == ["page_property"]
-    assert "margins differ" in report.of_kind("page_property")[0].detail
-    assert model.page == PageSetup(orientation="portrait", margin_in=1.25)
+    assert report.kinds() == []
+    assert model.page == PageSetup(
+        size="letter",
+        orientation="portrait",
+        margin_top_pt=72.0,
+        margin_bottom_pt=72.0,
+        margin_left_pt=90.0,
+        margin_right_pt=90.0,
+    )
 
 
 def test_a_page_size_the_model_cannot_hold_is_reported():
-    """`PageSetup` carries orientation, not size: an A5 page re-renders as Letter."""
+    """`PageSetup.size` is a CLOSED set of named sizes, and A5 is not one of them — so an
+    A5 page still re-renders on the writer's template paper, and still says so."""
     doc = Document()
     doc.sections[0].page_width = Inches(5.83)
     doc.sections[0].page_height = Inches(8.27)
@@ -927,7 +973,7 @@ def test_a_word_construct_fixture_reports_every_loss_honestly():
     assert model.title == "Quarterly Review"
     assert [block.kind for block in model.blocks] == ["paragraph", "table"]
     assert model.blocks[0].text.startswith("Revenue rose sharply")
-    assert set(_kinds(report)) == {
+    assert set(report.kinds()) == {
         "footnote",
         "comment",
         "tracked_change",
@@ -960,7 +1006,7 @@ _COVERED_BY = {
     "text_box": "test_a_text_box_is_reported_once_and_not_also_as_an_image",
     "merged_cells": "test_table_hazards_each_add_their_own_item",
     "multi_section": "test_multiple_sections_and_a_header_are_reported",
-    "header_footer": "test_multiple_sections_and_a_header_are_reported",
+    "header_footer": "test_a_header_the_model_cannot_hold_is_reported",
     "embedded_image": "test_an_embedded_image_is_reported",
     "embedded_object": "test_an_embedded_ole_object_is_reported",
     "tracked_change": "test_a_tracked_insertion_is_reported",
@@ -977,7 +1023,7 @@ _COVERED_BY = {
     "line_break": "test_a_break_inside_a_hyperlink_is_reported",
     "tab": "test_a_break_inside_a_hyperlink_is_reported",
     "line_spacing_exact": "test_an_absolute_line_spacing_rule_is_reported",
-    "page_property": "test_default_template_margins_are_reported",
+    "page_property": "test_a_page_size_the_model_cannot_hold_is_reported",
     "list_item_formatting": "test_a_formatted_list_item_is_reported",
     "nested_list_level": "test_a_nested_list_level_is_reported",
     "heading_level_clamped": "test_a_heading_deeper_than_the_model_allows_is_reported",

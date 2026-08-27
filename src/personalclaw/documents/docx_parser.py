@@ -59,6 +59,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.documents.model import (
+    PAGE_SIZE_IN,
+    PAGE_SIZES,
     Block,
     Cell,
     DocumentModel,
@@ -79,9 +81,11 @@ _Xml = Any
 _MONOSPACE = "Courier New"
 _LINK_COLOR = "0563C1"
 
-#: The writer builds on python-docx's default template, which is US Letter. A parsed page
-#: of any other size cannot be expressed — `PageSetup` carries orientation, not size.
-_TEMPLATE_PAGE_IN = {8.5, 11.0}
+#: How far a measured page may sit from a named size and still BE it, in inches. Word
+#: rounds to whole twentieths of a point, so an exact float match is not safe to require;
+#: the smallest gap between two named sizes is 3in (Letter vs. Legal height), so a
+#: hundredth of an inch cannot make one size match another.
+_SIZE_TOLERANCE_IN = 0.01
 
 _IMAGE_PLACEHOLDER = re.compile(r"^\[image: (.*)\]$")
 _HEADING_STYLE = re.compile(r"^heading\s*(\d+)$", re.IGNORECASE)
@@ -123,12 +127,10 @@ _RUN_PROPS = {
 #: Paragraph properties with no model field. Same denylist reasoning as `_RUN_PROPS`;
 #: `w:widowControl`, `w:contextualSpacing` and revision ids are omitted as invisible.
 _PARA_PROPS = {
-    "ind": "indentation",
     "pBdr": "paragraph border",
     "shd": "paragraph shading",
     "tabs": "tab stops",
     "pageBreakBefore": "page-break-before",
-    "keepNext": "keep with next",
     "keepLines": "keep lines together",
     "framePr": "text frame",
     "textDirection": "text direction",
@@ -338,6 +340,62 @@ def _is_off(element: _Xml) -> bool:
     return _attr(element, "val") in ("0", "false", "off")
 
 
+def _named_size(width: float, height: float) -> str:
+    """The `PageSetup.size` name for a measured page, or `""` when it matches none.
+
+    Orientation-blind: a landscape A4 is still A4, and reporting it as unnameable would
+    make every landscape document lossy.
+    """
+    for name, (portrait_w, portrait_h) in PAGE_SIZE_IN.items():
+        for expected_w, expected_h in ((portrait_w, portrait_h), (portrait_h, portrait_w)):
+            if (
+                abs(width - expected_w) <= _SIZE_TOLERANCE_IN
+                and abs(height - expected_h) <= _SIZE_TOLERANCE_IN
+            ):
+                return name
+    return ""
+
+
+def _has_page_field(part: _Xml) -> bool:
+    """True when a header/footer computes a page number.
+
+    Both spellings count: `w:fldSimple w:instr="PAGE"` (what this repo's writer emits) and
+    the `w:instrText` run sequence (what Word writes). Checking only one would read a
+    Word-authored footer as plain text and then silently drop its numbering.
+    """
+    for node in part._element.iter():
+        name = _local(node)
+        if name == "fldSimple" and "PAGE" in (_attr(node, "instr") or "").upper():
+            return True
+        if name == "instrText" and "PAGE" in str(node.text or "").upper():
+            return True
+    return False
+
+
+def _unrepresentable(part: _Xml, paragraphs: list) -> list[str]:
+    """Why a header/footer will not fit the model's plain-text field. Empty = it fits."""
+    reasons = []
+    if getattr(part, "tables", None):
+        reasons.append(f"it contains {len(part.tables)} table(s)")
+    if len(paragraphs) > 1:
+        reasons.append(f"it has {len(paragraphs)} non-empty paragraphs and the model holds one")
+    drawings = sum(1 for node in part._element.iter() if _local(node) in ("drawing", "pict"))
+    if drawings:
+        reasons.append(f"it contains {drawings} image(s)")
+    # A PAGE field IS representable (`page_numbers`); any other field is not, and reading
+    # its cached result as text would freeze a computed value into a literal string.
+    for node in part._element.iter():
+        instruction = (
+            _attr(node, "instr")
+            if _local(node) == "fldSimple"
+            else str(node.text or "") if _local(node) == "instrText" else ""
+        ) or ""
+        if instruction.strip() and "PAGE" not in instruction.upper():
+            reasons.append(f"it contains a {instruction.strip().split()[0]} field")
+            break
+    return reasons
+
+
 class _Parser:
     """One parse. Holds the growing block list and the report so every emitter can name
     the block index a loss belongs to without threading it through ten signatures."""
@@ -418,46 +476,80 @@ class _Parser:
         section = sections[0]
         width = float(section.page_width.inches) if section.page_width else 0.0
         height = float(section.page_height.inches) if section.page_height else 0.0
-        if width and height and {round(width, 2), round(height, 2)} != _TEMPLATE_PAGE_IN:
-            self.report.add(
-                "page_property",
-                f"page size {width:.2f}x{height:.2f}in; the model carries orientation "
-                "only, so a re-render uses the template's Letter page",
-            )
         orientation = "landscape" if width > height else "portrait"
-        margins = [
-            float(getattr(section, name).inches) if getattr(section, name) else 0.0
-            for name in ("top_margin", "bottom_margin", "left_margin", "right_margin")
-        ]
-        margin = margins[2]  # left: the one a reader notices
-        if len(set(round(m, 4) for m in margins)) > 1:
+        size = _named_size(width, height)
+        if width and height and not size:
             self.report.add(
                 "page_property",
-                "margins differ (top/bottom/left/right = "
-                + "/".join(f"{m:.2f}" for m in margins)
-                + f"in); the model holds one value, using left ({margin:.2f}in)",
+                f"page size {width:.2f}x{height:.2f}in is not one of the named sizes "
+                f"({', '.join(n for n in PAGE_SIZES if n)}), so a re-render uses the "
+                "writer's template page",
             )
-        elif margin == 0.0:
+        margins = {
+            edge: (
+                float(getattr(section, f"{edge}_margin").pt)
+                if getattr(section, f"{edge}_margin")
+                else 0.0
+            )
+            for edge in ("top", "bottom", "left", "right")
+        }
+        # Each edge is now its own field, so asymmetric geometry is representable and no
+        # longer reported. A genuine zero still is not: 0.0 reads as "writer default".
+        zero = sorted(edge for edge, points in margins.items() if points == 0.0)
+        if zero:
             self.report.add(
                 "page_property",
-                "zero page margins; 0.0 means 'writer default' in the model, so a "
-                "genuinely zero-margin page cannot be expressed",
+                f"zero {'/'.join(zero)} page margin; 0.0 means 'writer default' in the "
+                "model, so a genuinely zero margin cannot be expressed",
             )
-        self._headers_footers(sections)
-        return PageSetup(orientation=orientation, margin_in=margin)
+        header, footer, numbered = self._headers_footers(sections)
+        return PageSetup(
+            size=size,
+            orientation=orientation,
+            margin_top_pt=margins["top"],
+            margin_bottom_pt=margins["bottom"],
+            margin_left_pt=margins["left"],
+            margin_right_pt=margins["right"],
+            header_text=header,
+            footer_text=footer,
+            page_numbers=numbered,
+        )
 
-    def _headers_footers(self, sections: list) -> None:
+    def _headers_footers(self, sections: list) -> tuple[str, str, bool]:
+        """The first section's header/footer text, and whether the footer numbers pages.
+
+        Anything the model's plain-text fields cannot hold is REPORTED and left out, never
+        flattened in silently: squeezing a two-paragraph header with a logo into one string
+        would claim a fidelity the re-render does not have.
+        """
+        text = {"header": "", "footer": ""}
+        numbered = False
         for number, section in enumerate(sections):
             for name in ("header", "footer"):
                 part = getattr(section, name, None)
                 if part is None:
                     continue
-                text = " ".join(p.text for p in part.paragraphs).strip()
-                if text:
+                # A LINKED part defines nothing of its own — it shows the previous
+                # section's content. Reporting it would raise a loss for a fact already
+                # captured, and a report that cries wolf is one nobody reads.
+                if getattr(part, "is_linked_to_previous", False):
+                    continue
+                paragraphs = [p for p in part.paragraphs if p.text.strip()]
+                has_page_field = _has_page_field(part)
+                reasons = _unrepresentable(part, paragraphs)
+                if number > 0 and (paragraphs or has_page_field):
+                    reasons.append(f"it belongs to section {number}, and the model holds one")
+                if reasons:
                     self.report.add(
                         "header_footer",
-                        f"section {number} {name}: {text!r}; the model has no " f"{name} field",
+                        f"section {number} {name} is kept out of the model because "
+                        + "; ".join(reasons),
                     )
+                    continue
+                if number == 0:
+                    text[name] = paragraphs[0].text.strip() if paragraphs else ""
+                    numbered = numbered or (name == "footer" and has_page_field)
+        return text["header"], text["footer"], numbered
 
     # -- paragraphs ----------------------------------------------------------------
 
@@ -914,7 +1006,7 @@ class _Parser:
                 self.report.add(
                     "paragraph_property",
                     f"{_PARA_PROPS[name]} ({name}); the model's ParagraphStyle holds "
-                    "alignment and spacing only",
+                    "alignment, spacing, indents and keep-with-next only",
                     block_index=index,
                     paragraph_ordinal=ordinal,
                 )
@@ -954,13 +1046,21 @@ class _Parser:
         # A float is a multiple of single spacing (lineRule="auto"); a Length is an
         # absolute height, which the model cannot hold — `_spacing_props` reports it.
         line = float(spacing) if isinstance(spacing, float) else 0.0
-        if not align and not before and not after and not line:
+        left = fmt.left_indent.pt if fmt.left_indent is not None else 0.0
+        right = fmt.right_indent.pt if fmt.right_indent is not None else 0.0
+        first = fmt.first_line_indent.pt if fmt.first_line_indent is not None else 0.0
+        keep = bool(fmt.keep_with_next)
+        if not any((align, before, after, line, left, right, first, keep)):
             return None
         return ParagraphStyle(
             align=align,
             space_before_pt=float(before),
             space_after_pt=float(after),
             line_spacing=line,
+            indent_left_pt=float(left),
+            indent_right_pt=float(right),
+            first_line_indent_pt=float(first),
+            keep_with_next=keep,
         )
 
     def _align(self, para: _Xml, index: int, ordinal: int) -> str:

@@ -734,21 +734,23 @@ class TestToolGeneratedDocumentParsesBack:
     def test_the_tool_generated_document_reports_exactly_its_one_honest_loss(
         self, tmp_path, monkeypatch
     ):
-        """The loss report, in BOTH directions, on a document the tool made.
+        """A document the tool made is now LOSSLESS, which it was not before per-edge
+        margins existed.
 
-        Exact equality, not `in`: a shorter list means the parser went silent about the
-        template's non-uniform margins, and a longer one means it is reporting something
-        the model can hold. `page_property` is the single unavoidable item — python-docx's
-        default template is 1.00in top/bottom and 1.25in left/right, and
-        `PageSetup.margin_in` is one number.
+        Exact equality, not `in`: a longer list means the parser is reporting something the
+        model can hold. The one item this used to carry was `page_property` — python-docx's
+        default template is 1.00in top/bottom and 1.25in left/right, which a single
+        `margin_in` could not express, so every document this tool generated warned the
+        user that editing it would lose formatting. Four margin fields hold that geometry,
+        so the warning now fires only when something really is at risk.
         """
         from personalclaw.documents.docx_parser import parse_docx
 
         _model, report = parse_docx(self._generate(tmp_path, monkeypatch))
 
-        assert report.kinds() == ["page_property"]
-        assert not report.lossless
-        assert [item.kind for item in report.items] == ["page_property"]
+        assert report.kinds() == []
+        assert report.lossless
+        assert report.items == []
 
 
 class TestUpdateBinaryContract:

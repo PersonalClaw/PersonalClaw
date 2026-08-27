@@ -3878,9 +3878,23 @@ export interface Artifact {
 // silently dropped run/style, which is the exact fidelity failure the plan exists to
 // prevent. `loss` is the report the parse produced: what the model could not hold.
 export interface DocumentRun { text: string; bold: boolean; italic: boolean; code: boolean; link: string }
-export interface DocumentParagraphStyle { align: string; space_before_pt: number; space_after_pt: number; line_spacing: number }
+export interface DocumentParagraphStyle {
+  align: string; space_before_pt: number; space_after_pt: number; line_spacing: number
+  // DFE-6. `first_line_indent_pt` is the one field where a NEGATIVE value is meaningful
+  // (a hanging indent), so a control must not clamp it at zero.
+  indent_left_pt: number; indent_right_pt: number; first_line_indent_pt: number
+  keep_with_next: boolean
+}
 export interface DocumentCell { runs: DocumentRun[]; text: string; bold: boolean; align: string }
-export interface DocumentPageSetup { orientation: string; margin_in: number }
+/** DFE-6: margins are PER EDGE and in points. A single margin could not express the
+ *  asymmetric geometry every real template ships, which made every generated document
+ *  parse as lossy. `size` is a closed set — see `ui/content/documentPage.ts`. */
+export interface DocumentPageSetup {
+  size: string; orientation: string
+  margin_top_pt: number; margin_bottom_pt: number
+  margin_left_pt: number; margin_right_pt: number
+  header_text: string; footer_text: string; page_numbers: boolean
+}
 export interface DocumentBlock {
   kind: 'heading' | 'paragraph' | 'bullets' | 'numbered' | 'table' | 'image' | 'pagebreak' | 'code'
   text: string; level: number; items: string[]; rows: string[][]

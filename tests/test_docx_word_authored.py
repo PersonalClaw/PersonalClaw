@@ -138,10 +138,12 @@ def test_the_word_authored_document_parses_into_the_shipped_model_classes():
     assert type(model) is DocumentModel
     assert model.title == "DFE-3 Word fixture"
     assert type(model.page) is PageSetup
-    # Word's template has uniform 1in margins, which `PageSetup.margin_in` CAN hold — so
-    # unlike a python-docx document (1.00in top/bottom, 1.25in sides) this fixture carries
-    # no unavoidable `page_property` item, and the loss set below can be exact.
-    assert (model.page.orientation, model.page.margin_in) == ("portrait", 1.0)
+    # Word's template is Letter portrait with uniform 1in (72pt) margins, all of which the
+    # per-edge `PageSetup` now holds — so this fixture carries no `page_property` item and
+    # the loss set below can be exact.
+    assert (model.page.size, model.page.orientation) == ("letter", "portrait")
+    assert model.page.margin_top_pt == 72.0
+    assert model.page.margin_left_pt == 72.0
     assert {type(block) for block in model.blocks} == {Block}
     assert {type(item) for item in report.items} == {LossItem}
     table = next(block for block in model.blocks if block.cells)
