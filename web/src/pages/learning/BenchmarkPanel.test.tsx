@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { invalidateKeys } from '../../lib/data'
 import { BenchmarkPanel } from './BenchmarkPanel'
 import { LearningPage } from './LearningPage'
+import { ApiError } from '../../lib/api'
 import type {
   BenchmarkReport, BenchmarkTaskRow, BenchmarkView, LearningInbox, StagingWeek,
 } from '../../lib/api'
@@ -36,22 +37,33 @@ const judgeBench = vi.fn<() => Promise<never>>()
 const evalStudies = vi.fn<() => Promise<never>>()
 const retrievalBench = vi.fn<() => Promise<never>>()
 const ablation = vi.fn<() => Promise<never>>()
+const identityReport = vi.fn<() => Promise<never>>()
 const learningBenchmark = vi.fn<() => Promise<BenchmarkView>>()
 
-vi.mock('../../lib/api', () => ({
-  api: {
-    learningProposals: () => learningProposals(),
-    learningStagingWeek: () => learningStagingWeek(),
-    learningHealth: () => learningHealth(),
-    judgeBench: () => judgeBench(),
-    evalStudies: () => evalStudies(),
-    retrievalBench: () => retrievalBench(),
-    ablation: () => ablation(),
-    learningBenchmark: () => learningBenchmark(),
-    acceptLearningProposal: () => Promise.resolve({ ok: true }),
-    rejectLearningProposal: () => Promise.resolve(undefined),
-  },
-}))
+// 🪟 PARTIAL mock, via `importOriginal`: the REAL `ApiError`/`hasApiCode` are kept. This
+// panel branches on `hasApiCode(error, '<code>')`, so a factory that returned only `api` makes the
+// mocked module throw "No \"hasApiCode\" export is defined" from inside the render — and a fixture
+// that rejected with a bare `Error` would carry no `.code`, so the branch under test would never
+// fire and the test would pass by rendering the generic failure instead.
+vi.mock('../../lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/api')>()
+  return {
+    ...actual,
+    api: {
+      learningProposals: () => learningProposals(),
+      learningStagingWeek: () => learningStagingWeek(),
+      learningHealth: () => learningHealth(),
+      judgeBench: () => judgeBench(),
+      evalStudies: () => evalStudies(),
+      retrievalBench: () => retrievalBench(),
+      ablation: () => ablation(),
+      identityReport: () => identityReport(),
+      learningBenchmark: () => learningBenchmark(),
+      acceptLearningProposal: () => Promise.resolve({ ok: true }),
+      rejectLearningProposal: () => Promise.resolve(undefined),
+    },
+  }
+})
 
 const EMPTY_INBOX: LearningInbox = {
   rows: [], total: 0, by_kind: {}, by_tier: {}, flagged: 0, unrenderable: [], bulk_acceptable: 0,
@@ -126,10 +138,13 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
     learningProposals.mockResolvedValue(EMPTY_INBOX)
     learningStagingWeek.mockResolvedValue(WEEK)
     learningHealth.mockRejectedValue(new Error('not under test'))
-    judgeBench.mockRejectedValue(new Error('judge_bench_absent'))
-    evalStudies.mockRejectedValue(new Error('study_absent'))
-    retrievalBench.mockRejectedValue(new Error('retrieval_absent'))
-    ablation.mockRejectedValue(new Error('ablation_absent'))
+    judgeBench.mockRejectedValue(new ApiError('no judge bench', 404, 'judge_bench_absent'))
+    evalStudies.mockRejectedValue(new ApiError('no study', 404, 'study_absent'))
+    retrievalBench.mockRejectedValue(new ApiError('no retrieval bench', 404, 'retrieval_absent'))
+    ablation.mockRejectedValue(new ApiError('no ablation', 404, 'ablation_absent'))
+    // LV-4's identity report: the page reads it, so a double that omits it throws inside a
+    // passive effect and surfaces as failures about this panel instead.
+    identityReport.mockRejectedValue(new Error('not under test'))
   })
 
   /** 🔑 THE CALL-SITE RAIL. Deleting `<BenchmarkPanel …>` from `LearningPage` must turn this
@@ -270,7 +285,7 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
     const absent = render(
       <BenchmarkPanel
         view={undefined}
-        error={new Error('learning_benchmark_absent')}
+        error={new ApiError('no benchmark yet', 404, 'learning_benchmark_absent')}
         onRetry={() => {}}
       />,
     )
@@ -290,7 +305,7 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
 
   it('tells a user the substrate is off rather than showing an empty benchmark', () => {
     render(
-      <BenchmarkPanel view={undefined} error={new Error('evals_disabled')} onRetry={() => {}} />,
+      <BenchmarkPanel view={undefined} error={new ApiError('evals are off', 404, 'evals_disabled')} onRetry={() => {}} />,
     )
     expect(screen.getByText(/The eval substrate is off/)).toBeTruthy()
     expect(screen.queryByText(/No skill-impact benchmark has run yet/)).toBeNull()
