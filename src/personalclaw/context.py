@@ -1747,7 +1747,9 @@ class ContextBuilder:
                         skill_requests.append(SkillRequest(name=name, content=content))
 
         if skill_requests:
-            skill_alloc = allocate_skills(self.skills, skill_requests, query=text)
+            skill_alloc = allocate_skills(
+                self.skills, skill_requests, query=text, session=session_key or ""
+            )
             for _name, _block in skill_alloc.blocks:
                 parts.add(_block, name=f"skill: {_name}")
             # VISIBLE: which skill was reduced or refused, and why, on CE2-8's existing
