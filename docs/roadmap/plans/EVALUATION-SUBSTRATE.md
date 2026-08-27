@@ -1478,3 +1478,27 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   whether or not the identity report resolves, and if it ever grows a real dependency on that payload
   these tests should say so rather than silently pass. Falsified both directions: removing the entry
   reds exactly those 2 tests, restoring returns 497 files / 5277 tests.
+
+- [2026-08-26][ES-5] **OWNER RULING — `ES-5` flips to `done`.** Nine of ten clauses already held; the
+  tenth ("a flywheel template-diff RUNS a study") was short by an owner decision, not by code: the
+  diff pre-registers automatically, but the run is a deliberate `study --run` (30 arm + 90 judge calls
+  at 3 cases × k=5), where §2.1 says "the human registers the study; the substrate runs it".
+  RULED: **ratify register-at-file / run-on-invocation.** §2.1's concern is that a study be
+  *pre-registered before it is run* — which the shipped seam satisfies exactly, and arguably better,
+  because registration is now mechanical and cannot be skipped. Auto-running 120 model calls without a
+  human present is precisely the unattended spend AUTONOMY-GUARDRAILS exists to refuse, so gating
+  auto-run behind Guardrails spend would add a second control for a behaviour we do not want in the
+  first place. The inversion is only in WHO REGISTERS, and the shipped direction is the safer one.
+  Flipped; no owner input remains.
+
+- [2026-08-26][ES-11] **OWNER RULINGS on both open questions — neither needs further owner input, and
+  the remainder is small.** (1) The `LEARN-R3` skill-sidecar overlay arm does not exist in the tree.
+  RULED: **the criterion's OR is already satisfied by the template-diff disjunct** — do not build a
+  second arm to satisfy a disjunction that is true, and do not re-scope the clause to demand both.
+  (2) No `results.tsv` write, because `store.append_result` requires a complete `RunPin` and a
+  candidate scored by a caller-supplied scorer has no honest model fingerprint. RULED: **do not invent
+  a fingerprint.** An unscored candidate writes NO results row. An invented fingerprint would poison
+  every per-fingerprint baseline that reads the same file, which is a far worse failure than a missing
+  row — and it is the kind of failure that surfaces months later as an inexplicable regression.
+  REMAINING WORK, ordinary: make that absence *legible* at the read surface, so a human sees
+  "unscored" rather than a missing or zero result. `ES-11` stays `todo` on that one reader.

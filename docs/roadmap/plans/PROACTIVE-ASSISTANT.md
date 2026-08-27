@@ -671,3 +671,17 @@ Where each new piece plugs into the pluggable-provider architecture — nothing 
   **32**, which is tight against the existing ceiling — verified by lowering the ceiling to 1 and
   reading back `assert 32 <= 1`. Non-vacuous: removing `"executed"` reds the suite (1 failed / 7
   passed) and restoring from a file copy returns 8 passed, checked in both directions.
+
+- [2026-08-26][PA-4] **OWNER RULING — the clause is re-worded to match the shipped split, and `PA-4`
+  flips to `done`.** Four of five clauses were met. The fifth as worded required the decision-review
+  `WorkflowDef` itself to capture the outcome, while capture, `status=resolved` and the R18 lesson all
+  happen in `decision_resolve`. RULED: **re-word the clause.** The horizon trigger fires with nobody
+  present, so the only in-workflow way to "capture the outcome" is a stage or invoke-agent *inventing*
+  what happened — a hallucination surface deliberately placed in the one record whose entire value is
+  that it is honest about expectation-vs-outcome. `decision_resolve` is where a human is present, so
+  it is where capture belongs. The `done_when` in `dag.json` and `PA.md` now reads "the decision-review
+  WorkflowDef delivers the horizon card, and `decision_resolve` captures the outcome…", with the
+  reasoning inline so no future reader re-opens it.
+  The second unmet item in the 2026-08-25 entry — "no frontend" — was never `PA-4`'s scope: it is
+  `PA-6`, and `calibration()` already computes the strip, so `PA-6` is frontend-only. The §2.3
+  to-chat linked-session mechanism stays unbuilt and unscoped; it is not a condition on this atom.

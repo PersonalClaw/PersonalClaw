@@ -1010,3 +1010,15 @@ correct URL and returns `200 application/pdf`.
   honestly, but the grid / slide editors are `DFE-7`/`DFE-8`; page setup and paragraph layout
   controls are `DFE-6`; and `PUT …/model` still refuses non-docx kinds (`_MODEL_KINDS`), which
   is DFE-4's deliberate parser-gated design.
+
+- [2026-08-26][DFE-5] **OWNER RATIFICATION — option (c) is ratified and `DFE-5` flips to `done` with
+  no code change.** The atom was held on owner task 2, the editing-library decision
+  (`PLATFORM-PRIMITIVES.md:1305`, recorded E5), and the implementation had already taken it: option
+  **(c)**, hand-rolled controlled components over the block model, **no new frontend dependency**.
+  RULED: **ratified.** One `DocumentModel` is the whole fidelity story. A rich-text framework edits a
+  document DOM, so adopting one means a second document representation plus a lossy mapping between
+  them — which is exactly the second fidelity story §C2 refuses — and it adds a frontend dependency to
+  a local-first tool that ships its own SPA. The stated cost is accepted and recorded so nobody
+  re-litigates it: **the editor is STRUCTURAL** (per-block fields plus select-and-mark), not WYSIWYG.
+  Every `done_when` clause was already met and gated green. Flipped in `dag.json` and `DFE.md`.
+  Consequence: `DFE-6`, `DFE-7` and `DFE-8` all depended only on `DFE-5` and are now startable.

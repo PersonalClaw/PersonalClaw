@@ -1799,3 +1799,27 @@ the browser gate stays out of the unit run. `docs/roadmap/atomic/dag.json` delib
   corrected rather than the flag built.
   **Not covered, so not claimed:** `target-size` — the shipped axe tags omit it, and the a11y gate
   fails only on serious/critical.
+
+- [2026-08-26][PHF-14] **NEW ATOM — the ceiling rail fired, and this is the payment.** `PHF-5` and
+  `PHF-8` built the size rails and their docstrings predicted this exact arrival by name; it has now
+  arrived. Measured on `origin/main`: `config/loader.py` is **5900** lines,
+  `scripts/generate_structural_baseline.py` sets `SIZE_CEILING_LINES = 6000` as an absolute ceiling,
+  and `tests/test_structural_baseline.py::test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance`
+  asserts `ceiling - max_file_lines >= 100`. Headroom is **exactly 100**, so **one added line reds the
+  gate** — and that test's own docstring names this file and this scenario ("adding one boolean toggle
+  would red CI and demand a 5,427-line split as its price"). `loader.py` was 5427 when that was
+  written; it has grown 473 lines since and spent every line of its headroom.
+  **Why this is a floor and not a cleanup.** The config round-trip contract touches `loader.py` on
+  every new field, so with zero headroom the file is a chokepoint on all remaining user-facing work.
+  `LV-4` is already parked on it by name, and on 2026-08-26 three separate atoms in flight each had to
+  be told not to add a line to it. **Explicitly NOT the answer:** raising the ceiling, widening the
+  watch band, or regenerating the baseline to clear the red — each retires the rail instead of paying
+  it, and the rail is right.
+  Scoped in `atomic/PHF.md` with a `<= 5400`-line target (>= 600 lines of headroom, so the next
+  several ordinary fields do not each need a refactor), a no-shim clean-break extraction into sibling
+  modules under `src/personalclaw/config/` following the `agents/native/decision_tool_defs.py`
+  precedent created for this same rail at the 2800-line watch band, a RUNTIME import sweep with a
+  stated count as the anti-stranding proof (`mypy` cannot see it — `ignore_missing_imports` is true),
+  `PHF-5`'s schema baseline at ZERO drift as the proof that no observable config key moved, and
+  `LV-4`'s `learning.identity_report_*` field landed in the same change as the proof that headroom was
+  really restored. No deps; startable immediately.

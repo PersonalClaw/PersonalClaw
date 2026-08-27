@@ -1440,13 +1440,12 @@
         {
           "id": "DFE-5",
           "title": "Editing surface: non-Monaco renderer slot, the model editor, lossy-edit contract, config",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 T2.3\u2013T2.6; \u00a7C4 (EditCapability.render + ContentSurface.renderEditor branch, office types declare edit), \u00a7C5 (report shown pre-edit + repeated in save confirm + pre-edit version revertable), \u00a7C6 (document_editing 5-point wiring, off by default). GATED on owner task 2 (editing-library decision, E5); editor adopts DESIGN-SYSTEM primitives (adoption ratchet enforces).",
           "done_when": "every existing content type still renders Monaco (asserted); an office type mounts the new editor; a user bolds a word, saves, and the downloaded file opens bold in Word (read-back); a lossy doc warns before edit and at save-confirm and revert restores pre-edit bytes exactly (byte-compare); test_config_roundtrip green and document_editing=off restores today's read-only preview. V2 gate holds (incl. two-tab race \u2192 409, not silent loss).",
           "deps": [
             "DFE-4"
-          ],
-          "blocked_reason": "IMPLEMENTED, awaiting OWNER RATIFICATION (2026-08-25). Every done_when clause is met and gated green, but PLATFORM-PRIMITIVES.md:1305 records this atom as 'gated on owner task 2 (the editing-library decision, E5)'. The implementation TOOK that decision \u2014 option (c), hand-rolled controlled components over the block model, NO new frontend dependency \u2014 on the reasoning that a rich-text framework edits a document DOM while this editor edits a DocumentModel, so adopting one means a second document representation plus a mapping, i.e. the second fidelity story \u00a7C2 refuses. Stated cost: the editor is STRUCTURAL (per-block fields + select-and-mark), not WYSIWYG. Ratify option (c) and this flips with no code change; choose otherwise and the editor is rewritten. NOT flipped, because the atom's recorded gate is an owner call. PR pending."
+          ]
         },
         {
           "id": "DFE-6",
@@ -1509,15 +1508,14 @@
         {
           "id": "BA-3",
           "title": "Browse loop + BrowseActionProvider contract + provider-fidelity wiring (ALLOWED_HOOK_PROVIDERS, fencing, loop guards, budget)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a77 Browse Loop Architecture (7.1 form-submission verification, 7.2 loop guards); \u00a78.3 Workflow action-node dispatch; \u00a79 Provider-Fidelity Wiring; Session 3",
           "done_when": "BrowseActionProvider implements the ActionProvider ABC and 'browse' is added to ALLOWED_HOOK_PROVIDERS (validation.py:555); a workflow action node invokes browse by name and the definition is accepted and dispatched through the standard seams inheriting denylist/budget/profile; a multi-step task completes within max_steps (default 20) with each page fenced via fence_untrusted; SUBMIT triggers outcome verification; budget/step exhaustion parks cleanly into needs-input with notes preserved \u2014 SC 2, SC 6, SC 8",
           "deps": [
             "BA-2",
             "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:action-node dispatch contract",
             "EXT:AUTONOMY-GUARDRAILS:model-call budget chokepoint (SpendMeter) + denylist dispatch seams"
-          ],
-          "blocked_reason": "IMPLEMENTATION COMPLETE \u2014 all five done_when clauses met and proven live (see BROWSE-AUTOMATION.md's 2026-08-25 entry). Held `todo` on an OPEN OWNER QUESTION standing since 2026-08-24: flip on `done_when` as written, or wait for the Sec.4 Stealth Stack + Sec.10 launcher before calling browse done. Second owner call in the same entry: the CI pytest job installs no browser, so the behavioural clauses are proven only on a developer machine that has one; making CI prove them needs `npx playwright install chromium` plus PERSONALCLAW_REQUIRE_BROWSE_PROOF=1 on that job, which is a workflow-file change and a per-run minutes cost. Neither question is a code gap."
+          ]
         },
         {
           "id": "BA-4",
@@ -1749,15 +1747,14 @@
         {
           "id": "ES-5",
           "title": "Pre-registered template A/B studies (the re-opened eval gate)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a72 (2.1 pre-registration, 2.2 hidden locked validation, 2.3 blinded rubric-pinned judging, 2.4 verdict wiring)",
           "done_when": "a flywheel template-diff runs a pre-registered study: k=5 paired old-vs-new over the harvested suite, immutable registration.json (rubric_sha256 pinned; mid-study rubric edit \u2192 invalidated), blinded median-of-3 position-swapped judging with agreement floor and judge_unreliable routing, locked/ checks executed supervisor-side in the child output workspace (never rendered into any worker prompt \u2014 regression-tested); verdict + agreement rate + per-run artifacts inspectable from the Learning page; a pass emits an evidence unit + results.tsv row, a fail auto-files a demotion/revert proposal",
           "deps": [
             "ES-1",
             "EXT:WORKFLOWS-V2:Run Ledger Slices 0-3 (\u00a75 event table) for real-run input sampling + verdict events",
             "EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:proposal queue + LEARN-R2 harvested regression suite"
-          ],
-          "blocked_reason": "PARTIAL (2026-08-25). Nine of ten done_when clauses hold. The tenth is the criterion's opening sentence \u2014 'a flywheel template-diff RUNS a study' \u2014 short by an OWNER DECISION, not missing code: the diff pre-registers automatically, the run is a deliberate `study --run` (30 arm + 90 judge calls at 3 cases x k=5). Plan \u00a72.1 says 'the human registers the study; the substrate runs it', which the shipped seam inverts only in WHO REGISTERS. Ratify register-at-file/run-on-invocation, or gate auto-run behind Guardrails spend. PR #2050."
+          ]
         },
         {
           "id": "ES-6",
@@ -1835,7 +1832,7 @@
             "EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R16 change manifests + LEARN-R3 sidecar overlays + refiner tool-scoping",
             "EXT:AUTONOMY-GUARDRAILS:SpendMeter"
           ],
-          "blocked_reason": "PARTIAL (2026-08-25). MET: the optimize-harness template ships/validates/schedules; diff scope-check with a frozen-region touch is REFUSED as scope_violation (not merely flagged); the dual gate is genuinely dual (each half railed alone, ties lose); all three halts fire including the newly-built no_improvement_halt; the winner arrives only via refiner_tools.file_template_diff; nothing live mutates (two independent detectors, one bracketing the PROPOSER call, proven by observation).\nUNMET: (1) the LEARN-R3 skill sidecar overlay arm DOES NOT EXIST in the tree \u2014 git grep sidecar finds only agent-runner metadata and app execution modes; the criterion's OR is satisfied by the template-diff disjunct, the second is unbuildable. (2) No results.tsv WRITE: store.append_result requires a complete RunPin and a candidate scored by a caller-supplied scorer has no honest model fingerprint; inventing one would put unattributable rows in the shared ledger. THIS IS THE SAME OWNER CALL ES-3 FLAGGED (should RunPin narrow to the embedding binding for a retrieval/search subject?). (3) No trigger wiring and no Learning-page surface (\u00a710's FE half). (4) The composed run needs a live model for the propose stage, so no offline test covers it end to end.\nDEVIATION: tick.py already implements this halt rule as no_progress_stop; optimize.no_improvement reproduces the arithmetic for a DIFFERENT subject rather than aliasing the field, because runtime_hints.execution.breaker has no live reader (WF2LOO-7 owns that plumbing) and a second name for one shared consumer would mint a second dialect."
+          "blocked_reason": "OWNER RULINGS 2026-08-26 on both open questions; neither needs further owner input. MET as before: the optimize-harness template ships/validates/schedules; a diff touching a frozen region is REFUSED as scope_violation; the dual gate is genuinely dual; all three halts fire; the winner arrives only via refiner_tools.file_template_diff; nothing live mutates. (1) The LEARN-R3 skill-sidecar overlay arm does not exist in the tree. RULED: the criterion's OR is satisfied by the template-diff disjunct as written \u2014 do NOT build a second arm to satisfy a disjunction that is already true, and do not re-scope the clause. (2) No results.tsv write, because store.append_result requires a complete RunPin and a caller-supplied scorer has no honest model fingerprint. RULED: do NOT invent a fingerprint. An unscored candidate writes NO results row, and that absence must RENDER as 'unscored' rather than as a missing or zero result \u2014 an invented fingerprint would poison every per-fingerprint baseline that reads the same file. REMAINING WORK: make that absence legible at the read surface. Small and local."
         }
       ]
     },
@@ -2923,14 +2920,13 @@
         {
           "id": "PA-4",
           "title": "Decision journal core: `decision` native type + tools + horizon triggers + R18 lesson (Session 4)",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a72.1 Data model; \u00a72.2 log_decision; \u00a72.3 Horizon-triggered review + outcome capture; \u00a72.4 Lesson distillation via LEARN-R18; \u00a74 tools",
-          "done_when": "`decision` is the 13th NATIVE_TYPES entry riding the Passthrough graph; log_decision/decision_list/decision_resolve tools exist; log_decision creates a searchable/@-pickable knowledge item and mints exactly one one-shot clock trigger with a deterministic `system:decision-journal:<id>`; the decision-review WorkflowDef captures the outcome, sets status=resolved, and writes a `lesson.*` memory row via write_lesson citing expectation-vs-outcome, linked only by soft reference (criterion 5)",
+          "done_when": "`decision` is the 13th NATIVE_TYPES entry riding the Passthrough graph; log_decision/decision_list/decision_resolve tools exist; log_decision creates a searchable/@-pickable knowledge item and mints exactly one one-shot clock trigger with a deterministic `system:decision-journal:<id>`; the decision-review WorkflowDef delivers the horizon card, and `decision_resolve` captures the outcome, sets status=resolved, and writes a `lesson.*` memory row via write_lesson citing expectation-vs-outcome, linked only by soft reference (criterion 5) \u2014 the capture is deliberately NOT in-workflow, because the horizon fires with nobody present and an in-workflow stage could only invent an outcome (owner ruling 2026-08-26)",
           "deps": [
             "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:one-shot clock/at trigger with delete_after_run (commitment-conversion pattern)",
             "EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R18 pending\u2192resolved lesson lifecycle (write_lesson)"
-          ],
-          "blocked_reason": "PARTIAL (2026-08-25). Four of five clauses met. UNMET AS WORDED: the decision-review WorkflowDef delivers the horizon card but does NOT capture the outcome \u2014 capture, status=resolved and the R18 lesson all happen in decision_resolve. The horizon fires with nobody present, so the only in-workflow way to 'capture' is a stage/invoke-agent inventing what happened. OWNER RULING NEEDED: re-word the clause to match the split, or specify the to-chat linked-session mechanism \u00a72.3 gestures at (does not exist, not this atom's scope). ALSO UNMET: no frontend \u2014 that is PA-6, and calibration() already computes the strip so PA-6 is FE-only."
+          ]
         },
         {
           "id": "PA-5",
@@ -4409,8 +4405,7 @@
           "done_when": "A reply is composed but NOT sent while draft-mode is on; enabling sending delivers and threads correctly via In-Reply-To; the provider honors the platform's live-writes/dry-run posture (supports_dry_run). Owner-gated on the draft-by-default confirmation (Owner task 4).",
           "deps": [
             "EIAT-2"
-          ],
-          "blocked_reason": "BLOCKED-OWNER: the atom's own done_when ends 'Owner-gated on the draft-by-default confirmation (Owner task 4)' \u2014 whether replies default to draft or to send is a product/safety decision about sending mail on the user's behalf, not an engineering call. Everything else in EIAT-3 (SMTP send_reply, In-Reply-To threading, supports_dry_run) is implementable the moment that posture is confirmed."
+          ]
         },
         {
           "id": "EIAT-4",
@@ -5046,7 +5041,7 @@
             "EXT:WORKFLOWS-V2:Slices 0-5 (bundled template pack + run ledger + required_artifacts host)",
             "EXT:AUTONOMY-GUARDRAILS:headless profile/budgets inherited when present (graceful)"
           ],
-          "blocked_reason": "PARTIAL (2026-08-25). Clauses 1/2/4 met and railed. Clause 3 (a scenario mutating state through the real UI via Chrome DevTools MCP) is env-gated by a NEW cause: the 2026-08-23 tool-availability gate CLEARED (ToolSearch now returns mcp__chrome-devtools__* schemas), but chrome-devtools-mcp derives its profile dir from the server's --channel CLI arg only (browser.js:139), so concurrent sessions contend for one ~/.cache/chrome-devtools-mcp/chrome-profile, and a LIVE sibling holds it. --remote-debugging-pipe writes no DevToolsActivePort so --auto-connect cannot attach. OWNER DECISION: add --isolated or a per-session --user-data-dir to the chrome-devtools MCP server args. PR #2048."
+          "blocked_reason": "OWNER RULING 2026-08-26: add --isolated (or a per-session --user-data-dir) to the chrome-devtools MCP server args. RULED YES \u2014 a shared ~/.cache/chrome-devtools-mcp/chrome-profile makes the tool unusable whenever any sibling session holds it, and several agents drive this repo concurrently by design, so per-session isolation is the only configuration consistent with how the project is developed. Clauses 1/2/4 are met and railed. Clause 3 (a scenario mutating state through the real UI via Chrome DevTools MCP) becomes runnable once that arg is in place \u2014 it is a validation run, not a code change. No owner input remains."
         },
         {
           "id": "SV-10",
@@ -6100,7 +6095,7 @@
           "deps": [
             "EXT:SECURITY-LEGIBILITY:threat model + scanner gate + egress chokepoint narrative"
           ],
-          "blocked_reason": "PARTIAL \u2014 the draft is substantively COMPLETE at docs/launch/launch-post-draft.md (threat model, scanner gate, runtime egress chokepoint, zero telemetry, honest limitations). Two clauses cannot be met from core. (1) CROSS-REPO: done_when names src/content/blog/launch.md, and that path exists in NEITHER repo -- core has no src/content/ at all, and personalclaw.dev's content.config.ts defines exactly one collection (docs, Starlight) with no blog collection and no src/content/blog/. Publishing needs a website-repo change: define the collection, add the route and a listing. A file dropped at that path today would not build. (2) OWNER SIGN-OFF is not producible by an agent; the draft reads 'pending owner sign-off' rather than paraphrasing the clause into something tickable. FINDING carried into the draft and verified by EXECUTION, not by reading: the egress chokepoint is deny-by-default about PRIVATE RANGES, not destinations -- STRICT.allow_only is False, so the default profile and the `all` tier reach every public host; and security.egress.allow_hosts does DOUBLE DUTY (guard.py:169 feeds both the :174 exclusive allow-list and the :230 private-range waiver), so one host added for a homelab LAN webhook silently widens every later registry-tier run even though policy.py's own docstring calls that tier 'dev registries only'. Three claims were cut from the draft rather than shipped."
+          "blocked_reason": "OWNER SIGN-OFF GIVEN 2026-08-26 on the launch-post draft at docs/launch/launch-post-draft.md (threat model, scanner gate, runtime egress chokepoint, zero telemetry, honest limitations) \u2014 that clause is closed. ONE clause remains and it is CROSS-REPO, not an owner call: done_when names src/content/blog/launch.md, a path that exists in NEITHER repo \u2014 core has no src/content/ at all, and personalclaw.dev's content.config.ts defines exactly one collection (docs, Starlight) with no blog collection. Publishing needs a personalclaw.dev change: define the blog collection, add the route, add a listing, then place the post. A file dropped at that path today would not build. Ordinary implementable work in the website repo."
         },
         {
           "id": "DL-7",
@@ -6449,7 +6444,7 @@
           "deps": [
             "LV-1"
           ],
-          "blocked_reason": "BLOCKED-OWNER (2026-08-25): implementation is COMPLETE on main (22f53646, c09a0e7d, 5d4250f2 are ancestors; chip at LoopCockpitPage.tsx:585 and ChatPage.tsx:3803, tap-through at :3832, zero-new-WS-channel rail in tests/test_lv2_skills_used_meta.py). Stays todo on ONE owner taste call the plan's own log records as SURFACED, NOT DECIDED (LEARNING-VISIBILITY.md:358-361): the learned chip's tap target sits inside ContextLedger, collapsed by default, so reaching the link needs one disclosure. Clears when the owner rules whether 'a visible learned-chip whose tap lands on the right surface' requires the LINK reachable without disclosure. Re-briefed by a tick on 2026-08-25 and found already built \u2014 do not spend another slot on it."
+          "blocked_reason": "OWNER RULING 2026-08-26, no longer an open taste call. The question the plan surfaced (LEARNING-VISIBILITY.md:358-361) was whether 'a visible learned-chip whose tap lands on the right approve/edit surface' requires the LINK to be reachable without a disclosure. RULED: YES. A learning the user must first expand a collapsed ContextLedger to reach is not visible, and visibility is this plan's entire subject. Implementation is otherwise COMPLETE on main (chip at LoopCockpitPage.tsx:585 and ChatPage.tsx:3803, tap-through at :3832, zero-new-WS-channel rail in tests/test_lv2_skills_used_meta.py). REMAINING WORK, small and frontend-only: the chip's tap must open the ContextLedger disclosure and bring the approve/edit target into view in one action, asserted at the CALL SITE with a vacuity leg proving the assertion fails when the disclosure stays closed. No backend change, no new WS/SSE channel."
         },
         {
           "id": "LV-3",
@@ -6470,9 +6465,10 @@
           "done_when": "fixture home with seeded lessons/facets/skills yields a truthful report whose counts byte-match store contents with zero writes to any learning store (inspected before/after); no-model fixture still produces the deterministic sections; compressed-clock fixture fires the job, item lands in inbox linking the artifact, quiet-hours suppresses the ping but not the artifact, config round-trips and 'off' disables cleanly",
           "deps": [
             "LV-3",
-            "EXT:INBOX-NOTIFICATIONS-UNIFICATION:emit_attention_item kind=report (pre-42 source=learning InboxItem fallback)"
+            "EXT:INBOX-NOTIFICATIONS-UNIFICATION:emit_attention_item kind=report (pre-42 source=learning InboxItem fallback)",
+            "PHF-14"
           ],
-          "blocked_reason": "PARTIAL: compose/render/narrate/deliver + both routes + FE panel shipped and railed; counts, zero-writes, no-model floor, inbox item and quiet-hours all MET. UNMET: the clock job firing, cadence monthly|weekly|off, and 'off' disables cleanly -- all three need the learning.identity_report_* config field, which cannot be added because config/loader.py is 5900/6000 with headroom exactly 100 against a >=100 rail. OWNER: compress loader.py, split LearningConfig out, or raise the ceiling."
+          "blocked_reason": "OWNER RULING 2026-08-26 on the config-headroom question this atom raised. compose/render/narrate/deliver + both routes + FE panel are shipped and railed; counts, zero-writes, no-model floor, inbox item and quiet-hours are MET. UNMET: the clock job firing, cadence monthly|weekly|off, and 'off' disables cleanly \u2014 all three need a learning.identity_report_* config field, which cannot be added because config/loader.py is 5900 lines against an ABSOLUTE 6000-line ceiling with a >=100 headroom rail (tests/test_structural_baseline.py::test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance). The owner was offered three options \u2014 compress loader.py, split LearningConfig out, or raise the ceiling. RULED: SPLIT, and generalised beyond LearningConfig. Raising the ceiling defeats the rail whose own docstring predicted this exact arrival; compressing buys one field. The split is now PHF-14, added as a dep. LV-4 is unblocked the moment PHF-14 lands and needs no further owner input."
         },
         {
           "id": "LV-5",
@@ -6484,7 +6480,7 @@
             "LV-1",
             "EXT:LEARNING-FLYWHEEL:refiner statistical gates slot behind same queue/kind (coordination, non-blocking)"
           ],
-          "blocked_reason": "IMPLEMENTED, awaiting ONE owner reading (2026-08-25). All four done_when clauses are satisfied on feature-lv5-refinement-arm EXCEPT under a literal reading of 'approving applies the diff and writes provenance frontmatter'. The diff IS applied and provenance IS written -- version + date + trigger in the rendered refinement heading, plus the SEL accept row -- but to the OVERLAY record, not to SKILL.md frontmatter. That deviation is forced, not preferred: WF2LEA-6 made the base skill immutable precisely so verify_skill_integrity / .pclaw-lock.json stays valid, so stamping frontmatter would break a marketplace-locked skill, and doing it only for auto/ skills would be two paths. OWNER DECISION: does 'provenance frontmatter' require a literal frontmatter write? If yes, this atom is PARTIAL and the clause needs re-scoping against WF2LEA-6's immutability guarantee. If no (provenance recorded where it can be recorded), flip done -- the code is ready and gated."
+          "blocked_reason": "OWNER RULING 2026-08-26: 'provenance frontmatter' does NOT require a literal SKILL.md frontmatter write. The deviation the implementation reported is RATIFIED \u2014 provenance recorded on the overlay record (version + date + trigger in the rendered refinement heading, plus the SEL accept row) satisfies the clause. Reasoning: WF2LEA-6 made the base skill immutable precisely so verify_skill_integrity / .pclaw-lock.json stays valid, so a frontmatter write would break a marketplace-locked skill, and doing it only for auto/ skills would be two paths for one concern \u2014 which the clean-break tenet refuses. All four done_when clauses are therefore satisfied. STILL todo for one mechanical reason only: the implementation lives on branch feature-lv5-refinement-arm and is NOT on main. Flip it when that branch lands; no owner input remains."
         },
         {
           "id": "LV-6",
@@ -7240,6 +7236,14 @@
           ],
           "pr": "#1155",
           "evidence": "FINDING: PHF-12's named-but-unfixed second false-red class rested on a FALSE PREMISE, and the audit is what showed it. PHF-12 recorded that judge_contract.py:342 (`Verdict(str(raw.get(\"verdict\", \"\")).upper())`) runs on model-emitted text and therefore makes Verdict.REPLAN reachable. That line lives inside validate_verdict, and NOTHING in src/ calls validate_verdict: engine.py:1510 deliberately RESTATES the aggregation rule rather than importing it, and only tests (tests/test_workflows_judge_contract.py, tests/test_workflows_loop_templates.py) import the function. Model output never reaches that constructor. Same shape for judge_actors.py:84 Actor(...) (reached only from resolve_transition, whose only callers are in tests/test_workflows_judge_pretier.py) and judge_contract.py:224 `enum_cls(str(value))` for Ratchet (inside the equally uncalled hints_from_dict, and loop-bound so an E(value) rule cannot even see it). RULE DERIVED: E(value) proves reachability only when BOTH hold - the construction EXECUTES in production, and its value crosses a trust/authoring boundary. SIX SITES, AUDITED: (1) tasks/models.py:74 DependencyType(raw_type) - EXTERNALLY REACHABLE: tasks/handlers.py:242 calls registry.create_task(**body) on `await request.json()`, tasks/native.py:246 coerces via _coerce_dependencies, TaskDependency.from_dict (models.py:74) looks the member up, so a POST /api/tasks client picks REQUIRED_FOR; the bulk endpoint (handlers.py:164) is a second path. THE ONE GENUINE FALSE RED. (2-3) memory_record.py:216/218 MemoryTier/MemoryScope - INTERNAL ONLY: __post_init__ coerces rows read by from_semantic_row/from_episodic_row (vector_memory.py:1124/1129/1161/1169) that to_row wrote; the vault mirror (memory_vault.render_record) is render-only with no parse-back; every writer in memory_service.py passes WORKING/EPISODIC/SEMANTIC and SESSION/AGENT/GLOBAL, so \"segment\"/\"workspace\" never round-trip in. (4) workflows/confirmation.py:177 Status - INTERNAL ONLY: from_dict reads what to_dict wrote, and that is only pending/expired (resolve() returns a Resolution and never stamps RESOLVED; on_expiry returns EXPIRED). (5) judge_actors.py:84 Actor and (6) judge_contract.py:342 Verdict + :224 Ratchet - DEAD CALL SITES per the finding above. DECISION: DO NOT WIDEN. A syntactic E(value) rule would clear six classes of which exactly ONE is reachable - measured, not guessed: a temporary widening probe took enum 13 -> 7 (clearing MemoryTier.SEGMENT, MemoryScope.WORKSPACE, DependencyType.REQUIRED_FOR, Status.RESOLVED, Actor.WORKER, Verdict.REPLAN) and left Ratchet.RELAXED flagged anyway, so the rule would be unsound AND inconsistent. A false CLEAR is worse than the over-report it replaces: it buries a genuine gap inside every internal deserializer, and it passes the shrink-only ratchet silently because the count goes DOWN. Proving \"provably outside\" needs interprocedural dataflow (four hops across three modules for the DependencyType case), which is not a cheap deterministic AST rule. THE 13-MEMBER VERDICT: 1 false red (DependencyType.REQUIRED_FOR, left reported rather than cleared by an unsound rule); ONE reachable only OUT OF REPO by an app author (PromptCache.AUTOMATIC via sdk/provider_helpers.py:65 BrandedProviderSpec.prompt_cache, threaded at :334 - the census's declared blind spot, same reason sdk_export is 127); and ELEVEN GENUINELY unreachable, each with a named reason plus what closing it would take in the plan log. DISCOVERIES (not fixed here - classification atom): llm/capabilities.py:63-64 claims apps declare BrandedProviderSpec.structured_output, but that field does NOT exist on the SDK spec (provider_helpers.py:48-65 carries prompt_cache only), so grounding.py:492's live reader of a graded structured-output mode can never see anything but NONE; mcp_memory.py:41-49 advertises scope global|workspace on memory_remember and dashboard/handlers/schedule.py:181 drops the value entirely (write_lesson(rule, category, negative)), which is why MemoryScope.WORKSPACE has no writer; workflows/models.py:153 SessionMode is referenced NOWHERE in src/ (both members dead - FRESH is masked only because judge_contract.py:170 Isolation.FRESH shares the attribute name), the clearest delete candidate. NOT WIDENED, SO PINNED INSTEAD (3 tests in tests/test_inert_surface_baseline.py, 18 passed): test_value_lookup_alone_does_not_clear_a_member (fixture tree: a member reachable only via E(row[...]) is STILL reported); test_the_audited_value_lookup_call_sites_have_no_production_caller (real tree: validate_verdict / hints_from_dict / resolve_transition still have no production caller - it reds when one is wired up, which is the moment to re-verdict the member); and test_the_value_lookup_ruling_is_recorded_in_the_generator (the verdict vocabulary is present and PHF-12's superseded claim is refused). PROBE, REVERTED BY A TARGETED EDIT: the temporary widening reds exactly 3 tests - the new pin plus the two baseline-freshness tests (\"3 failed, 15 passed\"). RATCHET UNTOUCHED: forbidden-to-raise intact, no counter rose, baseline regenerated BY THE TOOL and byte-identical (140 total; enum 13, sdk_export 127, config/trigger_kind/editable_config 0). No src/ behaviour changed, no web/ change, no CHANGELOG entry - a repo audit tool and its committed baseline are not a user-visible surface."
+        },
+        {
+          "id": "PHF-14",
+          "title": "Decompose config/loader.py below the ceiling \u2014 restore the headroom every config field needs",
+          "status": "todo",
+          "scope": "The floor that PHF-5's and PHF-8's own rails predicted and that has now arrived. config/loader.py is 5900 lines against the ABSOLUTE 6000-line SIZE_CEILING_LINES, and tests/test_structural_baseline.py::test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance asserts ceiling - max_file_lines >= 100. Headroom is exactly 100, so ONE added line reds the gate \u2014 and that test's own docstring names this file and this exact scenario ('adding one boolean toggle would red CI and demand a 5,427-line split as its price'). The file was 5427 when that rail was written; it has since grown 473 lines and spent all of it. Because the config round-trip contract (dataclass + _meta, load(), to_dict(), a write path, a frontend control) touches loader.py on EVERY new field, the whole remaining roadmap is blocked from adding user-facing configuration. Extract cohesive per-domain config sections into sibling modules under src/personalclaw/config/ and update their importers, following the src/personalclaw/agents/native/decision_tool_defs.py precedent created for this same rail at the 2800-line watch band. Clean break: no re-export shim. NOT in scope: raising the ceiling, widening the watch band, or regenerating the structural baseline to make the red go away \u2014 each of those retires the rail instead of paying it.",
+          "done_when": "config/loader.py is at most 5400 lines (>= 600 lines of ceiling headroom, i.e. room for several ordinary config fields rather than one) with the extracted sections living in sibling modules under src/personalclaw/config/ and every importer updated \u2014 no re-export shim, proven by a RUNTIME import sweep with a stated count, not by mypy (ignore_missing_imports=true cannot see a stranded first-party import); tests/test_structural_baseline.py green including test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance and test_the_watch_band_is_not_sitting_on_a_cliff, with the ceiling and the watch band UNCHANGED and structural-baseline.json regenerated only for the moved-file rows; tests/test_config_roundtrip.py green and the committed config-schema baseline (PHF-5) shows ZERO schema drift, proving the split moved code without changing one observable config key; and a NEW config field is added end-to-end in the same change as the proof that headroom was really restored \u2014 LV-4's learning.identity_report_* field, wired through all four round-trip points plus its frontend control, which also closes LV-4's only unmet clause.",
+          "deps": []
         }
       ]
     },
@@ -7569,6 +7573,16 @@
         "plan": "BA"
       },
       {
+        "id": "BA-4",
+        "title": "Browser-session credential handoff (persistent per-site profiles, request_login needs-input flow, session-validity check)",
+        "plan": "BA"
+      },
+      {
+        "id": "BA-7",
+        "title": "user_browser execution-target selector on the browse action config (default gateway, no silent fallback, unattended refusal)",
+        "plan": "BA"
+      },
+      {
         "id": "CA-7",
         "title": "S3 remote-endpoint auth path over wss (no new origin exemption)",
         "plan": "CA"
@@ -7609,8 +7623,18 @@
         "plan": "DCU"
       },
       {
-        "id": "DFE-5",
-        "title": "Editing surface: non-Monaco renderer slot, the model editor, lossy-edit contract, config",
+        "id": "DFE-6",
+        "title": "Layout control: page setup, paragraph layout, headers/footers, page-geometry preview",
+        "plan": "DFE"
+      },
+      {
+        "id": "DFE-7",
+        "title": "Sheets: styled SheetModel + xlsx parser + grid editor (formulas stay formulas)",
+        "plan": "DFE"
+      },
+      {
+        "id": "DFE-8",
+        "title": "Decks: DeckModel/Slide layout+geometry+bullet levels + pptx parser + slide editor",
         "plan": "DFE"
       },
       {
@@ -7684,13 +7708,18 @@
         "plan": "ES"
       },
       {
-        "id": "ES-5",
-        "title": "Pre-registered template A/B studies (the re-opened eval gate)",
+        "id": "ES-6",
+        "title": "Loop-2 cheap gate subset + before/after score columns on self-modification proposals (amendment E2)",
         "plan": "ES"
       },
       {
         "id": "ES-7",
         "title": "Harness ablation runner + skills bench + model-upgrade watchdog",
+        "plan": "ES"
+      },
+      {
+        "id": "ES-10",
+        "title": "Model bake-off from production-sampled inputs \u2192 per-use-case recommendation",
         "plan": "ES"
       },
       {
@@ -7726,11 +7755,6 @@
       {
         "id": "LV-2",
         "title": "S2 legibility: per-run 'used N skills you approved' chip + session learned-chips with tap-through",
-        "plan": "LV"
-      },
-      {
-        "id": "LV-4",
-        "title": "Periodic identity report: compose_identity_report + delivery/schedule/config/FE (amendment)",
         "plan": "LV"
       },
       {
@@ -7774,13 +7798,13 @@
         "plan": "OU"
       },
       {
-        "id": "PA-4",
-        "title": "Decision journal core: `decision` native type + tools + horizon triggers + R18 lesson (Session 4)",
+        "id": "PA-5",
+        "title": "Triage FE surfaces + as-a-user validation (Session 5a)",
         "plan": "PA"
       },
       {
-        "id": "PA-5",
-        "title": "Triage FE surfaces + as-a-user validation (Session 5a)",
+        "id": "PA-6",
+        "title": "Decision Journal view + calibration strip FE + validation (Session 5b)",
         "plan": "PA"
       },
       {
@@ -7796,6 +7820,11 @@
       {
         "id": "PHF-2",
         "title": "cgroup v2 second enforcement tier",
+        "plan": "PHF"
+      },
+      {
+        "id": "PHF-14",
+        "title": "Decompose config/loader.py below the ceiling \u2014 restore the headroom every config field needs",
         "plan": "PHF"
       },
       {
@@ -8161,7 +8190,6 @@
       "LV-1",
       "LV-2",
       "LV-3",
-      "LV-4",
       "LV-5",
       "LV-6",
       "LV-7",
@@ -8270,6 +8298,8 @@
       "PHF-11",
       "PHF-12",
       "PHF-13",
+      "PHF-14",
+      "LV-4",
       "PL-1",
       "PL-2",
       "PL-3",
@@ -9634,18 +9664,18 @@
         "code": "DFE",
         "plan": "DOCUMENT-FIDELITY-EDITOR",
         "total_atoms": 8,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
         "code": "BA",
         "plan": "BROWSE-AUTOMATION",
         "total_atoms": 9,
-        "done": 1,
+        "done": 2,
         "in_progress": 0,
-        "todo": 8,
+        "todo": 7,
         "blocked": 0
       },
       {
@@ -9661,9 +9691,9 @@
         "code": "ES",
         "plan": "EVALUATION-SUBSTRATE",
         "total_atoms": 11,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 8,
+        "todo": 7,
         "blocked": 0
       },
       {
@@ -9751,9 +9781,9 @@
         "code": "PA",
         "plan": "PROACTIVE-ASSISTANT",
         "total_atoms": 6,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -10128,10 +10158,10 @@
       {
         "code": "PHF",
         "plan": "PLATFORM-HARDENING-FLOORS",
-        "total_atoms": 13,
+        "total_atoms": 14,
         "done": 12,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -10153,6 +10183,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 882
+    "edge_count": 883
   }
 }

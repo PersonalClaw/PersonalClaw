@@ -439,3 +439,16 @@ Stored via `ProviderSettings` in the app's `data/` (survives updates, §2.6). A 
   `Permissions.from_dict` has no outbound-mail key, so declaring one would drop on round-trip and ship an
   inert consent claim. Contract note: `send_reply` returns `False` for a successful draft because the ABC's
   `bool` means *delivered*; `reply() -> ReplyOutcome` carries the distinction.
+
+- [2026-08-26][EIAT-3] **OWNER RULING on Owner task 4 — replies DEFAULT TO DRAFT. This ratifies what
+  already shipped, and clears a stale gate record.** `EIAT-3`'s `done_when` ended "Owner-gated on the
+  draft-by-default confirmation (Owner task 4)", and `dag.json` still carried a `BLOCKED-OWNER`
+  reason for it — on an atom this log already recorded as **DONE on 2026-08-17** ("`mail-inbox`
+  send_reply over SMTP, **draft-by-default**", PersonalClawApps#36). So the implementation had already
+  taken the decision and the gate note was drift. RULED: **draft by default, with sending available
+  only behind an explicit per-rule opt-in that names the recipient scope.** Sending mail as the user
+  is the highest-regret action in the product and the one an unattended agent can least afford to get
+  wrong: a draft costs one click to send, a wrong send cannot be recalled. This also matches the
+  send-capable graduation toggle the triage work already uses, so the product has one posture for
+  "may act outward on your behalf" rather than a second one here. The stale `blocked_reason` is
+  removed; the atom's status is unchanged (`done`).

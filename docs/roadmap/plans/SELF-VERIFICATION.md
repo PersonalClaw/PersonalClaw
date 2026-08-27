@@ -584,3 +584,16 @@ Sessions 1-2 ship standalone value immediately; 3-4 are the ones that must not s
   contract the drive would have exercised permanent, so that when the harness flag lands the drive is
   confirming a rail rather than discovering a bug.
   **SV-9 stays `todo`.** Clauses 1/2/4 remain MET; clause 3 remains PARTIAL, now blocked on harness config.
+
+- [2026-08-26][SV-9] **OWNER RULING — add `--isolated` (or a per-session `--user-data-dir`) to the
+  chrome-devtools MCP server args. RULED YES.** The 2026-08-25 entry recorded clause 3 (a scenario
+  mutating state through the real UI via Chrome DevTools MCP) as env-gated because
+  `chrome-devtools-mcp` derives its profile dir from the server's `--channel` CLI arg only
+  (`browser.js:139`), so concurrent sessions contend for one
+  `~/.cache/chrome-devtools-mcp/chrome-profile` and a live sibling holds it;
+  `--remote-debugging-pipe` writes no `DevToolsActivePort`, so `--auto-connect` cannot attach either.
+  Decided: this project is *developed* by several concurrent agents by design — a browser tool that
+  only works when nobody else is working is not a tool we can build a verification companion on. Per-
+  session isolation is the only configuration consistent with how the repo is worked, and it costs a
+  flag. Clauses 1/2/4 remain MET and railed. Clause 3 becomes a **validation run**, not a code change,
+  once the flag is in place. `SV-9` stays `todo` until that run is recorded; no owner input remains.

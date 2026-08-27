@@ -773,3 +773,18 @@ class ElementRef:
   installs no browser (the same limitation BA-2's entry records). Colliding element identities resolve
   to the FIRST match, documented in the module rather than papered over. Real-browser actuation
   fidelity belongs to BA-5's as-a-user validation.
+
+- [2026-08-26][BA-3] **OWNER RULING — `BA-3` flips to `done` on its `done_when` as written.** The
+  2026-08-24 entry left two owner questions open and the atom `todo` on the first of them.
+  **Q1: flip on `done_when`, or wait for the §4 Stealth Stack and §10 launcher before calling browse
+  done?** RULED: **flip on `done_when` as written.** An atom's contract is its `done_when` and nothing
+  else — the Stealth Stack and the launcher are separate scope with their own atoms (`BA-4`…`BA-9`),
+  and holding a met criterion open until adjacent work lands is how a roadmap stops meaning anything.
+  All five clauses are met and were proven live per that entry. Flipped.
+  **Q2: the CI pytest job installs no browser, so the behavioural clauses are proven only on a
+  developer machine that has one.** RULED: **yes, make CI prove them** — add `npx playwright install
+  chromium` plus `PERSONALCLAW_REQUIRE_BROWSE_PROOF=1` to that job. A behavioural guarantee that only
+  ever runs on one laptop is a guarantee with no ratchet, and the per-run minutes are cheaper than the
+  first silent CDP regression. This is a workflow-file change, so it is ordinary implementable work
+  and **not** a condition on `BA-3`: it belongs with `BA-5`'s as-a-user validation, where the same
+  real-browser gap is already recorded. No owner input remains on either question.
