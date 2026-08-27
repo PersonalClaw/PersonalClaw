@@ -1,7 +1,9 @@
 import { Gavel, ShieldAlert } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
+import { hasApiCode } from '../../lib/api'
 import type { JudgeBenchRecommendation, JudgeBenchRow, JudgeBenchView } from '../../lib/api'
+import { EvalsOff } from './EvalsOff'
 
 /** The judge tier-recommendation table (EVALUATION-SUBSTRATE §6 / ES-4).
  *
@@ -23,11 +25,19 @@ export function JudgeBenchPanel({ bench, error, onRetry }: {
   error: unknown
   onRetry: () => void
 }) {
-  // A 404 is the ordinary state here — no benchmark has run — so it renders as guidance, not
-  // as a failure. Any other error is surfaced: the panel's subject is "can I trust the judge?",
-  // and a swallowed fetch would answer it with silence.
+  // A 404 is the ordinary state here — the substrate is off, or no benchmark has run — so both
+  // render as guidance, not as a failure. Any other error is surfaced: the panel's subject is
+  // "can I trust the judge?", and a swallowed fetch would answer it with silence.
   if (bench === undefined && error) {
-    if (isAbsent(error)) {
+    if (hasApiCode(error, 'evals_disabled')) {
+      return (
+        <section className="flex flex-col gap-s" aria-labelledby="judge-bench-heading">
+          <Heading />
+          <EvalsOff what="judge benchmark" />
+        </section>
+      )
+    }
+    if (hasApiCode(error, 'judge_bench_absent')) {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="judge-bench-heading">
           <Heading />
@@ -181,13 +191,6 @@ function RecommendationCard({ rec }: { rec: JudgeBenchRecommendation }) {
       </ul>
     </div>
   )
-}
-
-/** "No benchmark has run" is a 404 the panel EXPECTS. Matched on the backend's stable
- *  `code`, not on prose: the message is human copy and may be reworded, the code may not. */
-function isAbsent(error: unknown): boolean {
-  const text = error instanceof Error ? error.message : String(error ?? '')
-  return text.includes('judge_bench_absent')
 }
 
 function fmt(value: number | undefined): string {

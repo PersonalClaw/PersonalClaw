@@ -20,27 +20,36 @@ import { ModelsPanel } from './ModelsPanel'
 const patchConfig = vi.fn((_path: string, _value: unknown) => Promise.resolve({}))
 const personalclawConfig = vi.fn()
 
-vi.mock('../../lib/api', () => ({
-  api: {
-    personalclawConfig: () => personalclawConfig(),
-    patchConfig: (path: string, value: unknown) => patchConfig(path, value),
-    modelsAvailable: () => Promise.resolve([]),
-    modelsActive: () => Promise.resolve({}),
-    modelsHealth: () => Promise.resolve({ providers: [] }),
-    // ES-4: the panel reads the judge benchmark's tier recommendations on mount to offer
-    // the one-click rebind. 404 (no benchmark yet) is the ordinary case, so a reject here
-    // is what the panel really sees on a fresh install.
-    judgeBench: () => Promise.reject(new Error('judge_bench_absent')),
-    modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], reclaimable_bytes: 0 }),
-    // The panel's loaded-models section (LMMV-5) fetches on mount too; an unmocked call
-    // here would make this test fail for a reason that has nothing to do with caching.
-    modelsLoaded: () => Promise.resolve({
-      loaded: [],
-      providers: [],
-      pressure: { total_mb: 0, used_mb: 0, available_mb: 0, used_pct: 0, warn_pct: 85, warn: false, source: 'unavailable' },
-    }),
-  },
-}))
+// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError`/`hasApiCode` are kept. The four eval
+// panels branch on `hasApiCode(error, '<code>')`, so a factory that returned only `api` made the
+// mocked module throw "No \"hasApiCode\" export is defined" from inside the render — and a fixture
+// that rejected with a bare `Error` would carry no `.code`, so the branch under test would never
+// fire and the test would pass by rendering the generic failure instead.
+vi.mock('../../lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/api')>()
+  return {
+    ...actual,
+    api: {
+      personalclawConfig: () => personalclawConfig(),
+      patchConfig: (path: string, value: unknown) => patchConfig(path, value),
+      modelsAvailable: () => Promise.resolve([]),
+      modelsActive: () => Promise.resolve({}),
+      modelsHealth: () => Promise.resolve({ providers: [] }),
+      // ES-4: the panel reads the judge benchmark's tier recommendations on mount to offer
+      // the one-click rebind. 404 (no benchmark yet) is the ordinary case, so a reject here
+      // is what the panel really sees on a fresh install.
+      judgeBench: () => Promise.reject(new actual.ApiError('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.', 404, 'judge_bench_absent')),
+      modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], reclaimable_bytes: 0 }),
+      // The panel's loaded-models section (LMMV-5) fetches on mount too; an unmocked call
+      // here would make this test fail for a reason that has nothing to do with caching.
+      modelsLoaded: () => Promise.resolve({
+        loaded: [],
+        providers: [],
+        pressure: { total_mb: 0, used_mb: 0, available_mb: 0, used_pct: 0, warn_pct: 85, warn: false, source: 'unavailable' },
+      }),
+    },
+  }
+})
 vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))
 vi.mock('../../lib/data', () => ({
   useQuery: (_k: string, fn: () => Promise<unknown>) => {

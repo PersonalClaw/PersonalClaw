@@ -1,9 +1,11 @@
 import { Scissors, ShieldAlert } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
+import { hasApiCode } from '../../lib/api'
 import type {
   AblationArmAggregate, AblationHistoryEntry, AblationRegistryRow, AblationView,
 } from '../../lib/api'
+import { EvalsOff } from './EvalsOff'
 
 /** The keep/remove/lighten ablation report (EVALUATION-SUBSTRATE §3.1 / ES-7).
  *
@@ -32,20 +34,15 @@ export function AblationPanel({ view, error, onRetry }: {
   // makes this panel's empty state a guess — and a failed fetch rendering as "nothing has run
   // yet" is the specific confusion this section is built to refuse.
   if (view === undefined && error) {
-    if (hasCode(error, 'evals_disabled')) {
+    if (hasApiCode(error, 'evals_disabled')) {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="ablation-heading">
           <Heading />
-          <p className="text-on-surface-low text-[0.8125rem]">
-            The eval substrate is off, so no ablation can run. Turn on{' '}
-            <code className="text-on-surface-var">evals.enabled</code> in{' '}
-            <a className="underline" href="#/settings">Settings</a> to start measuring which
-            harness components earn their keep.
-          </p>
+          <EvalsOff what="ablation" />
         </section>
       )
     }
-    if (hasCode(error, 'ablation_absent')) {
+    if (hasApiCode(error, 'ablation_absent')) {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="ablation-heading">
           <Heading />
@@ -293,13 +290,6 @@ function Registry({ rows }: { rows: AblationRegistryRow[] }) {
       </ul>
     </div>
   )
-}
-
-/** Matched on the backend's stable `code`, not on prose: the message is human copy and may be
- *  reworded, the code may not. */
-function hasCode(error: unknown, code: string): boolean {
-  const text = error instanceof Error ? error.message : String(error ?? '')
-  return text.includes(code)
 }
 
 /** `on`, `off`, `cheap`, then anything else. The runner buckets cells that carry no arm under

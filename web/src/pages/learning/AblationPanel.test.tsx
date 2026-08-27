@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { invalidateKeys } from '../../lib/data'
 import { AblationPanel } from './AblationPanel'
 import { LearningPage } from './LearningPage'
+import { ApiError } from '../../lib/api'
 import type { AblationArmAggregate, AblationView, LearningInbox, StagingWeek } from '../../lib/api'
 
 /** ES-7's keep/remove/lighten report — and, first, the fact that anything reads it at all.
@@ -40,20 +41,29 @@ const retrievalBench = vi.fn<() => Promise<never>>()
 const identityReport = vi.fn<() => Promise<never>>()
 const ablation = vi.fn<() => Promise<AblationView>>()
 
-vi.mock('../../lib/api', () => ({
-  api: {
-    learningProposals: () => learningProposals(),
-    learningStagingWeek: () => learningStagingWeek(),
-    learningHealth: () => learningHealth(),
-    judgeBench: () => judgeBench(),
-    evalStudies: () => evalStudies(),
-    retrievalBench: () => retrievalBench(),
-    identityReport: () => identityReport(),
-    ablation: () => ablation(),
-    acceptLearningProposal: () => Promise.resolve({ ok: true }),
-    rejectLearningProposal: () => Promise.resolve(undefined),
-  },
-}))
+// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError`/`hasApiCode` are kept. The four eval
+// panels branch on `hasApiCode(error, '<code>')`, so a factory that returned only `api` made the
+// mocked module throw "No \"hasApiCode\" export is defined" from inside the render — and a fixture
+// that rejected with a bare `Error` would carry no `.code`, so the branch under test would never
+// fire and the test would pass by rendering the generic failure instead.
+vi.mock('../../lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/api')>()
+  return {
+    ...actual,
+    api: {
+      learningProposals: () => learningProposals(),
+      learningStagingWeek: () => learningStagingWeek(),
+      learningHealth: () => learningHealth(),
+      judgeBench: () => judgeBench(),
+      evalStudies: () => evalStudies(),
+      retrievalBench: () => retrievalBench(),
+      identityReport: () => identityReport(),
+      ablation: () => ablation(),
+      acceptLearningProposal: () => Promise.resolve({ ok: true }),
+      rejectLearningProposal: () => Promise.resolve(undefined),
+    },
+  }
+})
 
 const EMPTY_INBOX: LearningInbox = {
   rows: [], total: 0, by_kind: {}, by_tier: {}, flagged: 0, unrenderable: [], bulk_acceptable: 0,
@@ -109,9 +119,9 @@ describe('the ablation report is CONSUMED, not merely served', () => {
     // Each of these rejects with its own ORDINARY 404 code: their panels own their own
     // rendering, and this suite's subject must not depend on any of them loading.
     learningHealth.mockRejectedValue(new Error('not under test'))
-    judgeBench.mockRejectedValue(new Error('judge_bench_absent'))
-    evalStudies.mockRejectedValue(new Error('study_absent'))
-    retrievalBench.mockRejectedValue(new Error('retrieval_absent'))
+    judgeBench.mockRejectedValue(new ApiError('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.', 404, 'judge_bench_absent'))
+    evalStudies.mockRejectedValue(new ApiError('No study is registered under that id.', 404, 'study_absent'))
+    retrievalBench.mockRejectedValue(new ApiError('No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores.', 404, 'retrieval_absent'))
     // LV-4's identity report: the page reads it, so a double that omits it throws inside a
     // passive effect — exactly the failure mode the note above the declarations describes.
     identityReport.mockRejectedValue(new Error('not under test'))
@@ -222,7 +232,7 @@ describe('the ablation report is CONSUMED, not merely served', () => {
   // ── EMPTY vs BROKEN vs OFF: three codes, three answers ─────────────────────────────
 
   it('renders "no ablation yet" as guidance rather than as a load failure', () => {
-    render(<AblationPanel view={undefined} error={new Error('ablation_absent')} onRetry={() => {}} />)
+    render(<AblationPanel view={undefined} error={new ApiError('No ablation has run yet. Register a component in `evals/ablation_registry.json` and run `personalclaw ablation --force`.', 404, 'ablation_absent')} onRetry={() => {}} />)
     expect(screen.getByText(/personalclaw ablation --force/)).toBeTruthy()
     expect(screen.queryByText(/Retry/)).toBeNull()
   })
@@ -236,7 +246,7 @@ describe('the ablation report is CONSUMED, not merely served', () => {
   })
 
   it('points at the SWITCH when the substrate is off, not at the registry', () => {
-    render(<AblationPanel view={undefined} error={new Error('evals_disabled')} onRetry={() => {}} />)
+    render(<AblationPanel view={undefined} error={new ApiError('The eval substrate is off. Turn on `evals.enabled` to publish benchmark results.', 404, 'evals_disabled')} onRetry={() => {}} />)
     expect(screen.getByText(/evals.enabled/)).toBeTruthy()
     // Turning on a setting and registering a component send a user to two different places.
     expect(screen.queryByText(/ablation_registry.json/)).toBeNull()

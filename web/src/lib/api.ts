@@ -4,7 +4,7 @@
 // API contract in docs.
 
 import { apiVersionHeaders } from './apiVersion'
-import { errText } from './errText'
+import { errEnvelope, errText } from './errText'
 
 // Every request helper below spreads `SK`, so folding the API-version declaration
 // into it is the SPA's ONE declaration site (PL-9): the number lives only in
@@ -13,21 +13,48 @@ import { errText } from './errText'
 // at a field that quietly changed shape.
 const SK = { 'X-Session-Key': 'dashboard:ui', ...apiVersionHeaders }
 
-/** An Error that carries the HTTP status, so callers can distinguish a genuine 404
- *  (resource gone) from a transient network/5xx blip. `.message` is unchanged (the
- *  backend's error text), so existing `catch(e => e.message)` callers are unaffected;
- *  only callers that branch on status read `.status`. */
+/** An Error that carries the HTTP status AND the backend's typed error code, so callers can
+ *  distinguish a genuine 404 (resource gone) from a transient network/5xx blip, and — within
+ *  one status — which of several deliberate 404s this is. `.message` is unchanged (the
+ *  backend's error text), so existing `catch(e => e.message)` callers are unaffected; only
+ *  callers that branch read `.status`/`.code`.
+ *
+ *  🔑 `.code` is the field the panels needed and did not have. `http_errors.py` mints a
+ *  DISTINCT code per meaning — `/api/evals/ablation` answers 404 as `evals_disabled` (the
+ *  switch is off) or `ablation_absent` (nothing has run) — and the status alone cannot tell
+ *  them apart. Before this, a panel's only handle was the human sentence, which never
+ *  contains the code, so every code branch was dead. `''` when the body carried no code. */
 export class ApiError extends Error {
   status: number
-  constructor(message: string, status: number) {
+  code: string
+  constructor(message: string, status: number, code = '') {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
   }
 }
 
+/** The `ApiError` a failed response should become. A body is a one-shot stream, so the
+ *  sentence and the code have to come out of the SAME read — hence one builder every thrower
+ *  below calls, rather than `errText` here and a second parse somewhere else. */
+async function apiError(r: Response): Promise<ApiError> {
+  const { message, code } = await errEnvelope(r)
+  return new ApiError(message, r.status, code)
+}
+
+/** True when a rejection is this gateway's typed failure carrying exactly `code`.
+ *
+ *  Match on the code, NEVER on `.message`: the message is human copy that gets reworded, the
+ *  code is the registry key `http_errors.py` declares. The four learning panels each hand-rolled
+ *  `error.message.includes(code)`, which is false for every real response, so they shared one
+ *  bug in four places — this is the one predicate they now share instead. */
+export function hasApiCode(e: unknown, code: string): boolean {
+  return e instanceof ApiError && e.code === code
+}
+
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new ApiError(await errText(r), r.status)
+  if (!r.ok) throw await apiError(r)
   return r.json() as Promise<T>
 }
 
@@ -38,7 +65,7 @@ const put = <T>(p: string, body?: unknown) =>
   fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const patch = <T>(p: string, body?: unknown) =>
   fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
-const del = (p: string) => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw new ApiError(await errText(r), r.status) })
+const del = (p: string) => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) })
 
 /** App install/update: POST that returns the parsed body on ANY HTTP status.
  *  The scanner verdict + needs_consent are carried in the 400/409 body, so a
@@ -4372,7 +4399,7 @@ export const api = {
       headers: { ...SK, 'Content-Type': 'application/json' },
       body: JSON.stringify(domains && domains.length ? { domains } : {}),
     }).then(async (r) => {
-      if (!r.ok) throw new ApiError(await errText(r), r.status)
+      if (!r.ok) throw await apiError(r)
       return r.blob()
     }),
   /** `mode` omitted VALIDATES ONLY and applies nothing — the plan-first contract every
@@ -4489,7 +4516,7 @@ export const api = {
       `/api/memory/record-links?ref=${encodeURIComponent(ref)}`),
   memoryGraphExport: () =>
     fetch('/api/memory/graph/export', { headers: { ...SK } }).then(async (r) => {
-      if (!r.ok) throw new ApiError(await errText(r), r.status)
+      if (!r.ok) throw await apiError(r)
       return r.text()
     }),
   // §6/§7.1 — the Slots editor. `memorySlotAppend` RESOLVES on the 409 rather than throwing:
@@ -5035,7 +5062,7 @@ export const api = {
   uLoopAction: (id: string, action: 'start' | 'pause' | 'resume' | 'stop') =>
     fetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ action }) }).then(j<Loop>),
   uLoopNudge: (id: string, text: string, taskId?: string) => post(`/api/loops/${encodeURIComponent(id)}/nudge`, taskId ? { text, task_id: taskId } : { text }),
-  deleteULoop: (id: string) => fetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw new ApiError(await errText(r), r.status) }),
+  deleteULoop: (id: string) => fetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
   uLoopQueue: (id: string, taskIds: string[], action: 'queue' | 'unqueue' = 'queue') =>
     post<{ ok: boolean; queued_task_ids: string[] }>(`/api/loops/${encodeURIComponent(id)}/queue`, { task_ids: taskIds, action }),
   uLoopAutopilot: (id: string, on: boolean) =>
@@ -5240,7 +5267,7 @@ export const api = {
   saveSnippet: (name: string, body: Record<string, unknown>) => put<{ ok: boolean; snippet: PromptSnippet }>(`/api/prompt-snippets/${encodeURIComponent(name)}`, body),
   // carries the backend message (e.g. the 409 "included by N items" usage guard) so
   // the UI can explain why a delete was refused — not the generic del() "delete failed".
-  deleteSnippet: (name: string) => fetch(`/api/prompt-snippets/${encodeURIComponent(name)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw new ApiError(await errText(r), r.status) }),
+  deleteSnippet: (name: string) => fetch(`/api/prompt-snippets/${encodeURIComponent(name)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
   renderSnippet: (name: string, variables: Record<string, unknown>) => post<{ name: string; rendered: string }>(`/api/prompt-snippets/${encodeURIComponent(name)}/render`, { variables }),
   // prompt use-case bindings (which system prompt serves chat/background/code/goal_loop)
   promptBindings: () => get<PromptBindings>('/api/prompts/bindings'),
@@ -5791,7 +5818,7 @@ export const api = {
   // document — parse as text or every multi-line archive throws in r.json().
   sessionArchiveRead: (name: string) =>
     fetch(`/api/session/archive/${encodeURIComponent(name)}`, { headers: { ...SK } })
-      .then(async (r) => { if (!r.ok) throw new ApiError(await errText(r), r.status); return r.text() }),
+      .then(async (r) => { if (!r.ok) throw await apiError(r); return r.text() }),
   // Whole-home export/import live on the durability surface — see `durabilityExport`.
   // One PROJECT as a manifest ZIP — narrower than the whole-home archive above, so a user can hand
   // a colleague a single project without shipping their memory database. Credentials never travel;
@@ -5944,7 +5971,7 @@ export const api = {
   fileRoots: () => get<FileListResp>('/api/file-list'),
   fileList: (path: string) => get<FileListResp>(`/api/file-list?path=${encodeURIComponent(path)}`),
   fileRead: (path: string, resolve = false) => fetch(`/api/file-read?path=${encodeURIComponent(path)}${resolve ? '&resolve=1' : ''}`, { headers: { ...SK } }).then(async (r) => {
-    if (!r.ok) throw new ApiError(await errText(r), r.status)  // ApiError carries .status so the viewer can tell a 404 (file gone → close the stale tab) from a transient 5xx (offer retry)
+    if (!r.ok) throw await apiError(r)  // ApiError carries .status so the viewer can tell a 404 (file gone → close the stale tab) from a transient 5xx (offer retry)
     // X-Binary: the server detected non-text content (NUL bytes) — don't treat the
     // empty body as an editable file; the viewer shows a binary placeholder.
     return { content: await r.text(), truncated: r.headers.get('X-Truncated') === 'true', binary: r.headers.get('X-Binary') === 'true' }

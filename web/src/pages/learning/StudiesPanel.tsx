@@ -3,7 +3,8 @@ import { ChevronDown, ChevronRight, FlaskConical, ShieldAlert } from 'lucide-rea
 import { LoadError } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { useQuery } from '../../lib/data'
-import { api, type StudyPair, type StudyRow, type StudyView } from '../../lib/api'
+import { api, hasApiCode, type StudyPair, type StudyRow, type StudyView } from '../../lib/api'
+import { EvalsOff } from './EvalsOff'
 import { studyDetailKey } from './proposalCache'
 
 /** Pre-registered template A/B studies (EVALUATION-SUBSTRATE §2 / ES-5).
@@ -37,11 +38,23 @@ export function StudiesPanel({ studies, error, onRetry }: {
 }) {
   const [open, setOpen] = useState('')
 
-  // A 404 is the ordinary state — no study has been registered — so it renders as guidance.
-  // Any other failure is surfaced, because "no studies" and "we could not read the studies"
-  // send a user to two different places.
+  // The one 404 this route really answers is `evals_disabled`, and it is NOT "no study has been
+  // registered" — the switch being off and the register being empty send a user to two different
+  // places. Any other failure is surfaced, because "no studies" and "we could not read the
+  // studies" are a third place again.
+  //
+  // 🪤 An empty register is a 200 `{"studies": []}`, handled by the `length === 0` line below.
+  // `study_absent` used to be OR'd into this predicate; `api_evals_studies` cannot return it (it
+  // belongs to `/api/evals/studies/{id}`), so that arm was unreachable twice over and is gone.
   if (studies === undefined && error) {
-    if (isAbsent(error)) return <Empty />
+    if (hasApiCode(error, 'evals_disabled')) {
+      return (
+        <section className="flex flex-col gap-s" aria-labelledby="studies-heading">
+          <Heading />
+          <EvalsOff what="study" />
+        </section>
+      )
+    }
     return <LoadError what="studies" error={error} onRetry={onRetry} />
   }
   if (!studies) return null
@@ -299,13 +312,6 @@ function versionRange(study: StudyRow): string {
   const to = study.subject.new_version
   if (from === undefined || to === undefined) return ''
   return ` v${String(from)} → v${String(to)}`
-}
-
-/** "No study has been registered" is a 404 the panel EXPECTS. Matched on the backend's
- *  stable `code`, never on prose — the message is human copy and may be reworded. */
-function isAbsent(error: unknown): boolean {
-  const text = error instanceof Error ? error.message : String(error ?? '')
-  return text.includes('study_absent') || text.includes('evals_disabled')
 }
 
 /** A rate. `null` is UNMEASURED — the one value that must never render as 0%, because an

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RetrievalBenchPanel } from './RetrievalBenchPanel'
-import { api, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
+import { api, ApiError, type RetrievalArmContribution, type RetrievalBenchView, type RetrievalMaskRow, type RetrievalStoreReport } from '../../lib/api'
 
 /** ES-3's per-arm retrieval table, on what a table of measurements gets wrong.
  *
@@ -174,7 +174,7 @@ describe('the per-arm retrieval ablation table', () => {
   })
 
   it('renders "no benchmark yet" as guidance AND still offers the label card', () => {
-    render(<RetrievalBenchPanel bench={undefined} error={new Error('retrieval_absent')} onRetry={() => {}} />)
+    render(<RetrievalBenchPanel bench={undefined} error={new ApiError('No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores.', 404, 'retrieval_absent')} onRetry={() => {}} />)
     expect(screen.getByText(/personalclaw retrieval-eval/)).toBeTruthy()
     expect(screen.getByRole('button', { name: /Label knowledge/ })).toBeTruthy()
     expect(screen.queryByText(/Retry/)).toBeNull()
