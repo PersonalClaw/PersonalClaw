@@ -12,7 +12,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 |---|---|---|---|---|
 | `DCU-1` | ✅ | Keystone out-of-band enable-state | — | With the enable file absent, every computer-use tool refuses with a WHAT/WHY/FIX message pointing to the out-of-band enable step; no tool or config path can flip the state. |
 | `DCU-2` | ✅ | Target policy, input-target screen, SEL-audit gate | `EXT:AUTONOMY-GUARDRAILS:SEL audit + safety profile` | Driving a non-allowlisted app refuses; typing or set-value into a secure/password field refuses; every attempt, allowed or refused, produces a SEL record. |
-| `DCU-3` | ⬜ | macOS accessibility driver (indexed AX tree) | `DCU-1`, `EXT:SECURITY-HARDENING:OS-input-layer class-B/S review` | With the enable on, snapshotting a TextEdit window then AXPress-ing a button by index and typing into a field succeeds without the pointer moving; a stale index (past TTL or changed fingerprint) refuses and forces a re-snapshot. |
+| `DCU-3` | 🟡 | macOS accessibility driver (indexed AX tree) | `DCU-1`, `EXT:SECURITY-HARDENING:OS-input-layer class-B/S review` | With the enable on, snapshotting a TextEdit window then AXPress-ing a button by index and typing into a field succeeds without the pointer moving; a stale index (past TTL or changed fingerprint) refuses and forces a re-snapshot. |
 | `DCU-4` | ⬜ | Thin stdio shim, in-gateway dispatch, tool surface + ceilinged spawn | `DCU-1`, `DCU-2`, `DCU-3`, `EXT:PLATFORM-HARDENING-FLOORS:ceilinged driver subprocess`, `EXT:AUTONOMY-GUARDRAILS:approval ladder in dispatch` | The agent lists apps and clicks an element by index end-to-end; the shim holds no OS handles; the driver spawn carries the resource ceiling; V1 holds and is recorded — a real app driven by element index with the pointer staying put, a secure-field refusal, SEL records present, and an absent enable file blocking everything. |
 | `DCU-5` | ⬜ | Approval-ladder integration for desktop drive | `DCU-4`, `EXT:AUTONOMY-GUARDRAILS:approval ladder + unattended-profile grant` | An unattended run without the grant refuses and notifies; an interactive run prompts; validated. |
 | `DCU-6` | ⬜ | Windows/Linux honest typed refusals | `DCU-4` | On non-macOS, every computer-use tool returns a typed refusal naming the platform; no silent no-op; validated. |
@@ -89,6 +89,33 @@ policy.py (§3.3-3.4): a self-plus-operator target-app allowlist via check_app, 
 macOS accessibility driver over ctypes FFI (macos_driver.py, macos_ffi.py, types.py) per §2/§3.2: element walk into an indexed AX tree with TTL + fingerprint; AXPress activation by element index (no pointer involved); type/set-value/scroll/named-action; a located coordinate path that posts to the target process (CGEventPostToPid) for canvas/custom-drawn UI; and the explicit real-cursor global warp behind its own named method and a distinct SEL tool_kind that auto never resolves onto. Element-targeted, non-pointer input is the default and the only thing on by default.
 
 **Done when:** With the enable on, snapshotting a TextEdit window then AXPress-ing a button by index and typing into a field succeeds without the pointer moving; a stale index (past TTL or changed fingerprint) refuses and forces a re-snapshot.
+
+**PARTIAL (2026-08-26) — implementation landed; one clause is blocked on an OS permission a human
+must grant.** `types.py`, `macos_ffi.py` and `macos_driver.py` ship over **ctypes FFI as §3.2
+specifies, adding no dependency at all** — every symbol is in a system framework, so `pyobjc` was
+neither needed nor added. `driver_host.resolve_driver("Darwin")` now returns a module instead of
+`None`, which is the call site this atom exists to land.
+
+*Proven on the authoring machine:* `op_list_apps` against the real OS (75 bundled apps, and it
+needs no permission by design so an operator can discover the name to allowlist before granting
+anything); every FFI symbol binding; the real pointer read; the real ceilinged spawn reaching the
+real driver end-to-end through `computer_dispatch`; and the accessibility refusal as the **real OS
+answer** (`AXIsProcessTrusted()` False, `kAXErrorAPIDisabled`/-25211). Staleness is proven from
+both sides — the dispatch's TTL and fingerprint were already railed by `DCU-4`, and the driver adds
+the act-moment re-walk the dispatch cannot make for itself (its own re-walk precedes the
+secure-field screen and the SEL row, leaving a window in which the operator can drag the window).
+"The pointer does not move" is asserted as the *set of OS calls* each op makes against a recording
+double, with a rail proving that recording can fail.
+
+*NOT observed, and unblockable only by hand:* the done_when's "snapshotting a TextEdit window then
+AXPress-ing a button … **succeeds**". macOS gates the AX API behind TCC, whose database is
+SIP-protected, so no code can grant it. **What a human must click:** System Settings → Privacy &
+Security → Accessibility → `+` → add the python binary running the gateway (not the terminal
+hosting it) → restart the gateway. With that done, two tests already written flip from asserting
+the refusal branch to asserting a real indexed tree, with no code change:
+`test_the_accessibility_permission_refusal_is_the_real_os_answer` and
+`test_the_real_spawn_reaches_the_real_driver_and_its_code_survives`. The row stays `todo` until
+that walk-through is recorded.
 
 ### `DCU-4` — Thin stdio shim, in-gateway dispatch, tool surface + ceilinged spawn
 

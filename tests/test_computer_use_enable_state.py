@@ -557,6 +557,53 @@ def test_the_packages_public_surface_is_pinned():
         ],
         "tools.py": ["ToolSpec"],
         "driver_host.py": ["main", "resolve_driver", "run_op"],
+        # DCU-3's three modules — the first real platform driver, and the first code in this
+        # package that touches the OS. None is named `computer_*`, deliberately and for the same
+        # reason as `gate`/`tools`: the prefix marks "this can dispatch", and none of these can.
+        # They run INSIDE the ceilinged child, downstream of every screen, and the child holds
+        # no authority (`test_the_driver_child_makes_no_policy_decision` asserts it), so a second
+        # `require_enabled` reader here would be the drift that guard's docstring warns about.
+        #
+        # `types` is the platform-neutral vocabulary every driver speaks (DCU-6's Windows and
+        # Linux drivers will share it), `macos_ffi` is the ONLY module in the package containing
+        # ctypes — the whole OS-input surface in one auditable file, including the single
+        # function that warps the operator's real cursor — and `macos_driver` is the op layer the
+        # child dispatches into by `op_<name>`.
+        "types.py": [
+            "DriverError",
+            "DriverRefusal",
+            "Element",
+            "WindowWalk",
+            "fingerprint_of",
+        ],
+        "macos_ffi.py": [
+            "AXCallFailed",
+            "AXPermissionDenied",
+            "AppNotFound",
+            "FFIUnavailable",
+            "click_global",
+            "click_located",
+            "focus",
+            "is_process_trusted",
+            "list_gui_apps",
+            "perform_action",
+            "pointer_position",
+            "press",
+            "resolve_app_pid",
+            "scroll",
+            "set_value",
+            "type_text",
+            "walk_window",
+        ],
+        "macos_driver.py": [
+            "op_click",
+            "op_list_apps",
+            "op_perform_action",
+            "op_scroll",
+            "op_set_value",
+            "op_snapshot",
+            "op_type",
+        ],
     }, (
         "the computer_use package grew a public function/class. If it is a dispatchable "
         "tool, name it computer_* so the keystone ratchet covers it and call "

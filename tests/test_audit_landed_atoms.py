@@ -695,7 +695,6 @@ def test_the_real_ws7_gate_is_its_own_partial_not_the_deferred_naming_wart(
 @pytest.mark.parametrize(
     ("atom_id", "own_plan"),
     [
-        ("DCU-3", "DESKTOP-COMPUTER-USE.md"),
         ("EI-2", "EXECUTION-ISOLATION.md"),
         ("LV-7", "LEARNING-VISIBILITY.md"),
     ],
@@ -703,12 +702,18 @@ def test_the_real_ws7_gate_is_its_own_partial_not_the_deferred_naming_wart(
 def test_the_real_inherited_verdicts_are_gone(
     real_verdicts: list, real_log_hits: dict, atom_id: str, own_plan: str
 ) -> None:
-    """Three atoms bucketed LANDED-BUT-GATED with nothing of their own on the ref.
+    """Atoms bucketed LANDED-BUT-GATED with nothing of their own on the ref.
 
-    Each was scored off a sibling's entry in its own plan — ``DCU-3`` off ``DCU-4``'s DONE
-    headline, ``EI-2`` off ``EI-8``'s STOP POINT, ``LV-7`` off a ``run_matrix`` DISCOVERY — while
-    ``computer_use/`` has no ``macos_driver.py`` and ``sandbox_providers/`` holds only
+    Each was scored off a sibling's entry in its own plan — ``EI-2`` off ``EI-8``'s STOP POINT,
+    ``LV-7`` off a ``run_matrix`` DISCOVERY — while ``sandbox_providers/`` holds only
     ``base``/``none``/``registry``. The bucket is what a human acts on, so the bucket is pinned.
+
+    **``DCU-3`` GRADUATED off this list (2026-08-26) and that is the intended exit, not a
+    loosening.** It was here because it read LANDED-BUT-GATED off ``DCU-4``'s DONE headline
+    "while ``computer_use/`` has no ``macos_driver.py``". That module now exists, and the atom
+    wrote its own dated PARTIAL naming the one clause an OS permission still gates, so its
+    verdict is no longer inherited from anybody. The assertion below is what enforced the exit:
+    it reds the moment an atom here gains a headline entry, which is exactly what happened.
     """
     hits = [h for h in real_log_hits.get(atom_id, []) if h.plan_file == own_plan]
     assert hits, f"{atom_id} has no entry at all in {own_plan}: this test is mute"
