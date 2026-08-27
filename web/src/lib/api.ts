@@ -3851,6 +3851,15 @@ export interface TileRefreshRow {
   nodes?: TileNodeOutcome[]; version?: number; rendered_bytes?: number; error?: string
 }
 export interface TileRefreshResult { refreshed: boolean; reason: string; ok: boolean; nodes: TileNodeOutcome[]; row: TileRefreshRow }
+// The L2 user/agent surface overlays (AMBIENT-SURFACES §6 / AS-6). DATA, never code: a
+// `body` holding the genui DSL plus optional `define`d composites, both of which are
+// references to already-registered component names. Refusals ride along on the SAME 200
+// as the accepted overlays — a refused overlay the user cannot see is an invisible failure.
+export interface SurfaceOverlayDefine { name: string; description: string; body: string }
+export interface SurfaceOverlayDoc { file: string; surface: string; title: string; body: string; define: SurfaceOverlayDefine[] }
+export interface SurfaceOverlayError { code: string; what: string; why: string; fix: string; suggestions: string[] }
+export interface SurfaceOverlayRefusal { file: string; error: SurfaceOverlayError }
+export interface SurfaceOverlayPayload { overlays: SurfaceOverlayDoc[]; refusals: SurfaceOverlayRefusal[]; dir: string }
 
 export type ArtifactEventType = 'created' | 'edited' | 'iterated' | 'referenced' | 'reverted'
 export interface ArtifactEvent {
@@ -6264,6 +6273,12 @@ export const api = {
     post<{ view: DashboardView }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles`, body).then((d) => d.view),
   resolveTile: (viewId: string, body: { ref: string; keep: boolean }) =>
     post<{ view: DashboardView }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/resolve`, body).then((d) => d.view),
+
+  // ── the L2 user/agent surface overlays (AMBIENT-SURFACES §6 / AS-6) ──
+  // READ only, on purpose: an overlay is authored with the ordinary file tools under
+  // $PERSONALCLAW_HOME/surfaces/, so an HTTP writer would be a second producer with a
+  // second set of refusals.
+  surfaceOverlays: () => get<SurfaceOverlayPayload>('/api/surfaces/overlays'),
 
   // ── chatless refresh (AMBIENT-SURFACES §2) ──
   // `refreshTile` is TTL-GATED server-side unless `force` — a rendered dashboard may poll it

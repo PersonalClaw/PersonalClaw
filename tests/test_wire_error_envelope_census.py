@@ -200,7 +200,24 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: Measured against `origin/main` at rebase time: main 212, this branch 213. This row read
 #: "211 → 212" one rebase ago; the step is MAIN-RELATIVE and moves whenever another atom lands
 #: one of these, so it is re-measured at every rebase rather than carried forward.
-UNRESOLVED_PAYLOAD_CEILING = 213
+#: 213 → **214** (AS-6, the L2 overlay producer): one 200-status SUCCESS body on the new
+#: surface-overlay read route — ``GET /api/surfaces/overlays`` answers with
+#: ``web.json_response(overlay_payload())`` in ``dashboard/handlers/surfaces.py``, and
+#: ``surface_overlay.overlay_payload`` is the loader's own composer
+#: (``{"overlays": [...to_dict()], "refusals": [...to_dict()], "dir": str}``). Spelling those
+#: keys out at the call site would duplicate the overlay loader's wire schema in two places —
+#: the drift this census exists to catch — and it would put the ``dir``/refusal shape in a
+#: handler that "owns nothing but the JSON". **The slack is not spendable on an error
+#: envelope:** this route has no flat refusal at all. Its refusals ride the SAME 200 record by
+#: design (an overlay naming a component that does not exist is reported beside the surface it
+#: belongs to, because a 4xx would be indistinguishable from a broken request), so no flat
+#: ``{"error": …}`` body was added and ``FLAT_BASELINE`` stays 1507 — shrink-only, not raised.
+#: Measured against `origin/main` (c9fff2f3) at rebase time: main 213, this branch 214, with
+#: the one added unresolved site being ``dashboard/handlers/surfaces.py:28`` and the flat total
+#: identical at 1507 on both. MAIN-RELATIVE, so re-measure at the next rebase: a sibling atom
+#: (EA-5's ``POST /capture/import``) is in flight with its own independent 213 → 214 step, and
+#: whichever of the two lands second measures 215.
+UNRESOLVED_PAYLOAD_CEILING = 214
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites

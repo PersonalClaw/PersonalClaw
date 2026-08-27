@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
 import { PinnedTiles } from './PinnedTiles'
+import { SurfaceOverlay } from '../../ui/surfaces/SurfaceOverlay'
 import { AgentWorld } from './world/AgentWorld'
 import { HeroPulse } from './widgets/HeroPulse'
 import { ActionCenter } from './widgets/ActionCenter'
@@ -92,6 +93,14 @@ export function DashboardPage(route: RouteProps) {
                 so it would spend a `gap-2xl` of blank vertical space on every install
                 that has pinned no tiles. */}
             <PinnedTiles />
+
+            {/* The L2 user/agent overlay band (AMBIENT-SURFACES §6 / AS-6) — the call site
+                that makes the L2 layer a producer rather than a declared-and-empty layer.
+                Renders whatever `$PERSONALCLAW_HOME/surfaces/*.json` contributes to the
+                `dashboard` surface, and the named refusal for anything that would not load.
+                Same `null`-on-empty property as `PinnedTiles` above, and unwrapped for the
+                same reason. */}
+            <SurfaceOverlay surface="dashboard" />
 
             {/* Prime signal: what needs you + what's running, side by side on wide
                 screens, stacked on narrow. Bare sections, hairline-labelled. */}

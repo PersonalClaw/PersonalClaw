@@ -88,12 +88,41 @@ function renderLine(
   )
 }
 
+/** The chrome-less tree: parse a DSL body, render its roots, show its parse errors.
+ *
+ *  Extracted from `GenUiWidget` (which is this plus the Surface chrome and the action
+ *  provider) so the two OTHER things that render a genui tree do not re-derive it: an L2
+ *  surface overlay's band, and an overlay-defined composite component — both in
+ *  `ui/surfaces/`. A composite rendered inside a widget inherits that widget's
+ *  `GenUiActionCtx` through React context, so a Form inside a composite still routes to
+ *  the host's producer with no plumbing of its own. */
+export function GenUiNodes({ content }: { content: string }) {
+  const { lines, parseErrors } = parseGenUi(content || '')
+  const byId = new Map<string, ParsedLine>()
+  for (const l of lines) byId.set(l.id, l)
+  // Roots = lines nothing else references (the top of the tree). Everything else
+  // renders as a child of its referrer. When NOTHING is referenced (a flat list
+  // of siblings), every line is a root — the common single-component case.
+  const referenced = new Set<string>()
+  for (const l of lines) for (const ids of Object.values(l.refs)) for (const id of ids) referenced.add(id)
+  const roots = lines.filter((l) => !referenced.has(l.id))
+  return (
+    <>
+      {roots.map((l) => (
+        <div key={l.id}>{renderLine(l, byId, new Set())}</div>
+      ))}
+      {parseErrors.map((pe) => (
+        <DroppedLine key={`pe-${pe.line}`} message={`Line ${pe.line}: ${pe.message} — "${pe.text.slice(0, 60)}"`} />
+      ))}
+    </>
+  )
+}
+
 /** The genui widget embed. Parses + validates + renders the DSL body. */
 export const GenUiWidget = memo(function GenUiWidget({ content, title, slug }: EmbedProps) {
   // WHO is rendering this widget (§5.4). Supplied by the host, never by the widget's own
   // text — see actions.ts. Absent host ⇒ chat-born, the harmless default.
   const host = useGenUiHost()
-  const { lines, parseErrors } = parseGenUi(content || '')
   // A refused / failed action is reported HERE, next to the widget that raised it —
   // a submit that quietly did nothing is the worst outcome of the three.
   const [actionError, setActionError] = useState('')
@@ -117,15 +146,6 @@ export const GenUiWidget = memo(function GenUiWidget({ content, title, slug }: E
     // submit would hide a gate that is still waiting.
     else host.onResolved?.()
   }, [host, slug])
-  const byId = new Map<string, ParsedLine>()
-  for (const l of lines) byId.set(l.id, l)
-
-  // Roots = lines nothing else references (the top of the tree). Everything else
-  // renders as a child of its referrer. When NOTHING is referenced (a flat list
-  // of siblings), every line is a root — the common single-component case.
-  const referenced = new Set<string>()
-  for (const l of lines) for (const ids of Object.values(l.refs)) for (const id of ids) referenced.add(id)
-  const roots = lines.filter((l) => !referenced.has(l.id))
 
   return (
     <Surface tone="low" radius="lg" className="my-3 overflow-hidden">
@@ -134,12 +154,7 @@ export const GenUiWidget = memo(function GenUiWidget({ content, title, slug }: E
       </div>
       <GenUiActionCtx.Provider value={emit}>
         <div className="flex flex-col gap-s p-l">
-          {roots.map((l) => (
-            <div key={l.id}>{renderLine(l, byId, new Set())}</div>
-          ))}
-          {parseErrors.map((pe) => (
-            <DroppedLine key={`pe-${pe.line}`} message={`Line ${pe.line}: ${pe.message} — "${pe.text.slice(0, 60)}"`} />
-          ))}
+          <GenUiNodes content={content || ''} />
           {actionError && <DroppedLine message={actionError} />}
         </div>
       </GenUiActionCtx.Provider>

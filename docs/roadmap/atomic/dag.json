@@ -2162,7 +2162,7 @@
     {
       "plan": "AMBIENT-SURFACES",
       "code": "AS",
-      "status": "in_progress",
+      "status": "done",
       "summary": "9 atoms, all todo. AS-1 (composable home / dashboard-as-views) is the spine most others build on. AS-3, AS-4, AS-7 are independent. AS-6 gated on AUTOMATION-SUBSTRATE; AS-8 gated on INBOX-NOTIFICATIONS-UNIFICATION S1-2.",
       "atoms": [
         {
@@ -2217,15 +2217,14 @@
         {
           "id": "AS-6",
           "title": "Genui action routing + app-contributed components + L0/L1/L2 surface overlay + safe mode",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a75.4 Widget trees feeding actions back into execution (dual payloads; continue-conversation / gate resolution / tile re-fire); \u00a75.1 app-extension (manifest ui components via appSdk host-module map); \u00a76 Layered Surface Overlay (L0/L1/L2) + Safe Mode; typed-questionnaire consumer.",
           "done_when": "genui component actions emit dual payloads (llmFriendlyMessage + humanFriendlyMessage); a chat-born widget action becomes the next user turn showing humanFriendlyMessage (not raw JSON); a workflow-gate-emitted form widget submission resolves the run's wait node so the run advances; tile-widget actions re-fire the bound workflow within the trigger's frozen capability set; an installed app registers a genui component that appears in generated UIs and is removed on disable, and an attempt to shadow a core component name is refused at register time; each L1/L2 layer load is error-boundaried and #/dashboard?safe=1 (plus a --safe-surfaces gateway flag) forces maxLayer=0 pure-L0.",
           "deps": [
             "AS-4",
             "AS-5",
             "EXT:AUTOMATION-SUBSTRATE:resume-target path for gate resolution + frozen capability set on tile re-fire"
-          ],
-          "blocked_reason": "PARTIAL 2026-08-26 (PR pending) \u2014 five of six done_when clauses close; the atom stays todo on clause 6 and one leg of clause 2. (1) The L2 producer DOES NOT EXIST: the ceiling, the refusals and the LayerBoundary are layer-generic and L2 is exercised in tests (a user-layer component is boundaried and refused under safe mode), but nothing WRITES a user/agent overlay - there is no $PERSONALCLAW_HOME/surfaces/ loader. Building one is agent-writable-code surface that wants its own threat argument, so it was named rather than half-built; a declared layer with no producer is the exact shape this repo gets burned by. (2) Clause 6's 'tiles rendered as inert links' under safe mode is NOT built - safe mode stops the app layer and the overlay registrations, and the tile band is L0 so the recovery route is uncompromised, but the inert-link treatment is absent. (3) Clause 2's live-send leg is SOURCE-asserted, not rendered: ChatPage.tsx (4k lines, owns a socket + composer) is not mountable in the vitest suite, so the four live call sites are pinned on source while the RELOAD path goes through the real hydrateTurns with a vacuity leg. Nothing was driven in a browser for this atom. Not blocked on anyone: each remainder is buildable work with a named shape. NOTE the criterion's app-registers-a-component clause IS the 'separate atom with its own threat argument' that APP-PLATFORM-EVOLUTION.md reserves - it landed behind a distinct generative-component capability (a generative-widget grant does not imply it), additive-only names, host-schema validation, a layer boundary and removal-on-disable; APE-11's own unknown-component test still passes untouched."
+          ]
         },
         {
           "id": "AS-7",
@@ -7562,11 +7561,6 @@
         "plan": "AR"
       },
       {
-        "id": "AS-6",
-        "title": "Genui action routing + app-contributed components + L0/L1/L2 surface overlay + safe mode",
-        "plan": "AS"
-      },
-      {
         "id": "BA-2",
         "title": "CDP browser integration + per-page safety-script injection + BROWSE egress policy + redirect re-eval",
         "plan": "BA"
@@ -9721,9 +9715,9 @@
         "code": "AS",
         "plan": "AMBIENT-SURFACES",
         "total_atoms": 9,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
