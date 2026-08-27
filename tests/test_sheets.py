@@ -507,10 +507,15 @@ def test_every_declared_model_kind_resolves_to_a_codec() -> None:
 
 def test_a_kind_with_no_codec_resolves_to_none() -> None:
     """Vacuity for the test above: ``get_codec`` must be capable of saying no, or the
-    loop would pass for any list of strings at all."""
-    assert get_codec("pptx") is None
+    loop would pass for any list of strings at all.
+
+    ``pdf`` is the discriminating case rather than a made-up kind: it SHIPS A WRITER
+    (`writers/pdf_writer.py`), so a table that answered "editable" from the writer
+    registry would say yes here. There is no pdf parser and no pdf model, so the route
+    must refuse it. (``pptx`` was this test's example until `DFE-8` gave it a parser.)"""
+    assert get_codec("pdf") is None
     assert get_codec("png") is None
-    assert "pptx" not in MODEL_KINDS
+    assert "pdf" not in MODEL_KINDS
 
 
 def test_the_xlsx_codec_is_wired_to_the_shipped_parser_and_writer() -> None:

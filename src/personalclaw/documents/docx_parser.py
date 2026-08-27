@@ -204,6 +204,15 @@ LOSS_KINDS = (
     "formula_cached_value",
     "date_value",
     "row_height",
+    # ── deck kinds (documents/pptx_parser.py) ─────────────────────────────────
+    # Same reasoning as the sheet kinds above: one vocabulary, because the editing
+    # surface renders ONE loss report for whatever it loaded, whichever parser produced
+    # it. Their `location` is the editor's own terms ("slide 3 · bullet 2").
+    "slide_layout",
+    "slide_placeholder",
+    "slide_shape",
+    "bullet_run_style",
+    "slide_feature",
 )
 
 

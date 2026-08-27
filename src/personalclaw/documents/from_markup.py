@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from personalclaw.documents.model import Block, DeckModel, DocumentModel, Run, Slide
+from personalclaw.documents.model import Block, Bullet, DeckModel, DocumentModel, Run, Slide
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _BULLET = re.compile(r"^\s*[-*+]\s+(.*)$")
@@ -285,6 +285,21 @@ def document_from_html(html: str, *, title: str = "") -> DocumentModel:
     return document_from_markdown(md, title=title)
 
 
+def _bullet_level(raw: str) -> int:
+    """A markdown line's outline depth, from its indentation.
+
+    Markdown's own encoding of depth is leading whitespace, so this reads the format
+    rather than guessing at the text: two spaces per level (the column a ``- `` item's
+    content starts at), with a tab expanded to four per CommonMark. Measured from the raw
+    line because `_BULLET`'s own leading-whitespace match is what consumed — and lost —
+    this depth.
+    `Bullet` clamps the result, so a mangled outline lands at PowerPoint's deepest indent
+    rather than being refused.
+    """
+    lead = raw[: len(raw) - len(raw.lstrip(" \t"))]
+    return len(lead.replace("\t", "    ")) // 2
+
+
 def deck_from_markdown(md: str, *, title: str = "") -> DeckModel:
     """`#`/`##` start slides; body lines become bullets; `<!-- notes: … -->` are notes.
 
@@ -316,6 +331,10 @@ def deck_from_markdown(md: str, *, title: str = "") -> DeckModel:
             current = Slide(title=deck.title or "")
             deck.slides.append(current)
         b = _BULLET.match(raw) or _NUMBERED.match(raw)
-        # A slide body is `list[str]`; the atom does not widen it, so join the runs' text.
-        current.body.append(inline_text(parse_inline(b.group(1) if b else raw)))
+        current.bullets.append(
+            Bullet(
+                text=inline_text(parse_inline(b.group(1) if b else raw)),
+                level=_bullet_level(raw),
+            )
+        )
     return deck

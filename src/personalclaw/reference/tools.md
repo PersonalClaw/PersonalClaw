@@ -151,9 +151,9 @@ Generate a real PowerPoint deck (.pptx) from a markdown OUTLINE and save it as a
 **Parameters:**
 - `description` (string, optional) — Optional short description
 - `format` (string, optional) — Output format (default 'pptx')
-- `markdown` (string, optional) — Outline: `##` per slide, bullets beneath, `<!-- notes: -->` for notes
+- `markdown` (string, optional) — Outline: `##` per slide, bullets beneath (indent two spaces per sub-level), `<!-- notes: -->` for notes
 - `name` (string, required) — Display name for the deck
-- `slides` (array, optional) — Alternative to markdown: [{title, body:[str], notes}]
+- `slides` (array, optional) — Alternative to markdown: [{title, body:[str | {text, level}], notes}] — `level` is the bullet's indent depth (0 = top)
 - `slug` (string, optional) — Existing artifact slug to update in place (bumps a version)
 - `tags` (array, optional)
 - `title` (string, optional) — Deck title slide

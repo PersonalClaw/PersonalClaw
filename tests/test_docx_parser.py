@@ -49,6 +49,7 @@ from personalclaw.documents.writers.docx_writer import render_docx
 # the tuple itself), so the spreadsheet kinds are exercised by the spreadsheet suite. The
 # coverage rail below reads that module's namespace so a single registry can still be
 # asserted complete against the whole tuple — two registries could leave a kind in neither.
+from tests import test_decks as _deck_suite
 from tests import test_sheets as _sheet_suite
 
 _W = nsdecls("w")
@@ -1043,15 +1044,21 @@ _COVERED_BY = {
     "formula_cached_value": "test_a_formula_reports_that_its_cached_result_is_not_carried",
     "date_value": "test_a_date_format_survives_but_says_its_value_became_text",
     "row_height": "test_an_explicit_row_height_is_reported_per_row_and_located_at_that_row",
+    # ── deck kinds — exercised in tests/test_decks.py ──────────────────────────────────
+    "slide_layout": "test_a_layout_the_shipped_template_cannot_re_create_is_reported",
+    "slide_placeholder": "test_a_placeholder_the_model_has_no_field_for_is_reported_with_its_text",
+    "slide_shape": "test_a_free_shape_is_reported_not_dropped_silently",
+    "bullet_run_style": "test_character_formatting_inside_a_bullet_is_reported_at_that_bullet",
+    "slide_feature": "test_a_slide_that_overrides_its_background_is_reported",
 }
 
 
 def test_every_loss_kind_has_a_test():
     assert sorted(_COVERED_BY) == sorted(LOSS_KINDS)
-    # A name must resolve to a callable in one of the two suites that own the vocabulary's
-    # producers — stricter than a bare namespace membership check, which a same-named
-    # constant or an accidental import would have satisfied.
-    known = {**vars(_sheet_suite), **globals()}
+    # A name must resolve to a callable in one of the three suites that own the
+    # vocabulary's producers — stricter than a bare namespace membership check, which a
+    # same-named constant or an accidental import would have satisfied.
+    known = {**vars(_sheet_suite), **vars(_deck_suite), **globals()}
     missing = [
         name
         for name in set(_COVERED_BY.values())

@@ -1338,3 +1338,164 @@ correct URL and returns `200 application/pdf`.
     `test_a_date_format_survives_but_says_its_value_became_text` (`assert ['cell_style'] ==
     ['date_value']`). Each restored from a file copy at the literal path, SHA-verified, never
     `git checkout`. The two mutations red **disjoint single tests**, so the kinds discriminate.
+
+## Execution log — DFE-8 (decks: DeckModel/Slide layout+geometry+bullet levels + pptx parser + slide editor) — **DONE**
+
+- [2026-08-27][S4 · atom `DFE-8`] **DONE.** Both `done_when` clauses hold, each proved by re-parsing
+  the WRITTEN BYTES rather than round-tripping through our own writer. `Slide.body: list[str]` is
+  gone; `Bullet(text, level)`, `ShapeBox`, `Slide.layout`/`title_box`/`body_box` and
+  `DeckModel.width_in`/`height_in` are the model, `documents/pptx_parser.py` is the new read half,
+  `documents/deck_json.py` the strict wire boundary, `documents/pptx_shapes.py` the one answer to
+  "which shape is the body", and `web/src/ui/content/SlideDeck.tsx` the slide editor. `MODEL_KINDS`
+  is now `("docx", "xlsx", "pptx")` and `EDITORS.pptx` mounts `SlideDeck` instead of `DocumentEditor`.
+
+- **THE DEFECT WAS EXACTLY AS NAMED, AND IT WAS ONE OF THREE.** `pptx_writer._add_slide` pinned
+  `para.level = 0` on every appended paragraph. Measured: the depth was not lost in the file, it was
+  **never written** — and there was nowhere for it to come FROM either, because `Slide.body` was
+  `list[str]` and no .pptx parser existed at all (`GET …/model` answered 415 for every deck). So the
+  fix is three things, not one: the model carries `level`, the writer writes it, the parser reads it
+  back. A fourth was found on the way in: **the FIRST bullet takes a different code path** (the writer
+  reuses the placeholder's existing paragraph rather than appending one), so a fix applied only to the
+  appended bullets would have left every deck's opening line flat. Pinned separately by
+  `test_the_first_bullet_keeps_its_depth_too`.
+
+- **`from_markup` was silently flattening markdown too, and that is the user-visible half.**
+  `_BULLET`'s `^\s*` consumed the indentation that markdown uses to ENCODE depth, so
+  `deck_from_markdown` — the way the agent actually makes decks — could only ever produce a flat
+  outline. `_bullet_level` now reads the leading whitespace off the raw line (two spaces per level,
+  tab expanded to four per CommonMark) before the bullet regex eats it. This is reading the format's
+  own encoding, not sniffing prose: the same distinction `xlsx_parser` draws between `data_type == "f"`
+  and a leading `=`. `deck_create`'s `slides` input accepts `{"text", "level"}` beside a plain string
+  for the same reason — an agent with a nested outline has to be able to say so.
+
+- **Geometry is stored only when it OVERRIDES the layout, and that discrimination is the whole
+  design.** python-pptx reports a placeholder's inherited position as if the shape declared it, so a
+  parser that stored what it read would pin every shape of every deck at whatever the template said
+  the day it was parsed — and the next template change would stop reaching the file. `_box` compares
+  the shape's box against the LAYOUT placeholder's box (public API, matched by placeholder idx) and
+  returns `ShapeBox()` when they agree; `ShapeBox.placed` is keyed on the SIZE, not left/top, so a
+  shape flush against the corner still counts as placed. Both legs are asserted, and the inherited leg
+  is the one that would have passed vacuously.
+
+- **A deck title round-trips through its cover slide, which closes a defect the editor would have
+  had.** The writer renders `DeckModel.title` AS a title slide; without the parser folding that shape
+  back into the field, editing the title in the editor would have appended a SECOND cover on every
+  save. `_is_cover` is deliberately narrow — layout `Title Slide`, a title, no bullets, no notes, an
+  unmoved title box — because folding REMOVES a slide from the list, so it is only safe when nothing
+  on it would have nowhere to go. `test_a_first_slide_that_carries_content_is_NOT_folded_into_the_title`
+  is the discriminating leg.
+
+- **FINDING — a title slide's strapline is not a loss, it is the slide's body.** Measured, and it
+  changes what a cover means: the subtitle IS the first text-frame placeholder that is not the title,
+  so `body_placeholder` returns it, the model carries it as the outline, and the writer puts it back
+  there. Pinned by `test_a_title_slides_strapline_is_carried_as_its_body_not_lost`. My first
+  `slide_placeholder` test asserted the opposite and was wrong; the kind is exercised on a **Two
+  Content** layout instead, where a genuine second body has nowhere to go.
+
+- **Five deck kinds appended to `LOSS_KINDS`** (`slide_layout`, `slide_placeholder`, `slide_shape`,
+  `bullet_run_style`, `slide_feature`) rather than opening a third closed vocabulary, for the reason
+  DFE-7 gave: the editing surface renders ONE report for whatever it loaded. Each is registered in
+  `_COVERED_BY` with a real test in `tests/test_decks.py` and each has a vacuity leg
+  (`test_a_plain_deck_is_lossless` shared, plus `test_an_unused_placeholder_is_not_reported` and
+  `test_a_bullet_whose_formatting_is_inherited_is_not_reported` — python-pptx reads "inherited" as
+  `None`, and a parser that read `None` as a style would put an item on every bullet of every deck).
+  `_COVERED_BY`'s discovery widened to `{**vars(_sheet_suite), **vars(_deck_suite), **globals()}` —
+  one registry asserted set-equal to the whole tuple, no exemptions.
+
+- **Locations are the EDITOR's terms, not the file's.** `"slide 3 · bullet 2"` and `"cover slide"`,
+  because a folded cover is a FIELD and calling it "slide 1" would send a user looking at the wrong
+  surface. `test_a_loss_on_a_folded_cover_is_located_as_the_cover` pins it.
+
+- **No shared loss contract, per the standing owner ruling.** `SlideDeck` carries its own
+  `DeckLossList` and its own pre-edit gate, consuming `LossReport` unchanged — the third copy now.
+  **Named so it is not lost: three surfaces render one report shape with three near-identical
+  components. If the divergence is still cosmetic once DFE-6 and DFE-7 are both on main, that is a
+  follow-up coherence pass, and it is now worth doing** (two copies were arguable, three are a
+  pattern). `model_codec.py` was extended, not duplicated: one more branch and one more `MODEL_KINDS`
+  member.
+
+- **The editor follows DFE-5's ratified posture (option (c)) — no new frontend dependency.** Slide
+  list + per-slide fields over the model; **bullet depth is a `Select`, not a typing behaviour** (no
+  tab-to-indent, no dashes parsed out of prose), which is the atom's point made visible. Geometry is
+  **preserved, explained and releasable, never authored**: a moved shape says where it is and offers
+  "Use the layout's positions" — eight number fields would be a canvas, and this is not one. Consumed
+  rather than invented: `Field`, `Select`, `TextInput`, `TextArea`, `Segmented`, `EmptyState`,
+  `MoreRow`, `InlineError`, `Centered`, `confirm`.
+
+- **A primitive gap closed, exactly as DFE-7 closed Select's.** `TextInput` and `TextArea` had no
+  `disabled` at all, so an editor behind a consent gate could only be built from raw `<input>`s (which
+  is what `SheetGrid` had to do). Both now take `disabled` + `disabledReason` — applied as `title`
+  only WHILE disabled, same posture as `Button` and `Select` — and `forms.doc.ts` gained the four
+  entries plus the best-practice line the documentation-as-data guard requires. Non-disabled call
+  sites are byte-identical: the dim class is appended conditionally rather than added to `INPUT_BASE`.
+
+- **The a11y suite caught a real WCAG defect and it was fixed by DELETING a control, not renaming
+  one.** An empty deck rendered two buttons both named "Add slide" — the slide-list toolbar's and the
+  empty state's — an ambiguity a screen-reader user cannot resolve. The slide-list row is now hidden
+  while the deck has no slides (its Segmented has nothing to list and its Delete is dead anyway), so
+  one action has one control; the toolbar's is named "Add slide after this one", which is what it
+  actually does. Asserted with a count, not a presence check.
+
+- **Falsification.** Two live-line mutations, each grepped back to confirm it applied, red observed,
+  then restored from a file copy at the literal path (SHA-verified, never `git checkout`).
+  (1) `pptx_writer`'s `para.level = bullet.level` → `para.level = 0`, i.e. the atom's defect
+  reinstated verbatim ⇒ **exactly 3 reds**: the headline `test_bullet_depth_survives_the_round_trip`,
+  `test_the_written_file_itself_carries_the_depth` (the leg that reads the bytes with python-pptx
+  rather than our parser) and `test_markdown_indentation_becomes_bullet_depth`. Both vacuity legs
+  correctly stayed green — `test_a_flat_outline_stays_flat` because it asserts zeros, and
+  `test_the_first_bullet_keeps_its_depth_too` because the first bullet goes through the OTHER code
+  path, which is the two-paths finding above proving itself. (2) `deck_json._slide`'s
+  `title=_text(...)` → `title=""`, neutralising the persistence of a slide edit at the wire ⇒
+  **exactly 2 reds, a set disjoint from (1)**: the route-level
+  `test_a_slide_edit_survives_the_save_and_read_back` failing `assert '' == 'Pipeline — revised'` —
+  the second `done_when` clause reproduced as a defect — and
+  `test_a_deck_survives_the_json_boundary_unchanged`. The two mutations red disjoint sets, so the
+  clauses discriminate. 453/453 green on restore.
+
+- **Gates.** `make lint` clean (black **2153 files**, isort, flake8, **mypy 1065 source files**) ·
+  one existence-checked run of 14 targeted suites, **453 collected / 453 passed**, incl. new
+  `tests/test_decks.py` **36**, `tests/test_docx_parser.py` (the `_COVERED_BY` rail),
+  `tests/test_sheets.py`, `tests/test_documents.py`, `tests/test_artifact_binary_write_api.py`
+  (5 new pptx route tests), `tests/test_structural_baseline.py`, `tests/test_config_roundtrip.py`,
+  `tests/test_agent_reference.py` and `tests/test_api_version_one_origin.py` (the generated
+  `reference/tools.md` was regenerated with
+  `python -m personalclaw.manifest_reference`, since `deck_create`'s schema changed) ·
+  `scripts/gate_report.py` **6/6 PASS** · `~/.personalclaw` unchanged (the suite's own real-home rail
+  reported it clean) · `npm run typecheck:web` clean · full `npm run test:web`
+  **5466 passed / 509 files / 0 failed** (23 new: `deckModelEdit` + `slideDeckContract`) ·
+  `npm run build` OK, and it did NOT regenerate `docs/design/consistency-audit.json` ·
+  `config/loader.py` untouched at **5900 lines** before and after (no config field needed —
+  `dashboard.document_editing` already gates this surface, as `DFE-6`/`DFE-7` both found) · every new
+  module far inside the 2800-line watch band (`pptx_parser.py` 272, `deck_json.py` 106,
+  `pptx_shapes.py` 43, `SlideDeck.tsx` 385).
+
+- **For the driver, on flattening (this branch is stacked on `feature-dfe7-sheets` @ `49320b25`).**
+  Four `DFE-7` lines had to change, all of them because `DFE-7` deliberately wrote them to say pptx
+  had no parser: `model_codec.py`'s `MODEL_KINDS` tuple + the comment above it that explained pptx's
+  absence, `tests/test_sheets.py::test_a_kind_with_no_codec_resolves_to_none` (its "kind with no
+  codec" example moved from `pptx` to **`pdf`** — which is the better example anyway, since pdf ships
+  a WRITER, so a table answering "editable" from the writer registry would wrongly say yes),
+  `tests/test_docx_parser.py`'s `_COVERED_BY` + its `known = {**vars(_sheet_suite), …}` line, and
+  `web/src/ui/content/documentEditing.ts`'s `EDITORS` table + its comment. One `DFE-4` line changed:
+  `test_a_kind_without_a_shipped_parser_has_no_model`'s `model_kinds == ["docx", "xlsx"]`.
+  **One main-owned line to watch:** `web/src/ui/forms.tsx`'s TextArea `className` template — I had to
+  edit it to append the disabled tone, and on this base it still carries
+  `focus:ring-primary/50`. `web/src/design/focusRingContrast.test.ts` does not exist on this base
+  (56 files here still carry alpha rings), so main's sweep owns that class; when flattening, take
+  **main's** ring class on that line, not mine.
+
+- **NOT in this atom, by scope:** an image block still resolves to a notes marker rather than real
+  slide bytes (`artifact_slug` is written into the notes, and the parser deliberately does NOT sniff
+  it back out — recovering a field by matching a text prefix is the guessing this family abolished).
+  Pictures, tables, charts, free shapes, per-character formatting, extra placeholders, slide
+  backgrounds and non-standard layouts are reported, not carried. The editor does not author geometry.
+  No new runtime dependency: `python-pptx` was already declared in `pyproject.toml`
+  (`>=0.6.21,<2`) and used by the pptx writer and `knowledge/readers.py`.
+
+- **On V4's deck half, stated precisely.** The full lifecycle is proved end to end — create → `GET
+  …/model` → edit a title, a bullet's text and a bullet's DEPTH → `PUT` with `If-Match` → read the
+  STORED BYTES back with python-pptx — at the route, plus the editor's own contract at the component
+  (registration, the gate as a mechanism, the save payload, a 409, the empty deck, a moved shape). The
+  full local gate holds (above). What was **not** run this session is a live browser drive of the deck
+  editor against a dev gateway; the machine was under a load of 40+ on 18 CPUs for most of it. Same
+  standing as `DFE-7`'s sheet half, which is why the row is `🟡` rather than `✅`.

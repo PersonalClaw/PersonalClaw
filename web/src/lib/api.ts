@@ -4026,6 +4026,39 @@ export interface SheetModelResponse {
   model: SheetModelJson; loss: DocumentLossReport
 }
 
+// ── the deck model (DOCUMENT-FIDELITY-EDITOR T4.3) ───────────────────────────
+// Mirrors `personalclaw/documents/model.py`'s deck half field for field, and every field
+// is REQUIRED here for `DocumentModelJson`'s reason: this shape is posted BACK and
+// `deck_from_dict` is strict, so a field the UI forgot to echo is a dropped slide layout.
+//
+// `level` is the fidelity this atom is about: a bullet's indent DEPTH is a field of the
+// content, not a rendering flourish. The writer used to pin it to 0, so every deck came
+// out flat no matter what outline went in.
+export interface DeckBulletJson { text: string; level: number }
+/** Where a slide's shape sits, in inches. All zeros = "wherever the layout puts it", which
+ *  the server leaves inherited rather than pinning — so a zeroed box is not a position at
+ *  the top-left corner, it is the absence of an override. */
+export interface DeckShapeBoxJson { left_in: number; top_in: number; width_in: number; height_in: number }
+/** One slide. `layout` is a layout NAME (`DECK_LAYOUTS`), never an index — an index means
+ *  a different thing in every template. `""` means "laid out from the content". */
+export interface DeckSlideJson {
+  title: string
+  bullets: DeckBulletJson[]
+  notes: string
+  artifact_slug: string
+  layout: string
+  title_box: DeckShapeBoxJson
+  body_box: DeckShapeBoxJson
+}
+/** `title` is the deck's COVER slide — the server reads a leading title slide back into
+ *  this field and re-renders it as one, so editing it does not append a second cover.
+ *  `width_in`/`height_in` are the slide size (0 = the template's own). */
+export interface DeckModelJson { title: string; slides: DeckSlideJson[]; width_in: number; height_in: number }
+export interface DeckModelResponse {
+  slug: string; kind: string; version: number; mime: string
+  model: DeckModelJson; loss: DocumentLossReport
+}
+
 /** One deployed artifact (PEP-8). `url` is the stable in-gateway path the artifact is
  *  served at — always `/artifacts/serve/<slug>/`, never a public URL: local-only
  *  deploy, so it is reachable exactly to whoever holds a dashboard session. */
@@ -6363,6 +6396,15 @@ export const api = {
   // check into every editor, which is a discriminator the URL already carries.
   artifactSheetModel: (slug: string) => get<SheetModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
   saveArtifactSheetModel: (slug: string, version: number, model: SheetModelJson) =>
+    fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },
+      body: JSON.stringify({ model }),
+    }).then(j<{ slug: string; version: number; mime: string }>),
+  // …and again for a deck, for the same reason: one endpoint pair, three model shapes, the
+  // kind decides which crosses (`documents/model_codec.py`).
+  artifactDeckModel: (slug: string) => get<DeckModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
+  saveArtifactDeckModel: (slug: string, version: number, model: DeckModelJson) =>
     fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },
