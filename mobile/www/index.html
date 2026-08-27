@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      `viewport-fit=cover` is what makes `env(safe-area-inset-*)` resolve to anything but 0px.
+      This is the shell's OWN document; the served companion gets its insets natively instead
+      (see `shell/safeArea.mjs`).
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>PersonalClaw</title>
+    <link rel="stylesheet" href="shell/shell.css" />
+  </head>
+  <body>
+    <!--
+      The shell's entire UI: an address field. There is deliberately nothing here that resembles
+      the companion — no loops, no inbox, no tasks, no design-system component. Everything the
+      owner actually uses is the gateway's served `#/companion`, reached by leaving this page.
+    -->
+    <main id="shell">
+      <h1>PersonalClaw</h1>
+      <p class="lede">Connect this device to your gateway.</p>
+      <form id="connect">
+        <label for="gateway">Gateway address</label>
+        <input
+          id="gateway"
+          name="gateway"
+          type="url"
+          inputmode="url"
+          autocomplete="url"
+          autocapitalize="off"
+          spellcheck="false"
+          placeholder="192.168.1.10:10000"
+          required
+        />
+        <button type="submit">Connect</button>
+      </form>
+      <p id="status" role="alert" hidden></p>
+      <p class="hint">
+        Run <code>personalclaw status</code> on the machine running your gateway to see its
+        address, or pair this device from Settings &rsaquo; Devices.
+      </p>
+    </main>
+    <script type="module" src="shell/boot.mjs"></script>
+  </body>
+</html>

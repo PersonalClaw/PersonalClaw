@@ -695,3 +695,121 @@ whatever `Host` it was reached on, so a loopback dashboard hands out a `127.0.0.
 cannot resolve), point a phone camera at the QR, and confirm the phone lands on `/pair`, pairs, and
 appears in the Devices list. Nothing in the code path is waiting on that; it is the physical
 confirmation of a path already proven leg by leg.
+
+### 2026-08-27 — `MC-7` (S4 T4.1) — **PARTIAL**: the shell is complete; both native builds are environment-gated
+
+`mobile/` now exists and wraps the **served** `#/companion` route. Every clause of the `done_when`
+is met except `builds for iOS+Android and renders the live companion`, which cannot be satisfied on
+this machine by any amount of work — see the gate below. Row marked 🟡.
+
+**Repo-location decision: the shell lives in the CORE repo, at `mobile/`.** The companion is a
+served route of *this* gateway, and the shell is a thin wrapper over that route's URL — so a
+separate repository would put a release boundary between a URL and the thing serving it. The
+companion route, the pairing routes (`/pair`, `/api/devices/pair/*`), the session-cookie contract
+and the endpoint registry all live here and move together; splitting would mean a cross-repo
+version matrix for a change as small as renaming a hash route, and the first drift would be silent
+because nothing would build both sides at once. Concretely it earns the place three ways a sibling
+repo could not: `tests/test_mobile_shell.py` holds the shell's route string against the route
+`web/src/app/App.tsx` registers and its registry vocabulary against `web/src/lib/endpoints.ts`;
+`tests/test_ci_tier_enforcement.py` forces the tier to stay wired; and one root `npm ci` installs it.
+
+**How "no forked UI" is actually enforced, not just intended.** `mobile/www/` is a bootstrap screen
+and nothing else — one address field. The shell computes `<origin>/#/companion` and calls
+`location.replace`. Four rails in `tests/test_mobile_shell.py` keep it that way: no `.tsx/.jsx/.vue`
+file may be tracked under `mobile/`, no file there may import `web/src` (which would also break the
+app outright — `www/` is copied verbatim into the native project with no bundler), the shell's
+`COMPANION_ROUTE` must equal a route `App.tsx` registers, and `server.url`/`server.hostname` must
+stay **absent** from `capacitor.config.json`. That last one is the real design constraint: Capacitor's
+usual "wrap a remote site" recipe bakes the URL at build time, which for per-owner private addresses
+means one store build per owner. The bootstrap document exists only to make the address runtime state.
+
+**DISCOVERY — `web/src/lib/endpoints.ts` had ZERO production importers, and this atom is its first
+consumer.** That module declares the companion-shell endpoint registry (`companion:endpoints`,
+`{active, endpoints[]}`, rows `{id, label, base_url, kind, device_session_ref}`) and names its
+consumers explicitly: *"what desktop (T4.1) and mobile import so that neither re-decides the key
+format — two shells that disagree about the format are two shells that cannot share a registry."*
+`grep` for importers outside its own test found **nothing**, so the format was declared and
+unconsumed — exactly the state in which a second shell quietly invents its own key. The first draft
+of this shell did precisely that (`personalclaw.gatewayUrl` in `localStorage`); it was rewritten onto
+the declared contract before commit. `mobile/www/shell/registry.mjs` is a **parity rail, not an
+import**: `endpoints.ts` is TypeScript inside the `web` Vite bundle and the bootstrap has no build
+step at all, so the two cannot share code any more than `desktop/`'s modules can import core's
+Python — and this repo's existing answer to that shape is a vocabulary rail
+(`tests/test_desktop_seam.py`). The rail asserts the storage key, both field vocabularies and the
+id alphabet/prefix still match `endpoints.ts` character for character. The N-gateway switcher,
+per-endpoint storage namespacing and `endpointSocketUrl` are deliberately **not** reimplemented;
+whichever atom grows the shell to N gateways should do it by importing `endpoints.ts` through a real
+build.
+
+**The device session needed no new contract, and the shell holds no credential.**
+`POST /api/devices/pair/complete` answers with an httponly `Set-Cookie` (`pc_token_{port}`,
+SameSite=Lax, `token_auth.py:1130`), so the session lives in the WebView's own cookie jar where
+script cannot read it. The shell therefore does **not** redeem a scanned code itself — it hands the
+WebView to the gateway's own `/pair` page so the exchange happens in the jar the companion will read
+from. A native redemption would hold a session the WebView could not use *and* would be a second
+device-session mechanism beside the one on `main`. A rail asserts no `fetch(... pair/complete ...)`
+exists under `mobile/` (matching the call, not the string — the docstrings discuss the route on
+purpose). This also confirms `endpoints.ts`'s note that the URL carries no credential and the
+`?token=` query parameter stays forbidden.
+
+**Finding for `MC-8`: `device_session_ref` is not fillable by the shell.** The field wants the nonce
+naming a `sessions.json` device row, but `pair/complete`'s response body returns `device_id`, `name`,
+`kind`, `expires_in` — not the nonce — and the mapping (`nonces_for_device`) is server-side only.
+Since the shell hands redemption to the served `/pair` page, it never sees that body either. Rows
+this shell creates carry `device_session_ref: ''`, and it is never overwritten on a row found. Filling
+it needs either a route that returns the nonce for the *calling* session or a served-page write.
+
+**Safe areas are two mechanisms, because there are two documents.** Measured first: `web/src` contains
+**zero** `env(safe-area-inset-*)` and `web/index.html` has no `viewport-fit=cover`, so nothing in the
+served document insets itself. So (1) the **served companion** is inset natively, by
+`android.adjustMarginsForEdgeToEdge: "force"` (Android draws edge-to-edge from API 35) and
+`ios.contentInset: "always"`; and (2) the **bootstrap screen** — the shell's own document, and the only
+one a CI test can observe — resolves the four `env()` values into `--pc-safe-*` in `shell.css` (script
+cannot read `env()` directly) and `safeArea.mjs` reads them back and writes them onto the layout
+element as padding, re-applying on rotation and resize. That split is what makes it falsifiable rather
+than declarative. A rail also fails loudly if `web/src` ever grows its own inset handling, since the
+native keys would then be double-insetting. **Neither native key can be proven by any test in this
+repo** — they are read by native code.
+
+**Navigation is fenced to the private network, not `*`.** `server.allowNavigation` lists localhost,
+`*.local`, RFC1918 and `*.ts.net`; Capacitor keeps navigation to those hosts in the WebView and kicks
+everything else to the system browser, so a link in rendered content cannot steer the app onto an
+arbitrary origin wearing the app's chrome. The 172 block is spelled out one octet at a time because a
+glob cannot say "16 through 31" and `172.*` would hand the shell most of a public /8; Tailscale is
+matched by MagicDNS name rather than its `100.64/10` CGNAT range for the same reason. The list is
+duplicated between `network.mjs` (which the shell validates against) and `capacitor.config.json` (which
+native code reads) — necessarily, since one is JS and one is native config — so a rail asserts set
+equality, and a public reverse-proxy host has to be added to both, deliberately, in a diff.
+
+**BLOCKED clause — what a human must install and run.** Measured on the development host:
+`xcodebuild` is a Command Line Tools stub (`xcode-select -p` → `/Library/Developer/CommandLineTools`,
+no `/Applications/Xcode*.app`), `pod` is absent, and there is no Android SDK (`ANDROID_HOME` unset,
+no `~/Library/Android/sdk`, no `sdkmanager`, no `gradle`). So **neither** native build is runnable
+here, and neither is a CI tier — a rail asserts `cap build` never appears in `ci.yml`, because putting
+it there would need Xcode and the Android SDK on a runner. To close the clause:
+
+1. Install Xcode (full) + CocoaPods, and the Android SDK with `ANDROID_HOME` set (JDK 17+).
+2. From the repo root: `npm ci`, then `npm run add:ios --workspace mobile` and
+   `npm run add:android --workspace mobile` (these generate the gitignored `mobile/ios` and
+   `mobile/android` template projects), then `npm run sync --workspace mobile`.
+3. `npm run open:ios --workspace mobile` / `open:android`, and Run on a device or simulator.
+4. Start a gateway on the LAN (`make serve` binds `0.0.0.0`), read its address off
+   `personalclaw status`, type it into the bootstrap screen, and confirm the live companion renders
+   **inside** the safe area on a notched device — that last part is the half no rail can assert.
+
+**Footprint, stated rather than imposed.** `mobile/` is a third npm workspace member, so the root
+`package-lock.json` grew by **575 lines / 93 packages / 27 MB / ~12 s** of `npm ci` — all of it
+`@capacitor/{core,cli,ios,android}` and the CLI's Ionic / `native-run` / `xml2js` dependencies. The
+104 deleted lockfile lines are pure de-nesting: hoisting a top-level `semver` and `lru-cache` let npm
+drop nested copies under `@electron/get`, `node-gyp`, `jsdom` and five others, so the tree got
+slightly *less* duplicated. Nothing else changed version. Workspace membership was the deliberate
+choice over a standalone `mobile/package-lock.json`, because `tests/test_ci_tier_enforcement.py` only
+sees workspace members — keeping the shell outside the graph would have kept 37 `node --test` cases
+out of every gate, which is the exact gap that rail was written to close. 27 MB is a rounding error
+beside `desktop/`'s Electron, so the trade reads clearly in favour of the rail; if the owner disagrees,
+the alternative is dropping `mobile` from `workspaces`, giving it its own lockfile, and adding a
+`cd mobile && npm ci && npm test` CI step plus an exemption in that rail.
+
+`src/personalclaw/config/loader.py` is **untouched: 5900 lines before and after.** The shell needs no
+config field — the gateway URL is per-device runtime state in the shell's own storage, not gateway
+config, and the endpoint registry is the contract that already owns it.
