@@ -719,6 +719,25 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   edits to the live agent configuration are written atomically and recorded in the audit log — this
   was the one path that did neither.
 
+- **Switching an automation off now survives a restart.** Turning one off worked, and stayed off on
+  disk. Then the next start-up read the old scheduling file, which still said the automation was on,
+  and put it back — enabled *and* armed, so it went straight back to counting down to its next run. A
+  stop button that a restart undoes is not a stop button. Whether an automation is switched on is a
+  record of something a person did, so it now travels with the rest of that history instead of being
+  re-derived from a file that predates the decision.
+  **The subtlety that made this two lines rather than one:** the code that carries this history
+  forward skipped any value it considered empty, and in Python `False` counts as empty. So simply
+  listing "switched on/off" alongside the rest would have carried *on* and quietly dropped *off* — the
+  one value that needed carrying. A yes-or-no answer is never missing; `False` is an answer.
+
+- **Asking for an automation to be created switched off now creates it switched off.** The request was
+  accepted, the field was dropped, and you got a live automation already scheduled for its next run.
+  It is honoured now, it is not armed while off, and asking for it in a way that isn't a plain
+  yes-or-no is refused rather than guessed at — because the text `"false"` counts as *true* in the
+  language this is written in, so guessing would have turned the request into its opposite. When
+  PersonalClaw creates one for you and tells you about it, that message also stops claiming a
+  switched-off automation is "active now".
+
 - **Restarting PersonalClaw quietly moved a chat onto a different agent.** If you had pointed a chat
   at an external coding CLI, or put it in Ask or Plan mode, a restart threw both away and the next
   message you sent ran on the built-in agent instead — with a different set of tools and a different

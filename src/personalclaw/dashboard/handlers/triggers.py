@@ -30,6 +30,7 @@ from aiohttp import web
 
 from personalclaw.config.loader import config_dir
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
@@ -830,12 +831,31 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
 
     from personalclaw.triggers import tools as _tools
 
+    # `enabled` is OPTIONAL and defaults to on — but when it is sent it is honored. It used to be
+    # read by nobody on this path, so a caller asking for a trigger created switched off got a live,
+    # armed one and no indication otherwise (#587).
+    #
+    # A non-bool is a 400, not a coercion, and deliberately the same rule
+    # `POST /api/triggers/{id}/toggle` already applies: the JSON string "false" is truthy under
+    # `bool()`, so coercing here would silently ARM a trigger a caller asked to be created off —
+    # inverting the request. Two endpoints that take the same field answer about it the same way.
+    #
+    # Structured envelope (`json_error`), unlike its flat siblings a few lines up. `AGENTS.md`
+    # §"Shared conventions" declares the structured shape as THE wire error, and
+    # `test_wire_error_envelope_census` ratchets the flat population down — so a NEW refusal joins
+    # the shape the project is converging on rather than the one it is retiring. Converting this
+    # function's existing flat errors is a separate change; growing their number is not allowed.
+    enabled_raw = body.get("enabled", True)
+    if not isinstance(enabled_raw, bool):
+        return json_error("invalid_request", message="'enabled' must be a boolean", status=400)
+
     store = _trigger_store()
     result = _tools.create(
         store,
         name=name,
         kind="clock",
         spec=spec,
+        enabled=enabled_raw,
         # `workflow.inline` is the migrated shape, which `schedule_view` and the gateway's shared
         # dispatch both read — so an API-created row and a migrated one are indistinguishable
         # downstream.

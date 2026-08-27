@@ -559,3 +559,95 @@ def test_the_patch_allowlist_excludes_every_health_field():
 def test_a_tool_result_serializes():
     result = T.ToolResult(True, "hi", {"a": 1})
     assert result.to_dict() == {"ok": True, "text": "hi", "data": {"a": 1}}
+
+
+# ── 🔴 #587: `enabled: false` was silently dropped on creation ────────────────
+#
+# `create` hardcoded `enabled=True` and had no parameter to say otherwise, so
+# `POST /api/triggers {"enabled": false}` produced a LIVE, ARMED automation and the field the
+# caller sent went nowhere. Nothing reported it: the response echoed the created trigger, which
+# was accurately described as enabled — accurate about the wrong thing.
+
+
+class TestCreateHonorsEnabled:
+    def test_created_disabled_stays_disabled(self, store):
+        result = T.create(
+            store,
+            name="Nightly report",
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 3600},
+            workflow={"provider": "notify", "config": {"message": "x"}},
+            enabled=False,
+        )
+        assert result.ok
+        trigger = store.get(result.data["trigger"]["id"]).trigger
+        assert trigger.enabled is False
+
+    def test_a_trigger_created_off_is_NOT_ARMED(self, store):
+        """The harm is the arm, not the flag. An armed row carries a `next_fire_at`, which is what
+        `service.due_ids` selects on — so it would advertise a countdown for a fire the `enabled`
+        check then suppresses. `needs_arming` already refuses a disabled row; the creation path
+        does not go through it, so it needed the same rule.
+        """
+        result = T.create(
+            store,
+            name="Nightly report",
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 3600},
+            workflow={"provider": "notify", "config": {"message": "x"}},
+            enabled=False,
+        )
+        assert store.get(result.data["trigger"]["id"]).trigger.next_fire_at == ""
+
+    def test_a_disabled_trigger_is_never_DUE(self, store):
+        """Stated as the behaviour a user cares about rather than as a field value."""
+        from personalclaw.triggers import service as SVC
+
+        T.create(
+            store,
+            name="Nightly report",
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 60},
+            workflow={"provider": "notify", "config": {"message": "x"}},
+            enabled=False,
+        )
+        triggers = [r.trigger for r in store.load()]
+        assert SVC.due_ids(triggers, now=2_000_000_000.0) == []
+
+    def test_the_DEFAULT_is_still_enabled_and_armed(self, store):
+        """Vacuity floor, and the compatibility contract: "create an automation" has always meant
+        one that runs, and every existing caller omits the parameter."""
+        result = T.create(
+            store,
+            name="Nightly report",
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 3600},
+            workflow={"provider": "notify", "config": {"message": "x"}},
+        )
+        trigger = store.get(result.data["trigger"]["id"]).trigger
+        assert trigger.enabled is True
+        assert trigger.next_fire_at, "an enabled clock trigger must still be armed at creation"
+
+    def test_the_agent_announcement_does_not_claim_a_disabled_trigger_is_active(self, store):
+        """The sentence the user reads in chat is UI. "it is active now" about a switched-off
+        automation is the same class of lie the rest of this module hunts."""
+        off = T.create(
+            store,
+            name="Off one",
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 3600},
+            workflow={"provider": "notify", "config": {"message": "x"}},
+            created_by="agent",
+            enabled=False,
+        )
+        on = T.create(
+            store,
+            name="On one",
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 3600},
+            workflow={"provider": "notify", "config": {"message": "x"}},
+            created_by="agent",
+        )
+        assert "active now" not in off.text
+        assert "switched off" in off.text
+        assert "active now" in on.text
