@@ -577,6 +577,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A loop interrupted by a restart could stay stuck "running" forever, with nothing working on it.**
+  Bringing loops back after a crash or a restart was a one-shot step during startup, and if anything
+  at all went wrong in it the failure was written to the log and startup carried on. There was no
+  second attempt: for the rest of that session every loop the step should have picked up sat there
+  saying *running*, which reads as "still working" when in fact nothing was. **Loops are now brought
+  back by the supervisor that watches them, on its first pass**, so an attempt that fails is simply
+  retried on the next one a few seconds later — the same way workflow runs have always been recovered.
+  A loop with a workspace that went missing while you were away is still parked with a question rather
+  than restarted against a folder that is no longer there.
+  **Two related fixes came with it.** Starting up no longer waits for that recovery, so a restart with
+  several half-planned loops is not held behind however long it takes to resume them — the dashboard
+  comes up immediately and the loops catch up on their own. And a healthy loop resting between cycles
+  is no longer mistaken for a dead one: it used to be possible to restart work that was perfectly
+  fine, which also silently reset the approval window you had granted it.
+
 - **Restarting PersonalClaw quietly moved a chat onto a different agent.** If you had pointed a chat
   at an external coding CLI, or put it in Ask or Plan mode, a restart threw both away and the next
   message you sent ran on the built-in agent instead — with a different set of tools and a different

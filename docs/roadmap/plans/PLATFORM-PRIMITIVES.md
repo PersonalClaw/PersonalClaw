@@ -1307,3 +1307,279 @@ task 2 (the editing-library decision, E5), `WF2UNI-12`'s remaining deletion need
 (which is this atom), `PR2-8`'s `EXT` dep is genuinely absent (zero `adaptive` symbols under
 `src/personalclaw/triggers/`, so AUTOMATION-SUBSTRATE's adaptive-clock trigger kind does not exist),
 and `WF2LOO-9` already reads `blocked`.
+
+### `PP-16` — 2026-08-26, slice DONE: one adoption/reaping path. Atom stays `todo`.
+
+**The 2026-08-25 `BLOCKED` above asked for an owner scope decision splitting `PP-16` into sequenced
+sub-atoms. Taken, as owner:** the six seams that entry named are the decomposition, taken one per
+session in its dependency order. Its seam (1) had already landed (`9829f2d4`, terminality derived
+from a shared `LifecyclePhase`); this session took **seam (2)**, which
+`tests/test_pp16_convergence_census.py` also pinned as the first unconverged clause. The atom row is
+NOT flipped — four clauses remain, named at the bottom of this entry.
+
+**The convergence, and why it is a real unification rather than a relocation.** Both work-unit nouns
+now decide their crash survivors through **one primitive**, `concurrency.boot_sweep`, called from the
+**first poll of the supervisor that owns the noun**. `concurrency.reap_orphans` — the generic reaper
+with exactly ONE production caller (the loop side) and none on the run side — was replaced by it, not
+kept beside it. `loop/manager.reap_orphaned_loops` (75 lines incl. separators) is deleted; its body is
+`LoopWatchdog._boot_sweep` + `_rearm_running` + `_rekick_planning`. `WorkflowWatchdog._boot_sweep`
+became `async` and now funnels through the same primitive, keeping only §5.2's substrate rule as
+`_sweep_one`. The gateway's separate boot hook is gone.
+
+**What was measurably wrong with the hook, and is now structurally impossible.** The invocation
+asymmetry was the part that cost a user something, and neither half is visible from a test of the
+sweep's body:
+
+1. **A failed loop sweep was lost for the life of the process.** `gateway.py` wrapped it in
+   `except Exception: logger.warning("loop orphan reap at startup failed")` and then constructed and
+   started the watchdog anyway. Every loop the sweep should have re-armed then sat persisted RUNNING
+   with no worker — the exact "reads as still working while nothing is" failure
+   `workflows/watchdog.py`'s own header names. The run side never had this: `_swept` is flipped only
+   *after* the sweep returns, so a raising sweep is retried on the next poll. Both nouns now have
+   that property, and `test_pp16_boot_adoption.py` asserts it on both live classes (3 polls ⇒ 3
+   attempts, `_swept` still `False`) against a vacuity floor that the same driver sees exactly 1
+   attempt when the sweep succeeds.
+2. **Gateway startup blocked on revival.** The hook was awaited inline at `gateway.py:2467`, and
+   `_rekick_planning` runs `plan_walkthrough.advance_plan` — a model call. N stranded PLANNING loops
+   delayed everything after it in the startup sequence, including HTTP readiness. Boot adoption is now
+   concurrent with startup by construction.
+
+**A third defect found by moving it — the liveness predicate was wrong, not just misplaced.**
+`reap_orphaned_loops` classified a loop as a crash survivor unless
+`sess is not None and getattr(sess, "running", False)`. That extra `running` condition is wrong
+anywhere a session can be idle: **between cycles a live loop's session exists with `running` False**
+(autonudge fires a turn every `idle_secs`), so the strict predicate reads a healthy idle loop as dead
+and re-arms it — and `manager.start` re-stamps the RUNNING row on the way past, which silently resets
+the trust window the user granted. It was harmless only because the hook ran before any session could
+exist; moving the sweep into the poll that DOES see sessions is exactly the drift that makes it bite.
+**The shipped suite proved it, unprompted:** with the predicate carried over verbatim,
+`test_loop_watchdog.py::TestTrustTtl::test_expired_trust_pauses_for_reauth` went red
+(`assert 'running' == 'needs_input'`) with the re-arm's `AttributeError` in its captured log — a test
+that asserts a live-but-idle loop is trust-expired, not restarted. The predicate is now session
+ABSENCE (`_sessions.get(...) is None`), which is the whole crash signal, since `state._sessions` is
+per-process. No shipped test was weakened; the new
+`test_a_running_loop_with_an_idle_session_is_live_not_a_survivor` pins it directly.
+
+**A fourth defect the move introduced and the gate caught — recorded because of HOW it was caught.**
+`reap_orphaned_loops` opened with `kinds.ensure_loaded()`; the first draft of `_boot_sweep` dropped it
+and relied on `_poll_once` calling it one line earlier. `_rearm_running` asks the kind for its
+`launch_blocker`, and an unloaded registry answers `None` — so a brownfield loop whose workspace
+vanished during downtime was silently re-armed against the gone path instead of being parked with a
+question. **The behavioural test for this is order-dependent and would have shipped the bug:**
+`test_brownfield_orphan_with_missing_workspace_pauses_not_rearms` passed under every `-n0` run (an
+earlier test in the same process had already loaded the registry) and reds only under xdist, which is
+where it surfaced. The sweep now loads the registry itself, and the property has its own
+order-independent rail (`test_the_loop_boot_sweep_loads_the_kind_registry_itself`, a scan scoped to
+the sliced `_boot_sweep` body with positive and negative slice-boundary controls, so the two other
+`kinds.ensure_loaded()` call sites in the file cannot satisfy it).
+
+**Per-row failure isolation is now shared too**, which the run side did not have: a row whose decision
+raises no longer aborts the whole run sweep — it is logged and the remaining survivors are still
+decided. That is `reap_orphans`' documented contract ("one bad row can never block startup"), which
+only the loop side was getting.
+
+**Known bounded property, shared with the run side deliberately and not papered over:** the sweep
+fires on the owning watchdog's first poll rather than strictly before HTTP serving, so a loop created
+in the window before that first poll could in principle be seen by it. It cannot be misread now that
+the predicate is session absence (a just-started loop has a session), and this is precisely the shape
+the run side has shipped with — consistency between the two nouns is the clause's point.
+
+**Census updated in the same commit, as its own message demands.** `adoption/reaping` moved out of
+`_UNCONVERGED` and into a third RATCHET beside ledger and attention
+(`test_the_adoption_clause_is_converged_and_stays_converged`), which also asserts `gateway.py` has no
+`reap_orphaned_loops` again — a re-added hook would restore the duplication even while still using the
+shared primitive.
+
+**Deletion sweep, with counts (runtime, not `mypy` — `ignore_missing_imports` cannot catch a stranded
+first-party import).** After the change, production references to `reap_orphaned_loops` under `src/`:
+**1**, and it is the new `loop/watchdog.py` docstring naming what it replaced. `concurrency.reap_orphans`
+production callers: **0** (its only one was the deleted function; `apps/`'s `reap_orphans` is an
+unrelated PPID walk on `BackendSupervisor`). Confirmed by importing all five touched modules and
+asserting `hasattr` both ways.
+
+**File sizes (the structural watch band):** `concurrency.py` 127→168, `loop/watchdog.py` 985→1106,
+`loop/manager.py` 653→**578**, `workflows/watchdog.py` 550→567, `gateway.py` 4219→**4217**. Net −7
+across the five. Nothing approaches the 2800 band or the 6000 ceiling, and `config/loader.py` is
+untouched.
+
+**Gate:** `make lint` clean (black 2125 files, isort, flake8, mypy **1043** source files, no issues);
+`scripts/gate_report.py` **all 6 gates PASS** (config-baseline, inert-surface, docs-lint,
+structural-size, structural-import-direction, structural-duplication); the targeted set —
+`test_workflows_hardening.py`, `test_structural_baseline.py`, both `PP-16` rails, the field map,
+`test_loop_manager.py`, `test_loop_watchdog.py`, `test_workflows_watchdog.py`,
+`test_single_flight_reaper.py`, `test_loop_http.py` — **257 passed, 0 failed**; full Python suite
+**27,417 passed, 30 skipped, 12 xfailed, 0 failed** (401s). No `web/` change, so the frontend gate is
+untouched by design — the cockpit clause is a separate seam.
+
+**Falsifications — each mutated on the LIVE line, `git grep`-confirmed applied, red observed, then
+restored from a file copy at its literal path.** Messages are quoted as they actually appeared, not as
+predicted:
+
+1. `_swept = True` hoisted ABOVE `await self._boot_sweep()` in `loop/watchdog.py` ⇒
+   `test_a_loop_boot_sweep_that_raises_is_retried_on_the_next_poll` reds
+   *"Failed: DID NOT RAISE RuntimeError"* (1 failed / 8 passed). The message is worth recording
+   because it is not the assertion's own text: with `_swept` set first, polls 2 and 3 skip the sweep
+   entirely, so the `pytest.raises` block on the second poll is what fails. Same shape, right cause.
+2. The same hoist on `workflows/watchdog.py` ⇒ the run-side twin
+   (`test_a_run_boot_sweep_that_raises_is_retried_on_the_next_poll`), same message, 1 failed / 8
+   passed. `test_the_retry_rails_can_fail` stayed GREEN under both hoists — correctly, since it
+   arranges a SUCCEEDING sweep and one attempt is the right answer for it either way. Recorded so
+   the vacuity floor is not mistaken for a second copy of the same assertion.
+3. `survived=` restored to the old `sess.running` form ⇒ **2** reds:
+   `test_a_running_loop_with_an_idle_session_is_live_not_a_survivor`
+   (*"assert {'43f22f4c'} == set()"*) AND the shipped
+   `test_loop_watchdog.py::TestTrustTtl::test_expired_trust_pauses_for_reauth`
+   (*"assert 'running' == 'needs_input'"*), 2 failed / 55 passed.
+4. `concurrency.boot_sweep(` aliased away in `loop/watchdog.py` (`_private_sweep = concurrency.boot_sweep`
+   at module level, both call sites renamed — functionally identical, textually absent) ⇒ **3** reds:
+   the census ratchet, `test_both_watchdogs_sweep_through_the_shared_primitive`, and
+   `test_the_scan_rejects_a_symbol_that_does_not_exist`'s positive control. **Known limit, stated
+   rather than hidden:** these are text scans, so an alias is exactly what evades them — the third
+   red is what makes the evasion loud instead of silent, and the runtime rails (2) cover the
+   behaviour a text scan cannot.
+5. A `reap_orphaned_loops` hook re-added to `gateway.py` in its original try/except shape ⇒ **2**
+   reds: the census and `test_the_gateway_has_no_loop_boot_adoption_hook`, 2 failed / 15 passed.
+
+6. `kinds.ensure_loaded()` removed from `_boot_sweep` ⇒
+   `test_the_loop_boot_sweep_loads_the_kind_registry_itself` reds, 1 failed / 9 passed — and it reds
+   while the file still contains **2** other `kinds.ensure_loaded()` calls, which is what the sliced
+   scan plus its two boundary controls exist to guarantee.
+
+Post-restore: `git status --porcelain` clean of source changes and
+`git grep 'FALSIFICATION\|if False and\|# PROBE\|_private_sweep' -- src/ tests/` shows **zero** new
+hits from this diff (all hits are pre-existing, in files this slice never touched).
+
+**Still open on `PP-16` — the four clauses that keep the atom `todo`** (unchanged by this slice):
+*one projection to tasks* (`loop/tasks_link.provision` provisions imperatively vs
+`workflows/materialize.plan_materialization`); *the pluggable supervisor* — `LoopKindStrategy` +
+`loop/kinds/`'s five modules become bundled templates carrying a `SupervisorPolicy` (the noun half is
+already done: `loop_aliases.KIND_TO_TEMPLATE` resolves all 5 kinds); *one cockpit contract* (three
+frontend pairs — `useRunStream`/`useWorkflowStream`, `runFold`/`workflowFold`,
+`LoopCockpitPage`/`WorkflowRunDetail`); *the noun change itself* — `loop/store.py`'s parallel row
+(1253 lines) retired onto the run store. Plus the **five-kind end-to-end user validation**, which is
+its own session, and the still-open `WorkflowRun.task_list_id` owner decision recorded 2026-08-22.
+
+**For `WF2UNI-12`, the number it asked for: this slice does not move it.** Measured after the change,
+`src/` importers of `personalclaw.planning` excluding the package itself: **9**
+(`dashboard/chat_plan.py`, `dashboard/handlers/loop_routes.py`, `gateway.py`, `loop/store.py`,
+`loop/plan_walkthrough.py`, and the four `loop/*_plan_briefs.py`); the union with modules importing
+only the plan-brief modules is **13** (adding `loop/kinds/{design,goal,research,sdlc}.py`). The
+chat-plan routes are **6**, at `server.py:1055-1060`. `workflows.intent` importers under `loop/` or
+`dashboard/`: still **0**. The drain that changes these is the *store* seam plus the pluggable-
+supervisor seam, not the adoption seam — boot adoption never touched `planning/`.
+
+### `PP-16` — 2026-08-26, CI follow-up: the real-home rail failure was PRE-EXISTING, not this slice
+
+PR #2111 came back 16 pass / 1 fail. Every test passed; the run failed at the session-level
+real-home rail: *"1 entries under /home/runner/.personalclaw changed during this run. modified
+config.json (23667 bytes)"*. **Root-caused to a defect this slice does not touch, with a captured
+traceback.** No `ALLOWED_RESIDUE` entry was added and the rail was not weakened.
+
+**The writer, exactly.** Captured by wrapping `atomic_write`/`Path.write_text` and running the full
+suite against a relocated `HOME` (`real_home_guard.REAL_HOME` is `Path.home()/".personalclaw"`
+resolved at import, so relocating `HOME` reproduces CI's conditions without touching a real home):
+
+```
+pytest COLLECTION  (PYTEST_CURRENT_TEST=<none>, in _pytest/python.py::importtestmodule)
+  tests/test_aap9_project_stamping.py:27   import personalclaw.mcp_artifacts
+    src/personalclaw/mcp_artifacts.py:14   from personalclaw.mcp_core import _resolve_session_key
+      src/personalclaw/mcp_core.py:111     _API = _resolve_api_base()      ← module level
+        src/personalclaw/mcp_core.py:106   cfg = AppConfig.load()
+          src/personalclaw/config/loader.py:5657   cfg.save()              ← migration write-back
+            src/personalclaw/config/loader.py:5749 atomic_write(config_path())
+```
+
+**Why it is not this slice's, measured not asserted.** (1) `git diff --name-only fc1aac08 HEAD`
+touches **none** of `mcp_core.py`, `mcp_artifacts.py`, `test_aap9_project_stamping.py`. (2) The write
+happens during **collection**, before any test, any fixture and any watchdog exists — the stack is
+`pytest_collection → importtestmodule`, with `PYTEST_CURRENT_TEST` unset. Nothing this slice added
+can run there. (3) Exactly **one** such write occurred in the whole suite.
+
+**The coordinator's hypothesis was a leaked watchdog background task writing after monkeypatch
+teardown. Refuted, and worth recording so it is not re-investigated:** `git grep 'LoopWatchdog('
+-- tests/` finds **12** sites and **none** calls `.start()` — every test drives `_poll_once()` or
+`_boot_sweep()` synchronously, so this slice creates no background task at all. `_rekick_planning`'s
+model call is also not implicated: **no test both creates a PLANNING loop and calls `_poll_once`**
+(measured), so the real `advance_plan` is unreachable from the suite today.
+
+**Why CI-only, and why it reported ONE entry when TWO things changed.** Both answers matter because
+each hid half the evidence. The write only fires when `config.json` **exists AND needs migration**;
+a developer's own config is already migrated, so `needs_migration` is False and nothing is written —
+the rail is green locally *however broken the code is*. And `load()`'s migration copies the old file
+aside with `shutil.copy2`, which **preserves mtime**, so `config.json.bak` looks older than the run
+and the mtime-based rail cannot see it. Reproduced exactly: a 10,024-byte pre-migration seed became
+**24k** with a `.bak` carrying the seed's original mtime — the same transformation whose output CI
+reported as 23,667 bytes.
+
+**Fixed at the seam, as the rail's own message demands.** `mcp_core._API = _resolve_api_base()` is
+now `mcp_core._api_base()`, resolved at CALL time, with its four use sites updated (three
+`f"{_API}{path}"`, one `urlparse(_API)`); `gateway.py`'s now-stale docstring reference was updated
+too. This is the **fourth** instance of the one shape `tests/conftest.py::_isolate_real_home_writers`
+documents as beyond a fixture's reach — *"a home resolved into a module-level constant at import
+time … If a new leak appears here, check for that shape first"* — after
+`subagent_persistence._subagents_dir`, `session_map._sessions_dir` and `schedule._DEFAULT_DIR`, and
+the fix is the same conversion those three got. It also fixes a **product** bug: the API base was
+pinned to whatever `dashboard.url` said at first import, so a port change was invisible to every MCP
+tool call until the process restarted, and an MCP child that imported before the gateway wrote its
+config bound the wrong port.
+
+**Regression test: `tests/test_import_time_config_writes.py`, deterministic by construction.** Each
+rail spawns a **fresh interpreter** with `PERSONALCLAW_HOME` at a tmp home seeded with a genuinely
+pre-migration `config.json`, imports the module, and compares `(mtime_ns, contents)`. A subprocess
+because the import must be that interpreter's first (`sys.modules` makes a re-import a no-op) and
+because the property must hold with **no conftest fixture in play** — which also makes it independent
+of xdist ordering, the thing that let the original defect hide. Both `mcp_core` and its collection-time
+importer `mcp_artifacts` are pinned, plus a structural ratchet against the constant returning.
+**Vacuity leg (`test_the_probe_can_see_a_write`):** the rails are same/same comparisons, so a blind
+probe would pass them; the leg drives `AppConfig.load()` on the same pre-migration seed and REQUIRES
+the rewrite to be observed. **Falsification:** reinstating `_API = _api_base()` at module level and
+pointing the four sites back at it reds **3 of 4** — both behavioural rails (*"importing
+personalclaw.mcp_core REWROTE config.json"*, same for `mcp_artifacts`) and the ratchet — while the
+vacuity leg correctly stays green. Restored from a file copy.
+
+**Proof the fix holds, under the condition that distinguishes fixed from broken.** Full suite against
+a **pre-migration** fake home: **zero** traced writes anywhere under it, and `config.json` still the
+54-byte seed with **no `.bak`** — where the same run before the fix produced 24k + a `.bak`. A
+normal-`HOME` run cannot prove this either way, because a migrated developer config never triggers
+the write; that asymmetry is exactly why this shipped.
+
+**DISCOVERIES recorded, deliberately NOT fixed here.**
+1. **`AppConfig.load()` is not a pure read** — it performs a migration write-back, so *any* reader
+   can mutate the user's config, and a module-level read becomes a real-home write. That is the
+   deeper defect; the import-time constant was only its delivery mechanism. Left alone because
+   `config/` is concurrently owner-touched territory and because the write-back (with its `.bak`) is
+   deliberate behaviour whose removal is an owner scope decision, not a bugfix detail.
+2. **The real-home rail under-reports when a writer uses `shutil.copy2`** — the copy inherits the
+   source's mtime, so it is invisible to an mtime-since-start walk. Not a rail bug to fix blind: the
+   single-walk mtime design is a deliberate performance choice (the docstring costs it out against a
+   >100k-file home). Recorded so the next reader of a 1-entry report knows to check for a
+   metadata-preserving sibling.
+3. **The boot sweep still makes a model call** (`_rekick_planning` → `plan_walkthrough.advance_plan`).
+   **The coordinator is right in principle and this entry agrees:** unbounded adoption latency, and
+   because a failed sweep is now *retried every poll*, a provider outage turns the retry into a
+   5-second-interval hammer. It is the same objection as this slice's defect 2, one step along.
+   **Declined here on scope, not on merit:** removing the call without building its replacement
+   strands every restart-interrupted PLANNING loop forever — strictly worse than the wart. The
+   correct shape is the sweep leaving the row for the *ordinary* poll to advance, which means
+   `_poll_once` growing a PLANNING pass (it iterates RUNNING only today) with its own
+   budget/attention/stagnation coverage. That is `PP-16`'s still-open **pluggable supervisor** seam,
+   so it goes there rather than being half-built inside a CI fix. The wart, the reasoning and the
+   practical hazard (no test reaches it today, so a future one would silently make a real model call
+   in the suite — stub `advance_plan` as `TestBootSweep::test_rekicks_planning_orphan` does) are all
+   recorded in `_rekick_planning`'s docstring.
+
+**Gate after the fix.** `make lint` clean (black **2140** files, isort, flake8, mypy **1054** source
+files, no issues); `scripts/gate_report.py` **all 6 PASS**; targeted set of 14 verified paths —
+including the new rail, both `PP-16` rails, `test_aap9_project_stamping` (the collection-time
+importer), `test_mcp_core`, `test_mcp_importable`, `test_mcp_json_home_isolation` and
+`test_real_home_guard` — **232 passed, 0 failed**; full suite **27,465 passed, 30 skipped, 12
+xfailed, 0 failed** (450s), exit code **0**, which is itself the rail's verdict (it sets
+`session.exitstatus = TESTS_FAILED` when it fires). Rail line verbatim:
+`real-home rail: /Users/golani/.personalclaw unchanged by this run.`
+
+**Harness note, so nobody re-derives it:** the relocated-`HOME` reproduction is a diagnostic
+harness, not a gate. Two of its full-suite runs wedged in `pytest_sessionfinish` and were killed by
+explicit PID; the official normal-`HOME` full suite completed cleanly in 450s, so the wedge is the
+harness's own (relocated `HOME`), not the new test's. Under the relocated `HOME`,
+`test_triggers_pathguard::test_it_expands_a_tilde` also fails by construction — it asserts tilde
+expansion against the real home — which is likewise a harness artifact and not a finding.

@@ -1,11 +1,12 @@
-"""Tests for cross-process single-flight locks + the orphan-reaper seam."""
+"""Tests for cross-process single-flight locks + the ONE boot-adoption path."""
 
 import multiprocessing
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from personalclaw.concurrency import lock_path, reap_orphans, single_flight
+from personalclaw.concurrency import boot_sweep, lock_path, single_flight
 
 
 @pytest.fixture(autouse=True)
@@ -114,43 +115,81 @@ def test_single_flight_ignores_stale_lock_file():
         assert acquired is True
 
 
-# ── reap_orphans ─────────────────────────────────────────────────────────────
+# ── boot_sweep ───────────────────────────────────────────────────────────────
+#
+# The ONE boot-adoption path both work-unit nouns run through (`PP-16`). These pin the
+# generic contract; the per-noun call sites are pinned by `test_pp16_boot_adoption.py`.
+
+
+@dataclass
+class _Row:
+    """The minimum `BootSweepRow` — an id. Both real rows (`Loop`, `WorkflowRun`) are wider."""
+
+    id: str
 
 
 @pytest.mark.asyncio
-async def test_reap_orphans_empty_is_noop():
-    calls = []
+async def test_boot_sweep_with_no_survivors_never_calls_decide():
+    """A boot with nothing stale must not touch a single row."""
+    decided = []
 
-    async def _reap(item):
-        calls.append(item)
+    async def _decide(row):
+        decided.append(row.id)
+        return True
 
-    n = await reap_orphans("x", [], _reap)
-    assert n == 0
-    assert calls == []
+    out = await boot_sweep("x", [_Row("a"), _Row("b")], survived=lambda r: False, decide=_decide)
+    assert out == set()
+    assert decided == []
 
 
 @pytest.mark.asyncio
-async def test_reap_orphans_reaps_each():
+async def test_boot_sweep_decides_only_the_survivors():
+    """The partition is `survived`'s alone — a live row is never handed to `decide`."""
     seen = []
 
-    async def _reap(item):
-        seen.append(item)
+    async def _decide(row):
+        seen.append(row.id)
+        return True
 
-    n = await reap_orphans("x", [1, 2, 3], _reap)
-    assert n == 3
-    assert seen == [1, 2, 3]
+    out = await boot_sweep(
+        "x",
+        [_Row("a"), _Row("live"), _Row("c")],
+        survived=lambda r: r.id != "live",
+        decide=_decide,
+    )
+    assert out == {"a", "c"}
+    assert seen == ["a", "c"]
 
 
 @pytest.mark.asyncio
-async def test_reap_orphans_isolates_failures():
-    """One failing reap is logged + skipped; the rest still run."""
+async def test_boot_sweep_returns_only_the_ids_whose_fate_it_wrote():
+    """`decide` returning False means "I looked and deliberately left it to adoption", so its
+    id must NOT come back — the run side's inline path depends on exactly this, because the
+    same poll has to go on and drive it."""
+
+    async def _decide(row):
+        return row.id == "written"
+
+    out = await boot_sweep(
+        "x", [_Row("written"), _Row("left")], survived=lambda r: True, decide=_decide
+    )
+    assert out == {"written"}
+
+
+@pytest.mark.asyncio
+async def test_boot_sweep_isolates_failures():
+    """One failing decision is logged + skipped; the rest are still decided. A single
+    unreadable row must never cost a whole process its boot adoption."""
     seen = []
 
-    async def _reap(item):
-        if item == 2:
+    async def _decide(row):
+        if row.id == "boom":
             raise RuntimeError("boom")
-        seen.append(item)
+        seen.append(row.id)
+        return True
 
-    n = await reap_orphans("x", [1, 2, 3], _reap)
-    assert n == 2  # 1 and 3 succeeded; 2 failed
-    assert seen == [1, 3]
+    out = await boot_sweep(
+        "x", [_Row("a"), _Row("boom"), _Row("c")], survived=lambda r: True, decide=_decide
+    )
+    assert out == {"a", "c"}
+    assert seen == ["a", "c"]
