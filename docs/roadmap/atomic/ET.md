@@ -51,6 +51,14 @@ Session 2 (T2.1); C2 — registry.json schema; Design — Registry; Owner tasks 
 
 Session 2 (T2.2); C2 — 'registry repo URL ships as a default git source'
 
+**`ET-4a` landed 2026-08-27** (carved out of this atom): `scratch/registry/registry.json` is now
+`app-registry.json`, i.e. `catalog._REGISTRY_FILENAME`. That clears the THIRD of the three measured
+blockers on the 'a fresh dev home lists registry apps in the Store' clause. The clause stays UNMET
+and this row stays `⬜` — the other two blockers are outside core: (1) `github.com/PersonalClaw/registry`
+does not exist yet (owner task 1), (2) the staged index is `{"apps": []}` until `ET-6`. **The rename had
+to precede the public repo**: `scratch/registry/` becomes that repo verbatim, so renaming afterwards
+would be a breaking change on a repo third parties may have cloned or scripted against.
+
 **Done when:** registry URL seeds into app-sources.json on first run behind a config flag; Settings sources UI shows it as a removable default; a fresh dev home lists registry apps in the Store; removing the source persists across restart; the scanner gate at install is unchanged (no new install path)
 
 ### `ET-5` — Store-card provenance line for registry-sourced apps + end-to-end install validation

@@ -11,16 +11,18 @@ Owner steps to publish:
 
   1. Create `personalclaw/registry` (public).
   2. Copy THIS directory's contents to the repository ROOT — not into a subdirectory.
-     The workflows and the validator both assume `registry.json`,
-     `validate_registry.py` and `requirements.txt` sit at the root.
-  3. Delete this comment. Delete `fixtures/` only if you want to; the tests that use
-     it live in core (`tests/test_registry_validation.py`), so the published copy
-     works either way, and keeping it means the published repo can demonstrate its own
-     three outcomes.
-  4. `git commit -s`, push to `main`.
-  5. Settings → require the `validate-listings / validate` check on `main`.
+     The workflows and the validator both assume `app-registry.json`,
+     `app-registry.schema.json`, `validate_registry.py` and `requirements.txt` sit at
+     the root.
+  3. DELETE THIS WHOLE COMMENT BLOCK — it is staging scaffolding, not documentation,
+     and it is the only thing in this file that must not ship.
+  4. Delete `fixtures/` only if you want to; the tests that use it live in core
+     (`tests/test_registry_validation.py`), so the published copy works either way,
+     and keeping it means the published repo can demonstrate its own three outcomes.
+  5. `git commit -s`, push to `main`.
+  6. Settings → require the `validate-listings / validate` check on `main`.
 
-What is NOT proven until step 4 lands: whether GitHub actually runs these three
+What is NOT proven until step 5 lands: whether GitHub actually runs these three
 workflows. Every other behaviour — the four checks, all three verdict outcomes, the
 schema's refusals — is proven offline by core's test suite against `file://` git
 repositories built from `fixtures/apps/`, which is the same fetch code path a real
@@ -44,8 +46,8 @@ curate it, and PersonalClaw's install-time gate still runs on your own machine.
 
 | File | What it is |
 |---|---|
-| `registry.json` | the data. One object per listed app. |
-| `registry.schema.json` | its JSON Schema. Generated — do not hand-edit. |
+| `app-registry.json` | the data. One object per listed app. |
+| `app-registry.schema.json` | its JSON Schema. Generated — do not hand-edit. |
 | `validate_registry.py` | the validator CI runs on every listing PR. |
 | `CONTRIBUTING.md` | **the listing policy** — what gets listed, what this list does not do. |
 | `DELISTING.md` | what gets a listing removed, and how long that takes. |
@@ -53,7 +55,7 @@ curate it, and PersonalClaw's install-time gate still runs on your own machine.
 
 ## Listing an app
 
-Open a PR adding one row to `registry.json`. Read
+Open a PR adding one row to `app-registry.json`. Read
 [`CONTRIBUTING.md`](CONTRIBUTING.md) first — it is short, and every rule in it is
 enforced by CI rather than by review.
 
@@ -83,7 +85,7 @@ cannot drift apart.
 ## Regenerating the schema
 
 ```bash
-python validate_registry.py --emit-schema > registry.schema.json
+python validate_registry.py --emit-schema > app-registry.schema.json
 ```
 
 `validate_registry.py` is the authority; the schema file mirrors it for editors and

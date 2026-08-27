@@ -21,7 +21,7 @@ is a static text scan.
 
 ## `registries/`
 
-Candidate `registry.json` documents. `repo` is `{{REPO_BASE}}/<fixture>`, a
+Candidate `app-registry.json` documents. `repo` is `{{REPO_BASE}}/<fixture>`, a
 **placeholder**: there is no way to commit a machine-independent local repo URL.
 Tests substitute it with the `file://` URL of a throwaway git repository built from
 the matching `apps/` directory, then run the validator with `--allow-file-repos`.

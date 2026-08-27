@@ -1,4 +1,4 @@
-# Listing validation — runs on every PR that touches registry.json.
+# Listing validation — runs on every PR that touches app-registry.json.
 #
 # THIS WORKFLOW HAS NO WRITE ACCESS, ON PURPOSE. Almost every listing PR arrives from
 # a fork, and a `pull_request` run from a fork is handed a READ-ONLY token whatever
@@ -14,7 +14,7 @@ name: validate-listings
 on:
   pull_request:
     paths:
-      - registry.json
+      - app-registry.json
       - validate_registry.py
       - requirements.txt
 
@@ -49,21 +49,21 @@ jobs:
           uv venv --python 3.12
           uv pip install -r requirements.txt
 
-      - name: Recover the base branch's registry.json
+      - name: Recover the base branch's app-registry.json
         # Only rows this PR added or changed are re-fetched and re-scanned. A base
         # branch without the file (first listing ever) reads as an empty registry.
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
-          git show "origin/${BASE_REF}:registry.json" > base-registry.json \
-            || printf '{"apps": []}\n' > base-registry.json
+          git show "origin/${BASE_REF}:app-registry.json" > base-app-registry.json \
+            || printf '{"apps": []}\n' > base-app-registry.json
 
       - name: Validate the changed listings
         id: validate
         run: |
           set +e
-          uv run python validate_registry.py registry.json \
-            --base base-registry.json \
+          uv run python validate_registry.py app-registry.json \
+            --base base-app-registry.json \
             --report registry-report.json \
             --markdown registry-report.md
           code=$?

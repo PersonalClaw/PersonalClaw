@@ -68,7 +68,7 @@ here on the template README by
 
 ## 3. `registry/` → `github.com/personalclaw/registry`
 
-The community-listing data tier (`ET-3`): `registry.json` + its generated schema, `validate_registry.py`,
+The community-listing data tier (`ET-3`): `app-registry.json` + its generated schema, `validate_registry.py`,
 three GitHub workflows, `CONTRIBUTING.md` (listing policy) and `DELISTING.md`, plus fixture apps the tests
 build real one-commit git repos from. Publish steps are in an HTML comment at the top of
 `registry/README.md`, same as `app-template/`.

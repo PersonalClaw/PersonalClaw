@@ -950,7 +950,7 @@ def _registry_fixture_repo(root: Path, *, app_name: str = "fixture-registry-app"
     """A real local git repo publishing an ``app-registry.json`` index — the POSITIVE
     CONTROL for "the seeded source is actually consulted".
 
-    The shipped registry (`scratch/registry/registry.json`) is EMPTY until ET-6, so a
+    The shipped registry (`scratch/registry/app-registry.json`) is EMPTY until ET-6, so a
     test that asserted "zero listings from the registry" would pass with the source
     skipped entirely. This fixture publishes one listing, so the assertion below can
     only pass if the seeded source was fetched and parsed."""
@@ -1276,16 +1276,20 @@ def test_the_install_scanner_gate_has_exactly_three_call_sites():
 # "Repository not found"), and ET-3's staged index is `{"apps": []}` until ET-6 lists
 # something.
 #
-# What IS reachable is the CONTRACT between the two halves, and it turns out to be one
-# filename and nothing else. Core enumerates a source's apps from an index named
+# What IS reachable is the CONTRACT between the two halves, and it is one filename and
+# nothing else. Core enumerates a source's apps from an index named
 # `catalog._REGISTRY_FILENAME` at the source root — the same contract for every git and
-# local source. ET-3 publishes the same content under `registry.json`. Measured: an
-# ET-3 schema-valid row lists with NO core change when the index carries core's name,
-# and lists nothing when it carries ET-3's. So the rail below pins the filename as the
-# whole of the remaining gap, so that whoever closes it (ET-5 owns reading the richer
-# `maintainer`/`last_validated` fields) reaches for a rename rather than a parser
-# change — and so that a future parser that quietly stops reading an ET-3-shaped row
-# reds here instead of in a user's empty Store.
+# local source. That filename USED to be the gap: ET-3 staged its index as
+# `registry.json` while core reads `app-registry.json`, and an ET-3 schema-valid row
+# measured one listing under core's name and none under ET-3's. `ET-4a` closed it by
+# renaming the staged file, so the two halves now agree by construction — no parser
+# change was needed, and ET-5 (which owns reading the richer `maintainer`/
+# `last_validated` fields) inherits an index core can already see.
+#
+# The rail below keeps them agreeing, in BOTH directions: the positive leg proves an
+# ET-3-shaped row lists with no core change, and the negative leg proves core still
+# accepts exactly one filename — so a parser that quietly widens the accepted name, or
+# stops reading an ET-3-shaped row, reds here instead of in a user's empty Store.
 
 _STAGED_REGISTRY = Path(__file__).resolve().parent.parent / "scratch" / "registry"
 
@@ -1294,9 +1298,9 @@ def _et3_shaped_row(name: str) -> dict:
     """One listing row carrying every key ET-3's row schema marks required.
 
     Built against the schema rather than copied from it, so a new required field in
-    `registry.schema.json` reds this instead of drifting silently.
+    `app-registry.schema.json` reds this instead of drifting silently.
     """
-    schema = json.loads((_STAGED_REGISTRY / "registry.schema.json").read_text(encoding="utf-8"))
+    schema = json.loads((_STAGED_REGISTRY / "app-registry.schema.json").read_text(encoding="utf-8"))
     required = schema["properties"]["apps"]["items"]["required"]
     assert required, "the row schema declares no required fields — fixture is vacuous"
     row = {
@@ -1347,6 +1351,7 @@ def test_the_seeded_registry_lists_only_under_cores_index_filename(tmp_path, mon
     assert _seed_registry_publishing(catalog._REGISTRY_FILENAME, tmp_path, monkeypatch) == [
         "probe-app"
     ]
-    # ET-3's own filename. Same bytes, same row, same seeded source — no listing. This
-    # is the entire remaining distance to the atom's unmet clause.
+    # Any OTHER name. Same bytes, same row, same seeded source — no listing. This is the
+    # name ET-3 published under before `ET-4a` renamed it, so the leg pins the rename
+    # too: re-publishing the index under the old name lists nothing.
     assert _seed_registry_publishing("registry.json", tmp_path, monkeypatch) == []
