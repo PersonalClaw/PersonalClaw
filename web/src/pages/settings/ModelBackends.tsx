@@ -209,7 +209,7 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
   )
 }
 
-const inputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+const inputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
 
 /** A single schema-driven field: enum → select, sensitive → password, else text.
  *  Exported so the onboarding essential-apps step renders a provider's key/config

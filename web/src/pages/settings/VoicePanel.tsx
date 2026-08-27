@@ -333,7 +333,7 @@ function UseCaseVoiceSection({
   )
 }
 
-const selectCls = 'h-9 w-full max-w-sm rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 cursor-pointer'
+const selectCls = 'h-9 w-full max-w-sm rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary cursor-pointer'
 
 function AvailChip({ available, okLabel, missLabel }: { available: boolean; okLabel: string; missLabel: string }) {
   return (

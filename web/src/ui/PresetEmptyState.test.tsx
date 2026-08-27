@@ -116,7 +116,7 @@ describe('PresetEmptyState', () => {
     // card at the grid edge cannot clip its own indicator.
     expect(cls).toContain('focus-visible:ring-2')
     expect(cls).toContain('focus-visible:ring-inset')
-    expect(cls).toContain('focus-visible:ring-primary/50')
+    expect(cls).toContain('focus-visible:ring-primary')
     expect(cls).toContain('focus-visible:outline-none')
   })
 

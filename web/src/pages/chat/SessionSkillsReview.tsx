@@ -149,9 +149,9 @@ function DraftCard({ sessionKey, agent, draft, onChanged }: {
       {editing ? (
         <>
           <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Skill title"
-            className="mb-2 h-8 w-full rounded-md bg-surface-high px-2.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="mb-2 h-8 w-full rounded-md bg-surface-high px-2.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} aria-label="Skill body"
-            className="mb-2 w-full rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="mb-2 w-full rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         </>
       ) : (
         <div className="mb-2">

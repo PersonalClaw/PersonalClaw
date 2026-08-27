@@ -297,7 +297,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                 brownfield loop at minimal rigor (Plan Review skipped) has no way to bind a
                 workspace and can't do file work. */}
             {kind === 'code' && projectKind === 'brownfield' && !inheritedWs && (
-              <div className="flex w-full items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9 max-w-[480px] focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
+              <div className="flex w-full items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9 max-w-[480px] focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
                 <FolderGit2 size={13} className="shrink-0 text-on-surface-low" />
                 <input type="text" value={brownfieldWs} onChange={(e) => setBrownfieldWs(e.target.value)}
                   disabled={busy} placeholder="Codebase path (e.g. /Users/you/projects/app) — the repo to work in"
@@ -309,7 +309,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                 default-system preview. */}
             {kind === 'design' && (
               <div className="flex w-full flex-col gap-2 max-w-[480px]">
-                <div className="flex items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
+                <div className="flex items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
                   <LinkIcon size={13} className="shrink-0 text-on-surface-low" />
                   <input type="url" value={designUrl} onChange={(e) => setDesignUrl(e.target.value)}
                     disabled={busy} placeholder="Reference a site to mimic (https://…) — optional"
@@ -323,7 +323,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                       input stays `sr-only` so Tab reaches it and Space opens the picker natively, and
                       because it sits INSIDE the label it takes "Attach reference" as its name with no
                       `aria-label` needed. The ring is drawn on the label, keyed off the input. */}
-                  <label className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-high/50 px-2.5 h-7 text-[0.75rem] transition-colors has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-inset has-[input:focus-visible]:ring-primary/50 ${busy ? 'opacity-50' : 'cursor-pointer hover:bg-surface-high'}`}>
+                  <label className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-high/50 px-2.5 h-7 text-[0.75rem] transition-colors has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-inset has-[input:focus-visible]:ring-primary ${busy ? 'opacity-50' : 'cursor-pointer hover:bg-surface-high'}`}>
                     <Paperclip size={13} /> Attach reference
                     <input type="file" multiple accept={DESIGN_ACCEPT} disabled={busy} className="sr-only"
                       onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) setDesignFiles((cur) => [...cur, ...fs]); e.currentTarget.value = '' }} />

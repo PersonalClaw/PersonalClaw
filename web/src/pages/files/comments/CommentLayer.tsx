@@ -105,7 +105,7 @@ export function CommentLayer({ scrollRef, docId, docLabel, docPath, content, onS
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveComposer() } if (e.key === 'Escape') setComposing(null) }}
             placeholder="Add a comment…  (↵ to save, ⇧↵ for newline)"
             rows={3}
-            className="w-full resize-none rounded-md bg-surface-container px-2.5 py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="w-full resize-none rounded-md bg-surface-container px-2.5 py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           <div className="mt-2 flex justify-end gap-s">
             <Button variant="ghost" size="sm" onClick={() => setComposing(null)}>Cancel</Button>
             <Button size="sm" onClick={saveComposer} disabled={!draft.trim()}
@@ -258,7 +258,7 @@ function CommentCard({ c, muted }: { c: DocComment; muted: boolean }) {
         <div className="flex flex-col gap-1.5">
           <textarea autoFocus value={val} onChange={(e) => setVal(e.target.value)} rows={3} aria-label="Edit comment"
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const t = val.trim(); if (t) { commentStore.update(c.id, { comment: t }); setEditing(false) } } if (e.key === 'Escape') setEditing(false) }}
-            className="w-full resize-none rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="w-full resize-none rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           <div className="flex justify-end gap-1.5">
             <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
             <Button size="sm" onClick={() => { const t = val.trim(); if (t) { commentStore.update(c.id, { comment: t }); setEditing(false) } }}><Check size={13} /> Save</Button>

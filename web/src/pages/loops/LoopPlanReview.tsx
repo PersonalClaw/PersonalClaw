@@ -301,7 +301,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack }: {
           {editingTitle ? (
             <input autoFocus aria-label="Edit the plan title" value={title} onChange={(e) => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)} onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false) }}
-              className="h-8 min-w-[16rem] rounded-md bg-surface-high px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="h-8 min-w-[16rem] rounded-md bg-surface-high px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           ) : (
             <button type="button" onClick={() => setEditingTitle(true)} title="Edit title"
               className="truncate text-on-surface text-[0.9375rem] hover:text-on-surface-var" style={fvs(500)}>
@@ -475,7 +475,7 @@ function OverviewStep({ loop, goalType, setGoalType, rigor, subGoals, setSubGoal
             onChange={(e) => setVerifyCommand(e.target.value)}
             placeholder="e.g. make ci · npm test · 0 lint warnings"
             spellCheck={false}
-            className="w-full h-9 rounded-lg bg-surface-container px-m font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="w-full h-9 rounded-lg bg-surface-container px-m font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           <p className="mt-1.5 text-on-surface-low text-[0.75rem]">
             {verifyCommand.trim()
               ? 'The supervisor runs this each cycle; exit code 0 means done.'
@@ -701,13 +701,13 @@ function PhaseCard({ phase, index, total, skills, workflows, agentNames, onChang
           </div>
         )}
         <input value={phase.role} onChange={(e) => set({ role: e.target.value })} placeholder="role (e.g. researcher)"
-          className="flex-1 min-w-0 h-8 rounded-md bg-surface-high px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" style={fvs(550)} />
+          className="flex-1 min-w-0 h-8 rounded-md bg-surface-high px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" style={fvs(550)} />
         {/* Agent definition for this phase — a dropdown of saved agents (the
             planner's pick is pre-selected); "default worker" = empty = the loop
             worker does it inline. A pre-selected agent no longer installed is
             still shown so the choice isn't silently lost. */}
         <select value={phase.agent_name} onChange={(e) => set({ agent_name: e.target.value })}
-          className="w-40 h-8 rounded-md bg-surface-high px-2 text-on-surface-var text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
+          className="w-40 h-8 rounded-md bg-surface-high px-2 text-on-surface-var text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
           <option value="">default worker</option>
           {phase.agent_name && !agentNames.includes(phase.agent_name) && <option value={phase.agent_name}>{phase.agent_name} (not installed)</option>}
           {agentNames.map((a) => <option key={a} value={a}>{a}</option>)}
@@ -715,14 +715,14 @@ function PhaseCard({ phase, index, total, skills, workflows, agentNames, onChang
         <label className="shrink-0 inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]">
           <span>min</span>
           <input type="number" min={1} value={phase.min_cycles} onChange={(e) => set({ min_cycles: Math.max(1, Number(e.target.value) || 1) })}
-            className="w-12 h-8 rounded-md bg-surface-high px-1.5 text-on-surface text-[0.8125rem] text-center outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="w-12 h-8 rounded-md bg-surface-high px-1.5 text-on-surface text-[0.8125rem] text-center outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         </label>
         {total > 1 && <SquareIconButton icon={X} iconSize={15} tone="danger" label="Remove phase" onClick={onRemove} className="shrink-0" />}
       </div>
       <textarea value={phase.target} onChange={(e) => set({ target: e.target.value })} rows={2} placeholder="what this phase aims to accomplish"
-        className="rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        className="rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary" />
       <input value={phase.phase_exit} onChange={(e) => set({ phase_exit: e.target.value })} placeholder="advance when… (exit signal)"
-        className="h-8 rounded-md bg-surface-high px-2 text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        className="h-8 rounded-md bg-surface-high px-2 text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       <PhaseCapPicker label="Skills this phase" options={skills.map((s) => ({ id: s.key, name: s.name }))}
         selected={phase.skill_ids} onChange={(ids) => set({ skill_ids: ids })} />
       <PhaseCapPicker label="Workflows this phase" options={workflows.map((w) => ({ id: w.id, name: w.name }))}
@@ -925,7 +925,7 @@ function SubGoalsEdit({ value, onChange }: { value: string[]; onChange: (v: stri
         <input value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="New sub-goal"
           onKeyDown={(e) => { if (e.key === 'Enter' && draft.trim()) { onChange([...value, draft.trim()]); setDraft('') } }}
           placeholder="Add a sub-goal…"
-          className="flex-1 h-9 rounded-lg bg-surface-container px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="flex-1 h-9 rounded-lg bg-surface-container px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <IconButton icon={Plus} label="Add sub-goal" size={34} onClick={() => { if (draft.trim()) { onChange([...value, draft.trim()]); setDraft('') } }} />
       </div>
     </div>

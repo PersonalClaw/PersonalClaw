@@ -259,7 +259,7 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
       // `opacity-0` until hover/focus-within, so nothing advertises it. Same shape the tasks list
       // carried before cycle 159; same fix, through the same primitive.
       tabIndex={-1}
-      className="group relative flex items-center gap-m rounded-lg bg-surface-container px-m py-2.5 cursor-pointer hover:bg-surface-high transition-colors has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50"
+      className="group relative flex items-center gap-m rounded-lg bg-surface-container px-m py-2.5 cursor-pointer hover:bg-surface-high transition-colors has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
       onClick={onOpen}>
       {/* 🪤 THE UNREAD RAIL HAD TO STOP BEING A BOX-SHADOW FOR THIS ROW TO SHOW FOCUS — the whole reason
           `ui/RowHitTarget`'s ring painted nothing here. Written out in `UnreadRail`, which is where the

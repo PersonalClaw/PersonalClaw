@@ -16,7 +16,7 @@ export function CapRow({ id, name, description, checked, suggested, onToggle, on
 }) {
   return (
     <div key={id}
-      className={`group flex w-full items-start gap-s rounded-lg px-m py-2.5 transition-colors ${checked ? 'bg-surface-high ring-1 ring-primary/40' : 'bg-surface-container hover:bg-surface-high'}`}>
+      className={`group flex w-full items-start gap-s rounded-lg px-m py-2.5 transition-colors ${checked ? 'bg-surface-high ring-1 ring-primary' : 'bg-surface-container hover:bg-surface-high'}`}>
       {/* the row body toggles selection; the peek button is separate (stopPropagation) */}
       <button type="button" onClick={onToggle} className="flex flex-1 min-w-0 items-start gap-s text-left">
         <span className="mt-0.5 shrink-0 inline-flex size-4 items-center justify-center rounded-sm border" style={{ borderColor: checked ? 'var(--color-primary)' : 'var(--color-outline-variant)', background: checked ? 'var(--color-primary)' : 'transparent' }}>

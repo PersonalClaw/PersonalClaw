@@ -126,7 +126,7 @@ const FIELD_SURFACE: Record<FieldSurface, string> = {
 // the canonical right pad). Applied conditionally so px-m and pl-9 never both
 // emit — a `padding-inline` + `padding-left` cascade race — the same split the
 // prior leading-icon primitive used.
-const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
 
 /** The one standard text field. Chrome is fixed; the only axes are `size`
  *  (sm/md/lg) and `surface` (container/high/base) — the family variants the app's
@@ -227,7 +227,7 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
   // ariaLabel.
   return (
     <textarea value={value} rows={rows} autoFocus={autoFocus} id={autoId} aria-describedby={hintId} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-      className={`w-full rounded-md bg-surface-container px-m py-2 text-on-surface ${TEXTAREA_TEXT[size]} placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary/50 ${mono ? 'font-mono text-[0.8125rem]' : ''}`} />
+      className={`w-full rounded-md bg-surface-container px-m py-2 text-on-surface ${TEXTAREA_TEXT[size]} placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary ${mono ? 'font-mono text-[0.8125rem]' : ''}`} />
   )
 }
 
@@ -272,7 +272,7 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
       aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={ariaLabel} aria-describedby={hintId}
       onChange={(e) => setLocal(e.target.value)} onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-      className={cx('h-8 rounded-md bg-surface-high px-2 text-right text-[0.8125rem] text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50', width)} />
+      className={cx('h-8 rounded-md bg-surface-high px-2 text-right text-[0.8125rem] text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary', width)} />
   )
 }
 
@@ -282,7 +282,7 @@ export function DateInput({ value, onChange }: { value: string; onChange: (v: st
   const autoId = useId()
   return (
     <input type="date" value={value} id={autoId} aria-labelledby={labelId} aria-describedby={hintId} onChange={(e) => onChange(e.target.value)}
-      className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+      className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
   )
 }
 
@@ -302,7 +302,7 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel }: 
     <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={name || autoId}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
       aria-describedby={hintId}
-      className="w-full h-10 appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 disabled:opacity-50">
+      className="w-full h-10 appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50">
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )
@@ -328,7 +328,7 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
   // near-duplicate fragments like "Kubernetes" vs "kubernetes").
   const remaining = suggestions?.filter((s) => !values.includes(s)) ?? []
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-surface-container px-2 py-2 min-h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
+    <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-surface-container px-2 py-2 min-h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
       {values.map((v) => (
         <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var text-[0.8125rem]">
           {v}

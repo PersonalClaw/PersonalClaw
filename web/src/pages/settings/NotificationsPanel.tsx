@@ -100,6 +100,6 @@ function TimeInput({ value, onChange }: { value: string; onChange: (v: string) =
   // delivery gate). The controlled value snaps back, so a clear is a no-op.
   return (
     <input type="time" value={value} onChange={(e) => { if (e.target.value) onChange(e.target.value) }}
-      className="h-9 rounded-md bg-surface-container px-2.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+      className="h-9 rounded-md bg-surface-container px-2.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
   )
 }

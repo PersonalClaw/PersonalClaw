@@ -161,7 +161,7 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
       // click-to-open on a bare div, no tab stop, no name. Fixed the same way, in the same change —
       // a notification row should not behave differently depending on which surface shows it.
       tabIndex={-1}
-      className="group relative flex items-start gap-s rounded-md px-2 py-2 cursor-pointer hover:bg-surface-high transition-colors has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50"
+      className="group relative flex items-start gap-s rounded-md px-2 py-2 cursor-pointer hover:bg-surface-high transition-colors has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
       onClick={onOpen}>
       <UnreadRail tone={km.tone} acked={n.acked} radius="md" />
       <RowHitTarget label={subject} />

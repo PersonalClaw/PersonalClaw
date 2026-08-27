@@ -340,7 +340,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                 {showResults && (
                   <input value={include} onChange={(e) => setInclude(e.target.value)} placeholder="include glob e.g. *.py"
                     name="workspace-grep-include" aria-label="Restrict search to files matching glob"
-                    className="h-7 w-full rounded-md bg-surface-high px-2.5 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+                    className="h-7 w-full rounded-md bg-surface-high px-2.5 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
                 )}
                 {!showResults && (
                   <>
@@ -405,7 +405,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                       onKeyDown={(e) => { if (e.key === 'Enter') submitCreate(); if (e.key === 'Escape') { setCreating(null); setNewName('') } }}
                       onBlur={submitCreate} placeholder={creating === 'dir' ? 'folder name' : 'file name'}
                       aria-label={creating === 'dir' ? 'New folder name' : 'New file name'}
-                      className="h-7 flex-1 rounded-md bg-surface-high px-2 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+                      className="h-7 flex-1 rounded-md bg-surface-high px-2 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
                   </div>
                 )}
                 {showResults

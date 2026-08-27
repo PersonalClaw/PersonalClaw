@@ -127,7 +127,7 @@ describe('every file picker can be reached without a mouse', () => {
       // …and the ring only works if the input is a DESCENDANT, which is what the sibling version got
       // wrong. Asserted as ORDER: the container's class list comes before the input in the same block.
       expect(code, `${rel}: the input must sit inside the element carrying the ring`)
-        .toMatch(/has-\[input:focus-visible\]:ring-primary\/50[\s\S]{0,400}?type="file"/)
+        .toMatch(/has-\[input:focus-visible\]:ring-primary\b[\s\S]{0,400}?type="file"/)
     }
   })
 

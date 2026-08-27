@@ -38,7 +38,7 @@ export function PathBar({ value, onNavigate }: { value: string; onNavigate: (dir
 
   return (
     <div ref={boxRef} className="relative">
-      <div className="flex items-center gap-1.5 rounded-md bg-surface-high px-2.5 h-8 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
+      <div className="flex items-center gap-1.5 rounded-md bg-surface-high px-2.5 h-8 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
         <Folder size={13} className="shrink-0 text-on-surface-low" />
         <input value={draft} onChange={(e) => { setDraft(e.target.value); setOpen(true) }} onFocus={() => setOpen(true)} onKeyDown={onKey}
           name="workspace-path" aria-label="Go to path"

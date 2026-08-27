@@ -37,7 +37,7 @@ export function TileButton({ children, onClick, active, title, ariaLabel, classN
       className={cx(
         'group flex flex-col overflow-hidden rounded-xl border text-left transition-colors',
         active ? 'border-primary/60' : 'border-outline-variant/40 hover:border-outline-variant',
-        'bg-surface-container focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50',
+        'bg-surface-container focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary',
         className,
       )}
     >

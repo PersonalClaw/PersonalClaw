@@ -152,7 +152,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
           {/* Bookmark → its URL is the PRIMARY field (required; the page is scraped on
               save), so it leads — above the optional title — and gets autofocus. */}
           {kind === 'bookmark' && (
-            <div className="shrink-0 flex items-center gap-s rounded-md bg-surface-container px-m h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
+            <div className="shrink-0 flex items-center gap-s rounded-md bg-surface-container px-m h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
               <Link2 size={15} className="text-on-surface-low shrink-0" />
               <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" autoFocus aria-label="Bookmark URL" className="flex-1 bg-transparent text-on-surface text-[0.9375rem] outline-none placeholder:text-on-surface-low" />
             </div>
@@ -173,7 +173,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
             <div className="shrink-0 flex items-center gap-2">
               <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Language</span>
               <select value={language} onChange={(e) => setLanguage(e.target.value)} aria-label="Gist language"
-                className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
+                className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
                 {GIST_LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>
@@ -189,7 +189,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
             </div>
           )}
           {kind === 'text' && (
-            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
+            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
               {/* Focus the body when there's no title field (fleeting/journal) — it's the
                   primary input, so the cursor should land here rather than nowhere. */}
               <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Markdown supported…" autoFocus={!titleEditable} aria-label="Note content"
@@ -237,7 +237,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
                       if (e.target === fileRef.current) return
                       if (!file) fileRef.current?.click()
                     }} onDragOver={(e) => { e.preventDefault(); setDragOver(true) }} onDragLeave={() => setDragOver(false)} onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) pickFile(f) }}
-                    className={`min-h-0 flex-1 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed cursor-pointer transition-colors has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-inset has-[input:focus-visible]:ring-primary/50 ${dragOver ? 'border-primary bg-primary/5' : file ? 'border-primary/40' : 'border-outline-variant/60 hover:border-primary/50'}`}>
+                    className={`min-h-0 flex-1 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed cursor-pointer transition-colors has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-inset has-[input:focus-visible]:ring-primary ${dragOver ? 'border-primary bg-primary/5' : file ? 'border-primary/40' : 'border-outline-variant/60 hover:border-primary/50'}`}>
                     <input ref={fileRef} type="file" className="sr-only"
                       aria-label={`Choose a ${tm.label.toLowerCase()} file`}
                       accept={ACCEPTED_MIMES[type] || undefined} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); e.target.value = '' }} />
