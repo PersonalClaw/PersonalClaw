@@ -57,10 +57,13 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 ### `EA-5` — External-agent capture proxy (/capture/v1) + telemetry import
 
 **Status:** 🟡 implementation complete; flips to `done` when PR #2121 lands. Every `done_when`
-clause is met on `main` except two that #2121 carries — `POST /capture/import` and the
-*operator-visible* half of the upstream host allowlist (its Settings control). The two clauses
-this session closed were the last ones needing code: the `capture` staging source in
-`learning.db` (the fourth cadence) and `prune()`'s call site on the curator tick.
+clause is met on `main` except two that #2121 carries — `POST /capture/import` (ships at
+`capture_proxy.handle_import`) and the *operator-visible* half of the upstream host allowlist
+(its Settings control at `ExternalAccessPanel.tsx`, whose five-point config round-trip is
+complete). The two clauses this session closed were the last ones needing code: the `capture`
+staging source in `learning.db` (the fourth cadence) and `prune()`'s call site on the curator
+tick. An earlier revision of this branch recorded those last two as UNMET; that reading was
+taken before `a0bc0bf9` landed and has expired — both are on `main`.
 
 §7 (Dialect 5 capture proxy): §7.1 dual-wire OpenAI/Anthropic proxy, §7.2 recording + fence-at-ingestion; §8 telemetry import. Session 4.
 

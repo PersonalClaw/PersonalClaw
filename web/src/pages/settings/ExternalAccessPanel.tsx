@@ -3,7 +3,7 @@ import { AlertTriangle, KeyRound, Plug2, ShieldOff, Trash2 } from 'lucide-react'
 import { api, type ExternalAccessClient, type ExternalAccessSurface } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { Button } from '../../ui/Button'
-import { PanelHeader, Section, RowGroup, Row, Toggle, NumberRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Toggle, NumberRow, StrListField } from './settingsUI'
 
 // Named `CACHE_KEY`, not `KEY`. `dataLayerAdoption.test.ts` resolves an identifier
 // handed to `useQuery` by matching `const <NAME> = '…'` across the WHOLE tree, so a
@@ -86,8 +86,13 @@ export function ExternalAccessPanel() {
     'external_access.rate_concurrent': data?.caps?.rate_concurrent,
     'external_access.auto_disable_after_breaches': data?.caps?.auto_disable_after_breaches,
     'external_access.capture_retention_days': data?.caps?.capture_retention_days,
+    // The NESTED spelling, deliberately: it is the only one `_EDITABLE_CONFIG` accepts for
+    // this key, and the flat `capture_retention_days` above is the exception rather than
+    // the rule. Reading a cap under one name and PATCHing it under another is how a
+    // control ends up rendering a value it cannot save.
+    'external_access.capture.upstream_allowlist': data?.caps?.capture_upstream_allowlist,
   }
-  const patchNumber = (path: string, value: never, onSaved: () => void, label?: string) =>
+  const patchCap = (path: string, value: never, onSaved: () => void, label?: string) =>
     act(async () => {
       await api.patchConfig(path, value)
       onSaved()
@@ -174,7 +179,7 @@ export function ExternalAccessPanel() {
             field="external_access.rate_rps"
             min={1}
             max={1000}
-            patch={patchNumber} />
+            patch={patchCap} />
           <NumberRow
             label="Burst"
             hint="How many requests a client may make back-to-back before the sustained rate starts holding it back."
@@ -182,7 +187,7 @@ export function ExternalAccessPanel() {
             field="external_access.rate_burst"
             min={1}
             max={10000}
-            patch={patchNumber} />
+            patch={patchCap} />
           <NumberRow
             label="Concurrent requests"
             hint="How many of a client’s requests may be in flight at once."
@@ -190,7 +195,7 @@ export function ExternalAccessPanel() {
             field="external_access.rate_concurrent"
             min={1}
             max={256}
-            patch={patchNumber} />
+            patch={patchCap} />
           <NumberRow
             label="Switch a client off after"
             hint="Limit breaches within an hour before a client is disabled automatically. Set 0 to never do that — a client will then keep getting 429s indefinitely."
@@ -198,7 +203,7 @@ export function ExternalAccessPanel() {
             field="external_access.auto_disable_after_breaches"
             min={0}
             max={10000}
-            patch={patchNumber} />
+            patch={patchCap} />
           <NumberRow
             label="Keep captured sessions for (days)"
             hint="Applies to the capture proxy only. It records full prompts, so this is the one limit here that is about privacy rather than load."
@@ -206,7 +211,17 @@ export function ExternalAccessPanel() {
             field="external_access.capture_retention_days"
             min={0}
             max={3650}
-            patch={patchNumber} />
+            patch={patchCap} />
+          {/* The one cap whose EMPTY default refuses the surface outright. It is an exclusive
+              allow-list, so "nothing named yet" means "nowhere to forward" — right for egress,
+              and indistinguishable from a broken proxy until the operator can see the list. */}
+          <StrListField
+            label="Capture upstream allow-list"
+            hint="Hosts the capture proxy may forward a recorded turn to. Empty means it may forward NOWHERE, so a freshly enabled capture proxy refuses everything until you name at least one host (api.openai.com, api.anthropic.com)."
+            cfg={capsCfg}
+            field="external_access.capture.upstream_allowlist"
+            patch={patchCap}
+            placeholder="Add host…" />
         </RowGroup>
         <div className="mt-3 rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">
           <div>
