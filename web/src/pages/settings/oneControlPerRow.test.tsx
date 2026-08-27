@@ -67,12 +67,18 @@ describe('a settings Row labels exactly one control', () => {
     // `export function RowGroup`, so once settingsUI grew that sibling this guard silently sliced
     // RowGroup's body instead of Row's and failed while Row was untouched — the same
     // character-window-is-not-a-scope mistake one level up. `Row(` names exactly one declaration.
+    // 🪤 RE-DERIVED, not weakened: this used to pin `shrink-0">{children}`, the class that made the
+    // children the right-hand column of a FLEX row. `Row` is a grid now, where `flex-shrink` has no
+    // effect at all, so keeping that class would have been dead markup held alive by a rail. The
+    // fact this rail needs is the same one in the new spelling — all children share ONE slot, which
+    // is why two Toggles in one Row share one caption. `rowAlignsControlToLabel.test.tsx` owns the
+    // alignment invariant itself; this one only guards that premise.
     const ui = readFileSync(join(SRC, 'pages/settings/settingsUI.tsx'), 'utf8')
     const start = ui.indexOf('export function Row(')
     expect(start, 'Row must exist, and must not be shadowed by a prefix sibling').toBeGreaterThan(-1)
     const next = ui.indexOf('\nexport ', start + 1)
     const row = ui.slice(start, next > start ? next : undefined)
     expect(row).toMatch(/\{label\}/)
-    expect(row).toMatch(/shrink-0">\{children\}/)
+    expect(row).toMatch(/col-start-2 row-start-1 flex items-center">\{children\}/)
   })
 })
