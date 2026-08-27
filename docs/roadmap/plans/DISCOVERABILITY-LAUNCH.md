@@ -545,3 +545,14 @@ face. Resolved by probing the generator directly: the draft is in `_docs_md()`'s
 **209** markdown files), `_findings_for()` on its real text returns `[]`, and the same call with one
 link repointed at a missing file returns `['dead_link:docs/reference/NOPE.md']`. So the gate really
 does read this file's citations, and really would red on a broken one.
+
+- [2026-08-26][DL-6] **OWNER SIGN-OFF GIVEN on the launch-post draft — that clause is closed.** The
+  draft at `docs/launch/launch-post-draft.md` (threat model, scanner gate, runtime egress chokepoint,
+  zero telemetry, honest limitations) is signed off as owner; the "pending owner sign-off" line it
+  carries should be replaced with the sign-off when the remaining clause is closed.
+  ONE clause remains and it is **cross-repo, not an owner call**: `done_when` names
+  `src/content/blog/launch.md`, a path that exists in NEITHER repo — core has no `src/content/` at
+  all, and `personalclaw.dev`'s `content.config.ts` defines exactly one collection (`docs`,
+  Starlight) with no blog collection. A file dropped at that path today would not build. Publishing
+  needs a `personalclaw.dev` change: define the blog collection, add the route, add a listing, then
+  place the post. Ordinary implementable work in the website repo. `DL-6` stays `todo` on that.

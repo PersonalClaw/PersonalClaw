@@ -790,3 +790,40 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   effect). That file's own header comment already states the rule; it simply predates this atom.
   **Six files now share an unenforced contract** — nothing fails until a sixth-party test mounts the
   page. A shared fixture exporting the page's full read set would collapse all six.
+
+- [2026-08-26][LV-2] **OWNER RULING — the taste call is decided: the tap target must be reachable
+  WITHOUT a disclosure.** The plan surfaced but did not decide (`LEARNING-VISIBILITY.md:358-361`)
+  whether "a visible learned-chip whose tap lands on the right approve/edit surface" requires the link
+  to be reachable without first expanding the collapsed `ContextLedger`. RULED: **yes.** A learning
+  the user has to go looking for is not visible, and visibility is this plan's entire subject — a
+  chip that points at something behind a closed disclosure moves the work from "hidden" to "hinted",
+  which is not what the criterion asks for. Implementation is otherwise COMPLETE on main.
+  REMAINING WORK, small and frontend-only: the chip's tap opens the disclosure and brings the
+  approve/edit target into view in **one** action, asserted at the CALL SITE with a vacuity leg that
+  fails when the disclosure stays closed. No backend change and no new WS/SSE channel. `LV-2` stays
+  `todo` until that ships; it is no longer waiting on anyone.
+
+- [2026-08-26][LV-4] **OWNER RULING — SPLIT the config sections, and the split is now `PHF-14`.** The
+  atom offered three options for the blocked `learning.identity_report_*` field: compress
+  `config/loader.py`, split `LearningConfig` out, or raise the ceiling. RULED: **split — and
+  generalised beyond `LearningConfig`.** Raising the ceiling retires the very rail whose docstring
+  predicted this arrival (`tests/test_structural_baseline.py::test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance`,
+  which names this file by name); compressing buys exactly one more field and then we are here again.
+  Measured while ruling: `loader.py` is **5900** lines against an absolute **6000**-line ceiling with
+  a `>= 100` headroom assertion, so headroom is exactly 100 and **one added line reds the gate**. The
+  file was 5427 when that rail was written — it has since grown 473 lines and spent all of it. Because
+  the config round-trip contract touches `loader.py` on every new field, this blocks *all* remaining
+  user-facing configuration, not just `LV-4`. Filed as **`PHF-14`** in PLATFORM-HARDENING-FLOORS,
+  which owns the size rails, and added as a dep of `LV-4`. `PHF-14` closes `LV-4`'s only unmet clause
+  as its own proof-of-headroom step, so `LV-4` needs no separate session afterwards.
+
+- [2026-08-26][LV-5] **OWNER RULING — "provenance frontmatter" does NOT require a literal frontmatter
+  write; the reported deviation is RATIFIED.** Provenance recorded on the overlay record (version +
+  date + trigger in the rendered refinement heading, plus the SEL accept row) satisfies the clause.
+  Reasoning: `WF2LEA-6` made the base skill immutable precisely so `verify_skill_integrity` /
+  `.pclaw-lock.json` stays valid, so stamping `SKILL.md` frontmatter would break a marketplace-locked
+  skill; doing it only for `auto/` skills would be two paths for one concern, which the clean-break
+  tenet refuses. The immutability guarantee is the stronger invariant and it wins. All four
+  `done_when` clauses are therefore satisfied. `LV-5` stays `todo` for one mechanical reason only —
+  the implementation is on `feature-lv5-refinement-arm` and is **not on main**. Flip it when that
+  branch lands; no owner input remains.
