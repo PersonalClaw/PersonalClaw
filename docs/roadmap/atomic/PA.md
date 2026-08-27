@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PA-3` | ✅ | Trivial-tier auto-execution + `inbox-op` action provider (Session 3) | `PA-2`, `EXT:AUTONOMY-GUARDRAILS:NEW-1 budget floor (per-run/day token+dollar+action ceilings) consulted before each auto-executed action` | `inbox-op` implements ActionProvider, is registered via register_action_provider, added to ALLOWED_HOOK_PROVIDERS, and carries a settings-schema manifest; trivial/always-approve proposals auto-execute bounded by the NEW-1 budget floor + max_auto_actions_per_run cap, each emitting a named-rule ledger row with one-click undo, and budget breach demotes remaining proposals to pending with skipped_budget rows; adversarial injection test (criterion 2) passes |
 | `PA-4` | ✅ | Decision journal core: `decision` native type + tools + horizon triggers + R18 lesson (Session 4) | `EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:one-shot clock/at trigger with delete_after_run (commitment-conversion pattern)`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R18 pending→resolved lesson lifecycle (write_lesson)` | `decision` is the 13th NATIVE_TYPES entry riding the Passthrough graph; log_decision/decision_list/decision_resolve tools exist; log_decision creates a searchable/@-pickable knowledge item and mints exactly one one-shot clock trigger with a deterministic `system:decision-journal:<id>`; the decision-review WorkflowDef delivers the horizon card, and `decision_resolve` captures the outcome, sets status=resolved, and writes a `lesson.*` memory row via write_lesson citing expectation-vs-outcome, linked only by soft reference (criterion 5) — the capture is deliberately NOT in-workflow, because the horizon fires with nobody present and an in-workflow stage could only invent an outcome (owner ruling 2026-08-26) |
 | `PA-5` | ⬜ | Triage FE surfaces + as-a-user validation (Session 5a) | `PA-2`, `PA-3` | Digest card renders auto-done+undo, pending proposals with tier badges and one-tap yes/no/always, and the ledger "what your machine did" section with permalinks; the rules-manager settings card shows/revokes rules with the send-capable graduation toggle; the Morning-triage template pack card installs an editable trigger; triage flow validated as-a-user incl. quiet-hours deferral, gateway-restart reply idempotency, and rule revocation (criteria 1/3/4/9/10) |
-| `PA-6` | ⬜ | Decision Journal view + calibration strip FE + validation (Session 5b) | `PA-4` | The filtered knowledge Decision-Journal view shows pending (horizon countdown + overdue flag), resolved (expectation-vs-outcome side-by-side + linked lesson chip), and a per-domain calibration strip computed from knowledge.db alone (count-caveat under n=10, no LLM/new store); too_early defers at most twice then shows stale-pending; grep-audit confirms neither store writes the other (criteria 5/6/7/8) |
+| `PA-6` | 🟡 | Decision Journal view + calibration strip FE + validation (Session 5b) | `PA-4` | The filtered knowledge Decision-Journal view shows pending (horizon countdown + overdue flag), resolved (expectation-vs-outcome side-by-side + linked lesson chip), and a per-domain calibration strip computed from knowledge.db alone (count-caveat under n=10, no LLM/new store); too_early defers at most twice then shows stale-pending; grep-audit confirms neither store writes the other (criteria 5/6/7/8) |
 
 ## Atom scopes
 
@@ -163,9 +163,87 @@ both genuinely pinned rather than restated.
 
 ### `PA-6` — Decision Journal view + calibration strip FE + validation (Session 5b)
 
-**Status:** todo
+**Status:** 🟡 code complete (2026-08-27)
 
 §2.5 Calibration record; §5.3 Decision Journal view; Success Criteria 5/6/7/8
 
 **Done when:** The filtered knowledge Decision-Journal view shows pending (horizon countdown + overdue flag), resolved (expectation-vs-outcome side-by-side + linked lesson chip), and a per-domain calibration strip computed from knowledge.db alone (count-caveat under n=10, no LLM/new store); too_early defers at most twice then shows stale-pending; grep-audit confirms neither store writes the other (criteria 5/6/7/8)
+
+**DISCOVERY — this atom was NOT frontend-only, and `PA-4`'s log was wrong about it.** That log
+recorded *"`calibration()` already computes the strip so `PA-6` is FE-only"*. `calibration()` does
+compute the strip, but `decision_list`/`decision_resolve` are **chat tools**: `git grep` found the
+three tool handlers in `agents/native/builtin_tools.py` and **zero** HTTP routes, so a browser had
+no way to read a decision at all. `handlers/learning.py`'s `calibration` is judge-calibration
+(`workflows/judge_calibration.calibration_summary`) — a different subject entirely. So one read
+route was built: `GET /api/knowledge/decisions`.
+
+**One route, not two, and one payload.** The strip is an aggregate of the rows beside it, so
+separate endpoints would let a client render eleven resolved decisions above a rate computed from
+ten — two answers to one question, from two fetches that raced. Both reads happen in ONE thread hop
+against one store handle. The handler *forwards* `list_decisions`/`calibration` and computes
+nothing; `test_the_payload_is_the_owning_modules_own_answer` asserts the payload equals
+`calibration(store=…)` and `list_decisions(store=…)` **by value**, which is the assertion a handler
+that re-aggregated could not satisfy forever. `CALIBRATION_MIN_N` was named in `decisions.py` (it
+was a bare `min_n: int = 10` default) so the threshold the view quotes has exactly one spelling.
+
+**Under `/api/knowledge/` and not `/api/proactive/`,** because §5.3 says a decision IS a knowledge
+item and the view is a lens on the library — the path is the IA. The handler is a NEW module
+(`handlers/decisions.py`, 111 lines) because `handlers/knowledge.py` is a **shrink-only
+watch-band member** at 3666 lines (`structural-baseline.json`), so adding routes there would have
+reddened the size ratchet. `config/loader.py` untouched: 5900 → 5900, headroom still exactly 100.
+
+**Three calibration states, and the honesty rule is the substance of the atom.** `'calibrated'`
+(some domain at or over the threshold) · `'too-few'` (resolved decisions exist, every domain under
+it) · `'no-data'` (nothing resolved carries a calibratable grade). Below the threshold the strip
+renders the COUNT and its distance from the threshold and **draws no bar at all** — a 0%-width
+track is a lie in the shape of a chart, visually identical to "0% as expected", which sits next to
+"flawless". `as_expected_rate` is present in the payload precisely so the view can decline to draw
+it. Same rule as `learningMeta.evidenceLabel`'s `ungraded` (ES-7) and `optimize.SCORE_UNSCORED`
+(ES-11), and applied twice more: an unknown `outcome_grade` reads `ungraded` and never falls
+through to `as_expected` (the tempting default, and the worst one — it turns "nobody said" into the
+claim that the user called it right), and a null confidence reads "no stated confidence", never 0%.
+
+**The discrimination leg is not a count.** `expect(new Set(said).size).toBe(3)` over the three
+rendered captions, plus a per-state assertion that each names its own condition. A count of states
+would pass while two of them rendered identically — which is the actual bug, because the user would
+read one sentence for two different truths. The wire has the same leg:
+`test_the_three_states_are_three_DIFFERENT_payloads` serializes the strip at 0 / 3 / 10 resolved
+and asserts three distinct payloads.
+
+**Two DIFFERENT reds, from live-line mutations grepped back and restored from file copies.**
+Collapsing `calibrationState`'s `'too-few'` onto `'calibrated'` → **3 vitest failures** including
+the discrimination leg (`expected 'Calibration across 0 domains with at …' to match /too few to
+mean much/` — the collapse also produced a nonsense sentence). Neutralising the handler's
+`calibration()` read to `{}` → **6 pytest failures** in a different suite
+(`two states serialize identically: ['{}', '{}', '{}']`). Disjoint sets, so the FE state machine
+and the backend read are each pinned separately.
+
+**🔴 Two defects caught only by driving it, neither visible to any unit test written first.**
+(1) A stale-pending decision's horizon is usually in the **future**: each `too_early` deferral
+pushes it out by half the original span, so the row goes stale on the deferral COUNT while its date
+still sits ahead — measured live as `deferrals=2, stale_pending=True, review_horizon=2026-11-02`.
+The label read the sign off `Math.abs` and announced "Review lapsed 67 days ago" for a horizon 67
+days away. It now states the fact true in both directions (no reminder is coming) and calls the
+date lapsed only when it has lapsed. (2) The resolved row rendered `outcome_grade` verbatim, so the
+screen read `as_expected` — a raw wire token in the one place the user is told what their own
+judgement was worth.
+
+**Validated as a user** against an isolated `PERSONALCLAW_HOME=./.dev-home` on :10126, driving a
+real browser through all three states with real persisted rows: `no-data` ("1 decision still open
+and none resolved yet"), `too-few` (3 resolved across 3 domains, **0 bars drawn**, per-domain "1 of
+10 decisions — too few to mean much"), `calibrated` (career at n=10, **exactly 1 bar**, the two
+under-threshold domains still barless beside it). Both non-counting pending states rendered on one
+screen — the stale one and an overdue one. Zero console errors on every pass.
+
+**PARTIAL (2026-08-27) — the in-gateway chat-tool round trip was NOT driven.** `log_decision` /
+`decision_resolve` reach the journal only through a chat turn, and the dev home has no model
+provider configured, so decisions were created and resolved by calling the same `decisions` module
+functions out-of-process. Two consequences, recorded rather than papered over: the *rendering* of
+every clause above is validated against real persisted data, but the **tool → journal path is not
+re-validated here** (it is `PA-4`'s surface, already `done` with its own tests). And a DISCOVERY
+the driver should know: **a running gateway does not see another process's write to
+`knowledge.db`** — its cached store handle kept serving `status: pending` for a row the DB had
+recorded as `resolved`, so each seeding step needed a gateway restart. Whether that is a snapshot
+artifact of the long-lived connection or something a real out-of-process writer (a workflow
+subprocess) would hit is **not** established here and is not this atom's scope.
 

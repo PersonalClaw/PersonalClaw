@@ -105,7 +105,7 @@ const CLASSIFIED: Record<string, string> = {
   // Line moved 918 → 941 when `KL-8` added the Home lens above it; the SITE is unchanged and the
   // shape assertion below re-proves it. This map keys on file:line, so any edit above a classified
   // site is a mechanical re-point — not a re-classification.
-  'pages/knowledge/KnowledgeListPage.tsx:941': "the reason is the button's own label text",
+  'pages/knowledge/KnowledgeListPage.tsx:953': "the reason is the button's own label text",
   // Section-level explanation: the panel renders "Managed by project — read-only" with a lock icon, so
   // the surface states it once rather than repeating it on every checkbox.
   // 🪤 THESE FOUR ARE PINNED BY LINE NUMBER, so ANY edit above them in TaskDetail.tsx moves all four
@@ -170,7 +170,7 @@ describe('the disabled-reason census', () => {
     // than none, because it silently excuses whatever moved into place.
     const at = (rel: string, line: number) => readFileSync(join(SRC, rel), 'utf8').split('\n')[line - 1] ?? ''
     expect(at('ui/Button.tsx', 161)).toMatch(/softOff/)
-    expect(at('pages/knowledge/KnowledgeListPage.tsx', 941)).toMatch(/disabled=\{!o\.item_id\}/)
+    expect(at('pages/knowledge/KnowledgeListPage.tsx', 953)).toMatch(/disabled=\{!o\.item_id\}/)
     expect(readFileSync(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'), 'utf8'),
       'and its label really does explain the state').toMatch(/\(removed — insight kept\)/)
     expect(at('pages/tasks/TaskDetail.tsx', 295)).toMatch(/disabled=\{!onOpenTask\}/)

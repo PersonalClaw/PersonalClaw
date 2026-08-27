@@ -22,7 +22,7 @@ function mount(view = '') {
   const query: Record<string, string> = view ? { view } : {}
   const setQuery = vi.fn()
   render(<KnowledgeListPage onCreate={() => {}} onOpenItem={() => {}} onOpenReader={() => {}}
-    onOpenSources={() => {}} onOpenReports={() => {}} query={query} setQuery={setQuery} />)
+    onOpenSources={() => {}} onOpenReports={() => {}} onOpenChat={() => {}} query={query} setQuery={setQuery} />)
   return setQuery
 }
 
@@ -48,7 +48,10 @@ describe('the Home lens is on the page, not just in the file tree', () => {
     // First, because it is the orienting lens. The strip is `role=tablist`/`role=tab`, not
     // buttons — asserting the wrong role here was how this test first passed vacuously.
     expect(screen.getAllByRole('tab').map((t) => t.textContent))
-      .toEqual(['Home', 'Library', 'Graph', 'Intents', 'Tags', 'Conflicts'])
+      // `Decisions` (PA-6) is the seventh lens — a filtered view of the same library, per
+      // PROACTIVE-ASSISTANT §5.3 ("not a new nav section — decisions ARE knowledge items").
+      // Appended, so Home keeps the first slot this test is really about.
+      .toEqual(['Home', 'Library', 'Graph', 'Intents', 'Tags', 'Conflicts', 'Decisions'])
   })
 
   it('renders the shelves when Home is the active lens', async () => {
