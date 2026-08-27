@@ -201,14 +201,44 @@ def _embedder():
 
 
 def _fts(store, query: str, *, limit: int) -> list[dict]:
+    """The keyword rung. Returned NOTHING, ever, for two independent reasons.
+
+    🔴 **1 — the join compared the wrong columns.** `JOIN items i ON i.id = f.rowid` joins a TEXT id
+    against an INTEGER rowid, which matches no row, so this rung answered `[]` for every query in
+    every store — the documented degradation tier was dead on arrival (#1781). Measured: the same
+    store's own `search_items_fts("latency")` returned 1 hit while this returned 0.
+
+    🔴 **2 — and fixing only the join is not enough**, which is the trap here. FTS5 treats the query
+    string as an EXPRESSION, so an ordinary user query is a syntax error, and the `except Exception`
+    below swallows it into the same empty list. Measured with the join already corrected:
+
+        "latency"     -> 1 hit
+        "cold-start"  -> OperationalError: no such column: start
+        'latency"'    -> OperationalError: unterminated string
+        "AND"         -> OperationalError: fts5: syntax error near "AND"
+        "x:y"         -> OperationalError: no such column: x
+
+    So a join-only fix passes a one-word test and leaves the rung dead for any real query — a
+    hyphen is all it takes. The query goes through `KnowledgeStore._sanitize_fts5`, the store's own
+    quoting for exactly this (it is what `search_items_fts` uses), rather than a second copy here:
+    two opinions about FTS5 quoting is how these two paths came to disagree in the first place.
+    """
+    try:
+        match = store._sanitize_fts5(query)
+    except Exception:  # noqa: BLE001 — a provider without the helper degrades, never raises
+        logger.debug("FTS sanitizer unavailable — skipping the keyword rung", exc_info=True)
+        return []
+    if not match:
+        # An all-whitespace query sanitizes to "", which FTS5 rejects. Nothing to match.
+        return []
     try:
         rows = list(
             store.db.execute(
                 "SELECT i.id, i.title, i.summary, i.content, i.kind, i.updated_at, "
                 "i.last_verified, i.expires_at, i.file_metadata "
-                "FROM items_fts f JOIN items i ON i.id = f.rowid "
+                "FROM items_fts f JOIN items i ON i.rowid = f.rowid "
                 "WHERE items_fts MATCH ? LIMIT ?",
-                (query, limit),
+                (match, limit),
             )
         )
     except Exception:
@@ -217,16 +247,35 @@ def _fts(store, query: str, *, limit: int) -> list[dict]:
     return [dict(r) | {"score": 0.5, "match_type": "keyword"} for r in rows]
 
 
+def _like_escape(text: str) -> str:
+    """Escape the three characters `LIKE` treats specially, for use with `ESCAPE '\\'`.
+
+    The backslash goes first: escaping it after `%`/`_` would double the escapes this function
+    just inserted.
+    """
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _substring(store, query: str, *, limit: int) -> list[dict]:
     """The last rung. Crude on purpose — it exists so a store with no FTS index and no
-    embedder still answers something rather than nothing."""
-    like = f"%{query.strip()}%"
+    embedder still answers something rather than nothing.
+
+    Crude is not the same as wrong: the user's text is interpolated into a `LIKE` pattern, where
+    `%` and `_` are WILDCARDS, so an unescaped query silently searched for something else. Measured
+    against an item titled `axb`: searching `a_b` matched it, and so did `a%b`. Both are false
+    positives a user cannot see or explain — and this is the rung that answers when everything
+    smarter has already failed, so its results carry the most benefit of the doubt.
+
+    The escape character is declared with `ESCAPE`, which SQLite requires; without it a literal
+    backslash in the pattern is just another character.
+    """
+    like = f"%{_like_escape(query.strip())}%"
     try:
         rows = list(
             store.db.execute(
                 "SELECT id, title, summary, content, kind, updated_at, last_verified, "
                 "expires_at, file_metadata FROM items "
-                "WHERE title LIKE ? OR content LIKE ? LIMIT ?",
+                "WHERE title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\' LIMIT ?",
                 (like, like, limit),
             )
         )

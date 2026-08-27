@@ -303,10 +303,24 @@ def test_a_persisted_item_round_trips_through_retrieve(home, ctx, persist, retri
 
 def test_the_strategy_names_which_tier_answered(home, ctx, persist, retrieve):
     """A retrieve that quietly fell back to substring matching looks identical in its output to
-    one that used embeddings, and the synthesis built on it would be trusted equally."""
+    one that used embeddings, and the synthesis built on it would be trusted equally.
+
+    🔴 This asserted `strategy in ("hybrid", "fts", "fts_fallback", "substring_fallback")` — the
+    whole
+    ladder — so it passed whichever tier answered, INCLUDING a broken one. `_fts` joined a TEXT id
+    to
+    an INTEGER rowid and returned `[]` for every query in every store, and this test was green
+    throughout (#1781). A set-membership assertion over every possible answer cannot fail.
+
+    Named exactly now: an embedder is available here, so `hybrid` is the tier that answers, and a
+    silent degradation to a lower rung in THIS environment is a regression worth hearing about. Each
+    rung is separately forced and required to return something in
+    `tests/test_knowledge_retrieve_rungs.py`, which is where the ladder itself is tested.
+    """
     run(persist.execute({"kind": "fact", "title": "Cold starts", "content": "4.2s"}, ctx))
     payload = body(run(retrieve.execute({"query": "cold starts"}, ctx)))
-    assert payload["strategy"] in ("hybrid", "fts", "fts_fallback", "substring_fallback")
+    assert payload["strategy"] == "hybrid"
+    assert payload["items"], "the tier named itself and returned nothing"
 
 
 def test_an_exact_title_match_reports_exists(home, ctx, persist, retrieve):
