@@ -222,6 +222,12 @@ class Proposal:
     evidence_strength: str = "correlated"
     confidence: float = 0.0
     tags: list[str] = field(default_factory=list)
+    #: The Loop-2 gate's ``{before, after, pin}`` for this change (ES-6 —
+    #: :mod:`personalclaw.evals.gate`). EMPTY means no gate run stands behind this proposal,
+    #: which the card renders as "ungated" — never as a zero score, and never as a reason to
+    #: refuse the accept. `accept` deliberately does not read this field: a gate that could
+    #: block would stop a user shipping a change because the *gate* broke.
+    gate: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -243,6 +249,7 @@ class Proposal:
             "manifest_valid": self.manifest_valid,
             "manifest_issues": self.manifest_issues,
             "specializes": self.specializes,
+            "gate": dict(self.gate),
             "body_preview": self.body[:280],
         }
 
@@ -952,6 +959,25 @@ def reject(pid: str, *, actor: str = "user") -> bool:
     _audit("learning_proposal_reject", prop, "rejected")
     logger.info("Rejected %s proposal %s", prop.kind, pid)
     return True
+
+
+def attach_gate(pid: str, report: dict) -> bool:
+    """Persist a Loop-2 gate report onto a PENDING proposal (ES-6). Returns True if it landed.
+
+    The proposal file is the read surface — the inbox row and the detail view both project from
+    it — so persisting here is what lets the card render ``{before, after, pin}`` without
+    re-running a gate that costs money. Overwrites any prior report on purpose: a re-run over a
+    newer library or a rebound model is the CURRENT evidence, and keeping a stale pair beside it
+    would make the card ambiguous about which numbers describe the change.
+
+    Deliberately does not touch ``status`` or ``updated_at``: a measurement is not a decision,
+    and bumping the timestamp would re-sort a queue for something the user did not do.
+    """
+    prop = _load(pid)
+    if prop is None:
+        return False
+    prop.gate = dict(report or {})
+    return _save(prop)
 
 
 def defer(pid: str) -> bool:

@@ -156,11 +156,37 @@ def _src_root() -> Path:
     return _repo_root() / "src" / "personalclaw"
 
 
+def _is_excluded(path: Path) -> bool:
+    """Is *path* inside an excluded directory **within the census root**?
+
+    🔴 THE EXCLUSION MUST BE TESTED RELATIVE TO THE ROOT, NEVER ON THE ABSOLUTE PATH. It used to
+    be ``_EXCLUDED_DIR_NAMES & set(path.parts)`` on the absolute path, and `.worktrees` is one of
+    the excluded names — so every file in a git worktree under ``.worktrees/`` matched on an
+    ANCESTOR directory that is not part of this repo at all. The census went to **0**, the vacuity
+    floor fired, and all three structural ratchets plus ``test_gate_report`` went red: **18 tests,
+    unconditionally, in every worktree** — which is the workflow this repo mandates for
+    contributions.
+
+    The exclusion's actual purpose is unchanged and is stated in
+    ``test_the_walk_cannot_wander_into_a_worktree_or_a_vendor_directory``: don't count another
+    agent's tree. That guarantee comes from rooting the walk at ``src/personalclaw`` (asserted
+    there), not from matching ancestor names — and a name outside the root was never something
+    this filter could meaningfully judge.
+    """
+    try:
+        rel = path.relative_to(_src_root())
+    except ValueError:
+        # Outside the census root entirely. The walk cannot produce this, and the rail asserts
+        # so; treat it as excluded rather than silently counting it.
+        return True
+    return bool(_EXCLUDED_DIR_NAMES & set(rel.parts))
+
+
 def _src_py_files() -> list[Path]:
     """Every production ``.py`` file under ``src/personalclaw`` (sorted, vendor dirs excluded)."""
     out: list[Path] = []
     for path in _src_root().rglob("*.py"):
-        if _EXCLUDED_DIR_NAMES & set(path.parts):
+        if _is_excluded(path):
             continue
         out.append(path)
     return sorted(out)
@@ -207,7 +233,7 @@ def census_packages() -> set[str]:
     losing one still leaves the count above any plausible floor)."""
     packages: set[str] = set()
     for path in _src_root().rglob("*.py"):
-        if _EXCLUDED_DIR_NAMES & set(path.parts):
+        if _is_excluded(path):
             continue
         rel = path.resolve().relative_to(_src_root()).as_posix()
         packages.add(rel.split("/")[0] if "/" in rel else "")

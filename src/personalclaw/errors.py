@@ -135,6 +135,23 @@ ERROR_CODES: dict[str, str] = {
         "the BROWSE egress policy, the page could not be read, or the decision call failed. "
         "Distinct from a PARK, which succeeds with notes and asks for a human."
     ),
+    "ERR_BROWSE_TARGET_UNKNOWN": (
+        "A browse action named an execution target outside the closed `gateway`/`user_browser` "
+        "vocabulary. Refused rather than read as the default: running on the gateway's own "
+        "browser profile a task that asked for the operator's would use different logins than "
+        "the config named."
+    ),
+    "ERR_BROWSE_TARGET_UNATTENDED": (
+        "A scheduled, cron or otherwise unattended run named the `user_browser` execution "
+        "target, which drives the browser the operator is already logged into and therefore "
+        "requires a person present by construction. Refused at registration time where the "
+        "automation is authored, and again at the provider before a browser is touched."
+    ),
+    "ERR_BROWSE_USER_BROWSER_DISCONNECTED": (
+        "A `user_browser` browse task ran with no browser attached, so it was SKIPPED. It is "
+        "never re-pointed at the gateway's own profile: that is a different cookie and "
+        "credential context, so a fallback would do the work as somebody else."
+    ),
     "ERR_SURFACE_OVERLAY_PATH": (
         "A user/agent surface overlay resolved outside $PERSONALCLAW_HOME/surfaces/ — a "
         "traversal, an absolute path, a symlink pointing away, or not a regular file."

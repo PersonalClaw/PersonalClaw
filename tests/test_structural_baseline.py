@@ -58,8 +58,10 @@ re-walk — see ``vacuity_failures`` and the falsification tests at the bottom o
 from __future__ import annotations
 
 import json
+import tempfile
 import textwrap
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -392,14 +394,57 @@ def test_the_walk_cannot_wander_into_a_worktree_or_a_vendor_directory():
     """This repo is routinely checked out as ~200 concurrent worktrees. A census that counted
     another agent's tree is not a measurement of THIS repo, and its number would drift every
     run. Two guarantees: the walk is rooted at ``src/personalclaw`` (never the repo root), and
-    the excluded-directory floor names every vendor/worktree dir explicitly."""
+    the excluded-directory floor names every vendor/worktree dir explicitly.
+
+    🪤 THIS TEST USED TO PASS VACUOUSLY IN THE EXACT CASE IT GUARDS. Its per-path loop ran over
+    ``_src_py_files()``, and the bug was that ``_src_py_files()`` returned ``[]`` inside any
+    worktree — so the loop body never executed and the assertion held over nothing while the
+    census was zero and 18 other tests were red. Hence the floor below: a per-item rail must
+    assert it HAD items."""
     for excluded in (".worktrees", "node_modules", ".venv", "build", "__pycache__", ".git"):
         assert excluded in gen._EXCLUDED_DIR_NAMES, f"{excluded} left the exclusion floor"
     root = gen._src_root().as_posix()
     assert root.endswith("/src/personalclaw")
-    for path in gen._src_py_files():
+    files = gen._src_py_files()
+    assert len(files) >= gen.MIN_CENSUS_PY_FILES, (
+        f"the walk produced {len(files)} files, so every per-path assertion below is vacuous. "
+        f"This is what a broken exclusion looks like from inside this test."
+    )
+    for path in files:
         assert path.as_posix().startswith(root + "/"), f"{path} is outside the census root"
-        assert not (gen._EXCLUDED_DIR_NAMES & set(path.parts)), path
+        # Relative to the root, NOT absolute: an excluded name in an ANCESTOR (`.worktrees`) is
+        # not this repo's business, and matching it was the bug.
+        rel = path.relative_to(gen._src_root())
+        assert not (gen._EXCLUDED_DIR_NAMES & set(rel.parts)), path
+
+
+def test_an_excluded_name_in_an_ANCESTOR_directory_does_not_empty_the_census():
+    """The regression, reproduced without needing to be in a worktree.
+
+    A tree laid out as ``<tmp>/.worktrees/wt/src/personalclaw/...`` is exactly the shape a git
+    worktree gives this repo: `.worktrees` is an ancestor of the census root, so the old
+    absolute-path check matched every single file and the census was 0. The files themselves sit
+    in perfectly ordinary package directories.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / ".worktrees" / "wt" / "src" / "personalclaw"
+        (root / "workflows").mkdir(parents=True)
+        (root / "__init__.py").write_text("", encoding="utf-8")
+        (root / "workflows" / "tick.py").write_text("x = 1\n", encoding="utf-8")
+        # And one file that SHOULD still be excluded, to prove the filter is not simply off.
+        (root / "workflows" / "__pycache__").mkdir()
+        (root / "workflows" / "__pycache__" / "tick.cpython-312.py").write_text(
+            "", encoding="utf-8"
+        )
+
+        with mock.patch.object(gen, "_REPO_ROOT", root.parents[1]):
+            assert gen._src_root() == root, "the patch did not take — this test measures nothing"
+            found = {p.relative_to(root).as_posix() for p in gen._src_py_files()}
+
+    assert found == {"__init__.py", "workflows/tick.py"}, (
+        f"expected the two real files and nothing else, got {sorted(found)}. An empty set is the "
+        f"original bug: `.worktrees` matched on the ancestor path."
+    )
 
 
 # ── Detector rails: a false CLEAR passes the ratchet silently ────────────────

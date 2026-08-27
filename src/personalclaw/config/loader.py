@@ -129,6 +129,24 @@ def _workspace_default_mode(value: object) -> str:
     return word if word in {"scratch", "worktree", "in_place", "container"} else "scratch"
 
 
+def _identity_report_cadence(value: object) -> str:
+    """Coerce ``learning.identity_report_cadence``, reading an unknown word as the default.
+
+    Delegates to :func:`personalclaw.learning_report.normalize_cadence` instead of repeating the
+    vocabulary, so the loader, the PATCH allowlist's enum spec, the reconciler's cron map and the
+    frontend control cannot drift apart — the failure mode ``guardrails.scan_mode``'s three
+    hand-copied ``warn/redact/block`` tuples are one edit away from. Imported lazily (like
+    ``_slug_username`` above) so this module keeps no import-time dependency on
+    ``learning_report``, which reads ``AppConfig`` back.
+    """
+    try:
+        from personalclaw.learning_report import normalize_cadence
+
+        return normalize_cadence(value)
+    except Exception:
+        return "monthly"
+
+
 def _safe_int(value: object, default: int) -> int:
     """Convert *value* to int, returning *default* on failure."""
     try:
@@ -815,6 +833,30 @@ class CompanionConfig:
             "Instance name",
             "Friendly name companion apps show for this gateway. Empty falls back to the "
             "machine hostname.",
+        ),
+    )
+
+
+@dataclass
+class BrowseConfig:
+    """Autonomous-browse posture (BROWSE-AUTOMATION §(a)/(d) — BA-7).
+
+    ``user_browser_enabled`` is the connector toggle for the SECOND execution target. The
+    ``gateway`` target needs no switch: it drives this machine's own per-site browser profile,
+    which the operator created for that purpose. The ``user_browser`` target drives the browser
+    they are personally logged into, inheriting every live session in it — so it is OFF by
+    default and turning it on is the posture decision, exactly like ``companion.discovery_enabled``
+    above. With it off, a ``user_browser`` task SKIPS with a typed reason and is never re-pointed
+    at the gateway profile (``browse.target.connector_status``).
+    """
+
+    user_browser_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Browser control",
+            "Let a browse task drive YOUR browser through the connector extension, using the "
+            "sites you are already logged into. Off by default, and never available to a "
+            "scheduled or unattended run.",
         ),
     )
 
@@ -1968,6 +2010,18 @@ class LearningConfig:
             "have accumulated, grade whether the change delivered what it predicted — and if "
             "it only made things worse, file a revert proposal (never auto-applied) that names "
             "what broke. Off = accepted changes are never measured against their promise.",
+        ),
+    )
+    identity_report_cadence: str = field(
+        default="monthly",
+        metadata=_meta(
+            "Identity Report",
+            "How often to write 'how I've adapted to you' — one readable document over the "
+            "preferences, lessons and skills learned so far, saved as a versioned artifact and "
+            "announced once in your inbox. Monthly, weekly, or off. Off means the scheduled "
+            "job does not run at all; you can still write one by hand from the Learning page. "
+            "This is the only switch there is — no separate on/off flag that could disagree "
+            "with the cadence.",
         ),
     )
 
@@ -4246,6 +4300,10 @@ class AppConfig:
             "Companion apps", "LAN discovery + instance name for native companion clients."
         ),
     )
+    browse: BrowseConfig = field(
+        default_factory=BrowseConfig,
+        metadata=_meta("Browsing", "Which browser an autonomous browse task is allowed to drive."),
+    )
     local_models: LocalModelsConfig = field(
         default_factory=LocalModelsConfig,
         metadata=_meta(
@@ -4406,6 +4464,9 @@ class AppConfig:
         companion_data = data.get("companion", {})
         if not isinstance(companion_data, dict):
             companion_data = {}
+        browse_data = data.get("browse", {})
+        if not isinstance(browse_data, dict):
+            browse_data = {}
         local_models_data = data.get("local_models", {})
         if not isinstance(local_models_data, dict):
             local_models_data = {}
@@ -4758,6 +4819,12 @@ class AppConfig:
                 discovery_enabled=bool(companion_data.get("discovery_enabled", False)),
                 instance_name=str(companion_data.get("instance_name", "") or ""),
             ),
+            browse=BrowseConfig(
+                # Opt-in for the same reason `discovery_enabled` directly above is: a plain
+                # read defaulting False. A malformed config must not make the target that
+                # inherits the operator's live logins available.
+                user_browser_enabled=bool(browse_data.get("user_browser_enabled", False)),
+            ),
             local_models=LocalModelsConfig(
                 # Clamped to a real percentage: a threshold of 0 would warn permanently
                 # and one above 100 could never warn, and both read as "the bar is broken".
@@ -5092,6 +5159,9 @@ class AppConfig:
                 propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
                 run_end_enabled=bool(learning_data.get("run_end_enabled", True)),
                 attribution_enabled=bool(learning_data.get("attribution_enabled", True)),
+                identity_report_cadence=_identity_report_cadence(
+                    learning_data.get("identity_report_cadence", "monthly")
+                ),
             ),
             knowledge=KnowledgeConfig(
                 idempotent_persist=bool(knowledge_data.get("idempotent_persist", True)),
@@ -5350,6 +5420,7 @@ class AppConfig:
             "legibility": asdict(self.legibility),
             "ambient": asdict(self.ambient),
             "companion": asdict(self.companion),
+            "browse": asdict(self.browse),
             "local_models": asdict(self.local_models),
             "sources": asdict(self.sources),
             "packs": asdict(self.packs),

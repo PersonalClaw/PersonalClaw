@@ -1086,10 +1086,17 @@ def _validate_dashboard_path(raw: str) -> str | None:
     #     when file-list calls this per directory entry, and it is SKIPPED for a
     #     not-yet-existing target so create/write/move/upload of a fresh file is
     #     never rejected.
-    blocked_basenames = {
-        "sel_hmac.key",
-        ".local_secret",
-        "telemetry_salt",
+    # `OWN_SECRET_BASENAMES` is the SHARED definition (security.py), so this area and the
+    # bash/terminal guards cannot disagree about what is secret. They did: every name here
+    # was refused by `/api/file-read` and unknown to `is_sensitive_path`, which the terminal
+    # cwd guard and the bash read hook both consult (#643).
+    #
+    # The extras stay local because they are this area's stricter, allowlist-scoped policy —
+    # a `.env` anywhere under a browsable root is a credential file by convention, while the
+    # bash guard covers the whole filesystem and would refuse a project's own `.env`.
+    from personalclaw.security import OWN_SECRET_BASENAMES
+
+    blocked_basenames = set(OWN_SECRET_BASENAMES) | {
         ".env",
         # The session signing key: reading it forges any session token.
         "session_key",

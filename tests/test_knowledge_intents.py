@@ -67,8 +67,25 @@ def test_from_dict_derives_id_from_goal_when_absent():
     assert _ID_RE.match(derived.id)
     # Explicit id wins; symbol-only goals still yield a valid slug.
     assert Intent.from_dict({"id": "custom", "goal": "x"}).id == "custom"
-    assert slugify_goal("  ???  ") == "intent"
+    assert slugify_goal("  ???  ").startswith("intent-")
+    assert _ID_RE.match(slugify_goal("  ???  "))
     assert _ID_RE.match(slugify_goal("中文 only"))
+
+
+def test_slug_fallback_separates_goals_it_cannot_transliterate():
+    """The fallback is derived, so a non-Latin script does not collapse every goal onto
+    one id. It used to be the constant ``intent``, which gave every Japanese, Chinese,
+    Korean, Greek, Hebrew and Cyrillic goal the SAME id — so a user writing in any of
+    those could hold exactly one intent and the second silently replaced the first."""
+    from personalclaw.knowledge.intents import _ID_RE, slugify_goal
+
+    unslugifiable = ["健康診断", "日本語", "건강 검진", "Привет", "עברית", "???", "!!!"]
+    slugs = [slugify_goal(g) for g in unslugifiable]
+    assert len(set(slugs)) == len(slugs), f"goals collapsed onto one id: {slugs}"
+    assert all(_ID_RE.match(s) for s in slugs)
+    # Stable: the create path derives the id from the goal on every POST, so the same
+    # goal must keep resolving to the same row rather than accumulating duplicates.
+    assert slugs == [slugify_goal(g) for g in unslugifiable]
 
 
 # ── store CRUD ──
@@ -87,10 +104,38 @@ def test_get(store):
 
 
 def test_upsert_replaces_same_id(store):
+    """`replace=True` is the edit path — the caller named the id, so it means that row."""
     store.upsert(Intent(id="a", goal="first"))
-    store.upsert(Intent(id="a", goal="second"))
+    store.upsert(Intent(id="a", goal="second"), replace=True)
     intents = store.load()
     assert len(intents) == 1 and intents[0].goal == "second"
+
+
+def test_create_refuses_to_overwrite_a_different_goal(store):
+    """The invariant: no write ever reduces the intent count. The id is DERIVED from the
+    goal, so two differently-worded goals can slugify onto one id — and the create path
+    overwrote the first, destroying it, while answering as if it had created something."""
+    first = Intent.from_dict({"goal": "track homelab drive health"})
+    second = Intent.from_dict({"goal": "Track homelab drive health!"})
+    assert first.id == second.id, "precondition: these goals must collide"
+
+    store.upsert(first)
+    with pytest.raises(ValueError, match=f"intent_id_taken:{first.id}"):
+        store.upsert(second)
+
+    survived = store.load()
+    assert len(survived) == 1
+    assert survived[0].goal == "track homelab drive health"
+
+
+def test_create_of_an_identical_goal_stays_idempotent(store):
+    """Refusing a collision must not break re-posting the SAME goal: the create path
+    derives the id on every POST, so an unchanged goal has to keep resolving to its own
+    row (and carry a changed flag with it) rather than raising."""
+    store.upsert(Intent.from_dict({"goal": "track drive health"}))
+    store.upsert(Intent.from_dict({"goal": "track drive health", "propose_skill": True}))
+    rows = store.load()
+    assert len(rows) == 1 and rows[0].propose_skill is True
 
 
 def test_upsert_rejects_bad_id(store):
@@ -346,3 +391,156 @@ def test_reingest_does_not_duplicate_outcome(tmp_path):
     _run(ingest_item(s, iid, insights_pool=_StubPool(match)))
     _run(ingest_item(s, iid, insights_pool=_StubPool(match)))
     assert len(s.outcomes_for_item(iid)) == 1  # not 2
+
+
+# ── the POST endpoint's create-vs-edit split ──
+
+
+def _upsert(knowledge_store, body):
+    """Drive `POST /api/knowledge/intents` the way the panel does."""
+    import json
+    from types import SimpleNamespace
+
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import knowledge as H
+
+    app = web.Application()
+    app["state"] = SimpleNamespace(knowledge_store=knowledge_store)
+    req = make_mocked_request("POST", "/api/knowledge/intents", app=app)
+
+    async def _json():
+        return body
+
+    req.json = _json
+    resp = _run(H.upsert_intent(req))
+    return resp, json.loads(resp.body)
+
+
+@pytest.fixture
+def knowledge_store(tmp_path):
+    from personalclaw.knowledge.store import KnowledgeStore
+
+    return KnowledgeStore(tmp_path / "k.db")
+
+
+def test_creating_a_colliding_goal_is_a_typed_409_not_a_201(knowledge_store):
+    """A body with no id is a create, and the derived slug can land on a stranger's
+    intent. It used to overwrite that intent and answer 201, so the UI reported success
+    for a write that destroyed data. The message must name the OTHER goal — the id is
+    derived and never shown, so quoting it would be unactionable."""
+    first, second = "track homelab drive health", "Track homelab drive health!"
+    resp, _ = _upsert(knowledge_store, {"goal": first})
+    assert resp.status == 201
+
+    resp, body = _upsert(knowledge_store, {"goal": second})
+
+    assert resp.status == 409
+    assert body["error"]["code"] == "intent_id_taken"
+    assert first in body["error"]["message"]
+
+
+def test_editing_an_intent_may_still_change_its_goal(knowledge_store):
+    """The refusal above must not block the edit path: a body carrying an explicit id
+    means that row, and rewording the goal is the whole point of the edit."""
+    resp, body = _upsert(knowledge_store, {"goal": "track drive health"})
+    intent_id = body["id"]
+
+    resp, _ = _upsert(knowledge_store, {"id": intent_id, "goal": "track drive health, weekly"})
+
+    assert resp.status == 201
+    from personalclaw.knowledge.intents import IntentStore
+
+    rows = IntentStore(knowledge_store.db_path.parent / "intents.json").load()
+    assert len(rows) == 1 and rows[0].goal == "track drive health, weekly"
+
+
+# ── a model failure is an error, not a 0-match (#759) ─────────────────────────
+
+
+def _run_intent(knowledge_store, intent_id, pool):
+    """Drive `POST /api/knowledge/intents/{id}/run` with a given pool."""
+    import json
+    from types import SimpleNamespace
+
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import knowledge as H
+
+    app = web.Application()
+    app["state"] = SimpleNamespace(knowledge_store=knowledge_store)
+    app["knowledge_llm_pool"] = pool
+    req = make_mocked_request(
+        "POST", f"/api/knowledge/intents/{intent_id}/run", app=app, match_info={"id": intent_id}
+    )
+    resp = _run(H.run_intent(req))
+    return resp, json.loads(resp.body)
+
+
+def _real_pool_with_a_dead_model(monkeypatch):
+    """A REAL `LLMPool` of REAL `ProviderWorker`s whose provider call fails.
+
+    Deliberately not a stub that raises `WorkerError` itself: that would assert the
+    counter can add up a raised error while leaving the actual question — does a
+    provider failure ever BECOME one — untested. The original bug lived precisely in
+    that gap, so the chain has to be driven end to end from the provider call outward.
+    """
+    import asyncio as _asyncio
+
+    from personalclaw import llm_helpers
+    from personalclaw.knowledge.llm_pool import LLMPool, ProviderWorker
+
+    async def _boom(prompt, use_case=""):
+        raise RuntimeError("no model bound")
+
+    monkeypatch.setattr(llm_helpers, "one_shot_completion", _boom)
+    pool = LLMPool(pool_size=1)
+    pool._started = True
+    pool._workers.append(ProviderWorker())
+    pool._available.put_nowait(0)
+    assert isinstance(pool._semaphore, _asyncio.Semaphore)  # guard the internals we poke
+    return pool
+
+
+def test_a_model_failure_is_counted_as_an_error_not_a_zero_match(knowledge_store, monkeypatch):
+    """The whole point of the `errors` counter, which could never leave 0.
+
+    `ProviderWorker.send_message` swallowed every timeout and provider error to `""`,
+    and `""` parses to "not relevant" — so a cold model produced `matched: 0,
+    errors: 0`, which the UI reports as "No matches in your existing items". Identical
+    to a genuine no-match, and the opposite of what happened.
+    """
+    for i in range(3):
+        knowledge_store.create_typed_item(item_type="note", title=f"N{i}", content=f"body {i}")
+    resp, body = _upsert(knowledge_store, {"goal": "track anything about drives"})
+    intent_id = body["id"]
+
+    resp, body = _run_intent(knowledge_store, intent_id, _real_pool_with_a_dead_model(monkeypatch))
+
+    assert resp.status == 200
+    assert body["evaluated"] == 3
+    assert body["errors"] == 3, "a model failure must not read as 'nothing matched'"
+    assert body["matched"] == 0
+    assert body["outcomes"] == []
+
+
+def test_a_working_pool_that_finds_nothing_still_reports_zero_errors(knowledge_store):
+    """The other side of the distinction, and the reason this cannot be fixed by simply
+    counting every 0-match as an error: a model that ran fine and found nothing is a
+    legitimate 0/0, and the UI's "No matches in your existing items" is correct for it.
+    """
+
+    class _NotRelevantPool:
+        async def send(self, prompt, timeout=None):
+            return '{"relevant": false}'
+
+    knowledge_store.create_typed_item(item_type="note", title="N", content="body")
+    _, body = _upsert(knowledge_store, {"goal": "track anything about drives"})
+
+    _, body = _run_intent(knowledge_store, body["id"], _NotRelevantPool())
+
+    assert body["evaluated"] == 1
+    assert body["errors"] == 0
+    assert body["matched"] == 0

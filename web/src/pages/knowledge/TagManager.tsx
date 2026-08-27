@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronRight, GitMerge, Loader2, Pencil, Tag as TagIcon, Trash2 } from 'lucide-react'
-import { api, type KnowledgeTag } from '../../lib/api'
+import { api, ApiError, type KnowledgeTag } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { confirmDelete, promptInput } from '../../ui/dialog'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -47,17 +47,18 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
       setNote(label)
       onChanged?.()   // item rows show tags, so the library list is now stale
     } catch (e) {
-      const msg = String((e as Error)?.message || e)
-      // Typed codes from the store, surfaced as the actionable sentence rather than
-      // the raw code. A cycle and a name clash are both user-correctable.
-      notify(
-        msg.includes('tag_cycle')
-          ? "That would make a tag its own ancestor — pick a different parent."
-          : msg.includes('tag_name_taken')
-            ? 'A tag with that name already exists. Merge them instead of renaming.'
-            : `Couldn't update the tag: ${msg}`,
-        'error',
-      )
+      // 🔴 THIS MATCHED ON PROSE, AND THE BACKEND BENT TO MAKE IT WORK. It tested
+      // `msg.includes('tag_cycle')`, so `handlers/knowledge.py` had to set `message` to the CODE for
+      // the match to fire — which meant the fallback branch rendered
+      // `Couldn't update the tag: tag_name_taken:archive`, a machine token shown to a person. And the
+      // two good sentences lived here AND (once fixed) in the handler, so one fact had two homes.
+      // `lib/api.hasApiCode` exists for exactly this and its docstring states the rule: match on the
+      // code, never on the message, because the message is human copy that gets reworded.
+      //
+      // Nothing here BEHAVES differently per code — it only shows a sentence — so the whole branch
+      // collapses: the gateway composes the wording (one source) and this renders it. The fallback is
+      // for a non-`ApiError` rejection, which has no envelope to have composed one.
+      notify(e instanceof ApiError ? e.message : "Couldn't update the tag.", 'error')
     } finally {
       setBusy(null)
     }

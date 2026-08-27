@@ -23,6 +23,39 @@ DEFAULT_TIMEOUT = 60.0
 FETCH_TIMEOUT = 120.0
 
 
+class WorkerError(RuntimeError):
+    """A model or transport failure — as distinct from a model that answered nothing.
+
+    🔴 The distinction this type exists to preserve was being destroyed, and three
+    complete mechanisms were waiting on it (#759). ``ProviderWorker.send_message``
+    caught both ``asyncio.TimeoutError`` and bare ``Exception`` and returned ``""``,
+    so ``pool.send`` could not fail — and ``""`` is indistinguishable from a model
+    that ran fine and found nothing. Everything downstream reads it as the latter:
+
+    * ``match_intent`` parses ``""``, gets no dict, and returns ``None`` — "not
+      relevant". So ``run_intent``'s ``errors`` tally could never leave 0, and the
+      UI said "No matches in your existing items" for a cold or timing-out model.
+      Its ``raise_on_error=True`` branch was unreachable.
+    * ``InsightsExtractor.extract`` has the identical ``raise_on_error`` branch, also
+      unreachable. So ``_run_insights`` never returned False, an item was left
+      ``done`` rather than ``partial``, and the message the runner already writes —
+      "insights: model unavailable (insights not refreshed — try regenerating)" —
+      could not be reached.
+    * Both call sites carry comments stating a model failure "must be counted as an
+      error, not silently folded into 'not relevant'". The swallow defeated them.
+
+    Raising is safe rather than sweeping, because every caller of ``pool.send``
+    already handles an exception: ``EntityExtractor.extract`` returns
+    ``_empty_result()``, ``LLMPool.send_batch`` catches per item and substitutes
+    ``""``, skill synthesis catches and sets ``resp = ""``, and the two
+    ``raise_on_error`` callers are the ones asking for it. So the pool stops deciding
+    that a failure is an empty answer, and each caller keeps choosing for itself.
+
+    It also makes the two workers agree: ``AcpWorker.send_message`` always propagated,
+    so the contract depended on which worker you happened to get.
+    """
+
+
 class Worker(ABC):
     """Abstract base for a long-lived LLM worker."""
 
@@ -32,7 +65,11 @@ class Worker(ABC):
 
     @abstractmethod
     async def send_message(self, prompt: str, timeout: float = DEFAULT_TIMEOUT) -> str:
-        """Send a prompt and return the text response."""
+        """Send a prompt and return the text response.
+
+        Raises :class:`WorkerError` on a model/transport failure. An empty return
+        means the model answered with nothing, which is a different fact.
+        """
 
     @abstractmethod
     async def shutdown(self) -> None:
@@ -62,12 +99,12 @@ class ProviderWorker(Worker):
                 one_shot_completion(prompt, use_case="ingestion"),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             logger.warning("ProviderWorker: timeout after %.0fs", timeout)
-            return ""
+            raise WorkerError(f"model timed out after {timeout:.0f}s") from exc
         except Exception as exc:
             logger.warning("ProviderWorker: request failed: %s", exc)
-            return ""
+            raise WorkerError(f"model request failed: {exc}") from exc
 
     async def shutdown(self) -> None:
         pass

@@ -1855,6 +1855,24 @@ export interface LearningRow {
   manifest_valid: boolean; manifest_issues: string[]
   risk_tier: string; status: string
   renderable: boolean; bulk_acceptable: boolean
+  // The Loop-2 gate's before/after columns (EVALUATION-SUBSTRATE amendment E2 / ES-6). ALWAYS
+  // present: a proposal with no gate run arrives as `state: 'ungated'` with a reason, so the
+  // absence is a sentence the reader can act on rather than an empty cell. `before`/`after`/
+  // `delta` are `null` when unmeasured and must render as "not measured", never as 0 — the same
+  // rule every eval panel follows. `pin` identifies WHAT produced the pair and is `{}` when
+  // ungated; it is never synthesized.
+  gate: LearningGate
+}
+export interface LearningGate {
+  state: 'gated' | 'ungated'
+  reason: string
+  before: number | null; after: number | null; delta: number | null
+  regressed: boolean
+  scenarios: number
+  halted: boolean
+  dollars_est: number; spend_observed: boolean
+  pin: { model_fp?: string; scenario_sha256?: string }
+  ran_at: string
 }
 export interface LearningInbox {
   rows: LearningRow[]; total: number
@@ -2317,6 +2335,17 @@ export interface IdentityReport {
   narrative: string
   narrative_status: 'skipped' | 'written' | 'unavailable'
   markdown: string
+}
+/** The READ route's body: the report plus the delivery cadence beside it.
+ *
+ *  A separate type rather than an optional field on `IdentityReport`, because the two shapes are
+ *  genuinely different: the GET answers with a report AND a setting about future deliveries, while
+ *  the POST answers with what it just WROTE. An optional `cadence?` would let the panel's control
+ *  render off `undefined` on either shape without the compiler noticing which one it had. */
+export interface IdentityReportView extends IdentityReport {
+  /** `learning.identity_report_cadence`. `''` means the server could not READ the config, which
+   *  the panel must state rather than render as a saved value. */
+  cadence: '' | 'monthly' | 'weekly' | 'off'
 }
 export interface IdentityReportDelivery {
   artifact_slug: string
@@ -4168,6 +4197,39 @@ export interface SheetModelResponse {
   model: SheetModelJson; loss: DocumentLossReport
 }
 
+// ── the deck model ───────────────────────────────────────────────────────────
+// Mirrors `personalclaw/documents/model.py`'s deck half field for field, and every field
+// is REQUIRED here for `DocumentModelJson`'s reason: this shape is posted BACK and
+// `deck_from_dict` is strict, so a field the UI forgot to echo is a dropped slide layout.
+//
+// `level` is the fidelity this change is about: a bullet's indent DEPTH is a field of the
+// content, not a rendering flourish. The writer used to pin it to 0, so every deck came
+// out flat no matter what outline went in.
+export interface DeckBulletJson { text: string; level: number }
+/** Where a slide's shape sits, in inches. All zeros = "wherever the layout puts it", which
+ *  the server leaves inherited rather than pinning — so a zeroed box is not a position at
+ *  the top-left corner, it is the absence of an override. */
+export interface DeckShapeBoxJson { left_in: number; top_in: number; width_in: number; height_in: number }
+/** One slide. `layout` is a layout NAME (`DECK_LAYOUTS`), never an index — an index means
+ *  a different thing in every template. `""` means "laid out from the content". */
+export interface DeckSlideJson {
+  title: string
+  bullets: DeckBulletJson[]
+  notes: string
+  artifact_slug: string
+  layout: string
+  title_box: DeckShapeBoxJson
+  body_box: DeckShapeBoxJson
+}
+/** `title` is the deck's COVER slide — the server reads a leading title slide back into
+ *  this field and re-renders it as one, so editing it does not append a second cover.
+ *  `width_in`/`height_in` are the slide size (0 = the template's own). */
+export interface DeckModelJson { title: string; slides: DeckSlideJson[]; width_in: number; height_in: number }
+export interface DeckModelResponse {
+  slug: string; kind: string; version: number; mime: string
+  model: DeckModelJson; loss: DocumentLossReport
+}
+
 /** One deployed artifact. `url` is the stable in-gateway path the artifact is
  *  served at — always `/artifacts/serve/<slug>/`, never a public URL: local-only
  *  deploy, so it is reachable exactly to whoever holds a dashboard session. */
@@ -5542,14 +5604,22 @@ export const api = {
   learningHealth: (days = 7) =>
     get<LearningHealth>(`/api/learning/health?days=${days}`),
   /** The identity report, DETERMINISTIC. No model call — a panel mounting must not
-   *  spend one, so the narrative is only composed by the POST below. */
-  identityReport: (days = 30) =>
-    get<IdentityReport>(`/api/learning/identity-report?days=${days}`),
+   *  spend one, so the narrative is only composed by the POST below.
+   *
+   *  `days` is OMITTED by default so the server derives the window from the configured cadence.
+   *  It used to default to 30 here, which made a weekly install's panel say "last 30 days" about
+   *  a document its own cron writes over 7 — the FE quietly overriding a setting it also renders. */
+  identityReport: (days?: number) =>
+    get<IdentityReportView>(`/api/learning/identity-report${days === undefined ? '' : `?days=${days}`}`),
   /** Compose, narrate, persist the versioned artifact and raise ONE inbox item. Separate from
    *  the GET because it spends a model call and writes two durable things; the scheduled job
-   *  (when it lands) calls the same backend function, so there is one owner, not two. */
-  deliverIdentityReport: (days = 30) =>
-    post<IdentityReportDelivery>(`/api/learning/identity-report?days=${days}`, {}),
+   *  calls the same backend function, so there is one owner, not two. `days` is omitted by
+   *  default for the same reason as the GET — the hand-run's period is the cadence's period. */
+  deliverIdentityReport: (days?: number) =>
+    post<IdentityReportDelivery>(
+      `/api/learning/identity-report${days === undefined ? '' : `?days=${days}`}`,
+      {},
+    ),
   /** The judge tier-recommendation table. Read-only: the RUN is
    *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
    *  must not start one. 404 carries a distinct code for "no benchmark yet" vs "evals off". */
@@ -6530,6 +6600,15 @@ export const api = {
   // check into every editor, which is a discriminator the URL already carries.
   artifactSheetModel: (slug: string) => get<SheetModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
   saveArtifactSheetModel: (slug: string, version: number, model: SheetModelJson) =>
+    fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },
+      body: JSON.stringify({ model }),
+    }).then(j<{ slug: string; version: number; mime: string }>),
+  // …and again for a deck, for the same reason: one endpoint pair, three model shapes, the
+  // kind decides which crosses (`documents/model_codec.py`).
+  artifactDeckModel: (slug: string) => get<DeckModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
+  saveArtifactDeckModel: (slug: string, version: number, model: DeckModelJson) =>
     fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },

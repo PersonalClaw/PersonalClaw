@@ -53,6 +53,14 @@ month's report look like that" has to stay answerable) — and then raises ONE a
 item through :func:`personalclaw.inbox.emit_attention_item`, which is the only correct
 way to raise a durable agent request. Order matters: the artifact is written FIRST, so
 quiet hours suppressing the ping cannot also lose the report. Never a modal.
+
+**The cadence lives here, the clock does not.** This module owns the cadence vocabulary
+(:data:`IDENTITY_REPORT_CADENCES`), what each cadence's reporting window means
+(:func:`cadence_window_days`) and how a period becomes an idempotency key
+(:func:`delivery_dedup_key`). The trigger that fires on it is
+:mod:`personalclaw.action_providers.identity_report_provider`, which owns only the cron
+expressions and the reconcile — so nothing here has to know a scheduler exists, and the
+cron and the hand-run POST call the same :func:`deliver_identity_report`.
 """
 
 from __future__ import annotations
@@ -77,6 +85,33 @@ _MAX_TEXT_LEN = 160
 DEFAULT_WINDOW_DAYS = 30
 MIN_WINDOW_DAYS = 7
 MAX_WINDOW_DAYS = 365
+
+#: The cadence vocabulary — ONE definition, read by four places that must agree:
+#: ``config/loader.py``'s validator, the ``_EDITABLE_CONFIG`` enum spec,
+#: ``identity_report_provider``'s cron map, and the frontend control. Spelled here rather
+#: than at each site because ``guardrails.scan_mode``'s three copies of ``warn/redact/block``
+#: are exactly the drift this file's sibling comments keep paying for.
+#:
+#: ``off`` lives IN the cadence rather than beside it as an ``identity_report_enabled`` bool.
+#: The plan's §T2.5 named both; two switches for one concern is the shape this codebase calls
+#: a stateless control masking a stateful one — ``enabled=true, cadence=off`` and
+#: ``enabled=false, cadence=weekly`` are contradictions a reconciler would have to invent a
+#: precedence for, and one of them is always a setting that silently does nothing.
+CADENCE_MONTHLY = "monthly"
+CADENCE_WEEKLY = "weekly"
+CADENCE_OFF = "off"
+IDENTITY_REPORT_CADENCES: tuple[str, ...] = (CADENCE_MONTHLY, CADENCE_WEEKLY, CADENCE_OFF)
+DEFAULT_CADENCE = CADENCE_MONTHLY
+
+#: Each cadence's reporting window. The report is the ACCUMULATED shape and the window does not
+#: filter the sections, so this only sets what ``used_in_window`` means — "used this week" for a
+#: weekly reader and "used this month" for a monthly one. A weekly report carrying a 30-day
+#: window would say "not used this period" about a skill used nine days ago, to a reader whose
+#: period was seven.
+_CADENCE_WINDOW_DAYS: dict[str, int] = {
+    CADENCE_MONTHLY: DEFAULT_WINDOW_DAYS,
+    CADENCE_WEEKLY: MIN_WINDOW_DAYS,
+}
 
 #: ``narrative_status`` values. Three, not a bool, because "nobody asked for one" and
 #: "one was asked for and no model answered" are different facts about the same empty
@@ -126,6 +161,50 @@ def _parse(ts: str) -> datetime | None:
 def _clip(text: str) -> str:
     t = " ".join(str(text or "").split())
     return t if len(t) <= _MAX_TEXT_LEN else t[: _MAX_TEXT_LEN - 1].rstrip() + "…"
+
+
+# ── the cadence ────────────────────────────────────────────────────────────────────
+
+
+def normalize_cadence(value: object) -> str:
+    """Coerce *value* to a cadence word, reading an unknown one as the default.
+
+    Default rather than ``off``: an unrecognised word is a typo, and silently switching the
+    report off would make a misspelling indistinguishable from a deliberate opt-out — the
+    reading a user can never diagnose. ``_workspace_default_mode`` in the config loader makes
+    the same call for the same reason, and this is the function that one delegates to so the
+    vocabulary has one definition.
+    """
+    word = str(value or "").strip().lower()
+    return word if word in IDENTITY_REPORT_CADENCES else DEFAULT_CADENCE
+
+
+def cadence_window_days(cadence: str) -> int:
+    """The reporting window *cadence* implies. ``off`` reads as the default window.
+
+    ``off`` still answers, because the deterministic preview on the Learning page has to render
+    a period even when nothing is scheduled — a panel that showed no window while the cadence
+    was off would look broken rather than switched off.
+    """
+    return _CADENCE_WINDOW_DAYS.get(normalize_cadence(cadence), DEFAULT_WINDOW_DAYS)
+
+
+def configured_cadence() -> str:
+    """The cadence from config, or ``""`` when the config could not be read.
+
+    ``""`` rather than the default, because a caller that cannot read the config must not GUESS
+    a cadence. `remediation_provider` reports an unreadable config as a failed run instead of
+    assuming its engine is on, and both callers here follow it: the reconciler leaves the
+    trigger row exactly as it found it, and the provider reports the failure. Defaulting to
+    ``monthly`` on a broken read would deliver a report to someone who had turned it off.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return normalize_cadence(AppConfig.load().learning.identity_report_cadence)
+    except Exception:
+        logger.debug("identity report: cadence unreadable", exc_info=True)
+        return ""
 
 
 @dataclass(frozen=True)
@@ -405,6 +484,31 @@ def compose_identity_report(
     )
 
 
+def identity_report_payload(
+    *,
+    window_days: int = DEFAULT_WINDOW_DAYS,
+    vs: Any = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """The read route's whole wire body: the deterministic report plus the delivery cadence.
+
+    A composer rather than two lines in the handler, and the reason is measured, not stylistic.
+    ``test_wire_error_envelope_census`` pins the learning surface's unresolved payload rows as
+    ``Call`` — a composer's return value — because a dict assembled in the route reads as
+    ``Name``, which is the indirection that census exists to expose: it makes the handler a
+    second author of a shape this module owns. The first draft of this route did
+    ``payload = ...to_payload(); payload["cadence"] = ...`` and reddened it.
+
+    The cadence rides BESIDE the report, not inside :class:`IdentityReport`. The report is a
+    gather over stores; a cadence is a setting about future deliveries. Putting it on the
+    dataclass would make every consumer of a composed report — including the delivery record —
+    carry a field that has nothing to do with what was gathered.
+    """
+    payload = compose_identity_report(window_days=window_days, vs=vs, now=now).to_payload()
+    payload["cadence"] = configured_cadence()
+    return payload
+
+
 # ── the deterministic document ─────────────────────────────────────────────────────
 
 
@@ -672,16 +776,30 @@ def _write_artifact(markdown: str, *, generated_at: str) -> tuple[str, int]:
 
 
 def delivery_dedup_key(report: IdentityReport) -> str:
-    """One item per calendar month. The month is the idempotency key.
+    """One item per DELIVERY PERIOD — the period the report itself declares.
 
-    A monthly delivery firing twice is a real event, not a hypothetical: the boot sweep
-    re-arms an overdue trigger, and a user can run a report by hand. Keying on the month
-    means the second one returns the existing row and fires NO second notification, which
-    is `usage_recap_provider`'s reasoning and `emit_attention_item`'s ``dedup_key``
-    contract rather than a new mechanism.
+    A delivery firing twice inside one period is a real event, not a hypothetical: the boot
+    sweep re-arms an overdue trigger, and a user can run a report by hand. Keying on the period
+    means the second one returns the existing row and fires NO second notification, which is
+    `usage_recap_provider`'s reasoning and `emit_attention_item`'s ``dedup_key`` contract
+    rather than a new mechanism.
+
+    🔴 **This was hardcoded to the calendar month**, which was right while monthly was the only
+    cadence and wrong the instant ``weekly`` existed: `emit_attention_item` returns the existing
+    open row and fires no second notification for a repeated key, so weeks 2, 3 and 4 of every
+    month would have written a new artifact version and told nobody — a scheduled job that fires
+    and is discarded, which is this codebase's inert-control defect wearing a cron.
+
+    Derived from ``report.window_days`` rather than taking a cadence argument, so the cron and
+    the hand-run agree without either being told which one it is: a seven-day report buckets by
+    ISO week (``%G-W%V``, the ISO year — ``%Y`` would collide across a New Year boundary),
+    anything longer by calendar month.
     """
-    month = (_parse(report.generated_at) or _now()).strftime("%Y-%m")
-    return f"learning:identity-report:{month}"
+    at = _parse(report.generated_at) or _now()
+    bucket = (
+        at.strftime("%G-W%V") if report.window_days <= MIN_WINDOW_DAYS else at.strftime("%Y-%m")
+    )
+    return f"learning:identity-report:{bucket}"
 
 
 async def deliver_identity_report(

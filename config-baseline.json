@@ -243,6 +243,12 @@
     "type": "bool"
   },
   {
+    "default": false,
+    "path": "browse.user_browser_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": true,
     "path": "checkpoints.enabled",
     "sensitive": false,
@@ -939,6 +945,12 @@
     "path": "learning.enabled",
     "sensitive": false,
     "type": "bool"
+  },
+  {
+    "default": "monthly",
+    "path": "learning.identity_report_cadence",
+    "sensitive": false,
+    "type": "str"
   },
   {
     "default": 3,

@@ -1,23 +1,22 @@
 {
-  "name": "lesson_application",
-  "version": 1,
-  "fixture_home": "empty",
   "description": "Correct the agent in session 1, verify it applies the correction in session 2. Tests cross-session learning.\n",
   "dimensions": [
     "lesson_application"
   ],
+  "fixture_home": "empty",
+  "name": "lesson_application",
   "sessions": [
     {
       "name": "correction",
       "turns": [
         {
-          "user": "When I ask you to format code, always use 2-space indentation, not 4.",
           "assertions": [
             {
               "type": "contains",
               "value": "2"
             }
-          ]
+          ],
+          "user": "When I ask you to format code, always use 2-space indentation, not 4."
         }
       ]
     },
@@ -25,15 +24,19 @@
       "name": "verify_lesson",
       "turns": [
         {
-          "user": "Format this Python dict: {'a': 1, 'b': 2}",
           "assertions": [
             {
               "type": "regex",
               "value": "\\n  [^ ]"
             }
-          ]
+          ],
+          "user": "Format this Python dict: {'a': 1, 'b': 2}"
         }
       ]
     }
-  ]
+  ],
+  "tiers": [
+    "gate"
+  ],
+  "version": 2
 }

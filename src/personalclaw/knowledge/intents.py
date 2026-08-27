@@ -22,6 +22,7 @@ reuses the existing knowledge LLM pool — no new model wiring.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -40,9 +41,27 @@ _ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,48}$")
 def slugify_goal(goal: str) -> str:
     """Derive a stable intent id from its goal — the user never types one (vision).
     Lowercase, non-alphanumerics → hyphens, trimmed, capped at 48 chars to satisfy
-    ``_ID_RE``. Empty/symbol-only goals fall back to ``intent``."""
+    ``_ID_RE``.
+
+    🔴 The fallback is DERIVED, not constant. ``_ID_RE`` admits only ``[a-z0-9-]``, so
+    every goal written in a non-Latin script slugifies to the empty string — and a
+    constant ``intent`` fallback therefore gave *every* such goal the SAME id.
+    Measured: ``slugify_goal("健康診断") == slugify_goal("日本語") == "intent"``, so a
+    Japanese-, Chinese-, Korean-, Greek-, Hebrew- or Cyrillic-speaking user could hold
+    exactly one intent, and creating a second silently destroyed the first (#758).
+    Refusing the collision alone would be a dead end for those users, because there is
+    no id field for them to disambiguate with — the derivation itself has to separate
+    them.
+
+    Hashing the goal keeps the property the create path depends on: the id is a pure
+    function of the goal, so re-posting the same goal is idempotent rather than
+    accumulating duplicates. Opaque ids are acceptable here because every surface
+    displays ``goal``; the id only ever appears in a URL."""
     slug = re.sub(r"[^a-z0-9]+", "-", goal.lower()).strip("-")[:48].strip("-")
-    return slug or "intent"
+    if slug:
+        return slug
+    digest = hashlib.sha256(goal.strip().encode("utf-8")).hexdigest()[:12]
+    return f"intent-{digest}"
 
 
 # Standard field types the matcher may emit; the UI renders each type-aware.
@@ -148,12 +167,38 @@ class IntentStore:
     def save(self, intents: list[Intent]) -> None:
         atomic_write(self._path, json.dumps([i.to_dict() for i in intents], indent=2))
 
-    def upsert(self, intent: Intent) -> None:
+    def upsert(self, intent: Intent, *, replace: bool = False) -> None:
+        """Write one intent, keyed on ``id``.
+
+        ``replace`` is the caller declaring which operation it means, and it is required
+        because the id is DERIVED from the goal on the create path:
+
+        * ``False`` (default) — a create. The id came from :func:`slugify_goal`, so an id
+          already in the file belongs to a *different* goal that happened to slugify the
+          same way. Overwriting it destroyed the user's first intent with no warning and
+          no way to recover it, and the endpoint answered ``201`` as if it had created
+          something (#758). Two goals as ordinary as "track homelab drive health" and
+          "Track homelab drive health!" collide.
+        * ``True`` — an update. The caller named the id, so it means that row and a goal
+          change is the edit being saved.
+
+        The typed ``intent_id_taken:<id>`` code follows ``rename_tag``'s
+        ``tag_name_taken:<name>``: the sibling collision guard that already exists in this
+        subsystem. Defaulting to the SAFE side means a caller that never considered
+        collisions cannot silently destroy data.
+        """
         if not _ID_RE.match(intent.id):
             raise ValueError(
                 f"invalid intent id {intent.id!r} (lowercase/digits/hyphen, ≤49 chars)"
             )
-        intents = [i for i in self.load() if i.id != intent.id]
+        existing = self.load()
+        if not replace:
+            clash = next((i for i in existing if i.id == intent.id), None)
+            # An identical goal is the same intent, so re-posting it stays idempotent —
+            # only a DIFFERENT goal landing on this id is the destructive case.
+            if clash is not None and clash.goal.strip() != intent.goal.strip():
+                raise ValueError(f"intent_id_taken:{intent.id}")
+        intents = [i for i in existing if i.id != intent.id]
         intents.append(intent)
         self.save(intents)
 

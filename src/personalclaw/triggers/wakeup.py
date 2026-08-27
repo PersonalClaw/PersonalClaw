@@ -170,6 +170,18 @@ class Disposition(str, Enum):
     REQUEUED = "requeued"
     #: No session exists and none could be created. The caller spools or creates.
     NO_SESSION = "no_session"
+    #: A trigger-declared RESUME TARGET: this wakeup names a parked RUN, so it never enters a
+    #: session inbox at all and the loop applies it to the run directly.
+    #:
+    #: 🔴 A separate disposition rather than reusing `QUEUED`/`NO_SESSION`, because measured:
+    #: **nothing in the tree dispatches on `Wakeup.kind`.** `executor.drain` reads
+    #: `kwargs['wakeup']`, checks `trigger_id`, and hands the payload to the injected `runner` —
+    #: `grep -n kind executor.py` returns one hit, inside a prose docstring. So a resume queued
+    #: onto an inbox would be drained and executed as the trigger's ordinary ACTION, which is
+    #: strictly worse than not delivering it: it would look like the resume worked. Keeping the
+    #: resume out of `deliver()` is what stops that, and the typed disposition is what makes
+    #: "this was never an inbox delivery" legible instead of implied.
+    RESUME_TARGET = "resume_target"
 
 
 @dataclass
@@ -198,17 +210,89 @@ class Delivery:
         }
 
 
-def wakeup_for(fire: Any, *, seq: int = 0, now: float = 0.0) -> Wakeup:
-    """Build the `wake` a due fire becomes. Takes S88's `DueFire`.
+#: The key inside `Trigger.workflow` that names a parked run to resume instead of starting a new
+#: run. Inside the EXISTING `workflow` dict rather than a new `Trigger` field, because a resume
+#: target is per-trigger STATE that already has a home: `workflow` is the automation-substrate slot
+#: that says WHAT this trigger does (`inline` / `ref` / `provider`), and "resume run r7" is another
+#: answer to that question. It is deliberately not config — nothing global tunes it, every value is
+#: specific to one automation — so the config round-trip contract does not apply to it.
+RESUME_TARGET_KEY = "resume"
 
-    A fire is always a `wake`, never a `resume`: a resume answers a question a parked run
-    asked, and a
-    trigger firing on its schedule has asked nothing. Conflating them would make every
-    scheduled fire
-    un-droppable and defeat `overlap: skip`.
+
+def resume_target_of(trigger: Any) -> dict[str, Any]:
+    """The parked run this trigger targets, or `{}` when it starts a new run instead.
+
+    Returns the NORMALIZED target — `{run_id, project_id, resume_token, gate_answer,
+    answers_gate}` — so every consumer reads the same shape rather than re-deriving it from a
+    raw dict a user or an agent authored.
+
+    A missing `run_id` yields `{}` — i.e. "no target", which falls back to an ordinary new-run
+    wake. That direction is deliberate and it is the one place this function is fail-OPEN: a
+    `workflow: {resume: {}}` with no run id names nothing, and an authoring mistake that silently
+    disabled a trigger's normal fire would be much harder to find than one that fires normally.
+    `models._resume_target_issues` is what tells the author about it, at save time, where the
+    mistake was made.
+
+    `answers_gate` is derived rather than authored: an `answer` key PRESENT means "answer the
+    pending gate with this", and absent means "clear the pause and let the run carry on"
+    (`service.resume_run`'s own token-less, answer-less path). The distinction has to survive
+    `answer: false` and `answer: null`, both of which are legitimate gate answers that a truthiness
+    test would read as "no answer given" — so presence is checked, never the value.
+    """
+    workflow = getattr(trigger, "workflow", None)
+    if not isinstance(workflow, dict):
+        return {}
+    raw = workflow.get(RESUME_TARGET_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    run_id = str(raw.get("run_id", "") or "").strip()
+    if not run_id:
+        return {}
+    return {
+        "run_id": run_id,
+        "project_id": str(raw.get("project_id", "") or "").strip(),
+        "resume_token": str(raw.get("resume_token", "") or "").strip(),
+        "gate_answer": raw.get("answer"),
+        "answers_gate": "answer" in raw,
+    }
+
+
+def wakeup_for(fire: Any, *, seq: int = 0, now: float = 0.0) -> Wakeup:
+    """Build the wakeup a due fire becomes. Takes S88's `DueFire`.
+
+    A fire is a `wake` unless the trigger declares a RESUME TARGET, in which case it is a
+    `resume`. Both readings of §3.2 are honoured, and the distinction is the trigger's own
+    declaration rather than anything about the schedule:
+
+    * **No target → `wake`, droppable, unchanged.** "A trigger firing on its schedule has asked
+      nothing", so making every scheduled fire un-droppable would defeat `overlap: skip`. That
+      sentence used to be this docstring's reason for a hard rule and it is still the reason for
+      the DEFAULT — every trigger that does not opt in behaves exactly as before.
+    * **A declared target → `resume`, never droppable.** The trigger has asked something: it named
+      a parked run. Dropping that because the session looks busy is what §3.2 refuses.
+
+    This is where §3's documented step "resolve def / **resume target**" (`firepath`'s own header)
+    finally has a producer. `resume_for` had ZERO production callers before this — measured — so
+    the resume path was a complete decision layer with no call site, and no trigger could target
+    an existing run.
     """
     trigger = getattr(fire, "trigger", None)
     trigger_id = str(getattr(trigger, "id", "") or getattr(fire, "trigger_id", "") or "")
+    target = resume_target_of(trigger)
+    if target:
+        return resume_for(
+            trigger_id=trigger_id,
+            # EMPTY, and that is the honest value rather than an omission. `resume_for`'s contract
+            # is that the key names "the session that PARKED", which for a run-targeted resume is
+            # the run's own session — not derivable here and not needed: this wakeup never enters
+            # an inbox (see `Disposition.RESUME_TARGET`). Deriving the TRIGGER's key would name a
+            # session that provably did not park this run, which is the mis-delivery that
+            # docstring exists to forbid.
+            session_key="",
+            answer={"trigger_id": trigger_id, **target},
+            seq=seq,
+            now=now,
+        )
     return Wakeup(
         kind=WakeKind.WAKE.value,
         trigger_id=trigger_id,
@@ -368,10 +452,31 @@ def dispatch_fires(sessions: Any, fires: list[Any], *, now: float = 0.0) -> list
     inbox. Without that a five-trigger coalesced wake could drain in any order, and a user
     watching two
     dependent automations would see them run backwards.
+
+    🔴 **A RESUME TARGET NEVER REACHES `deliver`.** A resume names a parked run, not a session,
+    and measured: `executor.drain` never dispatches on `Wakeup.kind`, so a resume queued onto an
+    inbox is drained and executed as the trigger's ordinary ACTION — a resume that looks like it
+    worked while doing entirely different work, unattended. So a resume-target fire is dispatched
+    as `RESUME_TARGET` and the loop applies it to the run directly, exactly as `_execute_delivery`
+    already runs a `NO_SESSION` fire directly on the reasoning that "a trigger fire does not need a
+    model session". Order is preserved across both kinds: the batch position is the seq, and one
+    `Delivery` is returned per input fire either way.
     """
     stamp = now or time.time()
-    wakeups = [wakeup_for(f, seq=i + 1, now=stamp) for i, f in enumerate(fires or [])]
-    return deliver_all(sessions, wakeups)
+    out: list[Delivery] = []
+    for i, fire in enumerate(fires or []):
+        wakeup = wakeup_for(fire, seq=i + 1, now=stamp)
+        if wakeup.kind == WakeKind.RESUME.value:
+            out.append(
+                Delivery(
+                    Disposition.RESUME_TARGET.value,
+                    wakeup,
+                    "names a parked run; the loop resumes it rather than queueing an inbox wake",
+                )
+            )
+            continue
+        out.append(deliver(sessions, wakeup))
+    return out
 
 
 def retry_queue(deliveries: list[Delivery]) -> list[Wakeup]:

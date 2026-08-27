@@ -956,6 +956,15 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # reverts. Live-editable for the same reason — a user who does not want the flywheel
     # measuring its own accepted proposals should be able to stop it without a restart.
     "learning.attribution_enabled": {"type": "bool"},
+    # The periodic identity report's cadence, and its ONLY switch (`off` is a member, not
+    # a sibling bool). Live-editable because the reconciler CONVERGES it — `reconcile_digest_cron`'s
+    # contract — so changing it on the Learning page re-arms the trigger without the user knowing
+    # one exists. The `values` list is asserted equal to `learning_report.IDENTITY_REPORT_CADENCES`
+    # by `test_identity_report_schedule.py`, so this copy cannot drift from the vocabulary.
+    "learning.identity_report_cadence": {
+        "type": "enum",
+        "values": ["monthly", "weekly", "off"],
+    },
     # The write-semantics knobs worth changing without a restart.
     # `require_citations` is here deliberately — an owner mid-research may need to store an
     # unsourced note and should not have to restart the gateway to do it.
@@ -1039,6 +1048,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # is the opt-in to announcing this gateway on the local network.
     "companion.discovery_enabled": {"type": "bool"},
     "companion.instance_name": {"type": "str", "max_len": 64},
+    # The connector toggle for the `user_browser` execution target.
+    # Editable here so the Settings control has a write path; there is deliberately no knob for
+    # the `gateway` target, which needs no permission to drive this machine's own profile.
+    "browse.user_browser_enabled": {"type": "bool"},
     # Local models — the memory-pressure warning threshold the
     # loaded-models bar reads, and the crashed-sidecar respawn budget. Both are advisory
     # knobs on the user's own machine: the threshold blocks nothing, and the restart bound

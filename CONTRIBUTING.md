@@ -245,6 +245,17 @@ commits made before the hooks were installed, or with `--no-verify`, would
 otherwise reach CI unformatted. If it fails, run `make format` then `make lint`
 and commit the result.
 
+**Both halves check the working tree, so the push must come from the worktree
+that owns the branch.** The outgoing commits decide *which* halves run; what
+they then check is `git rev-parse --show-toplevel`. Those agree only when the
+ref you are pushing is what this worktree has `HEAD` on, so the hook refuses any
+outgoing ref that is not — naming both commits and pointing at `git worktree
+list`. Pushing `some-branch` from a checkout sitting on `main` would otherwise
+scope the gate by `some-branch`'s diff and then validate `main`'s tree: green,
+and proof of nothing about what shipped. Push one ref per worktree rather than
+batching several into one `git push` to pay the chain's cost once. A branch
+deletion carries no commits and is not affected.
+
 The same bar applies to dependency updates: a Dependabot or manual bump of
 React or the build toolchain merges only after this gate is green — reviewing
 the diff is not sufficient for changes whose failure mode is invisible to

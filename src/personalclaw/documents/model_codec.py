@@ -12,7 +12,8 @@ So the table IS the capability: :data:`MODEL_KINDS` is derived from it, which ma
 exist, and present the moment they do.
 
 The parsers are imported lazily, inside :func:`get_codec`, because they pull in openpyxl /
-python-docx and the gateway must not pay for a document library on a route nobody called.
+python-docx / python-pptx and the gateway must not pay for a document library on a route
+nobody called.
 """
 
 from __future__ import annotations
@@ -69,16 +70,24 @@ def get_codec(kind: str) -> ModelCodec | None:
             to_dict=sheet_to_dict,
             from_dict=sheet_from_dict,
         )
+    if kind == "pptx":
+        from personalclaw.documents.deck_json import deck_from_dict, deck_to_dict
+        from personalclaw.documents.pptx_parser import parse_pptx
+
+        return ModelCodec(
+            kind="pptx",
+            parse=parse_pptx,
+            to_dict=deck_to_dict,
+            from_dict=deck_from_dict,
+        )
     return None
 
 
-#: The kinds ``…/model`` serves. ``pptx`` is absent deliberately: its writer ships but its
-#: parser is ``DFE-8``, and a read-less save could only overwrite a document with content
-#: the editor never loaded.
+#: The kinds ``…/model`` serves.
 #:
 #: Declared, not computed by calling :func:`get_codec` for every candidate — that would
-#: import both document libraries at module import and throw away the laziness above. The
+#: import all three document libraries at module import and throw away the laziness above. The
 #: drift this list could carry (a kind advertised with no codec behind it) is closed by
 #: ``test_every_declared_model_kind_resolves_to_a_codec``, which is where a capability
 #: claim belongs: asserted, not made true by construction at a cost.
-MODEL_KINDS: tuple[str, ...] = ("docx", "xlsx")
+MODEL_KINDS: tuple[str, ...] = ("docx", "xlsx", "pptx")

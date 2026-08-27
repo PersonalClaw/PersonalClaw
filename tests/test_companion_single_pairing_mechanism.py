@@ -30,6 +30,7 @@ subject is.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -68,7 +69,8 @@ _PLATFORM_SDK_MARKERS = (
 )
 
 
-def _files(roots: tuple[str, ...]) -> list[Path]:
+@lru_cache(maxsize=None)
+def _files(roots: tuple[str, ...]) -> tuple[Path, ...]:
     """Every text source file under ``roots``, skipping generated and vendored trees."""
     out: list[Path] = []
     for rel in roots:
@@ -81,7 +83,28 @@ def _files(roots: tuple[str, ...]) -> list[Path]:
             if _SKIP_DIRS & set(path.parts):
                 continue
             out.append(path)
-    return out
+    return tuple(out)
+
+
+@lru_cache(maxsize=None)
+def _corpus(roots: tuple[str, ...]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Read every file under ``roots`` ONCE, as ``((relative path, lines), …)``.
+
+    `_census` is called once per pattern, and `test_no_speculative_per_platform_code` alone
+    walks nine markers — so re-walking and re-reading `src/personalclaw` plus `web/src` inside
+    every call made the cost O(files x patterns) for no benefit. Measured on an idle machine,
+    that one test took **45.0s** of the module's 71.7s; under the load this repo is routinely
+    developed at (several agents, load 40-70 on 18 cores) it ran past the suite's own 120s
+    per-test timeout and failed as a timeout rather than an assertion, which reads like a broken
+    test rather than a slow one. Reading once makes the tree a constant, not a multiplier.
+
+    The tuple-of-tuples return is deliberate: `lru_cache` hands the same object to every caller,
+    so an immutable one cannot be mutated by one test and observed by the next.
+    """
+    return tuple(
+        (str(p.relative_to(_ROOT)), tuple(p.read_text(encoding="utf-8").splitlines()))
+        for p in _files(roots)
+    )
 
 
 def _census(
@@ -94,10 +117,10 @@ def _census(
         else (lambda line, needle=pattern: needle in line)
     )
     hits: dict[str, list[int]] = {}
-    for path in _files(roots):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for rel, lines in _corpus(roots):
+        for lineno, line in enumerate(lines, 1):
             if matches(line):
-                hits.setdefault(str(path.relative_to(_ROOT)), []).append(lineno)
+                hits.setdefault(rel, []).append(lineno)
     return hits
 
 

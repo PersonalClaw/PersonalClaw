@@ -346,7 +346,9 @@ class TestTheWorkflowActionNode:
         monkeypatch.setattr(
             bp.BrowseActionProvider,
             "_open",
-            lambda self, cfg, ctx: _done((session, page, None)),
+            # `cdp_url` is keyword-only on the real seam (BA-7 resolves the target before the
+            # connect, so `_open` no longer reads the config key itself).
+            lambda self, cfg, ctx, *, cdp_url="": _done((session, page, None)),
         )
 
         node = Node.from_dict(
@@ -672,7 +674,9 @@ class TestParking:
         decide = _Decide("NOTES the index lists two guides", fallback="SCROLL down")
         monkeypatch.setattr(bp, "_decide", decide)
         monkeypatch.setattr(
-            bp.BrowseActionProvider, "_open", lambda self, cfg, ctx: _done((session, page, None))
+            bp.BrowseActionProvider,
+            "_open",
+            lambda self, cfg, ctx, *, cdp_url="": _done((session, page, None)),
         )
 
         result = _run(
@@ -810,7 +814,7 @@ class TestProviderRefusals:
         monkeypatch.setattr(
             BrowseActionProvider,
             "_open",
-            lambda self, cfg, ctx: opened.append(1) or _done((None, None, None)),
+            lambda self, cfg, ctx, *, cdp_url="": opened.append(1) or _done((None, None, None)),
         )
 
         result = _run(

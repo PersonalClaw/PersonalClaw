@@ -72,11 +72,16 @@ def _inventory_secrets() -> frozenset[str]:
         # for the case where the inventory cannot be imported, and that is precisely when the
         # file whose whole content is credentials must not become exportable.
         ".env.pre-keychain",
-        ".local_secret",
-        "sel_hmac.key",
-        "telemetry_salt",
         "session_map.json",
     }
+    # `.local_secret`, `sel_hmac.key` and `telemetry_salt` used to be spelled out here too,
+    # which made this the THIRD hand-kept copy of the same names (with `handlers/files.py`
+    # and `security.py`). That is the drift this function's own docstring warns about, and
+    # #643 was one of the copies not knowing what another did. Unioned rather than replaced:
+    # the extras above are export-specific and belong to this policy.
+    from personalclaw.security import OWN_SECRET_BASENAMES
+
+    literals |= set(OWN_SECRET_BASENAMES)
     try:
         from personalclaw.durability import inventory as inv
 

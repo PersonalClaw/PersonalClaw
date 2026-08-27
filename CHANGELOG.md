@@ -74,6 +74,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **When the model was unavailable, knowledge enrichment told you it had found nothing.**
+
+- **Creating a knowledge intent could silently delete one you already had.**
+
+- **Merging a knowledge tag into one nested underneath it made the tag disappear from the tree.**
+
 - **Knowledge search's keyword fallback never returned anything, in any install.**
 
 - **A loop interrupted by a restart could stay stuck "running" forever, with nothing working on it.**
@@ -212,6 +218,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The approval prompt now tells you what a tool call can touch, and how far your answer reaches.**
 
 ### Security
+
+- **PersonalClaw's own keys were protected in the files area and nowhere else.**
 
 - **A password inside a URL was invisible to every place PersonalClaw redacts secrets.**
 

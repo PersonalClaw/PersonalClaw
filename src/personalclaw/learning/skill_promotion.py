@@ -46,6 +46,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from personalclaw.learning import proposals
 
@@ -308,3 +309,59 @@ def install_accepted_skill(proposal_dict: dict) -> str:
     if not created:
         raise ValueError(f"could not create skill auto/{slug} (invalid name or it already exists)")
     return created
+
+
+def candidate_files(proposal_dict: dict) -> dict[str, str]:
+    """What an accept of this proposal WOULD write: home-relative path → content.
+
+    ES-6's gate needs the candidate artifact to stage in a throwaway home so a planted
+    regression is measurable before the user accepts. It lives here rather than in
+    :mod:`personalclaw.evals.gate` because this module owns the target encoding and the
+    install rail — the gate must not learn to spell an ``auto/`` skill a second way.
+
+    The content comes from :meth:`~personalclaw.skills.SkillsLoader.create_auto_skill` writing
+    into a TEMP skills root, then being read back. Going through the real rail is the whole
+    point: the frontmatter, the ``source: auto`` provenance and the name are byte-for-byte what
+    :func:`install_accepted_skill` would produce, so the gate scores the artifact that would
+    ship and not a re-rendered approximation of it. Nothing under the live home is touched.
+
+    Returns ``{}`` — never raises — when the proposal cannot render one (no slug, no procedure,
+    an invalid name). The caller reads that as "ungated", which is the honest outcome: a
+    candidate nobody can stage is a candidate nobody can score.
+    """
+    import tempfile
+
+    from personalclaw.skills import AutoSkillProvenance, SkillsLoader
+    from personalclaw.skills.loader import SKILLS_DIR_NAME
+
+    slug, description = _decode_target(str(proposal_dict.get("target") or ""))
+    procedure = str(proposal_dict.get("body") or "").strip()
+    if not slug or not procedure:
+        return {}
+    provenance = AutoSkillProvenance(
+        session_key=str(proposal_dict.get("session_key") or ""),
+        created_at=str(proposal_dict.get("created_at") or "") or AutoSkillProvenance.now_iso(),
+    )
+    with tempfile.TemporaryDirectory(prefix="pclaw_gate_candidate_") as tmp:
+        root = Path(tmp)
+        try:
+            created = SkillsLoader(skills_path=root, install_builtins=False).create_auto_skill(
+                slug,
+                description=description,
+                triggers="",
+                procedure_md=procedure,
+                provenance=provenance,
+            )
+        except Exception:
+            logger.debug("candidate render failed for %r", slug, exc_info=True)
+            return {}
+        if not created:
+            return {}
+        rendered = root / created / "SKILL.md"
+        if not rendered.is_file():
+            return {}
+        # The relpath the CHILD will stage: the skills dir's own name plus what the rail chose.
+        # Derived from the rail's return value rather than re-spelled, so a namespace change in
+        # `create_auto_skill` moves both halves at once.
+        relpath = f"{SKILLS_DIR_NAME}/{created}/SKILL.md"
+        return {relpath: rendered.read_text(encoding="utf-8")}
