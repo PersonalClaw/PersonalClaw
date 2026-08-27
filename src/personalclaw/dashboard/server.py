@@ -1987,6 +1987,7 @@ async def start_dashboard(
     # list (healthz, the manifest, the pre-session front door, WS upgrades, and
     # everything outside /api/) is enumerated with reasons in api_version_gate.py.
     from personalclaw.dashboard.api_version_gate import api_version_middleware
+    from personalclaw.dashboard.invalid_id_gate import invalid_id_middleware
 
     # Explicit middleware ordering — self-documenting and immune to future insertions
     app.middlewares[:] = [
@@ -2036,6 +2037,10 @@ async def start_dashboard(
         ),
         app_permission_middleware,
         sel_audit_middleware,
+        # INNERMOST: wraps the handler and nothing else, so it maps a store's refusal of
+        # an unsafe record id to a 400 without also catching one raised by a middleware
+        # (which would be a bug, not a client error). See invalid_id_gate.py.
+        invalid_id_middleware(),
         spa_fallback,
     ]
 
