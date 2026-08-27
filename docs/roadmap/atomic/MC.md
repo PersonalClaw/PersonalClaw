@@ -138,11 +138,33 @@ Amendment §S3 Push-to-approval (T3.2 web push, T3.3 ntfy/UnifiedPush adapter, T
 
 ### `MC-6` — S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping
 
-**Status:** todo
+**Status:** todo — **clause 1 of 2 landed 2026-08-26; clause 2 gated on `MC-5`.**
 
 Amendment §S3.5 (T3.5.1) — former S2 T2.1/T2.2 breadth
 
 **Done when:** Companion adds Running-loops (pause/nudge/stop via loop_routes), tasks, inbox-resolve, and recent-notifications sections working per the original S2 done-whens; the SW maps a push payload's `kind` to per-kind sound/badge using plan-42's rules field (a distinct sound fires for a kind configured in the rules UI).
+
+**Landed (the four sections).** `#/companion` carries Approvals → Running → Tasks → Inbox →
+Recent in one column, in that priority order (`web/src/pages/companion/CompanionSections.tsx`).
+The "Not on the phone yet" stub list `MC-3` shipped is DELETED, not hidden. Every action
+round-trips against the owning surface's own routes — `PATCH /api/loops/{id}` pause/resume/stop
+and `POST /api/loops/{id}/nudge`, `PUT /api/tasks/{id}` state transitions,
+`PUT /api/inbox/{id}` with plan 42's `handled`/`dismissed` lifecycle, `POST /api/notifications/ack`
+— and the optimistic-with-revert contract plus the reconcile-against-the-server rule live once
+in `useCompanionAction.ts` rather than four times. No loop/inbox/task endpoint was invented or
+reshaped. Also closes T2.4's owed "companion nav/link" (a footer link to Settings → Devices,
+recorded as owed to this atom in `MC-2`'s Execution log).
+
+**UNMET — clause 2, the SW sound/badge mapping.** Its call site is `MC-5`'s: the `push` handler
+in `web/src/sw.ts` and `web/src/app/pushPolicy.ts`'s `notificationFor()`, which compose every
+word of the notification from the payload's `kind`. Both exist only on the unmerged
+`feature-mc5-push-approval` (`dbc96b5f`) and are absent at this atom's branch point, so
+implementing the mapping here would mean building a SECOND push handler and a second
+notification composer — and shipping the rules field without a reader would be an inert
+control. Also measured: plan 42's rules field has **no** `sound` key (`notification_rules.Rule`
+is `mode`/`targets`/`conditions`/`verify`, and `MC-5` did not add one), so clause 2 owes a new
+per-(source,kind) field plus its control in `NotificationRulesMatrix.tsx`. See the plan's
+Execution log for the design that is ready to execute once `MC-5` is on `main`.
 
 ### `MC-7` — S4 Capacitor shell wrapping the served companion route
 

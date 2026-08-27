@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
-import { Check, Ban, LayoutDashboard, RefreshCw, ShieldCheck, Clock3, Inbox, Bell, CheckCheck } from 'lucide-react'
+import { Check, Ban, LayoutDashboard, RefreshCw, ShieldCheck, CheckCheck, Smartphone } from 'lucide-react'
 import { api, type PendingApproval } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
@@ -9,14 +9,16 @@ import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import type { RouteProps } from '../../app/useQueryState'
+import { InboxSection, RecentSection, RunningLoopsSection, TasksSection } from './CompanionSections'
 
 /** `#/companion` — the phone control surface, approvals first.
  *
  *  A run that is blocked on a permission decision is the one thing that genuinely cannot wait
  *  until the owner is back at a desk, so the phone route ships that decision FIRST and by
- *  itself. Everything else the companion will eventually carry (running loops, inbox,
- *  notifications) is named here as not-yet-built rather than rendered as an empty list — an
- *  empty "Running" section would read as "nothing is running", which this route cannot know.
+ *  itself and stays at the TOP of the column. `MC-6` adds the rest of the attention path
+ *  underneath it — running loops, tasks, inbox, recent notifications — in
+ *  `CompanionSections.tsx`; the ordering is the priority order and is not negotiable, because
+ *  a blocked run is the only row on this page that another person is waiting on.
  *
  *  No NavRail, no shell chrome: App.tsx returns this route full-screen (like `#/onboarding`)
  *  so the whole viewport belongs to the decision. It is a normal hash route, so the URL
@@ -132,36 +134,30 @@ export function CompanionPage({ navigate }: RouteProps) {
           )}
         </section>
 
-        {/* Honest stubs. Each names the section, says plainly that it is not built on the
-            phone yet, and points at the surface that DOES have it — so it cannot be misread
-            as "you have no running loops". */}
-        <section aria-labelledby="companion-soon-heading" className="flex flex-col gap-s">
-          <h2 id="companion-soon-heading" data-type="title-m" className="text-on-surface">Not on the phone yet</h2>
-          <ul className="flex flex-col gap-s">
-            {NOT_YET.map((s) => (
-              <li key={s.label} className="flex items-center gap-m rounded-lg border border-outline-variant/40 px-l py-l">
-                <s.icon size={16} aria-hidden className="shrink-0 text-on-surface-low" />
-                <div className="min-w-0">
-                  <p data-type="title-m" className="text-on-surface">{s.label}</p>
-                  <p data-type="body-m" className="text-on-surface-low">{s.hint}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-          <Button variant="secondary" size="sm" className="self-start" onClick={() => navigate('dashboard')}>
+        {/* The rest of the attention path (`MC-6`). The "Not on the phone yet" stub list that
+            stood here through MC-3/MC-4/MC-5 is DELETED, not hidden — the sections it named
+            are what these four are. */}
+        <RunningLoopsSection />
+        <TasksSection />
+        <InboxSection />
+        <RecentSection />
+
+        {/* Two ways off this page, and no third. `#/settings/devices` is the ONE device list
+            (`MC-2` consumed plan 54's contract to build it); linking to it is how the phone
+            reaches its own pairing/revocation without the companion growing a second copy —
+            recorded as owed to this atom in MC-2's Execution log entry. */}
+        <footer className="flex flex-wrap gap-s">
+          <Button variant="secondary" size="sm" onClick={() => navigate('dashboard')}>
             <LayoutDashboard size={15} /> Open the full dashboard
           </Button>
-        </section>
+          <Button variant="secondary" size="sm" onClick={() => navigate('settings/devices')}>
+            <Smartphone size={15} /> Paired devices
+          </Button>
+        </footer>
       </div>
     </div>
   )
 }
-
-const NOT_YET = [
-  { label: 'Running loops', hint: 'Pause, nudge and stop arrive in a later release.', icon: Clock3 },
-  { label: 'Inbox', hint: 'Reading and resolving inbox items arrives in a later release.', icon: Inbox },
-  { label: 'Recent notifications', hint: 'The notification feed arrives in a later release.', icon: Bell },
-]
 
 /** Where the request came from and how long it has been waiting — the context that turns a
  *  tool name into a decision. `session` is empty for gateway-originated approvals (a cron

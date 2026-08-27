@@ -57,6 +57,13 @@ export const CACHE_NAMESPACES: Record<string, NamespacePolicy> = {
   dirtree: COLLECTION,
   discover: COLLECTION,
   inbox: LIVE,
+  /** `#/companion`'s four sections (`MC-6`). Each is hyphen-suffixed so it sits in its
+   *  COLLECTION's namespace rather than a `companion:` one — `splitCollectionBusts.test.ts`
+   *  derives a namespace by stripping `-…`, so `invalidateKeys('inbox', true)` reaches the
+   *  phone's copy and a phone action reaches the desktop's. `namespaceOf` here splits on `:`
+   *  only, which is why each suffixed key needs its own declaration (same as `tasks-all`).
+   *  Policy matches the collection it projects, never the reader. */
+  'inbox-companion': LIVE,
   knowledge: COLLECTION,
   /** The Learning page's proposal facets, week rollup, health and judge bench. Keys are built
    *  by `pages/learning/proposalCache.ts` rather than written inline, which is why a census of
@@ -68,8 +75,10 @@ export const CACHE_NAMESPACES: Record<string, NamespacePolicy> = {
    *  frame — under a 5s window every revisit would paint a labelled-stale header for nothing. */
   loop: COLLECTION,
   loops: LIVE,
+  'loops-companion': LIVE,
   models: CONFIG,
   notifications: LIVE,
+  'notifications-companion': LIVE,
   onboarding: CONFIG,
   // PA-5's digest card. LIVE, not COLLECTION: the digest is a read of what a scheduled run just
   // did, and it changes behind the app's back on every fire — a 30-second-fresh digest could
@@ -89,6 +98,7 @@ export const CACHE_NAMESPACES: Record<string, NamespacePolicy> = {
   tasklist: COLLECTION,
   tasks: COLLECTION,
   'tasks-all': COLLECTION,
+  'tasks-companion': COLLECTION,
   tools: CONFIG,
   triggers: COLLECTION,
   /** Definitions, runs and the surfacing column. `#/workflows` hand-rolled these three reads with

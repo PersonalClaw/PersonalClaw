@@ -27,9 +27,25 @@ vi.mock('../../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
 
 const approvals = vi.fn()
 const resolveApproval = vi.fn()
+// `MC-6`'s four sections mount alongside the approvals queue and each makes its own read.
+// Left unmocked they reject (jsdom has no gateway), every section paints its LoadError, and
+// four spurious `role=alert`s + four "Retry" buttons break the assertions below — which is a
+// harness artifact, not a finding. They are stubbed EMPTY here so this file keeps measuring
+// only the approvals queue; the sections have their own suite in `companionSections.test.tsx`.
 vi.mock('../../lib/api', async (orig) => {
   const real = await orig<typeof import('../../lib/api')>()
-  return { ...real, api: { ...real.api, approvals: () => approvals(), resolveApproval: (id: string, action: string) => resolveApproval(id, action) } }
+  return {
+    ...real,
+    api: {
+      ...real.api,
+      approvals: () => approvals(),
+      resolveApproval: (id: string, action: string) => resolveApproval(id, action),
+      uLoops: () => Promise.resolve([]),
+      tasks: () => Promise.resolve({ tasks: [], total: 0 }),
+      inboxPending: () => Promise.resolve([]),
+      notifications: () => Promise.resolve({ notifications: [], unread: 0 }),
+    },
+  }
 })
 
 const AP: PendingApproval = {
@@ -45,7 +61,10 @@ beforeEach(() => {
   resolveApproval.mockReset()
   // COLD cache per test. A warm entry paints instantly and would mask the error branch
   // entirely — `data === undefined && error` is only reachable when nothing is cached.
-  invalidateKeys('companion:approvals')
+  invalidateKeys('companion:', true)
+  // `MC-6`'s sections key on their collection's namespace, so one `companion:` prefix no
+  // longer reaches them.
+  for (const k of ['loops-companion', 'tasks-companion', 'inbox-companion', 'notifications-companion']) invalidateKeys(k)
   sessionStorage.clear()
 })
 afterEach(cleanup)
@@ -176,17 +195,20 @@ describe('the companion approvals queue', () => {
     expect(resolveApproval).toHaveBeenCalledWith('ap-1', 'approve')
   })
 
-  it('stubs the unbuilt sections HONESTLY — never as an empty data state', async () => {
+  // REPLACED by `MC-6`. This slot held "stubs the unbuilt sections HONESTLY", which asserted
+  // the presence of the "Not on the phone yet" list and its three "arrives in a later
+  // release" rows. `MC-6` BUILDS those sections and deletes that list, so the old assertion
+  // is not weakened — its subject no longer exists. The honesty requirement it enforced moved
+  // with the sections: `companionSections.test.tsx` asserts, per section, that a failed fetch
+  // announces rather than falling through to an empty state.
+  it('keeps the approvals queue FIRST once the other sections are on the page', async () => {
     approvals.mockResolvedValue([])
     render(<CompanionPage {...route} />)
     await screen.findByText('Nothing waiting on you')
-    // The heading states the fact; each row says a later release, so none of them can be
-    // read as "you have no running loops" / "your inbox is empty".
-    expect(screen.getByText('Not on the phone yet')).toBeTruthy()
-    for (const label of ['Running loops', 'Inbox', 'Recent notifications']) {
-      expect(screen.getByText(label)).toBeTruthy()
-    }
-    expect(screen.getAllByText(/arrives? in a later release/i).length).toBe(3)
+    // A blocked run is the only row here another person is waiting on, so it stays at the top
+    // of the column no matter how much else the companion grows.
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)[0]).toBe('Approvals')
+    expect(screen.queryByText('Not on the phone yet')).toBeNull()
   })
 })
 
