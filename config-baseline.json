@@ -243,6 +243,12 @@
     "type": "bool"
   },
   {
+    "default": false,
+    "path": "browse.user_browser_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
     "default": true,
     "path": "checkpoints.enabled",
     "sensitive": false,

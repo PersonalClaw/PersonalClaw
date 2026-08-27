@@ -1039,6 +1039,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # is the opt-in to announcing this gateway on the local network.
     "companion.discovery_enabled": {"type": "bool"},
     "companion.instance_name": {"type": "str", "max_len": 64},
+    # BROWSE-AUTOMATION BA-7 — the connector toggle for the `user_browser` execution target.
+    # Editable here so the Settings control has a write path; there is deliberately no knob for
+    # the `gateway` target, which needs no permission to drive this machine's own profile.
+    "browse.user_browser_enabled": {"type": "bool"},
     # Local models (LOCAL-MODEL-MANAGER-V2 §9) — the memory-pressure warning threshold the
     # loaded-models bar reads, and the crashed-sidecar respawn budget. Both are advisory
     # knobs on the user's own machine: the threshold blocks nothing, and the restart bound

@@ -788,3 +788,126 @@ class ElementRef:
   first silent CDP regression. This is a workflow-file change, so it is ordinary implementable work
   and **not** a condition on `BA-3`: it belongs with `BA-5`'s as-a-user validation, where the same
   real-browser gap is already recorded. No owner input remains on either question.
+
+- [2026-08-27][BA-7] **DONE — all three clauses met. Atom marked `🟡` (this code is not on `main`
+  yet; `dag.json` is the driver's to write).** `browse/target.py` is the new owner of the one
+  question "which browser does this task drive": a closed `gateway`/`user_browser` vocabulary, the
+  connector registry, and three typed `AgentError` codes appended to `errors.ERROR_CODES`
+  (`ERR_BROWSE_TARGET_UNKNOWN`, `ERR_BROWSE_TARGET_UNATTENDED`,
+  `ERR_BROWSE_USER_BROWSER_DISCONNECTED` — the agent-facing envelope the browse seam already uses,
+  not the HTTP one).
+
+  **Clause 1 — default `gateway`, byte-identical — proven by a real before/after, not by "the old
+  tests still pass".** `git show origin/main:…/browse_provider.py` was loaded as a second module
+  beside the branch's, the CDP transport stubbed in both, and the SAME 12-case gateway-path matrix
+  run through each: the exact `cdp_url` string handed to `WebSocketCdpTransport.connect`, the
+  `GatedCdpSession` `caller_identity`/`source`, the driver's `screenshot_dir`, the loop's
+  `goal`/`start_url`/`max_steps`, and every branchable `ActionResult` field. **Identical, byte for
+  byte** (6 of the 12 cases reached a connect, so the comparison is not vacuous). The matrix
+  deliberately includes the falsy non-strings the old inline `str(… or "").strip()` had to tolerate
+  (`None`, `0`, `""`, `"   "`, a whitespace-padded URL) and the invalid `max_steps` shapes.
+
+  **Clause 2 — no silent fallback — is STRUCTURAL, not a suppressed branch.** `resolve_cdp_url` is
+  the only endpoint reader, and its `user_browser` arm reads the CONNECTOR and cannot reach
+  `action_config["cdp_url"]` at all, so the gateway profile is *unreachable* from a task that asked
+  for the operator's browser rather than merely unused. `_open` therefore takes a keyword-only
+  resolved `cdp_url` and no longer reads the config key (three existing `_open` test doubles in
+  `test_browse_loop_and_provider.py` were updated for the signature). Asserted in both directions —
+  the skip happens (`outcome="skip"`, `success=True`, typed code, actionable `fix`) AND
+  `probe.connected == []` with the gateway URL absent from the whole result — with a CONNECTED
+  vacuity leg that runs the same provider, the same config shape and the same `_open` seam, does not
+  skip, and connects to the connector's URL only.
+
+  **Clause 3 — never unattended — is refused at REGISTRATION and again at the call site.**
+  `triggers.tools.unattended_action_refusal` is consulted in `create` AND in `update` (the update
+  hole is real: save a `gateway` row, patch its `workflow` to `user_browser`, and a create-only
+  check is walked around). The proof that it is registration-time is that the store is left EMPTY —
+  not "saved and failing". Every trigger in that store is unattended by construction, which is a
+  code fact and not an assumption: the dispatch seam resolves
+  `unattended_dispatch_key(f"trigger:{id}")` and `gateway._background_write_surface` wraps the whole
+  fire — explicitly including "the provider's own writes" — in `SURFACE_BACKGROUND`.
+
+  **The floor CONSUMES the shipped ladder rather than inventing one.** AUTONOMY-GUARDRAILS' ladder
+  has four rungs (`draft_only` → `one_tap` → `auto_with_undo` → `autonomous`) and **no
+  never-unattended rung**, so a fifth name was not minted. Instead: (a) `permits_unattended` is a
+  closed allowlist (an unknown target is refused too, so a future third target must opt in); (b) the
+  run-time floor reads the ONE signal this tree already produces for the question —
+  `state_history.current_surface()` + `is_unattended_surface()`, whose producer is the trigger
+  wrapper above and whose ATTENDED counterpart is the hand-driven "run now" path; (c) a rail asserts
+  `action_type_for_provider("browse").ceiling` never ranks above `one_tap`, so a later session
+  cannot promote the provider to an unattended rung underneath this floor. `guardrails/rungs.py` was
+  READ, not restructured (DCU-5 is live in that area). The floor outranks a connected connector —
+  attachment is not evidence of a person.
+
+  🔴 **The residual gap, stated rather than papered over:** `current_surface()` defaults to
+  `interactive`, so an unattended entry point that sets no surface reads as attended. The trigger
+  path (every clock/cron/file/webhook fire) does set it, which is the path the clause names.
+  Positive-evidence attendance is `BA-9`'s fail-closed `ApprovalGate` + fresh per-task grant, which
+  is deliberately NOT built here.
+
+  **Config round-trip, all five points.** `BrowseConfig.user_browser_enabled` (dataclass + `_meta`)
+  → `load()` (fail-closed `bool(...)` default False, mirroring `companion.discovery_enabled`) →
+  `to_dict()` → `_EDITABLE_CONFIG["browse.user_browser_enabled"]` → a real control in
+  `CompanionPanel.tsx` ("Browser control"). The panel rather than a new surface because the
+  connector IS a companion client — `BA-8` pairs it through the same device-session machinery that
+  panel already advertises for. `test_config_roundtrip.py` provably does NOT cover the PATCH
+  allowlist, so that point is asserted directly, and a new FE rail
+  (`browserControlToggle.test.tsx`) asserts the PATH STRING the click sends — a control posting
+  `companion.user_browser_enabled` would leave every Python test green.
+
+  **`config/loader.py`: +38 lines. Final, post-rebase: 5581 → 5619, with 381 of headroom** against
+  the 6000 ceiling. 🔴 Measured three times, and it moved twice: 5647 → 5685 (315 headroom) against
+  this branch's original base `4c07b995`; then `origin/main` advanced 25 commits and a sibling's
+  refactor took loader.py to **5581**; the rebase onto `a3e17316` lands the final figure above. The
+  lesson is the line itself — a ceiling number inherited from a brief, or even measured at the start
+  of a session, is stale by the end of it.
+
+  **Falsifications (mutate the live line, observe the red, restore from a file copy):**
+  1. `resolve_cdp_url`'s `user_browser` arm made to fall back to `action_config["cdp_url"]` AND the
+     provider's `if not status.connected:` guard narrowed so it never fires ⇒ 3 red:
+     `test_it_NEVER_reaches_the_gateway_endpoint_on_the_same_config` reported
+     `probe.connected == ['ws://…/GATEWAYPROFILE']` (the task DID reach the gateway profile) and both
+     skip tests reported `'' == 'skip'`. **The CONNECTED vacuity leg stayed green**, so the rail
+     measures the fallback and not the feature.
+  2. `patchConfig(\`browse.${key}\`)` retyped to `companion.` (the realistic copy-paste bug) ⇒
+     `browserControlToggle.test.tsx` red on the path assertion, while its sibling on-screen-limits
+     test stayed green. This is the inert-control shape: the switch renders, flips, and writes
+     nothing.
+  3. `permits_unattended(target)` → `... or True` in `unattended_action_refusal` ⇒ the create and
+     update registration tests red (`assert True is False`), while the default-target vacuity leg
+     and the non-browse leg stayed green.
+
+  **What ran against a real browser: NOTHING here, and that is a limitation, not a pass.** Every
+  leg in `test_browse_target.py` stubs the CDP transport, so what is proven is the provider's
+  DECISION about which endpoint to drive — never a real page. The pytest gate installs no browser
+  (the same limitation `BA-2`'s and `BA-3`'s entries record, and `BA-3`'s ruling Q2 already filed
+  the fix as workflow work). `tests/test_browse_cdp_live.py` was NOT touched.
+
+  🔴 **DISCOVERY (found by the post-rebase gate, in my own code).** The first version of
+  `unattended_action_refusal` imported `browse_provider.PROVIDER_NAME` to learn the string
+  `"browse"` — and did it BEFORE checking whether the action was a browse action at all. Measured
+  with `python -X importtime`: that import costs **~1.0s** and drags in `personalclaw.browse` →
+  `browse.compress` → `browse.extraction` → `knowledge.connectors.web_url`. So every
+  `create`/`update` on this store, a `notify` cron included, paid a one-second cold-import chain to
+  read five characters, while the function's own docstring promised "one provider-name comparison".
+  Replaced with a `_BROWSE_PROVIDER = "browse"` literal, with a rail asserting it equals
+  `browse_provider.PROVIDER_NAME` so it cannot drift. Re-measured after: importing
+  `triggers.tools` is 0.124s, the refusal on a `notify` trigger is **3 microseconds**, and neither
+  `personalclaw.browse` nor `browse_provider` appears in `sys.modules` afterwards. A docstring
+  claiming a cost is not evidence of that cost.
+
+  **What `BA-8` needs from this atom:** call `browse.target.register_connector(device_id=…,
+  cdp_url=…)` when the extension attaches and `clear_connector()` when it drops — the registry is a
+  process-global live attachment on purpose (a persisted flag would answer "it was attached once",
+  which is the wrong question for a target chosen to inherit live logins), and `register_connector`
+  is its writer BY DESIGN, with no non-test caller until BA-8 lands. `cdp_url` is what the extension
+  must expose: `resolve_cdp_url` hands it straight to `WebSocketCdpTransport.connect`, so the typed
+  local contract needs a page-target endpoint, not a message channel. `ConnectorStatus.reason`/`fix`
+  are the two sentences already shown to a user; BA-8 should add its own reason there rather than
+  mint a second vocabulary.
+
+  **Corrected citation:** `BA-3`'s row in `docs/roadmap/atomic/BA.md` still cites
+  `ALLOWED_HOOK_PROVIDERS` at `validation.py:555`. Re-measured this session: the frozenset is at
+  **`validation.py:812`** — the same drift `BA-3`'s own log recorded and corrected in the plan, left
+  uncorrected in the atom row. Not edited here (it is `BA-3`'s row, and `dag.json` carries the same
+  string).

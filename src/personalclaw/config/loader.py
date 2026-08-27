@@ -820,6 +820,30 @@ class CompanionConfig:
 
 
 @dataclass
+class BrowseConfig:
+    """Autonomous-browse posture (BROWSE-AUTOMATION §(a)/(d) — BA-7).
+
+    ``user_browser_enabled`` is the connector toggle for the SECOND execution target. The
+    ``gateway`` target needs no switch: it drives this machine's own per-site browser profile,
+    which the operator created for that purpose. The ``user_browser`` target drives the browser
+    they are personally logged into, inheriting every live session in it — so it is OFF by
+    default and turning it on is the posture decision, exactly like ``companion.discovery_enabled``
+    above. With it off, a ``user_browser`` task SKIPS with a typed reason and is never re-pointed
+    at the gateway profile (``browse.target.connector_status``).
+    """
+
+    user_browser_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Browser control",
+            "Let a browse task drive YOUR browser through the connector extension, using the "
+            "sites you are already logged into. Off by default, and never available to a "
+            "scheduled or unattended run.",
+        ),
+    )
+
+
+@dataclass
 class LocalModelsConfig:
     """Local model-manager knobs (LOCAL-MODEL-MANAGER-V2 §9).
 
@@ -4246,6 +4270,10 @@ class AppConfig:
             "Companion apps", "LAN discovery + instance name for native companion clients."
         ),
     )
+    browse: BrowseConfig = field(
+        default_factory=BrowseConfig,
+        metadata=_meta("Browsing", "Which browser an autonomous browse task is allowed to drive."),
+    )
     local_models: LocalModelsConfig = field(
         default_factory=LocalModelsConfig,
         metadata=_meta(
@@ -4406,6 +4434,9 @@ class AppConfig:
         companion_data = data.get("companion", {})
         if not isinstance(companion_data, dict):
             companion_data = {}
+        browse_data = data.get("browse", {})
+        if not isinstance(browse_data, dict):
+            browse_data = {}
         local_models_data = data.get("local_models", {})
         if not isinstance(local_models_data, dict):
             local_models_data = {}
@@ -4757,6 +4788,12 @@ class AppConfig:
                 # the user never asked to expose.
                 discovery_enabled=bool(companion_data.get("discovery_enabled", False)),
                 instance_name=str(companion_data.get("instance_name", "") or ""),
+            ),
+            browse=BrowseConfig(
+                # Opt-in for the same reason `discovery_enabled` directly above is: a plain
+                # read defaulting False. A malformed config must not make the target that
+                # inherits the operator's live logins available.
+                user_browser_enabled=bool(browse_data.get("user_browser_enabled", False)),
             ),
             local_models=LocalModelsConfig(
                 # Clamped to a real percentage: a threshold of 0 would warn permanently
@@ -5350,6 +5387,7 @@ class AppConfig:
             "legibility": asdict(self.legibility),
             "ambient": asdict(self.ambient),
             "companion": asdict(self.companion),
+            "browse": asdict(self.browse),
             "local_models": asdict(self.local_models),
             "sources": asdict(self.sources),
             "packs": asdict(self.packs),
