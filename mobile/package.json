@@ -1,0 +1,26 @@
+{
+  "name": "personalclaw-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Capacitor shell that wraps the gateway's served companion route. Contains no copy of the companion UI.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "cap": "cap",
+    "add:ios": "cap add ios",
+    "add:android": "cap add android",
+    "sync": "cap sync",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android",
+    "build:ios": "cap sync ios && cap build ios",
+    "build:android": "cap sync android && cap build android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.6.8",
+    "@capacitor/core": "^7.6.8",
+    "@capacitor/ios": "^7.6.8"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.6.8"
+  }
+}
