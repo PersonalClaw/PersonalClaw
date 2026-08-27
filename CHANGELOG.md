@@ -625,6 +625,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   you had already made.
   **"Dismiss all" now means all.** It skipped anything you had opened, because opening a row marks it
   as read — so browsing your queue quietly put those rows beyond the reach of the only bulk control.
+- **Editing a task can no longer corrupt it.** Saving an edit wrote whatever you sent, exactly as
+  sent, with no check that it was the right sort of value — because the checks all ran when a task was
+  first built and an edit never re-ran them. What that let through, each measured on a real install:
+  a task given a non-numeric position vanished from every screen while its file stayed on disk,
+  holding its name and unreachable through the app; a task given a single label as plain text instead
+  of a list took **the whole Tasks page** down into an error screen, for every task, and stayed broken
+  after the offending task was deleted; a task given a number where its notes belong made the task
+  **search box fail for every search**, including searches that had nothing to do with it; and a task
+  given a single completion criterion as plain text had it split into one criterion per letter, none
+  of which can ever be ticked, so the task could never be marked done.
+  **One place now decides what each field is**, and both creating and editing go through it — they
+  used to disagree, so the same value could be accepted one way and rejected the other. A value that
+  can't be used is refused with a message naming the field, instead of being stored and discovered
+  later.
+  **Tasks already damaged by this repair themselves.** Reading a task no longer gives up when one
+  field is unusable: that field falls back to its default and the rest of the task loads, so it
+  becomes visible, editable and deletable again with nothing to run and no data lost beyond the
+  value that was already meaningless. The task-search box starts working again on its own.
 
 - **Scheduled automations now actually run.** Every trigger on a clock was deciding it was due,
   writing that down, and advancing its next run time — and then doing nothing. No action ever ran. The

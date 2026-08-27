@@ -334,63 +334,65 @@ class Task:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Task":
-        raw_status = d.get("status", "open")
-        try:
-            status = TaskStatus(raw_status)
-        except ValueError:
-            status = TaskStatus.OPEN
+        """Read a persisted task. NEVER raises on a field it cannot use.
 
-        # Typed dependencies, migrating any legacy flat `depends_on` list on read.
-        deps_raw = d.get("dependencies")
-        if deps_raw:
-            dependencies = [TaskDependency.from_dict(x) for x in deps_raw if isinstance(x, dict)]
-        else:
-            dependencies = [
-                TaskDependency(depends_on_task_id=str(pid), dependency_type=DependencyType.BLOCKS)
-                for pid in (d.get("depends_on") or [])
-                if str(pid).strip()
-            ]
+        Every field goes through `coerce_task_field(..., strict=False)` — the same table the write
+        path uses, in salvage mode. That is what makes this method's tolerance a rule rather than a
+        per-field accident: `order` used to be coerced with a bare `float()`, which RAISED on a
+        value an unguarded `PUT` had already stored, so the task answered 404 on every read while
+        its file sat on disk holding its id (#387). A record with one unusable field now loads with
+        that field defaulted — visible, editable, deletable — which is also how a home poisoned
+        before this fix recovers without a migration.
+        """
+        from_field = coerce_task_field
+
+        # Typed dependencies, migrating any legacy flat `depends_on` list on read. `depends_on` is a
+        # legacy KEY rather than a field, so it is resolved here and not in the coercion table.
+        deps_raw = d.get("dependencies") or d.get("depends_on")
 
         return cls(
-            id=d.get("id", ""),
-            title=d.get("title", ""),
-            status=status,
-            description=d.get("description", ""),
-            provider=d.get("provider", ""),
-            project=d.get("project", ""),
-            task_list_id=d.get("task_list_id", ""),
-            dependencies=dependencies,
-            author=d.get("author", ""),  # absent in pre-attribution task files
-            assignee=d.get("assignee", ""),
-            priority=TaskPriority.normalize(d.get("priority", "medium")),
-            labels=d.get("labels", []),
-            due=d.get("due", ""),
-            order=float(d.get("order", 0.0) or 0.0),
+            id=from_field("id", d.get("id"), strict=False),
+            title=from_field("title", d.get("title"), strict=False),
+            status=from_field("status", d.get("status", "open"), strict=False),
+            description=from_field("description", d.get("description"), strict=False),
+            provider=from_field("provider", d.get("provider"), strict=False),
+            project=from_field("project", d.get("project"), strict=False),
+            task_list_id=from_field("task_list_id", d.get("task_list_id"), strict=False),
+            dependencies=from_field("dependencies", deps_raw, strict=False),
+            author=from_field("author", d.get("author"), strict=False),  # absent pre-attribution
+            assignee=from_field("assignee", d.get("assignee"), strict=False),
+            priority=from_field("priority", d.get("priority", "medium"), strict=False),
+            labels=from_field("labels", d.get("labels"), strict=False),
+            due=from_field("due", d.get("due"), strict=False),
+            order=from_field("order", d.get("order"), strict=False),
             # Measured: `asdict` put the binding in `to_dict` while `from_dict` dropped it, so a
             # materialized task read back as STANDALONE — losing engine ownership after one
             # reload, which is exactly the state where a user's manual write would be accepted.
-            workflow_binding=(
-                WorkflowTaskBinding.from_dict(d["workflow_binding"])
-                if isinstance(d.get("workflow_binding"), dict)
-                else None
+            # Measured: `asdict` put the binding in `to_dict` while `from_dict` dropped it, so a
+            # materialized task read back as STANDALONE — losing engine ownership after one
+            # reload, which is exactly the state where a user's manual write would be accepted.
+            workflow_binding=from_field(
+                "workflow_binding", d.get("workflow_binding"), strict=False
             ),
-            blocked_kind=str(d.get("blocked_kind", "") or ""),
-            preview=str(d.get("preview", "") or ""),
-            done_criterion=str(d.get("done_criterion", "") or ""),
-            evidence=_as_item_list(d.get("evidence", [])),
-            attempts=_as_item_list(d.get("attempts", [])),
-            exit_criteria=[normalize_exit_criterion(e) for e in (d.get("exit_criteria") or [])],
-            action_plan=[
-                normalize_action_plan_item(a, i) for i, a in enumerate(d.get("action_plan") or [])
-            ],
-            notes=[normalize_note(n) for n in (d.get("notes") or [])],
-            research_notes=[normalize_note(n) for n in (d.get("research_notes") or [])],
-            execution_notes=[normalize_note(n) for n in (d.get("execution_notes") or [])],
-            agent_instructions_template=d.get("agent_instructions_template", ""),
-            blocked_reason_kind=d.get("blocked_reason_kind", ""),
-            created_at=d.get("created_at", ""),
-            updated_at=d.get("updated_at", ""),
-            url=d.get("url", ""),
+            blocked_kind=from_field("blocked_kind", d.get("blocked_kind"), strict=False),
+            preview=from_field("preview", d.get("preview"), strict=False),
+            done_criterion=from_field("done_criterion", d.get("done_criterion"), strict=False),
+            evidence=from_field("evidence", d.get("evidence"), strict=False),
+            attempts=from_field("attempts", d.get("attempts"), strict=False),
+            exit_criteria=from_field("exit_criteria", d.get("exit_criteria"), strict=False),
+            action_plan=from_field("action_plan", d.get("action_plan"), strict=False),
+            notes=from_field("notes", d.get("notes"), strict=False),
+            research_notes=from_field("research_notes", d.get("research_notes"), strict=False),
+            execution_notes=from_field("execution_notes", d.get("execution_notes"), strict=False),
+            agent_instructions_template=from_field(
+                "agent_instructions_template", d.get("agent_instructions_template"), strict=False
+            ),
+            blocked_reason_kind=from_field(
+                "blocked_reason_kind", d.get("blocked_reason_kind"), strict=False
+            ),
+            created_at=from_field("created_at", d.get("created_at"), strict=False),
+            updated_at=from_field("updated_at", d.get("updated_at"), strict=False),
+            url=from_field("url", d.get("url"), strict=False),
         )
 
     def prerequisite_ids(self) -> list[str]:
@@ -419,6 +421,255 @@ class TaskComment:
 # The two protected, always-present projects. ``Personal`` is the catch-all for
 # work created without a chosen project; ``Repeatable`` hosts resettable lists.
 DEFAULT_PROJECTS = ("Personal", "Repeatable")
+
+
+# ── The ONE coercion table for a task field ──────────────────────────────────
+#
+# **Why this exists.** A task field was coerced in some places and not others, in BOTH the read
+# and the write path, and the inconsistency was the bug rather than any single missing check.
+# `from_dict` coerced `order` with `float()` and `preview` with `str()`, but took `title`,
+# `description` and `labels` verbatim. `update_task` had typed branches for `status`,
+# `dependencies` and `priority`, and for everything else a catch-all
+# `setattr(task, key, val)` with no check at all. Measured consequences, each its own report:
+#
+#   * `PUT {"order": "abc"}` → 200, then `float("abc")` raised on every read, so the task
+#     answered 404 everywhere while its file stayed on disk (#387).
+#   * `labels: "not-an-array"` persisted as a bare string through BOTH create and update, and
+#     `labels.slice(...).map` took the whole Tasks page into an error boundary (#386).
+#   * `PUT {"description": 12345}` → `(12345).lower()` in the search scorer, so
+#     `POST /api/tasks/search` answered 500 for EVERY query, not only ones that would match
+#     the poisoned task (#388).
+#   * `PUT {"exit_criteria": "via put"}` iterated the string CHARACTER BY CHARACTER, fabricating
+#     one criterion per letter — each un-meetable, so the task became permanently
+#     un-completable. `__post_init__` guards exactly this, and only at construction (#818).
+#
+# So the coercion is a TABLE, exhaustive over `Task`'s fields, and both paths go through it.
+# `tests/test_task_field_coercion.py` asserts the exhaustiveness, which is what makes this
+# extensible: a field added to `Task` without a coercer reds rather than becoming the next
+# field nobody coerced.
+#
+# **Read salvages, write refuses.** The same function serves both, because two functions would
+# drift — but the two paths want opposite things from a value they cannot use:
+#
+#   * a WRITE must refuse it (`strict=True` → `ValueError` → the handler's 400). Accepting junk
+#     is what created every case above.
+#   * a READ must salvage it (`strict=False` → the field's default). "A broken row never
+#     disappears" is this store's stated rule, and a record that 404s is worse than one with a
+#     defaulted field: you cannot fix, or even see, what the API says is absent. This is also
+#     what recovers a task ALREADY poisoned by the bug, with no migration — the `order: "abc"`
+#     record loads with `order: 0.0` and is editable and deletable again.
+
+
+def _as_text(value: Any, *, strict: bool) -> str:
+    """A scalar becomes its text; a CONTAINER is refused.
+
+    `str({"a": 1})` is `"{'a': 1}"` — technically a string and never what anyone meant, and it is
+    what put an object where the frontend expected a label (React error #31). A number, though, is
+    a plausible slip with an obvious reading: `description=12345` means `"12345"`.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if strict:
+        raise ValueError(f"expected text, got {type(value).__name__}")
+    return ""
+
+
+def _as_number(value: Any, *, strict: bool) -> float:
+    """A number, or a refusal. Never a silently-stored string.
+
+    This is `order`, and it is the field that proved the point: an unparseable value written by a
+    200 made every later read raise inside a bare `except`, so the task was simultaneously absent
+    (404) and present (on disk, holding its id).
+    """
+    if value is None or value == "":
+        return 0.0
+    if isinstance(value, bool):  # bool is an int subclass; `order: true` is not an ordering
+        if strict:
+            raise ValueError("expected a number, got a boolean")
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        if strict:
+            raise ValueError(f"expected a number, got {value!r}") from None
+        return 0.0
+
+
+def _as_text_list(value: Any, *, strict: bool) -> list[str]:
+    """A list of text. A bare scalar is WRAPPED, never iterated.
+
+    Wrapping matches `_as_item_list`'s rule for the planning fields and for the same reason: a
+    caller passing one label as a string means one label, and iterating it would produce one entry
+    per character. Elements are coerced individually, so `[{"a": 1}, 42]` cannot reach a renderer
+    that expects strings.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (str, int, float, bool)):
+        return [_as_text(value, strict=strict)]
+    if isinstance(value, dict):
+        if strict:
+            raise ValueError("expected a list of text, got an object")
+        return []
+    try:
+        items = list(value)
+    except TypeError:
+        if strict:
+            raise ValueError(f"expected a list of text, got {type(value).__name__}")
+        return []
+    return [_as_text(v, strict=strict) for v in items]
+
+
+def _as_dict_list(normalizer: Any, *, indexed: bool = False) -> Any:
+    """Build a coercer for a list-of-dict field from its existing per-item normalizer.
+
+    Deliberately reuses `normalize_exit_criterion` / `normalize_action_plan_item` /
+    `normalize_note` rather than restating their shapes: those ARE the canonical forms, they
+    already accept the legacy spellings, and a second opinion here would let the read and the
+    write disagree about what a note is.
+    """
+
+    def _coerce(value: Any, *, strict: bool) -> list[dict]:
+        items = _as_item_list(value)
+        if indexed:
+            return [normalizer(item, i) for i, item in enumerate(items)]
+        return [normalizer(item) for item in items]
+
+    return _coerce
+
+
+def _as_open_dict_list(value: Any, *, strict: bool) -> list[dict]:
+    """A list of dicts whose SHAPE this module does not own.
+
+    `evidence` and `attempts` carry whatever the engine records — `{"kind": "gate", "node": …}`
+    for a gate, a per-attempt record for a retry — so they get the list-ification every planning
+    field gets and nothing more. Normalizing them the way notes are normalized DESTROYS the record:
+    the first draft of this table routed them through `normalize_note` and
+    `test_the_ENGINE_completion_path_persists_evidence` caught it, rewriting
+    `{"kind": "gate", "node": "check"}` to `{"content": "", "timestamp": ""}`.
+
+    Which is the general point: a coercion table is only safe where the shape is actually known.
+    """
+    items = _as_item_list(value)
+    out: list[dict] = []
+    for item in items:
+        if isinstance(item, dict):
+            out.append(item)
+        elif strict:
+            raise ValueError(f"expected a list of objects, got {type(item).__name__}")
+    return out
+
+
+def _as_dependencies(value: Any, *, strict: bool) -> list["TaskDependency"]:
+    if value is None:
+        return []
+    if isinstance(value, (str, dict)):
+        value = [value]
+    out: list[TaskDependency] = []
+    try:
+        items = list(value)
+    except TypeError:
+        if strict:
+            raise ValueError("expected a list of dependencies")
+        return []
+    for item in items:
+        if isinstance(item, TaskDependency):
+            out.append(item)
+        elif isinstance(item, dict):
+            out.append(TaskDependency.from_dict(item))
+        elif isinstance(item, str) and item.strip():
+            # The legacy flat `depends_on` spelling: a bare id means a BLOCKS edge.
+            out.append(
+                TaskDependency(depends_on_task_id=item, dependency_type=DependencyType.BLOCKS)
+            )
+        elif strict:
+            raise ValueError(f"not a dependency: {item!r}")
+    return out
+
+
+def _as_status(value: Any, *, strict: bool) -> "TaskStatus":
+    if isinstance(value, TaskStatus):
+        return value
+    try:
+        return TaskStatus(value)
+    except ValueError:
+        if strict:
+            raise ValueError(
+                f"invalid status {value!r} — use one of: " + ", ".join(s.value for s in TaskStatus)
+            ) from None
+        return TaskStatus.OPEN
+
+
+def _as_priority(value: Any, *, strict: bool) -> "TaskPriority":
+    return value if isinstance(value, TaskPriority) else TaskPriority.normalize(value)
+
+
+def _as_binding(value: Any, *, strict: bool) -> "WorkflowTaskBinding | None":
+    if value is None:
+        return None
+    if isinstance(value, WorkflowTaskBinding):
+        return value
+    if isinstance(value, dict):
+        return WorkflowTaskBinding.from_dict(value)
+    if strict:
+        raise ValueError("workflow_binding must be an object or null")
+    return None
+
+
+#: EXHAUSTIVE over `Task`'s fields — `tests/test_task_field_coercion.py` asserts it.
+TASK_FIELD_COERCERS: dict[str, Any] = {
+    "id": _as_text,
+    "title": _as_text,
+    "status": _as_status,
+    "description": _as_text,
+    "provider": _as_text,
+    "project": _as_text,
+    "task_list_id": _as_text,
+    "dependencies": _as_dependencies,
+    "author": _as_text,
+    "assignee": _as_text,
+    "priority": _as_priority,
+    "labels": _as_text_list,
+    "due": _as_text,
+    "order": _as_number,
+    "exit_criteria": _as_dict_list(normalize_exit_criterion),
+    "action_plan": _as_dict_list(normalize_action_plan_item, indexed=True),
+    "notes": _as_dict_list(normalize_note),
+    "research_notes": _as_dict_list(normalize_note),
+    "execution_notes": _as_dict_list(normalize_note),
+    "agent_instructions_template": _as_text,
+    "blocked_reason_kind": _as_text,
+    "workflow_binding": _as_binding,
+    "blocked_kind": _as_text,
+    "preview": _as_text,
+    "done_criterion": _as_text,
+    "evidence": _as_open_dict_list,
+    "attempts": _as_open_dict_list,
+    "created_at": _as_text,
+    "updated_at": _as_text,
+    "url": _as_text,
+}
+
+
+def coerce_task_field(name: str, value: Any, *, strict: bool = True) -> Any:
+    """Coerce one task field to its declared type. The ONE place that decides.
+
+    `strict=True` (a WRITE) raises `ValueError` on a value it cannot use, which the handlers
+    already map to a 400. `strict=False` (a READ) falls back to the field's default so a record
+    already written by an unguarded caller still loads — see the section comment above.
+
+    An unknown field name is always a `ValueError`: `update_task` used `hasattr` to decide what to
+    set, so a typo'd key silently did nothing, and a caller could not tell a rejected edit from an
+    applied one.
+    """
+    coercer = TASK_FIELD_COERCERS.get(name)
+    if coercer is None:
+        raise ValueError(f"unknown task field {name!r}")
+    return coercer(value, strict=strict)
 
 
 @dataclass
