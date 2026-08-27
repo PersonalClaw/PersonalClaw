@@ -146,7 +146,7 @@ const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surfac
  *  screen-reader user tabbing the field heard nothing about it and discovered the requirement by failing.
  *  (WCAG 3.3.2, level A: instructions are provided when content requires user input.) A VISIBLE marker is
  *  a separate, owner-facing decision; this is the invisible half, which is unambiguous. */
-export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, ariaLabel, required, size = 'lg', surface = 'container', type, mono, leadingIcon }: {
+export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, name, ariaLabel, required, size = 'lg', surface = 'container', type, mono, leadingIcon, disabled, disabledReason }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
@@ -167,6 +167,15 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
    *  passes the raw icon (e.g. `<Search size={14} />`) and it inherits the muted
    *  tone from the icon span. */
   leadingIcon?: ReactNode
+  /** Dim + block the field. Grown for an editing surface behind a consent gate (the
+   *  document/sheet/deck editors), where a text field that could still be typed into
+   *  would make the gate a notice instead of a mechanism. */
+  disabled?: boolean
+  /** Why the field is off, for a CONDITIONALLY disabled one. Same carrier `Select` and
+   *  `Button` have, for the same reason: a natively disabled control leaves the tab order,
+   *  so without it a keyboard user tabs past a dead field with no way to learn what is
+   *  missing. Applied only WHILE disabled — a tooltip on a working field would be noise. */
+  disabledReason?: string
 }) {
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
@@ -187,8 +196,10 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
       aria-describedby={hintId}
       aria-required={required || undefined}
+      disabled={disabled}
+      title={disabled ? disabledReason || undefined : undefined}
       onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder}
-      className={cx(INPUT_BASE, FIELD_SIZE[size], FIELD_SURFACE[surface], leadingIcon ? 'pl-9 pr-m' : 'px-m', mono && 'font-mono')} />
+      className={cx(INPUT_BASE, FIELD_SIZE[size], FIELD_SURFACE[surface], leadingIcon ? 'pl-9 pr-m' : 'px-m', mono && 'font-mono', disabled && 'opacity-50')} />
   )
   if (!leadingIcon) return input
   // The canonical leading-icon geometry (icon at left-3, input pl-9) — the shape
@@ -218,7 +229,11 @@ const TEXTAREA_TEXT: Record<FieldSize, string> = {
   lg: 'text-[0.9375rem]',
 }
 
-export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLabel, autoFocus, size = 'lg' }: { value: string; onChange: (v: string) => void; placeholder?: string; rows?: number; mono?: boolean; ariaLabel?: string; autoFocus?: boolean; size?: FieldSize }) {
+export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLabel, autoFocus, size = 'lg', disabled, disabledReason }: { value: string; onChange: (v: string) => void; placeholder?: string; rows?: number; mono?: boolean; ariaLabel?: string; autoFocus?: boolean; size?: FieldSize
+  /** Dim + block the field, and why — TextInput's pair, same reasoning (an editor behind a
+   *  consent gate needs the gate to be a mechanism, and a dead control owes a reason). */
+  disabled?: boolean
+  disabledReason?: string }) {
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
   const autoId = useId()
@@ -232,6 +247,7 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
   // ariaLabel.
   return (
     <textarea value={value} rows={rows} autoFocus={autoFocus} id={autoId} aria-describedby={hintId} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+      disabled={disabled} title={disabled ? disabledReason || undefined : undefined}
       className={`w-full rounded-md bg-surface-container px-m py-2 text-on-surface ${TEXTAREA_TEXT[size]} placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary ${mono ? 'font-mono text-[0.8125rem]' : ''}`} />
   )
 }

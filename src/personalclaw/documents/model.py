@@ -316,15 +316,120 @@ class SheetModel:
         )
 
 
+#: The layouts the shipped template offers, in its own order. A slide names its layout
+#: rather than holding an INDEX, because an index means a different thing in every
+#: template — and the name is what PowerPoint's own layout gallery shows a person.
+#:
+#: This tuple is the editor's option list and the parser's "can the writer re-create
+#: this?" test; it is NOT how the writer resolves one (it looks the name up in the real
+#: template, so a renamed template cannot make this tuple lie silently). The drift is
+#: closed by ``test_the_declared_layouts_are_the_shipped_templates_own``.
+DECK_LAYOUTS = (
+    "Title Slide",
+    "Title and Content",
+    "Section Header",
+    "Two Content",
+    "Comparison",
+    "Title Only",
+    "Blank",
+    "Content with Caption",
+    "Picture with Caption",
+    "Title and Vertical Text",
+    "Vertical Title and Text",
+)
+
+#: Deepest bullet indent, matching PowerPoint's own range (0-8). The model holds the SAME
+#: range as the format on purpose: a narrower one would make every deeply-indented real
+#: deck lose depth on load, which is the defect this atom closes rather than moves.
+MAX_BULLET_LEVEL = 8
+
+
+@dataclass
+class Bullet:
+    """One line of a slide's body, with its indent DEPTH.
+
+    Depth is a field of the content, not a rendering flourish: an outline whose
+    sub-points all flatten to the top level says something different from what its
+    author wrote. Before this, a slide body was `list[str]` and the writer pinned
+    ``level = 0``, so every deck came out flat no matter what went in.
+    """
+
+    text: str = ""
+    #: 0 = top level. Clamped rather than refused: a caller assembling a deck from a
+    #: nested outline can hand over its natural depth and get PowerPoint's deepest
+    #: indent, which is what a reader would see anyway. No file can exceed 8 (the
+    #: format's own schema stops at 8), so this clamp is only reachable from a caller.
+    level: int = 0
+
+    def __post_init__(self) -> None:
+        self.level = max(0, min(MAX_BULLET_LEVEL, int(self.level)))
+
+
+@dataclass
+class ShapeBox:
+    """Where one of a slide's shapes sits, in inches from the top-left of the slide.
+
+    All zeros means "wherever the layout puts it" — an inherited position, which is the
+    normal case and the one a writer must not pin, or every re-render would freeze a
+    shape at whatever the template happened to say the day the file was parsed.
+
+    Inches, like `PageSetup.margin_in`, because that is the unit the editor shows and a
+    person reasons in; the format's EMU are a writer's business.
+    """
+
+    left_in: float = 0.0
+    top_in: float = 0.0
+    width_in: float = 0.0
+    height_in: float = 0.0
+
+    @property
+    def placed(self) -> bool:
+        """True when this box overrides the layout's own position.
+
+        Keyed on the SIZE, not on left/top: a shape flush against the top-left corner has
+        `left_in == top_in == 0.0` and is still placed, while a box with no width is not a
+        position at all.
+        """
+        return self.width_in > 0 and self.height_in > 0
+
+
 @dataclass
 class Slide:
+    """One slide: a title, an outline body, speaker notes, and where its shapes sit."""
+
     title: str = ""
-    body: list[str] = field(default_factory=list)
+    #: The body outline. `list[Bullet]`, not `list[str]`: see `Bullet`.
+    bullets: list[Bullet] = field(default_factory=list)
     notes: str = ""
     artifact_slug: str = ""
+    #: A `DECK_LAYOUTS` name. `""` means "choose from the content" — which is what every
+    #: generated deck says, and what keeps a caller from having to know a template.
+    layout: str = ""
+    title_box: ShapeBox = field(default_factory=ShapeBox)
+    body_box: ShapeBox = field(default_factory=ShapeBox)
+
+    def __post_init__(self) -> None:
+        if self.layout and self.layout not in DECK_LAYOUTS:
+            raise ValueError(f"unknown layout {self.layout!r}; expected one of {DECK_LAYOUTS}")
+
+    @classmethod
+    def outline(cls, title: str = "", lines: Sequence[str] = (), *, notes: str = "") -> Slide:
+        """A slide from plain lines, all at the top level.
+
+        The plain constructor for a caller that has text and no opinion about depth —
+        `SheetModel.from_rows`'s role for a deck. It exists so "I have five bullets"
+        never becomes a reason to reach past `Bullet` and re-invent a flat body.
+        """
+        return cls(title=title, bullets=[Bullet(text=str(line)) for line in lines], notes=notes)
 
 
 @dataclass
 class DeckModel:
+    """A deck: an optional cover title plus its slides, at a given slide size."""
+
     title: str = ""
     slides: list[Slide] = field(default_factory=list)
+    #: Slide size in inches. `0.0` means "the template's own size", never "zero" — the
+    #: `ALIGNMENTS` convention. 13.333 × 7.5 is 16:9; 10 × 7.5 is 4:3.
+    width_in: float = 0.0
+    height_in: float = 0.0

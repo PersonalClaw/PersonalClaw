@@ -9,17 +9,21 @@ declarative model, and code renders the file. No vendor file-format vocabulary a
 outside ``writers/``.
 """
 
+from personalclaw.documents.deck_json import deck_from_dict, deck_to_dict
 from personalclaw.documents.model import (
     Block,
+    Bullet,
     Cell,
     DeckModel,
     DocumentModel,
     PageSetup,
     ParagraphStyle,
     Run,
+    ShapeBox,
     Sheet,
     SheetCell,
     SheetModel,
+    Slide,
 )
 from personalclaw.documents.model_json import document_from_dict, document_to_dict
 from personalclaw.documents.registry import (
@@ -37,6 +41,9 @@ __all__ = [
     "SheetCell",
     "SheetModel",
     "DeckModel",
+    "Bullet",
+    "ShapeBox",
+    "Slide",
     "PageSetup",
     "ParagraphStyle",
     "Run",
@@ -44,6 +51,8 @@ __all__ = [
     "document_to_dict",
     "sheet_from_dict",
     "sheet_to_dict",
+    "deck_from_dict",
+    "deck_to_dict",
     "register_writer",
     "get_writer",
     "available_formats",

@@ -393,11 +393,11 @@ def _list_tools() -> list[dict[str, Any]]:
                     "name": {"type": "string", "description": "Display name for the deck"},
                     "markdown": {
                         "type": "string",
-                        "description": "Outline: `##` per slide, bullets beneath, `<!-- notes: -->` for notes",  # noqa: E501
+                        "description": "Outline: `##` per slide, bullets beneath (indent two spaces per sub-level), `<!-- notes: -->` for notes",  # noqa: E501
                     },
                     "slides": {
                         "type": "array",
-                        "description": "Alternative to markdown: [{title, body:[str], notes}]",
+                        "description": "Alternative to markdown: [{title, body:[str | {text, level}], notes}] — `level` is the bullet's indent depth (0 = top)",  # noqa: E501
                     },
                     "title": {"type": "string", "description": "Deck title slide"},
                     "format": {"type": "string", "description": "Output format (default 'pptx')"},
@@ -1040,6 +1040,20 @@ _DOC_MIME = {
 }
 
 
+def _bullet(entry: Any) -> Any:
+    """One `deck_create` body line → a `Bullet`.
+
+    Accepts a plain string OR `{"text": …, "level": n}`, because an agent writing a nested
+    outline has to be able to SAY the depth: the model carries it now, and a string-only
+    input would have made the flat deck the only reachable one from this tool.
+    """
+    from personalclaw.documents.model import Bullet
+
+    if isinstance(entry, dict):
+        return Bullet(text=str(entry.get("text") or ""), level=int(entry.get("level") or 0))
+    return Bullet(text=str(entry))
+
+
 def _document_create(
     prov: Any, name: str, args: dict[str, Any], sk: str | None, _audit: Any
 ) -> str:
@@ -1083,7 +1097,10 @@ def _document_create(
                 slides=[
                     Slide(
                         title=str(sl.get("title") or ""),
-                        body=[str(b) for b in (sl.get("body") or [])],
+                        # A body line is either plain text or `{"text": …, "level": n}`,
+                        # so an agent that has a nested outline can say so — the depth is
+                        # the model's field now, not something the writer flattens.
+                        bullets=[_bullet(b) for b in (sl.get("body") or [])],
                         notes=str(sl.get("notes") or ""),
                         artifact_slug=str(sl.get("artifact_slug") or ""),
                     )

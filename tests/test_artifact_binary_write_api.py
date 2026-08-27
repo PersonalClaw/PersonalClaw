@@ -46,18 +46,23 @@ from personalclaw.artifacts.models import (
     mime_for_ext,
 )
 from personalclaw.artifacts.native import NativeArtifactProvider
+from personalclaw.documents.deck_json import deck_to_dict
 from personalclaw.documents.docx_parser import parse_docx
 from personalclaw.documents.model import (
     Block,
+    Bullet,
+    DeckModel,
     DocumentModel,
     Run,
     Sheet,
     SheetCell,
     SheetModel,
+    Slide,
 )
 from personalclaw.documents.model_json import document_from_dict, document_to_dict
 from personalclaw.documents.sheet_json import sheet_to_dict
 from personalclaw.documents.writers.docx_writer import render_docx
+from personalclaw.documents.writers.pptx_writer import render_pptx
 from personalclaw.documents.writers.xlsx_writer import render_xlsx
 from personalclaw.sel import sel
 
@@ -65,6 +70,7 @@ DOCX_MIME = mime_for_ext("docx")
 PDF_MIME = mime_for_ext("pdf")
 PNG_MIME = mime_for_ext("png")
 XLSX_MIME = mime_for_ext("xlsx")
+PPTX_MIME = mime_for_ext("pptx")
 
 #: The OOXML tells a JSON body must never carry. `PK\x03\x04` is the zip magic every
 #: .docx starts with; the other two appear in the package's own part names/markup.
@@ -789,7 +795,7 @@ async def test_a_kind_without_a_shipped_parser_has_no_model(patched_native) -> N
         assert resp.status == 415
         body = await resp.json()
         assert body["error"]["code"] == "model_unavailable"
-        assert body["error"]["model_kinds"] == ["docx", "xlsx"]
+        assert body["error"]["model_kinds"] == ["docx", "xlsx", "pptx"]
         write = await client.put(
             f"/api/artifacts/{art.slug}/model",
             json={"model": document_to_dict(_authored())},
@@ -1015,6 +1021,180 @@ async def test_a_malformed_spreadsheet_model_is_refused_before_any_write(
     try:
         payload = sheet_to_dict(SheetModel.from_rows({"S": [["x"]]}))
         payload["sheets"][0]["cells"][0][0]["numberformat"] = "0.0%"
+        resp = await client.put(
+            f"/api/artifacts/{art.slug}/model",
+            json={"model": payload},
+            headers={"If-Match": "1"},
+        )
+        assert resp.status == 400
+        assert (await resp.json())["error"]["code"] == "invalid_model"
+        assert prov.get(art.slug).version == 1
+        assert prov.raw_bytes(art.slug)[0] == original
+    finally:
+        await client.close()
+
+
+# ── DFE-8: the SAME two routes serve a deck ──────────────────────────────────
+
+
+def _deck_bytes() -> bytes:
+    """A deck with a nested outline, speaker notes and a cover slide."""
+    return render_pptx(
+        DeckModel(
+            title="Quarterly Review",
+            slides=[
+                Slide(
+                    title="Pipeline",
+                    bullets=[
+                        Bullet(text="Enterprise"),
+                        Bullet(text="Two renewals at risk", level=1),
+                        Bullet(text="Self-serve"),
+                    ],
+                    notes="lead with the renewals",
+                )
+            ],
+        )
+    )
+
+
+def _pptx_artifact(provider):
+    return provider.create_binary(
+        name="Review", data=_deck_bytes(), mime=PPTX_MIME, kind="pptx", actor="agent"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_deck_serves_its_model_through_the_same_route(patched_native) -> None:
+    """``GET …/model`` resolves the parser BY KIND. Before DFE-8 this route answered 415
+    for every .pptx, so the deck editor had nothing to load."""
+    prov = patched_native
+    art = _pptx_artifact(prov)
+    client = await _client()
+    try:
+        resp = await client.get(f"/api/artifacts/{art.slug}/model")
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["kind"] == "pptx"
+        model = body["model"]
+        # The cover slide came back as the deck TITLE, and the outline kept its depth.
+        assert model["title"] == "Quarterly Review"
+        assert [(b["text"], b["level"]) for b in model["slides"][0]["bullets"]] == [
+            ("Enterprise", 0),
+            ("Two renewals at risk", 1),
+            ("Self-serve", 0),
+        ]
+        # …and the browser saw no OOXML: `blocks`/`sheets` (the other two model shapes)
+        # are absent, so the kind really did choose the codec.
+        assert "blocks" not in model and "sheets" not in model
+        assert body["loss"]["lossless"] is True
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_slide_edit_survives_the_save_and_read_back(patched_native) -> None:
+    """The atom's second clause, at the route: GET the model, edit a slide, PUT it back,
+    then read the STORED BYTES with python-pptx — not with our parser — and find the edit
+    AND the bullet depth that was never touched."""
+    from pptx import Presentation
+
+    from personalclaw.documents.pptx_shapes import body_placeholder
+
+    prov = patched_native
+    art = _pptx_artifact(prov)
+    client = await _client()
+    try:
+        loaded = await (await client.get(f"/api/artifacts/{art.slug}/model")).json()
+        model = loaded["model"]
+        model["slides"][0]["title"] = "Pipeline — revised"
+        model["slides"][0]["bullets"][1]["text"] = "One renewal at risk"
+        model["slides"][0]["bullets"].append({"text": "Nested detail", "level": 2})
+        resp = await client.put(
+            f"/api/artifacts/{art.slug}/model",
+            json={"model": model},
+            headers={"If-Match": str(loaded["version"])},
+        )
+        assert resp.status == 200, await resp.text()
+
+        stored, _ = prov.raw_bytes(art.slug)
+        slides = list(Presentation(io.BytesIO(stored)).slides)
+        # Slide 1 is still the cover the deck title round-trips through.
+        assert slides[0].shapes.title.text == "Quarterly Review"
+        assert slides[1].shapes.title.text == "Pipeline — revised"
+        frame = body_placeholder(slides[1]).text_frame
+        assert [(p.text, p.level) for p in frame.paragraphs] == [
+            ("Enterprise", 0),
+            ("One renewal at risk", 1),
+            ("Self-serve", 0),
+            ("Nested detail", 2),
+        ]
+        # …and the notes the editor never showed are still in the saved file.
+        assert "lead with the renewals" in slides[1].notes_slide.notes_text_frame.text
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_deck_save_is_refused_while_document_editing_is_off(provider, monkeypatch) -> None:
+    """The §C6 consent gate governs the deck editor too — one route, one enforcement
+    point, and this is the proof it covers pptx rather than a second copy of the check."""
+    from personalclaw.config import AppConfig
+
+    monkeypatch.setattr(AppConfig, "load", staticmethod(AppConfig))
+    with patch.object(registry, "get_provider", return_value=provider):
+        art = _pptx_artifact(provider)
+        client = await _client()
+        try:
+            resp = await client.put(
+                f"/api/artifacts/{art.slug}/model",
+                json={"model": deck_to_dict(DeckModel(slides=[Slide.outline("A", ["x"])]))},
+                headers={"If-Match": "1"},
+            )
+            assert resp.status == 403
+            assert (await resp.json())["error"]["code"] == "document_editing_off"
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_stale_deck_save_is_refused_not_merged(patched_native) -> None:
+    """Two tabs over one deck collide with a 409, exactly as they do for a document and a
+    workbook — the guard chain is shared, and this asserts that it really is shared."""
+    prov = patched_native
+    art = _pptx_artifact(prov)
+    client = await _client()
+    try:
+        loaded = await (await client.get(f"/api/artifacts/{art.slug}/model")).json()
+        first = await client.put(
+            f"/api/artifacts/{art.slug}/model",
+            json={"model": loaded["model"]},
+            headers={"If-Match": str(loaded["version"])},
+        )
+        assert first.status == 200
+        second = await client.put(
+            f"/api/artifacts/{art.slug}/model",
+            json={"model": loaded["model"]},
+            headers={"If-Match": str(loaded["version"])},
+        )
+        assert second.status == 409
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_deck_naming_an_unknown_layout_is_refused_before_any_write(
+    patched_native,
+) -> None:
+    """Strict deserialization at the route: a layout the shipped template does not have is
+    a 400 and the artifact is untouched, rather than a deck that silently re-laid itself
+    out and told the user by opening wrong."""
+    prov = patched_native
+    art = _pptx_artifact(prov)
+    original = prov.raw_bytes(art.slug)[0]
+    client = await _client()
+    try:
+        payload = deck_to_dict(DeckModel(slides=[Slide.outline("A", ["x"])]))
+        payload["slides"][0]["layout"] = "Titel Slide"
         resp = await client.put(
             f"/api/artifacts/{art.slug}/model",
             json={"model": payload},

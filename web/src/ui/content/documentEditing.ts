@@ -20,21 +20,21 @@ import { api } from '../../lib/api'
 import { getContentType, registerContentType, type DocumentEditorProps } from './contentTypes'
 import { DocumentEditor } from './DocumentEditor'
 import { SheetGrid } from './SheetGrid'
+import { SlideDeck } from './SlideDeck'
 
 /** The types whose editor this flag governs, each with the editor it mounts.
  *
- *  A spreadsheet is not a flowing document — it has no blocks to show — so `xlsx` mounts
- *  the GRID (DFE-7) rather than the block editor. `pptx` is still listed because the same
- *  switch is about it, and it keeps the document editor until `DFE-8` gives it a slide
- *  editor; the server refuses its model writes anyway (`MODEL_KINDS` has no parser for it),
- *  so the flag governing it here is the UI half of a refusal that already holds.
+ *  None of the three is a flowing document twice over, so none of them shares an editor: a
+ *  spreadsheet has cells and no blocks (the GRID, DFE-7), a deck has slides and bullet
+ *  depth (the SLIDE editor, DFE-8), and only `docx` has blocks to show. Each mounts the
+ *  surface that matches its model.
  *
  *  A table rather than a branch inside `setDocumentEditing`, so "which editor does this
  *  type get?" has exactly one answer to read. */
 const EDITORS: Record<string, ComponentType<DocumentEditorProps>> = {
   docx: DocumentEditor,
   xlsx: SheetGrid,
-  pptx: DocumentEditor,
+  pptx: SlideDeck,
 }
 
 export const DOCUMENT_EDITING_TYPE_IDS = ['docx', 'xlsx', 'pptx'] as const

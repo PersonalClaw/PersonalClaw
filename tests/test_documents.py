@@ -273,20 +273,26 @@ body line
 
     assert deck.title == "The Deck"
     assert [s.title for s in deck.slides] == ["First", "Second"]
-    assert deck.slides[0].body == ["point one", "point two"]
+    # `bullets`, not `body`: a slide line carries its indent DEPTH since DFE-8, and the
+    # depth of a flat markdown outline is 0 — which is what these assert.
+    assert [(b.text, b.level) for b in deck.slides[0].bullets] == [
+        ("point one", 0),
+        ("point two", 0),
+    ]
     assert deck.slides[0].notes == "say hello"
-    assert deck.slides[1].body == ["body line"]
+    assert [(b.text, b.level) for b in deck.slides[1].bullets] == [("body line", 0)]
 
 
 def test_deck_body_before_any_heading_gets_an_opening_slide():
     deck = deck_from_markdown("orphan line\n")
-    assert len(deck.slides) == 1 and deck.slides[0].body == ["orphan line"]
+    assert len(deck.slides) == 1
+    assert [(b.text, b.level) for b in deck.slides[0].bullets] == [("orphan line", 0)]
 
 
 def test_deck_notes_are_kept_out_of_the_visible_body():
     deck = deck_from_markdown("## S\n\n<!-- notes: hidden -->\n- shown\n")
-    assert deck.slides[0].body == ["shown"]
-    assert "hidden" not in " ".join(deck.slides[0].body)
+    assert [b.text for b in deck.slides[0].bullets] == ["shown"]
+    assert "hidden" not in " ".join(b.text for b in deck.slides[0].bullets)
 
 
 def test_empty_deck_markdown_is_a_valid_empty_deck():
@@ -400,7 +406,7 @@ def test_pptx_body_placeholder_is_found_by_index_not_identity(tmp_path):
     check made the first body line overwrite the title — measured, not assumed."""
     from personalclaw.documents.model import DeckModel, Slide
 
-    deck = DeckModel(slides=[Slide(title="Real Title", body=["first bullet"])])
+    deck = DeckModel(slides=[Slide.outline("Real Title", ["first bullet"])])
     path, _ = _write(tmp_path, "pptx", deck)
 
     text, _ = FileReader().read(str(path))
