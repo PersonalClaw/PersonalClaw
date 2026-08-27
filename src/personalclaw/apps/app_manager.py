@@ -38,6 +38,7 @@ from personalclaw.apps.manager import (
     InstalledApp,
     _now_iso,
     _read_installed,
+    _validate_app_name,
     _write_installed,
     app_dir,
     apps_dir,
@@ -758,7 +759,15 @@ def install(
 
 
 def _rollback_dir(name: str) -> Path:
-    return apps_dir() / f".{name}{_ROLLBACK_SUFFIX}"
+    """The mid-update rollback copy of an app: ``apps/.{name}.rollback``.
+
+    Guards the name itself, with the same kebab rule ``app_dir``/``app_data_dir`` use.
+    ``update()`` already refuses a name that is not installed, so today nothing
+    path-shaped reaches here — but this expression is a ``shutil.move``/``rmtree``
+    target, and a guard that lives in the caller is one refactor away from being gone
+    (#455's class). The rule belongs on the expression that builds the path.
+    """
+    return apps_dir() / f".{_validate_app_name(name)}{_ROLLBACK_SUFFIX}"
 
 
 def update(

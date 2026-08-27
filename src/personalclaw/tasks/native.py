@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.config.loader import config_dir
+from personalclaw.record_ids import record_path
 from personalclaw.tasks import reconcile
 from personalclaw.tasks.models import (
     Task,
@@ -117,17 +118,38 @@ class NativeTaskProvider(TaskProvider):
         return d
 
     def _task_path(self, task_id: str) -> Path:
-        return self._ensure_dir() / f"{task_id}.json"
+        """Resolve a task id to its record, refusing an id that is not one segment.
+
+        ``task_id`` arrives from ``/api/tasks/{task_id}`` unvalidated through handler →
+        registry → provider (#471), and this is the one expression all four verbs share,
+        so the guard belongs here rather than at three call sites.
+        """
+        return record_path(self._ensure_dir(), task_id, kind="task_id")
+
+    def _comments_path(self, task_id: str) -> Path:
+        """Resolve a task's sidecar comments file — same guard, different template.
+
+        ``add_comment`` writes this file whenever ``<id>.json`` is readable, so an
+        unguarded template here is an arbitrary-overwrite primitive even though the id
+        never names it directly.
+        """
+        return record_path(self._ensure_dir(), task_id, prefix="_comments_", kind="task_id")
 
     def _comment_count(self, task_id: str) -> int:
-        """Number of comments on a task (length of its ``_comments_<id>.json``)."""
-        f = self._ensure_dir() / f"_comments_{task_id}.json"
-        if not f.exists():
-            return 0
+        """Number of comments on a task (length of its ``_comments_<id>.json``).
+
+        Fails soft, including on an unsafe id: this is a derived badge value stamped
+        during ``_read_task``, so a refusal here must not make the task itself
+        unreadable. The verbs that act on comments use :meth:`_comments_path` directly
+        and do surface the refusal.
+        """
         try:
+            f = self._comments_path(task_id)
+            if not f.exists():
+                return 0
             data = json.loads(f.read_text(encoding="utf-8"))
             return len(data) if isinstance(data, list) else 0
-        except Exception:
+        except Exception:  # noqa: BLE001 — incl. UnsafeRecordId; see the docstring
             return 0
 
     def _read_task(self, path: Path, label_cache: dict | None = None) -> Task | None:
@@ -450,7 +472,7 @@ class NativeTaskProvider(TaskProvider):
 
     async def get_comments(self, task_id: str) -> list[TaskComment]:
         def _get() -> list[TaskComment]:
-            comments_file = self._ensure_dir() / f"_comments_{task_id}.json"
+            comments_file = self._comments_path(task_id)
             if not comments_file.exists():
                 return []
             try:
@@ -475,7 +497,7 @@ class NativeTaskProvider(TaskProvider):
             path = self._task_path(task_id)
             if not path.exists():
                 return None
-            comments_file = self._ensure_dir() / f"_comments_{task_id}.json"
+            comments_file = self._comments_path(task_id)
             try:
                 data = json.loads(comments_file.read_text(encoding="utf-8"))
             except Exception:
@@ -502,7 +524,7 @@ class NativeTaskProvider(TaskProvider):
 
     async def delete_comment(self, task_id: str, comment_id: str) -> bool:
         def _delete() -> bool:
-            comments_file = self._ensure_dir() / f"_comments_{task_id}.json"
+            comments_file = self._comments_path(task_id)
             if not comments_file.exists():
                 return False
             try:

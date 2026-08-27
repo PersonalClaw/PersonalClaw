@@ -92,6 +92,12 @@ ERROR_CODES: dict[str, str] = {
         "timeout, or returned something unreadable. Reported as a failure rather than as an "
         "empty result, because a computer-use no-op reads to a model as success."
     ),
+    "ERR_COMPUTER_USE_AX_PERMISSION": (
+        "The OS has not granted this process the accessibility permission needed to read a "
+        "window's element tree or activate an element. Distinct from a driver failure because "
+        "only a human can fix it, in the OS's own privacy settings — a program cannot grant "
+        "itself input access, and this build never pops the system prompt on its own."
+    ),
     "ERR_BROWSE_CONFIG": (
         "A browse action's config is incomplete — it named no goal, or no page to start "
         "from. Refused before a browser is touched."

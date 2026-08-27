@@ -21,12 +21,16 @@ project by precedence: ``repeatable`` → the Repeatable project; an explicit
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from pathlib import Path
 
 from personalclaw.config.loader import config_dir
+from personalclaw.record_ids import is_safe_record_id, record_path
 from personalclaw.tasks.models import DEFAULT_PROJECTS, Project, TaskList
+
+logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -54,7 +58,15 @@ class HierarchyStore:
     # ── Projects ──
 
     def _project_dir(self, project_id: str) -> Path:
-        return self._projects_dir() / project_id
+        """Resolve a project id to its subtree, refusing an id that is not one segment.
+
+        A project is stored as a DIRECTORY, and :meth:`delete_project` ``rmtree``s
+        whatever this returns — so an unguarded id here was an arbitrary recursive
+        delete, not a single unlink (#455). Every other project path (``project.json``,
+        ``context/``, ``worktrees/``) is built on top of this one, which is why the
+        guard sits here and not on each of them.
+        """
+        return record_path(self._projects_dir(), project_id, suffix="", kind="project_id")
 
     def _project_path(self, project_id: str) -> Path:
         return self._project_dir(project_id) / "project.json"
@@ -117,6 +129,17 @@ class HierarchyStore:
                 if proj is None:
                     continue
                 # A legacy id may be a slug ("chore"/"repeatable") or "p-xxxx"; keep it.
+                # But a legacy id is data from a file, so it may be any string — and the
+                # new layout stores a project in a DIRECTORY named by its id, which a
+                # path-shaped id cannot name. Skip it rather than let one bad record
+                # abort the migration for every other project in the home.
+                if not is_safe_record_id(proj.id):
+                    logger.warning(
+                        "skipping legacy project %r during layout migration: "
+                        "its id is not a single path segment",
+                        proj.id,
+                    )
+                    continue
                 if not self._project_path(proj.id).exists():
                     self._write_project(proj)
             import shutil
@@ -313,7 +336,12 @@ class HierarchyStore:
     # ── Task lists ──
 
     def _list_path(self, list_id: str) -> Path:
-        return self._lists_dir() / f"{list_id}.json"
+        """Resolve a task-list id to its record, refusing an id that is not one segment.
+
+        ``list_id`` reaches here from ``/api/task-lists/{list_id}``, and the delete
+        cascade in :meth:`delete_project` unlinks whatever it returns (#455).
+        """
+        return record_path(self._lists_dir(), list_id, kind="list_id")
 
     def _read_list(self, path: Path) -> TaskList | None:
         try:

@@ -62,6 +62,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "invalid_request": "The request was well-formed JSON but failed validation.",
     "invalid_json": "The request body is not valid JSON.",
     "invalid_body": "The request body is valid JSON but not the expected object.",
+    "invalid_id": "A record id is not a single path segment (separators, '..' or over-long).",
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",

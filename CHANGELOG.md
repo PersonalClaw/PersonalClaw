@@ -194,6 +194,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **A record id can no longer address a file outside its own store.**
+
 - **Ways *in* now share one gate instead of each inventing their own.**
 
 - **Inbound settings and tokens moved, and old ones stop working.**

@@ -43,6 +43,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from personalclaw.record_ids import record_path
+
 logger = logging.getLogger(__name__)
 
 _DIRNAME = "attribution"
@@ -104,13 +106,22 @@ def _dir() -> Path:
     return Path(config_dir()) / "learning" / _DIRNAME
 
 
+def _path(record_id: object) -> Path:
+    """The ONE expression turning an attribution-record id into a file in this store.
+
+    Same class as #459's proven learning/skills instances — this store is its sibling and
+    reached the same way, so it takes the same guard rather than waiting to be proven.
+    """
+    return record_path(_dir(), record_id, kind="record_id")
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def _load(rid: str) -> AcceptedChange | None:
     try:
-        data = json.loads((_dir() / f"{rid}.json").read_text(encoding="utf-8"))
+        data = json.loads(_path(rid).read_text(encoding="utf-8"))
         return AcceptedChange(**data)
     except (OSError, ValueError, TypeError):
         return None
@@ -120,7 +131,7 @@ def _save(rec: AcceptedChange) -> bool:
     from personalclaw.atomic_write import atomic_write
 
     try:
-        atomic_write(_dir() / f"{rec.id}.json", json.dumps(rec.to_dict(), indent=2))
+        atomic_write(_path(rec.id), json.dumps(rec.to_dict(), indent=2))
         return True
     except OSError:
         logger.debug("attribution record write failed for %s", rec.id, exc_info=True)
@@ -258,7 +269,7 @@ def _expire_over_cap() -> None:
     pending = sorted((r for r in _all() if not r.resolved), key=lambda r: r.accepted_at)
     for victim in pending[: max(0, len(pending) - _MAX_PENDING + 1)]:
         try:
-            (_dir() / f"{victim.id}.json").unlink()
+            _path(victim.id).unlink()
             logger.info("attribution: store full; expired oldest pending record %s", victim.id)
         except OSError:
             logger.debug("attribution: expire failed for %s", victim.id, exc_info=True)
@@ -395,7 +406,7 @@ def _prune_resolved(keep: int = _RESOLVED_KEEP) -> int:
     removed = 0
     for rec in resolved[: max(0, len(resolved) - max(0, keep))]:
         try:
-            (_dir() / f"{rec.id}.json").unlink()
+            (_path(rec.id)).unlink()
             removed += 1
         except OSError:
             logger.debug("attribution: resolved prune failed for %s", rec.id, exc_info=True)
