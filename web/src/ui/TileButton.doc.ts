@@ -17,8 +17,12 @@ const doc: UiDoc = {
   bestPractices: [
     { guidance: true, description: 'Use for grids/galleries where the entire card opens one thing; nested actions inside the tile must stopPropagation.' },
     { guidance: false, description: 'Do not use for inline CTAs (Button) or compact toolbar actions (QuietButton) — a TileButton is a container, not a labeled pill.' },
+    { guidance: false, description: 'Do not add your own whileTap/scale press animation at the call site: the primitive already springs in on press (expressiveness-scaled, dropped under reduced motion), and a second transform on the same element fights it.' },
   ],
-  anatomy: ['bordered rounded-xl button container (surface-container, hover border, active primary ring)', 'caller-supplied children (preview + text rows)'],
+  anatomy: [
+    'bordered rounded-xl motion.button container (surface-container, hover border, active primary ring, expressiveness-scaled press spring on the fast spatial preset)',
+    'caller-supplied children (preview + text rows)',
+  ],
 }
 
 export default doc

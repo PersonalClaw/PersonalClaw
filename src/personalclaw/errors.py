@@ -98,6 +98,13 @@ ERROR_CODES: dict[str, str] = {
         "only a human can fix it, in the OS's own privacy settings — a program cannot grant "
         "itself input access, and this build never pops the system prompt on its own."
     ),
+    "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED": (
+        "This platform's desktop driver is not implemented yet. macOS is the only implemented "
+        "driver; Windows (UI Automation) and Linux (AT-SPI) declare themselves and refuse. "
+        "Distinct from a driver being unavailable: the platform is intended, named and "
+        "resolvable — the implementation is simply absent, so nothing the operator configures "
+        "on that machine changes the answer. Nothing was clicked, typed or changed."
+    ),
     "ERR_BROWSE_CONFIG": (
         "A browse action's config is incomplete — it named no goal, or no page to start "
         "from. Refused before a browser is touched."
@@ -119,6 +126,19 @@ ERROR_CODES: dict[str, str] = {
         "A browse run ended without reaching its goal — the first navigation was denied by "
         "the BROWSE egress policy, the page could not be read, or the decision call failed. "
         "Distinct from a PARK, which succeeds with notes and asks for a human."
+    ),
+    "ERR_SURFACE_OVERLAY_PATH": (
+        "A user/agent surface overlay resolved outside $PERSONALCLAW_HOME/surfaces/ — a "
+        "traversal, an absolute path, a symlink pointing away, or not a regular file."
+    ),
+    "ERR_SURFACE_OVERLAY_INVALID": (
+        "A surface overlay is not the declarative DATA shape the L2 layer accepts: not "
+        "JSON, not an object, an unknown key, a wrong value type, or over the size ceiling."
+    ),
+    "ERR_SURFACE_OVERLAY_COMPONENT": (
+        "A surface overlay names a component the host registry does not have, or passes "
+        "props its declared schema refuses. The whole overlay is refused rather than "
+        "partially rendered, because a dropped node is an invisible failure."
     ),
 }
 

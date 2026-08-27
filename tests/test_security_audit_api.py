@@ -32,7 +32,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.dashboard.handlers.security_audit import register_security_audit_routes
-from personalclaw.sel import SecurityEvent, sel
+from personalclaw.sel import _VERIFY_WINDOW, SecurityEvent, sel
 
 SECRET = "sk-ant-api03-PLANTEDoTTERsecretVALUE0123456789abcdefXYZ"
 
@@ -249,7 +249,19 @@ async def test_verify_reports_checked_and_ok(home):
     _write(4)
     async with _client() as client:
         _, clean = await _get(client, "/api/security/audit/verify")
-        assert clean == {"checked": 4, "ok": True, "valid": 4, "tampered": 0, "windowed": True}
+        assert clean == {
+            "checked": 4,
+            "ok": True,
+            "valid": 4,
+            "tampered": 0,
+            "windowed": True,
+            # WHICH cap was applied. `windowed` says one was set; a consumer cannot tell
+            # "I stopped at 5000" from "5000 is the whole log" without the size — and the
+            # dashboard was rendering the count as if it were the whole chain. Asserted as
+            # the exact envelope on purpose: a field added to a tamper-evidence response
+            # should have to be declared here.
+            "window": _VERIFY_WINDOW,
+        }
 
         _tamper(home, 2)
         _, dirty = await _get(client, "/api/security/audit/verify")
@@ -262,7 +274,43 @@ async def test_verify_on_empty_log_is_ok():
     """0 of 0 records tampered. An empty log is clean, not broken."""
     async with _client() as client:
         _, body = await _get(client, "/api/security/audit/verify")
-    assert body == {"checked": 0, "ok": True, "valid": 0, "tampered": 0, "windowed": True}
+    assert body == {
+        "checked": 0,
+        "ok": True,
+        "valid": 0,
+        "tampered": 0,
+        "windowed": True,
+        "window": _VERIFY_WINDOW,
+    }
+
+
+@pytest.mark.asyncio
+async def test_verify_says_which_cap_it_applied(home):
+    """`window` is what lets a consumer tell a truncated pass from a complete one.
+
+    The dashboard used to render `checked` alone, so a capped verification read as
+    "Chain intact — 5000 events verified" on a tamper-evidence surface. `windowed`
+    cannot fix that by itself: it reports that a cap was SET, and on a short log
+    (43 entries, cap 5000) it is true while nothing was left out — so trusting it
+    alone understates a complete answer as badly as the count overstated a partial
+    one. The size is the missing fact, and it is cheap: a total would cost the O(n)
+    walk this window exists to avoid.
+    """
+    _write(3)
+    async with _client() as client:
+        _, capped = await _get(client, "/api/security/audit/verify")
+        _, whole = await _get(client, "/api/security/audit/verify?full=1")
+
+    # A cap was set but never bit: 3 < 5000, so a consumer can prove the answer is complete.
+    assert capped["windowed"] is True
+    assert capped["window"] == _VERIFY_WINDOW
+    assert capped["checked"] == 3
+    assert capped["checked"] < capped["window"]
+
+    # An exhaustive pass reports NO cap at all, rather than a cap of infinity.
+    assert whole["windowed"] is False
+    assert whole["window"] is None
+    assert whole["checked"] == 3
 
 
 # ── Filters: they work, and they fail closed ─────────────────────────────────

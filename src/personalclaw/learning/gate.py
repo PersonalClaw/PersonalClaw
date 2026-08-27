@@ -43,10 +43,10 @@ logger = logging.getLogger(__name__)
 
 
 class Cadence(str, Enum):
-    """The three capture cadences. Each observes a different signal.
+    """The four capture cadences. Each observes a different signal.
 
     Kept as a closed enum rather than free strings so a typo can't silently
-    create a fourth cadence that no policy covers.
+    create a fifth cadence that no policy covers.
     """
 
     #: After every completed chat turn — corrections, facets, procedural priors.
@@ -55,6 +55,14 @@ class Cadence(str, Enum):
     SESSION_END = "session_end"
     #: On a workflow run reaching a terminal state — the run-outcome learner.
     RUN_END = "run_end"
+    #: On an external agent's turn observed through the `/capture/v1` proxy
+    #: (EXTERNAL-ACCESS §7.2). Unlike the three above, this cadence observes a
+    #: conversation PClaw did not conduct, so its content arrives already inside
+    #: `fence_untrusted(source="capture:<client_id>")` — `capture_hygiene`'s rule
+    #: ("content inside a fence is invisible to direct capture cadences; it may
+    #: only travel the proposal path") therefore applies to these rows with zero
+    #: new policy. The one cadence whose rows are un-actionable by construction.
+    CAPTURE = "capture"
 
 
 class GateReason(str, Enum):
@@ -237,6 +245,9 @@ class LearningGate:
             return session_score >= min_session_score
         # RUN_END: a terminal run is itself the signal — there is no cheaper
         # proxy to threshold on, and skipping one loses the outcome permanently.
+        # CAPTURE: same shape for a different reason — the observed turn has
+        # already happened elsewhere, so there is nothing to spend by indexing it,
+        # and its content is fenced (i.e. mineable only via the proposal path).
         return True
 
 

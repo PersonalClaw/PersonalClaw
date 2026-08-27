@@ -294,6 +294,26 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers/terminal.py::_list_tmux_sessions::asyncio.create_subprocess_exec": (
         "operator: list user's tmux sessions"
     ),
+    # EI-6 tmux substrate — the same class as the terminal entries above, and for the same
+    # reason: the argv is FIXED (`tmux -L personalclaw <subcommand>`), no element of it is
+    # agent-influenced, and every one of these is a bounded read of our own tmux server. A
+    # resource ceiling on a `has-session` probe would cap the boot sweep's ability to ask
+    # whether a run's worker is still alive, which is the opposite of the safety it buys.
+    "tmux_substrate.py::has_session::asyncio.create_subprocess_exec": (
+        "operator: probe our own tmux server for a session"
+    ),
+    "tmux_substrate.py::has_session_sync::subprocess.run": (
+        "operator: probe our own tmux server for a session (sync boot sweep)"
+    ),
+    "tmux_substrate.py::list_sessions::asyncio.create_subprocess_exec": (
+        "operator: list sessions on our own tmux server"
+    ),
+    "tmux_substrate.py::pane_paths_sync::subprocess.run": (
+        "operator: read pane cwds from our own tmux server"
+    ),
+    "tmux_substrate.py::kill_session::asyncio.create_subprocess_exec": (
+        "operator: kill a session on our own tmux server"
+    ),
     # Update machinery — operator/service; re-execs the gateway itself (must not be capped).
     # The install-kind decision + the shared git/pip primitives live in core self_update.py
     # (DIST-13); the dashboard and the CLI both drive them.

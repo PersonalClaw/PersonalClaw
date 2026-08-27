@@ -349,23 +349,36 @@ async def api_learning_staging_week(request: web.Request) -> web.Response:
 _CALIBRATION_RUNS = 50
 
 
-def _precision_from_usage() -> tuple[float | None, int, int]:
-    """Surfaced-vs-used precision from the usage store. `(precision, surfaced, used)`.
+def _precision_from_events(days: int) -> tuple[float | None, int, int]:
+    """Surfaced-vs-used precision over `surfacing_events`. `(precision, surfaced, used)`.
 
-    From the USAGE store rather than `measure.per_arm_precision`: the per-arm report
-    needs a `surfacing_events` table that nothing writes yet, and a panel reading it
-    would render an empty state that looks like "surfacing never lands". The
-    surfaced/used counters, by contrast, have a live writer per session flush.
+    **This read used to come from `usage.UsageStore`**, on the stated grounds that the per-arm
+    report "needs a `surfacing_events` table that nothing writes yet" while "the surfaced/used
+    counters, by contrast, have a live writer per session flush". The first half was true and is
+    now fixed — LEARN-R4's table exists and `allocate_skills` writes it. The second half was
+    NOT true: `UsageStore.record` has no production caller at all, so this function returned
+    `(None, 0, 0)` on every box, and the panel's surfacing row rendered the empty state the old
+    docstring was written to avoid. Reading the table that is actually written is the fix.
+
+    Aggregated across arms because the response's three fields are totals; the per-`(kind, arm)`
+    breakdown is `measure.per_arm_precision`'s return value, which this discards deliberately
+    rather than publishing a field no surface reads yet.
+
+    Windowed on the panel's own `days` so the number answers the question the page asks. A
+    lifetime ratio beside windowed capture/utilization figures would invite a comparison across
+    two different periods.
     """
-    from personalclaw.learning.usage import TRACKED_KINDS, UsageStore
+    from personalclaw.learning import measure
+    from personalclaw.learning.surfacing_events import SurfacingEventStore
 
-    store = UsageStore()
+    store = SurfacingEventStore()
     try:
-        rows = [rec for kind in TRACKED_KINDS for rec in store.list_kind(kind)]
+        events = [e.to_dict() for e in store.read(days=days)]
     finally:
         store.close()
-    surfaced = sum(int(r.surfaced) for r in rows)
-    used = sum(int(r.used) for r in rows)
+    arms = measure.per_arm_precision(events)
+    surfaced = sum(a.surfaced for a in arms)
+    used = sum(a.used for a in arms)
     return ((used / surfaced) if surfaced else None), surfaced, used
 
 
@@ -440,7 +453,7 @@ async def api_learning_health(request: web.Request) -> web.Response:
     finally:
         store.close()
 
-    precision, surfaced, used = _precision_from_usage()
+    precision, surfaced, used = _precision_from_events(days)
 
     try:
         judge = _judge_calibration()

@@ -20,6 +20,7 @@ from aiohttp.multipart import BodyPartReader
 
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 from personalclaw.security import (
     is_sensitive_path,
     is_system_path,
@@ -102,6 +103,37 @@ async def api_reveal_path(request: web.Request) -> web.Response:
             metadata={"action": action},
         )
         return web.json_response({"error": "access denied"}, status=403)
+    # 🔴 THE ROOT ALLOWLIST. This was the ONE files endpoint that skipped
+    # `_validate_dashboard_path`, so `/etc/hosts` and another instance's home both answered 200
+    # (#655) — and it gains nothing from the blocked-basename work, because that lives INSIDE the
+    # function it was bypassing. The `..` and `is_sensitive_path` checks above are not a substitute:
+    # a path needs neither to be outside every root the dashboard is meant to surface.
+    #
+    # This is the endpoint that hands a path to `open`/`xdg-open`, i.e. to the host's default
+    # handler for whatever it is, which makes it the worst one to leave unrestricted.
+    #
+    # SECOND, not first: the sensitive-path check above is the more specific refusal (403 + a
+    # `sensitive_path` audit reason) and it holds regardless of roots, so it keeps answering for the
+    # case it already owned. This gate only decides paths that were previously ALLOWED.
+    #
+    # Non-breaking for the product: the only caller is the explorer's "Reveal in Finder" button,
+    # which passes an `entry.path` the explorer itself enumerated — and the explorer cannot leave
+    # the roots.
+    if _validate_dashboard_path(path) is None:
+        _sel().log_tool_invocation(
+            session_key="api",
+            source="api",
+            tool_name="reveal_path",
+            outcome="denied",
+            error="outside_dashboard_roots",
+            resources=path,
+            metadata={"action": action},
+        )
+        # STRUCTURED (`json_error`), unlike this module's six flat siblings emitting the same
+        # sentence. `test_wire_error_envelope_census` ratchets the flat population DOWN, so a
+        # NEW refusal joins the shape the project converges on; converting the six is
+        # its own change.
+        return json_error("invalid_path", message="invalid or forbidden path", status=400)
     if action == "open":
         if not os.path.isfile(path):
             return web.json_response({"error": "not a regular file"}, status=400)
@@ -1583,12 +1615,95 @@ async def api_file_list(request: web.Request) -> web.Response:
     return web.json_response({"roots": [], "entries": entries, "path": path})
 
 
+def _within_roots_resolved(path: str) -> bool:
+    """:func:`_path_within_roots`, comparing FULLY RESOLVED paths on both sides.
+
+    Necessary wherever the candidate has been through ``realpath``: on macOS ``/var`` is a symlink
+    to ``/private/var`` (and a user's home or workspace may be symlinked anywhere), so comparing a
+    resolved candidate against an unresolved root reports "outside" for a path that is plainly
+    inside. Measured while writing this: the first version of the gitdir check refused every
+    ordinary in-root repository, not just the escaping one.
+
+    Separate from :func:`_path_within_roots` rather than a change to it, because that function's
+    other callers pass paths that have already been canonicalized their own way, and widening the
+    comparison for all of them is a bigger change than this fix.
+    """
+    resolved = os.path.realpath(path)
+    for _label, root in _dashboard_roots():
+        if not root:
+            continue
+        root_resolved = os.path.realpath(root)
+        if resolved == root_resolved or resolved.startswith(root_resolved + os.sep):
+            return True
+    return False
+
+
+def _gitfile_target(marker: str) -> str | None:
+    """Where a ``.git`` FILE points, absolute and resolved. ``None`` if it points nowhere usable.
+
+    A ``.git`` file is git's standard *gitfile pointer* — one line, ``gitdir: <path>`` — which is
+    how ``git worktree`` and submodules work, so it is an ordinary shape rather than a synthetic
+    one. The pointed-at path may be relative, in which case it resolves against the directory
+    holding the marker, exactly as git resolves it.
+
+    Only the FILE case needs this. A ``.git`` directory is inside the repo the call sites already
+    validate, so resolving and re-checking it would add nothing and would only invite the
+    symlink-comparison mistake :func:`_within_roots_resolved` exists to avoid.
+    """
+    try:
+        with open(marker, "r", encoding="utf-8", errors="replace") as fh:
+            line = fh.readline(4096).strip()
+    except OSError:
+        return None
+    if not line.startswith("gitdir:"):
+        return None
+    target = line[len("gitdir:") :].strip()
+    if not target:
+        return None
+    if not os.path.isabs(target):
+        target = os.path.join(os.path.dirname(marker), target)
+    return os.path.realpath(target)
+
+
 def _git_repo_root(path: str) -> str | None:
-    """Walk up from *path* to find the enclosing git repo root (has ``.git``)."""
+    """Walk up from *path* to find the enclosing git repo root (has ``.git``).
+
+    🔴 THE GITDIR IS VALIDATED, NOT ONLY THE MARKER'S LOCATION. `os.path.exists` is true for a
+    ``.git`` FILE, and git honours the ``gitdir: <path>`` pointer inside it — so a one-line ``.git``
+    file written into an allowed root redirected every git read endpoint at an arbitrary repository
+    anywhere on disk. The containment check at each of the four call sites ran on every request and
+    measured the directory CONTAINING the pointer, which is legitimately inside a root; the gitdir
+    it named was never looked at. Whole-commit diffs then returned `.env`/`.key` contents that
+    `file-read` refuses by name (#430). The check was wired and pointed at the wrong path — and
+    the dashboard writes the pointer for you, since ``.git`` is not a blocked basename.
+
+    Refusing here rather than at the call sites is deliberate — all four ask the same question of
+    this function, and a guard added to three of them is the shape this bug already has.
+
+    **One narrow behaviour change, stated rather than hidden:** a git *worktree* whose main
+    repository lives OUTSIDE the dashboard roots now reports no repo, so the explorer shows no git
+    status for it. That is the exact shape the escape uses, and a worktree of an in-root repo is
+    unaffected (its gitdir sits inside that repo). Logged at debug so it is diagnosable rather than
+    mysterious.
+    """
 
     cur = path if os.path.isdir(path) else os.path.dirname(path)
     while cur and cur != os.path.dirname(cur):
-        if os.path.exists(os.path.join(cur, ".git")):
+        marker = os.path.join(cur, ".git")
+        if os.path.isdir(marker):
+            # An ordinary repository. Its gitdir is inside `cur`, which the call sites validate.
+            return cur
+        if os.path.exists(marker):
+            # A gitfile pointer. WHERE IT POINTS is the thing to check.
+            gitdir = _gitfile_target(marker)
+            if gitdir is None:
+                logger.debug("git: %s has a .git file that names no usable gitdir", cur)
+                return None
+            if not _within_roots_resolved(gitdir):
+                logger.debug(
+                    "git: refusing %s — its gitdir %s is outside the dashboard roots", cur, gitdir
+                )
+                return None
             return cur
         cur = os.path.dirname(cur)
     return None

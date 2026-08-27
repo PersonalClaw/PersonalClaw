@@ -3,9 +3,10 @@
 Owns the kind-agnostic lifecycle, polling RUNNING loops and deciding each cycle
 whether to keep going, complete, stall, fail, or pause for the user. The
 done-ness *signal* is always produced by something OTHER than the worker — it's
-delegated to the loop's :class:`LoopKindStrategy` ``is_done_signal`` (a verify
-command, a judge subagent, all-phases-gated). The watchdog *decides*; the
-strategy only *advises*. This upholds the tenet that no agent certifies its own
+read from the loop's DECLARED :class:`~personalclaw.workflows.supervisor_policy.\
+SupervisorPolicy` by the one evaluator in :mod:`personalclaw.loop.supervisor` (a
+verify command, a judge subagent, an orchestration hook). The watchdog *decides*;
+the policy only *advises*. This upholds the tenet that no agent certifies its own
 work.
 
 Shared lifecycle (all kinds): trust-TTL expiry → NEEDS_INPUT, attended/unattended
@@ -23,10 +24,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from personalclaw import notification_kinds, shutdown_event
+from personalclaw import concurrency, notification_kinds, shutdown_event
 from personalclaw.config.loader import AppConfig
-from personalclaw.loop import instrument, kinds, manager, store
-from personalclaw.loop.loop import LoopStatus
+from personalclaw.loop import instrument, kinds, manager, store, supervisor
+from personalclaw.loop.loop import Loop, LoopStatus
+from personalclaw.workflows.supervisor_policy import policy_for_kind
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +206,11 @@ class LoopWatchdog:
         #: ``_complete`` really can run twice for one loop. Without this set the second pass
         #: would pay for a second forked model call and race a second proposal into the queue.
         self._ladder_done: set[str] = set()
+        #: Whether the ONE boot sweep has run in this process. Flipped only AFTER
+        #: :meth:`_boot_sweep` returns, so a sweep that raises is retried on the next poll
+        #: instead of being lost — the property the gateway startup hook this replaced could
+        #: not have.
+        self._swept = False
 
     # ── lifecycle ──
 
@@ -747,6 +754,138 @@ class LoopWatchdog:
             return True
         return not nudge_loop.active and nudge_loop.cycle_count >= max_cycles
 
+    # ── boot adoption ("one adoption/reaping path") ──
+
+    async def _boot_sweep(self) -> set[str]:
+        """Decide the fate of every loop left mid-flight by a crash/restart, ONCE, on the
+        first poll — through the one boot-adoption path both work-unit nouns now share
+        (:func:`concurrency.boot_sweep`).
+
+        A worker — and the planner — session lives only in memory, so a loop persisted
+        RUNNING or PLANNING at startup has lost it:
+
+        * RUNNING → :func:`manager.start` (re-arm the execution worker).
+        * PLANNING → re-kick one ``advance_plan`` pass. The stepwise walkthrough runs as a
+          background task spawned from an HTTP request, so a restart strands it in PLANNING
+          with no live planner; ``advance_plan`` is idempotent and self-healing — it re-runs
+          the in-flight step / design pass and stops at the next gate.
+
+        PAUSED/STAGNANT/BLOCKED/NEEDS_INPUT/REVIEW await a deliberate action. Idempotent — a
+        genuinely-live worker is skipped. Also GCs orphan file dirs with no backing row.
+
+        **This was `loop/manager.reap_orphaned_loops`, awaited from a gateway startup hook** —
+        the second boot-adoption path `PP-16` names beside ``workflows/watchdog``'s. Both now
+        run through one primitive from the first poll of the supervisor that owns the noun,
+        which fixes two defects the hook shape guaranteed: the hook's
+        ``except: logger.warning`` lost loop revival for the life of the process (a loop stuck
+        RUNNING with no worker, which a user reads as "still working"), and awaiting it inline
+        delayed gateway readiness by however long N stranded planner passes take.
+        """
+        # Self-sufficient on purpose: `_rearm_running` asks the kind for its `launch_blocker`,
+        # and an unloaded registry answers `None` — which silently re-arms a brownfield loop
+        # against a workspace that is gone instead of parking it. `_poll_once` also calls this,
+        # so the sweep must not depend on being reached only through it.
+        kinds.ensure_loaded()
+        loops = store.list_all()
+
+        def _lost_its_worker(loop: Loop) -> bool:
+            """A RUNNING loop with NO worker session at all.
+
+            ``state._sessions`` is in-memory, so a loop the *previous* process armed has no
+            entry here — absence is the whole crash signal. The version this replaced also
+            required ``sess.running``, and that extra condition is wrong anywhere a session
+            can be idle: between cycles a live loop's session exists with ``running`` False
+            (autonudge fires a turn every ``idle_secs``), so the stricter predicate reads a
+            perfectly healthy idle loop as a crash survivor and re-arms it. It was harmless
+            only because the boot hook ran before any session could exist; moving the sweep
+            into the poll that DOES see sessions is exactly the drift that would have made it
+            bite. `test_expired_trust_pauses_for_reauth` is the shipped test that proves the
+            difference — under the strict predicate its live-but-idle loop is re-armed instead
+            of being trust-expired, and `manager.start` re-stamps the RUNNING row on the way
+            past, which is how a re-arm silently resets the trust window.
+            """
+            if loop.status != LoopStatus.RUNNING.value:
+                return False
+            return self._state._sessions.get(manager.session_key(loop.id)) is None
+
+        def _stranded_in_planning(loop: Loop) -> bool:
+            return loop.status == LoopStatus.PLANNING.value
+
+        decided = await concurrency.boot_sweep(
+            "loop", loops, survived=_lost_its_worker, decide=self._rearm_running
+        )
+        decided |= await concurrency.boot_sweep(
+            "loop-planning", loops, survived=_stranded_in_planning, decide=self._rekick_planning
+        )
+        try:
+            reaped = store.reap_orphan_dirs()
+            if reaped:
+                logger.info("loop: reaped %d orphan dir(s) with no DB row", reaped)
+        except Exception:
+            logger.warning("loop: orphan-dir GC failed", exc_info=True)
+        return decided
+
+    async def _rearm_running(self, loop: Loop) -> bool:
+        """Re-arm one RUNNING loop whose worker died with the process — or park it for the
+        user if its workspace went missing. Both are decisions, so both return ``True``."""
+        # The live worker was reaped by the crash/restart — record it as a `watcher_reaped`
+        # ledger event so the flywheel sees a watcher cut off before its cadence
+        # (fewer cycles than the budget implies), not a template that simply under-produced.
+        try:
+            store.record_watcher_reaped(
+                loop.id, cycles=loop.total_cycles, reason="worker process lost to restart"
+            )
+        except Exception:
+            logger.debug("loop: watcher_reaped emit failed for %s", loop.id, exc_info=True)
+        # A workspace-needing loop (brownfield code) can have its bound dir moved/deleted
+        # during downtime. start() would re-provision against the gone path; re-validate via
+        # the kind's launch precondition (the same one the start action enforces) and pause
+        # for the user instead of resurrecting nothing.
+        strat = kinds.get_or_none(loop.kind)
+        blocker = getattr(strat, "launch_blocker", None)
+        reason = blocker(loop) if blocker else None
+        if reason:
+            store.write_question(
+                loop.id, f"{reason} (the workspace went missing during a restart)."
+            )
+            store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
+            logger.warning(
+                "loop: orphaned %s blocked from re-arm (%s) — paused for the user", loop.id, reason
+            )
+            return True
+        await manager.start(self._state, self._svc, loop.id)
+        logger.info("loop: re-armed orphaned %s after restart", loop.id)
+        return True
+
+    async def _rekick_planning(self, loop: Loop) -> bool:
+        """Re-kick one restart-stranded PLANNING loop so it resumes instead of freezing on a
+        spinner forever. Lazy import (plan_walkthrough → store, no watchdog cycle, but kept
+        lazy for symmetry + cheap startup).
+
+        **KNOWN WART, carried over from `reap_orphaned_loops` and deliberately not changed
+        here: this makes a MODEL CALL from inside the boot sweep.** That is wrong in principle
+        — it gives adoption unbounded latency, and because a failed sweep is now retried every
+        poll, a provider outage turns the retry into a 5-second-interval hammer. The right
+        shape is for the sweep to leave the row in a state the *ordinary* poll advances, which
+        means `_poll_once` growing a PLANNING pass (it iterates RUNNING only today). That is
+        new supervisor behaviour needing its own budget/attention/stagnation coverage, so it
+        belongs to `PP-16`'s still-open "pluggable supervisor" seam, not to this one — removing
+        the call without building the replacement would strand every restart-interrupted
+        PLANNING loop forever, which is worse than the wart. Recorded in
+        PLATFORM-PRIMITIVES' execution log.
+
+        Practical hazard while it stands: **no test reaches this today** (measured — no test
+        both creates a PLANNING loop and calls `_poll_once`), so a future test that does will
+        silently start making a real model call inside the suite. Stub
+        `plan_walkthrough.advance_plan` when you write it, as
+        `test_loop_manager.py::TestBootSweep::test_rekicks_planning_orphan` does.
+        """
+        from personalclaw.loop import plan_walkthrough as pw
+
+        await pw.advance_plan(self._state, self._svc, loop.id)
+        logger.info("loop: re-kicked stranded planning loop %s after restart", loop.id)
+        return True
+
     # ── poll loop ──
 
     async def _loop(self) -> None:
@@ -764,6 +903,14 @@ class LoopWatchdog:
 
     async def _poll_once(self) -> None:
         kinds.ensure_loaded()
+        # The boot sweep runs ONCE, and BEFORE this poll reads a single loop: a loop persisted
+        # RUNNING by a crash has no worker session, and every check below would misread that
+        # as a live loop whose worker went silent. Its ids are deliberately NOT skipped the
+        # way the run side skips its swept ids — a loop the sweep re-armed IS live now and
+        # should be polled, and one it parked has left RUNNING so the filter below drops it.
+        if not self._swept:
+            await self._boot_sweep()
+            self._swept = True
         cfg = AppConfig.load().loops
         running = [loop for loop in store.list_all() if loop.status == LoopStatus.RUNNING.value]
         live_ids = {loop.id for loop in running}
@@ -829,59 +976,60 @@ class LoopWatchdog:
                 # the gate; design: advance the design step) runs its on_new_cycle
                 # hook, which OWNS the cycle's done-ness (and its own side effects:
                 # stage-advance, provisioning, publish). A kind without one falls
-                # through to the generic point-in-time is_done_signal.
+                # through to the policy's declared point-in-time done-signal.
                 strat = kinds.get_or_none(loop.kind)
+                # The convergence decision is a DECLARED policy, not pluggable
+                # Python. `policy_for_kind` resolves the kind (+ its goal_type variant) to the ONE
+                # SupervisorPolicy the ONE evaluator reads, so this branch no longer asks the
+                # strategy anything about done-ness, budget or stalling.
+                policy = policy_for_kind(loop.kind, loop.kind_config)
                 done = False
+                hooked = None
                 if strat is not None:
                     hooked = await kinds.run_cycle_hook(strat, loop, findings, self._cycle_ctx())
-                    if hooked is not None:
-                        # The kind's orchestration owns done-ness this cycle.
-                        if hooked:
-                            continue  # the hook already completed the loop
+                if hooked is not None:
+                    # The kind's orchestration owns done-ness this cycle.
+                    if hooked:
+                        continue  # the hook already completed the loop
+                else:
+                    try:
+                        signal = await supervisor.done_signal(loop, findings, policy)
+                    except Exception:
+                        logger.warning("loop %s: done signal errored", cid, exc_info=True)
+                        signal = None
+                    if signal is None:
+                        # None has TWO meanings: (a) a loop that HAS a point-in-time
+                        # done-check genuinely couldn't assess (judge errored / verify
+                        # un-runnable) → degraded, surface it; (b) a loop whose policy
+                        # declares NO such check for this config (e.g. a General loop with
+                        # no verify_command) → deferring to budget BY DESIGN, not a failure.
+                        # Only flag (a), so we don't false-alarm "Done-ness check
+                        # unavailable" on a loop that never had one.
+                        if supervisor.has_done_check(loop, policy):
+                            # P4: distinguish a transient judge failure from a CONFIRMED
+                            # BLIND judge (the canary proved it can't tell good from empty).
+                            # A blind judge won't recover by retrying, so halt the loop to
+                            # NEEDS_INPUT with judge_blind rather than spinning on judge_error.
+                            fresh = store.get(cid)
+                            blind = (
+                                bool((fresh.kind_config or {}).get("judge_calibrated") is False)
+                                if fresh
+                                else False
+                            )
+                            if blind:
+                                store.update_status(cid, LoopStatus.NEEDS_INPUT)
+                                self._publish(cid, "judge_blind", {"loop_id": cid, "cycle": count})
+                            else:
+                                self._publish(cid, "judge_error", {"loop_id": cid, "cycle": count})
                     else:
-                        try:
-                            signal = await strat.is_done_signal(loop, findings)
-                        except Exception:
-                            logger.warning("loop %s: is_done_signal errored", cid, exc_info=True)
-                            signal = None
-                        if signal is None:
-                            # None has TWO meanings: (a) a kind that HAS a point-in-time
-                            # done-check genuinely couldn't assess (judge errored / verify
-                            # un-runnable) → degraded, surface it; (b) a kind that has NO
-                            # such check for this loop's config (e.g. a General loop with no
-                            # verify_command) → deferring to budget BY DESIGN, not a failure.
-                            # Only flag (a), so we don't false-alarm "Done-ness check
-                            # unavailable" on a loop that never had one.
-                            has_check = getattr(strat, "has_done_check", lambda _l: True)(loop)
-                            if has_check:
-                                # P4: distinguish a transient judge failure from a CONFIRMED
-                                # BLIND judge (the canary proved it can't tell good from empty).
-                                # A blind judge won't recover by retrying, so halt the loop to
-                                # NEEDS_INPUT with judge_blind rather than spinning on judge_error.
-                                fresh = store.get(cid)
-                                blind = (
-                                    bool((fresh.kind_config or {}).get("judge_calibrated") is False)
-                                    if fresh
-                                    else False
-                                )
-                                if blind:
-                                    store.update_status(cid, LoopStatus.NEEDS_INPUT)
-                                    self._publish(
-                                        cid, "judge_blind", {"loop_id": cid, "cycle": count}
-                                    )
-                                else:
-                                    self._publish(
-                                        cid, "judge_error", {"loop_id": cid, "cycle": count}
-                                    )
-                        else:
-                            # A non-None signal means the kind ran a third-party assessment
-                            # and persisted whatever it produced. Publish the verdict it just
-                            # wrote for THIS cycle (+ a ratchet_regression flag) so the ROI
-                            # rail / verdict panel / judge-degraded indicator update live —
-                            # the FE listens for these. Kind-agnostic: a kind that writes no
-                            # verdict (verifiable/monitor) yields none here, so nothing emits.
-                            self._publish_cycle_verdict(cid, count)
-                        done = signal is True
+                        # A non-None signal means the supervisor ran a third-party assessment
+                        # and persisted whatever it produced. Publish the verdict it just
+                        # wrote for THIS cycle (+ a ratchet_regression flag) so the ROI
+                        # rail / verdict panel / judge-degraded indicator update live —
+                        # the FE listens for these. Kind-agnostic: a policy that writes no
+                        # verdict (verifiable/monitor) yields none here, so nothing emits.
+                        self._publish_cycle_verdict(cid, count)
+                    done = signal is True
                 if done:
                     await self._complete(cid, reason="done-ness signal met")
                     continue
@@ -893,15 +1041,11 @@ class LoopWatchdog:
                 # Budget cap — max_cycles > 0 always bounds a finite loop. Reaching it
                 # is NON-genuine by default (the goal may not be met → "stopped on
                 # budget"), EXCEPT where the budget IS the intended stopping condition
-                # (a monitor's watch window): the kind says so via budget_stop_genuine,
+                # (a monitor's watch window): the POLICY says so via its convergence spec,
                 # so the cockpit shows a clean completion rather than an error-flavored
                 # "stopped before done" for an inherently-ongoing loop that ran its course.
                 if loop.max_cycles > 0 and count >= loop.max_cycles:
-                    genuine = (
-                        bool(getattr(strat, "budget_stop_genuine", lambda _l: False)(loop))
-                        if strat is not None
-                        else False
-                    )
+                    genuine = supervisor.budget_stop_is_genuine(policy)
                     await self._complete(cid, reason="cycle budget reached", genuine=genuine)
                     continue
 
@@ -975,9 +1119,10 @@ class LoopWatchdog:
                     self._publish(cid, "failed")
 
     def _stagnation_disabled(self, loop) -> bool:
-        """Monitor goals never stagnate (a quiet cycle is a valid no-op). Other
-        kinds use the stall signal."""
-        return loop.kind == "goal" and str((loop.kind_config or {}).get("goal_type")) == "monitor"
+        """Whether the stall signal is off for this loop — read off the DECLARED policy
+        (`PP-16` seam 3) rather than a hard-coded kind name. A monitor goal's quiet cycle is a
+        valid no-op; every other declared row keeps the stall signal."""
+        return not supervisor.stagnation_enabled(policy_for_kind(loop.kind, loop.kind_config))
 
     def _clear_liveness(self, cid: str) -> None:
         self._last_count.pop(cid, None)

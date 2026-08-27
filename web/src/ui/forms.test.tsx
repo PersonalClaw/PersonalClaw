@@ -39,7 +39,7 @@ describe('standard-field scale', () => {
     expectTokens(input, [
       'w-full', 'h-10', 'rounded-md', 'bg-surface-container', 'px-m',
       'text-on-surface', 'text-[0.9375rem]', 'placeholder:text-on-surface-low',
-      'outline-none', 'focus:ring-2', 'focus:ring-inset', 'focus:ring-primary/50',
+      'outline-none', 'focus:ring-2', 'focus:ring-inset', 'focus:ring-primary',
     ])
     // No explicit type attribute (native default = text) — byte-identical to the
     // pre-scale field, which set none either.
@@ -146,7 +146,7 @@ describe('NumberField', () => {
     expectTokens(input, [
       'h-8', 'w-24', 'rounded-md', 'bg-surface-high', 'px-2', 'text-right',
       'text-[0.8125rem]', 'text-on-surface', 'tabular-nums', 'outline-none',
-      'focus:ring-2', 'focus:ring-inset', 'focus:ring-primary/50',
+      'focus:ring-2', 'focus:ring-inset', 'focus:ring-primary',
     ])
     expect(input?.getAttribute('type')).toBe('number')
   })

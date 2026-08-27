@@ -271,7 +271,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
         // about a search the user has not run.
         <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search the marketplace', label: 'Search marketplace' }}
           results={{ count: results?.length ?? 0, noun: 'skills', active: !!q.trim() && !loading && results !== null }}>
-          <select value={marketplace} onChange={(e) => setMarketplace(e.target.value)} aria-label="Marketplace" className="h-10 rounded-pill bg-surface-high px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
+          <select value={marketplace} onChange={(e) => setMarketplace(e.target.value)} aria-label="Marketplace" className="h-10 rounded-pill bg-surface-high px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
             <option value="">{totalMatches ? `All marketplaces (${totalMatches})` : 'All marketplaces'}</option>
             {marketplaces.map((m) => <option key={m.name} value={m.name}>{counts[m.name] ? `${m.name} (${counts[m.name]})` : m.name}</option>)}
           </select>

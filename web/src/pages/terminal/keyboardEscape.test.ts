@@ -104,7 +104,7 @@ describe('TerminalView wires the escape to the DOM', () => {
     // `:focus-visible` does not match a scripted `.focus()`, so a focus-visible ring would
     // never paint on the way out — measured in a browser, where the ring is the 4th of five
     // box-shadow layers (`… 0px 0px 0px 2px inset`).
-    expect(src).toMatch(/focus:ring-2 focus:ring-inset focus:ring-primary\/50/)
+    expect(src).toMatch(/focus:ring-2 focus:ring-inset focus:ring-primary\b/)
     expect(src).not.toMatch(/focus-visible:ring/)
   })
 

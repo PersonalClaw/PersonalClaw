@@ -143,6 +143,13 @@ async def api_external_access(request: web.Request) -> web.Response:
             "rate_concurrent": int(ea.rate_concurrent),
             "auto_disable_after_breaches": int(ea.auto_disable_after_breaches),
             "capture_retention_days": int(ea.capture_retention_days),
+            # Read from the NESTED surface object, which is the spelling `load()` fills
+            # and the only one the PATCH allowlist accepts
+            # (`external_access.capture.upstream_allowlist`). Reported because an empty
+            # allow-list denies EVERY upstream — correct, fail-closed, and completely
+            # opaque to a user who has just enabled capture and is getting 502s. A knob
+            # whose default breaks the surface has to be visible where the surface is.
+            "capture_upstream_allowlist": list(ea.capture.upstream_allowlist),
         }
         public_url = str(ea.public_url or "")
     except Exception:  # noqa: BLE001

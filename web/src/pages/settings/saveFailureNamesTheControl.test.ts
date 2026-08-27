@@ -29,12 +29,17 @@ const panels = () =>
   readdirSync(SETTINGS).filter((f) => /Panel\.tsx$/.test(f) && !f.includes('.test.'))
 
 describe('a rejected settings save names the control', () => {
-  it('both shared rows hand the label to the patch they fire', () => {
+  it('every shared row hands the label to the patch it fires', () => {
     expect(UI, 'the toggle must pass its label').toContain('patch(field, v as never, flash, label)')
     expect(UI, 'the number field must too').toContain('patch(field, n as never, flash, label)')
+    // THREE rows now, not two: `StrListField` joined the family when External Access needed a
+    // str_list control and the copy in `AgentDefaultsPanel` moved here rather than being duplicated.
+    // Named individually rather than just bumping the count — a count alone would go green again if
+    // a fourth row arrived without the argument and a third one lost it.
+    expect(UI, 'the string list must too').toContain('patch(field, next as never, flash, label)')
     // The contract has to admit it, or a panel cannot receive it.
     const sigs = [...UI.matchAll(/patch: \(k: string, v: never, cb: \(\) => void, label\?: string\) => void/g)]
-    expect(sigs.length, 'both row prop types carry the 4th argument').toBe(2)
+    expect(sigs.length, 'all three row prop types carry the 4th argument').toBe(3)
   })
 
   it('NO save failure names a config key or path — the ratchet', () => {

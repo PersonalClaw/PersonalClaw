@@ -240,10 +240,14 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
         onClick={() => setRailOpen((v) => !v)} ariaExpanded={railOpen}>
         <Sliders size={13} />
       </SquareIconButton>
-      <SquareIconButton label={saved ? 'Saved — click to remove' : 'Save as artifact'} onClick={toggleSave} disabled={savePending} on={saved}>
+      {/* Save is purely in flight → `loading`. Pin is a COMPOUND gate and splits: `pinned` is
+          genuine unavailability (it is already on the dashboard, and `on` shows that), `pinPending`
+          is the request → `loading`. OR-ed together, a pin that had just been clicked was
+          indistinguishable from one that could never be clicked again. */}
+      <SquareIconButton label={saved ? 'Saved — click to remove' : 'Save as artifact'} onClick={toggleSave} loading={savePending} on={saved} iconSize={13}>
         <Bookmark size={13} fill={saved ? 'currentColor' : 'none'} />
       </SquareIconButton>
-      <SquareIconButton label={pinned ? 'Pinned to dashboard' : 'Pin to dashboard'} onClick={pin} disabled={pinPending || pinned} on={pinned}>
+      <SquareIconButton label={pinned ? 'Pinned to dashboard' : 'Pin to dashboard'} onClick={pin} disabled={pinned} loading={pinPending} on={pinned} iconSize={13}>
         <Pin size={13} fill={pinned ? 'currentColor' : 'none'} />
       </SquareIconButton>
       <SquareIconButton label="Download as HTML" onClick={download}><Download size={13} /></SquareIconButton>

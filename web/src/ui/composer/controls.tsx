@@ -88,7 +88,7 @@ export function AgentPill({ data, value, onSelect, openSignal }: { data?: Compos
             <div className="relative shrink-0 px-1 pb-1">
               <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agents" autoFocus
-                className="h-8 w-full rounded-md bg-surface-high pl-8 pr-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+                className="h-8 w-full rounded-md bg-surface-high pl-8 pr-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
             </div>
           )}
           <div className="min-h-0 flex-1 overflow-y-auto">

@@ -87,7 +87,7 @@ function unexplained(): string[] {
   return out.sort()
 }
 
-/** The remainder, each with why it is not a defect. Twelve today. */
+/** The remainder, each with why it is not a defect. Thirteen today. */
 const CLASSIFIED: Record<string, string> = {
   // The carrier itself: these two lines ARE the soft-off implementation `disabledReason` drives.
   'ui/Button.tsx:161': 'the Button carrier implementing soft-off',
@@ -116,6 +116,15 @@ const CLASSIFIED: Record<string, string> = {
   'pages/tasks/TaskDetail.tsx:254': 'no navigation handler → informational row (cursor-default)',
   // A sequence dependency whose cause is the field directly above it.
   'pages/tasks/TaskForm.tsx:181': 'depends on the Project field rendered immediately above',
+  // The reason is the control's own NAME, which flips with the state: "Pin to dashboard" when it can
+  // be pressed, "Pinned to dashboard" when it cannot — plus `aria-pressed` saying the same thing.
+  //
+  // 🔍 THIS SITE IS NOT NEW; IT WAS HIDDEN. It read `disabled={pinPending || pinned}`, and
+  // `pinPending` is in the BUSY list above, so the whole compound expression was skipped as
+  // in-flight. Giving the icon tiers a `loading` prop split it into `disabled={pinned}` +
+  // `loading={pinPending}`, and the pre-existing unexplained half surfaced. A compound gate with one
+  // in-flight term is a blind spot for any in-flight-keyed scan, this one included.
+  'ui/widget/WidgetFrame.tsx:250': "the reason is the button's own name, which flips to \"Pinned to dashboard\"",
 }
 
 /** Pass-through primitives: `disabled` arrives as a prop and the reason belongs to the CALLER. Counted
@@ -153,6 +162,9 @@ describe('the disabled-reason census', () => {
     expect(at('pages/tasks/TaskDetail.tsx', 254)).toMatch(/disabled=\{!onOpenTask\}/)
     expect(readFileSync(join(SRC, 'pages/tasks/TaskDetail.tsx'), 'utf8'),
       'the cursor says "not a button", not "blocked"').toMatch(/disabled:cursor-default/)
+    expect(at('ui/widget/WidgetFrame.tsx', 250)).toMatch(/disabled=\{pinned\} loading=\{pinPending\}/)
+    expect(at('ui/widget/WidgetFrame.tsx', 250),
+      'and the name really does state the gate').toMatch(/pinned \? 'Pinned to dashboard'/)
     expect(at('pages/tasks/TaskForm.tsx', 181)).toMatch(/disabled=\{!projectId\}/)
     expect(readFileSync(join(SRC, 'pages/tasks/TaskForm.tsx'), 'utf8'),
       'and the Project field it depends on is right above').toMatch(/<Field label="Project">/)

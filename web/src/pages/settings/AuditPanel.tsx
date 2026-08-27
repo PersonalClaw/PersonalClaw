@@ -65,6 +65,31 @@ function downloadJsonl(events: SelEvent[]): void {
  *  tamper-evident hash chain of every tool invocation, approval/denial, redaction, and
  *  config write. Server-side filters, cursor pagination, per-row integrity, chain-verify,
  *  credential-safe JSONL export, key-rotate. */
+/** How much of the chain a verdict actually covers, and whether anything was left out.
+ *
+ *  🔴 THE VERDICT USED TO OVERSTATE ITS SCOPE. `sel.verify_integrity` defaults to a 5000-entry
+ *  window — the live tamper-detection window, added because a full walk "had reached >1M entries,
+ *  taking 20s+ and hanging the audit UI" (its own docstring) — and the handler reports that as
+ *  `windowed: true`. **Nothing in the SPA read the flag** (`git grep windowed web/src` found only the
+ *  unrelated `WindowedList`), so a capped check rendered as "Chain intact — 5000 events verified",
+ *  which on a tamper-evidence surface reads as *the chain is intact*, full stop.
+ *
+ *  Same ruling as the usage panel's unpriced total: "cannot present as complete" is not "do not
+ *  present" — state the scope. And state it in BOTH directions: with 43 events in the log the window
+ *  never bit, and calling that "the last 43" would understate a complete answer just as badly. That
+ *  is why the server now sends `window` (the cap it applied) and not just `windowed` (that a cap
+ *  existed) — the boundary case where the log is exactly the window size resolves as "capped", which
+ *  is the safe direction to be wrong in. */
+export function verifiedScope(v: { checked: number; windowed?: boolean; window?: number | null }): string {
+  const n = v.checked.toLocaleString()
+  return capped(v) ? `the last ${n} events` : `all ${n} events`
+}
+
+/** Did the cap actually leave entries unchecked? `windowed` alone cannot answer this. */
+export function capped(v: { checked: number; windowed?: boolean; window?: number | null }): boolean {
+  return !!v.windowed && typeof v.window === 'number' && v.checked >= v.window
+}
+
 export function AuditPanel() {
   const [filters, setFilters] = useState<AuditFilters>({})
   const [showMore, setShowMore] = useState(false)
@@ -123,6 +148,11 @@ export function AuditPanel() {
     setVerify(null)
     try { setVerify(await api.auditVerify()) } catch { setVerify({ ok: false, checked: 0, error: 'verify failed' }) }
   }
+  // NOT offered as a button on purpose. `verify_integrity(max_entries=None)` is the exhaustive walk the
+  // window exists to avoid, and `personalclaw security verify` already performs it — its own comment
+  // calls it "an explicit offline audit". A button here would re-create the 20s+ hang the window was
+  // added to fix, so the panel NAMES the command instead: the same choice `DurabilityPanel` makes for
+  // `personalclaw restore --replace`.
   // 🔑 A CONFIRMED ACTION THAT FAILED SILENTLY, and the confirmed-delete ratchet could not see it: that
   // sweep matches `api.(delete|purge|revoke)*`, and this one is called `selRotate`. The user confirmed
   // rotating the audit-log signing key, the request failed, and the panel invalidated its verify cache and
@@ -198,12 +228,21 @@ export function AuditPanel() {
       )}
 
       {verify && (
-        <div className="mb-3 flex items-center gap-1.5 rounded-lg bg-surface-container px-3 py-2 text-[0.8125rem]"
-          style={{ color: verify.ok ? 'var(--color-success)' : 'var(--color-danger)' }}>
-          {verify.ok ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
-          {verify.ok
-            ? `Chain intact — ${verify.checked} events verified.`
-            : `Chain broken — ${verify.tampered ?? '?'} of ${verify.checked} events altered${verify.error ? ` (${verify.error})` : ''}.`}
+        <div className="mb-3 rounded-lg bg-surface-container px-3 py-2 text-[0.8125rem]">
+          <div className="flex items-center gap-1.5"
+            style={{ color: verify.ok ? 'var(--color-success)' : 'var(--color-danger)' }}>
+            {verify.ok ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
+            {verify.ok
+              ? `Chain intact — ${verifiedScope(verify)} verified.`
+              : `Chain broken — ${verify.tampered ?? '?'} of ${verifiedScope(verify)} altered${verify.error ? ` (${verify.error})` : ''}.`}
+          </div>
+          {capped(verify) && (
+            <p className="mt-1 text-on-surface-low text-[0.75rem]">
+              Older entries were not checked — this is the live tamper-detection window.
+              {' '}<code className="font-mono">personalclaw security verify</code> walks the whole log
+              offline, which can take a while on a long one.
+            </p>
+          )}
         </div>
       )}
 

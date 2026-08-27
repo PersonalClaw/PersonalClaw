@@ -122,7 +122,6 @@ async def tick_once(
     `pending_resumes` is the caller's cross-tick retry list, mutated in place. Owned by
     `run_forever` because this function is deliberately stateless — see that function.
     """
-    from personalclaw.triggers import executor as ex
     from personalclaw.triggers import service as svc
     from personalclaw.triggers import wakeup as wk
 
@@ -179,21 +178,110 @@ async def tick_once(
     # `no_session` delivery (a fire that reached nobody) was logged nowhere. Third key-mismatch in
     # this criterion, same shape as the missed-review one: a live check reading a name its producer
     # does not emit is worse than no check, because the silence reads as "nothing wrong".
+    #
+    # 🔴 AND IT IS NO LONGER A WARNING, because it no longer describes a problem. When the check was
+    # fixed, `no_session` was a fire that reached nobody. Now `_execute_delivery` runs that fire
+    # directly, so this counts triggers with no session inbox — which is EVERY scheduled trigger, on
+    # every gateway. A WARNING on the healthy path is how a log stops being read; the count is still
+    # worth having, at the level a normal event belongs.
     no_session = int((summary.get("by_disposition") or {}).get("no_session", 0) or 0)
     if no_session:
-        logger.warning("clock dispatch reached no session for %d wakeups", no_session)
+        logger.debug("clock dispatch: %d wakeups have no session inbox (run directly)", no_session)
 
     _hold_resumes(wk, deliveries, pending_resumes)
 
-    for fire in result.fires:
-        key = wk.session_key_for(fire.trigger.id)
+    # 🔴 EXECUTE PER DELIVERY, NOT PER FIRE. Two defects lived in the loop this replaces, and both
+    # come from re-deriving what the dispatcher already decided.
+    #
+    # 1. It drained `session_key_for(fire.trigger.id)` — WITHOUT the trigger's `session` binding,
+    #    which `wakeup_for` DOES pass. For a trigger bound to `conversation:<key>` the two disagree:
+    #    the wakeup was queued onto the conversation and the drain looked in `cron:<id>`. One key,
+    #    computed once, carried on the delivery.
+    # 2. It drained unconditionally, so a fire that reached NO INBOX was silently dropped — which,
+    #    measured, is every scheduled fire on a real gateway, because nothing in the tree creates a
+    #    trigger's session. See `_execute_delivery`.
+    for delivery in deliveries:
         try:
-            await ex.drain(sessions, key, runner, now=now, base_dir=base_dir)
+            await _execute_delivery(delivery, runner, sessions=sessions, now=now, base_dir=base_dir)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 - one trigger's drain must not strand the others
-            logger.warning("drain failed for %s", fire.trigger.id, exc_info=True)
+        except Exception:  # noqa: BLE001 - one trigger's execution must not strand the others
+            logger.warning("execution failed for %s", delivery.wakeup.trigger_id, exc_info=True)
     return result
+
+
+async def _execute_delivery(
+    delivery: Any,
+    runner: Callable[[dict[str, Any]], Awaitable[Any]],
+    *,
+    sessions: Any,
+    now: float = 0.0,
+    base_dir: Any = None,
+) -> list[Any]:
+    """Execute (or correctly abandon) ONE dispatched fire. Returns its run outcomes.
+
+    🔴 **THE BUG THIS CLOSES: no scheduled trigger had ever executed its action.** `tick` decided
+    the fire, wrote a ledger row, persisted a claim and advanced `next_fire_at` — and then the fire
+    went nowhere. Measured on a live gateway: 46 cycles of accumulated state contained run records
+    from `manual` and `replay` only, never one from a schedule. The UI showed each trigger enabled
+    with an advancing next-run time the whole time.
+
+    The break was that `deliver` queues onto a session inbox, and **nothing in the tree creates a
+    trigger's session** — `get_or_create` has no caller with a trigger key. So `enqueue` returned
+    False, `deliver` reported `NO_SESSION`, and the old loop drained an inbox that had never
+    received anything. `deliver`'s own docstring names the two ways out: *"the caller creates the
+    session or spools the payload"*. It did neither.
+
+    **A trigger fire does not need a model session.** That is why this takes neither of those two
+    ways. In this chain the session is used ONLY as a queue: `drain` pops a payload and hands it to
+    the injected `runner`, and in production that runner is the gateway's action dispatch, which
+    creates whatever it needs itself. `get_or_create` would spin up a provider process per fire —
+    an ACP CLI started at 3am so a `notify` action can print a line — and then the payload would
+    still have to be drained back out of the queue it was only ever passed through. So a fire with
+    no inbox runs directly, through the same `run_one` a drained fire runs through.
+
+    **A fire that does not run releases its claim.** `tick` persists a claim so `overlap` can
+    enforce, and `run_one` releases it in a `finally`. Every path that never reaches `run_one` was
+    therefore leaving a claim held for its full `max_duration_secs` (3600s), which left the trigger
+    reporting `is_running: true`, recording `skipped_overlap` on every later tick, and answering
+    `409 already running` to a manual Run for an hour. `SKIPPED_RUNNING` is a deliberate skip — the
+    session is mid-turn and `overlap: skip` says don't pile on — but "we chose not to start a run"
+    and "a run is in flight" are different facts, and only the second is what a claim means.
+    """
+    from personalclaw.triggers import executor as ex
+    from personalclaw.triggers import wakeup as wk
+
+    wakeup = delivery.wakeup
+    key = wakeup.session_key
+
+    if delivery.disposition == wk.Disposition.QUEUED.value:
+        drained = await ex.drain(sessions, key, runner, now=now, base_dir=base_dir)
+        return list(drained.outcomes)
+
+    if delivery.disposition == wk.Disposition.NO_SESSION.value:
+        # The normal path on a real gateway, not an edge case. `run_one` owns the classification,
+        # the timing and the claim release, so this is the same execution a drained fire gets.
+        outcome = await ex.run_one(
+            wakeup.payload, runner, session_key=key, now=now, base_dir=base_dir
+        )
+        logger.info(
+            "clock fire for %s ran without a session inbox: %s",
+            wakeup.trigger_id,
+            outcome.outcome,
+        )
+        return [outcome]
+
+    # SKIPPED_RUNNING (a wake dropped because the session is mid-turn) or REQUEUED (a resume held
+    # for the next tick — never a fire, since `wakeup_for` always builds a wake). Nothing ran, so
+    # the claim must come back or this trigger is jammed until the claim expires.
+    released = ex.release_claim_for(wakeup.trigger_id, base_dir=base_dir)
+    logger.debug(
+        "clock fire for %s not executed (%s); claim released=%s",
+        wakeup.trigger_id,
+        delivery.disposition,
+        released,
+    )
+    return []
 
 
 async def _poll_idle(

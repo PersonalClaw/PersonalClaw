@@ -14,10 +14,11 @@ import {
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { Meter } from '../../ui/Meter'
+import { WavyProgress } from '../../ui/WavyProgress'
 import { SearchField } from '../../ui/SearchField'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { confirm } from '../../ui/dialog'
-import { PanelHeader, Section, ToggleRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, ToggleRow } from './settingsUI'
 import { notify } from '../../app/appSdk'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
@@ -408,10 +409,10 @@ function PromptCacheSection() {
 
   return (
     <Section title="Prompt caching" hint="Reuse the stable part of the prompt across turns on providers that support it.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <ToggleRow label="Prompt caching" cfg={cfg} field="prompt_cache_enabled" patch={patch}
           hint="Ask providers that support it to cache the stable prompt prefix, cutting cost and latency on multi-turn work. Providers without cache support are unaffected. Turn it off to rule caching out when debugging a provider — what the model is shown, and in what order, is identical either way." />
-      </div>
+      </RowGroup>
     </Section>
   )
 }
@@ -624,17 +625,19 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
                     <HealthDot provider={provider} health={health} />
                     <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.8125rem]">{id}</span>
                     {provider && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{provider}</span>}
-                    {/* The reason names the BOUNDARY branch only: while `saving` the gate is
-                        transient and the row's own save state carries it, so a reason there
-                        would explain the wrong cause. */}
+                    {/* Two different claims, so two different props. The BOUNDARY (`i === 0`,
+                        last row) is genuine unavailability and keeps `disabled` + the reason that
+                        names it. `saving` is the chain PUT in flight, so it is `loading`: OR-ing
+                        it into `disabled` made all three arrows announce "unavailable" for the
+                        length of a request they had just started. */}
                     <IconButton icon={ArrowUp} label={`Move ${id} up`} size={24} iconSize={13}
-                      disabled={saving || i === 0} onClick={() => move(i, -1)}
+                      disabled={i === 0} loading={saving} onClick={() => move(i, -1)}
                       disabledReason={i === 0 ? 'Already the default' : undefined} />
                     <IconButton icon={ArrowDown} label={`Move ${id} down`} size={24} iconSize={13}
-                      disabled={saving || i === activeModels.length - 1} onClick={() => move(i, 1)}
+                      disabled={i === activeModels.length - 1} loading={saving} onClick={() => move(i, 1)}
                       disabledReason={i === activeModels.length - 1 ? 'Already the last fallback' : undefined} />
                     <IconButton icon={X} label={`Remove ${id} from chain`} size={24} iconSize={13}
-                      disabled={saving} onClick={() => setActive(activeModels.filter((m) => m !== ref))} />
+                      loading={saving} onClick={() => setActive(activeModels.filter((m) => m !== ref))} />
                   </div>
                 )
               })}
@@ -654,9 +657,22 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
               ) : (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-on-surface-var">Re-indexing embeddings — {reindex.phase}{reindex.total > 0 ? ` (${reindex.done}/${reindex.total})` : '…'}</span>
-                  <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-container">
-                    <div className="h-full rounded-pill bg-primary transition-[width]" style={{ width: reindex.total > 0 ? `${Math.min(100, Math.round((reindex.done / reindex.total) * 100))}%` : '40%' }} />
-                  </div>
+                  {/* 🔴 A bar must never invent a fill it cannot compute. While a phase has no
+                      total yet (`total === 0`) this parked the bar at a hardcoded 40% — a
+                      fabricated claim that the job is nearly half done, and one that then
+                      JUMPED backwards the moment a real total arrived. Determinate only when
+                      there is a denominator; otherwise the indeterminate wave, which is the
+                      one primitive that already expresses "running, extent unknown" (Meter
+                      deliberately has no indeterminate mode). The wave is aria-hidden on
+                      purpose — the sentence above it already reports the phase, so a second
+                      valueless progressbar would only repeat it. */}
+                  {reindex.total > 0 ? (
+                    <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-container">
+                      <div className="h-full rounded-pill bg-primary transition-[width]" style={{ width: `${Math.min(100, Math.round((reindex.done / reindex.total) * 100))}%` }} />
+                    </div>
+                  ) : (
+                    <WavyProgress width={140} />
+                  )}
                 </div>
               )}
             </div>

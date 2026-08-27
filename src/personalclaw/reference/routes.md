@@ -283,7 +283,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/hooks/agent` — run an agent turn from an external webhook.
 - `GET /api/inbox` — list all inbox items (recency, optionally engagement-weighted).
 - `GET /api/inbox/digest` — on-demand channel digest.
-- `POST /api/inbox/dismiss-all` — dismiss all pending items.
+- `POST /api/inbox/dismiss-all` — dismiss every OPEN item (pending or seen).
 - `GET /api/inbox/kinds` — item kinds present, with open counts, for the filter chips.
 - `GET /api/inbox/pending` — list pending items only (recency, optionally weighted).
 - `POST /api/inbox/proposals` — an APP raises a proposal (INU-7 T7.2).
@@ -617,6 +617,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/search/providers` — registered providers + capabilities + availability.
 - `GET /api/security/audit` — a cursor-paginated page of filtered security events.
 - `GET /api/security/audit/verify` — HMAC-chain verification over the audit log.
+- `GET /api/security/credentials` — where the instance's secrets are stored.
+- `POST /api/security/credentials/migrate` — move ``.env`` secrets into the keychain.
+- `POST /api/security/credentials/rollback` — restore the pre-migration ``.env``.
 - `GET /api/security/denied-commands` — the bash denylist for the Security panel.
 - `GET /api/security/egress` — the operator's outbound-egress overrides for the
 - `GET /api/security/stats` — live security feature counts.
@@ -669,6 +672,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/status` — _(no summary)_
 - `POST /api/stt/transcribe` — transcribe uploaded audio via the active STT model.
 - `GET /api/suggestions` — return pre-computed contextual suggestions.
+- `GET /api/surfaces/overlays` — the user/agent (L2) overlays, plus named refusals.
 - `GET /api/system` — System information endpoint with live CPU, memory, network metrics.
 - `POST /api/system/restart` — bounce the gateway to apply committed backend
 - `GET /api/task-lists` — _(no summary)_

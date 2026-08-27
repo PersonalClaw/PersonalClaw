@@ -879,6 +879,12 @@ async def start_dashboard(
 
     # Generative-UI component catalog — read-only.
     app.router.add_get("/api/genui/library", api_genui_library)
+    # The L2 user/agent surface overlays. Read-only by
+    # design: an overlay is authored with the ordinary file tools, so an HTTP writer here
+    # would be a second producer with a second set of refusals.
+    from personalclaw.dashboard.handlers.surfaces import api_surface_overlays
+
+    app.router.add_get("/api/surfaces/overlays", api_surface_overlays)
     app.router.add_get("/api/dashboard/views", api_dashboard_views)
     app.router.add_post("/api/dashboard/views", api_dashboard_views)
     app.router.add_post(
@@ -1351,6 +1357,13 @@ async def start_dashboard(
     from personalclaw.dashboard.handlers.security_audit import register_security_audit_routes
 
     register_security_audit_routes(app)
+    # Where credentials are stored, plus the consented snapshot-backed move between
+    # stores. Owner-only for the same reason the audit surface is.
+    from personalclaw.dashboard.handlers.security_credentials import (
+        register_security_credential_routes,
+    )
+
+    register_security_credential_routes(app)
     app.router.add_get("/api/approvals", handlers.api_approvals)
     app.router.add_post("/api/approvals/{id}/{action}", handlers.api_approval_resolve)
 

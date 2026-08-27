@@ -22,7 +22,7 @@
  *        onClick={open}                     //   which would be a second, nameless tab stop
  *        className="group relative … has-[>button:focus-visible]:ring-2
  *                   has-[>button:focus-visible]:ring-inset
- *                   has-[>button:focus-visible]:ring-primary/50">
+ *                   has-[>button:focus-visible]:ring-primary">
  *        <RowHitTarget label={item.name} />
  *        …content, including its own controls…
  *      </motion.div>

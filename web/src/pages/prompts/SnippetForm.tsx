@@ -75,7 +75,7 @@ export function SnippetForm({ draft, onChange, nameLocked, registerInsert }: { d
             primitive is a wider change than this pass — so it self-names instead. */}
         <textarea ref={taRef} value={draft.content} onChange={(e) => set('content', e.target.value)} rows={8}
           aria-label="Snippet content" spellCheck={false} placeholder={'— {{author}}, {{role}}'}
-          className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono text-[0.8125rem] leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 resize-y" />
+          className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono text-[0.8125rem] leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-y" />
       </Field>
 
       {includes.length > 0 && (

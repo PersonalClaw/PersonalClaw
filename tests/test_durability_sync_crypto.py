@@ -509,7 +509,7 @@ class TestPassphraseCustody:
             seen["key"] = key
             return CANARY_PASSPHRASE
 
-        monkeypatch.setattr("personalclaw.config.loader.get_credential", _fake_get)
+        monkeypatch.setattr("personalclaw.config.credentials.get_credential", _fake_get)
         assert sc.load_passphrase() == CANARY_PASSPHRASE
         assert seen["key"] == sc.PASSPHRASE_CREDENTIAL
 

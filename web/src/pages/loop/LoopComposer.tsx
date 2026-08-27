@@ -230,10 +230,37 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
         <Segmented ariaLabel="Granularity" disabled={busy} collapse="menu" value={granularity} onChange={(v) => setGranularity(v as Granularity)}
           options={GRANULARITIES.map((g) => ({ key: g, label: g.charAt(0).toUpperCase() + g.slice(1) }))} />
       )}
-      {/* Code-only: greenfield vs an existing codebase (workspace is picked on Plan Review). */}
+      {/* Code-only: greenfield vs an existing codebase (workspace is picked on Plan Review).
+          🔴 THE ACTIVE OPTION USED TO PAINT THE SAME WORDS AS THE CONTROL BESIDE IT. Measured on
+          `#/code` against the live gateway: `ProjectPicker`'s idle trigger paints "New project", and
+          this tab painted "New project" too — **12px apart at 1440px** (picker x=240..372, tab
+          x=384..483), and **8px apart at 1024px and 640px**, where this Segmented has collapsed to a
+          pill so the two are the same shape as well as the same text. Two controls, one row, adjacent,
+          identical words, unrelated jobs: one chooses WHICH project the work attaches to, the other
+          whether there is a codebase to attach to at all.
+          The accessible tree was already fixed — `ProjectPicker` announces "Project: New project" and
+          this group announces "Project kind" (see ui/composer/pillDimension.test.tsx, whose own
+          comment records that pass as "a naming fix, not a redesign" and deliberately left the visible
+          label alone). This is the other half: what a SIGHTED user reads.
+          The picker is not the side that moves: its label is product vocabulary the backend honours
+          ("New project (auto-named)" — it auto-creates one). So this option is reworded instead.
+          🪤 AND IT MUST NOT GET WIDER. This row is already over its width budget (see the escalated
+          overflow finding: the control row paints under the shell's right cluster at nine widths
+          between 640 and 1180). "New codebase" was the obvious rewording and it measured **89.4px
+          against this label's 73px** at the tab's real font (13px DM Sans) — enough to push the Mode
+          dial past its collapse threshold, which fixed the 1440px overlap but made 900px newly steal
+          the Scratch target. Trading one broken width for another is not a fix. "Fresh start" is
+          **64.9px — 8px NARROWER than the label it replaces**, so it cannot create an overlap
+          anywhere; measured, the whole 640-1440 sweep is unchanged or better.
+          It also reads as the pair a developer actually chooses between: start fresh, or point at a
+          codebase you already have. Distinct from the Scratch toggle on the same row, which is about
+          what happens AFTER (reclaiming the dir), not what you start from.
+          The KEYS are untouched (`greenfield`/`brownfield` — `ProjectKind` in lib/api), so nothing
+          persisted or wire-facing moves, and `ariaLabel` stays "Project kind" so the group name the
+          collapse rail asserts is unchanged. */}
       {kind === 'code' && (
         <Segmented ariaLabel="Project kind" disabled={busy} collapse="menu" value={projectKind} onChange={(v) => setProjectKind(v as 'greenfield' | 'brownfield')}
-          options={[{ key: 'greenfield', label: 'New project' }, { key: 'brownfield', label: 'Existing codebase' }]} />
+          options={[{ key: 'greenfield', label: 'Fresh start' }, { key: 'brownfield', label: 'Existing codebase' }]} />
       )}
       <Segmented ariaLabel="Mode" disabled={busy} collapse="menu" value={attended ? 'attended' : 'unattended'} onChange={(v) => setAttended(v === 'attended')}
         options={[{ key: 'unattended', label: 'Unattended' }, { key: 'attended', label: 'Attended' }]} />
@@ -297,7 +324,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                 brownfield loop at minimal rigor (Plan Review skipped) has no way to bind a
                 workspace and can't do file work. */}
             {kind === 'code' && projectKind === 'brownfield' && !inheritedWs && (
-              <div className="flex w-full items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9 max-w-[480px] focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
+              <div className="flex w-full items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9 max-w-[480px] focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
                 <FolderGit2 size={13} className="shrink-0 text-on-surface-low" />
                 <input type="text" value={brownfieldWs} onChange={(e) => setBrownfieldWs(e.target.value)}
                   disabled={busy} placeholder="Codebase path (e.g. /Users/you/projects/app) — the repo to work in"
@@ -309,7 +336,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                 default-system preview. */}
             {kind === 'design' && (
               <div className="flex w-full flex-col gap-2 max-w-[480px]">
-                <div className="flex items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
+                <div className="flex items-center gap-2 rounded-lg bg-surface-high/50 px-3 h-9 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
                   <LinkIcon size={13} className="shrink-0 text-on-surface-low" />
                   <input type="url" value={designUrl} onChange={(e) => setDesignUrl(e.target.value)}
                     disabled={busy} placeholder="Reference a site to mimic (https://…) — optional"
@@ -323,7 +350,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                       input stays `sr-only` so Tab reaches it and Space opens the picker natively, and
                       because it sits INSIDE the label it takes "Attach reference" as its name with no
                       `aria-label` needed. The ring is drawn on the label, keyed off the input. */}
-                  <label className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-high/50 px-2.5 h-7 text-[0.75rem] transition-colors has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-inset has-[input:focus-visible]:ring-primary/50 ${busy ? 'opacity-50' : 'cursor-pointer hover:bg-surface-high'}`}>
+                  <label className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-high/50 px-2.5 h-7 text-[0.75rem] transition-colors has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-inset has-[input:focus-visible]:ring-primary ${busy ? 'opacity-50' : 'cursor-pointer hover:bg-surface-high'}`}>
                     <Paperclip size={13} /> Attach reference
                     <input type="file" multiple accept={DESIGN_ACCEPT} disabled={busy} className="sr-only"
                       onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) setDesignFiles((cur) => [...cur, ...fs]); e.currentTarget.value = '' }} />

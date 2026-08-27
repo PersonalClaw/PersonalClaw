@@ -38,6 +38,28 @@ a monitor keeps `MONITOR_LOG.md`; code has no document — the code itself is
 the deliverable), and readiness prerequisites (a brownfield code loop with no
 bound workspace cannot start).
 
+**The supervisor is NOT part of that plugin seam**. How a loop
+converges is *declared*, not coded: `workflows/supervisor_policy.py` holds the
+`ConvergenceSpec` type, the closed `DONE_SIGNALS` vocabulary
+(`orchestrated` | `never` | `verify_command` | `judge_assessment`) and the
+`KIND_CONVERGENCE` table with one row per kind — or per `kind:goal_type`
+variant, because goal-type is the axis convergence actually varies on.
+`policy_for_kind(kind, kind_config)` resolves a kind to the one
+`SupervisorPolicy` that carries it, and `loop/supervisor.py` is the single
+kind-agnostic evaluator that reads it (`done_signal`, `has_done_check`,
+`budget_stop_is_genuine`, `stagnation_enabled`). The watchdog calls only those.
+A kind may not supply a convergence mechanism in Python — adding a fifth
+mechanism means extending the closed vocabulary and the one evaluator, in one
+place, for every kind at once.
+
+| Kind (variant) | marked done-signal |
+|---|---|
+| `code`, `design` | `orchestrated` — the per-cycle `on_new_cycle` hook owns done-ness |
+| `general` | `verify_command` (optional: no command ⇒ defers to budget by design) |
+| `goal:verifiable`, `research:verifiable` | `verify_command`, plus a sub-goal judge when >1 sub-goal is declared |
+| `goal:open_ended`, `research:open_ended` | `judge_assessment` (ground truth: `REPORT.md` / `RESEARCH.md`) |
+| `goal:monitor`, `research:monitor` | `never` — only a user Stop (or the budget, counted as a clean stop) ends it |
+
 ## Stage progression
 
 - **Code loops** walk the canonical SDLC ladder (`loop/sdlc_meta.py`):
@@ -80,9 +102,13 @@ The supervisor does not take the worker's word for it:
 - The **SDLC gate** reads the deliverable *content* (not just existence), and
   the **goal judge** re-runs commands / reads artifacts — ground truth over
   worker self-report.
-- **`loop/watchdog.py`** detects stalls; `loop/manager.py::reap_orphaned_loops`
-  re-arms RUNNING loops after a gateway restart so an interrupted loop
-  resumes rather than zombifying.
+- **`loop/watchdog.py`** detects stalls, and its own first poll re-arms loops left
+  RUNNING/PLANNING by a gateway restart so an interrupted loop resumes rather than
+  zombifying (`LoopWatchdog._boot_sweep`). That sweep runs through
+  `concurrency.boot_sweep`, the ONE boot-adoption path it shares with
+  `workflows/watchdog.py`. There is deliberately **no gateway boot hook**: a
+  hook cannot be retried when it raises, and awaiting it delays startup by however long
+  N stranded planner passes take.
 
 ## Planning walkthrough & grill
 

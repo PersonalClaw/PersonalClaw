@@ -16,7 +16,7 @@ import {
 } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, Row, Toggle, ToggleRow, SavedToast } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Toggle, ToggleRow, SavedToast } from './settingsUI'
 import { Checkbox, NumberField, Select } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { fvs } from '../../design/fontWeight'
@@ -244,14 +244,14 @@ function TimeTravelSection({ cfg, setCfg }: {
   // ProvidersPanel's nine muted entity glyphs.
   return (
     <Section title="Time travel" hint={hint} icon={History} iconTone="muted">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <ToggleRow
           label="Keep a local edit history"
           hint="Records configuration, skills, prompts, project context and memory notes as they change, roughly ten seconds after you stop typing. Off means no history is recorded from now on; what is already recorded is kept."
           cfg={cfg}
           field="time_travel"
           patch={patch} />
-      </div>
+      </RowGroup>
 
       {gitMissing && (
         <div className="mt-3 flex items-start gap-2 rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem]" style={{ color: 'var(--color-warn)' }}>
@@ -535,7 +535,7 @@ function ScheduleSection({ cfg, setCfg, status }: {
 
   return (
     <Section title="Schedule" hint="Backups run in the background so losing work never depends on remembering to run one.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <Row label="Automatic backups"
           hint="Take a nightly snapshot and an hourly incremental export in the background. Off means backups only happen when you run them by hand — below, or with `personalclaw backup export`.">
           <div className="flex items-center gap-2">
@@ -577,7 +577,7 @@ function ScheduleSection({ cfg, setCfg, status }: {
           command-line action — <code>personalclaw restore --replace</code> — because it has to
           overwrite live state while the gateway is stopped.
         </p>
-      </div>
+      </RowGroup>
     </Section>
   )
 }
@@ -596,7 +596,7 @@ function RetentionSection({ cfg, setCfg, snaps }: {
   return (
     <Section title="How long copies are kept"
       hint="Older snapshots thin out rather than piling up: dailies become weeklies, weeklies become monthlies. 0 disables a tier.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <NumberRow label="Daily snapshots" saved={saved}
           hint="How many days of nightly snapshots to keep before thinning to weeklies."
           value={num(cfg.keep_daily, 14)} min={0} max={365} suffix="days"
@@ -616,7 +616,7 @@ function RetentionSection({ cfg, setCfg, snaps }: {
             settings above on the next pass. They are struck through in the archive below.
           </div>
         )}
-      </div>
+      </RowGroup>
     </Section>
   )
 }
@@ -766,7 +766,7 @@ function SyncSection({ cfg, setCfg, status, transports }: {
   return (
     <Section title="Sync"
       hint="Keep more than one machine in step through storage you own — a git repo, a synced folder, a bucket. There is no PersonalClaw server in the middle.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <Row label="Sync this instance"
           hint="Push this machine's changes and pull the other machines' on the schedule below. Off means nothing leaves this machine.">
           <div className="flex items-center gap-2">
@@ -840,7 +840,7 @@ function SyncSection({ cfg, setCfg, status, transports }: {
             </p>
           </div>
         )}
-      </div>
+      </RowGroup>
     </Section>
   )
 }

@@ -6,7 +6,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle } from '../../ui/Toggle'
 import { SavedToast } from './settingsUI'
 
-export const inputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+export const inputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
 
 /** Seed {key: default} from a schema's properties so a created instance submits
  *  the same defaults the form shows (else a field with a `default` renders but

@@ -72,6 +72,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A loop interrupted by a restart could stay stuck "running" forever, with nothing working on it.**
+
+- **Turning a tool off on the Tools page now turns it off everywhere.**
+
+- **The skill-proposal queue could fill up and never empty.**
+
+- **Scheduled automations now actually run.**
+
 - **Restarting PersonalClaw quietly moved a chat onto a different agent.**
 
 - **Restarting PersonalClaw mid-conversation lost what the agent had actually done.**
@@ -194,7 +202,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Three more ways a path could leave the folders PersonalClaw is allowed to touch.**
+
 - **A record id can no longer address a file outside its own store.**
+
+- **An argument a tool call carries can no longer lower that call's risk.**
 
 - **Ways *in* now share one gate instead of each inventing their own.**
 

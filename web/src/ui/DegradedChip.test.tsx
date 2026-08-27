@@ -178,3 +178,105 @@ describe('the degraded popover names the missing use-case', () => {
     expect(container.textContent).not.toContain('No model for')
   })
 })
+
+// ── It said where to fix it, and never linked there ──────────────────────────
+//
+// Measured on a demo-seeded gateway whose `/api/onboarding` reports
+// `{"needs_model": true, "has_model_provider": false}` — the state every fresh install sits in —
+// on `#/dashboard`, opening the chip ("12 degraded"):
+//
+//     [role=dialog][aria-label="Degraded surfaces"]
+//       button, a                      0
+//       focusable descendants          0
+//       rows                          12
+//
+// Twelve surfaces named as broken, twelve floors explained, no destination — while the panel's own
+// copy issued instructions: *"Chat is unavailable without a model — the composer shows how to bind
+// one."* Copy that instructs and cannot navigate is the whole defect.
+//
+// The destination was never in doubt: `USE_CASE_LABEL` at the top of the component exists ONLY so
+// "No model for Speech-to-text" here matches the "Speech-to-text" row of ModelsPanel's
+// `USE_CASE_META` you go bind it in. That deliberate word-matching was unusable without a link.
+//
+// AFTER, same gateway, driven by KEYBOARD in both themes at 1440×900 and 390×844: `button, a` = 1,
+// focusable = 1, `#/settings/models`. Enter on the chip opens the panel, ONE Tab reaches the link
+// (`:focus-visible` true, 2px solid coral outline at 2px offset), its box measures 207.2×26 so a
+// 24×24 square fits (SC 2.5.8), and its ink measures 5.9:1 dark / 4.83:1 light against the
+// popover's composited ground. Enter navigated to `#/settings/models`, the dialog AND the chip's
+// own scrim unmounted, and `document.activeElement` was the chip trigger — not `<body>`. axe over
+// the OPEN panel (wcag2a/2aa/21a/21aa/22aa): **zero violations** in both modes, with
+// `color-contrast`, `link-name` and `target-size` among the passes.
+//
+// 🪤 THE LINK SITS ABOVE THE ROW LIST, AND THAT IS MEASURED. The panel has `max-height: none` /
+// `overflow-y: visible`, so at 12 surfaces it renders 320×1770 from y=43 inside the FIXED shell
+// corner, which nothing scrolls. A footer line lands at y≈1750 — outside the viewport at 1440×900,
+// 1280×800 AND 390×844, so it would have shipped INERT in the only state it exists for. Above the
+// rows it measures y=84 and is on screen at all three.
+//
+// 🪤 NO RESTING UNDERLINE, and that is measured too rather than assumed: `link-in-text-block` only
+// applies to a link inside a block of text, and this is a standalone action line — axe reports it
+// nowhere, in either mode. So the chip matches `#/settings/voice`'s `ManageLink` exactly (the owner
+// already settled that same job — "go bind a model in Models" — as a convergence onto `TextLink`)
+// instead of inventing a second inline-link idiom next door to the primitive itself.
+
+const MODELS_LINK = 'a[href="#/settings/models"]'
+
+describe('the degraded popover links to where you fix it', () => {
+  it('offers exactly one actionable — the Models link', async () => {
+    const { container } = await openPopover(SURFACES_WITH_USE_CASES)
+    const dialog = screen.getByRole('dialog')
+    // The measured before/after: `button, a` inside the panel is the whole population of things a
+    // user can act on. It was 0 while the copy told them to act.
+    expect(dialog.querySelectorAll('button, a').length,
+      'the panel had zero actionables; it needs exactly one').toBe(1)
+    const link = dialog.querySelector<HTMLAnchorElement>(MODELS_LINK)!
+    expect(link, 'and that actionable is the Models link').not.toBeNull()
+    // Named by its visible text, in the words the destination page uses. No aria-label: it would
+    // only override text the user can already read.
+    expect(link.textContent).toContain('Settings')
+    expect(link.textContent).toContain('Models')
+    expect(link.getAttribute('aria-label')).toBeNull()
+    // Positive control that the diagnosis it points at actually rendered.
+    expect(container.textContent).toContain('No model for Speech-to-text')
+  })
+
+  it('places the link ABOVE the first surface row, where a tall panel still shows it', async () => {
+    // The reachability clause. 12 surfaces make the panel 1770px tall inside fixed chrome with no
+    // scroller, so DOM order is the only thing keeping this control on screen.
+    await openPopover(SURFACES_WITH_USE_CASES)
+    const link = screen.getByRole('dialog').querySelector(MODELS_LINK)!
+    // Anchored on the first surface's NAME, not on a layout class: the action line carries the same
+    // `border-b` hairline the rows do, so a class selector would match the action line itself.
+    const firstRowName = screen.getByText('Inbox classify')
+    expect(
+      link.compareDocumentPosition(firstRowName) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the link must precede the surface rows, or a long list pushes it off-screen',
+    ).toBeTruthy()
+  })
+
+  it('closes the popover and its scrim on activate, and returns focus to the chip', async () => {
+    // `open` is component state, not route-derived: without an explicit close, the panel and its
+    // full-viewport `fixed inset-0` scrim stay mounted over the page the link just opened and
+    // swallow every click on it. Focus must not be dropped on the unmounted anchor either — the
+    // same contract the Escape handler above already honours.
+    const { container } = await openPopover(SURFACES_WITH_USE_CASES)
+    const trigger = screen.getByRole('button')
+    screen.getByRole('dialog').querySelector<HTMLAnchorElement>(MODELS_LINK)!.click()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(container.querySelector('.fixed.inset-0'), 'the click-away scrim must go too').toBeNull()
+    expect(document.activeElement, 'focus must not be dropped on <body>').toBe(trigger)
+  })
+
+  it('offers no link in the unknown state, where no fault has been measured', async () => {
+    // The chip's standing rule, kept: when the check itself could not be read it says so and
+    // deliberately does NOT claim a fault. Pointing at a fix would be that same error in reverse.
+    setViewport(false)
+    vi.spyOn(api, 'degraded').mockRejectedValue(new Error('unreachable'))
+    const { container } = render(<DegradedChip />)
+    await waitFor(() => expect(screen.getByRole('button')).toBeTruthy())
+    screen.getByRole('button').click()
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
+    expect(container.textContent).toContain('Could not read the check')
+    expect(container.querySelector(MODELS_LINK), 'no destination without a diagnosis').toBeNull()
+  })
+})

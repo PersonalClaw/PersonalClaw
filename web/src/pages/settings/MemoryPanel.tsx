@@ -806,7 +806,7 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
   return (
     <div className="flex flex-col gap-2">
       <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={16} spellCheck={false}
-        className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-[0.75rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
+        className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-[0.75rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
         style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }} />
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={save} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Save size={14} /> {busy ? 'Saving…' : 'Save'}</Button>
@@ -837,7 +837,7 @@ function AddLessonForm({ onDone }: { onDone: (created: boolean) => void }) {
       <textarea value={rule} onChange={(e) => setRule(e.target.value)} rows={4} autoFocus
         aria-label="Lesson rule"
         placeholder="e.g. Always run the test suite before saying a fix works."
-        className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={submit} disabled={!rule.trim() || saving}
           disabledReason={!rule.trim() ? 'Write the lesson first' : undefined}>{saving ? 'Saving…' : 'Save lesson'}</Button>
@@ -871,10 +871,10 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
           need DISTINCT names — "key" and "value" are meaningless apart from each other. */}
       <input value={key} onChange={(e) => setKey(e.target.value)} aria-label="Fact key"
         placeholder="key (e.g. pref.theme, user.timezone)"
-        className="mb-2 h-9 w-full rounded-md bg-surface-high px-3 font-mono text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        className="mb-2 h-9 w-full rounded-md bg-surface-high px-3 font-mono text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       <textarea value={value} onChange={(e) => setValue(e.target.value)} aria-label="Fact value"
         placeholder="value" rows={2}
-        className="mb-2 w-full rounded-md bg-surface-high px-3 py-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        className="mb-2 w-full rounded-md bg-surface-high px-3 py-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={submit} disabled={saving || !key || !value.trim()}
           disabledReason={!key ? 'Choose a key first' : !value.trim() ? 'Enter a value first' : undefined}>{saving ? 'Saving…' : 'Save'}</Button>

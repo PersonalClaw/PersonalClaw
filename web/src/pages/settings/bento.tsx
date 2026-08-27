@@ -78,7 +78,7 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, stale, a
       // the card hosts inline controls (toggles/selects) over a full-card nav
       // overlay, and a whole-card press-squish would fire when tapping those.
       whileHover={{ y: -expr(4, 0.3), boxShadow: 'var(--shadow-lift)' }}
-      className="group relative flex w-full flex-col rounded-xl bg-surface-container p-4 transition-colors focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50 hover:bg-surface-high"
+      className="group relative flex w-full flex-col rounded-xl bg-surface-container p-4 transition-colors focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary hover:bg-surface-high"
     >
       {/* Behind-content nav overlay: the whole card opens the subpage.
           `aria-busy` while the tile's data is still in flight. This button is the ONLY node an
@@ -208,7 +208,7 @@ export function InlineSelect({ value, options, onPick, ariaLabel }: {
     <select value={value} aria-label={ariaLabel} disabled={busy}
       onClick={(e) => e.stopPropagation()}
       onChange={async (e) => { e.stopPropagation(); setBusy(true); try { await onPick(e.target.value) } finally { setBusy(false) } }}
-      className="pointer-events-auto max-w-[10rem] truncate rounded-md bg-surface-high px-2 h-7 text-[0.75rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 disabled:opacity-60">
+      className="pointer-events-auto max-w-[10rem] truncate rounded-md bg-surface-high px-2 h-7 text-[0.75rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-60">
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )

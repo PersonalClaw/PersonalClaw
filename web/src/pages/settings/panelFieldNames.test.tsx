@@ -48,11 +48,19 @@ describe('the four panels that had unnamed controls', () => {
     expect(code('SecurityPanel.tsx')).toMatch(/aria-label="Add a shell denylist pattern \(regex\)"/)
   })
 
-  it('AgentDefaultsPanel path input names itself from its Field label', () => {
+  it('the shared StrListField input names itself from its Field label', () => {
     // A RAW input inside settingsUI's Field cannot claim the published label — only the form-family
     // components read FieldLabelCtx — so it must self-name. Derived from `label`, so it stays right
-    // if StrListField gains a second call site.
-    expect(code('AgentDefaultsPanel.tsx')).toMatch(/aria-label=\{`Add to \$\{label\.toLowerCase\(\)\}`\}/)
+    // at every call site.
+    //
+    // 🔁 SCANNED IN `settingsUI.tsx`, NOT `AgentDefaultsPanel.tsx`: StrListField gained its second
+    // call site (External Access' capture upstream allow-list) and moved into the shared module
+    // rather than being copied. The prediction in this test's old comment is what happened; the
+    // scan follows the code. `placeholder` is now per-call-site ("Add path…" / "Add host…") — which
+    // is precisely why the NAME must not be, since a placeholder is not an accessible name.
+    expect(code('settingsUI.tsx')).toMatch(/aria-label=\{`Add to \$\{label\.toLowerCase\(\)\}`\}/)
+    // …and the panel that used to declare it privately must not have kept a copy.
+    expect(code('AgentDefaultsPanel.tsx')).not.toMatch(/function StrListField/)
   })
 
   it('VoicePanel vocabulary input is named', () => {
@@ -110,7 +118,9 @@ describe('what a SOURCE rail can and cannot decide here', () => {
     const MUST_KEEP: Array<[string, RegExp]> = [
       ['SecurityPanel.tsx', /aria-label=\{`Add a host to \$\{label\.toLowerCase\(\)\}`\}/],
       ['SecurityPanel.tsx', /aria-label="Add a shell denylist pattern \(regex\)"/],
-      ['AgentDefaultsPanel.tsx', /aria-label=\{`Add to \$\{label\.toLowerCase\(\)\}`\}/],
+      // Scanned in the SHARED module: `StrListField` moved there when External Access became its
+      // second call site. Same control, same derived name, one declaration.
+      ['settingsUI.tsx', /aria-label=\{`Add to \$\{label\.toLowerCase\(\)\}`\}/],
       ['VoicePanel.tsx', /aria-label="Add a vocabulary term"/],
       ['MemoryPanel.tsx', /aria-label="Lesson rule"/],
       ['MemoryPanel.tsx', /aria-label="Fact key"/],
@@ -124,7 +134,7 @@ describe('what a SOURCE rail can and cannot decide here', () => {
   })
 
   it('the check is not vacuous — every named file exists and is scanned', () => {
-    for (const f of ['SecurityPanel.tsx', 'AgentDefaultsPanel.tsx', 'VoicePanel.tsx', 'MemoryPanel.tsx', 'ProjectionRulesPanel.tsx']) {
+    for (const f of ['SecurityPanel.tsx', 'AgentDefaultsPanel.tsx', 'settingsUI.tsx', 'VoicePanel.tsx', 'MemoryPanel.tsx', 'ProjectionRulesPanel.tsx']) {
       expect(readdirSync(SETTINGS), `${f} must exist`).toContain(f)
       expect(code(f).length).toBeGreaterThan(200)
     }

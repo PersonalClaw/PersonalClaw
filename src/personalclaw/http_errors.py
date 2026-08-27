@@ -63,6 +63,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "invalid_json": "The request body is not valid JSON.",
     "invalid_body": "The request body is valid JSON but not the expected object.",
     "invalid_id": "A record id is not a single path segment (separators, '..' or over-long).",
+    # ── dashboard file I/O (handlers/files.py) ──
+    # The refusal `_validate_dashboard_path` produces: not a path under any root the dashboard
+    # surfaces, or a blocked basename inside one. 400 rather than 403/404 deliberately — the answer
+    # must not confirm whether the path exists. `files.py`'s six other sites emit this same sentence
+    # FLAT today; this is the code they convert to, and the census ratchet is what moves them.
+    "invalid_path": "The path is not one the dashboard may touch.",
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
@@ -106,6 +112,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "invalid_limit": "The limit parameter is out of range or not an integer.",
     "invalid_time_filter": "A since/until filter is not a recognized timestamp.",
     "unknown_filter": "The request names a filter this endpoint does not support.",
+    # ── credential store (handlers/security_credentials.py) ──
+    "credentials_owner_only": "The credential store is owner-only; an app-scoped token may "
+    "neither read where secrets live nor move them.",
+    "migration_refused": "The keychain is not the active credential backend, so moving "
+    "secrets out of .env would leave them nowhere. Nothing was changed.",
+    "rollback_refused": "There is no pre-migration .env snapshot to roll back to.",
     # ── evals (handlers/evals.py) ──
     "evals_disabled": "The evals surface is switched off in config.",
     "learning_disabled": "Learning is switched off in config, so there is nothing learned to "
@@ -344,6 +356,18 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # sentence, and both are safe to retry (the fingerprint ledger records each write as it
     # lands). A `conflict` or `rejected` ITEM is not this — those are 200 rows of the report.
     "onboarding_import_failed": "Scanning for or importing from another agent tool failed.",
+    # ── direct tool invocation (handlers/tools.py) ──
+    # 403 and not 404: the tool exists and this caller may reach the route. The user
+    # turned it off, which is a policy answer, and a 404 would read as "no such tool" to a
+    # cron script whose next move is to reinstall something.
+    "tool_disabled": "The tool is disabled on the Tools page and will not be executed.",
+    # ── capture telemetry import (inbound/capture_proxy.py) ──
+    # ONE code, for the store failing under the import — NOT for a file that parsed badly.
+    # A malformed export is a 200 whose `reasons` name each skipped line (§8's
+    # skipped-and-counted), so a caller that branches on this code branches on "the
+    # machinery broke", which is retryable, and never on "your file was rubbish", which
+    # is not. A refused `file` is `invalid_request`: the name, not the machinery.
+    "capture_import_failed": "Staging an exported agent log into the capture store failed.",
 }
 
 

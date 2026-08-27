@@ -174,6 +174,16 @@ def _apply_style(para, style) -> None:
         fmt.space_after = Pt(style.space_after_pt)
     if style.line_spacing > 0:
         fmt.line_spacing = style.line_spacing
+    if style.indent_left_pt > 0:
+        fmt.left_indent = Pt(style.indent_left_pt)
+    if style.indent_right_pt > 0:
+        fmt.right_indent = Pt(style.indent_right_pt)
+    # `!= 0` — a NEGATIVE first-line indent is a hanging indent, a real request. The
+    # `> 0` test every field above uses would drop it on the floor.
+    if style.first_line_indent_pt != 0:
+        fmt.first_line_indent = Pt(style.first_line_indent_pt)
+    if style.keep_with_next:
+        fmt.keep_with_next = True
 
 
 def _apply_align(para, align: str) -> None:
@@ -193,27 +203,73 @@ def _apply_align(para, align: str) -> None:
 def _apply_page(doc, page) -> None:
     """Page geometry; `None` means the model declared none.
 
-    `margin_in == 0.0` is "writer default", never "no margin" — a zero-margin page is
+    A `0.0` margin is "writer default", never "no margin" — a zero-margin page is
     unprintable, so it can only ever be a field nobody filled in.
+
+    **A named size is applied before orientation**, and it decides the page dimensions
+    outright. Swapping the template's own width/height (what this did when size was
+    unnameable) can only ever produce a landscape version of the TEMPLATE's paper, so a
+    model asking for A4 landscape got landscape Letter and the size was silently dropped.
     """
     if page is None:
         return
     from docx.enum.section import WD_ORIENT
-    from docx.shared import Inches
+    from docx.shared import Inches, Pt
 
+    width_in, height_in = page.size_in()
     for section in doc.sections:
-        if page.orientation == "landscape" and section.page_width < section.page_height:
+        if width_in and height_in:
+            section.page_width, section.page_height = Inches(width_in), Inches(height_in)
+        elif page.orientation == "landscape" and section.page_width < section.page_height:
             section.page_width, section.page_height = section.page_height, section.page_width
-            section.orientation = WD_ORIENT.LANDSCAPE
         elif page.orientation == "portrait" and section.page_height < section.page_width:
             section.page_width, section.page_height = section.page_height, section.page_width
+        # Declared from the resulting geometry, not from the model's string: a reader that
+        # trusts `w:orient` over the dimensions must agree with the paper it is printed on.
+        if section.page_width > section.page_height:
+            section.orientation = WD_ORIENT.LANDSCAPE
+        elif section.page_height > section.page_width:
             section.orientation = WD_ORIENT.PORTRAIT
-        if page.margin_in > 0:
-            margin = Inches(page.margin_in)
-            section.top_margin = margin
-            section.bottom_margin = margin
-            section.left_margin = margin
-            section.right_margin = margin
+        for edge in ("top", "bottom", "left", "right"):
+            points = float(getattr(page, f"margin_{edge}_pt", 0.0))
+            if points > 0:
+                setattr(section, f"{edge}_margin", Pt(points))
+    _apply_header_footer(doc, page)
+
+
+def _apply_header_footer(doc, page) -> None:
+    """The first section's header/footer text and its page-number field.
+
+    Written into the EXISTING first paragraph rather than an added one: python-docx ships
+    every header with one empty paragraph, so adding gives a blank line above the text.
+    """
+    if not (page.header_text or page.footer_text or page.page_numbers):
+        return
+    section = doc.sections[0]
+    for name, text in (("header", page.header_text), ("footer", page.footer_text)):
+        if not text:
+            continue
+        part = getattr(section, name)
+        paragraph = part.paragraphs[0] if part.paragraphs else part.add_paragraph()
+        paragraph.text = text
+    if page.page_numbers:
+        footer = section.footer
+        paragraph = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+        _add_page_number_field(paragraph, separator=bool(page.footer_text))
+
+
+def _add_page_number_field(paragraph, *, separator: bool) -> None:
+    """Append a `PAGE` field so the number is computed per page.
+
+    A literal digit would be the same number on every page, which is the whole reason
+    `page_numbers` is a flag and not part of `footer_text`.
+    """
+    from docx.oxml.ns import qn
+
+    if separator:
+        paragraph.add_run(" ")
+    field = paragraph.add_run()._r.makeelement(qn("w:fldSimple"), {qn("w:instr"): "PAGE"})
+    paragraph._p.append(field)
 
 
 def _add_table(doc, rows: list[list[str]]) -> None:

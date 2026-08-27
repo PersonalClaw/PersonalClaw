@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, ToggleRow, NumberRow, Field } from './settingsUI'
+import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow, Field } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton } from '../../ui/ListScaffold'
@@ -84,25 +84,25 @@ export function SourcesPanel() {
       <PanelHeader title="Watched sources" hint="Poll feeds, pages and local directories into your knowledge library on a schedule. Off parks the loop — nothing is fetched." />
 
       <Section title="Polling" hint="How often sources are checked, and the floor that keeps polling polite.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <ToggleRow label="Watched sources" cfg={cfg} field="enabled" patch={patch}
             hint="Enable the poll engine. Off parks the loop; sources you add are not fetched until you turn it back on." />
           <NumberRow label="Default poll interval (seconds)" cfg={cfg} field="poll_interval_default_secs" min={300} max={604800} patch={patch}
             hint="How often a source is polled when it does not set its own interval. Clamped up to the network floor." />
           <NumberRow label="Network poll floor (seconds)" cfg={cfg} field="network_floor_secs" min={300} max={604800} patch={patch}
             hint="The fastest any network source is polled regardless of its own setting — the rate floor that keeps a poll from being abusive to the target server." />
-        </div>
+        </RowGroup>
       </Section>
 
       <Section title="Limits" hint="Bounds so a busy feed or a runaway config cannot flood ingestion.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <NumberRow label="Max active sources" cfg={cfg} field="max_sources" min={1} max={1000} patch={patch}
             hint="Cap on how many enabled sources the engine arms per tick." />
           <NumberRow label="Max items per poll" cfg={cfg} field="max_items_per_poll" min={1} max={1000} patch={patch}
             hint="How many new items one poll may ingest before the rest wait for the next cycle." />
           <NumberRow label="Daily request budget per source" cfg={cfg} field="daily_request_budget" min={1} max={100000} patch={patch}
             hint="Upper bound on network requests one source may make in a rolling day (enforced by the fetching providers)." />
-        </div>
+        </RowGroup>
       </Section>
 
       {/* PEP-7 lives here rather than in a knowledge panel of its own: this is the panel that
@@ -110,14 +110,14 @@ export function SourcesPanel() {
           is the one such feed that needs no polling. It is `knowledge.*`, not `sources.*` —
           see `patchKnowledge`. */}
       <Section title="Artifacts" hint="Artifacts you and the agent write, mirrored into knowledge search.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <ToggleRow label="Index artifacts for search" cfg={knowledgeCfg} field="auto_ingest_artifacts" patch={patchKnowledge}
             hint="Make text artifacts (markdown, HTML, text, JSON, CSV) findable from knowledge search. They stay in the Artifacts library and are never listed as knowledge items — only found by a search. Indexing is local: a mirrored artifact never reaches a model. Off stops indexing new changes and removes nothing already indexed." />
-        </div>
+        </RowGroup>
       </Section>
 
       <Section title="Watched scratchpad" hint="A notes file whose jotted todos become plan proposals you accept — never runs on its own.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <Field label="Scratchpad path" hint="Full path to a local notes file. Each new actionable line becomes a PROPOSED plan in your inbox, linked back to its source line. Checked (- [x]) and struck-through lines are ignored. Leave empty to turn this off — no file is read.">
             <div className="flex items-center gap-s">
               {/* `surface="high"` because this row's wrapper is `bg-surface-container`, which is also
@@ -130,7 +130,7 @@ export function SourcesPanel() {
                 disabled={(scratchpad ?? '').trim() === data.scratchpadPath} disabledReason={(scratchpad ?? '').trim() === data.scratchpadPath ? 'No changes to save' : undefined}>Save</Button>
             </div>
           </Field>
-        </div>
+        </RowGroup>
       </Section>
     </div>
   )

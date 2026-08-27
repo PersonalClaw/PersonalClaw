@@ -145,7 +145,7 @@ function StrategyPicker({ value, disabled, onChange, forRule }: {
   return (
     <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as ProjectionStrategy)}
       aria-label={forRule ? `Strategy for ${forRule}` : 'Strategy for the new rule'}
-      className="min-w-0 max-w-full h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
+      className="min-w-0 max-w-full h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
       {STRATEGIES.map((s) => <option key={s.id} value={s.id}>{s.label} — {s.blurb}</option>)}
     </select>
   )
@@ -156,7 +156,7 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
 }) {
   const hasOps = Boolean(rule.head || rule.tail || rule.keep || rule.skip || rule.count)
   const [showOps, setShowOps] = useState(hasOps)
-  const inputCls = 'h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+  const inputCls = 'h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   return (
     <div className="flex flex-col gap-2 rounded-lg bg-surface-container px-3 py-2.5">
       {/* Same pairing, same collapse: measured 16×36 at 390px for an EXISTING rule's name too, so
@@ -166,7 +166,7 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
         <input value={rule.name} disabled={disabled} placeholder="rule name"
           aria-label="Rule name"
           onChange={(e) => onChange({ ...rule, name: e.target.value })}
-          className="min-w-40 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="min-w-40 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         {/* The select and Remove travel TOGETHER when the row wraps. Wrapped independently, Remove
             landed alone on a third line — and before the row could wrap at all it was pushed off the
             card entirely at 390px, so the only way to delete a rule was to widen the window. */}
@@ -248,14 +248,14 @@ function AddRule({ disabled, onAdd }: { disabled?: boolean; onAdd: (r: Projectio
         <input value={name} disabled={disabled} placeholder="new rule name"
           aria-label="New rule name"
           onChange={(e) => setName(e.target.value)}
-          className="min-w-40 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="min-w-40 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <StrategyPicker value={strat} disabled={disabled} onChange={setStrat} />
       </div>
       <div className="flex items-center gap-2">
         <input value={rx} disabled={disabled} spellCheck={false} placeholder="match regex, e.g. ^\[MYAPP\]"
           aria-label="Match regex for the new rule"
           onChange={(e) => setRx(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add() }}
-          className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <button type="button" onClick={add}
           {...unavailableWhen(!rx.trim(), 'Enter a pattern first', { busy: disabled })}
           className="shrink-0 h-9 rounded-md bg-primary px-3 text-on-primary text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">Add rule</button>

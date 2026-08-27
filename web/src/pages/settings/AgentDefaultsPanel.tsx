@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { X, Plus } from 'lucide-react'
 import { api, type RunnerRow } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName, type AgentOption } from '../../lib/agents'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, Row, Field, SegPills, SavedToast, ToggleRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, SegPills, SavedToast, StrListField, ToggleRow } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { FieldError, NumberField, TextInput } from '../../ui/forms'
-import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { accentChip } from '../../design/accent'
@@ -96,30 +94,30 @@ export function AgentDefaultsPanel() {
       </Section>
 
       <Section title="Defaults" hint="Baseline behavior for every session.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <EnumRow label="Approval mode" hint="When the agent must ask before running a tool." cfg={cfg} field="approval_mode" patch={patch}
             options={[{ key: 'auto', label: 'Auto' }, { key: 'interactive', label: 'Ask each time' }, { key: 'trust_reads', label: 'Trust reads' }]} />
           <EnumRow label="Sandbox" hint="Sandbox mode for the ACP provider." cfg={cfg} field="sandbox" patch={patch}
             options={[{ key: 'auto', label: 'Auto' }, { key: 'off', label: 'Off' }]} />
           <ToggleRow label="YOLO mode" cfg={cfg} field="yolo" patch={patch}
             hint="Skip every tool-approval confirmation — overrides approval mode. Only inside a sandbox or for trusted automation." danger />
-        </div>
+        </RowGroup>
       </Section>
 
       <RunnersSection />
 
       <Section title="Subagents" hint="Limits for helper agents the main agent spawns.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <NumberRow label="Max concurrent subagents" hint="0 = auto-size from this host's CPU and memory." cfg={cfg} field="max_subagents" patch={patch} min={0} max={16} />
           <NumberRow label="Max turns per subagent" cfg={cfg} field="subagent_max_turns" patch={patch} min={1} max={200} />
           <NumberRow label="Subagent timeout" cfg={cfg} field="subagent_timeout_secs" patch={patch} min={60} max={7200} suffix="s" />
           <NumberRow label="Min free memory to spawn" cfg={cfg} field="spawn_min_memory_gb" patch={patch} min={0} max={64} step={0.5} suffix="GB" />
-          <StrListField label="Allowed working directories" hint="Roots a subagent may run in." cfg={cfg} field="subagent_cwd_allowed_roots" patch={patch} />
-        </div>
+          <StrListField label="Allowed working directories" hint="Roots a subagent may run in." cfg={cfg} field="subagent_cwd_allowed_roots" patch={patch} placeholder="Add path…" />
+        </RowGroup>
       </Section>
 
       <Section title="Advanced" hint="Delegation, safety enforcement, and diagnostics.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <ToggleRow label="Orchestrator skill" cfg={cfg} field="orchestrator_skill" patch={patch}
             hint="Enable agent delegation — loads the orchestrator skill with the agent roster." />
           <ToggleRow label="Concurrent ACP sessions" cfg={cfg} field="acp_concurrent_sessions" patch={patch}
@@ -132,13 +130,17 @@ export function AgentDefaultsPanel() {
             hint="Seconds to wait for a cooperative cancel before hard-killing a session." />
           <NumberRow label="Runner health check interval" cfg={cfg} field="runner_health_check_secs" patch={patch} min={60} max={86400} step={60} suffix="s"
             hint="How long a runner's measured health stays current. Past this, its row under Runners is marked check overdue rather than presenting an old reading as the present state. Nothing is probed automatically — use Re-check runners." />
-        </div>
+          <NumberRow label="Runner idle release" cfg={cfg} field="runner_idle_release_secs" patch={patch} min={60} max={86400} step={60} suffix="s"
+            hint="How long a session may hold an agent runner without using it. Past this the hold is released and the runner reads as free under Runners — so a session that went quiet, or a gateway that was killed, cannot leave a runner looking permanently taken. The session itself is untouched." />
+          <ToggleRow label="Durable worker sessions" cfg={cfg} field="durable_sessions" patch={patch}
+            hint="Run workers inside a tmux session on PersonalClaw's own socket so their shell outlives the gateway. On restart the recovery sweep finds the still-alive worker and marks the run resumable instead of aborting it. Requires the tmux binary; without it this has no effect." />
+        </RowGroup>
         {/* multi-agent space concurrency (max_spaces / max_space_agents) lives in
             Settings → Spaces, not here. */}
       </Section>
 
       <Section title="Self-QA companion" hint="Watch a repository and QA each user-impacting commit as a user would — driving the real UI, then filing an Inbox item and a Task when a scenario fails. Off by default: it spends model calls and drives your browser unattended.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <ToggleRow label="Enable the companion" cfg={selfQa} field="enabled" patch={patchSelfQa}
             hint="Off means the commit watcher stays idle. A commit only gets a scenario when the change could actually be noticed by a user — test-only and docs-only commits are recorded as skips, with the reason, and cost nothing." />
           <TextRow label="Watched repository" cfg={selfQa} field="watched_repo" patch={patchSelfQa}
@@ -148,7 +150,7 @@ export function AgentDefaultsPanel() {
             hint="Ceiling on scenarios generated from one push. Every commit still gets a verdict; this bounds how many browser sessions one push can start." />
           <ToggleRow label="Propose fix branches" cfg={selfQa} field="fix_branch_enabled" patch={patchSelfQa} danger
             hint="On a confirmed failure, open a pclaw/selfqa-<sha> branch carrying a proposed diff. Never merged and never pushed — the branch name lands in the Task for you to review." />
-        </div>
+        </RowGroup>
       </Section>
     </div>
   )
@@ -162,7 +164,7 @@ function DefaultAgentRow({ options, value, onChange }: { options: AgentOption[];
     ? options
     : [{ value, label: value, group: 'Current' }, ...options]
   return (
-    <div className="rounded-lg bg-surface-container px-4 py-2">
+    <RowGroup>
       <Row label="Default agent" hint="Used for every new session.">
         <div className="flex items-center gap-2">
           <SavedToast show={saved} />
@@ -172,7 +174,7 @@ function DefaultAgentRow({ options, value, onChange }: { options: AgentOption[];
           </div>
         </div>
       </Row>
-    </div>
+    </RowGroup>
   )
 }
 
@@ -243,7 +245,21 @@ function RunnerRowItem({ row }: { row: RunnerRow }) {
             looking at is older than the health-check interval, so "healthy" describes
             then, not now. Only shown for `true`: `null` means we do not know the age. */}
         {row.health_stale === true && <Chip>check overdue</Chip>}
+        {/* Who holds this runner. Shown beside the health verdict because it answers
+            a different question — a healthy runner someone else is using is not one you can
+            start a chat on right now. The backend has already dropped an expired lease, so
+            a chip here always names a CURRENT holder. */}
+        {row.lease !== null && <Chip>held by {row.lease.holder}</Chip>}
       </div>
+      {/* The lease detail, only when there is a lease. "for Ns" is the age of the hold and
+          "released in Ns" is when idle-release takes it back — together they tell a user
+          whether to wait or to go look at that session. */}
+      {row.lease !== null && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-on-surface-low text-[0.75rem]">
+          <span>held for {row.lease.age_secs}s</span>
+          <span>released in {row.lease.expires_in_secs}s if idle</span>
+        </div>
+      )}
 
       {/* Health evidence. `version`/`latency_ms` can be null even on a healthy probe —
           the CLI answered but its output carried no version we could parse — so each is
@@ -369,34 +385,3 @@ function NumberRow({ label, hint, cfg, field, patch, min, max, step, suffix }: {
   )
 }
 
-function StrListField({ label, hint, cfg, field, patch }: {
-  label: string; hint?: string; cfg: AgentCfg; field: string; patch: (k: string, v: unknown, cb: () => void) => void
-}) {
-  const [saved, flash] = useSavedFlash()
-  const list = Array.isArray(cfg[field]) ? (cfg[field] as string[]) : []
-  const [adding, setAdding] = useState('')
-  const commit = (next: string[]) => patch(field, next, flash)
-  return (
-    <Field label={label} hint={hint}>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {list.map((v) => (
-          <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface text-[0.75rem] font-mono">
-            {v}
-            <button type="button" onClick={() => commit(list.filter((x) => x !== v))} aria-label={`Remove ${v}`} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
-          </span>
-        ))}
-        {/* A RAW input inside settingsUI's Field cannot claim the Field's published label — only the
-            form-family components read FieldLabelCtx. So it names itself, from `label`, which keeps
-            it correct if this component gains a second call site. */}
-        <input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="Add path…"
-          aria-label={`Add to ${label.toLowerCase()}`}
-          onKeyDown={(e) => { if (e.key === 'Enter' && adding.trim()) { commit([...list, adding.trim()]); setAdding('') } }}
-          className="h-8 w-40 rounded-md bg-surface-high px-2 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
-        {adding.trim() && (
-          <SquareIconButton icon={Plus} iconSize={15} label={`Add ${label.toLowerCase()}`} onClick={() => { commit([...list, adding.trim()]); setAdding('') }} />
-        )}
-        <SavedToast show={saved} />
-      </div>
-    </Field>
-  )
-}

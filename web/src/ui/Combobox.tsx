@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { ChevronDown, Search, Check, X } from 'lucide-react'
 import { spring, physics } from '../design/motion'
+import { useFieldHintId } from './forms'
 
 export interface ComboOption { value: string; label: string; group?: string; description?: string }
 
@@ -24,6 +25,16 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
   placeholder?: string
   emptyText?: string
 }) {
+  // The hint published by the surrounding `Row`/`Field`, claimed by the COLLAPSED trigger — the
+  // node that is actually in the form. Three hinted call sites: `AgentDefaultsPanel`'s "Default
+  // agent" under a `Row`, `ActionConfig`'s "Action" under a `ui/forms` Field, and `ChatPanel`'s
+  // "Warm pool agent" under a `Row` (that one only renders once the warm pool size is above 0).
+  // Measured live before this, the trigger carried no `aria-describedby` on any of them; after,
+  // #/settings/agent resolves to "Used for every new session." and #/triggers/new to "What runs
+  // when this trigger fires. Provided by a registered action provider." The expanded search input
+  // deliberately does NOT claim it: it is a transient filter inside the popup, and describing both
+  // would announce the same sentence twice in one interaction.
+  const hintId = useFieldHintId()
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [active, setActive] = useState(0)
@@ -138,7 +149,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
               <input ref={inputRef} value={q} onChange={(e) => { setQ(e.target.value); setActive(0) }} onKeyDown={onKey}
                 role="combobox" aria-expanded aria-controls={listId} aria-autocomplete="list"
                 aria-activedescendant={flat[active] ? optId(active) : undefined}
-                placeholder="Search…" className="w-full h-8 rounded-md bg-surface pl-8 pr-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+                placeholder="Search…" className="w-full h-8 rounded-md bg-surface pl-8 pr-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
             </div>
             {/* `role="listbox"` only while it HOLDS options: a container that claims the role and
                 contains one line of prose is the exact lie `popupItemRoles` was written about. When the
@@ -194,8 +205,8 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
           //    doesn't stretch during the morph; it's the container-transform's
           //    "outgoing" content (fades quickly as the shape opens).
           <motion.button layout="position" type="button" onClick={() => setOpen(true)} data-type="title-m"
-            aria-haspopup="listbox" aria-expanded={open}
-            className="flex w-full items-center gap-s h-10 px-m text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50">
+            aria-haspopup="listbox" aria-expanded={open} aria-describedby={hintId}
+            className="flex w-full items-center gap-s h-10 px-m text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary">
             <span className={`flex-1 truncate ${selected ? 'text-on-surface' : 'text-on-surface-low'}`}>{selected ? selected.label : placeholder}</span>
             <motion.span className="shrink-0 text-on-surface-low" animate={{ rotate: open ? 180 : 0 }} transition={physics.snappy}>
               <ChevronDown size={16} />
@@ -223,7 +234,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
       {!open && value !== '' && (
         <button type="button" aria-label="Clear selection" title="Clear selection"
           onClick={() => onChange('')}
-          className="absolute right-8 top-5 grid size-6 -translate-y-1/2 place-items-center rounded-md text-on-surface-low transition-colors hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+          className="absolute right-8 top-5 grid size-6 -translate-y-1/2 place-items-center rounded-md text-on-surface-low transition-colors hover:text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
           <X size={14} />
         </button>
       )}

@@ -484,7 +484,7 @@ def verdict_for_cycle(done: bool, regressed: bool) -> Verdict:
     """Project a loop cycle's boolean done-ness onto the closed enum. The ONE mapping.
 
     `done` DOMINATES, including over `regressed`, because that is what the supervisor actually
-    does: `loop/kinds/goal._assess_open_ended` returns "complete" on `verdict.done` without
+    does: `loop/supervisor._judge_assessment_signal` returns "complete" on `verdict.done` without
     consulting `regressed`. A projection that made a done-and-regressed cycle REJECT would
     describe a stricter engine than the one that runs, and a verdict label that disagrees with
     the routing it labels is worse than no label. `regressed` is not lost — it is its own

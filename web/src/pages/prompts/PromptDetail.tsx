@@ -235,7 +235,7 @@ function RenderPanel({ name, vars, launchable, launchKind, onNavigate }: { name:
 }
 
 function RenderInput({ v, value, onChange }: { v: PromptVariable; value: unknown; onChange: (v: unknown) => void }) {
-  const base = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+  const base = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   // Stable id/name per variable, for browser autofill and as a stable test/automation handle.
   //
   // The id alone does NOT name the field: nothing renders a `<label htmlFor={fid}>`, so it was a

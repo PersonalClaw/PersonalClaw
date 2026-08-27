@@ -1,13 +1,14 @@
 {
   "name": "personalclaw",
   "private": true,
-  "workspaces": ["web", "desktop"],
+  "workspaces": ["web", "desktop", "mobile"],
   "scripts": {
     "dev": "npm run dev --workspace=web",
     "build": "npm run build --workspace=web",
     "typecheck:web": "npm run typecheck --workspace=web",
     "test:web": "npm run test --workspace=web",
     "test:desktop": "npm run test --workspace=desktop",
+    "test:mobile": "npm run test --workspace=mobile",
     "smoke:render": "node scripts/render_smoke.mjs",
     "hooks:install": "sh scripts/install_git_hooks.sh",
     "postinstall": "sh scripts/install_git_hooks.sh"

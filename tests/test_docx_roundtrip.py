@@ -54,13 +54,20 @@ _OTHER_URL = "https://example.invalid/other"
 def _rich_model() -> DocumentModel:
     """Every `BLOCK_KIND`, plus inline spans, styles, cells and a page setup.
 
-    Margins are declared explicitly: python-docx's default template is 1.00in top/bottom
-    and 1.25in left/right, which `PageSetup.margin_in` cannot hold, so a fixture that left
-    the page unset would carry an unavoidable loss item and could not assert losslessness.
+    The page is declared explicitly rather than left unset so the fixture pins a geometry
+    of its own choosing — A4 landscape with uniform margins, none of which is the
+    template's default, so a writer that ignored `page` entirely would red the round trip.
     """
     return DocumentModel(
         title="Fidelity Fixture",
-        page=PageSetup(orientation="landscape", margin_in=0.9),
+        page=PageSetup(
+            size="a4",
+            orientation="landscape",
+            margin_top_pt=64.8,
+            margin_bottom_pt=64.8,
+            margin_left_pt=64.8,
+            margin_right_pt=64.8,
+        ),
         blocks=[
             Block(kind="heading", text="Chapter One", level=1),
             Block(kind="heading", text="A Deeper Section", level=4),
@@ -173,7 +180,17 @@ def _canonical(model: DocumentModel) -> tuple:
     page = model.page or PageSetup()
     return (
         model.title,
-        (page.orientation or "portrait", round(page.margin_in, 4)),
+        (
+            page.size,
+            page.orientation or "portrait",
+            round(page.margin_top_pt, 4),
+            round(page.margin_bottom_pt, 4),
+            round(page.margin_left_pt, 4),
+            round(page.margin_right_pt, 4),
+            page.header_text,
+            page.footer_text,
+            page.page_numbers,
+        ),
         tuple(
             (
                 block.kind,
@@ -254,7 +271,14 @@ def test_inline_span_boundaries_survive_the_round_trip():
 def test_page_setup_survives_the_round_trip():
     parsed, _ = parse_docx(render_docx(_rich_model()))
 
-    assert parsed.page == PageSetup(orientation="landscape", margin_in=0.9)
+    assert parsed.page == PageSetup(
+        size="a4",
+        orientation="landscape",
+        margin_top_pt=64.8,
+        margin_bottom_pt=64.8,
+        margin_left_pt=64.8,
+        margin_right_pt=64.8,
+    )
 
 
 def test_table_cells_survive_the_round_trip():

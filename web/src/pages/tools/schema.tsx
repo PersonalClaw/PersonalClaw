@@ -83,7 +83,7 @@ export function SchemaField({ name, schema, required, value, onChange, widgets }
   // inputs/selects/textareas get `id` + a <label htmlFor>; the boolean Toggle and
   // custom widgets (which own their own element) take an accessible name instead.
   const id = useId()
-  const base = 'w-full rounded-md bg-surface px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+  const base = 'w-full rounded-md bg-surface px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   let control: ReactNode
   const customWidget = meta.widget ? widgets?.[meta.widget] : undefined
   if (customWidget) {

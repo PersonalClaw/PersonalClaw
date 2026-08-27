@@ -157,17 +157,26 @@ class TestTheCliFlag:
         `no_dashboard=True` expecting a fast failure; it BOOTED THE REAL GATEWAY against the
         REAL home (it appended a row to `~/.personalclaw/security_events.jsonl` and
         regenerated `agents/personalclaw.json`) and then timed out. The latch happens on the
-        first lines of `_gateway`, before `AppConfig.load()`, so the honest cheap proof is
-        that those lines exist and are ordered — read off the source, not by starting a
-        gateway inside a unit test.
+        first lines of `_gateway`, before it reads config, so the honest cheap proof is that
+        those lines exist and are ordered — read off the source, not by starting a gateway
+        inside a unit test.
+
+        The config read is `_boot_config()`, not `AppConfig.load()`: PHF-15 moved the
+        migration write-back out of `load()` into that named boot step, which is now the
+        first thing in `_gateway` that touches the config file.
         """
         import inspect
 
         from personalclaw import cli_server
 
         src = inspect.getsource(cli_server._gateway)
+        assert "set_safe_surfaces(True)" in src, "the latch call is gone from _gateway"
+        assert "_boot_config()" in src, (
+            "_gateway no longer calls _boot_config() — re-anchor this ordering check on "
+            "whatever now performs the first config read, or it silently stops measuring."
+        )
         latch = src.index("set_safe_surfaces(True)")
-        boot = src.index("AppConfig.load()")
+        boot = src.index("_boot_config()")
         assert latch < boot, "the latch must precede any config read or page serve"
         assert "if safe_surfaces:" in src
 

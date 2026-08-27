@@ -166,7 +166,7 @@ function PromptFieldRow({ field, value, error, autoFocus, onChange, onSubmit }: 
 }) {
   const ref = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
   useEffect(() => { if (autoFocus) ref.current?.focus() }, [autoFocus])
-  const base = 'w-full rounded-lg bg-surface-high px-3 text-[0.9375rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+  const base = 'w-full rounded-lg bg-surface-high px-3 text-[0.9375rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   return (
     <div>
       {field.label && <label className="mb-1 block text-on-surface-var text-[0.8125rem]">{field.label}</label>}

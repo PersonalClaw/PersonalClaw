@@ -151,7 +151,7 @@ function PromptVarsFields({ prompts, promptId, vars, onVars }: {
           {v.type === 'select' && v.options && v.options.length > 0 ? (
             <select
               value={valOf(v)} onChange={(e) => setVar(v.name, e.target.value)}
-              className="w-full rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50">
+              className="w-full rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
               {!v.required && <option value="">—</option>}
               {v.options.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
@@ -160,7 +160,7 @@ function PromptVarsFields({ prompts, promptId, vars, onVars }: {
           ) : (
             <input
               value={valOf(v)} onChange={(e) => setVar(v.name, e.target.value)} aria-label={v.name}
-              className="w-full rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+              className="w-full rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           )}
         </Field>
       ))}

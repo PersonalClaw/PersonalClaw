@@ -3,7 +3,7 @@ import { Check, Radio, RadioTower, ShieldCheck, ShieldAlert } from 'lucide-react
 import { api } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, ToggleRow, Field, Row } from './settingsUI'
+import { PanelHeader, Section, RowGroup, ToggleRow, Field, Row } from './settingsUI'
 import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -71,7 +71,7 @@ export function CompanionPanel() {
       <PanelHeader title="Companion apps" hint="Native clients — phone or desktop — that connect to this gateway. Nothing is announced on your network unless you turn discovery on." />
 
       <Section title="Local network" hint="How companion apps find this gateway on your LAN.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <ToggleRow label="LAN discovery" cfg={cfg} field="discovery_enabled" patch={patch}
             hint="Advertise this gateway on your local network so companion apps can find it without a typed URL. Off by default — announcing a service on your LAN is an opt-in." />
           <Field label="Instance name" hint="Friendly name companion apps show for this gateway. Empty falls back to the machine hostname.">
@@ -99,7 +99,7 @@ export function CompanionPanel() {
               </span>
             </Row>
           ) : null}
-        </div>
+        </RowGroup>
       </Section>
 
       {/* What the network is actually told. A discovery record is a broadcast — unauthenticated
@@ -139,7 +139,7 @@ export function CompanionPanel() {
           surface, and installing the PWA is how the dashboard gets onto a phone.
           The state is reported in WORDS as well as tone — a colour-only status would fail 1.4.1. */}
       <Section title="Install & offline" hint="Whether this browser can install the dashboard as an app and keep its shell available offline.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <Row label="Install &amp; offline support"
             hint={swBlocked
               ? `Unavailable — ${swBlocked}.`
@@ -149,7 +149,7 @@ export function CompanionPanel() {
               {swBlocked ? 'Unavailable' : 'Available'}
             </span>
           </Row>
-        </div>
+        </RowGroup>
       </Section>
     </div>
   )

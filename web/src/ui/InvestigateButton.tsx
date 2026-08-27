@@ -19,7 +19,11 @@ export function InvestigateButton({ kind, id, backLink, size = 24, label }: {
   const [busy, setBusy] = useState(false)
   return (
     <IconButton icon={MessageCircleQuestion} label={label ?? 'Investigate in chat'} title="Investigate in chat"
-      size={size} iconSize={Math.max(12, Math.round(size * 0.55))} disabled={busy}
+      // `loading`, not `disabled`: opening the chat is a fetch, and this one prop reaches nine
+      // surfaces (inbox, loops ×2, notifications, schedule, audit, doctor, memory, tasks). Every
+      // one of them used to dim this button to 40% not-allowed and announce `aria-disabled` for
+      // the length of the round trip — "unavailable" for an action that was working.
+      size={size} iconSize={Math.max(12, Math.round(size * 0.55))} loading={busy}
       onClick={(e) => {
         e.stopPropagation()
         setBusy(true)

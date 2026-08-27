@@ -277,29 +277,6 @@ def live_state_digest(extra_refs: list[str] | None = None) -> dict[str, str]:
     return digests
 
 
-def _normalize_config_before_snapshot() -> None:
-    """Force ``config.json``'s one-time normalization BEFORE the digest is taken.
-
-    Found by driving the real CLI against a dev home: ``AppConfig.load()`` rewrites
-    ``config.json`` in full (every default filled in, plus a ``meta.lastTouchedAt`` wall-clock
-    stamp) the FIRST time it loads an un-normalized file, and is a byte no-op on every load
-    after that. The pin (``config_snapshot_ref``) loads config INSIDE the guarded block, so
-    without this the very first ablation in a fresh or hand-edited home raised
-    ``LiveStateMutatedError`` — accusing the runner of the one thing §3.1 forbids, over a
-    rewrite the config loader did on its own.
-
-    Normalizing first makes byte-identity a true statement about what the ABLATION did.
-    Best-effort: an unreadable config is not a reason to refuse to measure, and it will fail
-    louder a moment later inside the pin.
-    """
-    try:
-        from personalclaw.config.loader import AppConfig
-
-        AppConfig.load()
-    except Exception:
-        logger.debug("pre-snapshot config normalization skipped", exc_info=True)
-
-
 def _drift(before: dict[str, str], after: dict[str, str]) -> list[str]:
     keys = sorted(set(before) | set(after))
     return [k for k in keys if before.get(k, ABSENT) != after.get(k, ABSENT)]
@@ -316,7 +293,6 @@ def live_state_unchanged(extra_refs: list[str] | None = None) -> Iterator[dict[s
     raised with the body's exception chained as ``__cause__``: a run that altered the
     operator's config is the more serious of the two facts, and neither is lost.
     """
-    _normalize_config_before_snapshot()
     before = live_state_digest(extra_refs)
     failure: BaseException | None = None
     try:

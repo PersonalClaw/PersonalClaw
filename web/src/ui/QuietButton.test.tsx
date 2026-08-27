@@ -20,8 +20,11 @@ describe('QuietButton', () => {
   it('is the 28px, ink-low, medium-radius quiet toolbar action', () => {
     const { getByRole } = render(<QuietButton>Download</QuietButton>)
     const have = classOf(getByRole('button'))
-    for (const t of ['inline-flex', 'items-center', 'gap-1', 'rounded-md',
-      'px-2', 'h-7', 'text-[0.75rem]', 'text-on-surface-low',
+    // `gap-1`/`px-2` → `gap-xs`/`px-s`: Tailwind's own defaults compile but BYPASS the
+    // `--space-scale` slider and cli density (system.md trap 3). Both are 4px/8px at
+    // comfortable density, so the swap moves no pixels there and every pixel at dense/cli.
+    for (const t of ['inline-flex', 'items-center', 'gap-xs', 'rounded-md',
+      'px-s', 'h-7', 'text-[0.75rem]', 'text-on-surface-low',
       'hover:bg-surface-high', 'hover:text-on-surface']) {
       expect(have, `missing "${t}"`).toContain(t)
     }

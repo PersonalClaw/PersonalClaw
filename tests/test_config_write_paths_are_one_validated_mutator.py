@@ -115,10 +115,12 @@ def _section(cfg_file, name: str) -> dict:
 async def _unchanged(cfg_file, section: str, request_fn):
     """Run `request_fn` and return (response, whether `section` is byte-identical after).
 
-    A SNAPSHOT, not an absence check: `AppConfig.load()` writes the whole normalised config
-    back (22 KB from `{}`), so every field is present with its default the moment a handler
-    reads config. "the key is not in the file" can therefore never be true, and a test that
-    asserted it would be measuring the loader, not the write.
+    A SNAPSHOT, not an absence check. Originally because `AppConfig.load()` wrote the whole
+    normalised config back (22 KB from `{}`) the moment any handler read config, so "the key
+    is not in the file" could never be true and an absence check would have been measuring the
+    loader rather than the write. PHF-15 made `load()` a pure read, but the snapshot stays: it
+    is the shape that states the actual property ("this request changed nothing here")
+    regardless of what else happens to be materialised on disk.
     """
     before = json.dumps(_section(cfg_file, section), sort_keys=True)
     resp = await request_fn()
@@ -304,14 +306,21 @@ def _config_set(key: str, value: str):
 
 
 def test_the_cli_cannot_write_past_the_bounds_the_api_enforces(cfg_file):
-    """`config set agent.max_subagents 9999` used to succeed on the same field the API caps."""
-    from personalclaw.config.loader import AppConfig
+    """`config set agent.max_subagents 9999` used to succeed on the same field the API caps.
 
-    default = AppConfig.load().agent.max_subagents
+    A SNAPSHOT of the section, not a read of one key: the seeded config is ``{}``, so nothing
+    materialises ``agent.max_subagents`` on disk unless a write puts it there. (This test used
+    to read the key back and compare it to the default, which only worked because
+    ``AppConfig.load()`` rewrote the whole normalised config as a migration side effect —
+    PHF-15 removed that, so the key is legitimately absent when the write is refused.)
+    """
+    before = json.dumps(_section(cfg_file, "agent"), sort_keys=True)
     with pytest.raises(SystemExit) as exc:
         _config_set("agent.max_subagents", "9999")
     assert exc.value.code == 1
-    assert _section(cfg_file, "agent")["max_subagents"] == default, "9999 was written anyway"
+    assert (
+        json.dumps(_section(cfg_file, "agent"), sort_keys=True) == before
+    ), "9999 was written anyway"
 
 
 def test_the_cli_still_writes_an_in_bounds_value(cfg_file):

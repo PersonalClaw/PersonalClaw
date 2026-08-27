@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, type AutonomyLadder, type AutonomyReversal, type AutonomyType, type CallerHealth, type ProviderHealth } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { PanelHeader, Section, Row, Field, SegPills, Toggle, SavedToast } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Field, SegPills, Toggle, SavedToast } from './settingsUI'
 import { NumberField } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { RungChip } from '../../ui/RungChip'
@@ -53,7 +53,7 @@ export function GuardrailsPanel() {
       <IncidentSection />
 
       <Section title="Daily budget" hint="Cap what your automations spend in a day. At the ceiling, further unattended runs are skipped (a cron fire is paused, a subagent spawn refused) and resume automatically the next day. 0 = unlimited.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <NumberRow label="Max tokens / day" hint="Across every trigger. 0 = unlimited."
             value={cfg.budgets?.max_tokens_per_day ?? 0} min={0} step={1000}
             onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_tokens_per_day: v } })); return patchNum('budgets.max_tokens_per_day', v, 'Max tokens / day') }} />
@@ -63,28 +63,28 @@ export function GuardrailsPanel() {
           <NumberRow label="Max tokens / run" hint="Per single unattended run (a goal-loop cycle, a cron fire). 0 = unlimited."
             value={cfg.budgets?.max_tokens_per_run ?? 0} min={0} step={1000}
             onSave={(v) => { setCfg((c) => ({ ...c, budgets: { ...c?.budgets, max_tokens_per_run: v } })); return patchNum('budgets.max_tokens_per_run', v, 'Max tokens / run') }} />
-        </div>
+        </RowGroup>
       </Section>
 
       <Section title="Outbound scan" hint="How a prompt bound for a REMOTE model provider is handled when it contains secrets or PII. Local models always warn (their content never leaves your machine).">
-        <div className="rounded-lg bg-surface-container px-4 py-3">
+        <RowGroup>
           <Field label="Scan mode" hint="warn = log & send · redact = substitute & send · block = refuse the call.">
             <SegPills ariaLabel="Scan mode" value={String(cfg.scan_mode ?? 'redact')}
               onChange={(v) => { setCfg((c) => ({ ...c, scan_mode: v })); api.patchConfig('guardrails.scan_mode', v).catch((e) => notify(`Couldn't save scan mode: ${String((e as Error)?.message || e)}`, 'error')) }}
               options={[{ key: 'warn', label: 'Warn' }, { key: 'redact', label: 'Redact' }, { key: 'block', label: 'Block' }]} />
           </Field>
-        </div>
+        </RowGroup>
       </Section>
 
       <Section title="Circuit breaker" hint="Per-provider fail-fast: after N consecutive failures a provider's breaker opens, so unattended runs fail in microseconds during an outage instead of stacking timeouts.">
-        <div className="rounded-lg bg-surface-container px-4 py-1">
+        <RowGroup>
           <NumberRow label="Failure threshold" hint="Consecutive failures before the breaker opens."
             value={cfg.breaker?.failure_threshold ?? 5} min={1} step={1}
             onSave={(v) => { setCfg((c) => ({ ...c, breaker: { ...c?.breaker, failure_threshold: v } })); return patchNum('breaker.failure_threshold', v, 'Failure threshold') }} />
           <NumberRow label="Recovery seconds" hint="How long an open breaker waits before a half-open probe."
             value={cfg.breaker?.recovery_secs ?? 30} min={0} step={5}
             onSave={(v) => { setCfg((c) => ({ ...c, breaker: { ...c?.breaker, recovery_secs: v } })); return patchNum('breaker.recovery_secs', v, 'Recovery seconds') }} />
-        </div>
+        </RowGroup>
       </Section>
 
       <AutonomyLadderSection />
@@ -154,7 +154,7 @@ function AutonomyLadderSection() {
               Incident mode is active, so nothing runs above “asks first” — a granted rung shows as held until you resume.
             </div>
           )}
-          <div className="rounded-lg bg-surface-container px-4 py-1">
+          <RowGroup>
             {types.map((t) => (
               <div key={t.key} className="flex items-start justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
                 <div className="min-w-0">
@@ -198,7 +198,7 @@ function AutonomyLadderSection() {
                 </div>
               </div>
             ))}
-          </div>
+          </RowGroup>
           <UndoList ladder={ladder} onChange={reload} />
         </div>
       )}
@@ -232,7 +232,7 @@ function UndoList({ ladder, onChange }: { ladder: AutonomyLadder; onChange: () =
   return (
     <div>
       <div className="mb-s text-on-surface-low text-[0.75rem] uppercase tracking-wide">Automatic actions you can still undo</div>
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         {pending.length === 0 ? (
           <div className="py-3 text-on-surface-low text-[0.8125rem]">Nothing is waiting to be undone — no action has run at the “runs with undo” rung yet.</div>
         ) : pending.map((r) => (
@@ -241,7 +241,7 @@ function UndoList({ ladder, onChange }: { ladder: AutonomyLadder; onChange: () =
             <Button size="xs" variant="secondary" disabled={busy === r.id} onClick={() => undo(r)}>Undo</Button>
           </Row>
         ))}
-      </div>
+      </RowGroup>
     </div>
   )
 }

@@ -1101,13 +1101,13 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
         <label className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">What do you want to track?</label>
         <textarea aria-label="What do you want to track?" value={goal} onChange={(e) => setGoal(e.target.value)} rows={4} autoFocus
           placeholder={'e.g. "anything that could improve my homelab self-hosted setup"'}
-          className="rounded-md bg-surface p-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 resize-none" />
+          className="rounded-md bg-surface p-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-none" />
         <p className="text-on-surface-low text-[0.75rem]">Plain language. As items are saved, PersonalClaw decides what's relevant and pulls out the useful specifics for you — no need to define fields.</p>
       </div>
       <div className="flex flex-col gap-1.5">
         <label className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Limit to types (optional)</label>
         <input aria-label="Limit to types (optional)" value={enabledFor} onChange={(e) => setEnabledFor(e.target.value)} placeholder="comma-separated, blank = all types"
-          className="h-9 rounded-md bg-surface px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="h-9 rounded-md bg-surface px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       </div>
       <label className="flex items-start gap-2 text-on-surface-var text-[0.8125rem]">
         <input type="checkbox" className="mt-0.5" checked={proposeSkill} onChange={(e) => setProposeSkill(e.target.checked)} />

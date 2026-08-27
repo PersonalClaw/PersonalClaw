@@ -29,6 +29,7 @@ a leak into the real ``~/.personalclaw`` fails conftest's own rail.
 
 from __future__ import annotations
 
+import io
 import json
 from unittest.mock import MagicMock, patch
 
@@ -46,14 +47,24 @@ from personalclaw.artifacts.models import (
 )
 from personalclaw.artifacts.native import NativeArtifactProvider
 from personalclaw.documents.docx_parser import parse_docx
-from personalclaw.documents.model import Block, DocumentModel, Run
+from personalclaw.documents.model import (
+    Block,
+    DocumentModel,
+    Run,
+    Sheet,
+    SheetCell,
+    SheetModel,
+)
 from personalclaw.documents.model_json import document_from_dict, document_to_dict
+from personalclaw.documents.sheet_json import sheet_to_dict
 from personalclaw.documents.writers.docx_writer import render_docx
+from personalclaw.documents.writers.xlsx_writer import render_xlsx
 from personalclaw.sel import sel
 
 DOCX_MIME = mime_for_ext("docx")
 PDF_MIME = mime_for_ext("pdf")
 PNG_MIME = mime_for_ext("png")
+XLSX_MIME = mime_for_ext("xlsx")
 
 #: The OOXML tells a JSON body must never carry. `PK\x03\x04` is the zip magic every
 #: .docx starts with; the other two appear in the package's own part names/markup.
@@ -75,20 +86,45 @@ def _authored(bold_word: str = "bold") -> DocumentModel:
 
 
 def _docx_bytes(model: DocumentModel | None = None) -> bytes:
-    """One render of *model*. NOT lossless when parsed back: python-docx's default
-    template ships asymmetric page margins (1.00in top/bottom, 1.25in left/right) and
-    the model holds a single ``margin_in``, so the parse honestly reports one
-    ``page_property`` loss. That is the report doing its job, and
-    ``test_the_loss_report_names_what_did_not_fit`` pins it."""
+    """One render of *model*, and it IS lossless when parsed back.
+
+    It was not: python-docx's default template ships asymmetric page margins
+    (1.00in top/bottom, 1.25in left/right) which a single ``margin_in`` could not hold, so
+    a document this repo generated itself reported a ``page_property`` loss. ``PageSetup``
+    now carries a margin per edge, so that geometry is representable and the report on a
+    freshly generated document is empty."""
     return render_docx(model if model is not None else _authored())
 
 
 def _settled_docx_bytes(model: DocumentModel | None = None) -> bytes:
-    """*model* rendered, parsed and re-rendered, so its page setup is explicit and a
-    further parse is lossless. This is the fixture for every test about the write path
-    itself, where an incidental margin loss would be noise."""
+    """*model* rendered, parsed and re-rendered, so its page setup is EXPLICIT in the model
+    rather than inherited from the template.
+
+    Since DFE-6 one render already parses losslessly, so this no longer exists to dodge a
+    margin loss — it exists for the tests that need the page setup to be a stated fact of
+    the model they hold."""
     parsed, _ = parse_docx(_docx_bytes(model))
     return render_docx(parsed)
+
+
+def _lossy_docx_bytes() -> bytes:
+    """A document carrying a construct the model genuinely CANNOT hold: a two-paragraph
+    header, against ``PageSetup.header_text``'s one string.
+
+    Until DFE-6 the vehicle here was the template's asymmetric page margins. Those are
+    representable now, so a test that still used them would assert `lossless is False`
+    about a lossless document — the vacuity leg needs a construct that is honestly
+    unrepresentable, not one that used to be.
+    """
+    from docx import Document as _Docx
+
+    doc = _Docx(io.BytesIO(_settled_docx_bytes()))
+    header = doc.sections[0].header
+    header.paragraphs[0].text = "line one"
+    header.add_paragraph("line two")
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
 
 
 @pytest.fixture
@@ -602,7 +638,7 @@ async def test_the_loss_report_names_what_did_not_fit(patched_native) -> None:
     """VACUITY for the clause above: ``lossless`` can be False, and when it is, the
     report names the construct and where it was. A report that only ever says "no
     losses" would let the warning surface stay silent for a lossy document."""
-    art = _docx_artifact(patched_native, data=_docx_bytes())  # ONE render: margins differ
+    art = _docx_artifact(patched_native, data=_lossy_docx_bytes())
     client = await _client()
     try:
         body = await (await client.get(f"/api/artifacts/{art.slug}/model")).json()
@@ -610,11 +646,11 @@ async def test_the_loss_report_names_what_did_not_fit(patched_native) -> None:
         await client.close()
     loss = body["loss"]
     assert loss["lossless"] is False
-    assert loss["kinds"] == ["page_property"]
-    assert loss["summary"] == "page_property×1"
+    assert loss["kinds"] == ["header_footer"]
+    assert loss["summary"] == "header_footer×1"
     (item,) = loss["items"]
-    assert item["kind"] == "page_property" and item["where"] == "document"
-    assert "margins differ" in item["detail"]
+    assert item["kind"] == "header_footer" and item["where"] == "document"
+    assert "2 non-empty paragraphs" in item["detail"]
 
 
 @pytest.mark.asyncio
@@ -753,7 +789,7 @@ async def test_a_kind_without_a_shipped_parser_has_no_model(patched_native) -> N
         assert resp.status == 415
         body = await resp.json()
         assert body["error"]["code"] == "model_unavailable"
-        assert body["error"]["model_kinds"] == ["docx"]
+        assert body["error"]["model_kinds"] == ["docx", "xlsx"]
         write = await client.put(
             f"/api/artifacts/{art.slug}/model",
             json={"model": document_to_dict(_authored())},
@@ -830,3 +866,163 @@ def test_only_the_download_route_serves_document_bytes() -> None:
         assert "web.Response(" not in source, f"{name} can return a raw body"
     # VACUITY: the download handler DOES, which is why the check above means something.
     assert "web.Response(" in inspect.getsource(handlers_mod.api_artifact_raw)
+
+
+# ── The SAME two routes serve a spreadsheet ──────────────────────────────────
+
+
+def _sheet_bytes() -> bytes:
+    """A workbook with a formula, a number format and a bold header."""
+    return render_xlsx(
+        SheetModel(
+            sheets=[
+                Sheet(
+                    name="Q1",
+                    cells=[
+                        [SheetCell(value="Item", bold=True), SheetCell(value="Qty", bold=True)],
+                        [SheetCell(value="Pens"), SheetCell(value=12)],
+                        [SheetCell(value="Total"), SheetCell(formula="=SUM(B2:B2)")],
+                    ],
+                )
+            ]
+        )
+    )
+
+
+def _xlsx_artifact(provider):
+    return provider.create_binary(
+        name="Budget", data=_sheet_bytes(), mime=XLSX_MIME, kind="xlsx", actor="agent"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_spreadsheet_serves_its_model_through_the_same_route(patched_native) -> None:
+    """``GET …/model`` must resolve the parser BY KIND. Before DFE-7 this route answered
+    415 for every .xlsx, so this is the call site the codec table exists for."""
+    prov = patched_native
+    art = _xlsx_artifact(prov)
+    client = await _client()
+    try:
+        resp = await client.get(f"/api/artifacts/{art.slug}/model")
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["kind"] == "xlsx"
+        cells = body["model"]["sheets"][0]["cells"]
+        # The formula crossed the wire AS a formula, in its own field.
+        assert cells[2][1]["formula"] == "=SUM(B2:B2)"
+        assert cells[2][1]["value"] is None
+        # …and the browser saw no OOXML: the payload is structure, and `blocks` (the
+        # document shape) is absent, so the kind really did choose the codec.
+        assert "blocks" not in body["model"]
+        assert body["loss"]["kinds"] == ["formula_cached_value"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_spreadsheet_cell_edit_survives_the_save_and_read_back(patched_native) -> None:
+    """The full editor circuit at the route: GET the model, change one cell, PUT it back,
+    then read the STORED BYTES with openpyxl — not our parser — and find the edit."""
+    from openpyxl import load_workbook
+
+    prov = patched_native
+    art = _xlsx_artifact(prov)
+    client = await _client()
+    try:
+        loaded = await (await client.get(f"/api/artifacts/{art.slug}/model")).json()
+        model = loaded["model"]
+        model["sheets"][0]["cells"][1][0]["value"] = "Notebooks"
+        model["sheets"][0]["cells"][1][1]["number_format"] = "#,##0.00"
+        resp = await client.put(
+            f"/api/artifacts/{art.slug}/model",
+            json={"model": model},
+            headers={"If-Match": str(loaded["version"])},
+        )
+        assert resp.status == 200, await resp.text()
+
+        stored, _ = prov.raw_bytes(art.slug)
+        ws = load_workbook(io.BytesIO(stored))["Q1"]
+        assert ws["A2"].value == "Notebooks"
+        assert ws["B2"].number_format == "#,##0.00"
+        # The formula is STILL a formula in the saved file — the whole point of the change.
+        assert ws["B3"].data_type == "f"
+        assert ws["B3"].value == "=SUM(B2:B2)"
+        # …and the header is still bold, so the save rewrote one cell and not the sheet.
+        assert ws["A1"].font.bold is True
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_spreadsheet_save_is_refused_while_document_editing_is_off(
+    provider, monkeypatch
+) -> None:
+    """The consent gate governs the sheet editor too — it is one route, so a second
+    enforcement point was never written, and this proves the first one covers xlsx."""
+    from personalclaw.config import AppConfig
+
+    monkeypatch.setattr(AppConfig, "load", staticmethod(AppConfig))
+    with patch.object(registry, "get_provider", return_value=provider):
+        art = _xlsx_artifact(provider)
+        client = await _client()
+        try:
+            resp = await client.put(
+                f"/api/artifacts/{art.slug}/model",
+                json={"model": sheet_to_dict(SheetModel.from_rows({"S": [["x"]]}))},
+                headers={"If-Match": "1"},
+            )
+            assert resp.status == 403
+            assert (await resp.json())["error"]["code"] == "document_editing_off"
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_stale_spreadsheet_save_is_refused_not_merged(patched_native) -> None:
+    """Two tabs over one workbook collide with a 409, exactly as they do for a document —
+    the guard chain is shared, and this is the assertion that it really is shared."""
+    prov = patched_native
+    art = _xlsx_artifact(prov)
+    client = await _client()
+    try:
+        loaded = await (await client.get(f"/api/artifacts/{art.slug}/model")).json()
+        first = await client.put(
+            f"/api/artifacts/{art.slug}/model",
+            json={"model": loaded["model"]},
+            headers={"If-Match": str(loaded["version"])},
+        )
+        assert first.status == 200
+        second = await client.put(
+            f"/api/artifacts/{art.slug}/model",
+            json={"model": loaded["model"]},
+            headers={"If-Match": str(loaded["version"])},
+        )
+        assert second.status == 409
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_spreadsheet_model_is_refused_before_any_write(
+    patched_native,
+) -> None:
+    """Strict deserialization at the route: an unknown field is a 400 and the artifact is
+    untouched, so a client that misspelled a format learns it rather than losing it."""
+    prov = patched_native
+    art = _xlsx_artifact(prov)
+    original = prov.raw_bytes(art.slug)[0]
+    client = await _client()
+    try:
+        payload = sheet_to_dict(SheetModel.from_rows({"S": [["x"]]}))
+        payload["sheets"][0]["cells"][0][0]["numberformat"] = "0.0%"
+        resp = await client.put(
+            f"/api/artifacts/{art.slug}/model",
+            json={"model": payload},
+            headers={"If-Match": "1"},
+        )
+        assert resp.status == 400
+        assert (await resp.json())["error"]["code"] == "invalid_model"
+        assert prov.get(art.slug).version == 1
+        assert prov.raw_bytes(art.slug)[0] == original
+    finally:
+        await client.close()

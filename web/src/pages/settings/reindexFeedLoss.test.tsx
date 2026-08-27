@@ -55,3 +55,41 @@ describe('a dropped re-index feed reports itself honestly', () => {
     expect(read('pages/settings/ModelsPanel.tsx')).toMatch(/setReindex\(\{ id: '', model: '', status: 'error'/)
   })
 })
+
+// ── And the bar itself must not invent progress ──────────────────────────────────────────────────────
+//
+// The same panel's progress bar was pinned to a hardcoded `'40%'` whenever the running phase had no
+// total (`reindex.total === 0`, which is exactly what the copy beside it signals with a bare "…").
+// So a job that had reported no denominator at all rendered as *nearly half done*, and then jumped
+// BACKWARDS the moment a real total arrived. That is the same class of defect as the frozen feed
+// above — a surface asserting something it has no basis for — on the visual half instead of the copy.
+//
+// The fix is the indeterminate wave (`ui/WavyProgress` with no `value`), which is the one primitive
+// that already expresses "running, extent unknown". `ui/Meter` deliberately has no indeterminate
+// mode, so it is not the answer here. The wave is `aria-hidden` by design, so this does not trade a
+// lying bar for an unnamed progressbar.
+describe('the re-index bar reports only progress it can compute', () => {
+  it('is determinate ONLY when there is a denominator', () => {
+    const code = read('pages/settings/ModelsPanel.tsx')
+    expect(code, 'the determinate track is gated on a real total').toMatch(
+      /\{reindex\.total > 0 \? \([\s\S]{0,400}?rounded-pill bg-primary transition-\[width\]/,
+    )
+  })
+
+  it('falls back to the indeterminate wave, not a fabricated fill', () => {
+    const code = read('pages/settings/ModelsPanel.tsx')
+    expect(code, 'the no-total branch renders the indeterminate wave').toMatch(/<WavyProgress width=\{\d+\} \/>/)
+    // The wave must stay VALUELESS — passing `value` would make it a determinate bar again, and the
+    // type then also demands a label. Either way it would stop meaning "extent unknown".
+    expect(code, 'the wave must not carry a value').not.toMatch(/<WavyProgress[^>]*\bvalue=/)
+  })
+
+  it("never pins the fill to a literal percentage", () => {
+    // Vacuity floor for the sibling rail in `design/meterAdoption.test.ts`: assert the exact defect
+    // string is gone from THIS file, so a revert reds here by name and not only in a tree-wide sweep.
+    const code = read('pages/settings/ModelsPanel.tsx')
+    expect(code, "the hardcoded '40%' fill must stay gone").not.toMatch(/: '40%'/)
+    expect(code, 'and no other literal percentage may drive a fill width')
+      .not.toMatch(/width: [^,}\n]*['"](?!0%|100%)\d+(?:\.\d+)?%['"]/)
+  })
+})

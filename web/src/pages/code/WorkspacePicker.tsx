@@ -133,7 +133,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
             onBlur={() => setPathDraft(path)}
             spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-label="Workspace path"
             placeholder="/absolute/path/to/folder"
-            className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 font-mono text-[0.8125rem] text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 font-mono text-[0.8125rem] text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         </div>
 
         {/* in-dir filter — only worth showing once the list is long enough to scan */}
@@ -216,7 +216,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
               <input autoFocus value={newName} onChange={(e) => { setNewName(e.target.value); if (error) setError(null) }}
                 onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); else if (e.key === 'Escape' && !submitting) { setCreating(false); setError(null) } }}
                 disabled={submitting} placeholder="new-project-folder"
-                className="h-9 min-w-0 flex-1 rounded-md bg-surface-high px-2.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 disabled:opacity-60" />
+                className="h-9 min-w-0 flex-1 rounded-md bg-surface-high px-2.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-60" />
               <Button size="sm" onClick={createFolder} disabled={!newName.trim() || submitting}
                 disabledReason={!newName.trim() ? 'Enter a folder name first' : undefined}>
                 {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Create + use

@@ -206,7 +206,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
           <ol className="flex flex-col gap-1">
             {task.action_plan!.map((a, i) => <li key={i} className="flex items-start gap-s text-[0.8125rem]">
               <button type="button" disabled={readOnly} onClick={() => toggleStep(i)} aria-label={a.completed ? 'Mark step incomplete' : 'Mark step done'}
-                className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill text-[0.75rem] tabular-nums enabled:hover:ring-2 enabled:hover:ring-primary/40 disabled:cursor-default transition-shadow"
+                className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill text-[0.75rem] tabular-nums enabled:hover:ring-2 enabled:hover:ring-primary disabled:cursor-default transition-shadow"
                 style={{ background: a.completed ? 'var(--color-ok)' : 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{a.completed ? <Check size={11} className="text-white" /> : i + 1}</button>
               <span className={a.completed ? 'text-on-surface-low line-through' : 'text-on-surface'}>{a.content ?? a.description}</span></li>)}
           </ol>
@@ -352,7 +352,7 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
         <div className="flex items-end gap-s">
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add a comment…" rows={1}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send() } }}
-            className="flex-1 rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none resize-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+            className="flex-1 rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none resize-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           {/* Icon-only send, one per comment composer — a constant name is correct. */}
           <button type="button" aria-label="Post comment" onClick={send}
             {...unavailableWhen(!draft.trim(), 'Write a comment first', { busy: sending })} className="shrink-0 inline-flex size-9 items-center justify-center rounded-pill bg-primary text-on-primary disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"><Send size={15} /></button>

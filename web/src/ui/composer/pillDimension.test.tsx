@@ -114,6 +114,16 @@ describe('the THIRD pill family — the project picker — agrees', () => {
   // project the work attaches to, the other chooses greenfield vs brownfield. The tablist itself is
   // correctly named "Project kind", so the group context exists on that side; the picker had no
   // dimension anywhere in its name, only in a `title` that a button with text content does not use.
+  //
+  // 🔁 THE OTHER HALF OF THAT COLLISION IS NOW CLOSED TOO. The pass above fixed the accessible names
+  // and signed off "Sighted users see no change" — correct for its scope, but it left the VISIBLE
+  // duplication in place, and re-measuring found it at three viewports, not one: 12px apart at
+  // 1440px, and 8px apart at 1024px and 640px where the Segmented has collapsed to a pill so the two
+  // controls are the same SHAPE as well as the same words. The greenfield tab now reads "Fresh start"
+  // (LoopComposer) — chosen over the obvious "New codebase" because that measured 89.4px against the
+  // old label's 73px and pushed the Mode dial past its collapse threshold, moving the header's
+  // overflow to a width that had been fine. "Fresh start" is 64.9px, NARROWER, so it cannot create an
+  // overlap. The rail below is what keeps the two labels apart, since neither file can see the other.
   it('names the dimension and the value', () => {
     render(<ProjectPicker value="" onChange={() => {}} />)
     expect(screen.getByRole('button', { name: 'Project: New project' })).toBeTruthy()
@@ -183,5 +193,71 @@ describe('the rail', () => {
     const header = readFileSync(join(process.cwd(), 'src/ui/HeaderActions.tsx'), 'utf8')
     expect(header, 'the header pill composes "<dimension>: <value>"').toMatch(/aria-label=\{`\$\{ariaLabel[^`]*\}: \$\{label\}`\}/)
     expect(src, 'the composer pill composes the same shape').toMatch(/`\$\{dimension\}: \$\{label\}`/)
+  })
+})
+
+// ── The cockpit header row must not paint one label twice ──────────────────────────────
+//
+// The collision above was between two controls in TWO DIFFERENT FILES, which is why nothing caught
+// it: `LoopComposer` writes its Segmented's option labels, `ProjectPicker` owns its own idle label,
+// and neither module can see the other. A render test would need the whole cockpit (DotGlow, the
+// api client, the loop store), so this reads the two label sources directly and compares them —
+// source-level ON PURPOSE, and the live proof lives in the PR that added it:
+//
+//   #/code @1440   picker "New project" x=240..372   ·   greenfield tab "New project" x=384..483
+//   #/code @1024   picker "New project" x=240..372   ·   collapsed pill "New project" x=380..499
+//   #/code @640    picker "New project" x=44..176    ·   collapsed pill "New project" x=184..303
+//
+// Only 390px was clean, and only because the picker hides its text below `sm`.
+describe('the cockpit header row paints no label twice', () => {
+  const composer = readFileSync(join(process.cwd(), 'src/pages/loop/LoopComposer.tsx'), 'utf8')
+  const picker = readFileSync(join(process.cwd(), 'src/ui/ProjectPicker.tsx'), 'utf8')
+
+  /** Every `label: '…'` on a Segmented option in the composer's header row, plus the checkbox's own
+   *  word. Deliberately NOT scoped to a character window around `headerControls` — a window is not a
+   *  scope, and the body's Segmenteds (the kind slider) share this file. Instead: take every option
+   *  label in the file, which OVER-collects, because over-collecting can only make this stricter. */
+  const composerLabels = [...composer.matchAll(/\blabel:\s*'([^']+)'/g)].map((m) => m[1])
+  /** The picker's idle label, i.e. what it paints when no project is bound — the default in
+   *  `emptyLabel ?? '…'`. That default is the one every cockpit uses; Chat overrides it. */
+  const pickerDefault = picker.match(/emptyLabel \?\? '([^']+)'/)?.[1] ?? null
+
+  it('found both label sources (vacuity floor)', () => {
+    // If either matcher stops matching, the comparison below passes by comparing nothing.
+    expect(composerLabels.length, 'no Segmented option labels found in LoopComposer').toBeGreaterThanOrEqual(6)
+    expect(pickerDefault, "ProjectPicker's default empty label was not found").toBeTruthy()
+    // And the specific pair this exists for is present, so a rename cannot silently drop the subject.
+    expect(composerLabels).toContain('Existing codebase')
+  })
+
+  it("no composer control reuses the project picker's idle label", () => {
+    const clash = composerLabels.filter((l) => l === pickerDefault)
+    expect(
+      clash,
+      `LoopComposer paints ${JSON.stringify(clash)}, which is also what ProjectPicker paints when no ` +
+        `project is bound — two adjacent controls in the same header row with the same words and ` +
+        `different jobs. Rename the composer's label; the picker's is product vocabulary the backend ` +
+        `honours ("${pickerDefault} (auto-named)" auto-creates one).`,
+    ).toEqual([])
+  })
+
+  it('the greenfield/brownfield pair still reads as one choice', () => {
+    // Both halves present, and the brownfield half keeps the noun that the body's "Codebase path"
+    // input echoes. Pinned by name so a future rewording of either half comes back through this rail
+    // and gets its width re-measured — the reason the first attempt here was rejected.
+    expect(composerLabels).toContain('Fresh start')
+    expect(composerLabels).toContain('Existing codebase')
+  })
+
+  it('the group name the collapse rail asserts is unchanged', () => {
+    // `composerHeaderNarrow.test.ts` iterates ['Granularity', 'Mode', 'Project kind'] to prove each
+    // wide control collapses to a menu. Renaming a visible OPTION must not move the group's name.
+    expect(composer).toMatch(/ariaLabel="Project kind"/)
+  })
+
+  it('the wire keys are untouched by the rename', () => {
+    // `ProjectKind` in lib/api is the persisted vocabulary. A label change must never reach it.
+    expect(composer).toMatch(/key: 'greenfield'/)
+    expect(composer).toMatch(/key: 'brownfield'/)
   })
 })

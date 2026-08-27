@@ -93,7 +93,7 @@ export function PromptPreviewPane({ draft }: { draft: PromptDraft }) {
 }
 
 function SampleField({ v, value, onChange }: { v: PromptVariable; value: unknown; onChange: (v: unknown) => void }) {
-  const base = 'w-full rounded-md bg-surface px-2.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+  const base = 'w-full rounded-md bg-surface px-2.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   const label = (
     <label className="flex items-center gap-1.5 text-on-surface-var text-[0.75rem]">
       <code className="font-mono text-on-surface">{v.name}</code>

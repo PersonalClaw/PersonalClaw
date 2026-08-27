@@ -168,7 +168,7 @@ describe('the tasks list row and card carry the same overlay', () => {
   })
 
   it('the ring is drawn on the row, keyed off the overlay', () => {
-    const rings = [...src.matchAll(/has-\[>button:focus-visible\]:ring-2 has-\[>button:focus-visible\]:ring-inset has-\[>button:focus-visible\]:ring-primary\/50/g)]
+    const rings = [...src.matchAll(/has-\[>button:focus-visible\]:ring-2 has-\[>button:focus-visible\]:ring-inset has-\[>button:focus-visible\]:ring-primary\b/g)]
     expect(rings.length, 'both wrappers').toBeGreaterThanOrEqual(2)
   })
 

@@ -600,7 +600,7 @@ Activate an element by index. The default performs an accessibility press, which
 
 **Response type:** `computer_use.click.result`
 
-**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
 **Safety:** requires approval
 
@@ -627,7 +627,7 @@ List the desktop applications this machine will let you drive. Requires the oper
 
 **Response type:** `computer_use.list_apps.result`
 
-**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
 **Safety:** requires approval
 
@@ -646,7 +646,7 @@ Perform a named accessibility action the element advertises (for controls a pres
 
 **Response type:** `computer_use.perform_action.result`
 
-**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
 **Safety:** requires approval
 
@@ -671,7 +671,7 @@ Scroll the element at this index.
 
 **Response type:** `computer_use.scroll.result`
 
-**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
 **Safety:** requires approval
 
@@ -697,7 +697,7 @@ Set the element's value directly (faster and more reliable than typing for long 
 
 **Response type:** `computer_use.set_value.result`
 
-**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_SECURE_FIELD`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_SECURE_FIELD`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
 **Safety:** requires approval, risk: caution
 
@@ -722,7 +722,7 @@ Walk one application's front window into an indexed accessibility tree. Returns 
 
 **Response type:** `computer_use.snapshot.result`
 
-**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
 **Safety:** requires approval
 
@@ -743,7 +743,7 @@ Type text into the element at this index. Refuses secure/password destinations, 
 
 **Response type:** `computer_use.type.result`
 
-**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_SECURE_FIELD`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`
+**Error codes:** `ERR_COMPUTER_USE_DISABLED`, `ERR_COMPUTER_USE_APP_NOT_ALLOWED`, `ERR_COMPUTER_USE_SECURE_FIELD`, `ERR_COMPUTER_USE_STALE_INDEX`, `ERR_COMPUTER_USE_BAD_ARGUMENT`, `ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`
 
 **Safety:** requires approval
 

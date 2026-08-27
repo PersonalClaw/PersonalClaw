@@ -8,6 +8,7 @@ import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
+import { Meter } from '../../ui/Meter'
 import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { TextLink } from '../../ui/TextLink'
@@ -597,7 +598,7 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
       // cannot add a second stop, no role on the wrapper (a wrapper role containing the checkbox is
       // nested-interactive), and the ring drawn on the ROW keyed off the overlay's focus.
       tabIndex={-1}
-      className="group relative flex items-center gap-l rounded-lg bg-surface-container px-l py-m cursor-pointer transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50"
+      className="group relative flex items-center gap-l rounded-lg bg-surface-container px-l py-m cursor-pointer transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary"
       style={selected ? { outline: '1.5px solid var(--color-primary)', outlineOffset: -1.5 } : undefined}>
       {/* The row's tab stop and name, through the primitive that already owns this idiom.
           🪤 Hand-rolling a bespoke element here is what the primitive-adoption ratchet is for: it went
@@ -665,7 +666,7 @@ function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number;
       onClick={onOpen}
       // Same defect, same fix, in the Cards view: 30 cards, each openable by pointer only.
       tabIndex={-1}
-      className="group relative flex flex-col gap-m rounded-xl bg-surface-container p-l cursor-pointer transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50">
+      className="group relative flex flex-col gap-m rounded-xl bg-surface-container p-l cursor-pointer transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary">
       <RowHitTarget label={t.title} />
       <div className="flex items-start gap-s">
         <sm.icon size={18} className="shrink-0 mt-0.5" style={{ color: sm.tone }} />
@@ -681,9 +682,14 @@ function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number;
       </div>
       {exit.length > 0 && (
         <div className="flex items-center gap-s">
-          {/* the exit-criteria progress fills with a spring on mount/change instead
-              of snapping to width — a small "progress earned" moment */}
-          <div className="flex-1 h-1 rounded-pill bg-surface-high overflow-hidden"><motion.div className="h-full rounded-pill" style={{ background: 'var(--color-ok)' }} initial={{ width: 0 }} animate={{ width: `${(exitDone / exit.length) * 100}%` }} transition={spring.spatialSlow} /></div>
+          {/* Exit-criteria progress now goes through the Meter primitive, so a card
+              announces "3 of 5 exit criteria met" instead of shipping a bar with no
+              role at all. The bar formerly sprang in from width 0 on mount; that
+              flourish fired once per card in a list of dozens, which is decoration
+              rather than state, so it is gone with the hand-rolled track. */}
+          <Meter size="thin" className="flex-1" tone="var(--color-ok)"
+            label={`Exit criteria: ${exitDone} of ${exit.length} met`}
+            pct={(exitDone / exit.length) * 100} />
           <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{exitDone}/{exit.length}</span>
         </div>
       )}

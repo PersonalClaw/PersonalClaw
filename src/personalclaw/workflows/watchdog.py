@@ -39,7 +39,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from personalclaw import shutdown_event
+from personalclaw import concurrency, shutdown_event
 from personalclaw.workflows import containers, overlap, store
 from personalclaw.workflows.coalescer import EventCoalescer
 from personalclaw.workflows.controller import _ROOT_TO_RUN, EngineServices, RunController
@@ -308,7 +308,7 @@ class WorkflowWatchdog:
         # sweep just paused.
         swept: set[str] = set()
         if not self._swept:
-            swept = self._boot_sweep()
+            swept = await self._boot_sweep()
             self._swept = True
 
         for run in store.active_runs():
@@ -335,7 +335,7 @@ class WorkflowWatchdog:
         # controller's own drain.
         await overlap.drain_all(self)
 
-    def _boot_sweep(self) -> set[str]:
+    async def _boot_sweep(self) -> set[str]:
         """Decide the fate of every crash-survivor ISOLATED run, ONCE, before adoption.
 
         A RUNNING run with no live controller on the first poll is one this process never
@@ -357,30 +357,47 @@ class WorkflowWatchdog:
         runs before the first `_adopt`, so it only sees controller-less runs). The status
         write happens BEFORE adoption so a swept run is not relaunched. Returns the ids it
         decided, so the adoption loop on this same poll skips them.
+
+        `PP-16` ("one adoption/reaping path") made the *mechanics* of this shared with the loop
+        watchdog's own boot sweep: :func:`concurrency.boot_sweep` owns the crash-survivor
+        partition, the per-row failure isolation, the count log and the decided-id contract,
+        and the run-specific §5.2 substrate rule stays here in :meth:`_sweep_one`. One
+        consequence is a real improvement rather than a relocation: a row whose decision raises
+        no longer aborts the whole sweep — it is logged and the remaining survivors are still
+        decided.
         """
-        swept: set[str] = set()
-        for run in store.active_runs():
-            if run.status != RunStatus.RUNNING:
-                continue
-            if self._controllers.get(run.id) is not None:
-                continue  # a live controller owns this run — never sweep it
-            substrate = self._substrate_for(run)
-            if not substrate.isolated:
-                continue  # inline → left to adoption (resumed from the journal)
-            decision = containers.sweep_decision(run, substrate)
-            if decision.status is None or decision.status == run.status:
-                continue
-            run.status = decision.status
-            run.completed_at = run.completed_at or _now()
-            store.save(run)
-            swept.add(run.id)
-            logger.info(
-                "workflow boot sweep: run %s → %s (%s)",
-                run.id,
-                decision.status.value,
-                decision.reason,
-            )
-        return swept
+        return await concurrency.boot_sweep(
+            "workflow-run",
+            store.active_runs(),
+            survived=self._is_crash_survivor,
+            decide=self._sweep_one,
+        )
+
+    def _is_crash_survivor(self, run: WorkflowRun) -> bool:
+        """A run persisted RUNNING that no controller in THIS process drives — i.e. one a
+        gateway was killed in the middle of. A run with a live controller is never swept."""
+        return run.status == RunStatus.RUNNING and self._controllers.get(run.id) is None
+
+    async def _sweep_one(self, run: WorkflowRun) -> bool:
+        """§5.2's substrate rule for ONE crash-survivor run. Returns whether a fate was
+        written — an inline run, or one whose substrate says nothing changed, is deliberately
+        left to adoption and reports ``False`` so this poll still drives it."""
+        substrate = self._substrate_for(run)
+        if not substrate.isolated:
+            return False  # inline → left to adoption (resumed from the journal)
+        decision = containers.sweep_decision(run, substrate)
+        if decision.status is None or decision.status == run.status:
+            return False
+        run.status = decision.status
+        run.completed_at = run.completed_at or _now()
+        store.save(run)
+        logger.info(
+            "workflow boot sweep: run %s → %s (%s)",
+            run.id,
+            decision.status.value,
+            decision.reason,
+        )
+        return True
 
     def _substrate_for(self, run: WorkflowRun) -> containers.Substrate:
         """The execution substrate for a stale run, for the sweep's substrate check.
@@ -401,6 +418,14 @@ class WorkflowWatchdog:
         Falls back to the cheap existence check if the inspection raises: a boot sweep must
         decide, and an unanswerable git call is not a reason to leave a stale `running` row.
         """
+        # EI-6 §5.1 reattach-not-reap PRE-STEP. It runs FIRST, before any path check, because
+        # it is the only question whose answer can be "the worker is still executing right
+        # now" — and a run with a live worker must never be decided by looking at a directory.
+        # Ordering matters in one direction only: a live durable worker outranks every other
+        # signal, and if there is none this falls through to today's decision unchanged.
+        durable = self._durable_substrate(run)
+        if durable is not None:
+            return durable
         wt = str((run.extra or {}).get("worktree_path", "") or "")
         if not wt:
             return containers.Substrate(kind="inline", alive=False)
@@ -419,6 +444,66 @@ class WorkflowWatchdog:
         except Exception:
             logger.debug("substrate inspection failed for run %s", run.id, exc_info=True)
             return containers.Substrate(kind="worktree", alive=Path(wt).is_dir(), detail=wt)
+
+    @staticmethod
+    def _durable_substrate(run: WorkflowRun) -> containers.Substrate | None:
+        """A still-alive durable tmux worker for *run*, or None. The §5.1 boot pre-step.
+
+        Two ways a worker is recognised, in order of strength:
+
+        1. **The recomputed deterministic name.** `pclaw-<project>-<run>-<session>` is derived
+           from identity alone, so a gateway that lost every byte of in-memory state can
+           reconstruct it and ask the daemon directly. This recomputability IS the mechanism —
+           nothing had to be persisted at spawn time, so there is no write a crash could have
+           missed.
+        2. **A durable session working inside the run's workspace.** A worker is also identified
+           by WHERE it is, not only by what it is called: a shell the daemon is holding whose
+           cwd is inside this run's workspace is this run's live substrate even when an earlier
+           mechanism chose its name. Without this leg the pre-step would only ever recognise
+           sessions named by this exact version of this exact function, which is a reader that
+           agrees with itself and nothing else.
+
+        Returns None — never a dead `Substrate` — so the caller falls through to today's
+        decision untouched. That is deliberate: this function may only ever RESCUE a run from
+        being aborted, never cause one to be aborted that would not have been. A bug here can
+        cost a spurious "suspended"; it cannot destroy work.
+        """
+        from personalclaw import tmux_substrate
+        from personalclaw.agents import runner_lifecycle
+
+        # The flag gate is first and cheap. Off (or no tmux binary) means not one probe is
+        # spawned and the sweep behaves exactly as it did before this existed.
+        if not runner_lifecycle.durable_sessions_enabled():
+            return None
+        name = tmux_substrate.durable_session_name(
+            run.project_id or "default", run.id, run.workflow_name or "run"
+        )
+        if tmux_substrate.has_session_sync(name):
+            return containers.Substrate(
+                kind="tmux", alive=True, detail=f"durable session {name} is still running"
+            )
+        ws = str((run.extra or {}).get("worktree_path", "") or "")
+        if not ws:
+            return None
+        try:
+            root = Path(ws).resolve()
+        except OSError:
+            return None
+        for session_name, pane_path in tmux_substrate.pane_paths_sync():
+            try:
+                pane = Path(pane_path).resolve()
+            except OSError:
+                continue
+            # `is_relative_to`, not a string prefix: `/tmp/run-1x` must not match the
+            # workspace `/tmp/run-1`, and adopting a NEIGHBOUR's worker would report someone
+            # else's live shell as this run's recoverable work.
+            if pane == root or pane.is_relative_to(root):
+                return containers.Substrate(
+                    kind="tmux",
+                    alive=True,
+                    detail=f"durable session {session_name} is working in {pane}",
+                )
+        return None
 
     async def _adopt(self, run: WorkflowRun) -> None:
         """Resume a run with no live controller.

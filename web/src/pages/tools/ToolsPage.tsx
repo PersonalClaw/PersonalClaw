@@ -383,8 +383,8 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
             {/* Reconnect just THIS server (re-probe) — recover a timed-out/errored
                 provider without re-probing all. Spins while in flight. */}
             <SquareIconButton label={`Reconnect ${g.server.name}`} title="Reconnect this server"
-              disabled={reconnecting === g.server.name} onClick={() => onReconnect(g.server!)}>
-              <RefreshCw size={13} className={reconnecting === g.server.name ? 'animate-spin' : ''} />
+              loading={reconnecting === g.server.name} iconSize={13} onClick={() => onReconnect(g.server!)}>
+              <RefreshCw size={13} />
             </SquareIconButton>
             <button onClick={() => onToggleServer(g.server!)} title={g.server.enabled ? 'Disable server' : 'Enable server'}
               aria-label={`${g.server.enabled ? 'Disable' : 'Enable'} server ${g.server.name}`}>

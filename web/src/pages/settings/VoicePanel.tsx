@@ -4,7 +4,7 @@ import { unavailableWhen } from '../../ui/unavailable'
 import { CheckCircle2, AlertTriangle, ArrowRight, Plus, Trash2, RefreshCw, Check, X, Wand2 } from 'lucide-react'
 import { api, type LexiconTerm, type LexiconCorrection } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { PanelHeader, Section, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SavedToast, ToggleRow } from './settingsUI'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ChipInput } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -145,7 +145,7 @@ function HandsFreeSection() {
 
   return (
     <Section title="Hands-free voice" hint="Keep listening and send only when you say a confirmation phrase. The mic button stays push-to-talk; these settings shape the hands-free loop beside it.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <ChordRow
           value={typeof cfg.push_to_talk_chord === 'string' && cfg.push_to_talk_chord
             ? cfg.push_to_talk_chord
@@ -164,7 +164,7 @@ function HandsFreeSection() {
           cfg={cfg} field="clean_for_speech_enabled" patch={patch} />
         <ToggleRow label="Voice-origin disclaimer" hint="Tell the model a message was dictated so it self-corrects misheard words instead of confidently misreading them."
           cfg={cfg} field="voice_disclaimer_enabled" patch={patch} />
-      </div>
+      </RowGroup>
     </Section>
   )
 }
@@ -308,7 +308,7 @@ function UseCaseVoiceSection({
 
   return (
     <Section title={title} hint={hint}>
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <Row label={enableLabel} hint={bound ? undefined : 'No model bound for this use case — bind one in Models to use this.'}>
           <div className="flex items-center gap-2">
             <AvailChip available={bound} okLabel="model bound" missLabel="no model" />
@@ -325,7 +325,7 @@ function UseCaseVoiceSection({
         </Row>
 
         {enabled && bound && extras?.(settings, saveSettings, boundModel)}
-      </div>
+      </RowGroup>
 
       <ManageLink kind={useCase.toUpperCase()} go={go} />
       <SavedToast show={saved} />
@@ -333,7 +333,7 @@ function UseCaseVoiceSection({
   )
 }
 
-const selectCls = 'h-9 w-full max-w-sm rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 cursor-pointer'
+const selectCls = 'h-9 w-full max-w-sm rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary cursor-pointer'
 
 function AvailChip({ available, okLabel, missLabel }: { available: boolean; okLabel: string; missLabel: string }) {
   return (
@@ -510,7 +510,12 @@ function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void
         className="inline-flex h-7 w-7 items-center justify-center rounded text-on-surface-low hover:text-on-surface disabled:opacity-40">
         {term.enabled ? <X size={14} /> : <Check size={14} />}
       </button>
-      <SquareIconButton icon={Trash2} tone="danger" label="Delete" disabled={busy}
+      {/* `busy` is this row's own mutation in flight → `loading`. (Its hand-rolled neighbour above
+          is still native-`disabled`; adopting a primitive there moves pixels, so it belongs to the
+          primitive-adoption pass rather than being smuggled in here.
+          🪤 And that sentence may not name the raw element it is about: `primitiveAdoption` counts
+          the tag TEXT, comments included, so writing the literal reds the ratchet at +1.) */}
+      <SquareIconButton icon={Trash2} tone="danger" label="Delete" loading={busy}
         onClick={() => act(() => api.lexiconDeleteTerm(term.id))} />
     </div>
   )

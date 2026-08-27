@@ -528,6 +528,72 @@ def _build_record(
     return record, sidecar
 
 
+def _stage_capture(record: dict, sidecar: dict, *, session_id: str, client_id: str) -> int:
+    """Index one captured turn into ``learning.db``'s staging tier. **NEVER raises.**
+
+    The FOURTH capture cadence (``Cadence.CAPTURE``), beside per-turn, session-end and
+    run-end — the plan's own framing: the capture proxy feeds the existing flywheel
+    machinery as a new source and "must not grow a parallel learning pipeline". This is
+    that hookup, and it is the whole of it: the row lands whether or not any mining pass
+    exists to read it, so capture is durable even with flywheel steps 1-3 absent.
+
+    **The row carries the fence; it does not bypass it.** ``content`` is the sidecar's
+    ALREADY-fenced prompt/response verbatim. Two properties depend on that, and both are
+    lost by "helpfully" re-processing here:
+
+    * Re-screening is worse than useless. ``redact_credentials`` populates ``found`` only
+      on first contact and matches the ``key=`` prefix *inside* the credential span, so a
+      second pass over persisted text reports clean and would destroy field names. Every
+      source string was screened once at its own boundary in :func:`_build_record`.
+    * Staging the *unfenced* text would defeat the ingestion fence entirely. Because the
+      content stays fenced, ``capture_hygiene``'s existing rule — fenced spans are
+      invisible to direct capture cadences and may travel only the proposal path — makes
+      an injection planted in an external agent's transcript un-actionable from
+      ``learning.db`` with zero new policy.
+
+    Returns the staging row id, or 0 when nothing was staged (deduplicated, learning off,
+    or a store failure). Failure is silent-but-logged for the same reason
+    :func:`record_turn` never raises: a staging problem must not cost the captured turn.
+    """
+    try:
+        from personalclaw.config.loader import AppConfig
+        from personalclaw.learning.gate import Cadence
+        from personalclaw.learning.staging import get_store
+
+        cfg = AppConfig.load().learning
+        if not getattr(cfg, "enabled", True) or not getattr(cfg, "staging_enabled", True):
+            # The operator turned the learning tier off. The capture FILES are unaffected
+            # — recording is this module's job, indexing for learning is the flywheel's.
+            return 0
+
+        content = "\n".join(
+            part for part in (sidecar.get("prompt"), sidecar.get("response")) if part
+        )
+        if not content:
+            return 0
+        return int(
+            get_store().stage(
+                cadence=Cadence.CAPTURE.value,
+                kind="capture_turn",
+                content=content,
+                session_key=session_id,
+                meta={
+                    "client_id": client_id,
+                    "record_hash": str(record.get("record_hash") or ""),
+                    "dialect": str(record.get("dialect") or ""),
+                    "model_requested": str(record.get("model_requested") or ""),
+                    "read_skills": list(record.get("read_skills") or []),
+                    "wrote_skills": list(record.get("wrote_skills") or []),
+                    "tool_calls": len(record.get("tool_calls") or []),
+                    "redactions": int(record.get("redactions") or 0),
+                },
+            )
+        )
+    except Exception:
+        logger.debug("capture: turn not staged for learning", exc_info=True)
+        return 0
+
+
 def record_turn(
     *,
     client_id: str,
@@ -563,6 +629,10 @@ def record_turn(
         record_path, sidecar_path = _session_paths(session_id)
         _append(record_path, record)
         _append(sidecar_path, sidecar)
+        # AFTER the durable write, never before: the files are the record of truth and
+        # the staging row is an index into them. Ordered so a learning-tier problem can
+        # never be the reason a turn went unrecorded.
+        _stage_capture(record, sidecar, session_id=session_id, client_id=client_id)
     except Exception:
         # Broad by contract, not by laziness — see the docstring. Debug level because
         # a capture gap is not an operator-actionable event.
@@ -720,6 +790,10 @@ def stage_records(records: list[dict], *, source: str) -> dict:
             _append(record_path, record)
             _append(sidecar_path, sidecar)
             seen[session_id].add(str(record["record_hash"]))
+            # The SAME staging adapter as the live proxy. An imported transcript that
+            # reached `learning.db` by a second route would be exactly the "laxer path
+            # for imported content" this function exists to refuse.
+            _stage_capture(record, sidecar, session_id=session_id, client_id=client_id)
             imported += 1
         except Exception as exc:
             _skip(f"record could not be normalised: {type(exc).__name__}")

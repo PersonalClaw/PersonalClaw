@@ -1,7 +1,7 @@
-import { motion, useReducedMotion } from 'framer-motion'
-import type { LucideIcon } from 'lucide-react'
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
+import { Loader2, type LucideIcon } from 'lucide-react'
 import { cx } from './cx'
-import { spring, expr } from '../design/motion'
+import { spring, physics, expr } from '../design/motion'
 
 /** Dense square icon button — the compact sibling of the round {@link IconButton}.
  *  A 28px (size-7) `rounded-md` hit area with a small glyph, for tight action
@@ -18,7 +18,7 @@ import { spring, expr } from '../design/motion'
  *  destructive (delete/remove) variant: idle at ink-low, hover tints the glyph
  *  red with no fill — the restrained treatment those buttons already ship. */
 export function SquareIconButton({
-  icon: Icon, children, label, title, onClick, on, ariaExpanded, disabled, disabledReason,
+  icon: Icon, children, label, title, onClick, on, ariaExpanded, disabled, disabledReason, loading = false,
   tone = 'neutral', iconSize = 14, className,
 }: {
   icon?: LucideIcon
@@ -57,6 +57,20 @@ export function SquareIconButton({
    *  Omit it when the gate is self-evident or transient; a compound gate should pass it only
    *  for the branch it actually describes. */
   disabledReason?: string
+  /** The action is IN FLIGHT — the opposite claim from `disabled`, which says "unavailable".
+   *
+   *  Measured before this prop existed: every async site in this tier passed `disabled={busy}`,
+   *  so mid-flight the button dimmed to 40% with `cursor: not-allowed` and announced
+   *  `aria-disabled` — and five of them then hand-rolled a spinner *inside* the dim
+   *  (`{testing ? <Loader2 className="animate-spin"/> : <Wifi/>}`), which is the tell: the
+   *  primitive was missing the state, so each caller invented half of it.
+   *
+   *  What it does: `aria-busy`, the glyph cross-fades under a centered spinner (`Button`'s
+   *  treatment), the click is refused by the same `off = disabled || loading` guard, and the
+   *  press spring stands down. It deliberately does NOT dim or set `aria-disabled` — a working
+   *  button is not an unavailable one. Pass your idle glyph as usual; the spinner is the
+   *  primitive's, so callers stop shipping their own. */
+  loading?: boolean
   /** `danger` = destructive action: hover tints the glyph red (no fill). Ignored
    *  while `on` (a selected destructive button is not a pattern the app has). */
   tone?: 'neutral' | 'danger'
@@ -65,7 +79,10 @@ export function SquareIconButton({
   className?: string
 }) {
   const reduce = useReducedMotion()
-  const pressScale = reduce || disabled ? 1 : 1 - expr(0.1, 0.5)
+  // One guard for both inert reasons, exactly as `Button` spells it — otherwise `loading` would
+  // trade a false "unavailable" for a double-fire.
+  const off = !!disabled || loading
+  const pressScale = reduce || off ? 1 : 1 - expr(0.1, 0.5)
   // The tint means "this is the live one" for both questions; the ARIA state is the one that differs.
   const lit = on || ariaExpanded
   return (
@@ -79,12 +96,17 @@ export function SquareIconButton({
       // and nothing else. `undefined` unless a caller opts in, so a plain icon action claims no state.
       aria-pressed={ariaExpanded === undefined ? on : undefined}
       aria-expanded={ariaExpanded}
+      // "Working", not "unavailable". It is the only signal a screen-reader user gets: the spinner
+      // is aria-hidden and the name deliberately never changes, so the action stays findable.
+      aria-busy={loading || undefined}
       title={disabled && disabledReason ? `${title ?? label} — ${disabledReason}` : (title ?? label)}
-      onClick={disabled ? undefined : onClick}
-      whileTap={disabled ? undefined : { scale: pressScale }}
+      onClick={off ? undefined : onClick}
+      whileTap={off ? undefined : { scale: pressScale }}
       transition={spring.spatialFast}
       className={cx(
-        'grid size-7 place-items-center rounded-md transition-colors',
+        // `relative`: the loading spinner is an `absolute inset-0` overlay, and without a
+        // positioned ancestor here it would centre itself on the nearest one — the row.
+        'relative grid size-7 place-items-center rounded-md transition-colors',
         disabled
           ? 'text-on-surface-low opacity-40 cursor-not-allowed'
           : lit
@@ -92,11 +114,35 @@ export function SquareIconButton({
             : tone === 'danger'
               ? 'text-on-surface-low hover:text-danger'
               : 'text-on-surface-low hover:bg-surface-high hover:text-on-surface',
+        // In flight keeps its full ink and colour; only the cursor changes. Dimming here is
+        // exactly what made a working button read as dead.
+        loading && !disabled && 'cursor-progress',
         className,
       )}
       style={lit && !disabled ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' } : undefined}
     >
-      {Icon ? <Icon size={iconSize} /> : children}
+      {/* Glyph — cross-fades out under the spinner while loading (`Button`'s treatment). Always
+          mounted, never keyed on `loading`, so the two directions cross-fade instead of remounting. */}
+      <motion.span
+        className="relative inline-flex"
+        animate={{ opacity: loading ? 0 : 1, scale: loading ? 0.6 : 1 }}
+        transition={spring.effects}
+      >
+        {Icon ? <Icon size={iconSize} /> : children}
+      </motion.span>
+      <AnimatePresence>
+        {loading && (
+          <motion.span
+            aria-hidden
+            className="absolute inset-0 grid place-items-center"
+            initial={{ opacity: 0, scale: 0.6 }}
+            animate={{ opacity: 1, scale: 1, transition: physics.snappy }}
+            exit={{ opacity: 0, scale: 0.6, transition: spring.effects }}
+          >
+            <Loader2 size={iconSize} className="animate-spin" />
+          </motion.span>
+        )}
+      </AnimatePresence>
     </motion.button>
   )
 }

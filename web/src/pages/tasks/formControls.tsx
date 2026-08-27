@@ -230,7 +230,7 @@ export function ChecklistEditor<T extends { description?: string }>({ items, onC
         {ordered ? <GripVertical size={14} className="text-on-surface-low shrink-0 opacity-40" /> : <span className="size-5 shrink-0" />}
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} aria-label={placeholder} name={`checklist-add-${addId}`}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }} onBlur={add}
-          className="flex-1 h-9 rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="flex-1 h-9 rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <IconButton icon={Plus} label="Add" size={32} onClick={add} />
       </div>
     </div>
@@ -272,7 +272,7 @@ export function NotesEditor({ items, onChange, placeholder }: {
         <span className="size-5 shrink-0" />
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} aria-label={placeholder} name={`note-add-${addId}`}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }} onBlur={add}
-          className="flex-1 h-9 rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="flex-1 h-9 rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <IconButton icon={Plus} label="Add note" size={32} onClick={add} />
       </div>
     </div>

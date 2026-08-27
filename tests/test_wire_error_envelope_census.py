@@ -200,7 +200,40 @@ FLAT_TOTAL_BASELINE = FLAT_BASELINE + FLAT_VIA_WRAPPER_BASELINE
 #: Measured against `origin/main` at rebase time: main 212, this branch 213. This row read
 #: "211 → 212" one rebase ago; the step is MAIN-RELATIVE and moves whenever another change lands
 #: one of these, so it is re-measured at every rebase rather than carried forward.
-UNRESOLVED_PAYLOAD_CEILING = 213
+#: 213 → **214** (the L2 overlay producer): one 200-status SUCCESS body on the new
+#: surface-overlay read route — ``GET /api/surfaces/overlays`` answers with
+#: ``web.json_response(overlay_payload())`` in ``dashboard/handlers/surfaces.py``, and
+#: ``surface_overlay.overlay_payload`` is the loader's own composer
+#: (``{"overlays": [...to_dict()], "refusals": [...to_dict()], "dir": str}``). Spelling those
+#: keys out at the call site would duplicate the overlay loader's wire schema in two places —
+#: the drift this census exists to catch — and it would put the ``dir``/refusal shape in a
+#: handler that "owns nothing but the JSON". **The slack is not spendable on an error
+#: envelope:** this route has no flat refusal at all. Its refusals ride the SAME 200 record by
+#: design (an overlay naming a component that does not exist is reported beside the surface it
+#: belongs to, because a 4xx would be indistinguishable from a broken request), so no flat
+#: ``{"error": …}`` body was added and ``FLAT_BASELINE`` stays 1507 — shrink-only, not raised.
+#: The one added unresolved site is ``dashboard/handlers/surfaces.py:28``. AS-6 LANDED FIRST, so
+#: this row's 213 → 214 step is now part of `origin/main`'s own measurement.
+#: 213 → **214**: one 200-status SUCCESS body on the capture import route —
+#: ``POST /capture/import`` answers with ``web.json_response(report)`` in
+#: ``inbound/capture_proxy.py``, where ``report`` is verbatim what
+#: ``capture_import.import_capture_file`` returned (``-> dict[str, Any]``: the normalised
+#: counts, the staged record ids and the per-line rejections). Spelling those keys out at the
+#: call site would duplicate the importer's own report schema in two places — the drift this
+#: census exists to catch — and would make the proxy the second author of a shape the importer
+#: owns. **The slack is not spendable on an error envelope:** every refusal on this route
+#: already goes through :func:`json_error` (``capture_import_failed`` 500 immediately above this
+#: site, plus the admission refusals), which needs no payload dict at all, so no flat
+#: ``{"error": …}`` body was added and ``FLAT_BASELINE`` stays 1507 — shrink-only, not raised.
+#: The one added unresolved site is ``inbound/capture_proxy.py``'s import route.
+#: **214 + 1 = 215 (union).** The two rows above were measured against the SAME base of 213 —
+#: the overlay producer and the capture import each bought +1, independently — so NEITHER
+#: side's 214 is correct for a tree carrying both, exactly as the 208 + 2 = 210 row above records.
+#: AS-6 landed first, so `origin/main` now measures 214 and this branch measures 215; taking
+#: either row's 214 would silently un-pin the other surface. Measured at rebase time, both with
+#: ``files_scanned`` 1033 and the flat total identical at 1507 on both sides, so ``FLAT_BASELINE``
+#: stays 1507 — shrink-only, not raised. MAIN-RELATIVE, so re-measure at the next rebase.
+UNRESOLVED_PAYLOAD_CEILING = 215
 
 #: What the append-only rail must inspect. Derived from the census so a matcher that
 #: stops matching cannot read as clean: if the rail's scan finds fewer emitter sites

@@ -19,7 +19,11 @@ describe('AddItemButton', () => {
   it('is the medium-radius, container-filled, ink-var quiet add affordance', () => {
     const { getByRole } = render(<AddItemButton>Add step</AddItemButton>)
     const have = classOf(getByRole('button'))
-    for (const t of ['inline-flex', 'items-center', 'gap-1.5', 'rounded-md',
+    // `gap-1.5` → `gap-xs`: Tailwind's own default compiles but BYPASSES the `--space-scale`
+    // slider and cli density (system.md trap 3), and 6px is not a rung on the spacing scale
+    // at all. This one DOES move 2px at comfortable density (6px → 4px) — unlike QuietButton's
+    // gap-1/px-2 swap — and it lands on the same icon↔label gap QuietButton already uses.
+    for (const t of ['inline-flex', 'items-center', 'gap-xs', 'rounded-md',
       'bg-surface-container', 'px-m', 'h-9', 'text-on-surface-var',
       'text-[0.8125rem]', 'hover:bg-surface-high', 'transition-colors']) {
       expect(have, `missing "${t}"`).toContain(t)

@@ -1349,6 +1349,25 @@ class HistoryConsolidator:
                         logger.info("Pruned %d volunteer event(s)", pruned_vol)
                 except Exception:
                     logger.debug("Volunteer-log prune failed for %s", key, exc_info=True)
+                # External-agent capture retention: `capture/*.jsonl`
+                # age out at `external_access.capture.retention_days` on THIS tick — the
+                # "curator tick" `capture_store.prune`'s own docstring already named, while
+                # nothing called it, so a shipped and round-tripped retention control
+                # governed a function no schedule reached. Beside the volunteer prune
+                # because both are retention sweeps, and BEFORE the curator below so a
+                # later replay-mining pass sees an already-aged capture dir. Deliberately
+                # NOT inside `_run_learning_curator`: retention is a data-hygiene
+                # obligation the operator configured, not a learning feature, and gating it
+                # on `learning.enabled` would make "I turned learning off" silently mean
+                # "keep every captured transcript forever".
+                try:
+                    from personalclaw.inbound import capture_store
+
+                    pruned_captures = capture_store.prune()
+                    if pruned_captures:
+                        logger.info("Pruned %d expired capture file(s)", pruned_captures)
+                except Exception:
+                    logger.debug("Capture prune failed for %s", key, exc_info=True)
                 # Community topology: deterministic seeded
                 # Louvain over mem_links, writing `community` into mem_link_stats. HERE
                 # rather than in a loop of its own, and after the write paths above, so it
@@ -1447,6 +1466,23 @@ class HistoryConsolidator:
                 attribution_note = f"attribution graded={rep['graded']} reverts={rep['reverts']}"
         except Exception:
             logger.debug("Attribution grading failed", exc_info=True)
+
+        # LEARN-R4 / §2.5: "Events prune at 90d on the curator tick." Here rather than on its own
+        # timer because the surfacing log is exactly the kind of high-volume, low-value,
+        # independently-prunable data the curator tick already exists to age — a second cadence
+        # would be a daemon to own for one DELETE.
+        try:
+            from personalclaw.learning.surfacing_events import SurfacingEventStore
+
+            _events = SurfacingEventStore()
+            try:
+                _pruned = _events.prune()
+            finally:
+                _events.close()
+            if _pruned:
+                logger.debug("pruned %d surfacing events past retention", _pruned)
+        except Exception:
+            logger.debug("Surfacing-event prune failed", exc_info=True)
 
         store = UsageStore()
         try:
@@ -1784,8 +1820,27 @@ class HistoryConsolidator:
                     # from the Skill-proposals inbox. No auto-install path exists.
                     from personalclaw.skills import proposals as _proposals
 
+                    # 🔴 A proposal for a slug that ALREADY EXISTS is a REFINEMENT, and it has to
+                    # say so. `find_similar` above compares DESCRIPTIONS, so a differently-worded
+                    # synthesis for an installed skill passes that guard — and then went out as
+                    # `kind="new"` (the `enqueue` default), which accept() could not apply because
+                    # `create_auto_skill` refuses an existing slug. Measured on a live instance:
+                    # 26 of 30 pending proposals named an already-installed slug, 20 of them the
+                    # same one, and every accept answered 409 permanently.
+                    #
+                    # accept() now infers this too (a proposal labelled `new` whose slug exists is
+                    # overlaid), which is what recovers a queue the bug already filled. Labelling
+                    # it HERE is what stops the queue filling again — and it makes the inbox row
+                    # say "Refine a skill" instead of "New skill proposed", which is the truth.
+                    from personalclaw.skills.loader import AUTO_SKILL_NAMESPACE
+
+                    _existing = f"{AUTO_SKILL_NAMESPACE}/{slug}"
+                    _is_refine = self._skills_loader.load_skill(_existing) is not None
+
                     prop = _proposals.enqueue(
                         slug=slug,
+                        kind="refine" if _is_refine else "new",
+                        refine_target=_existing if _is_refine else "",
                         description=description,
                         triggers=triggers,
                         procedure_md=procedure_md,

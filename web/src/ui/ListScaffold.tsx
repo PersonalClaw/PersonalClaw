@@ -6,6 +6,7 @@ import { Spark } from './Spark'
 import { Button } from './Button'
 import { spring, expr } from '../design/motion'
 import { PageTitle } from './PageTitle'
+import { Surface } from './Surface'
 
 /** Shared shell for the workspace/build list PAGES (design Tenet 2: list as a
  *  destination page, not a cramped panel). Centered column at the customizable
@@ -158,7 +159,7 @@ export function ListRow({ index = 0, onClick, children, accent, label }: {
       // `:has(> button:focus-visible)` is deliberately narrower than `focus-within`, which
       // would also light the row when the checkbox or a tag filter inside it takes focus
       // and double-ring with that control's own indicator.
-      className={`group relative flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50' : ''}`}
+      className={`group relative flex items-center gap-l overflow-hidden rounded-lg bg-surface-container px-l py-l text-left transition-colors hover:bg-surface-high ${interactive ? 'cursor-pointer has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary' : ''}`}
     >
       {accent && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: accent }} />}
       {/* The row's tab stop and accessible name, as a real <button> SIBLING of the
@@ -288,14 +289,20 @@ export function FormSkeleton({ sections = 2, rows = 3, title = true, what }: { s
       {Array.from({ length: sections }).map((_, s) => (
         <section key={s} className="mb-2xl">
           <Skeleton className="mb-m h-4 w-32" />
-          <div className="rounded-lg bg-surface-container px-4 py-1">
+          {/* Must stay padding-identical to the loaded settings row group (`settings/settingsUI`'s
+              `RowGroup`) — this is the skeleton those very panels render while `useQuery` resolves,
+              so a divergence is a loading→loaded REFLOW. It was `px-4 py-1`, which is frozen against
+              the density and space-scale sliders; `RowGroup` is now `px-l py-xs` (identical 16px/4px
+              at default), so this tracks it. `Surface` rather than `RowGroup` because `src/ui` must
+              not import from `src/pages` — same tone, same radius, same padding, one layer down. */}
+          <Surface tone="container" radius="lg" className="px-l py-xs">
             {Array.from({ length: rows }).map((_, r) => (
               <div key={r} className="flex items-center justify-between gap-4 border-b border-outline-variant/20 py-3 last:border-0">
                 <div className="min-w-0 flex-1 space-y-1.5"><Skeleton className="h-3.5 w-1/3" /><Skeleton className="h-3 w-1/2" /></div>
                 <Skeleton className="h-6 w-16 shrink-0 rounded-pill" />
               </div>
             ))}
-          </div>
+          </Surface>
         </section>
       ))}
     </div>

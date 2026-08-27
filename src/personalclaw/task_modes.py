@@ -111,6 +111,45 @@ def is_read_only_bash(cmd: str) -> bool:
     return True
 
 
+def is_shell_invocation(title: str, tool_kind: str) -> bool:
+    """Is this tool call a shell invocation — i.e. does a ``command`` key mean anything?
+
+    The ONE answer to that question. It exists because ``command`` is an ordinary
+    argument name: ``workflow_delete_def``, ``memory_forget`` and any MCP tool may carry
+    one, and reading it as "the shell command this call will run" is how a destructive
+    tool got classified by a string that was never going to be executed (#443).
+
+    Three positive signals, because no single one covers every caller:
+
+    1. the ACP ``tool_kind`` — an agent that declares ``execute``/``command``;
+    2. the tool's own name — the native loop declares no kind for its ``bash`` tool;
+    3. the ``Running: `` display title — an ACP permission frame can carry the command
+       inline with no preceding ``tool_call`` frame and no kind at all, so the title is
+       the only signal there is.
+
+    Anything else is not a shell call, and its arguments are data.
+    """
+    name = (title or "").lower()
+    return (
+        (tool_kind or "").lower() in _COMMAND_TOOL_KINDS
+        or name in SHELL_TOOL_NAMES
+        or name.startswith(SHELL_TITLE_PREFIXES)
+    )
+
+
+def shell_command(title: str, tool_kind: str, tool_input: object) -> str:
+    """The shell command THIS call will run, or ``""`` if it is not a shell call.
+
+    The scoped extractor every decision must use. :func:`extract_bash_command` is the
+    raw parser — it answers "is there a ``command`` key here", which is a different
+    question and not one any gate may act on, because the answer is yes for tools that
+    run no shell at all.
+    """
+    if not tool_input or not is_shell_invocation(title, tool_kind):
+        return ""
+    return extract_bash_command(tool_input)
+
+
 def extract_bash_command(tool_input: object) -> str:
     """Extract the command string from an execute_bash tool input.
 
@@ -118,6 +157,13 @@ def extract_bash_command(tool_input: object) -> str:
     a bare command string), the native loop passes the parsed *dict*. Always
     returns a ``str`` because callers feed the result to ``is_read_only_bash``,
     which requires string input.
+
+    **Not scoped to shell tools, by design — so do not gate on it.** It reads a
+    ``command`` key out of whatever it is handed, which is correct for a parser and
+    wrong for a decision: ``command`` is an ordinary argument name. Any code deciding
+    what a call is allowed to do wants :func:`shell_command`, which asks
+    :func:`is_shell_invocation` first. The remaining direct callers are display and
+    DENY-only paths, where an over-broad read cannot widen a permission.
     """
     # Native loop: already a parsed dict.
     if isinstance(tool_input, dict):
@@ -149,6 +195,47 @@ _READONLY_TOOL_KINDS = {"read", "fetch", "search", "think"}
 # itself: the command TEXT decides, so a call of this kind with no readable command is
 # UNCLASSIFIED, not safe and not destructive (see :func:`classify_invocation`).
 _COMMAND_TOOL_KINDS = {"command", "execute"}
+
+#: Tool NAMES that mean "this call runs a shell command", for the callers that carry no
+#: ACP kind. The native loop passes ``tool_kind=""`` for its own ``bash`` tool, so
+#: :data:`_COMMAND_TOOL_KINDS` alone cannot recognise the product's primary shell tool —
+#: which is why :func:`is_shell_invocation` consults both.
+#:
+#: EXACT names, and deliberately not the substring hints
+#: :data:`~personalclaw.approval_brief.SHELL_HINTS` uses. Those describe a tool to a
+#: human ("this one can run things"), where over-matching is harmless. This set decides
+#: whether a ``command`` string is *authoritative evidence about the call*, where
+#: over-matching is the bug: every extra name is another tool whose declared risk a
+#: decoy ``command`` key could downgrade. Under-matching only costs an extra prompt.
+#:
+#: :mod:`personalclaw.guardrails.loop_breaker` imports this rather than keeping the
+#: second copy it used to hold — one question, one answer.
+SHELL_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "bash",
+        "shell",
+        "execute_bash",
+        "run-script",
+        "run_script",
+        "terminal",
+    }
+)
+
+#: Title prefixes that mean "the rest of this title IS a shell command". An ACP agent
+#: sends a humanized display title rather than a tool name, and for a shell call the hook
+#: chain normalizes it to ``Running: <command>`` — which ``hooks.on_tool_call`` already
+#: treats as ``execute_bash`` when it screens for sensitive paths, and which
+#: ``acp/permission_authority.command_probe`` reconstructs for the deny check. So this is
+#: not a new convention, it is the existing one, consulted by the gate that needs it.
+#:
+#: Load-bearing: an ACP permission frame can carry the command INLINE with no preceding
+#: ``tool_call`` frame and no declared kind, so the title is the ONLY signal that the call
+#: runs a shell. Dropping this reds ``test_acp_effective_risk_correlation`` with "a
+#: read-only ls RUNS in ask mode", which is how it was found.
+#:
+#: ``Reading `` is deliberately NOT here: that prefix names a FILE, not a command, and
+#: treating it as a shell call would hand ``is_read_only_bash`` a path to parse.
+SHELL_TITLE_PREFIXES: tuple[str, ...] = ("running: ",)
 
 # Name fragments that signal a mutating/effectful tool when the kind is ambiguous.
 # ``generate`` covers media producers (image_generate, future audio/video_generate):
@@ -239,29 +326,49 @@ def classify_invocation(title: str, tool_kind: str, tool_input: object) -> str:
     """Classify ONE tool call → ``READ_ONLY`` | ``MUTATING`` | ``UNCLASSIFIED``.
 
     The single source of truth for the read-only/mutating question. Resolution order,
-    most-evidence-first: a readable shell command is decided by
-    :func:`is_read_only_bash`; a shell-kind call with no readable command is
-    ``UNCLASSIFIED``; otherwise the declared ACP kind decides; otherwise the tool's
+    most-evidence-first: for a SHELL call, the command text decides
+    (:func:`is_read_only_bash`), and a shell call whose text the host never received is
+    ``UNCLASSIFIED``; for anything else the declared ACP kind decides, then the tool's
     name. Deny-by-default at every step — only a positive read signal yields
     ``READ_ONLY``.
+
+    **A ``command`` argument only speaks for a shell call.** It used to speak for every
+    call: ``extract_bash_command`` reads a ``command`` key out of any tool's arguments,
+    step 1 ran before the kind and the name were consulted, and ``command`` is an
+    ordinary argument name. So ``workflow_delete_def`` with ``command: "ls"`` classified
+    ``READ_ONLY`` — auto-approved under ``trust_reads`` and *allowed to run* in
+    ask/plan/build mode, both from a string that was never going to be executed (#443).
+    The scoping lives in :func:`shell_command`; the extra clause at the end is what
+    stops the fallthrough quietly re-granting what step 1 no longer does.
     """
     name = (title or "").lower()
     kind = (tool_kind or "").lower()
-    cmd = extract_bash_command(tool_input) if tool_input else ""
-    # 1. A readable shell command: the text decides, not the kind or the name.
-    if cmd:
-        return READ_ONLY if is_read_only_bash(cmd) else MUTATING
-    # 2. A shell call whose command the host cannot see. Not read-only (nothing
-    #    positively says so) and not knowably mutating either.
-    if kind in _COMMAND_TOOL_KINDS:
+    if is_shell_invocation(title, tool_kind):
+        cmd = shell_command(title, tool_kind, tool_input)
+        # 1. A readable shell command: the text decides, not the kind or the name.
+        if cmd:
+            return READ_ONLY if is_read_only_bash(cmd) else MUTATING
+        # 2. A shell call whose command the host cannot see. Not read-only (nothing
+        #    positively says so) and not knowably mutating either. Reached by NAME as
+        #    well as by kind now: `bash` with an unreadable input used to fall all the
+        #    way to step 4 and come back READ_ONLY, because "bash" carries no mutating
+        #    name hint — the product's own shell tool, classified as a read.
         return UNCLASSIFIED
     # 3. Non-shell: the declared ACP kind.
     if kind in _MUTATING_TOOL_KINDS:
+        verdict = MUTATING
+    elif kind in _READONLY_TOOL_KINDS:
+        verdict = READ_ONLY
+    else:
+        # 4. Nothing declared: the tool's name.
+        verdict = MUTATING if any(h in name for h in _MUTATING_NAME_HINTS) else READ_ONLY
+    # 5. A non-shell tool carrying a `command` string is not a call we understand. The
+    #    kind/name path may well answer READ_ONLY (`memory_forget` carries no mutating
+    #    hint), which would hand back exactly the verdict step 1 used to give — the same
+    #    bypass through a different door. A decoy argument can no longer produce a read.
+    if verdict == READ_ONLY and extract_bash_command(tool_input):
         return MUTATING
-    if kind in _READONLY_TOOL_KINDS:
-        return READ_ONLY
-    # 4. Nothing declared: the tool's name.
-    return MUTATING if any(h in name for h in _MUTATING_NAME_HINTS) else READ_ONLY
+    return verdict
 
 
 def _is_read_only_tool(title: str, tool_kind: str, tool_input: object) -> bool:
@@ -312,7 +419,12 @@ def resolve_effective_risk(
     # 1. A read-only bash invocation is SAFE regardless of the (DESTRUCTIVE) bash
     #    declaration — this is the per-invocation downgrade that generalizes the
     #    old read-only-bash trust-reads path.
-    cmd = extract_bash_command(tool_input) if tool_input else ""
+    # SCOPED (`shell_command`, not `extract_bash_command`): this branch is the
+    # per-invocation downgrade, so it must fire only for a call that actually runs a
+    # shell. Reading a `command` key off any tool is what let a decoy argument reach the
+    # downgrade at all (#443), and `classify_invocation` agreeing is not enough on its
+    # own — this `if` is a second door to the same decision.
+    cmd = shell_command(title, tool_kind, tool_input)
     kind = (tool_kind or "").lower()
     verdict = classify_invocation(title, tool_kind, tool_input)
     if cmd:

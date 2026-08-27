@@ -17,14 +17,20 @@ ledger is written under the temp home and never the operator's real
 ``~/.personalclaw``.
 
 ``stage_records`` (the sibling ``capture_store``, which owns redact → fence →
-persist) is INJECTED as a double throughout. That is deliberate: this half owns
-parsing and idempotence, and a suite that reached for the real store would be
-testing hygiene this module is specifically not allowed to own.
+persist) is INJECTED as a double in sections 1-5. That is deliberate: this half
+owns parsing and idempotence, and a suite that reached for the real store would
+be testing hygiene this module is specifically not allowed to own.
+
+Section 6 — the ``POST /capture/import`` route — is the deliberate exception and
+runs the REAL store. Its claim is precisely that the route reaches the shared
+pipeline rather than restating it beside itself, and a doubled store would let a
+route that persisted raw prompts satisfy every count in the report.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -808,3 +814,283 @@ def test_cli_bare_capture_prints_usage(
     out = capsys.readouterr().out
     assert "capture import" in out
     assert "jsonl|json|sse" in out
+
+
+# ── 6. The HTTP half — POST /capture/import ──
+#
+# The route's whole job is to reach the SAME `import_capture_file` the CLI reaches, under
+# the SAME admission gate the two `/capture/v1/*` dialects use. So these tests measure two
+# things and nothing else: that the shared gate and the shared pipeline are genuinely on
+# this path (not restated beside it), and that the one thing the route does NOT inherit
+# from the CLI — an any-path file argument — is fenced.
+#
+# The REAL `capture_store` runs here, deliberately, unlike sections 1-5 which inject
+# `FakeStore`. A doubled store would let the route bypass redact→fence and still pass: the
+# fence assertion below is only worth writing against the real pipeline.
+
+
+@pytest.fixture
+def _no_surface_tokens(monkeypatch: pytest.MonkeyPatch):
+    """Clear surface tokens on BOTH sides of the test.
+
+    `create_surface_token` mirrors into `os.environ` itself, so a token minted mid-test is
+    a variable monkeypatch never recorded and never undoes — it would read as "this surface
+    has a valid token" in every later test in this worker.
+    """
+    surfaces = ("OPENAI", "MCP", "A2A", "CAPTURE", "BRIDGE")
+    for surface in surfaces:
+        monkeypatch.delenv(f"PERSONALCLAW_INBOUND_{surface}_TOKEN", raising=False)
+    yield
+    for surface in surfaces:
+        os.environ.pop(f"PERSONALCLAW_INBOUND_{surface}_TOKEN", None)
+
+
+def _enable_capture(monkeypatch: pytest.MonkeyPatch, *, enabled: bool = True) -> None:
+    """Point `AppConfig.load()` at an external-access config without writing config.json."""
+    from personalclaw.config.loader import AppConfig, CaptureSurfaceConfig, ExternalAccessConfig
+
+    cfg = AppConfig()
+    cfg.external_access = ExternalAccessConfig(
+        enabled=True, capture=CaptureSurfaceConfig(enabled=enabled)
+    )
+    monkeypatch.setattr(AppConfig, "load", staticmethod(lambda *a, **k: cfg))
+
+
+async def _import_client():
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.inbound import capture_proxy
+
+    app = web.Application()
+    capture_proxy.register_routes(app)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    return client
+
+
+async def _post_import(client, token: str, **body):
+    from personalclaw.inbound.capture_proxy import ROUTE_IMPORT
+
+    return await client.post(ROUTE_IMPORT, json=body, headers={"Authorization": f"Bearer {token}"})
+
+
+def _drop(home: Path, name: str, text: str) -> Path:
+    from personalclaw.inbound.capture_import import imports_dir
+
+    path = imports_dir(home) / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+@pytest.mark.asyncio
+async def test_the_route_stages_through_the_same_pipeline_and_fences_what_it_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _no_surface_tokens
+) -> None:
+    """One drop-directory file in, the CLI's own report out, content fenced on disk.
+
+    The fence assertion is the point of running the real store: §7.2 requires
+    redact()→fence_untrusted(source=capture:<client_id>) BEFORE persist, and a route that
+    reached past `stage_records` into its own writer would satisfy every count in the
+    report and still persist raw prompts.
+    """
+    from personalclaw.inbound import auth, capture_store
+    from personalclaw.security import UNTRUSTED_CLOSE, UNTRUSTED_OPEN
+
+    _enable_capture(monkeypatch)
+    _drop(tmp_path, "session.jsonl", _claude_code_jsonl())
+    token = auth.create_surface_token("capture")
+
+    client = await _import_client()
+    try:
+        resp = await _post_import(client, token, file="session.jsonl", format="jsonl")
+        assert resp.status == 200, await resp.text()
+        report = await resp.json()
+    finally:
+        await client.close()
+
+    # The CLI's report shape, key for key — one dialect, not two.
+    assert report["imported"] == 2, report
+    assert report["skipped"] == 0
+    assert report["duplicate"] is False
+    assert report["format"] == "jsonl"
+    assert report["source"] == "import"
+    assert len(report["content_hash"]) == 64
+
+    sidecars = list(capture_store.capture_dir().glob("*.content.jsonl"))
+    assert sidecars, "nothing was persisted, so the fence claim below would be vacuous"
+    written = [json.loads(line) for path in sidecars for line in path.read_text().splitlines()]
+    fenced = [row for row in written if row.get("prompt")]
+    assert fenced, "no prompt was persisted at all"
+    for row in fenced:
+        assert UNTRUSTED_OPEN[:-1] in row["prompt"], "imported content is not fenced"
+        assert UNTRUSTED_CLOSE in row["prompt"], "the fence is not closed"
+
+
+@pytest.mark.asyncio
+async def test_a_second_post_of_the_same_file_is_a_duplicate_not_a_second_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _no_surface_tokens
+) -> None:
+    """Idempotence by content hash is inherited, not re-derived at the route."""
+    from personalclaw.inbound import auth
+
+    _enable_capture(monkeypatch)
+    _drop(tmp_path, "session.jsonl", _claude_code_jsonl())
+    token = auth.create_surface_token("capture")
+
+    client = await _import_client()
+    try:
+        first = await (await _post_import(client, token, file="session.jsonl")).json()
+        second = await (await _post_import(client, token, file="session.jsonl")).json()
+    finally:
+        await client.close()
+
+    # `format` defaulted on both calls — the route's default must be the CLI's default.
+    assert first["format"] == "jsonl"
+    assert first["imported"] == 2 and first["duplicate"] is False
+    assert second["imported"] == 0 and second["duplicate"] is True
+    assert any("already imported" in reason for reason in second["reasons"]), second
+
+
+@pytest.mark.asyncio
+async def test_the_route_runs_the_shared_admission_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _no_surface_tokens
+) -> None:
+    """404 disabled, 403 non-loopback, 401 bad bearer — the `_admit` order, on this route.
+
+    Asserted here rather than trusted from the proxy suite: `_admit` protects whichever
+    handler calls it, and "the new route forgot to call it" is precisely the regression
+    this file cannot detect anywhere else.
+    """
+    from personalclaw.inbound import auth, capture_proxy
+
+    _drop(tmp_path, "session.jsonl", _claude_code_jsonl())
+
+    _enable_capture(monkeypatch, enabled=False)
+    token = auth.create_surface_token("capture")
+    client = await _import_client()
+    try:
+        # 1. A disabled surface does not confirm its own existence.
+        assert (await _post_import(client, token, file="session.jsonl")).status == 404
+
+        _enable_capture(monkeypatch)
+        # 2. Loopback forever. `allow_remote` is not even in the config above — the refusal
+        #    stands because capture never reads it. Scoped with `monkeypatch.context()`
+        #    rather than `monkeypatch.undo()`: undo() would also roll back the autouse
+        #    fixture's PERSONALCLAW_HOME and point the rest of this test at the real home.
+        with monkeypatch.context() as loop_off:
+            loop_off.setattr(capture_proxy.auth, "is_loopback", lambda _request: False)
+            assert (await _post_import(client, token, file="session.jsonl")).status == 403
+
+        # 3. A wrong bearer is 401 — and VACUITY: the right one, same request, is 200.
+        assert (await _post_import(client, "not-the-token", file="session.jsonl")).status == 401
+        assert (await _post_import(client, token, file="session.jsonl")).status == 200
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_caller_chosen_path_never_becomes_a_file_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _no_surface_tokens
+) -> None:
+    """The one thing the route does NOT inherit from the CLI: an arbitrary path.
+
+    Four escapes, one accepting case. The accepting case is the vacuity floor and it goes
+    through the SAME resolver — a fence that refused everything would pass the four
+    refusals and be indistinguishable from a broken route.
+    """
+    from personalclaw.inbound import auth
+    from personalclaw.inbound.capture_import import imports_dir
+
+    _enable_capture(monkeypatch)
+    # Valid jsonl, so ONLY the fence can stop it — and byte-different from `ok.jsonl` below,
+    # so a followed symlink would show up as a SECOND ledger hash rather than as a duplicate.
+    secret = tmp_path / "id_rsa"
+    secret.write_text(
+        _claude_code_jsonl() + "\n" + json.dumps({"type": "user", "message": {"content": "x"}}),
+        encoding="utf-8",
+    )
+    (imports_dir(tmp_path) / "link.jsonl").symlink_to(secret)
+    _drop(tmp_path, "ok.jsonl", _claude_code_jsonl())
+    token = auth.create_surface_token("capture")
+
+    client = await _import_client()
+    try:
+        for name in ("../id_rsa", str(secret), "sub/ok.jsonl", "", "missing.jsonl"):
+            resp = await _post_import(client, token, file=name)
+            assert resp.status == 400, f"{name!r} was not refused: {await resp.text()}"
+            body = await resp.json()
+            assert body["error"]["code"] == "invalid_request", body
+        # A SYMLINK out of the drop directory is the escape a name check alone cannot see.
+        resp = await _post_import(client, token, file="link.jsonl")
+        assert resp.status == 400, await resp.text()
+        assert "resolves outside" in (await resp.json())["error"]["message"]
+        # VACUITY: a real bare name in the drop directory imports.
+        ok = await _post_import(client, token, file="ok.jsonl")
+        assert ok.status == 200, await ok.text()
+        assert (await ok.json())["imported"] == 2
+    finally:
+        await client.close()
+
+    # Nothing the fence refused reached the store: the only staged content is `ok.jsonl`'s,
+    # and `id_rsa` was never opened. Proven by the ledger, which records one hash.
+    assert len(load_ledger(tmp_path)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_body_is_a_400_and_a_store_fault_is_a_screened_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _no_surface_tokens
+) -> None:
+    """Two failure shapes that must not be one shape.
+
+    A file that PARSED badly is a 200 whose `reasons` name the losses (§8's
+    skipped-and-counted, exercised in section 3). Only the machinery failing is an error
+    code — and its message is screened, because an exception raised by a writer names a
+    path and a path can look like a credential.
+    """
+    from personalclaw.inbound import auth
+    from personalclaw.inbound.capture_proxy import ROUTE_IMPORT
+
+    _enable_capture(monkeypatch)
+    _drop(tmp_path, "session.jsonl", _claude_code_jsonl())
+    token = auth.create_surface_token("capture")
+
+    client = await _import_client()
+    try:
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        resp = await client.post(ROUTE_IMPORT, data=b"{not json", headers=headers)
+        assert resp.status == 400
+        assert (await resp.json())["error"]["code"] == "invalid_json"
+
+        resp = await client.post(ROUTE_IMPORT, json=["a list"], headers=headers)
+        assert resp.status == 400
+        assert (await resp.json())["error"]["code"] == "invalid_body"
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("token=sk-live-abcdef0123456789 could not be written")
+
+        monkeypatch.setattr(
+            "personalclaw.inbound.capture_import.import_capture_file", _boom, raising=True
+        )
+        resp = await _post_import(client, token, file="session.jsonl")
+        assert resp.status == 500
+        body = await resp.json()
+        assert body["error"]["code"] == "capture_import_failed"
+        # Screened: the credential in the exception's own words does not reach the wire.
+        assert "sk-live-abcdef0123456789" not in body["error"]["message"]
+        assert "RuntimeError" in body["error"]["message"]
+    finally:
+        await client.close()
+
+
+def test_the_drop_directory_is_owner_only(tmp_path: Path) -> None:
+    """0700, matching the recordings beside it. An export is as sensitive as a capture."""
+    import stat
+
+    from personalclaw.inbound.capture_import import imports_dir
+
+    path = imports_dir(tmp_path)
+    assert path.is_dir()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o700
+    # And it is INSIDE the capture directory, not a fifth top-level home entry.
+    assert path.parent.name == "capture"

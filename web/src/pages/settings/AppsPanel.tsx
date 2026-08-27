@@ -3,7 +3,7 @@ import { Check, ExternalLink, Loader2 } from 'lucide-react'
 import { api, type AppSummary } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section, ToggleRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, ToggleRow } from './settingsUI'
 import { Skeleton, LoadingStatus, LoadError, FormSkeleton } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
@@ -93,10 +93,10 @@ function StoreSourcesSection() {
 
   return (
     <Section title="Store sources" hint="Where the Store looks for installable apps. A source only ever contributes listings — installing still runs the security scanner, and nothing is installed without your consent.">
-      <div className="rounded-lg bg-surface-container px-4 py-1">
+      <RowGroup>
         <ToggleRow label="Curated app registry" cfg={cfg} field="registry_source_enabled" patch={patch}
           hint="Ship the community app registry as a default Store source, so registry apps are discoverable out of the box. Added once as a removable source — turning this off stops it being added again, but does not remove one already there (do that in the Store)." />
-      </div>
+      </RowGroup>
     </Section>
   )
 }

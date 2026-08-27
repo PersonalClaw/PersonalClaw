@@ -86,7 +86,7 @@ export function PromptForm({ draft, onChange, compact, nameLocked, registerInser
         <textarea ref={taRef} value={draft.content} onChange={(e) => set('content', e.target.value)} rows={compact ? 6 : 12}
           spellCheck={false} name="prompt-template" aria-label="Prompt template body"
           placeholder={'Summarize the thread {{thread_url}} in {{style}} style.\n{{> signature}}'}
-          className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono text-[0.8125rem] leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 resize-y" />
+          className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono text-[0.8125rem] leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-y" />
       </Field>
 
       {includes.length > 0 && (

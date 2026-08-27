@@ -213,7 +213,7 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
         // inside the terminal must reach the shell, and this handler also sees it bubble.
         if (e.key === 'Enter' && e.target === e.currentTarget) { e.preventDefault(); termRef.current?.focus() }
       }}
-      className="group relative h-full overflow-hidden rounded-lg border border-outline/30 outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50"
+      className="group relative h-full overflow-hidden rounded-lg border border-outline/30 outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
       style={{ background: mode === 'light' ? '#ffffff' : '#0d0d12' }}>
       <div ref={hostRef} className="h-full w-full" />
 

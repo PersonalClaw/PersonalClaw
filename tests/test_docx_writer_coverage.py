@@ -26,7 +26,7 @@ Three rules this file lives by:
 
 Deliberately NOT re-measured here: the run-level properties DFE-2 already pins in
 `tests/test_docx_run_fidelity.py` (bold / italic / code font / hyperlink text + URL +
-relationship + rPr schema order, the four `ParagraphStyle` numerics, `margin_in`, the
+relationship + rPr schema order, the `ParagraphStyle` numerics, the page margins, the
 `Cell` table paths, and the legacy-equivalence golden). Overlap is waste. What was
 genuinely unmeasured, and is measured here, is the STRUCTURAL identity of each block
 kind, the three container-level fields (`title`, `level`, `items`), and every one of the
@@ -56,6 +56,10 @@ from personalclaw.documents.writers.docx_writer import render_docx
 
 _MONOSPACE = "Courier New"
 _URL = "https://example.invalid/dfe3"
+
+#: One twentieth of a point, in EMU. `w:pgSz` and `w:pgMar` are stored in twips, so a page
+#: dimension cannot read back at exact EMU — see `_measure_page_size`.
+_ONE_TWIP_EMU = 635
 
 #: The three verdicts. `partial` is not a hedge: it names a field whose value survives
 #: in SOME form but is not recoverable as what the model declared (an artifact slug that
@@ -455,10 +459,23 @@ WRITER_COVERAGE: dict[str, str] = {
     "ParagraphStyle.space_before_pt": "emitted",
     "ParagraphStyle.space_after_pt": "emitted",
     "ParagraphStyle.line_spacing": "emitted",
+    "ParagraphStyle.indent_left_pt": "emitted",
+    "ParagraphStyle.indent_right_pt": "emitted",
+    # Measured with a NEGATIVE value on purpose: a hanging indent is the only place this
+    # model treats a non-zero negative as a real request.
+    "ParagraphStyle.first_line_indent_pt": "emitted",
+    "ParagraphStyle.keep_with_next": "emitted",
     # --- PageSetup -----------------------------------------------------------------
     # `landscape` writes `w:orient`; `portrait` is geometry only.
     "PageSetup.orientation": "partial",
-    "PageSetup.margin_in": "emitted",
+    "PageSetup.size": "emitted",
+    "PageSetup.margin_top_pt": "emitted",
+    "PageSetup.margin_bottom_pt": "emitted",
+    "PageSetup.margin_left_pt": "emitted",
+    "PageSetup.margin_right_pt": "emitted",
+    "PageSetup.header_text": "emitted",
+    "PageSetup.footer_text": "emitted",
+    "PageSetup.page_numbers": "emitted",
     # --- Cell ----------------------------------------------------------------------
     "Cell.runs": "emitted",
     # Dropped when `runs` is also supplied.
@@ -495,7 +512,7 @@ WRITER_COVERAGE: dict[str, str] = {
 #: field being supplied too (`Block.text` beside `runs`), on the block kind
 #: (`Block.style` on a table), or on direction (`bold` can be switched on, never off).
 #: That is why a LossReport has to be computed per block, not read off a static list.
-CENSUS_SHAPE = {"emitted": 17, "partial": 10, "dropped": 0}
+CENSUS_SHAPE = {"emitted": 28, "partial": 10, "dropped": 0}
 
 
 # ------------------------------------------------------- the live measurements
@@ -629,16 +646,85 @@ def _measure_page_orientation() -> str:
     return _verdict(present=landscape, faithful=portrait)
 
 
-def _measure_page_margin() -> str:
-    from docx.shared import Inches
+def _measure_style_indent_left() -> str:
+    from docx.shared import Pt
 
-    declared = _reopen(_render(Block("paragraph", text="a"), page=PageSetup(margin_in=0.75)))
-    default = _reopen(_render(Block("paragraph", text="a")))
-    left = declared.sections[0].left_margin
+    got = _styled_paragraph(ParagraphStyle(indent_left_pt=24)).paragraph_format.left_indent
+    return _verdict(present=got is not None, faithful=got == Pt(24))
+
+
+def _measure_style_indent_right() -> str:
+    from docx.shared import Pt
+
+    got = _styled_paragraph(ParagraphStyle(indent_right_pt=12)).paragraph_format.right_indent
+    return _verdict(present=got is not None, faithful=got == Pt(12))
+
+
+def _measure_style_first_line_indent() -> str:
+    """NEGATIVE — a hanging indent. A `> 0` guard in the writer drops this silently, so
+    measuring the positive case would report "emitted" for a half-working field."""
+    from docx.shared import Pt
+
+    style = ParagraphStyle(first_line_indent_pt=-18)
+    got = _styled_paragraph(style).paragraph_format.first_line_indent
+    return _verdict(present=got is not None, faithful=got == Pt(-18))
+
+
+def _measure_style_keep_with_next() -> str:
+    got = _styled_paragraph(ParagraphStyle(keep_with_next=True)).paragraph_format.keep_with_next
+    return _verdict(present=got is not None, faithful=got is True)
+
+
+def _measure_page_size() -> str:
+    """Within one twip, not exact. `w:pgSz` is stored in twentieths of a point, so A4's
+    7560000 EMU is written as 11906 twips and reads back 310 EMU high. An exact comparison
+    here would report every named size as `partial` for a format rounding this code does
+    not control."""
+    from docx.shared import Mm
+
+    section = _reopen(_render(Block("paragraph", text="a"), page=PageSetup(size="a4"))).sections[0]
     return _verdict(
-        present=left != default.sections[0].left_margin,
-        faithful=left == Inches(0.75),
+        present=section.page_width is not None,
+        faithful=abs(section.page_width - Mm(210)) <= _ONE_TWIP_EMU,
     )
+
+
+def _measure_page_header_text() -> str:
+    section = _reopen(
+        _render(Block("paragraph", text="a"), page=PageSetup(header_text="Top"))
+    ).sections[0]
+    texts = [p.text for p in section.header.paragraphs]
+    return _verdict(present="Top" in " ".join(texts), faithful=texts == ["Top"])
+
+
+def _measure_page_footer_text() -> str:
+    section = _reopen(
+        _render(Block("paragraph", text="a"), page=PageSetup(footer_text="Bottom"))
+    ).sections[0]
+    texts = [p.text for p in section.footer.paragraphs]
+    return _verdict(present="Bottom" in " ".join(texts), faithful=texts == ["Bottom"])
+
+
+def _measure_page_numbers() -> str:
+    """A real `PAGE` field, not a literal digit — the number must differ per page."""
+    section = _reopen(
+        _render(Block("paragraph", text="a"), page=PageSetup(page_numbers=True))
+    ).sections[0]
+    xml = section.footer._element.xml
+    return _verdict(present="PAGE" in xml, faithful="fldSimple" in xml)
+
+
+def _measure_page_margin_edge(edge: str) -> Callable[[], str]:
+    def measure() -> str:
+        from docx.shared import Pt
+
+        section = _reopen(
+            _render(Block("paragraph", text="a"), page=PageSetup(**{f"margin_{edge}_pt": 90.0}))
+        ).sections[0]
+        got = getattr(section, f"{edge}_margin")
+        return _verdict(present=got is not None, faithful=got == Pt(90))
+
+    return measure
 
 
 def _measure_cell_runs() -> str:
@@ -767,14 +853,12 @@ def _measure_document_blocks() -> str:
 
 
 def _measure_document_page() -> str:
-    from docx.shared import Inches
+    from docx.shared import Pt
 
     section = _reopen(
-        _render(Block("paragraph", text="a"), page=PageSetup(margin_in=1.25))
+        _render(Block("paragraph", text="a"), page=PageSetup(margin_left_pt=90.0))
     ).sections[0]
-    return _verdict(
-        present=section.left_margin is not None, faithful=section.left_margin == Inches(1.25)
-    )
+    return _verdict(present=section.left_margin is not None, faithful=section.left_margin == Pt(90))
 
 
 _MEASUREMENTS: dict[str, Callable[[], str]] = {
@@ -787,8 +871,19 @@ _MEASUREMENTS: dict[str, Callable[[], str]] = {
     "ParagraphStyle.space_before_pt": _measure_style_space_before,
     "ParagraphStyle.space_after_pt": _measure_style_space_after,
     "ParagraphStyle.line_spacing": _measure_style_line_spacing,
+    "ParagraphStyle.indent_left_pt": _measure_style_indent_left,
+    "ParagraphStyle.indent_right_pt": _measure_style_indent_right,
+    "ParagraphStyle.first_line_indent_pt": _measure_style_first_line_indent,
+    "ParagraphStyle.keep_with_next": _measure_style_keep_with_next,
     "PageSetup.orientation": _measure_page_orientation,
-    "PageSetup.margin_in": _measure_page_margin,
+    "PageSetup.size": _measure_page_size,
+    "PageSetup.margin_top_pt": _measure_page_margin_edge("top"),
+    "PageSetup.margin_bottom_pt": _measure_page_margin_edge("bottom"),
+    "PageSetup.margin_left_pt": _measure_page_margin_edge("left"),
+    "PageSetup.margin_right_pt": _measure_page_margin_edge("right"),
+    "PageSetup.header_text": _measure_page_header_text,
+    "PageSetup.footer_text": _measure_page_footer_text,
+    "PageSetup.page_numbers": _measure_page_numbers,
     "Cell.runs": _measure_cell_runs,
     "Cell.text": _measure_cell_text,
     "Cell.bold": _measure_cell_bold,
@@ -832,7 +927,7 @@ def test_the_census_shape_is_pinned_so_it_cannot_collapse_to_all_emitted():
     counted = {verdict: list(WRITER_COVERAGE.values()).count(verdict) for verdict in VERDICTS}
 
     assert counted == CENSUS_SHAPE
-    assert sum(CENSUS_SHAPE.values()) == len(WRITER_COVERAGE) == 27
+    assert sum(CENSUS_SHAPE.values()) == len(WRITER_COVERAGE) == 38
 
 
 @pytest.mark.parametrize("field_name", sorted(WRITER_COVERAGE))

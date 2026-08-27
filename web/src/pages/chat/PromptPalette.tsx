@@ -205,7 +205,7 @@ function FillIn({ prompt, onBack, onInsert, onSend }: {
 }
 
 function VarInput({ v, value, onChange }: { v: PromptVariable; value: unknown; onChange: (v: unknown) => void }) {
-  const base = 'w-full rounded-md bg-surface-container px-2.5 py-1.5 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+  const base = 'w-full rounded-md bg-surface-container px-2.5 py-1.5 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   if (v.type === 'boolean') {
     return <Toggle on={!!value} onChange={(val) => onChange(val)} size="sm" />
   }

@@ -132,6 +132,12 @@ def _style(payload: Any, where: str) -> ParagraphStyle | None:
         space_before_pt=_number(data.get("space_before_pt"), f"{where}.space_before_pt"),
         space_after_pt=_number(data.get("space_after_pt"), f"{where}.space_after_pt"),
         line_spacing=_number(data.get("line_spacing"), f"{where}.line_spacing"),
+        indent_left_pt=_number(data.get("indent_left_pt"), f"{where}.indent_left_pt"),
+        indent_right_pt=_number(data.get("indent_right_pt"), f"{where}.indent_right_pt"),
+        first_line_indent_pt=_number(
+            data.get("first_line_indent_pt"), f"{where}.first_line_indent_pt"
+        ),
+        keep_with_next=_flag(data.get("keep_with_next"), f"{where}.keep_with_next"),
     )
 
 
@@ -140,8 +146,15 @@ def _page(payload: Any, where: str) -> PageSetup | None:
         return None
     data = _object(payload, PageSetup, where)
     return PageSetup(
+        size=_text(data.get("size"), f"{where}.size"),
         orientation=_text(data.get("orientation"), f"{where}.orientation"),
-        margin_in=_number(data.get("margin_in"), f"{where}.margin_in"),
+        margin_top_pt=_number(data.get("margin_top_pt"), f"{where}.margin_top_pt"),
+        margin_bottom_pt=_number(data.get("margin_bottom_pt"), f"{where}.margin_bottom_pt"),
+        margin_left_pt=_number(data.get("margin_left_pt"), f"{where}.margin_left_pt"),
+        margin_right_pt=_number(data.get("margin_right_pt"), f"{where}.margin_right_pt"),
+        header_text=_text(data.get("header_text"), f"{where}.header_text"),
+        footer_text=_text(data.get("footer_text"), f"{where}.footer_text"),
+        page_numbers=_flag(data.get("page_numbers"), f"{where}.page_numbers"),
     )
 
 

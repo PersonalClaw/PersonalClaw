@@ -14,6 +14,7 @@ import logging
 import pytest
 
 from personalclaw.auth import credentials as creds
+from personalclaw.config import credentials as cred_store
 
 GOOD_PASSWORD = "correct-horse-battery-staple"
 
@@ -244,9 +245,8 @@ def test_clear_when_nothing_is_stored_is_not_an_error() -> None:
 
 def test_totp_secret_never_lands_in_the_credential_json(monkeypatch) -> None:
     saved: dict[str, str] = {}
-    import personalclaw.config.loader as loader
 
-    monkeypatch.setattr(loader, "save_credential", lambda k, v: saved.update({k: v}), raising=False)
+    monkeypatch.setattr(cred_store, "save_credential", lambda k, v: saved.update({k: v}))
     creds.set_password("jordan", GOOD_PASSWORD)
     creds.set_totp_secret("JBSWY3DPEHPK3PXP")
 
@@ -258,9 +258,8 @@ def test_totp_secret_never_lands_in_the_credential_json(monkeypatch) -> None:
 
 def test_disable_totp_clears_the_flag_but_keeps_the_secret(monkeypatch) -> None:
     saved: dict[str, str] = {}
-    import personalclaw.config.loader as loader
 
-    monkeypatch.setattr(loader, "save_credential", lambda k, v: saved.update({k: v}), raising=False)
+    monkeypatch.setattr(cred_store, "save_credential", lambda k, v: saved.update({k: v}))
     creds.set_password("jordan", GOOD_PASSWORD)
     creds.set_totp_secret("JBSWY3DPEHPK3PXP")
     creds.disable_totp()
@@ -270,9 +269,8 @@ def test_disable_totp_clears_the_flag_but_keeps_the_secret(monkeypatch) -> None:
 
 def test_setting_a_new_password_preserves_the_totp_flag(monkeypatch) -> None:
     """A password rotation must not silently turn 2FA off."""
-    import personalclaw.config.loader as loader
 
-    monkeypatch.setattr(loader, "save_credential", lambda k, v: None, raising=False)
+    monkeypatch.setattr(cred_store, "save_credential", lambda k, v: None)
     creds.set_password("jordan", GOOD_PASSWORD)
     creds.set_totp_secret("JBSWY3DPEHPK3PXP")
     creds.set_password("jordan", "another-long-password")

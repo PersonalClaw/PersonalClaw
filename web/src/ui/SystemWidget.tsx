@@ -6,6 +6,7 @@ import { api, type SystemInfo, type AuthStatus, type SpawnedAgent } from '../lib
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { spring, stagger, listItemEnter } from '../design/motion'
 import { fvs } from '../design/fontWeight'
+import { Meter } from './Meter'
 
 /** Live system + auth health — the app shell's top-right corner dot.
  *  - Collapsed (resting): a single connectivity dot. GREEN + pulsing = gateway
@@ -310,10 +311,12 @@ function Bar({ icon: Icon, label, pct, detail }: { icon: typeof Cpu; label: stri
         <span className="text-on-surface-var">{label}</span>
         <span className="ml-auto text-on-surface-low tabular-nums">{Math.round(p)}%</span>
       </div>
+      {/* Through the Meter primitive: the hand-rolled track this replaced had no role,
+          so a tile that reads "CPU 42%" to the eye read as nothing at all to a screen
+          reader. The spring on the fill is gone with it — this tile repaints on a poll,
+          and a spring retargeting every few seconds is motion that conveys no state. */}
       <div className="mt-1 flex items-center gap-2">
-        <div className="h-1 flex-1 overflow-hidden rounded-pill bg-surface-high">
-          <motion.div className="h-full rounded-pill" style={{ background: tone }} animate={{ width: `${p}%` }} transition={spring.spatialSlow} />
-        </div>
+        <Meter size="thin" className="flex-1" label={`${label} usage`} pct={p} tone={tone} />
       </div>
       <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{detail}</div>
     </div>

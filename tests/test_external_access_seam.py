@@ -21,6 +21,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw.config import credentials as cred_store
 from personalclaw.inbound import audit as audit_mod
 from personalclaw.inbound import auth
 from personalclaw.inbound import caps as caps_mod
@@ -334,11 +335,10 @@ class TestSurfaceTokens:
     def test_token_goes_through_save_credential(self, monkeypatch):
         """The clause names `save_credential` specifically, so assert the CALL."""
         calls: list[tuple[str, str]] = []
-        import personalclaw.config.loader as loader
 
-        real = loader.save_credential
+        real = cred_store.save_credential
         monkeypatch.setattr(
-            loader, "save_credential", lambda k, v: (calls.append((k, v)), real(k, v))[1]
+            cred_store, "save_credential", lambda k, v: (calls.append((k, v)), real(k, v))[1]
         )
         token = auth.create_surface_token("a2a")
         assert calls == [("PERSONALCLAW_INBOUND_A2A_TOKEN", token)]

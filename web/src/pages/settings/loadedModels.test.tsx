@@ -20,19 +20,28 @@ import type { LoadedModel, MemoryPressure } from '../../lib/api'
 
 const modelsLoaded = vi.fn()
 
-vi.mock('../../lib/api', () => ({
-  api: {
-    modelsLoaded: () => modelsLoaded(),
-    unloadModelProvider: vi.fn(() => Promise.resolve({ ok: true, freed: true })),
-    personalclawConfig: () => Promise.resolve({ agent: { prompt_cache_enabled: true } }),
-    patchConfig: vi.fn(() => Promise.resolve({})),
-    modelsAvailable: () => Promise.resolve([]),
-    modelsActive: () => Promise.resolve({}),
-    modelsHealth: () => Promise.resolve({ providers: [] }),
-    judgeBench: () => Promise.reject(new Error('judge_bench_absent')),
-    modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], total_bytes: 0 }),
-  },
-}))
+// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError`/`hasApiCode` are kept. The four eval
+// panels branch on `hasApiCode(error, '<code>')`, so a factory that returned only `api` made the
+// mocked module throw "No \"hasApiCode\" export is defined" from inside the render — and a fixture
+// that rejected with a bare `Error` would carry no `.code`, so the branch under test would never
+// fire and the test would pass by rendering the generic failure instead.
+vi.mock('../../lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/api')>()
+  return {
+    ...actual,
+    api: {
+      modelsLoaded: () => modelsLoaded(),
+      unloadModelProvider: vi.fn(() => Promise.resolve({ ok: true, freed: true })),
+      personalclawConfig: () => Promise.resolve({ agent: { prompt_cache_enabled: true } }),
+      patchConfig: vi.fn(() => Promise.resolve({})),
+      modelsAvailable: () => Promise.resolve([]),
+      modelsActive: () => Promise.resolve({}),
+      modelsHealth: () => Promise.resolve({ providers: [] }),
+      judgeBench: () => Promise.reject(new actual.ApiError('No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one.', 404, 'judge_bench_absent')),
+      modelDownloadCleanupCandidates: () => Promise.resolve({ candidates: [], total_bytes: 0 }),
+    },
+  }
+})
 vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))
 vi.mock('../../lib/data', () => ({
   useQuery: (_k: string, fn: () => Promise<unknown>) => {

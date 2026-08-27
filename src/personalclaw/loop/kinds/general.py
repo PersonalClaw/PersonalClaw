@@ -29,9 +29,10 @@ class GeneralKind(LoopKindStrategy):
         return str(phase.get("title", "")).strip()
 
     def validate_config(self, config: dict) -> tuple[list[str], list[str]]:
-        """Screen the optional verify_command — the general kind RUNS it every cycle
-        (is_done_signal), so a destructive one must be rejected pre-persist, same gate
-        goal/code apply. Without this hook the shared validator never screened a
+        """Screen the optional verify_command — the supervisor RUNS it every cycle
+        (the declared ``verify_command`` signal), so a destructive one must be rejected
+        pre-persist, same gate goal/code apply. Without this hook the shared validator
+        never screened a
         general loop's command (run_verify_command's exec-time screen is only the
         defensive backstop; the create/edit gate is the intended one)."""
         from personalclaw.security import audit_bash_command
@@ -43,24 +44,6 @@ class GeneralKind(LoopKindStrategy):
             if danger:
                 return [f"Verify command rejected — {danger}."], []
         return [], []
-
-    async def is_done_signal(self, loop: Loop, findings: list[dict]) -> bool | None:
-        # Generic: if a verify_command is set, the supervisor runs it (verifiable-
-        # style); else defer (the loop is bounded by the judge/budget). No domain
-        # phasing — the point is the generic mechanics.
-        cfg = loop.kind_config or {}
-        cmd = str(cfg.get("verify_command", "")).strip()
-        if cmd:
-            from personalclaw.loop.gates import run_verify_command
-
-            return await run_verify_command(cmd, loop.workspace_dir or None, label="verify")
-        return None
-
-    def has_done_check(self, loop: Loop) -> bool:
-        # A General loop only has a point-in-time done-check when a verify_command
-        # is configured. Without one it defers to budget BY DESIGN — so a None
-        # signal is normal, NOT a degraded judge (the watchdog must not flag it).
-        return bool(str((loop.kind_config or {}).get("verify_command", "")).strip())
 
     async def classify(self, task: str, ask, *, skills=None, workflows=None, agents=None) -> dict:
         """No domain specialization — the General kind doesn't analyze a problem

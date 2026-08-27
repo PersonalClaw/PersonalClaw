@@ -246,7 +246,7 @@ function SideChat({ side }: { side: SidePanelData }) {
         )}
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 p-2">
-        <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
+        <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
           <textarea value={q} onChange={(e) => setQ(e.target.value)} rows={1} placeholder="Ask the side…"
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }}
             className="max-h-24 min-h-0 flex-1 resize-none bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />

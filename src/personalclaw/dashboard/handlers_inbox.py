@@ -401,11 +401,17 @@ async def api_inbox_restore(request: web.Request) -> web.Response:
 
 
 async def api_inbox_dismiss_all(request: web.Request) -> web.Response:
-    """POST /api/inbox/dismiss-all — dismiss all pending items."""
+    """POST /api/inbox/dismiss-all — dismiss every OPEN item (pending or seen).
+
+    🔴 This used `pending()`, and the UI marks a row SEEN the moment you open it — so merely
+    LOOKING at an item removed it from the reach of the only bulk control, and a queue you had
+    browsed could not be cleared except one row at a time (#409, measured with 32 open rows).
+    "Dismiss all" that skips what you have read is not "all".
+    """
     state: "DashboardState" = request.app["state"]
     inbox_state, inbox = _get_inbox(state)
     count = 0
-    for item in inbox.pending():
+    for item in inbox.open_items():
         inbox_state.dismissed.add(item.id)
         inbox.update(item.id, status=ItemStatus.DISMISSED)
         count += 1

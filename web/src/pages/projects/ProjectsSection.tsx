@@ -187,7 +187,7 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
                   // focusable, hence tabIndex={-1} rather than dropping the attribute.
                   tabIndex={-1}
                   onClick={togglePeek}
-                  className="group relative flex cursor-pointer items-center gap-3 rounded-xl border border-outline-variant/50 bg-surface-container/60 px-4 py-3 text-left transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary/50">
+                  className="group relative flex cursor-pointer items-center gap-3 rounded-xl border border-outline-variant/50 bg-surface-container/60 px-4 py-3 text-left transition-colors hover:bg-surface-high has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary">
                   {/* The row had NO accessible name before — measured `(none)` on all 5. */}
                   <RowHitTarget label={p.name} />
                   <FolderKanban size={16} className="shrink-0 text-on-surface-low" />
@@ -608,7 +608,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
     <div className="flex items-center gap-2">
       <input autoFocus aria-label="Rename this project" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) } else if (e.key === 'Escape') setRenaming(false) }}
-        className="min-w-0 rounded-md bg-surface-high px-2.5 py-1 text-on-surface text-[1.0625rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+        className="min-w-0 rounded-md bg-surface-high px-2.5 py-1 text-on-surface text-[1.0625rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       {/* Its sibling Cancel below carries an `aria-label`; this one did not — the confirm half of a
           two-button pair announced as bare "button". That asymmetry is the tell. */}
       <Button size="sm" ariaLabel="Save the project name" onClick={() => { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) }} disabled={!nameDraft.trim()}
@@ -895,7 +895,7 @@ function TaskListRow({ list, active, onOpen }: { list: TaskListItem; active: boo
   const count = (list as { task_count?: number; count?: number }).task_count ?? (list as { count?: number }).count
   return (
     <button type="button" onClick={onOpen}
-      className={`group flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] transition-colors ${active ? 'bg-surface-high text-on-surface ring-1 ring-primary/40' : 'bg-surface-high/60 text-on-surface-var hover:bg-surface-high hover:text-on-surface'}`}>
+      className={`group flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] transition-colors ${active ? 'bg-surface-high text-on-surface ring-1 ring-primary' : 'bg-surface-high/60 text-on-surface-var hover:bg-surface-high hover:text-on-surface'}`}>
       <ListChecks size={13} className="shrink-0 text-on-surface-low" />
       <span className="min-w-0 flex-1 truncate">{list.name}</span>
       {typeof count === 'number' && <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{count}</span>}
@@ -1004,7 +1004,7 @@ function BriefRow({ brief, onSave }: { brief: string; onSave: (b: string) => voi
         <textarea autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} rows={3}
           onKeyDown={(e) => { if (e.key === 'Escape') { setDraft(brief); setEditing(false) } }}
           placeholder="Project brief — the goal, scope, and background. Shared as context with every agent working on this project's sessions and loops."
-          className="resize-y rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] leading-relaxed text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+          className="resize-y rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] leading-relaxed text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <div className="flex items-center gap-1.5">
           <Button size="sm" onClick={() => { onSave(draft.trim()); setEditing(false) }}><Check size={13} /> Save brief</Button>
           <button type="button" onClick={() => { setDraft(brief); setEditing(false) }} className="rounded-md px-2 py-1 text-[0.75rem] text-on-surface-low hover:text-on-surface">Cancel</button>

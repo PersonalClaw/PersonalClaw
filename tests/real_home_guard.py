@@ -10,13 +10,32 @@ guarding is indistinguishable from one that never fires.
 Detection shape — one walk, no "before" map:
 
 ``pytest_sessionstart`` records a nanosecond timestamp; ``pytest_sessionfinish``
-walks the real home once and reports every entry whose ``st_mtime_ns`` is newer
-than that timestamp. That catches all three shapes the rail cares about:
+walks the real home once and reports every entry whose ``st_mtime_ns`` **or**
+``st_ctime_ns`` is newer than that timestamp. That catches all four shapes the
+rail cares about:
 
 * a file created during the run (its mtime is necessarily newer),
 * a file modified or appended to in place (ditto — this is the one a
   directory-mtime check cannot see),
-* an entry deleted or renamed (the surviving parent directory's mtime moves).
+* an entry deleted or renamed (the surviving parent directory's mtime moves),
+* a **metadata-preserving** write — ``shutil.copy2``, ``shutil.copystat``, a
+  bare ``os.utime`` — which back-dates the new file's mtime to the source's and
+  is therefore invisible to an mtime-only check.
+
+Why ctime, and what it costs. That fourth shape is not hypothetical: a config
+migration backed the user's ``config.json`` aside with ``shutil.copy2`` before
+rewriting it, so CI reported *one* changed entry when *two* things changed —
+the ``.bak`` carried the original's mtime and looked older than the session.
+``st_ctime_ns`` is the inode-change time; userspace cannot set it, and
+``utime()`` itself bumps it, so it is the one field a metadata-preserving copy
+cannot forge. The cost of widening to it is **precision, not performance**:
+``entry.stat()`` already returns ctime, so there is no extra syscall and the
+walk stays single-pass. But ctime also moves for a metadata-only touch —
+``chmod``, ``chown``, a hardlink count change, a rename — none of which alter a
+byte. Those are reported too, deliberately: the rail's contract is that the
+suite leaves the developer's home *alone*, and re-permissioning their config is
+not leaving it alone. Reads do not move ctime (only atime), so simply walking or
+reading the real home cannot red the rail.
 
 The alternative — snapshot the tree at start, snapshot again at finish, diff —
 costs two full walks of a real home that already holds >100k files, i.e. seconds
@@ -68,8 +87,22 @@ def _birthtime_ns(st: os.stat_result) -> int | None:
     return None
 
 
+def _touched_ns(st: os.stat_result) -> int:
+    """The latest moment this inode was touched at all.
+
+    ``max(mtime, ctime)``: mtime alone misses a metadata-preserving write (``copy2``
+    back-dates it), and ctime alone is not guaranteed to be >= mtime on a filesystem
+    that lets a write land without an inode update. Taking the max means a change has
+    to beat BOTH clocks to hide.
+    """
+    return max(st.st_mtime_ns, st.st_ctime_ns)
+
+
 def scan_changes(root: Path, since_ns: int) -> list[HomeChange]:
-    """Return every entry under ``root`` whose mtime is newer than ``since_ns``.
+    """Return every entry under ``root`` touched more recently than ``since_ns``.
+
+    "Touched" is ``max(mtime, ctime)`` — see the module docstring for why ctime is in
+    the comparison and what widening to it costs.
 
     An absent (or non-directory) ``root`` yields ``[]`` — nothing to compare.
     Symlinks are stat'd but never followed, so the walk cannot escape the tree.
@@ -94,7 +127,7 @@ def scan_changes(root: Path, since_ns: int) -> list[HomeChange]:
             is_dir = entry.is_dir(follow_symlinks=False)
             if is_dir:
                 stack.append(entry.path)
-            if st.st_mtime_ns <= since_ns:
+            if _touched_ns(st) <= since_ns:
                 continue
             rel = entry.path[prefix_len:]
             if rel in ALLOWED_RESIDUE:
@@ -103,7 +136,16 @@ def scan_changes(root: Path, since_ns: int) -> list[HomeChange]:
                 kind = "dir-entries-changed"
             else:
                 birth = _birthtime_ns(st)
-                kind = "created" if birth is not None and birth > since_ns else "modified"
+                if birth is not None and birth > since_ns:
+                    kind = "created"
+                elif st.st_mtime_ns > since_ns:
+                    kind = "modified"
+                else:
+                    # ctime moved but mtime did not: a metadata-preserving write
+                    # (``copy2``/``copystat``/``utime``) or a metadata-only touch.
+                    # Named distinctly because the fix differs — you are looking for
+                    # a copy, not for a writer.
+                    kind = "metadata-preserving-write"
             changes.append(HomeChange(path=rel, kind=kind, size=st.st_size))
     changes.sort(key=lambda c: c.path)
     return changes

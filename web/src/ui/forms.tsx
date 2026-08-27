@@ -36,9 +36,14 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  works) and not one had `aria-describedby` — so every hint was sighted-only. That includes a
  *  CONSTRAINT ("At least 12 characters") and a consequence ("Leave it empty to keep records
  *  unattributed"): a screen-reader user heard "Username, edit text" and none of the rule they were
- *  expected to follow. 196 call sites pass a hint today (Field 99, settingsUI's Row 69, NumberRow 28),
- *  and none of them has to change — the id is published here and claimed by the same controls that
- *  already claim the label. axe cannot see this: an unassociated paragraph is valid HTML. */
+ *  expected to follow. 260 hinted publishers render today — 229 DIRECT call sites (Field 118,
+ *  settingsUI's Row 77, NumberRow 34) plus 31 that arrive through five local wrappers which forward
+ *  a hint into one of those three (ToggleRow 22, EnumRow 3, CheckList 3, TextRow 2, StrListField 1).
+ *  Recounted 2026-08-27 with a depth-tracking JSX scan, excluding tests and `.doc.ts`; the earlier
+ *  196/99/69/28 reading is stale, and its "69" is the number of hinted `Row` CALL SITES, not the
+ *  number of switches, which is a distinction the Q13/BE-8 queue entry lost. None of the 260 has to
+ *  change — the id is published here and claimed by the same controls that already claim the label.
+ *  axe cannot see this: an unassociated paragraph is valid HTML. */
 const FieldHintCtx = createContext<string | undefined>(undefined)
 export function useFieldHintId() { return useContext(FieldHintCtx) }
 export const FieldHintProvider = FieldHintCtx.Provider
@@ -126,7 +131,7 @@ const FIELD_SURFACE: Record<FieldSurface, string> = {
 // the canonical right pad). Applied conditionally so px-m and pl-9 never both
 // emit — a `padding-inline` + `padding-left` cascade race — the same split the
 // prior leading-icon primitive used.
-const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50'
+const INPUT_BASE = 'w-full rounded-md text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
 
 /** The one standard text field. Chrome is fixed; the only axes are `size`
  *  (sm/md/lg) and `surface` (container/high/base) — the family variants the app's
@@ -227,7 +232,7 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
   // ariaLabel.
   return (
     <textarea value={value} rows={rows} autoFocus={autoFocus} id={autoId} aria-describedby={hintId} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-      className={`w-full rounded-md bg-surface-container px-m py-2 text-on-surface ${TEXTAREA_TEXT[size]} placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary/50 ${mono ? 'font-mono text-[0.8125rem]' : ''}`} />
+      className={`w-full rounded-md bg-surface-container px-m py-2 text-on-surface ${TEXTAREA_TEXT[size]} placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary ${mono ? 'font-mono text-[0.8125rem]' : ''}`} />
   )
 }
 
@@ -272,7 +277,7 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
       aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={ariaLabel} aria-describedby={hintId}
       onChange={(e) => setLocal(e.target.value)} onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-      className={cx('h-8 rounded-md bg-surface-high px-2 text-right text-[0.8125rem] text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50', width)} />
+      className={cx('h-8 rounded-md bg-surface-high px-2 text-right text-[0.8125rem] text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary', width)} />
   )
 }
 
@@ -282,18 +287,25 @@ export function DateInput({ value, onChange }: { value: string; onChange: (v: st
   const autoId = useId()
   return (
     <input type="date" value={value} id={autoId} aria-labelledby={labelId} aria-describedby={hintId} onChange={(e) => onChange(e.target.value)}
-      className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50" />
+      className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
   )
 }
 
 /** Styled native select — matches the TextInput chrome. */
-export function Select({ value, onChange, options, disabled, name, ariaLabel }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; disabled?: boolean; name?: string
+export function Select({ value, onChange, options, disabled, name, ariaLabel, disabledReason }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; disabled?: boolean; name?: string
   /** The accessible name for a Select OUTSIDE any `Field` (a floating toolbar control, or a
    *  second control in a multi-control Field). Mirrors `TextInput`/`ChipInput`, which both
    *  already take one — Select was the odd primitive out, so an unlabelled select was the
    *  only way to render one here. An explicit ariaLabel WINS over the Field's label, same
    *  precedence as TextInput's. */
-  ariaLabel?: string }) {
+  ariaLabel?: string
+  /** Why this select is off, for a CONDITIONALLY disabled one. `Button` has carried this
+   *  since `unavailable.ts` (a natively disabled control leaves the tab order, so a
+   *  keyboard user tabs straight past it with no way to learn what is missing); Select was
+   *  the odd primitive out again, and a caller's only options were an unexplained dead
+   *  control or wrapping it in something that could hold a `title`. Applied only WHILE
+   *  disabled — a tooltip on a working select would be noise. */
+  disabledReason?: string }) {
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
   const autoId = useId()
@@ -302,7 +314,8 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel }: 
     <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={name || autoId}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
       aria-describedby={hintId}
-      className="w-full h-10 appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary/50 disabled:opacity-50">
+      title={disabled ? disabledReason || undefined : undefined}
+      className="w-full h-10 appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50">
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )
@@ -328,7 +341,7 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
   // near-duplicate fragments like "Kubernetes" vs "kubernetes").
   const remaining = suggestions?.filter((s) => !values.includes(s)) ?? []
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-surface-container px-2 py-2 min-h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary/50">
+    <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-surface-container px-2 py-2 min-h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
       {values.map((v) => (
         <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var text-[0.8125rem]">
           {v}

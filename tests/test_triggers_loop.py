@@ -917,3 +917,173 @@ def test_the_retry_queue_SURVIVES_a_tick(tmp_path):
         )
     )
     assert len(pending) == 1, "an unready session must leave the held resume in place across a tick"
+
+
+# ── 🔴 #402: no scheduled trigger had ever executed its action ────────────────
+#
+# `test_one_iteration_fires_dispatches_and_executes` above proves the chain works — but it
+# calls `_manager(WK.session_key_for("j"))`, hand-building the one piece of state production
+# never builds. Nothing in the tree creates a trigger's session: `get_or_create` has no caller
+# with a trigger key. So on a real gateway `enqueue` returned False, `deliver` reported
+# NO_SESSION, and the old loop drained an inbox that had never received anything.
+#
+# Measured on a live gateway before the fix: 46 cycles of accumulated state held run records
+# from `manual` and `replay` only, never one from a schedule, while the UI showed each trigger
+# enabled with an advancing next-run time.
+#
+# These tests use an EMPTY manager, which is what production has.
+
+
+def _empty_manager():
+    """A session manager with no sessions — production, for a trigger nothing has opened."""
+    return _manager()
+
+
+def test_a_fire_with_NO_session_inbox_still_executes(tmp_path):
+    """🔴 THE BUG. The action must run even though no session exists for the trigger's key.
+
+    A trigger fire does not need a model session: in this chain the session is only a queue, and
+    the injected `runner` (in production, the gateway's action dispatch) creates whatever it
+    needs itself. Creating one per fire would start a provider process at 3am so a `notify`
+    action can print a line.
+    """
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(_clock())
+    ran: list[str] = []
+
+    async def runner(payload):
+        ran.append(payload.get("trigger_id", ""))
+        return {"status": "ok"}
+
+    result = asyncio.run(
+        L.tick_once(store, runner=runner, sessions=_empty_manager(), base_dir=tmp_path, now=NOW)
+    )
+    assert [f.trigger.id for f in result.fires] == ["j"]
+    assert ran == ["j"], "the fire was decided, claimed, ledgered — and never executed"
+
+
+def test_a_fire_with_no_session_inbox_RELEASES_its_claim(tmp_path):
+    """The second half: an unexecuted fire left its claim held for the full 3600s, so the
+    trigger reported `is_running: true`, recorded `skipped_overlap` on every later tick, and
+    answered `409 already running` to a manual Run for an hour."""
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(_clock())
+    asyncio.run(
+        L.tick_once(store, runner=_ok, sessions=_empty_manager(), base_dir=tmp_path, now=NOW)
+    )
+    assert not C.is_running("j", now=NOW, base_dir=tmp_path), "the claim leaked for 1h"
+
+
+def test_the_SECOND_slot_of_a_sessionless_trigger_also_fires(tmp_path):
+    """The user-visible consequence stated as a behaviour: an `overlap: skip` trigger whose
+    first fire leaked its claim would skip every slot until the claim expired. One tick proving
+    the claim is gone is weaker than two ticks proving the trigger still fires."""
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(_clock())
+    ran: list[str] = []
+
+    async def runner(payload):
+        ran.append(payload.get("trigger_id", ""))
+        return {"status": "ok"}
+
+    async def two_slots():
+        await L.tick_once(
+            store, runner=runner, sessions=_empty_manager(), base_dir=tmp_path, now=NOW
+        )
+        await L.tick_once(
+            store, runner=runner, sessions=_empty_manager(), base_dir=tmp_path, now=NOW + 120
+        )
+
+    asyncio.run(two_slots())
+    assert ran == ["j", "j"], f"the second slot was skipped: {ran}"
+
+
+def test_a_skipped_running_fire_does_NOT_run_but_DOES_release_its_claim(tmp_path):
+    """`overlap: skip` means don't pile onto a session mid-turn — that skip is correct and stays.
+
+    What was wrong is that the skip kept the claim. "We chose not to start a run" and "a run is
+    in flight" are different facts, and only the second is what a claim means. Reachable in
+    ordinary use: a conversation-bound trigger firing while the user is typing.
+    """
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(_clock())
+    manager = _manager(WK.session_key_for("j"))
+    manager._sessions[WK.session_key_for("j")].semaphore._value = 0  # a turn in flight
+    ran: list[str] = []
+
+    async def runner(payload):
+        ran.append(payload.get("trigger_id", ""))
+        return {"status": "ok"}
+
+    asyncio.run(L.tick_once(store, runner=runner, sessions=manager, base_dir=tmp_path, now=NOW))
+    assert ran == [], "a wake for a busy session must not pile on"
+    assert not C.is_running("j", now=NOW, base_dir=tmp_path), "the skip jammed the trigger for 1h"
+
+
+def test_a_conversation_bound_fire_drains_the_key_it_was_DELIVERED_to(tmp_path):
+    """🔴 The key mismatch. `wakeup_for` computes the key WITH the trigger's `session` binding;
+    the old loop re-derived it WITHOUT. For `session: "conversation:<key>"` the two disagree —
+    `session_key_for("j", session="conversation:chat-abc")` is `chat-abc` while
+    `session_key_for("j")` is `cron:j` — so the wakeup was queued onto the conversation and the
+    drain looked in a different inbox entirely.
+
+    The fire runs either way now (a missing inbox executes directly), so the assertion that
+    catches the mismatch is WHICH inbox was drained: the conversation's queue must be empty
+    afterwards. A payload still sitting there is a fire that was delivered and abandoned.
+    """
+    trigger = _clock()
+    trigger.session = "conversation:chat-abc"
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(trigger)
+    manager = _manager("chat-abc")  # the conversation exists; `cron:j` does not
+    ran: list[str] = []
+
+    async def runner(payload):
+        ran.append(payload.get("trigger_id", ""))
+        return {"status": "ok"}
+
+    asyncio.run(L.tick_once(store, runner=runner, sessions=manager, base_dir=tmp_path, now=NOW))
+    assert ran == ["j"]
+    assert manager.dequeue("chat-abc") is None, "the delivered payload was left in the inbox"
+
+
+def test_a_queued_fire_still_drains_through_the_session(tmp_path):
+    """Vacuity floor. A 'fix' that always ran directly would pass every test above while
+    bypassing the inbox — losing the property §3.2 exists for, that a crash between decision and
+    execution leaves the payload in the inbox rather than lost."""
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(_clock())
+    manager = _manager(WK.session_key_for("j"))
+    seen: list[str] = []
+
+    async def runner(payload):
+        seen.append(payload.get("trigger_id", ""))
+        return {"status": "ok"}
+
+    asyncio.run(L.tick_once(store, runner=runner, sessions=manager, base_dir=tmp_path, now=NOW))
+    assert seen == ["j"]
+    assert manager.dequeue(WK.session_key_for("j")) is None
+
+
+def test_nothing_in_the_tree_creates_a_trigger_session(tmp_path):
+    """The census behind the fix, so the reasoning cannot rot.
+
+    If a future change DOES start creating trigger sessions, this reds — and at that point the
+    direct-execution branch should be revisited rather than left as a second path. That is the
+    point of pinning it: the branch exists because this is true, not as belt-and-braces.
+    """
+    import pathlib
+    import re
+
+    src = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
+    creators = []
+    for py in sorted(src.rglob("*.py")):
+        for n, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
+            if "get_or_create(" not in line or "def get_or_create" in line:
+                continue
+            if re.search(r"session_key_for|cron:|trigger", line):
+                creators.append(f"{py.relative_to(src).as_posix()}:{n}")
+    assert creators == [], (
+        "something now creates a session for a trigger key — revisit "
+        f"`_execute_delivery`'s direct-run branch instead of keeping two paths: {creators}"
+    )

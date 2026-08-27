@@ -42,6 +42,24 @@ import { join } from 'node:path'
 const SRC = join(process.cwd(), 'src')
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 
+/** All three measured wrappers are now `settingsUI`'s shared `RowGroup`, so the vacuity guards below
+ *  have to FOLLOW that indirection instead of grepping the panel for the raw class.
+ *
+ *  🪤 Two of the three guards did not go red when the class moved — they kept passing by matching an
+ *  UNRELATED `bg-surface-container` block elsewhere in the same file (`CompanionPanel:111`,
+ *  `PacksPanel:147+`), i.e. they became false passes about a wrapper the field is not in. Only
+ *  SourcesPanel, which had no other container block left, actually failed. So this checks both links
+ *  in the chain: the panel wraps its rows in `RowGroup`, and `RowGroup` still paints the container
+ *  tone that makes a default `surface="container"` field invisible. */
+const wrapsRowsOnAContainerSurface = (panel: string) => {
+  expect(read(`pages/settings/${panel}.tsx`), `${panel} must wrap its rows in RowGroup`)
+    .toMatch(/<RowGroup[\s>]/)
+  const rowGroup = read('pages/settings/settingsUI.tsx').match(/export function RowGroup\([\s\S]*?\n\}/)?.[0] ?? ''
+  expect(rowGroup, 'RowGroup must exist to be the wrapper').toContain('Surface')
+  expect(rowGroup, 'and it must still paint bg-surface-container — the reason surface="high" is needed')
+    .toMatch(/tone="container"/)
+}
+
 describe('a settings field on a container backdrop lifts its surface', () => {
   it('SourcesPanel scratchpad field passes surface="high"', () => {
     const src = read('pages/settings/SourcesPanel.tsx')
@@ -53,7 +71,7 @@ describe('a settings field on a container backdrop lifts its surface', () => {
   it('the SourcesPanel row really is a container-surfaced wrapper', () => {
     // Vacuity guard: if the wrapper ever stops painting bg-surface-container the fix above becomes
     // unnecessary, and this rail should be re-derived rather than left asserting a stale reason.
-    expect(read('pages/settings/SourcesPanel.tsx')).toMatch(/rounded-lg bg-surface-container/)
+    wrapsRowsOnAContainerSurface('SourcesPanel')
   })
 
   it('PacksPanel TextRow passes surface="high"', () => {
@@ -64,7 +82,7 @@ describe('a settings field on a container backdrop lifts its surface', () => {
   })
 
   it('PacksPanel TextRow callers sit on a container surface', () => {
-    expect(read('pages/settings/PacksPanel.tsx')).toMatch(/bg-surface-container/)
+    wrapsRowsOnAContainerSurface('PacksPanel')
   })
 
   it('CompanionPanel instance-name field passes surface="high"', () => {
@@ -77,7 +95,7 @@ describe('a settings field on a container backdrop lifts its surface', () => {
   })
 
   it('the CompanionPanel row really is a container-surfaced wrapper', () => {
-    expect(read('pages/settings/CompanionPanel.tsx')).toMatch(/rounded-lg bg-surface-container/)
+    wrapsRowsOnAContainerSurface('CompanionPanel')
   })
 
   it('TextInput still defaults to the container surface, and still has no at-rest border', () => {

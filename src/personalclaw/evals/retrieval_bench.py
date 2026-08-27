@@ -329,8 +329,13 @@ class RetrievalBenchmark:
         ``benchmark.json``: the report and the panel showed P@5 with no visible statement
         of which labels produced it. §5.2 names three sources and this harness mines a
         SUBSTITUTE for one of them (``intent_outcomes`` stands in for LEARN-R4's
-        ``surfacing_events``, which nothing in the tree writes), so a reader who cannot
-        see the mix cannot judge the number. Counted here rather than in the frontend for
+        ``surfacing_events``), so a reader who cannot see the mix cannot judge the number.
+        The substitution was originally forced — that table had no schema and no writer —
+        and is now a CHOICE: LEARN-R4 landed it
+        (:mod:`personalclaw.learning.surfacing_events`), with ``query``/``entity``/``used``
+        columns carried precisely so :func:`mine_knowledge_qrels` can read them, and
+        switching this source over is ES-3's own remaining work rather than the table's.
+        Counted here rather than in the frontend for
         the reason :func:`latest_retrieval_view` states: a re-derived answer eventually
         disagrees with the runner's.
 

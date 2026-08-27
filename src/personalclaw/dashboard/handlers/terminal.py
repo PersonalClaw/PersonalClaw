@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from personalclaw import tmux_substrate
 from personalclaw.config.loader import config_path
 
 if TYPE_CHECKING:
@@ -76,7 +77,13 @@ def _get_config(request: web.Request) -> dict:
 # P25 — tmux-backed persistence. Opt-in (config `dashboard.terminal.persist`) AND requires
 # the `tmux` binary; both gates default to the in-process PTY (today's behavior). A dedicated
 # socket (`-L personalclaw`) isolates our sessions from the user's own tmux.
-_TMUX_SOCKET = "personalclaw"
+#
+# The socket and the name mapping come from `tmux_substrate`, not from local literals: EI-6's
+# boot recovery sweep interrogates this same server to decide whether a run's worker outlived
+# the gateway. Two copies of "which socket" is how a reaper and a sweep end up talking to
+# different daemons, and that disagreement is not symmetric — a sweep that cannot see a live
+# session concludes the work is dead.
+_TMUX_SOCKET = tmux_substrate.TMUX_SOCKET
 
 
 def _tmux_available() -> bool:
@@ -91,9 +98,13 @@ def _persist_enabled(request: web.Request) -> bool:
 
 
 def _tmux_session_name(session_id: str) -> str:
-    """tmux session name for a PClaw terminal id — tmux forbids '.' in names, so map
-    it to '_' (the dashboard session_id is otherwise a safe slug)."""
-    return "pclaw-" + str(session_id).replace(".", "_")
+    """tmux session name for a PClaw terminal id. One implementation, in `tmux_substrate`.
+
+    Terminal names share a namespace with EI-6's durable worker sessions (same socket, same
+    `pclaw-` prefix), so the mapping is defined once. Two copies would eventually disagree,
+    and a disagreement here means the reaper kills a session the sweep is counting on.
+    """
+    return tmux_substrate.terminal_session_name(session_id)
 
 
 def _is_enabled(request: web.Request) -> bool:

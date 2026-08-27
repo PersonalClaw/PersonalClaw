@@ -175,6 +175,14 @@ jobs:
         # platform/fs/os, none reads process.platform and none launches electron, so an
         # `electron .` smoke test would need a display and deliberately is NOT here.
         run: npm run test:desktop
+      - name: test (mobile, node --test)
+        # mobile/ is the THIRD member of this single root workspace (the Capacitor shell that
+        # wraps the served `#/companion` route — MOBILE-COMPANION `MC-7`), so the `npm ci`
+        # above already installed it. 24 cases over the shell's pure modules: which URL the
+        # WebView is handed, the private-network navigation rail, and safe-area insets actually
+        # landing on an element. The NATIVE builds are deliberately not here — they need Xcode
+        # and the Android SDK, so they are a maintainer step documented in mobile/README.md.
+        run: npm run test:mobile
       - name: build (tsc + vite)
         run: npm run build
       # Render smoke: mount the BUILT bundle in headless Chromium and assert it

@@ -459,7 +459,7 @@ def load_passphrase() -> str:
     time-travel git history — which is why this function takes no argument that could carry
     one in from elsewhere.
     """
-    from personalclaw.config.loader import get_credential
+    from personalclaw.config.credentials import get_credential
 
     return get_credential(PASSPHRASE_CREDENTIAL) or ""
 

@@ -4,7 +4,7 @@
 // API contract in docs.
 
 import { apiVersionHeaders } from './apiVersion'
-import { errText } from './errText'
+import { errEnvelope, errText } from './errText'
 
 // Every request helper below spreads `SK`, so folding the API-version declaration
 // into it is the SPA's ONE declaration site: the number lives only in
@@ -13,21 +13,48 @@ import { errText } from './errText'
 // at a field that quietly changed shape.
 const SK = { 'X-Session-Key': 'dashboard:ui', ...apiVersionHeaders }
 
-/** An Error that carries the HTTP status, so callers can distinguish a genuine 404
- *  (resource gone) from a transient network/5xx blip. `.message` is unchanged (the
- *  backend's error text), so existing `catch(e => e.message)` callers are unaffected;
- *  only callers that branch on status read `.status`. */
+/** An Error that carries the HTTP status AND the backend's typed error code, so callers can
+ *  distinguish a genuine 404 (resource gone) from a transient network/5xx blip, and — within
+ *  one status — which of several deliberate 404s this is. `.message` is unchanged (the
+ *  backend's error text), so existing `catch(e => e.message)` callers are unaffected; only
+ *  callers that branch read `.status`/`.code`.
+ *
+ *  🔑 `.code` is the field the panels needed and did not have. `http_errors.py` mints a
+ *  DISTINCT code per meaning — `/api/evals/ablation` answers 404 as `evals_disabled` (the
+ *  switch is off) or `ablation_absent` (nothing has run) — and the status alone cannot tell
+ *  them apart. Before this, a panel's only handle was the human sentence, which never
+ *  contains the code, so every code branch was dead. `''` when the body carried no code. */
 export class ApiError extends Error {
   status: number
-  constructor(message: string, status: number) {
+  code: string
+  constructor(message: string, status: number, code = '') {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
   }
 }
 
+/** The `ApiError` a failed response should become. A body is a one-shot stream, so the
+ *  sentence and the code have to come out of the SAME read — hence one builder every thrower
+ *  below calls, rather than `errText` here and a second parse somewhere else. */
+async function apiError(r: Response): Promise<ApiError> {
+  const { message, code } = await errEnvelope(r)
+  return new ApiError(message, r.status, code)
+}
+
+/** True when a rejection is this gateway's typed failure carrying exactly `code`.
+ *
+ *  Match on the code, NEVER on `.message`: the message is human copy that gets reworded, the
+ *  code is the registry key `http_errors.py` declares. The four learning panels each hand-rolled
+ *  `error.message.includes(code)`, which is false for every real response, so they shared one
+ *  bug in four places — this is the one predicate they now share instead. */
+export function hasApiCode(e: unknown, code: string): boolean {
+  return e instanceof ApiError && e.code === code
+}
+
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new ApiError(await errText(r), r.status)
+  if (!r.ok) throw await apiError(r)
   return r.json() as Promise<T>
 }
 
@@ -38,7 +65,7 @@ const put = <T>(p: string, body?: unknown) =>
   fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
 const patch = <T>(p: string, body?: unknown) =>
   fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
-const del = (p: string) => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw new ApiError(await errText(r), r.status) })
+const del = (p: string) => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) })
 
 /** App install/update: POST that returns the parsed body on ANY HTTP status.
  *  The scanner verdict + needs_consent are carried in the 400/409 body, so a
@@ -193,6 +220,9 @@ export interface ExternalAccess {
     rate_concurrent?: number
     auto_disable_after_breaches?: number
     capture_retention_days?: number
+    /** Hosts the capture proxy may forward to. EMPTY DENIES EVERYTHING — it is an
+     *  exclusive allow-list, so this is the one cap whose default breaks its surface. */
+    capture_upstream_allowlist?: string[]
   }
   surfaces: ExternalAccessSurface[]
   clients: ExternalAccessClient[]
@@ -2636,6 +2666,10 @@ export interface AuditFilters {
 // checked (the default; `full` walks the whole chain).
 export interface SelVerify {
   ok: boolean; checked: number; valid?: number; tampered?: number; windowed?: boolean
+  /** The entry cap the server applied (`null` for an exhaustive check). `windowed` says a cap was
+   *  SET; this says how big it was — the only way a consumer can tell "stopped at 5000" from
+   *  "5000 is the whole log". */
+  window?: number | null
   error?: string
 }
 // An archived chat session file (read-only browse). `key`=session key, `stamp`=
@@ -3040,6 +3074,32 @@ export interface DeniedCommands {
   user_additions: number
 }
 export interface EgressPolicyConfig { allow_hosts: string[]; deny_hosts: string[]; allow_private: boolean }
+/** Where this instance's credentials live, and whether the move is reversible.
+ *
+ *  `backend` is the RESOLVED outcome; `requested` is the intent. `blocked` is the mismatch
+ *  named once on the server — a box that asked for a keychain it does not have must not
+ *  render as ready to migrate, and deriving that in TypeScript is how the two surfaces
+ *  disagree. **No field here ever carries a secret value** — `pending_keys` is names only. */
+export interface CredentialStoreState {
+  migration: string
+  backend: 'keychain' | 'dotenv'
+  requested: 'keychain' | 'dotenv'
+  blocked: boolean
+  pending_keys: string[]
+  pending: number
+  keychain_keys: number
+  rollback_available: boolean
+  snapshot_name: string
+  verified: boolean
+  verification: { checked: number; missing: string[]; still_in_dotenv: string[] }
+}
+export interface CredentialMoveResult extends CredentialStoreState {
+  ok: boolean
+  reason: string
+  moved: string[]
+  already: string[]
+  failed: string[]
+}
 // User-teachable tool-output projection rule (TokenJuice OP6): output matching
 // match_regex is projected with `strategy` (a builtin content type).
 export type ProjectionStrategy = 'log' | 'diff' | 'json' | 'test' | 'csv' | 'code'
@@ -3216,6 +3276,15 @@ export interface RunnerRow {
   health_stale: boolean | null
   capabilities: RunnerCapabilities | null
   adapter: { npm_pkg: string; pinned: boolean; state: string; verified: boolean; detail: string }
+  // Who is holding this runner right now (EI-6 §3.1(5)), or `null` for free. Already
+  // expiry-filtered server-side: a holder that went quiet past
+  // `agent.runner_idle_release_secs` arrives as `null`, so the UI never has to decide
+  // whether a stale lease still counts.
+  lease: RunnerLease | null
+}
+export interface RunnerLease {
+  holder: string; taken_at: number; expires_at: number; renewals: number
+  age_secs: number; expires_in_secs: number
 }
 // JSON-Schema (Draft-07 + x-meta) describing one provider's user-config fields.
 export interface ProviderSchemaProp {
@@ -3851,6 +3920,15 @@ export interface TileRefreshRow {
   nodes?: TileNodeOutcome[]; version?: number; rendered_bytes?: number; error?: string
 }
 export interface TileRefreshResult { refreshed: boolean; reason: string; ok: boolean; nodes: TileNodeOutcome[]; row: TileRefreshRow }
+// The L2 user/agent surface overlays. DATA, never code: a
+// `body` holding the genui DSL plus optional `define`d composites, both of which are
+// references to already-registered component names. Refusals ride along on the SAME 200
+// as the accepted overlays — a refused overlay the user cannot see is an invisible failure.
+export interface SurfaceOverlayDefine { name: string; description: string; body: string }
+export interface SurfaceOverlayDoc { file: string; surface: string; title: string; body: string; define: SurfaceOverlayDefine[] }
+export interface SurfaceOverlayError { code: string; what: string; why: string; fix: string; suggestions: string[] }
+export interface SurfaceOverlayRefusal { file: string; error: SurfaceOverlayError }
+export interface SurfaceOverlayPayload { overlays: SurfaceOverlayDoc[]; refusals: SurfaceOverlayRefusal[]; dir: string }
 
 export type ArtifactEventType = 'created' | 'edited' | 'iterated' | 'referenced' | 'reverted'
 export interface ArtifactEvent {
@@ -3878,9 +3956,23 @@ export interface Artifact {
 // silently dropped run/style, which is the exact fidelity failure the plan exists to
 // prevent. `loss` is the report the parse produced: what the model could not hold.
 export interface DocumentRun { text: string; bold: boolean; italic: boolean; code: boolean; link: string }
-export interface DocumentParagraphStyle { align: string; space_before_pt: number; space_after_pt: number; line_spacing: number }
+export interface DocumentParagraphStyle {
+  align: string; space_before_pt: number; space_after_pt: number; line_spacing: number
+  // `first_line_indent_pt` is the one field where a NEGATIVE value is meaningful
+  // (a hanging indent), so a control must not clamp it at zero.
+  indent_left_pt: number; indent_right_pt: number; first_line_indent_pt: number
+  keep_with_next: boolean
+}
 export interface DocumentCell { runs: DocumentRun[]; text: string; bold: boolean; align: string }
-export interface DocumentPageSetup { orientation: string; margin_in: number }
+/** Margins are PER EDGE and in points. A single margin could not express the
+ *  asymmetric geometry every real template ships, which made every generated document
+ *  parse as lossy. `size` is a closed set — see `ui/content/documentPage.ts`. */
+export interface DocumentPageSetup {
+  size: string; orientation: string
+  margin_top_pt: number; margin_bottom_pt: number
+  margin_left_pt: number; margin_right_pt: number
+  header_text: string; footer_text: string; page_numbers: boolean
+}
 export interface DocumentBlock {
   kind: 'heading' | 'paragraph' | 'bullets' | 'numbered' | 'table' | 'image' | 'pagebreak' | 'code'
   text: string; level: number; items: string[]; rows: string[][]
@@ -3903,6 +3995,44 @@ export interface DocumentLossReport {
 export interface DocumentModelResponse {
   slug: string; kind: string; version: number; mime: string
   model: DocumentModelJson; loss: DocumentLossReport
+}
+
+// ── the spreadsheet model ────────────────────────────────────────────────────
+// Mirrors `personalclaw/documents/model.py`'s sheet half field for field, and every
+// field is REQUIRED here for `DocumentModelJson`'s reason: this shape is posted BACK and
+// `sheet_from_dict` is strict, so a field the UI forgot to echo is a dropped format.
+//
+// `value` and `formula` are SEPARATE, and that is the fidelity: a cell holds either a
+// literal or an expression, and the file format distinguishes them. A single text field
+// would force a guess, and the guess is wrong in both directions — `"=SUM(A1)"` typed as
+// a label becomes a formula, and a label like `"=TBD"` becomes `#NAME?` in Excel.
+// `value` is the cached result when `formula` is set (usually null: the parse keeps
+// formulas rather than cached values, and says so in the loss report).
+export interface SheetCellJson {
+  value: string | number | boolean | null
+  formula: string
+  number_format: string
+  bold: boolean
+  italic: boolean
+  font_color: string
+  fill: string
+  align: string
+}
+/** One sheet. `column_widths` is dense and index-aligned (0 = the writer's default), and
+ *  `merges` are A1-notation refs because that is what the format and a person both use.
+ *  There is no `rows` here on purpose — the server derives the plain view from the cells,
+ *  so the wire carries one representation of a cell and it cannot go stale. */
+export interface SheetJson {
+  name: string
+  cells: SheetCellJson[][]
+  column_widths: number[]
+  merges: string[]
+  frozen_header: boolean
+}
+export interface SheetModelJson { sheets: SheetJson[] }
+export interface SheetModelResponse {
+  slug: string; kind: string; version: number; mime: string
+  model: SheetModelJson; loss: DocumentLossReport
 }
 
 /** One deployed artifact. `url` is the stable in-gateway path the artifact is
@@ -4372,7 +4502,7 @@ export const api = {
       headers: { ...SK, 'Content-Type': 'application/json' },
       body: JSON.stringify(domains && domains.length ? { domains } : {}),
     }).then(async (r) => {
-      if (!r.ok) throw new ApiError(await errText(r), r.status)
+      if (!r.ok) throw await apiError(r)
       return r.blob()
     }),
   /** `mode` omitted VALIDATES ONLY and applies nothing — the plan-first contract every
@@ -4489,7 +4619,7 @@ export const api = {
       `/api/memory/record-links?ref=${encodeURIComponent(ref)}`),
   memoryGraphExport: () =>
     fetch('/api/memory/graph/export', { headers: { ...SK } }).then(async (r) => {
-      if (!r.ok) throw new ApiError(await errText(r), r.status)
+      if (!r.ok) throw await apiError(r)
       return r.text()
     }),
   // The Slots editor. `memorySlotAppend` RESOLVES on the 409 rather than throwing:
@@ -5035,7 +5165,7 @@ export const api = {
   uLoopAction: (id: string, action: 'start' | 'pause' | 'resume' | 'stop') =>
     fetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ action }) }).then(j<Loop>),
   uLoopNudge: (id: string, text: string, taskId?: string) => post(`/api/loops/${encodeURIComponent(id)}/nudge`, taskId ? { text, task_id: taskId } : { text }),
-  deleteULoop: (id: string) => fetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw new ApiError(await errText(r), r.status) }),
+  deleteULoop: (id: string) => fetch(`/api/loops/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
   uLoopQueue: (id: string, taskIds: string[], action: 'queue' | 'unqueue' = 'queue') =>
     post<{ ok: boolean; queued_task_ids: string[] }>(`/api/loops/${encodeURIComponent(id)}/queue`, { task_ids: taskIds, action }),
   uLoopAutopilot: (id: string, on: boolean) =>
@@ -5240,7 +5370,7 @@ export const api = {
   saveSnippet: (name: string, body: Record<string, unknown>) => put<{ ok: boolean; snippet: PromptSnippet }>(`/api/prompt-snippets/${encodeURIComponent(name)}`, body),
   // carries the backend message (e.g. the 409 "included by N items" usage guard) so
   // the UI can explain why a delete was refused — not the generic del() "delete failed".
-  deleteSnippet: (name: string) => fetch(`/api/prompt-snippets/${encodeURIComponent(name)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw new ApiError(await errText(r), r.status) }),
+  deleteSnippet: (name: string) => fetch(`/api/prompt-snippets/${encodeURIComponent(name)}`, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
   renderSnippet: (name: string, variables: Record<string, unknown>) => post<{ name: string; rendered: string }>(`/api/prompt-snippets/${encodeURIComponent(name)}/render`, { variables }),
   // prompt use-case bindings (which system prompt serves chat/background/code/goal_loop)
   promptBindings: () => get<PromptBindings>('/api/prompts/bindings'),
@@ -5791,7 +5921,7 @@ export const api = {
   // document — parse as text or every multi-line archive throws in r.json().
   sessionArchiveRead: (name: string) =>
     fetch(`/api/session/archive/${encodeURIComponent(name)}`, { headers: { ...SK } })
-      .then(async (r) => { if (!r.ok) throw new ApiError(await errText(r), r.status); return r.text() }),
+      .then(async (r) => { if (!r.ok) throw await apiError(r); return r.text() }),
   // Whole-home export/import live on the durability surface — see `durabilityExport`.
   // One PROJECT as a manifest ZIP — narrower than the whole-home archive above, so a user can hand
   // a colleague a single project without shipping their memory database. Credentials never travel;
@@ -5877,6 +6007,16 @@ export const api = {
   deniedCommands: () => get<DeniedCommands>('/api/security/denied-commands'),
   setUserDeniedCommands: (patterns: string[]) => patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.denied_commands', value: patterns }),
   securityEgress: () => get<EgressPolicyConfig>('/api/security/egress'),
+  // The credential store. Both writes send `confirm: true`: the flag is the
+  // protocol-level record that the user was shown the snapshot step, and the backend
+  // refuses without it independently, so this client cannot skip the consent.
+  credentialStore: () => get<CredentialStoreState>('/api/security/credentials'),
+  migrateCredentialsToKeychain: () =>
+    post<CredentialMoveResult>('/api/security/credentials/migrate', { confirm: true }),
+  rollbackCredentialsToKeychain: () =>
+    post<CredentialMoveResult>('/api/security/credentials/rollback', { confirm: true }),
+  setCredentialKeychain: (on: boolean) =>
+    patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.credential_keychain', value: on }),
   // The desktop shell's pushed capability manifest. In a browser tab this is
   // `{connected: false, capabilities: {}}` — an EMPTY map, not the capability names
   // with a placeholder state, so no surface can render a grant control for something
@@ -5944,7 +6084,7 @@ export const api = {
   fileRoots: () => get<FileListResp>('/api/file-list'),
   fileList: (path: string) => get<FileListResp>(`/api/file-list?path=${encodeURIComponent(path)}`),
   fileRead: (path: string, resolve = false) => fetch(`/api/file-read?path=${encodeURIComponent(path)}${resolve ? '&resolve=1' : ''}`, { headers: { ...SK } }).then(async (r) => {
-    if (!r.ok) throw new ApiError(await errText(r), r.status)  // ApiError carries .status so the viewer can tell a 404 (file gone → close the stale tab) from a transient 5xx (offer retry)
+    if (!r.ok) throw await apiError(r)  // ApiError carries .status so the viewer can tell a 404 (file gone → close the stale tab) from a transient 5xx (offer retry)
     // X-Binary: the server detected non-text content (NUL bytes) — don't treat the
     // empty body as an editable file; the viewer shows a binary placeholder.
     return { content: await r.text(), truncated: r.headers.get('X-Truncated') === 'true', binary: r.headers.get('X-Binary') === 'true' }
@@ -6225,6 +6365,18 @@ export const api = {
       headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },
       body: JSON.stringify({ model }),
     }).then(j<{ slug: string; version: number; mime: string }>),
+  // The SAME two routes for a spreadsheet — one endpoint pair, the kind decides which
+  // model shape crosses it (`documents/model_codec.py`). Separate accessors rather than a
+  // union return, so the caller that knows it opened an .xlsx is not made to narrow a type
+  // it already knows: a `DocumentModelJson | SheetModelJson` would push a `'blocks' in m`
+  // check into every editor, which is a discriminator the URL already carries.
+  artifactSheetModel: (slug: string) => get<SheetModelResponse>(`/api/artifacts/${encodeURIComponent(slug)}/model`),
+  saveArtifactSheetModel: (slug: string, version: number, model: SheetModelJson) =>
+    fetch(`/api/artifacts/${encodeURIComponent(slug)}/model`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'If-Match': String(version), ...SK },
+      body: JSON.stringify({ model }),
+    }).then(j<{ slug: string; version: number; mime: string }>),
 
   // ── local static artifact deploy ──
   // Deploying publishes an html/widget artifact at a stable IN-GATEWAY url
@@ -6250,6 +6402,12 @@ export const api = {
     post<{ view: DashboardView }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles`, body).then((d) => d.view),
   resolveTile: (viewId: string, body: { ref: string; keep: boolean }) =>
     post<{ view: DashboardView }>(`/api/dashboard/views/${encodeURIComponent(viewId)}/tiles/resolve`, body).then((d) => d.view),
+
+  // ── the L2 user/agent surface overlays ──
+  // READ only, on purpose: an overlay is authored with the ordinary file tools under
+  // $PERSONALCLAW_HOME/surfaces/, so an HTTP writer would be a second producer with a
+  // second set of refusals.
+  surfaceOverlays: () => get<SurfaceOverlayPayload>('/api/surfaces/overlays'),
 
   // ── chatless refresh ──
   // `refreshTile` is TTL-GATED server-side unless `force` — a rendered dashboard may poll it
