@@ -18,6 +18,10 @@ satisfied while being quietly false, so each is railed with its own negative:
   a condition that would fire on any input.
 * **the winner is a PROPOSAL**: the only filing path is ``refiner_tools.file_template_diff``,
   and nothing in this module can apply a template.
+* **an unscored candidate reads as "unscored"** rather than as a ``0.0``. Railed on the files a
+  real search wrote, and non-vacuously: the three states a score column can be in are compared
+  as a SET, so two of them collapsing into one rendering is a red even though each state's own
+  test would stay green.
 
 The last group is the call-site half: the bundled template's ``bash`` nodes name subcommands
 and ``PC_OPT_*`` env keys, and those names are asserted against the module's own tables. The
@@ -897,3 +901,202 @@ class TestCli:
         assert code == 1
         payload = json.loads(capsys.readouterr().out)
         assert payload["ok"] is False and "budget_usd" in payload["error"]
+
+
+# ── the unscored candidate is LEGIBLE, not a zero ─────────────────────────────
+
+
+def _violator_only(live: Path, sandbox: Path, meter: SpendMeter):
+    """A search whose ONLY candidate is a scope violation — every row unscored.
+
+    The touch is left in place long enough to be seen and then reverted, so the search reaches
+    its end and its rendered ledger can be inspected (a persisted change correctly raises).
+    """
+
+    def propose(iteration: int, sb: Path, experience: list[dict]):
+        if iteration > 1:
+            return None
+        path = live / "workflow.json"
+        keep = path.read_text(encoding="utf-8")
+        path.write_text("smuggled", encoding="utf-8")
+        path.write_text(keep, encoding="utf-8")
+        return optimize.Candidate(iteration=iteration, fix_fingerprint="fix-1", diff_text="diff 1")
+
+    return _run(live, sandbox, meter, propose=propose, score=lambda *a: (1.0, {}))
+
+
+def _one_unscored_one_scored(live: Path, sandbox: Path, meter: SpendMeter):
+    """A search with one of each, which is the only shape where the two renderings can be
+    compared side by side out of a single file."""
+
+    def propose(iteration: int, sb: Path, experience: list[dict]):
+        if iteration > 2:
+            return None
+        if iteration == 1:
+            path = live / "workflow.json"
+            keep = path.read_text(encoding="utf-8")
+            path.write_text("smuggled", encoding="utf-8")
+            path.write_text(keep, encoding="utf-8")
+        return optimize.Candidate(
+            iteration=iteration,
+            fix_fingerprint=f"fix-{iteration}",
+            diff_text=f"diff {iteration}",
+            ops=[{"op": "update_node", "id": "audit"}],
+        )
+
+    return _run(live, sandbox, meter, propose=propose, score=lambda *a: (0.6, {}))
+
+
+class TestUnscoredIsLegible:
+    """A candidate the scorer never ran on must SAY so, in words, at the read surface.
+
+    ``store.append_result`` requires a complete ``RunPin`` (ES-2) and a candidate scored by a
+    caller-supplied scorer has no honest model fingerprint, so an unscored candidate writes NO
+    ``results.tsv`` row — and must not, because an invented fingerprint would poison every
+    per-fingerprint baseline that reads the same file. What is left is the reader's obligation:
+    a missing row, an empty cell and a ``0.0`` all read as "measured, and it was nothing", so
+    the absence gets its own named state instead.
+    """
+
+    def test_the_ledger_a_human_reads_renders_the_unscored_candidate_unscored(
+        self, live: Path, sandbox: Path, meter: SpendMeter, isolated_home: Path
+    ) -> None:
+        """Asserted on the FILES a real ``run_search`` wrote, not on ``to_dict()`` in isolation.
+
+        The bundled template's report node reads ``.experience/index.json`` and the search's own
+        output by path, so a rendering only reachable by calling the method by hand would be an
+        inert control dressed as a fix.
+        """
+        outcome = _one_unscored_one_scored(live, sandbox, meter)
+
+        index = json.loads(
+            (sandbox / optimize.EXPERIENCE_DIR / "index.json").read_text(encoding="utf-8")
+        )
+        rows = {row["iteration"]: row for row in index}
+        assert rows[1]["outcome"] == "scope_violation"
+        assert rows[1]["score"] is None, "a 0.0 here reads as a measurement that came up empty"
+        assert rows[1]["score_state"] == optimize.SCORE_UNSCORED
+
+        search = json.loads((sandbox / "search.json").read_text(encoding="utf-8"))
+        assert (search["scored_candidates"], search["unscored_candidates"]) == (1, 1)
+        assert [row["score_state"] for row in search["rows"]] == [
+            optimize.SCORE_UNSCORED,
+            optimize.SCORE_SCORED,
+        ]
+
+        # The absence the rendering stands in for is real: no `results.tsv` row exists for that
+        # candidate. If a fingerprint were ever invented to force one, the reader above would be
+        # describing a state the ledger no longer has.
+        from personalclaw.evals import store
+
+        assert [r for r in store.read_results() if r.get("kind") == optimize.SEARCH_KIND] == []
+        assert outcome.results_state == optimize.SCORE_SCORED
+
+    def test_a_SCORED_candidate_is_never_labelled_unscored(
+        self, live: Path, sandbox: Path, meter: SpendMeter
+    ) -> None:
+        """The other side of the discrimination. Every outcome the dual gate itself reaches was
+        scored by definition, and a label that is always on is the same as no label at all."""
+        propose, score = _proposer([0.9, 0.2, 0.95])
+        outcome = _run(live, sandbox, meter, propose=propose, score=score)
+        assert [r.outcome for r in outcome.rows] == [
+            "admitted",
+            "below_suite_threshold",
+            "admitted",
+        ]
+        rendered = [row.to_dict() for row in outcome.rows]
+        assert {row["score_state"] for row in rendered} == {optimize.SCORE_SCORED}
+        assert [row["score"] for row in rendered] == [0.9, 0.2, 0.95]
+
+    def test_a_search_with_NO_candidates_renders_its_own_third_state(
+        self, live: Path, sandbox: Path, meter: SpendMeter
+    ) -> None:
+        """A search that never got a candidate must not borrow the ``unscored`` label: it did not
+        fail to measure anything, it had nothing to measure, and only one of those is a proposer
+        problem."""
+        outcome = _run(live, sandbox, meter, propose=lambda *a: None, score=lambda *a: (0.0, {}))
+        assert outcome.rows == []
+        search = json.loads((sandbox / "search.json").read_text(encoding="utf-8"))
+        assert search["candidates"] == 0
+        assert search["results_state"] == optimize.SCORE_NO_CANDIDATES
+        assert search["results_state"] not in {optimize.SCORE_SCORED, optimize.SCORE_UNSCORED}
+
+    def test_the_three_states_are_THREE_different_renderings(
+        self, tmp_path: Path, live: Path, meter: SpendMeter
+    ) -> None:
+        """The anti-vacuity leg: it fails if two different inputs render the same thing.
+
+        Against a search with no candidates at all, every "unscored" assertion above would pass
+        for the wrong reason, so all three surfaces are built from three real searches and their
+        states compared as a SET — two collapsing into one is a red here even though each of the
+        single-state tests would stay green.
+        """
+        propose, score = _proposer([0.9])
+        boxes = {name: tmp_path / f"sb-{name}" for name in ("scored", "unscored", "none")}
+        for box in boxes.values():
+            box.mkdir()
+
+        states = {
+            "scored": _run(
+                live, boxes["scored"], meter, propose=propose, score=score
+            ).results_state,
+            "unscored": _violator_only(live, boxes["unscored"], meter).results_state,
+            "none": _run(
+                live, boxes["none"], meter, propose=lambda *a: None, score=lambda *a: (0.0, {})
+            ).results_state,
+        }
+        assert len(set(states.values())) == 3, states
+        assert states == {
+            "scored": optimize.SCORE_SCORED,
+            "unscored": optimize.SCORE_UNSCORED,
+            "none": optimize.SCORE_NO_CANDIDATES,
+        }
+
+    def test_every_candidate_outcome_is_classified_scored_or_unscored(self) -> None:
+        """A sixth outcome added without being classified defaults to "scored" and publishes its
+        placeholder 0.0 as a measurement. Both sides are asserted non-empty: an
+        ``UNSCORED_OUTCOMES`` that swallowed the whole enum would make ``scored`` unreachable and
+        every assertion in this class vacuous."""
+        values = {o.value for o in optimize.CandidateOutcome}
+        assert optimize.UNSCORED_OUTCOMES < values, optimize.UNSCORED_OUTCOMES - values
+        assert values - optimize.UNSCORED_OUTCOMES
+        # The membership itself, stated once: moving a gate-decided outcome in here would hide a
+        # real measurement, which is the mirror of the defect this whole class is about.
+        assert optimize.UNSCORED_OUTCOMES == {"scope_violation", "no_change"}
+
+    def test_an_unscored_row_stays_unscored_through_the_index_ROUND_TRIP(
+        self, live: Path, sandbox: Path, isolated_home: Path
+    ) -> None:
+        """``_cmd_adjudicate`` rewrites the whole index from the rows it read back, and it reads
+        ``score`` through ``_as_float`` — which turns the rendered ``None`` into ``0.0``. Deriving
+        the state from ``outcome`` survives that; a flag stored beside the score would not, and
+        iteration 2 would quietly resurrect the zero iteration 1 removed."""
+        payload = {
+            "subject": "code-project",
+            "live_target": str(live),
+            "sandbox": str(sandbox),
+            "stops": {"budget_usd": "2.0"},
+        }
+        optimize._cmd_preflight(dict(payload))
+
+        path = live / "workflow.json"
+        keep = path.read_text(encoding="utf-8")
+        path.write_text("smuggled", encoding="utf-8")
+        first = optimize._cmd_adjudicate(
+            {**payload, "suite_threshold": "0.5", "score": "1.0", "fix_fingerprint": "fix-1"}
+        )
+        assert first["outcome"] == "scope_violation"
+        assert first["score"] is None and first["score_state"] == optimize.SCORE_UNSCORED
+
+        path.write_text(keep, encoding="utf-8")
+        second = optimize._cmd_adjudicate(
+            {**payload, "suite_threshold": "0.5", "score": "0.9", "fix_fingerprint": "fix-2"}
+        )
+        assert second["score"] == 0.9 and second["score_state"] == optimize.SCORE_SCORED
+
+        index = json.loads(
+            (sandbox / optimize.EXPERIENCE_DIR / "index.json").read_text(encoding="utf-8")
+        )
+        rows = {row["iteration"]: row for row in index}
+        assert rows[1]["score"] is None and rows[1]["score_state"] == optimize.SCORE_UNSCORED
+        assert rows[2]["score_state"] == optimize.SCORE_SCORED

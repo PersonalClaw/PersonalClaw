@@ -1502,3 +1502,44 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   row — and it is the kind of failure that surfaces months later as an inexplicable regression.
   REMAINING WORK, ordinary: make that absence *legible* at the read surface, so a human sees
   "unscored" rather than a missing or zero result. `ES-11` stays `todo` on that one reader.
+
+## Execution log — ES-11 (the unscored candidate is now LEGIBLE) — §8 **COMPLETE**, ready to flip
+
+- [2026-08-26][ES-11] **DONE — the remaining reader landed; every `done_when` clause now holds.**
+  Scope was exactly the remainder the ruling above named: neither open question was re-litigated, no
+  second overlay arm was built, and `append_result` still refuses an incomplete `RunPin`. What was
+  wrong was the *rendering*: a `scope_violation` row carried `score: 0.0` and a `no_change` row
+  carried the inherited incumbent, so both read as "measured, and it was nothing" in the two files a
+  person (and the report node's prompt) actually opens — `.experience/index.json` and `search.json`.
+  Three states now have three names, in one vocabulary reused from `retrieval_bench`
+  (`SCORE_NO_CANDIDATES == REASON_NO_CANDIDATES == "no_candidates"`, so there is no second spelling
+  of "there was nothing to measure"): `LedgerRow.to_dict` emits `score: None` plus
+  `score_state: scored|unscored`, `SearchOutcome.to_dict` emits `results_state` plus
+  `candidates`/`scored_candidates`/`unscored_candidates`, and `_cmd_adjudicate`'s per-iteration
+  verdict carries the same two keys. `UNSCORED_OUTCOMES` is the closed classifier and is derived
+  from `outcome` on purpose — `_cmd_adjudicate` rewrites the whole index from rows it reads back
+  through `_as_float`, which turns a rendered `None` into `0.0`, so a flag stored beside the score
+  would have resurrected the zero on iteration 2. That round trip is its own test.
+
+- [2026-08-26][ES-11] **The anti-vacuity leg is the one that matters here: with no candidates at
+  all, every "unscored" assertion passes for the wrong reason.** So the three states are compared
+  as a SET across three real searches (`test_the_three_states_are_THREE_different_renderings`) —
+  two collapsing into one rendering is a red even when each state's own test stays green. Assertions
+  are on the FILES a real `run_search` wrote, not on `to_dict()` called by hand, because a rendering
+  nobody's read path reaches is the inert-control shape this program keeps re-finding. Falsified
+  four ways, each mutation `git grep`-confirmed and restored from a file copy: unscored → the scored
+  label reds 2 tests (the ledger reader + the round trip); unscored `score` → the `0.0` reds the
+  same 2 with *"a 0.0 here reads as a measurement that came up empty"*; no-candidates → the
+  `unscored` state reds a DIFFERENT 2 (the third-state test + the set-of-three); and the unscored
+  surface → `scored` reds the set-of-three alone. Four distinct reds, so the legs discriminate
+  rather than all keying on one line. `tests/test_evals_optimize.py` 47 → 53 tests, all green;
+  `make lint` clean; `src/personalclaw/config/loader.py` untouched at 5900 lines.
+
+- [2026-08-26][ES-11] **Deliberately NOT changed, recorded so it is not re-found as a gap.**
+  `SearchOutcome.winner_score` still renders `0.0` when nothing was admitted. That zero is already
+  named by `admitted: false` + `winner_fingerprint: ""`, it is not one of the three candidate-level
+  states the ruling is about, and the bundled template's report node declares `winner_score` as a
+  required `number` in its own output schema — nulling it would be a template-contract change for
+  no legibility gain. `ES.md`'s file-level narrative ("entirely unstarted; all 11 atoms are todo")
+  is also stale against the row marks; it is the free-text summary `test_roadmap_atomic_status_sync`
+  deliberately does not rail, and correcting it is a tracking pass, not this atom.
