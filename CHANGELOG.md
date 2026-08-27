@@ -626,6 +626,29 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   **"Dismiss all" now means all.** It skipped anything you had opened, because opening a row marks it
   as read — so browsing your queue quietly put those rows beyond the reach of the only bulk control.
 
+- **Four places where sending the wrong kind of value did something worse than refuse it.** Each one
+  already had the right answer written a few lines away, in a sibling that handles the same field
+  correctly — so each of these now does what its neighbour does.
+  **Editing an agent could silently switch off its tools.** Sending a single tool name where a list
+  belongs *deleted the whole field* and reported success — on the built-in agent, whose file is the
+  live configuration PersonalClaw reads at startup. Its two sibling routes have always ignored a
+  wrong-typed list instead of acting on it. Sending an empty list still clears it, which is how you
+  say "none" on purpose.
+  **A malformed message crashed the chat request instead of refusing it.** Sending a number or a list
+  where the message text belongs returned a bare server error with nothing to read. It's a clear
+  refusal now, naming the field.
+  **Reordering a chat folder crashed on a value the identical tag route quietly ignored.** Two
+  controls for the same thing, disagreeing about the same input.
+  **And one out-of-range number could make your whole artifacts library unreadable.** A value too
+  large to be a number serialises as something that isn't valid data, and the browser rejects the
+  entire response rather than the one row — so every artifact vanished from the page until the
+  offending record was found. Out-of-range values are recorded as text now, so they stay visible
+  without breaking anything around them.
+  **Two more things while in there:** deleting an agent through this route now consults the real list
+  of protected built-in agents rather than three hard-coded filenames (it covered one of five), and
+  edits to the live agent configuration are written atomically and recorded in the audit log — this
+  was the one path that did neither.
+
 - **Restarting PersonalClaw quietly moved a chat onto a different agent.** If you had pointed a chat
   at an external coding CLI, or put it in Ask or Plan mode, a restart threw both away and the next
   message you sent ran on the built-in agent instead — with a different set of tools and a different

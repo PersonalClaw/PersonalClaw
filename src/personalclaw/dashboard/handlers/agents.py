@@ -20,6 +20,7 @@ from personalclaw.config.loader import (
 from personalclaw.config.schema import SCHEMA_REGISTRY, config_entry_to_dict
 from personalclaw.dashboard.chat_utils import _SLASH_COMMAND_HINTS
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 
 logger = logging.getLogger(__name__)
 
@@ -533,23 +534,53 @@ async def api_agent_detail(request: web.Request) -> web.Response:
             patch_body = await request.json()
         except (json.JSONDecodeError, ValueError):
             return web.json_response({"error": "invalid JSON"}, status=400)
+        # 🔴 …and validate the SHAPE, which seven sibling handlers in this file already do
+        # (`:223`, `:278`, `:363`, `:418`, `:741`, `:812`, `:974`). This one did not, so a scalar
+        # body answered a bare 500 — and `null` was worse than that: the PATCH branch is gated on
+        # `patch_body is not None`, so `null` skipped the mutation entirely and the caller got a
+        # 200 with a GET response body for a mutating request (#427).
+        if not isinstance(patch_body, dict):
+            return json_error("invalid_body", message="JSON body must be an object", status=400)
 
     for f in AGENTS_DIR.glob("*.json"):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
             if data.get("name") == name or f.stem == name:
                 if request.method == "DELETE":
-                    if f.name in (
-                        "personalclaw.json",
-                        "personalclaw-lite.json",
-                        "PersonalClawAICapabilities-personalclaw-lite.json",
-                    ):
-                        return web.json_response(
-                            {"error": "cannot delete personalclaw"}, status=400
+                    # 🔴 Guard on the RESERVED NAME, not on the filename. This listed three
+                    # filenames against a five-name reserved set (`RESERVED_AGENT_NAMES`), covering
+                    # only `personalclaw-lite` — and it cannot be authoritative in principle either,
+                    # because the match two lines up tests the file's INTERNAL `name` field as
+                    # well as its stem, so a filename allowlist cannot be authoritative
+                    # regardless. The sibling `DELETE /api/agents/{name}`
+                    # already does this correctly (`is_reserved_agent`), and answering 403 rather
+                    # than 400 matches it: the request is well-formed and refused, not malformed.
+                    #
+                    # Latent today only because `AGENTS_DIR` holds one file, so the four unguarded
+                    # reserved names 404 — the ABSENCE of a file is what protects them, not the
+                    # guard. Any flow that materializes a reserved agent as a per-file JSON (a
+                    # marketplace activate, an app, a restored snapshot) makes it deletable here
+                    # while the UI's own route refuses. This removes the class, not the instance.
+                    from personalclaw.agents.defaults import is_reserved_agent
+
+                    if is_reserved_agent(name) or f.name == "personalclaw.json":
+                        # STRUCTURED, and it SHRINKS the flat population rather than merely not
+                        # growing it: this refusal replaced a flat one, so converting it is free.
+                        return json_error(
+                            "forbidden",
+                            message=(f"'{name}' is a built-in system agent and cannot be deleted"),
+                            status=403,
                         )
                     f.unlink()
                     state: DashboardState = request.app["state"]
                     state.push_refresh("agents")
+                    _sel().log_api_access(
+                        caller=request.get("user", "dashboard"),
+                        operation="agent.detail_delete",
+                        outcome="success",
+                        source="dashboard",
+                        resources=name,
+                    )
                     return web.json_response({"ok": True})
                 if request.method == "PATCH" and patch_body is not None:
                     async with _get_config_lock():
@@ -566,11 +597,37 @@ async def api_agent_detail(request: web.Request) -> web.Response:
                                 val = patch_body[key]
                                 if isinstance(val, list):
                                     data[key] = val
-                                else:
-                                    data.pop(key, None)
-                        f.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+                                # 🔴 A wrong TYPE is not a delete instruction. `else: data.pop(key)`
+                                # treated one as the other, so `{"tools": "@personalclaw-core"}`
+                                # DROPPED the field and answered `{"ok": true}` — disarming the live
+                                # agent's whole MCP tool surface, on the one agent that always
+                                # exists
+                                # as a per-file JSON (`personalclaw.json`, the runtime config the
+                                # ACP
+                                # agent reads). Measured: `tools` went from two servers to absent
+                                # (#427).
+                                #
+                                # Both siblings already ignore a non-list rather than acting on it —
+                                # the create path coerces (`:780`) and `PUT /api/agents/{name}`
+                                # guards with `isinstance` (`:869`). Ignoring is what makes this a
+                                # defect rather than a convention. Clearing a list stays
+                                # expressible,
+                                # by sending `[]`.
+                        # Atomic, via the SAME writer `agent.py` and `apps/mcp_bridge.py` use for
+                        # this exact file. A bare `write_text` truncates the live runtime config if
+                        # the process dies mid-write, and this is the file the agent reads at boot.
+                        from personalclaw.agent import _atomic_json_write
+
+                        _atomic_json_write(f, data)
                     state = request.app["state"]
                     state.push_refresh("agents")
+                    _sel().log_api_access(
+                        caller=request.get("user", "dashboard"),
+                        operation="agent.detail_update",
+                        outcome="success",
+                        source="dashboard",
+                        resources=f"{name}:{','.join(sorted(patch_body))}",
+                    )
                     return web.json_response({"ok": True})
                 return web.json_response(data)
         except (json.JSONDecodeError, OSError):
