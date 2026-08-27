@@ -1467,6 +1467,23 @@ class HistoryConsolidator:
         except Exception:
             logger.debug("Attribution grading failed", exc_info=True)
 
+        # LEARN-R4 / §2.5: "Events prune at 90d on the curator tick." Here rather than on its own
+        # timer because the surfacing log is exactly the kind of high-volume, low-value,
+        # independently-prunable data the curator tick already exists to age — a second cadence
+        # would be a daemon to own for one DELETE.
+        try:
+            from personalclaw.learning.surfacing_events import SurfacingEventStore
+
+            _events = SurfacingEventStore()
+            try:
+                _pruned = _events.prune()
+            finally:
+                _events.close()
+            if _pruned:
+                logger.debug("pruned %d surfacing events past retention", _pruned)
+        except Exception:
+            logger.debug("Surfacing-event prune failed", exc_info=True)
+
         store = UsageStore()
         try:
             records = [rec for kind in ("skill", "template") for rec in store.list_kind(kind)]

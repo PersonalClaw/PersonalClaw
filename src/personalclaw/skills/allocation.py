@@ -296,12 +296,18 @@ def allocate_skills(
     *,
     query: str = "",
     budget_tokens: int | None = None,
+    session: str = "",
 ) -> SkillAllocation:
     """Fit this turn's skill bodies through the one allocator. Never raises.
 
     ``requests`` is in caller priority order (forced skills first); ``score`` is what the
     candidate competes on, so a confirmed skill outranks a passively surfaced one at equal
     query overlap rather than by virtue of being appended first.
+
+    ``session`` is recorded on the surfacing events this turn produces (LEARN-R4 / §2.5). It
+    is an argument rather than something the recorder looks up because only the caller knows
+    which session a turn belongs to, and an event with no session cannot be de-duplicated
+    against the other nine retrievals of the same attention.
     """
     budget = AGGREGATE_CAP_TOKENS if budget_tokens is None else max(0, budget_tokens)
     result = SkillAllocation(budget_tokens=budget)
@@ -418,7 +424,60 @@ def allocate_skills(
     # Observable per turn, in all three states, whether or not anything went wrong: a
     # report that only appears on a problem cannot answer "did my skill load?".
     logger.info("skill allocation: %s", result.summary)
+    _record_surfacing_events(facts, result, query=query, session=session)
     return result
+
+
+def _record_surfacing_events(
+    facts: dict[str, tuple[SkillRequest, str, int, Candidate]],
+    result: SkillAllocation,
+    *,
+    query: str,
+    session: str,
+) -> None:
+    """Log this turn's offers to LEARN-R4's `surfacing_events`. Never raises.
+
+    **Here because this is the only point that holds both halves of an event.** §2.5 requires
+    `used` to be derived MECHANICALLY, and `SkillAllocation.loaded` is exactly such a
+    derivation — content that reached the prompt, with REFUSED deliberately excluded because
+    "crediting a use to a skill the agent never saw would train the ranker on the allocator's
+    failures". A separate marking pass would have to re-derive that judgement from a stored id
+    and would eventually disagree with the allocator that made it.
+
+    Every candidate in `facts` gets a row, not just the included ones: precision is
+    used ÷ SURFACED, so dropping the offers that lost would make the denominator the numerator
+    and report every arm at 1.0.
+
+    Best-effort by the same contract as the caller ("Never raises"). A measurement write that
+    cost a user their skills would be strictly worse than an unmeasured turn.
+    """
+    if not facts:
+        return
+    try:
+        from personalclaw.learning.surfacing_events import SurfacingEvent, SurfacingEventStore
+
+        loaded = set(result.loaded)
+        events = [
+            SurfacingEvent(
+                kind=cand.kind,
+                entity=name,
+                arm=cand.arm,
+                confidence=cand.score,
+                used=name in loaded,
+                query=query,
+                session=session,
+            )
+            for name, (_req, _tier, _cap, cand) in facts.items()
+        ]
+        store = SurfacingEventStore()
+        try:
+            store.record(events)
+        finally:
+            # Closed explicitly: the store holds a sqlite handle, and a leaked one per turn
+            # would exhaust file descriptors on a long session.
+            store.close()
+    except Exception:
+        logger.debug("surfacing event recording skipped (error)", exc_info=True)
 
 
 def _why_not_full(body_tokens: int, cap: int, tier: str, budget: int) -> str:

@@ -1982,3 +1982,78 @@ injection.
 
 **Gate.** `make lint` clean (black 2007 files, isort, flake8, mypy 992 sources). Refiner suites
 120 passed. `make test` below. No `web/` change; `dag.json` untouched.
+
+- **2026-08-26 — DONE — §2.5 / LEARN-R4: the `surfacing_events` TABLE, its writer and its 90d
+  prune.** Branch `feature-learnr4-surfacing-events`. Closes the one item S71 explicitly deferred
+  ("**NOT DONE (by scope):** the `surfacing_events` TABLE and its 90d prune on the curator tick"),
+  and with it the named blocker on **EVALUATION-SUBSTRATE `ES-3`**, which was `BLOCKED (E6,
+  external)` because §5.2's source (a) needed a table that "appears in the entire tree exactly ONCE
+  and only as prose — no table, no schema, no reader, no writer".
+
+  **The gap was real and measured before designing.** `git grep surfacing_events` over `src/`
+  returned two hits, both prose: `dashboard/handlers/learning.py` explaining why it could not read
+  the table, and `evals/retrieval_bench.py` explaining that it shipped a substitute instead. Three
+  consumers named a table nobody had created.
+
+  New `learning/surfacing_events.py`: `SurfacingEvent` + `SurfacingEventStore` in `learning.db`,
+  declaring its own table lazily with `CREATE TABLE IF NOT EXISTS` over `StagingStore._cursor()` —
+  the house pattern `usage.UsageStore` already uses on the same connection. No migration machinery
+  was written; the idempotent declaration is the whole story, per CONTRIBUTING §"the lifecycle
+  mental model".
+
+  **Every column is justified by a live reader, and the shape is deliberately narrow.** §2.5 named
+  four fields ("entity kind, matching arm, confidence, session/turn"); `measure.per_arm_precision`
+  pins `kind`/`arm`/`used` as the exact keys it destructures; `retrieval_bench.mine_knowledge_qrels`
+  needs `query` + `entity` (its `intent_outcomes` substitute reads exactly that pair); the prune
+  needs `created_ts`. Nothing else was added — a wide speculative table would have been worse than a
+  narrow correct one, and `ES-3` can now switch its source over without a schema change.
+
+  **The writer is reached from production, which was the point.** `allocate_skills` records one
+  event per candidate it was OFFERED (not per candidate included — precision is used ÷ *surfaced*,
+  and dropping the losers would make the denominator the numerator), and `used` comes from
+  `SkillAllocation.loaded`, an existing MECHANICAL derivation: content that really reached the
+  prompt, REFUSED excluded. That seam is the only point holding both halves at once, so no second
+  marking pass can disagree with the allocator that made the judgement. `allocate_skills` gained
+  one `session` kwarg, passed from `context.py`'s `build_message` call site. The 90d prune runs on
+  `history._run_learning_curator`, the tick §2.5 assigns it.
+
+  **🔴 DISCOVERY — `usage.UsageStore.record` has NO production caller.** The handler docstring this
+  work replaced claimed the surfaced/used counters "have a live writer per session flush"; the only
+  importers of `learning.usage` are two READERS (`handlers/learning.py`, `history.py`) and the
+  package re-export. So `_precision_from_usage` returned `(None, 0, 0)` on every box and the health
+  panel's surfacing row rendered an empty state — the exact failure its docstring was written to
+  avoid, one store over. It is now `_precision_from_events`, reading the table that is actually
+  written, windowed on the panel's own `days`. The per-arm breakdown is deliberately NOT published
+  as a new response field: no surface reads it yet, and an unread field would red `inert-surface`.
+  `UsageStore`'s missing writer is left as a separate finding — it is not this atom's scope.
+
+  **DEVIATION — no config knob.** §2.5 states one retention number, so `DEFAULT_RETENTION_DAYS = 90`
+  is a module constant. `config/loader.py` sits at 5900 lines against a 6000 ceiling with a `>= 100`
+  headroom assertion, so a knob would also have forced an unrelated extraction; it is untouched at
+  5900 and `test_structural_baseline.py` is green.
+
+  **NOT DONE (by scope, and named so it is not mistaken for finished):** only the SKILLS arm is
+  instrumented. §2.5's other three mechanical-used clauses (template run started, run outcome
+  success/failure, lesson cited by `after_turn_review`) and the ambient render's lesson/memory/
+  persona candidates write no events yet — `Allocation.included` carries `(kind, key, tier)` and no
+  arm, so wiring those paths is per-path work in the modules that own them, exactly as S71 said of
+  `Candidate.arm`. `ES-3` needs the knowledge arm, which this covers via `query`/`entity`/`used`.
+
+  **Falsification** (two; each restore `cp` from a pre-mutation file copy, never `git checkout`,
+  each verified byte-identical and `git status` clean). (1) Deleted the `_record_surfacing_events`
+  call from `allocate_skills` — the definition stayed, so `git grep` went 2 hits → 1 — and the
+  anchor test reds on its own message, *"a real surfacing wrote no row — the writer is not reached
+  from production"*, plus two siblings: the pre-existing writerless state IS detectable. (2) Renamed
+  the table in the `CREATE TABLE IF NOT EXISTS` declaration only — a DIFFERENT red, and an error
+  rather than an assertion: `sqlite3.OperationalError: no such table: main.surfacing_events`.
+
+  **Gate.** `make lint` clean (black 2147 files, isort, flake8, mypy 1060 sources). Targeted 209
+  passed / 209 collected (new suite + staging/usage/measure + skill allocation + config round-trip +
+  structural baseline + promotion wire); handler/surfacing sweep 242 passed / 242 collected; wider
+  subsystem sweep 364 passed / 364 collected. `python scripts/gate_report.py`: all 6 gates PASS,
+  `inert-surface` included — the new writer and reader are both reached. Real-home rail confirmed
+  unchanged on every run; the new suite's `home` fixture patches both `config_dir` bindings plus
+  `staging._default_home` and ASSERTS the redirect before creating the database. No `web/` change.
+  `dag.json` untouched — `ES-3`'s `blocked_reason` is the owner's to update, and `LEARN-R4` has no
+  atom row of its own to flip (the nearest, `WF2LEA-2`, is already ✅ and its `done_when` covers the
+  per-arm report's pure functions, which is precisely what S71 shipped without the table).
