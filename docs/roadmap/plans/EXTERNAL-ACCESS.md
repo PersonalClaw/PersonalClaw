@@ -535,7 +535,7 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
 
 ---
 
-## Execution log — `EA-5` (§7 capture proxy + §8 telemetry import) — **PARTIAL, atom stays `todo`**
+## Execution log — `EA-5` (§7 capture proxy + §8 telemetry import) — **COMPLETE in code; atom flips with PR #2121**
 
 - [2026-08-24][EA-5] **Shipped in PR #1988** as three fenced halves plus one integration fix:
   `inbound/capture_store.py` (682) — session assembly, 0600 records + `.content.jsonl` sidecar,
@@ -616,6 +616,91 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   into one session per client, because `conversation_fingerprint({})` is the digest of the empty
   string — correct as "unknown conversation opening" is one bucket, but worth knowing before someone
   reads a per-turn session count.
+- [2026-08-26][EA-5] ✅ **DONE — the two clauses the last session recorded as DISCOVERY.** Both were
+  the same defect in different disguises: a control that exists, is tested, and nothing reaches.
+  **(1) The `capture` staging source now exists.** `Cadence` gained its FOURTH member, `CAPTURE`
+  — §7.2 and the plan's own line 42 ("the capture proxy is a **fourth capture cadence**") /
+  line 169 ("a new `capture` staging source beside per-turn/session-end/run-end") name the enum's
+  three members exactly, so this is a member and not a `kind` on an existing cadence. The enum's own
+  docstring said it stays closed "so a typo can't silently create a fourth cadence that no policy
+  covers"; that sentence now reads *fifth*. `_worthwhile` needed no branch — capture falls through to
+  the RUN_END arm and the comment there now states why (the observed turn already happened elsewhere,
+  so indexing it costs nothing to threshold).
+  **One adapter, both call sites.** `capture_store._stage_capture(record, sidecar, …)` is called from
+  `record_turn` AND from `stage_records`, i.e. the proxy path and the §8 import path stage through the
+  identical function — the same argument `stage_records` already makes against "a second, laxer path
+  for imported content". The staging test for the import path is what proves it, and mutating the
+  adapter reds both.
+  🔒 **The row carries the fence; it does not re-derive it.** `content` is the sidecar's
+  ALREADY-fenced `prompt`/`response` verbatim. Deliberately no second `redact()` and no second
+  `fence_untrusted()`: this module's measured note is that `redact_credentials` reports `found` only
+  on FIRST contact and matches the `key=` prefix *inside* the credential span, so a chokepoint over
+  persisted text reads clean AND destroys field names. Because the fenced spans survive into
+  `learning.db`, `learning/hygiene.py`'s existing rule (fenced content is invisible to direct capture
+  cadences, proposal path only) governs these rows with **zero new policy** — the whole point of
+  fencing at ingestion. A test asserts the payload sits INSIDE the fence, not merely that a marker is
+  present, plus `content.count(UNTRUSTED_CLOSE) == 2` to pin "one fence, applied once".
+  **Ordered after the durable write**, and gated on `learning.enabled`/`staging_enabled` like every
+  other staging writer — with a test proving learning-off still writes the capture FILE. That is the
+  clause's "records durably even if flywheel steps 1-3 absent": the files are the record, the row is
+  an index into them. A staging store that raises cannot cost the turn (tested).
+  **Scope held:** the adapter and the row, nothing else. No mining, no scoring, no promotion — the
+  clause's own framing is "the hookup is one adapter", and it is one function.
+  **(2) `prune()` is reachable.** Its docstring has said "Called from the curator tick" since #1988
+  while `git grep prune -- capture_store.py` found only the definition, so the shipped and
+  round-tripped `capture.retention_days` governed a function no schedule reached.
+  `_consolidate_locked` now calls `capture_store.prune()` in the maintenance block, immediately after
+  the volunteer-log prune (both are retention sweeps) and BEFORE `_run_learning_curator` so a later
+  replay-mining pass sees an already-aged capture dir. Deliberately NOT inside
+  `_run_learning_curator`: that helper returns early on `learning.enabled`/`curator_enabled`, and
+  retention is a data-hygiene obligation the operator configured — gating it there would make "I
+  turned learning off" silently mean "keep every captured transcript forever".
+  **The tests assert the CALL SITE, because calling `prune()` directly proves nothing about the
+  defect.** Three drive the REAL `_consolidate_locked` (a stub memory service returning 0 from every
+  other maintenance item, so the block runs without this suite owning its neighbours) and assert on
+  files disappearing: a 40-day file goes, a 1-day file stays, `retention_days=0` keeps an ancient
+  file, and — the accepting case through the SAME path — `retention_days=1` removes a 2-day file.
+  That last one is load-bearing: "0 kept the file" is equally consistent with a pruner that never
+  runs, which is exactly the state being closed. Each carries a vacuity floor
+  (`mark_consolidated.assert_called_once_with("k", 1)`) proving the tick reached the block at all.
+  A fourth test is an AST assertion on the wire, the idiom
+  `test_learning_promotion_wire.test_the_consolidation_tick_calls_the_gate` already established —
+  parsed, not grepped, because a text scan would count the sentence in a comment and a control
+  described-but-not-called is this entry's whole subject.
+  **CITATION CORRECTED (DISCOVERY):** the briefing cited `history.py:1347` for the volunteer prune —
+  correct at the branch point (`c9fff2f3`), and `capture_store.py:731` for `prune` likewise. No drift.
+  `StagingEntry` is at `learning/staging.py:76` as cited. Nothing to correct; recorded because it was
+  checked.
+  **NO config change.** `capture.retention_days` and `upstream_allowlist` were already fully wired,
+  so `config/loader.py` is untouched at **5900 lines** before and after — headroom against the
+  absolute 6000-line ceiling stays exactly 100, and `test_structural_baseline` is green.
+  **Falsifications (3, each restored from a `cp` copy at the literal path, never `git checkout`).**
+  (i) `capture_store.prune()` → `0` in the tick: **3 failed** — the AST wire assertion, the 40-day
+  prune, and the `retention_days=1` accepting case. `retention_days=0` correctly stayed GREEN, which
+  is the measured justification for the accepting-case test. (ii) stripping the fence markers off the
+  staged content: a DIFFERENT red, **3 failed** — the fence test, the "same fenced text" test, and
+  the *import-path* fence test, while every retention test stayed green (the two halves are
+  independently detectable, and the import red proves both call sites share the adapter).
+  (iii) staging under `Cadence.PER_TURN` instead of `CAPTURE`: **7 failed** — proof the cadence
+  assertions are not vacuous.
+  **Gate** (`PERSONALCLAW_HOME` unset, from the worktree root): `make lint` clean (black 2146 files,
+  isort, flake8, mypy **1059** source files); **349 passed** across the six `test_ea5_capture_*`
+  suites + `test_learning_gate` + both staging suites + `test_learning_promotion_wire` +
+  `test_memory_formation` + `test_memory_push_reflex` + `test_structural_baseline` +
+  `test_config_roundtrip`; **1928 passed** over the shared tick's neighbours (all
+  `test_learning_*`, all `test_memory_*`, `test_history`, `test_history_inert_partition`,
+  `test_external_access_seam`, `test_inbound_a2a`, `test_inbound_mcp`) — a maintenance block is
+  exactly where an unrelated regression hides; `scripts/gate_report.py` **6/6 PASS**. `web/`
+  untouched. Probe sweep 0 introduced; `git status` clean.
+- [2026-08-26][EA-5] 🟡 **ATOM READY TO FLIP, NOT FLIPPED.** With this commit, every `done_when`
+  clause holds on `main` **except two that PR #2121 carries** — `POST /capture/import` and the
+  *operator-visible* half of the upstream host allowlist (the Settings control; the allowlist itself
+  and its `guard.evaluate` pre-flight have shipped since #1988). The atom's row is `🟡`, which
+  `test_roadmap_atomic_status_sync` sanctions while `dag.json` says `todo`; a ✅ from this session
+  would hand over a red gate. **Also closed since the 2026-08-24 entry:** the `upstream` ProviderEntry
+  clause that entry recorded as UNMET — `InboundClient.upstream` exists (`inbound/clients.py:85`),
+  `capture_proxy._client_upstream_name` reads it, and `tests/test_ea5_capture_client_upstream.py`
+  covers it. No third unmet clause was found.
 
 ## Execution log — `EA-9` (§9.5 Headless CLI mode: `personalclaw run`)
 

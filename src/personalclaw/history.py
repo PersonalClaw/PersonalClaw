@@ -1349,6 +1349,25 @@ class HistoryConsolidator:
                         logger.info("Pruned %d volunteer event(s)", pruned_vol)
                 except Exception:
                     logger.debug("Volunteer-log prune failed for %s", key, exc_info=True)
+                # External-agent capture retention (EXTERNAL-ACCESS §7.2): `capture/*.jsonl`
+                # age out at `external_access.capture.retention_days` on THIS tick — the
+                # "curator tick" `capture_store.prune`'s own docstring already named, while
+                # nothing called it, so a shipped and round-tripped retention control
+                # governed a function no schedule reached. Beside the volunteer prune
+                # because both are retention sweeps, and BEFORE the curator below so a
+                # later replay-mining pass sees an already-aged capture dir. Deliberately
+                # NOT inside `_run_learning_curator`: retention is a data-hygiene
+                # obligation the operator configured, not a learning feature, and gating it
+                # on `learning.enabled` would make "I turned learning off" silently mean
+                # "keep every captured transcript forever".
+                try:
+                    from personalclaw.inbound import capture_store
+
+                    pruned_captures = capture_store.prune()
+                    if pruned_captures:
+                        logger.info("Pruned %d expired capture file(s)", pruned_captures)
+                except Exception:
+                    logger.debug("Capture prune failed for %s", key, exc_info=True)
                 # Community topology (MEMORY-GRAPH-AND-VAULT §2.4): deterministic seeded
                 # Louvain over mem_links, writing `community` into mem_link_stats. HERE
                 # rather than in a loop of its own, and after the write paths above, so it
