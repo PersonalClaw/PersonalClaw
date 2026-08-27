@@ -222,6 +222,14 @@ async def api_security_audit_verify(request: web.Request) -> web.Response:
             "valid": valid,
             "tampered": checked - valid,
             "windowed": not full,
+            # WHICH limit was applied, so a consumer can tell "I stopped at 5000" from
+            # "5000 is all there is". `windowed` alone cannot: it says a cap was set, not
+            # that the cap bit. The dashboard rendered the count as if it were the whole
+            # chain because that distinction had nowhere to come from, and a tamper-evidence
+            # surface is the last place to leave it implicit. Deliberately the WINDOW SIZE
+            # rather than a boolean: a total would cost the O(n) walk this window exists to
+            # avoid (the log had reached >1M entries and hung the audit UI).
+            "window": None if full else _VERIFY_WINDOW,
         }
     )
 

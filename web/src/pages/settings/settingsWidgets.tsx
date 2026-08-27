@@ -3,6 +3,7 @@ import {
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
   MonitorSmartphone, Plug2, FileType2,
 } from 'lucide-react'
+import { verifiedScope } from './AuditPanel'
 import type { LucideIcon } from 'lucide-react'
 import { notify } from '../../app/appSdk'
 import {
@@ -586,7 +587,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={ScrollText} title="Audit log" query={query} onClick={() => go('audit')} loading={v === undefined} stale={vStale}>
           {v && (v.ok
-            ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.checked === 'number' && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{v.checked} events verified</div>}</>
+            ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.checked === 'number' && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{verifiedScope(v)} verified</div>}</>
             : <><StatusPill label="Chain broken" tone="warn" />{(v.error || v.tampered) && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{v.error || `${v.tampered} altered`}</div>}</>)}
         </BentoCard>
       )
