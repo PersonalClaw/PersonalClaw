@@ -246,6 +246,9 @@ class _InvokeRequest:
 
     def __init__(self, body: dict) -> None:
         self._body = body
+        # The handler reads X-Session-Key for the SEL row on every outcome, including
+        # the refusals, so the stand-in needs a mapping rather than nothing.
+        self.headers: dict[str, str] = {}
 
     async def json(self):
         return self._body
@@ -346,3 +349,188 @@ async def test_toggle_accepts_a_real_bool_and_known_tool(monkeypatch):
     assert resp.status == 200
     payload = json.loads(resp.body.decode())
     assert payload["ok"] is True
+
+
+# ── #437: POST /api/tools/invoke honors the Tools page toggle ─────────────────
+#
+# The toggle wrote `tool_prefs.json` and only the NATIVE RUNTIME read it, dropping
+# disabled tools at schema assembly. This route resolved a provider and called it, so a
+# tool the UI showed as "disabled" still executed — including through
+# `schedule_script.py`, which posts here specifically so a cron script "gets the same
+# MCP+native tool surface the agent has". The realistic failure is a scheduled run using
+# a tool the user believes they turned off.
+#
+# The tests below are written against the ROUTE, not against `tool_prefs`: the preference
+# store was always correct, and asserting it again would have passed before the fix.
+
+
+class _RecordingProvider:
+    """A provider that records whether it was reached. Reaching it IS the bug."""
+
+    def __init__(self, tool_name: str, provider_tag: str = "personalclaw-artifacts") -> None:
+        from personalclaw.tool_providers.base import RiskLevel, ToolDefinition
+
+        self.name = provider_tag
+        self.invoked: list[tuple[str, dict]] = []
+        self._defs = [
+            ToolDefinition(
+                name=tool_name,
+                description="d",
+                provider=provider_tag,
+                risk_level=RiskLevel.DESTRUCTIVE,
+            )
+        ]
+
+    async def list_tools(self):
+        return self._defs
+
+    async def invoke(self, name, arguments):
+        from personalclaw.tool_providers.base import ToolResult
+
+        self.invoked.append((name, dict(arguments or {})))
+        return ToolResult(success=True, output="[]")
+
+
+def _install_provider(monkeypatch, provider):
+    monkeypatch.setattr(
+        "personalclaw.tool_providers.registry.get_provider",
+        lambda name: provider if name == provider.name else None,
+    )
+    monkeypatch.setattr("personalclaw.tool_providers.registry.list_providers", lambda: [provider])
+
+
+def _disable(monkeypatch, *keys: str):
+    """Point the preference store at an explicit disabled set (no real home touched)."""
+    monkeypatch.setattr("personalclaw.tool_providers.tool_prefs.load_disabled", lambda: set(keys))
+    monkeypatch.setattr(
+        "personalclaw.tool_providers.tool_prefs.load_disabled_providers", lambda: set()
+    )
+
+
+@pytest.mark.asyncio
+async def test_invoke_refuses_a_disabled_tool(monkeypatch):
+    """The reported defect, at the route: a 403 instead of a run."""
+    import json
+
+    prov = _RecordingProvider("artifact_list")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch, "personalclaw-artifacts:artifact_list")
+
+    resp = await tools_mod.api_tool_invoke(_InvokeRequest({"tool": "artifact_list"}))
+    assert resp.status == 403
+    payload = json.loads(resp.body.decode())
+    assert payload["error"]["code"] == "tool_disabled"
+    assert prov.invoked == [], "the provider was reached — the toggle still gates nothing"
+
+
+@pytest.mark.asyncio
+async def test_invoke_refuses_a_disabled_destructive_tool(monkeypatch):
+    """#437 measured this with a destructive tool reaching the provider's own argument
+    validation, i.e. execution proceeded and only the argument name stopped it."""
+    prov = _RecordingProvider("memory_forget", provider_tag="personalclaw-core")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch, "personalclaw-core:memory_forget")
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "memory_forget", "arguments": {"query": "x"}})
+    )
+    assert resp.status == 403
+    assert prov.invoked == []
+
+
+@pytest.mark.asyncio
+async def test_an_enabled_tool_still_runs(monkeypatch):
+    """Vacuity floor: a gate that refused everything would pass both tests above, and
+    would break every cron script."""
+    import json
+
+    prov = _RecordingProvider("artifact_list")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch)  # nothing disabled
+
+    resp = await tools_mod.api_tool_invoke(_InvokeRequest({"tool": "artifact_list"}))
+    assert resp.status == 200
+    assert json.loads(resp.body.decode())["ok"] is True
+    assert prov.invoked == [("artifact_list", {})]
+
+
+@pytest.mark.asyncio
+async def test_a_core_locked_tool_is_never_refused(monkeypatch):
+    """`bash` and the other primitives must stay reachable even with a stray disable row.
+
+    Not a special case here: the exemption is `tool_prefs.is_disabled`'s own, which is why
+    the gate calls that instead of testing the disabled set itself. A cron script locked
+    out of `bash` by a bad row would be a worse outage than the bug being fixed.
+    """
+    prov = _RecordingProvider("bash", provider_tag="personalclaw-filesystem")
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch, "personalclaw-filesystem:bash")
+
+    resp = await tools_mod.api_tool_invoke(_InvokeRequest({"tool": "bash"}))
+    assert resp.status == 200
+    assert prov.invoked == [("bash", {})]
+
+
+@pytest.mark.asyncio
+async def test_the_gate_keys_on_the_tools_own_provider_tag(monkeypatch):
+    """The disable row is written by the UI against the tool's `provider` TAG, which can
+    differ from the provider instance name. Keying on the instance name would report the
+    tool as enabled for exactly the tools a disable row exists for.
+    """
+    prov = _RecordingProvider("artifact_list", provider_tag="personalclaw-artifacts")
+    prov.name = "artifacts-instance-42"  # instance name ≠ the tools' provider tag
+    _install_provider(monkeypatch, prov)
+    _disable(monkeypatch, "personalclaw-artifacts:artifact_list")
+
+    resp = await tools_mod.api_tool_invoke(
+        _InvokeRequest({"tool": "artifact_list", "provider": "artifacts-instance-42"})
+    )
+    assert resp.status == 403
+    assert prov.invoked == []
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_provider_refuses_its_whole_toolset(monkeypatch):
+    """The other half of the toggle: `POST /api/tools/toggle-provider` writes
+    `disabledProviders`, and the runtime skips that provider entirely."""
+    prov = _RecordingProvider("artifact_list")
+    _install_provider(monkeypatch, prov)
+    monkeypatch.setattr("personalclaw.tool_providers.tool_prefs.load_disabled", lambda: set())
+    monkeypatch.setattr(
+        "personalclaw.tool_providers.tool_prefs.load_disabled_providers",
+        lambda: {"personalclaw-artifacts"},
+    )
+
+    resp = await tools_mod.api_tool_invoke(_InvokeRequest({"tool": "artifact_list"}))
+    assert resp.status == 403
+    assert prov.invoked == []
+
+
+def test_only_two_execution_paths_exist_and_both_are_gated():
+    """The census. This fix is complete only if no THIRD path calls a provider ungated.
+
+    `runtime.py` dispatches through an index built with the disabled filter already
+    applied at assembly, and `handlers/tools.py` now checks before dispatch. A new
+    `.invoke(` on a tool provider needs its own gate, and this reds until it has one.
+    """
+    import pathlib
+    import re
+
+    src = pathlib.Path(__file__).resolve().parent.parent / "src" / "personalclaw"
+    # File → how many dispatch sites it holds. Files and counts, deliberately NOT line
+    # numbers: an edit anywhere above a call site would move its line and red this test
+    # for a reason that has nothing to do with gating. A SECOND `.invoke(` appearing in an
+    # already-listed file is still caught, because the count changes.
+    hits: dict[str, int] = {}
+    for py in sorted(src.rglob("*.py")):
+        for line in py.read_text(encoding="utf-8").splitlines():
+            if re.search(r"\b(prov|provider)\.invoke\(", line):
+                rel = py.relative_to(src).as_posix()
+                hits[rel] = hits.get(rel, 0) + 1
+    assert hits == {
+        "agents/native/runtime.py": 1,
+        "dashboard/handlers/tools.py": 1,
+    }, (
+        "the set of tool-execution call sites changed — a new one needs the same "
+        f"tool_prefs gate before it dispatches. Found: {hits}"
+    )

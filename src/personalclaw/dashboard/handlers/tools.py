@@ -6,6 +6,7 @@ import logging
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
@@ -236,6 +237,11 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     the agent has, without importing the in-process registry. Body:
     ``{"tool": str, "arguments": dict, "provider"?: str}``. Returns
     ``{ok, output, error}``.
+
+    "The same surface the agent has" includes the user's tool preferences: a tool disabled
+    on the Tools page is refused here with ``403 tool_disabled``, exactly as the runtime
+    drops it at schema assembly. Core-locked tools and the locked platform provider are
+    exempt (``tool_prefs.is_disabled`` handles that), so the primitives stay reachable.
     """
     from personalclaw.tool_providers.registry import get_provider, list_providers
 
@@ -305,24 +311,61 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     if provider is None:
         return web.json_response({"ok": False, "error": f"tool not found: {tool_name}"}, status=404)
 
+    # Resolve the tool's own definition once: both the user-disabled gate below and the
+    # declared risk after it need it, and a second `list_tools()` per request is a
+    # per-provider round trip (an MCP server, for the bridged providers).
+    _tool_def = None
+    try:
+        _tool_def = next((t for t in await provider.list_tools() if t.name == tool_name), None)
+    except Exception:  # noqa: BLE001 — a broken provider must not turn into a 500 here
+        _tool_def = None
+
+    # The user-disabled gate. This route executes a tool, so the Tools page toggle has to
+    # reach it: the toggle presents itself as "this tool is off", and it was honored only
+    # by the native runtime, which drops disabled tools at schema assembly. Everything
+    # arriving here bypassed it — including `schedule_script.py`, which posts to this route
+    # specifically so a cron script "gets the same MCP+native tool surface the agent has".
+    # That surface is the agent's surface AFTER the user's preferences, so applying them is
+    # what makes the two actually the same (#437).
+    #
+    # Same guards as the runtime, via the same `tool_prefs` helpers rather than a second
+    # reading of the file: `is_disabled` exempts core-locked tools and the locked platform
+    # provider on its own, so `bash`/`read_file`/the filesystem provider stay reachable and
+    # a cron script cannot be locked out of the primitives.
+    #
+    # The provider KEY is the tool's own `provider` tag with the instance name as the
+    # fallback — the same resolution `GET /api/tools` and the runtime use. Keying on the
+    # instance name alone would miss a tool whose tag differs, i.e. it would report the
+    # tool as enabled on exactly the tools the UI wrote a disable row for.
+    from personalclaw.tool_providers import tool_prefs
+
+    _pkey = (getattr(_tool_def, "provider", "") or "") or provider.name
+    if tool_prefs.is_disabled(_pkey, tool_name):
+        try:
+            _sel().log_tool_invocation(
+                session_key=request.headers.get("X-Session-Key", "") or "internal",
+                agent="",
+                source="tool_invoke",
+                tool_name=tool_name,
+                tool_kind=provider.name,
+                outcome="denied",
+                error="tool is disabled by the user",
+            )
+        except Exception:  # noqa: BLE001 — an unaudited refusal is still a refusal
+            pass
+        return json_error(
+            "tool_disabled",
+            message=(f"{tool_name!r} is disabled — re-enable it on the Tools page to invoke it"),
+            status=403,
+        )
+
     # Effective risk of this direct invocation, for the SEL — so this path (cron
     # scripts + the inspector "Try it") is as auditable as the chat gate ("what
     # destructive tool ran"). Resolve the declared risk from the provider's tool
     # def, then downgrade per-invocation (a read-only bash call is safe).
     from personalclaw.task_modes import resolve_effective_risk
 
-    _declared = ""
-    try:
-        _declared = next(
-            (
-                getattr(t, "risk_level", "")
-                for t in await provider.list_tools()
-                if t.name == tool_name
-            ),
-            "",
-        )
-    except Exception:
-        _declared = ""
+    _declared = getattr(_tool_def, "risk_level", "") if _tool_def is not None else ""
     _risk = resolve_effective_risk(_declared, tool_name, "", arguments)
 
     caller = request.headers.get("X-Session-Key", "") or "internal"
@@ -361,9 +404,14 @@ async def api_tools_toggle(request: web.Request) -> web.Response:
     """POST /api/tools/toggle — enable/disable a native-provider tool.
 
     Body ``{"provider": str, "name": str, "enabled": bool}``. Writes
-    ``~/.personalclaw/tool_prefs.json``; the native runtime drops disabled tools at
-    assembly. Core-locked tools are rejected (4xx). MCP tools use
-    ``/api/mcp/toggle-tool`` (which writes mcp.json) — the page routes by provider.
+    ``~/.personalclaw/tool_prefs.json``, which BOTH execution paths honor: the native
+    runtime drops disabled tools at schema assembly (the model cannot see or call them),
+    and ``POST /api/tools/invoke`` refuses them with ``403 tool_disabled``. This docstring
+    used to promise only the first, accurately — and the toggle's UI presented itself as
+    the tool's on/off switch while a second path executed it anyway (#437).
+
+    Core-locked tools are rejected (4xx). MCP tools use ``/api/mcp/toggle-tool`` (which
+    writes mcp.json) — the page routes by provider.
     """
     from personalclaw.tool_providers import tool_prefs
     from personalclaw.tool_providers.registry import list_all_tools

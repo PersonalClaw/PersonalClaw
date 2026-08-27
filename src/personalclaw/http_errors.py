@@ -356,6 +356,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # sentence, and both are safe to retry (the fingerprint ledger records each write as it
     # lands). A `conflict` or `rejected` ITEM is not this — those are 200 rows of the report.
     "onboarding_import_failed": "Scanning for or importing from another agent tool failed.",
+    # ── direct tool invocation (handlers/tools.py) ──
+    # 403 and not 404: the tool exists and this caller may reach the route. The user
+    # turned it off, which is a policy answer, and a 404 would read as "no such tool" to a
+    # cron script whose next move is to reinstall something.
+    "tool_disabled": "The tool is disabled on the Tools page and will not be executed.",
 }
 
 
