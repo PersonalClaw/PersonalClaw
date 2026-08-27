@@ -112,6 +112,37 @@ class CandidateOutcome(str, Enum):
     NOT_BEST_EVER = "not_best_ever"
 
 
+#: The outcomes a candidate reaches WITHOUT the scorer ever running on it: a scope violation is
+#: dead regardless of score (§8.1) and an empty candidate inherits the incumbent rather than
+#: being re-evaluated. Closed, and every :class:`CandidateOutcome` member sits on exactly one
+#: side of it (railed in ``tests/test_evals_optimize.py``) — a sixth outcome added without being
+#: classified would default to "scored" and publish its ``0.0`` as a measurement.
+UNSCORED_OUTCOMES: frozenset[str] = frozenset(
+    {CandidateOutcome.SCOPE_VIOLATION.value, CandidateOutcome.NO_CHANGE.value}
+)
+
+#: The three states a score column can be in, and the whole reason they are NAMED rather than
+#: left to a number.
+#:
+#: ``results.tsv`` is pinned (ES-2): :func:`personalclaw.evals.store.append_result` refuses a row
+#: without a complete :class:`~personalclaw.evals.pinning.RunPin`, and a candidate that a
+#: caller-supplied scorer never ran has no honest model fingerprint to pin. So an unscored
+#: candidate writes NO results row — and inventing a fingerprint to force one would poison every
+#: per-fingerprint baseline that reads the same file, which surfaces months later as an
+#: inexplicable regression. The absence is therefore RENDERED, not filled: a reader sees
+#: :data:`SCORE_UNSCORED` where a number would be, exactly as an unknown evidence tier renders
+#: ``ungraded`` rather than falling back to a grade.
+#:
+#: Three values because a COUNT cannot tell them apart. "the scorer ran", "the scorer never ran"
+#: and "there was nothing to run it on" all leave the same empty score, and only the first of
+#: them means the candidate was measured and came up at nothing.
+SCORE_SCORED = "scored"
+SCORE_UNSCORED = "unscored"
+#: The same string ``retrieval_bench.REASON_NO_CANDIDATES`` uses for the same state, on purpose:
+#: two spellings of "there was nothing to measure" would be two vocabularies.
+SCORE_NO_CANDIDATES = "no_candidates"
+
+
 class LiveMutationError(RuntimeError):
     """The live artifact changed while the search was running.
 
@@ -492,11 +523,31 @@ class LedgerRow:
     scope: dict[str, Any] = field(default_factory=dict)
     note: str = ""
 
+    @property
+    def scored(self) -> bool:
+        """Whether the scorer actually ran on this candidate.
+
+        Derived from ``outcome`` rather than carried as its own flag because ``outcome`` is the
+        field that survives the experience index's write → read → rewrite round trip:
+        :func:`_cmd_adjudicate` reads prior rows back through :func:`_as_float`, which turns the
+        rendered ``None`` into ``0.0`` — the very zero this property exists to keep out of the
+        record. A flag stored beside the score would be lost on the same trip.
+        """
+        return self.outcome not in UNSCORED_OUTCOMES
+
     def to_dict(self) -> dict[str, Any]:
+        """The row as a human (and the report node's prompt) reads it out of ``index.json``.
+
+        ``score`` is ``None`` and never ``0.0`` for an unscored candidate, and ``score_state``
+        says which of the three states that is in words — a bare ``null`` is an empty cell, and
+        an empty cell reads the same as "measured, and it was nothing".
+        """
+        scored = self.scored
         return {
             "iteration": self.iteration,
             "outcome": self.outcome,
-            "score": self.score,
+            "score": self.score if scored else None,
+            "score_state": SCORE_SCORED if scored else SCORE_UNSCORED,
             "fix_fingerprint": self.fix_fingerprint,
             "best_so_far": self.best_so_far,
             "scope": dict(self.scope),
@@ -526,6 +577,26 @@ class SearchOutcome:
     def admitted(self) -> bool:
         return self.winner is not None
 
+    @property
+    def scored_candidates(self) -> int:
+        """How many candidates the scorer actually ran on — the denominator under any headline
+        number here, in the same shape ``retrieval_bench``'s ``scored_queries`` reports it."""
+        return sum(1 for row in self.rows if row.scored)
+
+    @property
+    def results_state(self) -> str:
+        """Which of the three states this search's results are in, as one of the
+        :data:`SCORE_SCORED` / :data:`SCORE_UNSCORED` / :data:`SCORE_NO_CANDIDATES` names.
+
+        ``no_candidates`` is its own value rather than a zero count because "the search measured
+        nothing" and "the search had nothing to measure" are the same empty ledger to a count and
+        entirely different situations to a person: the first spent its budget and learned nothing
+        measurable, the second never got a candidate to spend it on.
+        """
+        if not self.rows:
+            return SCORE_NO_CANDIDATES
+        return SCORE_SCORED if self.scored_candidates else SCORE_UNSCORED
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "halt_reason": self.halt_reason.value,
@@ -534,6 +605,10 @@ class SearchOutcome:
             "admitted": self.admitted,
             "winner_score": self.winner_score,
             "winner_fingerprint": self.winner.fix_fingerprint if self.winner else "",
+            "results_state": self.results_state,
+            "candidates": len(self.rows),
+            "scored_candidates": self.scored_candidates,
+            "unscored_candidates": len(self.rows) - self.scored_candidates,
             "rows": [r.to_dict() for r in self.rows],
             "gate": dict(self.gate),
             "needs_from_human": self.needs_from_human,
@@ -1066,9 +1141,16 @@ def _cmd_adjudicate(payload: dict[str, Any]) -> dict[str, Any]:
             iteration=iteration,
         )
 
+    # The same rendering the ledger row carries, on the per-iteration verdict too: this dict is
+    # what the template's report node reads as `{{nodes.search.output}}`, so echoing the payload's
+    # `score` back beside a `scope_violation` would hand a person a number for a candidate that
+    # was never scored.
+    scored = outcome.value not in UNSCORED_OUTCOMES
     return {
         "ok": True,
         "outcome": outcome.value,
+        "score": score_value if scored else None,
+        "score_state": SCORE_SCORED if scored else SCORE_UNSCORED,
         "admitted": outcome is CandidateOutcome.ADMITTED,
         "clears_suite_threshold": gate.clears_suite_threshold(score_value),
         "beats_best_ever": gate.beats_best_ever(score_value),
