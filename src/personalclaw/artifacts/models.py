@@ -8,6 +8,7 @@ so every provider and the REST layer share one definition.
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from dataclasses import asdict, dataclass, field
@@ -333,7 +334,23 @@ def clean_event_metadata(metadata: Any) -> dict[str, Any]:
             break
         if not isinstance(k, str):
             continue
-        if isinstance(v, bool) or isinstance(v, (int, float)):
+        if isinstance(v, bool) or (
+            isinstance(v, (int, float))
+            # 🔴 …but a NON-FINITE float is not a bounded scalar, and letting one through poisoned
+            # the whole library. `json.dumps` writes `inf`/`nan` as the bare tokens `Infinity` and
+            # `NaN`, which are not JSON — Python's own `json.loads` accepts them, and a browser's
+            # `JSON.parse` rejects the ENTIRE response. So one `POST /events` with
+            # `widget_index: 1e309` made every artifact unreadable in the UI, not just that one
+            # (#424). Measured: `{"widget_index": Infinity}` on the wire.
+            #
+            # It falls through to the `str()` branch rather than being dropped: this is
+            # metadata, the value is decorative, and "inf" records that something out-of-range
+            # arrived instead of hiding it. Guarding HERE rather than at the one reported
+            # route is the point:
+            # this function is the declared bounder for every event-metadata write, and its own
+            # docstring already promises bounded scalars.
+            and not (isinstance(v, float) and not math.isfinite(v))
+        ):
             out[k] = v
         else:
             out[k] = str(v)[:MAX_EVENT_METADATA_VALUE_LEN]
