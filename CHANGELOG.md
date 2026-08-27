@@ -1594,6 +1594,26 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Three more ways a path could leave the folders PersonalClaw is allowed to touch.** All three are
+  the same mistake as the record-id one above, reached differently, and all three were reproduced
+  before being fixed.
+  **"Reveal in Finder" checked less than every other file operation.** It was the one file endpoint
+  that never asked whether a path was inside a folder the dashboard surfaces, so `/etc/hosts` and
+  another install's home both worked — and it is the endpoint that hands the path to your operating
+  system to open with whatever it thinks the file is. The checks it *did* have could not catch that: a
+  path needs no `..` and no credential-looking name to simply be somewhere else.
+  **A one-line file could redirect the git panel at any repository on the machine.** Git lets a `.git`
+  entry be a file that points somewhere else — that is how worktrees work — and PersonalClaw was
+  checking where the pointer *sat* rather than where it *pointed*. A pointer written inside a folder
+  it was allowed to browse therefore aimed the whole git panel anywhere, and a whole-commit diff would
+  hand back `.env` contents that reading the file directly refuses. The check ran on every request; it
+  was measuring the wrong path. Worktrees of repositories you can already browse are unaffected.
+  **Installing a skill checked every file in it and not the folder they go into.** A skill whose name
+  was a path escaped the skills folder entirely. A safe file path underneath an unsafe folder is not a
+  safe path. The same hole existed in the quarantine folder used to scan a skill *before* installing
+  it — so it escaped ahead of the security scan, which could not object to a write it had not been
+  asked about yet. That one was found while fixing the reported one.
+
 - **A record id can no longer address a file outside its own store.** Projects, task lists, tasks,
   task comments, learning proposals, skill proposals and attribution records were each stored as a
   file named by putting an id into a directory — and in Python that expression is not a join: hand it

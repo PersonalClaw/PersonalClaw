@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw.record_ids import record_path
+
 
 def _path_home_pclaw():
     """Resolve PersonalClaw home dir, honoring PERSONALCLAW_HOME."""
@@ -424,7 +426,16 @@ def install_scanned(
     staged_root = Path(tempfile.mkdtemp(prefix="pclaw-skill-quarantine-"))
     try:
         # Stage the fetched payload to quarantine (path-safe) BEFORE any scan/commit.
-        staged_skill = staged_root / (detail.name or skill_id)
+        #
+        # 🔴 The QUARANTINE directory's name is marketplace-supplied too, and it had the same hole
+        # `install_skill_files` had (#739): `detail.name` comes from `fetch`, so a name of
+        # `"../../evil"` escaped the temp dir that exists to contain it — and it escaped HERE, which
+        # is before `scan_dir` runs, so the supply-chain gate could not refuse a write it had not
+        # yet been asked about. `_stage_files` validates every file path and then `mkdir`s whatever
+        # this expression produced.
+        staged_skill = record_path(
+            staged_root, detail.name or skill_id, suffix="", kind="skill name"
+        )
         _stage_files(detail.files, staged_skill)
 
         report = scan_dir(staged_skill, tier)
@@ -555,8 +566,17 @@ def install_skill_files(
 
     Validates SKILL.md content and rejects any path containing ``..``.
     Returns the path to the written SKILL.md.
+
+    🔴 THE DIRECTORY NAME IS VALIDATED TOO. Every *file* path here was checked for ``..`` and for a
+    leading ``/`` — and ``skill_name``, which names the directory all of them are written into, was
+    not. So a marketplace-supplied name of ``"../../evil"`` escaped the skills tree entirely, and
+    `mkdir(parents=True)` created wherever it landed (#739). Checking the leaves while the branch is
+    unchecked is the whole bug: a safe relative path under an unsafe root is an unsafe path.
+
+    Latent rather than exploited — only trusted marketplaces are registered by default — which is
+    also why it is worth closing now rather than after that changes.
     """
-    skill_dir = target_base / skill_name
+    skill_dir = record_path(target_base, skill_name, suffix="", kind="skill name")
 
     # Supply-chain gate (S3): scan ALL incoming content with the shared scanner
     # BEFORE writing anything to disk. A skill carries executable instructions +
