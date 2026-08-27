@@ -9,6 +9,7 @@ import os
 import pytest
 
 from personalclaw.loop import manager, store
+from personalclaw.loop import watchdog as W
 from personalclaw.loop.loop import Loop, LoopStatus
 
 
@@ -460,13 +461,25 @@ class TestTaskWorker:
         assert not os.path.isdir(wt)  # worktree removed
 
 
-class TestReap:
+class TestBootSweep:
+    """The loop half of `PP-16`'s ONE boot-adoption path.
+
+    These live in the *manager* test file although the entry point is now
+    ``LoopWatchdog._boot_sweep``: what they exercise is the re-arm itself
+    (``manager.start`` provisioning a real session + nudge, ``plan_walkthrough.advance_plan``
+    re-kicking a stranded planner), and this file's ``_FakeState`` is the one that implements
+    ``get_or_create_session`` and its autouse fixture is the one that isolates the Tasks
+    hierarchy ``manager.start`` writes into. Only the caller moved — from
+    ``manager.reap_orphaned_loops``, awaited from a gateway startup hook, to the first poll of
+    the watchdog that owns the noun.
+    """
+
     def test_reaps_running_orphan_with_no_live_session(self):
         g = _goal()
         store.update_status(g.id, LoopStatus.RUNNING)
         state, svc = _FakeState(), _FakeSvc()  # no live session
-        n = _run(manager.reap_orphaned_loops(state, svc))
-        assert n == 1
+        decided = _run(W.LoopWatchdog(state, svc)._boot_sweep())
+        assert decided == {g.id}
         assert svc.get_by_session(manager.session_key(g.id)) is not None  # re-armed
 
     def test_skips_paused_and_live(self):
@@ -474,7 +487,20 @@ class TestReap:
         store.update_status(paused.id, LoopStatus.RUNNING)
         store.update_status(paused.id, LoopStatus.PAUSED)
         state, svc = _FakeState(), _FakeSvc()
-        assert _run(manager.reap_orphaned_loops(state, svc)) == 0
+        assert _run(W.LoopWatchdog(state, svc)._boot_sweep()) == set()
+
+    def test_a_running_loop_with_an_idle_session_is_live_not_a_survivor(self):
+        """The liveness predicate is session ABSENCE, not ``sess.running``. Between cycles a
+        live loop's session exists with ``running`` False (autonudge fires a turn every
+        ``idle_secs``), and re-arming that is a silent restart of healthy work — plus
+        ``manager.start`` re-stamps the RUNNING row, which resets the trust window."""
+        g = _goal()
+        store.update_status(g.id, LoopStatus.RUNNING)
+        state, svc = _FakeState(), _FakeSvc()
+        state._sessions[manager.session_key(g.id)] = _FakeSession(manager.session_key(g.id))
+        assert state._sessions[manager.session_key(g.id)].running is False  # idle, not dead
+        assert _run(W.LoopWatchdog(state, svc)._boot_sweep()) == set()
+        assert svc.get_by_session(manager.session_key(g.id)) is None  # NOT re-armed
 
     def test_rekicks_planning_orphan(self, monkeypatch):
         g = _goal()
@@ -486,8 +512,8 @@ class TestReap:
             return "gated"
 
         monkeypatch.setattr("personalclaw.loop.plan_walkthrough.advance_plan", _fake_advance)
-        n = _run(manager.reap_orphaned_loops(_FakeState(), _FakeSvc()))
-        assert n == 1 and kicked == [g.id]
+        decided = _run(W.LoopWatchdog(_FakeState(), _FakeSvc())._boot_sweep())
+        assert decided == {g.id} and kicked == [g.id]
 
     def test_brownfield_orphan_with_missing_workspace_pauses_not_rearms(self):
         # workspace_dir set to a non-existent path → launch_blocker fires → NEEDS_INPUT,
@@ -504,6 +530,6 @@ class TestReap:
         )
         store.update_status(c.id, LoopStatus.RUNNING)
         state, svc = _FakeState(), _FakeSvc()
-        _run(manager.reap_orphaned_loops(state, svc))
+        _run(W.LoopWatchdog(state, svc)._boot_sweep())
         assert store.get(c.id).status == LoopStatus.NEEDS_INPUT.value
         assert svc.get_by_session(manager.session_key(c.id)) is None  # NOT re-armed

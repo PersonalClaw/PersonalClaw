@@ -80,9 +80,13 @@ The supervisor does not take the worker's word for it:
 - The **SDLC gate** reads the deliverable *content* (not just existence), and
   the **goal judge** re-runs commands / reads artifacts — ground truth over
   worker self-report.
-- **`loop/watchdog.py`** detects stalls; `loop/manager.py::reap_orphaned_loops`
-  re-arms RUNNING loops after a gateway restart so an interrupted loop
-  resumes rather than zombifying.
+- **`loop/watchdog.py`** detects stalls, and its own first poll re-arms loops left
+  RUNNING/PLANNING by a gateway restart so an interrupted loop resumes rather than
+  zombifying (`LoopWatchdog._boot_sweep`). That sweep runs through
+  `concurrency.boot_sweep`, the ONE boot-adoption path it shares with
+  `workflows/watchdog.py` (`PP-16`). There is deliberately **no gateway boot hook**: a
+  hook cannot be retried when it raises, and awaiting it delays startup by however long
+  N stranded planner passes take.
 
 ## Planning walkthrough & grill
 

@@ -2457,16 +2457,14 @@ class GatewayOrchestrator:
         if self.dashboard_state is not None:
             # The unified Loop supervisor — ONE watchdog for every kind
             # (general/goal/code/design) on top of autonudge. Replaces the legacy
-            # goal-loop + code watchdogs at the cutover (Slice 2e). Re-arm loops left
-            # RUNNING/PLANNING by a crash/restart BEFORE it polls — its first poll
-            # would otherwise misread a crash-interrupted loop (worker session gone).
-            from personalclaw.loop import manager as _loop_manager
+            # goal-loop + code watchdogs at the cutover (Slice 2e). Loops left
+            # RUNNING/PLANNING by a crash/restart are re-armed by the watchdog's OWN first
+            # poll, before it reads a single loop — there is deliberately no boot hook here
+            # (`PP-16`, "one adoption/reaping path": both work-unit nouns sweep from the
+            # supervisor that owns them, through `concurrency.boot_sweep`). A hook here could
+            # not be retried when it raised, and awaiting it delayed everything below,
+            # including HTTP readiness, by however long N stranded planner passes took.
             from personalclaw.loop.watchdog import LoopWatchdog
-
-            try:
-                await _loop_manager.reap_orphaned_loops(self.dashboard_state, self.autonudge_svc)
-            except Exception:
-                logger.warning("loop orphan reap at startup failed", exc_info=True)
 
             self.loop_watchdog = LoopWatchdog(self.dashboard_state, self.autonudge_svc)
             self.loop_watchdog.start()
@@ -3493,7 +3491,7 @@ class GatewayOrchestrator:
         """Publish the bound dashboard port into this process's environment.
 
         Child processes resolve the gateway's API base through
-        ``mcp_core._resolve_api_base()`` -> ``parse_dashboard_url(dashboard.url)``,
+        ``mcp_core._api_base()`` -> ``parse_dashboard_url(dashboard.url)``,
         which falls back to the 10000 default. Neither ``--port`` nor ``--port auto``
         writes that config, so on any other port an MCP server spawned for a session
         posted where nothing was listening and its tools returned a raw ``urlopen``

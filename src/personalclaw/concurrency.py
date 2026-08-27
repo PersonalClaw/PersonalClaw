@@ -11,9 +11,12 @@ two failure modes that in-process guards alone can't cover:
   a time — across processes, and (because flock is per open file description)
   across threads within one process too.
 - **Crash-zombie state.** A process that dies mid-job leaves persisted
-  ``running`` rows that nothing will ever finish. :func:`reap_orphans` is the
-  startup-sweep seam that lets each subsystem resolve its own stale rows before
-  its supervisor's first poll.
+  ``running`` rows that nothing will ever finish. :func:`boot_sweep` is the ONE
+  boot-adoption path — both work-unit nouns (loops and workflow runs) resolve
+  their crash survivors through it, from inside their own supervisor's first
+  poll rather than from a separate startup hook (`PP-16`, "one adoption/reaping
+  path"). Its docstring carries why that placement, and not the hook, is what
+  makes a failed sweep retryable and a slow revival non-blocking.
 
 Both are built on ``fcntl.flock``, the established PClaw locking primitive
 (see ``schedule.py``, ``session_pid.py``, ``mcp_core.py``). flock is **released
@@ -30,7 +33,7 @@ import re
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Protocol, TypeVar
 
 from personalclaw.config.loader import config_dir
 
@@ -99,29 +102,67 @@ def single_flight(job_key: str) -> Iterator[bool]:
         fd.close()
 
 
-async def reap_orphans(
-    label: str,
-    items: Iterable[Any],
-    reap: Callable[[Any], Awaitable[None]],
-) -> int:
-    """Startup-sweep seam: resolve each stale ``running`` item via ``reap``.
+class BootSweepRow(Protocol):
+    """The one thing a boot sweep needs of a persisted work-unit row: an id.
 
-    The generic half of the orphan-reaper. A subsystem supplies the items it
-    considers orphaned (e.g. goal loops persisted as RUNNING whose in-memory
-    worker vanished on restart) and an async ``reap`` that resolves one — by
-    resuming, failing, or finalizing it, whatever that subsystem's semantics
-    require. Per-item failures are isolated and logged so one bad row can never
-    block startup. Returns the number of items reaped.
+    Deliberately this narrow. Both work-unit nouns satisfy it (``loop.loop.Loop`` and
+    ``workflows.models.WorkflowRun``) without either importing the other, which is what
+    lets ONE sweep serve both without pulling a store into this module.
     """
-    items = list(items)
-    if not items:
-        return 0
-    reaped = 0
-    for item in items:
+
+    id: str
+
+
+_RowT = TypeVar("_RowT", bound=BootSweepRow)
+
+
+async def boot_sweep(
+    label: str,
+    rows: Iterable[_RowT],
+    *,
+    survived: Callable[[_RowT], bool],
+    decide: Callable[[_RowT], Awaitable[bool]],
+) -> set[str]:
+    """The ONE boot-adoption path: decide the fate of every crash-survivor row, once.
+
+    A process that dies mid-job leaves rows persisted as in-flight that nothing will ever
+    finish. ``survived`` answers the only question this primitive owns — *is this row a
+    crash survivor, i.e. persisted in-flight with no live driver in THIS process* — and
+    ``decide`` applies whatever fate the subsystem's semantics require (re-arm the worker,
+    park it for the user, finish it, honestly abort it). ``decide`` returns ``True`` when it
+    wrote a fate, and the ids of those rows come back here so the caller's own poll does not
+    immediately re-drive what the sweep just settled.
+
+    Per-row failures are isolated and logged: one unreadable row can never cost a whole
+    process its boot adoption.
+
+    **Call it from the owning supervisor's FIRST POLL, never from a separate boot hook**
+    (`PP-16`, "one adoption/reaping path"). Both properties that makes true are load-bearing
+    and neither is available to a boot hook:
+
+    * **A failed sweep is retried.** The caller flips its ``_swept`` flag only after this
+      returns, so a sweep that raises is re-attempted on the next poll. A gateway boot hook
+      wrapped in ``except: logger.warning`` loses boot adoption for the life of the process —
+      and the rows it should have decided sit in-flight forever, which a user reads as "still
+      working" while nothing is.
+    * **Startup is not blocked on revival.** Reviving a row can mean spawning a worker or
+      re-running a planner pass (a model call). Awaited inline in a gateway's startup
+      sequence, N stranded rows delay everything after it, including HTTP readiness.
+
+    Returns the set of ids whose fate this sweep decided (``len()`` is the reaped count).
+    """
+    rows = list(rows)
+    orphans = [row for row in rows if survived(row)]
+    if not orphans:
+        return set()
+    decided: set[str] = set()
+    for row in orphans:
         try:
-            await reap(item)
-            reaped += 1
+            if await decide(row):
+                decided.add(row.id)
         except Exception:
-            logger.warning("reap_orphans[%s]: failed to reap %r", label, item, exc_info=True)
-    logger.info("reap_orphans[%s]: reaped %d orphan(s) at startup", label, reaped)
-    return reaped
+            logger.warning("boot_sweep[%s]: failed to decide %r", label, row.id, exc_info=True)
+    logger.info(
+        "boot_sweep[%s]: %d crash survivor(s), %d decided", label, len(orphans), len(decided)
+    )
+    return decided

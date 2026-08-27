@@ -23,10 +23,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from personalclaw import notification_kinds, shutdown_event
+from personalclaw import concurrency, notification_kinds, shutdown_event
 from personalclaw.config.loader import AppConfig
 from personalclaw.loop import instrument, kinds, manager, store
-from personalclaw.loop.loop import LoopStatus
+from personalclaw.loop.loop import Loop, LoopStatus
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +204,11 @@ class LoopWatchdog:
         #: ``_complete`` really can run twice for one loop. Without this set the second pass
         #: would pay for a second forked model call and race a second proposal into the queue.
         self._ladder_done: set[str] = set()
+        #: Whether the ONE boot sweep has run in this process (`PP-16`). Flipped only AFTER
+        #: :meth:`_boot_sweep` returns, so a sweep that raises is retried on the next poll
+        #: instead of being lost — the property the gateway startup hook this replaced could
+        #: not have.
+        self._swept = False
 
     # ── lifecycle ──
 
@@ -747,6 +752,138 @@ class LoopWatchdog:
             return True
         return not nudge_loop.active and nudge_loop.cycle_count >= max_cycles
 
+    # ── boot adoption (`PP-16`, "one adoption/reaping path") ──
+
+    async def _boot_sweep(self) -> set[str]:
+        """Decide the fate of every loop left mid-flight by a crash/restart, ONCE, on the
+        first poll — through the one boot-adoption path both work-unit nouns now share
+        (:func:`concurrency.boot_sweep`).
+
+        A worker — and the planner — session lives only in memory, so a loop persisted
+        RUNNING or PLANNING at startup has lost it:
+
+        * RUNNING → :func:`manager.start` (re-arm the execution worker).
+        * PLANNING → re-kick one ``advance_plan`` pass. The stepwise walkthrough runs as a
+          background task spawned from an HTTP request, so a restart strands it in PLANNING
+          with no live planner; ``advance_plan`` is idempotent and self-healing — it re-runs
+          the in-flight step / design pass and stops at the next gate.
+
+        PAUSED/STAGNANT/BLOCKED/NEEDS_INPUT/REVIEW await a deliberate action. Idempotent — a
+        genuinely-live worker is skipped. Also GCs orphan file dirs with no backing row.
+
+        **This was `loop/manager.reap_orphaned_loops`, awaited from a gateway startup hook** —
+        the second boot-adoption path `PP-16` names beside ``workflows/watchdog``'s. Both now
+        run through one primitive from the first poll of the supervisor that owns the noun,
+        which fixes two defects the hook shape guaranteed: the hook's
+        ``except: logger.warning`` lost loop revival for the life of the process (a loop stuck
+        RUNNING with no worker, which a user reads as "still working"), and awaiting it inline
+        delayed gateway readiness by however long N stranded planner passes take.
+        """
+        # Self-sufficient on purpose: `_rearm_running` asks the kind for its `launch_blocker`,
+        # and an unloaded registry answers `None` — which silently re-arms a brownfield loop
+        # against a workspace that is gone instead of parking it. `_poll_once` also calls this,
+        # so the sweep must not depend on being reached only through it.
+        kinds.ensure_loaded()
+        loops = store.list_all()
+
+        def _lost_its_worker(loop: Loop) -> bool:
+            """A RUNNING loop with NO worker session at all.
+
+            ``state._sessions`` is in-memory, so a loop the *previous* process armed has no
+            entry here — absence is the whole crash signal. The version this replaced also
+            required ``sess.running``, and that extra condition is wrong anywhere a session
+            can be idle: between cycles a live loop's session exists with ``running`` False
+            (autonudge fires a turn every ``idle_secs``), so the stricter predicate reads a
+            perfectly healthy idle loop as a crash survivor and re-arms it. It was harmless
+            only because the boot hook ran before any session could exist; moving the sweep
+            into the poll that DOES see sessions is exactly the drift that would have made it
+            bite. `test_expired_trust_pauses_for_reauth` is the shipped test that proves the
+            difference — under the strict predicate its live-but-idle loop is re-armed instead
+            of being trust-expired, and `manager.start` re-stamps the RUNNING row on the way
+            past, which is how a re-arm silently resets the trust window.
+            """
+            if loop.status != LoopStatus.RUNNING.value:
+                return False
+            return self._state._sessions.get(manager.session_key(loop.id)) is None
+
+        def _stranded_in_planning(loop: Loop) -> bool:
+            return loop.status == LoopStatus.PLANNING.value
+
+        decided = await concurrency.boot_sweep(
+            "loop", loops, survived=_lost_its_worker, decide=self._rearm_running
+        )
+        decided |= await concurrency.boot_sweep(
+            "loop-planning", loops, survived=_stranded_in_planning, decide=self._rekick_planning
+        )
+        try:
+            reaped = store.reap_orphan_dirs()
+            if reaped:
+                logger.info("loop: reaped %d orphan dir(s) with no DB row", reaped)
+        except Exception:
+            logger.warning("loop: orphan-dir GC failed", exc_info=True)
+        return decided
+
+    async def _rearm_running(self, loop: Loop) -> bool:
+        """Re-arm one RUNNING loop whose worker died with the process — or park it for the
+        user if its workspace went missing. Both are decisions, so both return ``True``."""
+        # The live worker was reaped by the crash/restart — record it as a `watcher_reaped`
+        # ledger event (PP-5) so the flywheel sees a watcher cut off before its cadence
+        # (fewer cycles than the budget implies), not a template that simply under-produced.
+        try:
+            store.record_watcher_reaped(
+                loop.id, cycles=loop.total_cycles, reason="worker process lost to restart"
+            )
+        except Exception:
+            logger.debug("loop: watcher_reaped emit failed for %s", loop.id, exc_info=True)
+        # A workspace-needing loop (brownfield code) can have its bound dir moved/deleted
+        # during downtime. start() would re-provision against the gone path; re-validate via
+        # the kind's launch precondition (the same one the start action enforces) and pause
+        # for the user instead of resurrecting nothing.
+        strat = kinds.get_or_none(loop.kind)
+        blocker = getattr(strat, "launch_blocker", None)
+        reason = blocker(loop) if blocker else None
+        if reason:
+            store.write_question(
+                loop.id, f"{reason} (the workspace went missing during a restart)."
+            )
+            store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
+            logger.warning(
+                "loop: orphaned %s blocked from re-arm (%s) — paused for the user", loop.id, reason
+            )
+            return True
+        await manager.start(self._state, self._svc, loop.id)
+        logger.info("loop: re-armed orphaned %s after restart", loop.id)
+        return True
+
+    async def _rekick_planning(self, loop: Loop) -> bool:
+        """Re-kick one restart-stranded PLANNING loop so it resumes instead of freezing on a
+        spinner forever. Lazy import (plan_walkthrough → store, no watchdog cycle, but kept
+        lazy for symmetry + cheap startup).
+
+        **KNOWN WART, carried over from `reap_orphaned_loops` and deliberately not changed
+        here: this makes a MODEL CALL from inside the boot sweep.** That is wrong in principle
+        — it gives adoption unbounded latency, and because a failed sweep is now retried every
+        poll, a provider outage turns the retry into a 5-second-interval hammer. The right
+        shape is for the sweep to leave the row in a state the *ordinary* poll advances, which
+        means `_poll_once` growing a PLANNING pass (it iterates RUNNING only today). That is
+        new supervisor behaviour needing its own budget/attention/stagnation coverage, so it
+        belongs to `PP-16`'s still-open "pluggable supervisor" seam, not to this one — removing
+        the call without building the replacement would strand every restart-interrupted
+        PLANNING loop forever, which is worse than the wart. Recorded in
+        PLATFORM-PRIMITIVES' execution log.
+
+        Practical hazard while it stands: **no test reaches this today** (measured — no test
+        both creates a PLANNING loop and calls `_poll_once`), so a future test that does will
+        silently start making a real model call inside the suite. Stub
+        `plan_walkthrough.advance_plan` when you write it, as
+        `test_loop_manager.py::TestBootSweep::test_rekicks_planning_orphan` does.
+        """
+        from personalclaw.loop import plan_walkthrough as pw
+
+        await pw.advance_plan(self._state, self._svc, loop.id)
+        logger.info("loop: re-kicked stranded planning loop %s after restart", loop.id)
+        return True
+
     # ── poll loop ──
 
     async def _loop(self) -> None:
@@ -764,6 +901,14 @@ class LoopWatchdog:
 
     async def _poll_once(self) -> None:
         kinds.ensure_loaded()
+        # The boot sweep runs ONCE, and BEFORE this poll reads a single loop: a loop persisted
+        # RUNNING by a crash has no worker session, and every check below would misread that
+        # as a live loop whose worker went silent. Its ids are deliberately NOT skipped the
+        # way the run side skips its swept ids — a loop the sweep re-armed IS live now and
+        # should be polled, and one it parked has left RUNNING so the filter below drops it.
+        if not self._swept:
+            await self._boot_sweep()
+            self._swept = True
         cfg = AppConfig.load().loops
         running = [loop for loop in store.list_all() if loop.status == LoopStatus.RUNNING.value]
         live_ids = {loop.id for loop in running}

@@ -101,14 +101,29 @@ def reset_current_agent_id(token) -> None:
         pass
 
 
-def _resolve_api_base() -> str:
-    """Resolve the gateway API base URL from ``dashboard.url`` config."""
+def _api_base() -> str:
+    """Resolve the gateway API base URL from ``dashboard.url`` config, AT CALL TIME.
+
+    Deliberately not a module-level constant. This was ``_API = _resolve_api_base()``
+    evaluated at import, which is the one shape ``tests/conftest.py``'s
+    ``_isolate_real_home_writers`` documents as beyond a fixture's reach — *"a home
+    resolved into a module-level constant at import time … If a new leak appears here,
+    check for that shape first"* — and it is the fourth instance of it, after
+    ``subagent_persistence._subagents_dir``, ``session_map._sessions_dir`` and
+    ``schedule._DEFAULT_DIR``. It is worse than those three, because :meth:`AppConfig.load`
+    is not a pure read: it performs a **migration write-back** (``loader.py`` ~5657), so
+    merely importing this module could rewrite the user's real ``config.json``. Under
+    pytest that happened during COLLECTION — before any fixture exists — which is how it
+    reached the real home past every isolation seam the suite has.
+
+    Call-time resolution also fixes a product bug the frozen constant caused: the API base
+    was pinned to whatever ``dashboard.url`` said when this module was first imported, so a
+    port change was invisible to every MCP tool call until the process restarted, and an
+    MCP child that imported before the gateway wrote its config bound the wrong port.
+    """
     cfg = AppConfig.load()
     _host, port = parse_dashboard_url(cfg.dashboard.url)
     return f"http://localhost:{port}"
-
-
-_API = _resolve_api_base()
 
 
 def _list_tools() -> list[dict[str, Any]]:
@@ -770,7 +785,7 @@ def _post(path: str, body: dict | None = None) -> dict:
     if sk:
         headers["X-Session-Key"] = sk
     req = urllib.request.Request(
-        f"{_API}{path}",
+        f"{_api_base()}{path}",
         data=data,
         headers=headers,
         method="POST",
@@ -788,7 +803,7 @@ def _get(path: str) -> dict:
     if sk:
         headers["X-Session-Key"] = sk
     req = urllib.request.Request(
-        f"{_API}{path}",
+        f"{_api_base()}{path}",
         headers=headers,
     )
     try:
@@ -807,7 +822,7 @@ def _delete(path: str, body: dict | None = None) -> dict:
     if data:
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(
-        f"{_API}{path}",
+        f"{_api_base()}{path}",
         data=data,
         headers=headers,
         method="DELETE",
@@ -1122,7 +1137,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # Resolve webhook URL
         from urllib.parse import urlparse
 
-        parsed = urlparse(_API)
+        parsed = urlparse(_api_base())
         base = f"{parsed.scheme}://{parsed.hostname}"
         if parsed.port:
             base += f":{parsed.port}"

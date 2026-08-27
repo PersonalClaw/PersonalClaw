@@ -1,25 +1,26 @@
 """Which of `PP-16`'s six "one X" clauses have CONVERGED, measured rather than assumed.
 
 The atom's `done_when` names six unifications: *"One status vocabulary, one adoption/reaping path,
-one attention path, one ledger, one projection to tasks, one cockpit contract."* Two of those six
-are **already satisfied** — `PP-5` made the loop a `personalclaw.ledger` writer, and
-`workflows/attention.py` was built on the loop watchdog's own inbox seam. A clause that has already
-converged is as load-bearing to record as one that has not: a later slice that "unifies the ledger"
-would be writing code for a problem that no longer exists, and a slice that re-forks either seam
-would silently undo a landed atom.
+one attention path, one ledger, one projection to tasks, one cockpit contract."* Three of those six
+are **satisfied** — `PP-5` made the loop a `personalclaw.ledger` writer, `workflows/attention.py`
+was built on the loop watchdog's own inbox seam, and the adoption/reaping slice converged both
+nouns' boot sweeps onto `concurrency.boot_sweep`. A clause that has already converged is as
+load-bearing to record as one that has not: a later slice that "unifies the ledger" would be
+writing code for a problem that no longer exists, and a slice that re-forks either seam would
+silently undo a landed atom.
 
 So this rail is a census with two directions, in the idiom `test_pp16_loop_field_map.py`
 established for the field map:
 
-* **The converged clauses are RATCHETS.** Ledger and attention are asserted to still funnel through
-  one seam each. If a future change gives loops their own ledger writer or their own
-  `state.notify` + `store.add` pair again, this reds — which is the only thing standing between
-  "`PP-5` landed" and "`PP-5` landed and then rotted".
-* **The unconverged clauses are PINNED COUNTS that must SHRINK.** Reaping, the task projection, the
-  cockpit contract and the pluggable supervisor each still have exactly two implementations (or, for
-  the supervisor, five registered strategies). Each count is pinned with the file:line of both
-  sides, so the slice that unifies one of them reds HERE and updates the census as part of landing —
-  rather than leaving a stale "still open" list in a plan nobody re-measures.
+* **The converged clauses are RATCHETS.** Ledger, attention and boot adoption are asserted to still
+  funnel through one seam each. If a future change gives loops their own ledger writer, their own
+  `state.notify` + `store.add` pair, or their own private boot sweep again, this reds — which is the
+  only thing standing between "`PP-5` landed" and "`PP-5` landed and then rotted".
+* **The unconverged clauses are PINNED COUNTS that must SHRINK.** The task projection, the cockpit
+  contract and the pluggable supervisor each still have exactly two implementations (or, for the
+  supervisor, five registered strategies). Each count is pinned with the file:line of both sides, so
+  the slice that unifies one of them reds HERE and updates the census as part of landing — rather
+  than leaving a stale "still open" list in a plan nobody re-measures.
 
 **Why source text and not imports.** These are structural facts about which modules exist and which
 seams they call, and importing `loop.watchdog` or the dashboard handlers drags in a gateway's worth
@@ -52,7 +53,7 @@ def _text(rel: str, root: Path = _SRC) -> str:
     return body
 
 
-# ── the two clauses that have already converged (ratchets) ────────────────────────────────
+# ── the three clauses that have already converged (ratchets) ──────────────────────────────
 
 
 #: The loop-side and run-side modules that must remain `personalclaw.ledger` writers. `PP-5`
@@ -89,8 +90,36 @@ def test_the_attention_clause_is_converged_and_stays_converged():
         )
 
 
+#: The two watchdogs whose boot sweep must keep running through `concurrency.boot_sweep`. This
+#: row was in `_UNCONVERGED` — `loop/manager.py::reap_orphaned_loops` vs
+#: `workflows/watchdog.py::_boot_sweep` — until the adoption/reaping slice retired the loop side's
+#: gateway hook onto the shared primitive. Kept as a ratchet, not deleted: the census's whole
+#: point is that a converged clause can rot, and a private sweep re-added to either watchdog
+#: would silently restore the duplication with nothing else objecting.
+_BOOT_SWEEPERS = ("loop/watchdog.py", "workflows/watchdog.py")
+
+
+def test_the_adoption_clause_is_converged_and_stays_converged():
+    """`PP-16`'s "one adoption/reaping path" clause is satisfied — both work-unit nouns decide
+    their crash survivors through `concurrency.boot_sweep`, each from the first poll of the
+    supervisor that owns the noun, with no second boot hook anywhere."""
+    assert "async def boot_sweep(" in _text(
+        "concurrency.py"
+    ), "concurrency.boot_sweep is gone — the primitive both nouns share no longer exists"
+    for rel in _BOOT_SWEEPERS:
+        assert "concurrency.boot_sweep(" in _text(rel), (
+            f"{rel} no longer sweeps through concurrency.boot_sweep. A private boot-adoption "
+            f"loop here re-forks the path PP-16's adoption slice unified."
+        )
+    assert "reap_orphaned_loops" not in _text("gateway.py"), (
+        "gateway.py awaits a loop boot-adoption hook again — the second INVOCATION is back even "
+        "if the shared primitive is still used. See tests/test_pp16_boot_adoption.py for why "
+        "that shape loses a failed sweep for the life of the process."
+    )
+
+
 def test_the_seam_probe_rejects_a_symbol_that_does_not_exist():
-    """Vacuity floor for the two ratchets above: a scan that reports every symbol as present —
+    """Vacuity floor for the three ratchets above: a scan that reports every symbol as present —
     or every symbol as absent — would pass them without measuring anything."""
     body = _text("workflows/attention.py")
     assert "emit_attention_item" in body, "positive control failed — the probe sees nothing"
@@ -106,12 +135,6 @@ def test_the_seam_probe_rejects_a_symbol_that_does_not_exist():
 #: `path::symbol`. Each pair is a real pair TODAY; the slice that unifies one deletes a side and
 #: reds this rail, which is how the census stays honest instead of rotting into a stale claim.
 _UNCONVERGED: dict[str, tuple[tuple[str, str], ...]] = {
-    # loop/manager.py:581 vs workflows/watchdog.py:338 + :423. The loop side reaps orphans from a
-    # single gateway boot call; the run side sweeps and ADOPTS at boot, then holds a lease.
-    "adoption/reaping": (
-        ("loop/manager.py", "async def reap_orphaned_loops"),
-        ("workflows/watchdog.py", "def _boot_sweep"),
-    ),
     # loop/tasks_link.py:167 provisions imperatively; workflows/materialize.py:257 PLANS a
     # materialization and returns bindings. Two directions over one relationship.
     "projection to tasks": (
