@@ -69,6 +69,15 @@ const IPC_CHANNELS = {
   loginItemGet: `${IPC_PREFIX}login-item-get`,
   /** renderer → main: register or un-register the login item (DC-4). */
   loginItemSet: `${IPC_PREFIX}login-item-set`,
+  /** renderer → main: raise ONE native OS notification (DC-5). The gateway already
+   * decided this note names plan-42's `native` target and that this shell can deliver it;
+   * this channel is the use, handled by `registerNativeNotificationIpc` rather than folded
+   * into the capability vocabulary (probe/request ask "may we?", this does it). */
+  notify: `${IPC_PREFIX}notify`,
+  /** main → renderer push: a native notification was TAPPED, carrying the route it named.
+   * The main process focuses the window; the renderer owns the SPA's routes, so it is the
+   * one that navigates. */
+  notificationActivate: `${IPC_PREFIX}notification-activate`,
 };
 
 /**

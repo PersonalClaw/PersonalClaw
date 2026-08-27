@@ -10,6 +10,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Notification rules can now deliver as real OS notifications.** The **Desktop** delivery target in
+  Settings → Notifications was accepted and stored from the day the rules matrix shipped, but nothing
+  acted on it — it was dimmed and labelled as needing the desktop app, and ticking it changed nothing
+  even when the desktop app was running. It works now: a rule set to **Notify** with Desktop ticked
+  raises a native notification whenever the desktop app is connected, and clicking it brings
+  PersonalClaw forward on the surface the note came from (an inbox alert opens Inbox, a loop's progress
+  opens Loops, a skill proposal opens Skills).
+  It is deliberately per-kind and never global. A kind set to **Badge** or **Digest** raises nothing
+  even with Desktop ticked — those modes mean "do not interrupt me", and a banner is an interruption.
+  And the dashboard stays the record: a native notification is an addition, not a replacement, so
+  closing the desktop app loses nothing. The rule falls back to the dashboard bell it would have used
+  anyway, and the stored note says why.
+  macOS never reports whether notifications are authorized, so PersonalClaw does not claim a state it
+  cannot read — if you have turned them off in System Settings, ticking Desktop will do nothing, and
+  that is the OS's answer rather than a broken toggle.
+
 - **A reviewer's findings now get triaged by you before anything touches your code.** When a workflow
   review stage reports problems in the `Finding` shape it has always been asked for
   (`severity / location / problem / why / recommended_fix`), those findings are recorded against the

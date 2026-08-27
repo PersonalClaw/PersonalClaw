@@ -23,6 +23,7 @@ import { CommandPalette, type Command } from './CommandPalette'
 import { TerminalDrawer } from '../pages/terminal/TerminalDrawer'
 import { Toaster } from '../ui/Toaster'
 import { useApprovalToasts } from './useApprovalToasts'
+import { useNativeNotifications } from '../lib/nativeNotifications'
 import { DialogHost } from '../ui/dialog/DialogHost'
 import { PersonalityShellElement } from './personality'
 import { UpdateProgressOverlay } from '../ui/UpdateProgressOverlay'
@@ -180,6 +181,11 @@ function AppInner() {
   // `sub` on the chat route (excluding the new/history list routes).
   const activeChatSession = route === 'chat' && sub && sub !== 'new' && sub !== 'history' ? sub : ''
   useApprovalToasts(activeChatSession)
+  // Plan-42's `native` notification target (DC-5). Mounted in the shell because it must
+  // hold for every route, not just the notifications page: the gateway decides which notes
+  // are native and this relays them to the Electron shell, which raises the OS banner and
+  // hands back the route on a tap. A no-op in a browser tab — the bell is the fallback.
+  useNativeNotifications(navigate)
   // Sound cues need their AudioContext built inside a real user gesture, and the
   // three cue points (turn settled, approval requested, error toast) are none of
   // them. So the shell arms a one-shot primer here and the next click/keypress

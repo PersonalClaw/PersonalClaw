@@ -11,7 +11,9 @@ This module adds the second axis. Each ``(source, kind)`` from
 * **mode** — ``never`` (drop), ``badge`` (persist, no toast), ``immediate`` (today's
   behavior), ``digest`` (batch for the scheduled summary).
 * **targets** — where an ``immediate`` goes: ``dashboard`` today, ``channel_dm`` when a
-  channel is configured, ``push``/``native`` reserved for the mobile and desktop plans.
+  channel is configured, ``native`` as a real OS notification whenever the desktop shell is
+  connected (DESKTOP-CAPABILITIES DC-5 — see :func:`native_delivery`), ``push`` still
+  reserved for MOBILE-COMPANION.
 * **conditions** — keywords / name-mention that ESCALATE a quieter mode to ``immediate``.
 
 **The global gate still runs first, unchanged.** ``notification_allowed()`` in
@@ -49,11 +51,19 @@ from personalclaw.config.loader import config_dir
 
 logger = logging.getLogger(__name__)
 
-#: Delivery targets. ``push``/``native`` are accepted and persisted but inert until
-#: MOBILE-COMPANION / DESKTOP-CAPABILITIES land — storing them now means a user's choice
-#: survives, rather than being silently dropped and needing re-entry later.
+#: Delivery targets. ``push`` is accepted and persisted but inert until MOBILE-COMPANION
+#: lands — storing it now means a user's choice survives, rather than being silently
+#: dropped and needing re-entry later. ``native`` is LIVE as of DC-5: see
+#: :func:`native_delivery`.
 TARGETS: tuple[str, ...] = ("dashboard", "channel_dm", "push", "native")
 DEFAULT_TARGETS: tuple[str, ...] = ("dashboard",)
+
+#: The desktop target (DESKTOP-CAPABILITIES DC-5) and the shell capability it needs. Named
+#: because three files have to agree on both strings: this module decides, `dashboard/
+#: state.py` reads the decision onto the note, and `dashboard/desktop_registry.py` owns the
+#: capability vocabulary the second name comes from.
+NATIVE_TARGET = "native"
+NATIVE_CAPABILITY = "native_notifications"
 
 #: Digest defaults. 08:00 local, matching the plan's morning-digest intent.
 DEFAULT_DIGEST_SCHEDULE = "0 8 * * *"
@@ -122,6 +132,47 @@ class Rule:
         if self.mode == "immediate":
             return self
         return Rule(self.source, self.kind, "immediate", self.targets, self.conditions, self.verify)
+
+
+def native_delivery(rule: Rule | None, capability: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Whether an ``immediate`` note should be raised as a native OS notification (DC-5).
+
+    This is the whole ``native`` target decision, in one pure function so the rule half is
+    testable without a gateway and the Electron half without a rule. It answers three
+    questions in order, and each ``None``/``False`` answer is a distinct product outcome:
+
+    * **The rule does not name ``native``** → ``None``. No key on the note, so nothing
+      downstream can raise one. This is the vacuity property the target rests on: a rule
+      that did not ask for the desktop cannot get it, however the shell is configured.
+    * **The rule names it but no shell can deliver it** → ``{"deliver": False, "reason": …}``.
+      The dashboard delivery that runs anyway IS the fallback — the caller does not choose
+      a different path, it just does not raise an OS notification. The reason rides along
+      because "I asked for native and got a bell instead" needs an answer, and a UI that
+      cannot say why reads as a broken toggle.
+    * **The rule names it and the shell reports the capability available** →
+      ``{"deliver": True, "reason": ""}``.
+
+    *capability* is ``DesktopRegistry.capability("native_notifications")`` — ``None`` when
+    no shell is registered at all. ``available`` is the only field consulted: the registry
+    normalizes ``granted``/``requestable`` into it and fails closed, and macOS never
+    reports notification authorization, so a ``granted`` check here would mean refusing to
+    deliver on the one platform that cannot answer.
+
+    Note what this does NOT do: it never promotes ``dashboard`` off the note and never runs
+    for ``never``/``badge``/``digest``. ``native`` is an interruption, and the three quieter
+    modes have already said not to interrupt.
+    """
+    if rule is None or NATIVE_TARGET not in rule.targets:
+        return None
+    if not capability:
+        return {"deliver": False, "reason": "the desktop shell is not connected"}
+    if not capability.get("available"):
+        reason = str(capability.get("reason") or "").strip()
+        return {
+            "deliver": False,
+            "reason": reason or "the desktop shell cannot show native notifications",
+        }
+    return {"deliver": True, "reason": ""}
 
 
 def _rules_path() -> Path:

@@ -246,6 +246,12 @@ async def test_state_notify_respects_gate(monkeypatch, tmp_path):
     er._save_entity_settings("notifications", {"mute_all": True})
     ds = object.__new__(st.DashboardState)  # skip heavyweight __init__
     ds._notification_log = []
+    # `notify()` reads the desktop registry to decide the `native` target (DC-5). Supplied
+    # explicitly rather than left off: the decision fails OPEN, so an absent attribute would
+    # make this test pass through the except branch and stop exercising the live path.
+    from personalclaw.dashboard.desktop_registry import DesktopRegistry
+
+    ds.desktop = DesktopRegistry()
     broadcasts = []
     persisted = []
     monkeypatch.setattr(st.DashboardState, "_broadcast", lambda self, note: broadcasts.append(note))

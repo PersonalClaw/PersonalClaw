@@ -16,6 +16,10 @@ const {
   shouldQuitOnAllWindowsClosed,
 } = require("./trayPresence");
 const { makeLoginItem, registerLoginItemIpc } = require("./loginItem");
+const {
+  makeNativeNotifications,
+  registerNativeNotificationIpc,
+} = require("./nativeNotifications");
 const { shutdownGateway } = require("./gatewayShutdown");
 
 /**
@@ -260,6 +264,33 @@ const pushToTalk = makePushToTalk({
     }
   },
   onCapturing: (on) => setCaptureIndicator(on),
+});
+
+/**
+ * Native OS notifications (DC-5 T4.2) — plan-42's `native` delivery target, actuated.
+ *
+ * The gateway decides (a rule naming `native` + this shell reporting the capability
+ * available); the renderer relays, because it holds the WS the main process does not; this
+ * raises the banner. Note the tap does NOT go through `deepLink()`: the route came from the
+ * renderer in the first place, so it navigates itself and the main process never has to
+ * interpret a route string it did not author. Focusing the window is the half only the main
+ * process can do, and it happens whether or not a route was named.
+ */
+const nativeNotifications = makeNativeNotifications({
+  Notification,
+  focusWindow: () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    showMainWindow();
+    return true;
+  },
+  sendToRenderer: (payload) => {
+    try {
+      mainWindow?.webContents?.send(IPC_CHANNELS.notificationActivate, payload);
+    } catch {
+      /* window may be gone between the tap and the send */
+    }
+  },
+  log: (msg) => console.warn(msg),
 });
 
 /**
@@ -926,6 +957,9 @@ if (!app.requestSingleInstanceLock()) {
     // The login item's bridge half (DC-4), so Settings can drive the same toggle the
     // tray checkbox drives. Its own channels, not the capability vocabulary's.
     registerLoginItemIpc(ipcMain, loginItem, IPC_CHANNELS);
+    // The `native` notification target's actuator (DC-5). Registered before any window
+    // loads, like the rest: the first gateway note can arrive as soon as the WS opens.
+    registerNativeNotificationIpc(ipcMain, nativeNotifications, IPC_CHANNELS);
 
     // Menu-bar presence. A failed tray is reported, not fatal — and it changes the
     // window-close behavior below so the window can never become unreachable.
