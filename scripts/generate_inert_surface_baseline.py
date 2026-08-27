@@ -156,25 +156,45 @@ def _attribute_names_in_src(files: list[Path]) -> set[str]:
 # ── Kind: config (reuses the SH3.1 config walk) ──────────────────────────────
 
 
+#: The ``AppConfig`` methods that may hold the load mapping. ``load()`` itself is a one-line
+#: delegate — the mapping lives in ``load_with_migration_state()``, which returns the parsed
+#: config plus whether it needed migrating (PHF-15 split the two so ``load()`` could stop
+#: writing). Kept as a set rather than one name so the mapping can move again without
+#: silently emptying this detector. Mirrored in ``harness/scanner.py``.
+_LOAD_MAPPING_METHODS = frozenset({"load", "load_with_migration_state"})
+
+
 def _load_body_kwarg_names(loader_tree: ast.Module) -> set[str]:
-    """Every keyword-argument name used anywhere inside ``AppConfig.load()`` — the set of
-    field names the load mapping assigns (mirrors ``harness/scanner.py`` config-four-points).
+    """Every keyword-argument name used anywhere in ``AppConfig``'s load mapping — the set of
+    field names it assigns (mirrors ``harness/scanner.py`` config-four-points).
+
+    Raises if no anchor method is found. That is deliberate: returning an empty set instead
+    reports EVERY config leaf as inert, which is 295 bogus failures that read like a real
+    regression and bury the one-line cause (a renamed method).
     """
+    names: set[str] = set()
+    found: set[str] = set()
     for cls in ast.walk(loader_tree):
         if isinstance(cls, ast.ClassDef) and cls.name == "AppConfig":
             for item in cls.body:
                 if (
                     isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and item.name == "load"
+                    and item.name in _LOAD_MAPPING_METHODS
                 ):
-                    names: set[str] = set()
+                    found.add(item.name)
                     for call in ast.walk(item):
                         if isinstance(call, ast.Call):
                             for kw in call.keywords:
                                 if kw.arg:
                                     names.add(kw.arg)
-                    return names
-    return set()
+    if not found:
+        raise RuntimeError(
+            "config/loader.py has no AppConfig method named any of "
+            f"{sorted(_LOAD_MAPPING_METHODS)} — the config-inertness detector lost its "
+            "anchor. Re-point _LOAD_MAPPING_METHODS (here and in harness/scanner.py) at "
+            "whichever method now holds the load mapping."
+        )
+    return names
 
 
 def _config_leaf_paths() -> list[str]:

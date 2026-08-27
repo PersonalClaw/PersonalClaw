@@ -653,6 +653,27 @@ def _status(args: argparse.Namespace) -> None:
     print(f"  Lessons:     {data.get('lessons', 0)}")
 
 
+def _boot_config() -> AppConfig:
+    """The gateway's config boot step — the ONE place a pending migration is PERSISTED.
+
+    ``AppConfig.load()`` is a pure read: it applies pending migrations to the object it
+    returns and writes nothing, so no library reader (and no module imported during test
+    collection) can rewrite the user's ``config.json``. The gateway is the process that
+    legitimately owns that file, so the write-back happens here instead.
+
+    A named function rather than four inline lines because that is what makes the write
+    testable: a test points ``config_dir`` at ``tmp_path`` and drives the real startup
+    path, instead of asserting on a string in ``_gateway``'s body.
+    """
+    if not config_path().exists():
+        AppConfig().save()
+        print(f"Created default config: {config_path()}")
+
+    from personalclaw.config.migrations import load_and_persist_migrations
+
+    return load_and_persist_migrations()
+
+
 async def _gateway(
     *,
     no_dashboard: bool = False,
@@ -687,12 +708,7 @@ async def _gateway(
             _hint,
         )
 
-    if not config_path().exists():
-        cfg = AppConfig()
-        cfg.save()
-        print(f"Created default config: {config_path()}")
-
-    cfg = AppConfig.load()
+    cfg = _boot_config()
 
     # Unattended login enrollment (REMOTE-USER-AUTH T2.4). A no-op unless
     # PERSONALCLAW_LOGIN_USER/PASSWORD are set AND no credential exists yet, so a container

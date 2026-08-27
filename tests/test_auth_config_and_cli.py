@@ -251,9 +251,11 @@ def test_enable_then_disable_writes_only_the_flag(_isolated_home, capsys) -> Non
     creds.set_password("jordan", "correct-horse-battery")
     assert auth_cmd(_Args(auth_command="enable")) == 0
 
-    # Read the FILE before any AppConfig.load() — load() self-heals config.json by
-    # materialising every default section, so loading first would mask what the CLI
-    # actually wrote. The property under test is that `enable` touches one key.
+    # Read the FILE, not the loaded object: load() materialises every default section in
+    # memory, so asserting on `to_dict()` would report defaults the CLI never wrote. (It no
+    # longer WRITES them back — PHF-15 made load() a pure read — but the in-memory filling
+    # is still there, and that is what this ordering guards against.) The property under
+    # test is that `enable` touches one key.
     on_disk = json.loads((_isolated_home / "config.json").read_text(encoding="utf-8"))
     assert on_disk == {"auth": {"login_enabled": True}}, "only the flag should be written"
     assert AppConfig.load().auth.login_enabled is True

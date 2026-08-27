@@ -7,6 +7,7 @@ is the defect the detector exists to prevent.
 """
 
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -78,6 +79,61 @@ def test_in_place_rewrite_of_identical_bytes_is_caught(tmp_path: Path) -> None:
     (root / "sessions" / "s1.json").write_text("{}\n")
 
     assert [c.path for c in scan_changes(root, since)] == ["sessions/s1.json"]
+
+
+def test_a_metadata_preserving_copy_is_caught(tmp_path: Path) -> None:
+    """``shutil.copy2`` of a tracked file must be REPORTED.
+
+    Measured, not hypothetical: the config migration copied ``config.json`` aside before
+    rewriting it, and ``copy2`` back-dates the new file's mtime to the source's. With an
+    mtime-only comparison the ``.bak`` looked older than the session, so CI reported "1
+    entries changed" while TWO things had changed — and the ``.bak`` sits directly under the
+    root, whose own mtime the walk never inspects, so nothing else caught it either.
+
+    ``st_ctime_ns`` is the field a copy cannot forge: ``utime()`` bumps the inode-change
+    time even as it back-dates mtime. The distinct ``kind`` is part of the fix — the reader
+    needs to know they are hunting a *copy*, not a writer.
+    """
+    root = _fake_home(tmp_path)
+    tracked = root / "config.json"
+    tracked.write_text('{"pre":"migration"}\n')
+    # Age the source a day, exactly as an already-existing config would be.
+    day_ago = time.time() - 86_400
+    os.utime(tracked, (day_ago, day_ago))
+    since = _armed(root)
+
+    shutil.copy2(tracked, root / "config.json.bak")
+
+    caught = {c.path: c.kind for c in scan_changes(root, since)}
+    assert "config.json.bak" in caught, (
+        "a copy2'd backup went unreported. An mtime-only comparison cannot see it; the "
+        "detector must compare max(mtime, ctime)."
+    )
+    assert caught["config.json.bak"] == "metadata-preserving-write"
+    # The premise of the test: mtime really was back-dated, so this is not passing because
+    # copy2 happened to move the mtime on this filesystem.
+    assert (root / "config.json.bak").stat().st_mtime_ns <= since, (
+        "copy2 did not preserve the source mtime here, so this test is not exercising the "
+        "shape it names"
+    )
+    assert "metadata-preserving-write" in format_report(root, list(scan_changes(root, since)))
+
+
+def test_reading_the_tree_does_not_red_the_rail(tmp_path: Path) -> None:
+    """Widening to ctime must not turn a READ into a failure.
+
+    ctime moves on an inode change, never on access (that is atime), so opening and reading
+    every file under the root must stay quiet. Without this, the ctime widening could have
+    made the rail fire on any suite that merely inspects the real home.
+    """
+    root = _fake_home(tmp_path)
+    since = _armed(root)
+
+    for p in root.rglob("*"):
+        if p.is_file():
+            p.read_text()
+
+    assert scan_changes(root, since) == []
 
 
 def test_deletion_is_caught_via_the_surviving_parent(tmp_path: Path) -> None:
