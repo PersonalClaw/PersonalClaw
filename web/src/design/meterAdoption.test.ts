@@ -29,8 +29,6 @@ import { join } from 'node:path'
 //
 //  · `pages/settings/ModelsPanel.tsx`  — 6px track on `bg-surface-container`, not
 //    `bg-surface-high`. Adopting Meter would retint the track, so it moves pixels.
-//  · `pages/tasks/TaskDetail.tsx`      — 6px track that IS byte-equivalent to Meter's
-//    default. Held back only because the brief scoped it out; it is a one-line follow-up.
 //  · `ui/genui/components.tsx`         — 8px track. Meter has no 8px rung and inventing
 //    one for a single model-authored widget would be speculative API.
 //  · `pages/loops/RunProgress.tsx`     — square corners, `duration-500`, and its only
@@ -39,6 +37,15 @@ import { join } from 'node:path'
 //
 // The rail's job is that this list does not GROW. Adding an entry to it is the forbidden
 // move; deleting one by adopting Meter is the intended one.
+//
+// 🔁 THE INTENDED MOVE HAS NOW HAPPENED ONCE, 4 → 3. `pages/tasks/TaskDetail.tsx` was listed here
+// with the reason "6px track that IS byte-equivalent to Meter's default — held back only because the
+// brief scoped it out; it is a one-line follow-up". That was an honest note that the exclusion was
+// procedural rather than technical, so the follow-up adopted it: `mb-2 h-1.5 rounded-pill
+// bg-surface-high overflow-hidden` is `Meter`'s default track exactly, and `mb-2` rides the
+// `className` this same pass added — which is what that prop was for. The exit-criteria bar now
+// carries `role="progressbar"`, a name and `aria-valuenow` where it had none of the three. The pin
+// below moved 4 → 3 IN THAT COMMIT, which is the ratchet working as designed.
 
 const SRC = join(process.cwd(), 'src')
 
@@ -67,7 +74,6 @@ const PRIMITIVES = [
 /** Owner-deferred hand-rolled bars, each with a stated reason above. NEVER add to this. */
 const DEFERRED = [
   join('pages', 'settings', 'ModelsPanel.tsx'),
-  join('pages', 'tasks', 'TaskDetail.tsx'),
   join('pages', 'loops', 'RunProgress.tsx'),
   join('ui', 'genui', 'components.tsx'),
 ]
@@ -112,7 +118,7 @@ describe('the determinate progress primitive', () => {
     // The allowlist itself is pinned. Every allowlist rail has the same escape hatch —
     // add your new offender to the list and the sweep goes green — so the count is
     // asserted, not merely documented. Adopting Meter at a deferred site LOWERS this.
-    expect(DEFERRED.length, 'never add to DEFERRED; adopt ui/Meter instead').toBe(4)
+    expect(DEFERRED.length, 'never add to DEFERRED; adopt ui/Meter instead').toBe(3)
   })
 
   it('has no hand-rolled determinate bar outside the primitives and the deferred four', () => {
