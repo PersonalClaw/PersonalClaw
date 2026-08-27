@@ -131,7 +131,14 @@ async def api_chat_folder_update(request: web.Request) -> web.Response:
     if "collapsed" in body:
         folder["collapsed"] = bool(body["collapsed"])
     if "order" in body:
-        folder["order"] = int(body["order"])
+        # Coerce-or-ignore, matching `chat_tags.py`'s tag and column updates verbatim. A bare
+        # `int()` here raised `ValueError` on an unparseable order and answered a 500, while the
+        # identical payload against the sibling tag route answered 200 and ignored it (#770). One
+        # of the two was wrong about the same field, and the sibling is the one with the precedent.
+        try:
+            folder["order"] = int(body["order"])
+        except (TypeError, ValueError):
+            pass
     state.save_folders()
     state.push_sessions_update()
     sel().log_api_access(

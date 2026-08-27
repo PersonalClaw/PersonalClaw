@@ -3,6 +3,7 @@ import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
   HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone, Plug2, FileType2,
+  FlaskConical,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -33,6 +34,7 @@ import { UsagePanel } from './UsagePanel'
 import { RoutingPanel } from './RoutingPanel'
 import { ProjectionRulesPanel } from './ProjectionRulesPanel'
 import { LegibilityPanel } from './LegibilityPanel'
+import { EvalsPanel } from './EvalsPanel'
 import { AmbientPanel } from './AmbientPanel'
 import { CompanionPanel } from './CompanionPanel'
 import { DevicesPanel } from './DevicesPanel'
@@ -72,6 +74,11 @@ const SUBPAGES: SubPage[] = [
   { id: 'search', label: 'Search', icon: Search, render: () => <SearchPanel /> },
   { id: 'prompts', label: 'Prompts', icon: FileText, render: () => <PromptsPanel /> },
   { id: 'memory', label: 'Memory', icon: Database, render: (c) => <MemoryPanel query={c.query} setQuery={c.setQuery} /> },
+  // Grouped with Prompts/Models rather than under System: a study measures a prompt template
+  // against another one, and its judge is a model — the things this page is about are the things
+  // those two pages configure. Its RESULTS live on `#/learning`; this page is only the five knobs
+  // that decide whether they can be produced at all.
+  { id: 'evals', label: 'Evaluations', icon: FlaskConical, render: () => <EvalsPanel /> },
   { id: 'agent', label: 'Agent defaults', icon: Bot, render: () => <AgentDefaultsPanel /> },
   { id: 'voice', label: 'Speech & Transcription', icon: AudioLines, render: (c) => <VoicePanel go={c.go} query={c.query} /> },
   { id: 'apps', label: 'Apps', icon: Blocks, render: (c) => <AppsPanel navigate={c.navigate} /> },

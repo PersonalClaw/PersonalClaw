@@ -1,7 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { Compass, ArrowUpRight, ArrowRight, X } from 'lucide-react'
+import { Compass, ArrowUpRight, ArrowRight, Settings, X } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
-import { SlotEmptyState } from './kit'
+import { SlotEmptyState, SlotAction } from './kit'
 import { instant, physics, spring } from '../../../design/motion'
 import { Button } from '../../../ui/Button'
 import { IconButton } from '../../../ui/IconButton'
@@ -68,11 +68,14 @@ export function Discover({ navigate }: RouteProps) {
     return (
       <SlotEmptyState
         icon={Compass}
-        action={
-          <Button variant="ghost" size="xs" onClick={() => navigate('settings/legibility')} className="self-start text-on-surface-var">
-            Open Settings
-          </Button>
-        }
+        // Through `SlotAction`, not a `Button`: this control lives in a SLOT's action position, the
+        // same position Tasks' "+ New task" and Schedule's "+ New trigger" occupy, and all three can
+        // paint on the first screen at once. The ghost `Button` this replaced also carried an ink
+        // override in `className`, landing two colour utilities on one element — `ghost` already
+        // sets `text-on-surface` — so which ink won was decided by stylesheet ORDER, the hazard
+        // `ui/Button`'s own `ghost-accent` note documents. The deck's "See all" footer below keeps
+        // its `Button`: it belongs to the deck, not to a slot's sentence.
+        action={<SlotAction icon={Settings} onClick={() => navigate('settings/legibility')}>Open Settings</SlotAction>}
       >
         Discover tips are off.
       </SlotEmptyState>

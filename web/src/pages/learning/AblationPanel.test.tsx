@@ -247,7 +247,11 @@ describe('the ablation report is CONSUMED, not merely served', () => {
 
   it('points at the SWITCH when the substrate is off, not at the registry', () => {
     render(<AblationPanel view={undefined} error={new ApiError('The eval substrate is off. Turn on `evals.enabled` to publish benchmark results.', 404, 'evals_disabled')} onRetry={() => {}} />)
-    expect(screen.getByText(/evals.enabled/)).toBeTruthy()
+    // The SWITCH, asked for by the name the user will see on it — its `_meta` label, which is what
+    // `#/settings/evals` renders. This assertion used to read `/evals.enabled/`, the config path;
+    // that was the right instruction while the CLI was the only way to flip it, and became the
+    // wrong one the moment a control existed. See `EvalsOff.tsx`.
+    expect(screen.getByRole('link', { name: /Evals enabled/ }).getAttribute('href')).toBe('#/settings/evals')
     // Turning on a setting and registering a component send a user to two different places.
     expect(screen.queryByText(/ablation_registry.json/)).toBeNull()
   })

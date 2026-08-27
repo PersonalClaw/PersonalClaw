@@ -162,6 +162,7 @@ def create(
     workflow: dict[str, Any] | None = None,
     message: str = "",
     created_by: str = "agent",
+    enabled: bool = True,
     cadence_to_cron: Any = None,
 ) -> ToolResult:
     """`automation_create` — §4's NL-friendly constructor. Criterion 2's one message.
@@ -222,7 +223,12 @@ def create(
         id=_unique_id(store, slug_for(name, resolved_kind)),
         name=name.strip(),
         kind=resolved_kind,
-        enabled=True,
+        # A caller may create a trigger switched OFF. This was hardcoded `True`, and there was no
+        # parameter to say otherwise, so `POST /api/triggers {"enabled": false}` created a live,
+        # armed automation and the field the caller sent was dropped without a word (#587). Default
+        # stays `True`: "create an automation" means an automation that runs, and the chat tool has
+        # always meant that.
+        enabled=bool(enabled),
         created_by=created_by,
         spec=resolved_spec,
         workflow=dict(workflow),
@@ -244,7 +250,11 @@ def create(
     # one-shot) returns "" and is left alone — `arm` refuses rather than guessing a cadence.
     from personalclaw.triggers.arm import arm as _arm
 
-    armed = _arm(trigger)
+    # A trigger created switched off is NOT armed. Arming it would give it a `next_fire_at`, which
+    # is what `service.due_ids` selects on — so the row would advertise a countdown for a fire the
+    # `enabled` check then suppresses. `needs_arming` already refuses a disabled row for exactly
+    # this reason; this is the same rule on the creation path, which does not go through it.
+    armed = _arm(trigger) if trigger.enabled else ""
     if armed:
         trigger.next_fire_at = armed
     saved = store.upsert(trigger)
@@ -259,8 +269,12 @@ def create(
     if resolved_spec.get("paths"):
         lines.append(f"  watching: {', '.join(resolved_spec['paths'])}")
     if created_by == "agent":
+        # "active now" is a claim about state, so it tracks state. A disabled trigger announced as
+        # active is the same class of lie the rest of this module hunts — and this string is UI: it
+        # is what the user reads in chat after the agent creates an automation for them.
+        _state = "active now" if saved.enabled else "switched off until you enable it"
         lines.append(
-            f"  I created this for you — it is active now and visible on the Automations page "
+            f"  I created this for you — it is {_state} and visible on the Automations page "
             f"({_active_agent_count(store)}/{max_agent_triggers()} agent-created)."
         )
     return ToolResult(True, "\n".join(lines), {"trigger": saved.to_dict()})

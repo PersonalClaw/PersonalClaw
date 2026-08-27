@@ -33,6 +33,7 @@
       "pushToTalk.js",
       "trayPresence.js",
       "loginItem.js",
+      "nativeNotifications.js",
       "gatewayShutdown.js",
       "preload.js",
       "loading.html",

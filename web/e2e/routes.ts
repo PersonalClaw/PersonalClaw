@@ -53,7 +53,7 @@ export const ROUTES: RouteEntry[] = [
 // src/pages/settings/SettingsPage.tsx — `settingsSubpageCoverage.test.ts` fails if the
 // two lists drift, so a new panel cannot ship unscanned.
 export const SETTINGS_PANELS = [
-  'account', 'design', 'chat', 'providers', 'models', 'search', 'prompts', 'memory',
+  'account', 'design', 'chat', 'providers', 'models', 'search', 'prompts', 'memory', 'evals',
   'agent', 'voice', 'apps', 'inbox', 'documents', 'notifications', 'security', 'devices', 'guardrails',
   'external-access', 'audit',
   'doctor', 'diagnostics', 'tool-output', 'feedback', 'usage', 'routing', 'legibility',

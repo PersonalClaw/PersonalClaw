@@ -19,8 +19,8 @@ import { AblationPanel } from './AblationPanel'
 //   evals.enabled = false  → all four answer 404 `evals_disabled`
 //     BEFORE  4 × red role="alert" "Couldn't load your judge benchmark / studies / retrieval
 //             benchmark / ablation report", each with a Retry that cannot ever succeed
-//     AFTER   4 × "The eval substrate is off, so no <x> can run. Turn it on with
-//             `personalclaw config set evals.enabled true`." — no Retry
+//     AFTER   4 × "The eval substrate is off, so no <x> can run — turn on Evals enabled in
+//             Settings → Evaluations." — one link to `#/settings/evals`, no Retry
 //
 //   evals.enabled = true, nothing run yet → 404 `judge_bench_absent` / `retrieval_absent` /
 //   `ablation_absent` (studies answers 200 `{"studies": []}`)
@@ -34,9 +34,18 @@ import { AblationPanel } from './AblationPanel'
 // old prose predicate is proven to have been false for exactly these responses.
 //
 // 🔑 AND THE ONE COPY THAT EXISTED FOR THIS STATE WAS WRONG. `AblationPanel`'s `evals_disabled`
-// branch said "Turn on `evals.enabled` in Settings" and linked `#/settings`. `evals.enabled` is
-// in no `_EDITABLE_CONFIG` entry and on no settings surface — the link led to a page with no such
-// control. Being unreachable is what kept that invisible.
+// branch said "Turn on `evals.enabled` in Settings" and linked `#/settings`. `evals.enabled` was
+// in `_EDITABLE_CONFIG` but on no settings surface — the link led to a page with no such control.
+// Being unreachable is what kept that invisible.
+//
+// 🔁 AND THAT IS WHY ONE ASSERTION HERE INVERTED. This file shipped with a rail forbidding a
+// Settings link, whose stated reason was that `#/settings` had no evals control — measured, and
+// true at the time. `#/settings/evals` now exists (`pages/settings/EvalsPanel.tsx`, the five
+// allowlisted `evals.*` keys), so the rail's premise is gone and it now enforces the OPPOSITE
+// property in the same spirit: the link must be DEEP (`#/settings/evals`, never the bare
+// 34-card hub), and there must still be exactly ONE instruction — so the CLI command it used to
+// print is now asserted ABSENT. The invariant that never moved: this state hands the user exactly
+// one place to go, and that place has the control.
 
 /** Verbatim `curl http://127.0.0.1:10784/api/evals/…` bodies. Do not paraphrase these. */
 const WIRE = {
@@ -151,7 +160,10 @@ describe('all four eval panels say "the substrate is off" — and say it alike',
     it(`${c.name}: guidance, one instruction, and no Retry`, async () => {
       render(c.el(await wireError(c.body)))
       expect(screen.getByText(new RegExp(`no ${c.what} can run`))).toBeTruthy()
-      expect(screen.getByText('personalclaw config set evals.enabled true')).toBeTruthy()
+      // ONE instruction, and it is the control's own `_meta` label — not the dotted config path,
+      // which appears nowhere on the destination page.
+      expect(screen.getByRole('link', { name: 'Evals enabled in Settings → Evaluations' })).toBeTruthy()
+      expect(screen.queryByText(/personalclaw config set/), 'two ways to flip one switch is not guidance').toBeNull()
       // A switch that is off does not flip because the fetch is repeated.
       expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()
       // Nor is this a failure: `LoadError`'s role="alert" would announce a decided answer as
@@ -161,13 +173,19 @@ describe('all four eval panels say "the substrate is off" — and say it alike',
     })
   }
 
-  it('does NOT send the user to Settings, which has no such control', async () => {
-    // The sentence that used to ship here. `evals.enabled` is in no `_EDITABLE_CONFIG` entry
-    // and on no settings surface, so the link was a dead end.
+  it('sends the user to the SUBPAGE that has the control, never the bare hub', async () => {
+    // 🔁 INVERTED, deliberately — see the header. The dead-end version of this copy linked
+    // `#/settings`, a 34-card bento with no evals card on it; the fix then was to drop the link,
+    // and the fix now is to make it deep. Both halves are asserted because the bare hub is the
+    // regression: `SettingsHome` renders only `SETTINGS_WIDGETS`, so a user dropped there has to
+    // find the right card among 34 before they can reach the switch this sentence names.
     for (const c of CASES) {
       const { unmount } = render(c.el(await wireError(c.body)))
-      expect(screen.queryByRole('link', { name: /Settings/ })).toBeNull()
-      expect(document.querySelector('a[href="#/settings"]')).toBeNull()
+      const link = document.querySelector('a[href="#/settings/evals"]')
+      expect(link, `${c.name} must link the evals subpage`).not.toBeNull()
+      expect(document.querySelector('a[href="#/settings"]'), 'the bare hub is the dead end').toBeNull()
+      // Exactly one instruction: two links in a four-panel column is four choices nobody wants.
+      expect(document.querySelectorAll('a').length, `${c.name}: one instruction`).toBe(1)
       unmount()
     }
   })

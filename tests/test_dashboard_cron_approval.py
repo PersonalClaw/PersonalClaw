@@ -151,3 +151,84 @@ class TestTriggerListFields:
         assert t["silent"] is True
         # The action derives from the invoke-agent exec mode.
         assert t["action"]["provider"] == "invoke-agent"
+
+
+# ── 🔴 #587 at the HTTP layer: `enabled` on POST /api/triggers ────────────────
+#
+# `_create_schedule` never read `body["enabled"]`. It called `tools.create` (which hardcoded
+# `enabled=True`), post-processed only `delivery`, then called `_arm_if_needed` — so a caller
+# asking for a trigger created switched off got a live, ARMED one, and the response echoed it as
+# enabled: accurate about the wrong thing.
+
+
+class TestCreateHonorsEnabledOverTheWire:
+    def _request(self, body: dict) -> MagicMock:
+        mock_state = MagicMock()
+        mock_state._sessions = {}
+        request = MagicMock()
+        request.app = {"state": mock_state}
+        request.get = lambda *a, **k: "dashboard"
+        request.json = AsyncMock(return_value=body)
+        return request
+
+    def _home(self, monkeypatch, tmp_path):
+        import personalclaw.config.loader as loader
+        from personalclaw.dashboard.handlers import triggers as T
+
+        monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
+        monkeypatch.setattr(T, "config_dir", lambda: tmp_path)
+
+    def _body(self, **over):
+        body = {"trigger_type": "schedule", "name": "t", "every": 300, "action": _action()}
+        body.update(over)
+        return body
+
+    @pytest.mark.asyncio
+    async def test_enabled_false_creates_a_disabled_unarmed_trigger(self, monkeypatch, tmp_path):
+        from personalclaw.triggers.store import TriggerStore
+
+        self._home(monkeypatch, tmp_path)
+        resp = await api_trigger_create(self._request(self._body(enabled=False)))
+        assert resp.status == 200
+
+        rows = TriggerStore(base_dir=tmp_path).load()
+        assert len(rows) == 1
+        trigger = rows[0].trigger
+        assert trigger.enabled is False
+        assert trigger.next_fire_at == "", "a trigger created off must not be armed"
+
+    @pytest.mark.asyncio
+    async def test_omitting_enabled_still_creates_it_live(self, monkeypatch, tmp_path):
+        """Vacuity floor and the compatibility contract — every existing client omits the field."""
+        from personalclaw.triggers.store import TriggerStore
+
+        self._home(monkeypatch, tmp_path)
+        resp = await api_trigger_create(self._request(self._body()))
+        assert resp.status == 200
+
+        trigger = TriggerStore(base_dir=tmp_path).load()[0].trigger
+        assert trigger.enabled is True
+        assert trigger.next_fire_at
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("bad", ["false", "true", 0, 1, "0", None, [], {}])
+    async def test_a_non_bool_enabled_is_a_400_not_a_coercion(self, bad, monkeypatch, tmp_path):
+        """The same rule `POST /api/triggers/{id}/toggle` already applies, and for the same reason:
+        the JSON string "false" is TRUTHY under `bool()`, so coercing would silently ARM a trigger
+        the caller asked to be created off — inverting the request rather than refusing it.
+
+        Two endpoints that take the same field must answer about it the same way.
+        """
+        import json
+
+        from personalclaw.triggers.store import TriggerStore
+
+        self._home(monkeypatch, tmp_path)
+        resp = await api_trigger_create(self._request(self._body(enabled=bad)))
+        assert resp.status == 400
+        # The STRUCTURED envelope, unlike this function's older flat siblings: a new refusal joins
+        # the shape `test_wire_error_envelope_census` ratchets the codebase toward.
+        error = json.loads(resp.body.decode())["error"]
+        assert error["code"] == "invalid_request"
+        assert "enabled" in error["message"]
+        assert TriggerStore(base_dir=tmp_path).load() == [], "a refused create must persist nothing"

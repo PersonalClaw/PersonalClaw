@@ -10,6 +10,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Notification rules can now deliver as real OS notifications.**
+
 - **A reviewer's findings now get triaged by you before anything touches your code.**
 
 - **Your watched sources now write you a morning digest, without you scheduling anything.**
@@ -72,13 +74,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Knowledge search's keyword fallback never returned anything, in any install.**
+
 - **A loop interrupted by a restart could stay stuck "running" forever, with nothing working on it.**
 
 - **Turning a tool off on the Tools page now turns it off everywhere.**
 
 - **The skill-proposal queue could fill up and never empty.**
+- **Editing a task can no longer corrupt it.**
 
 - **Scheduled automations now actually run.**
+
+- **Four places where sending the wrong kind of value did something worse than refuse it.**
+
+- **Switching an automation off now survives a restart.**
+
+- **Asking for an automation to be created switched off now creates it switched off.**
 
 - **Restarting PersonalClaw quietly moved a chat onto a different agent.**
 
@@ -201,6 +212,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The approval prompt now tells you what a tool call can touch, and how far your answer reaches.**
 
 ### Security
+
+- **A password inside a URL was invisible to every place PersonalClaw redacts secrets.**
+
+- **Adding an app source no longer accepts anything you type.**
 
 - **Three more ways a path could leave the folders PersonalClaw is allowed to touch.**
 
@@ -512,4 +527,3 @@ agent reference), and a render-smoke gate that closes the v0.1.0 blank-dashboard
 
 - **Single-user, self-hosted, MIT-licensed.**
 - **Requires Python 3.12+; a model-provider API key (or a local Ollama) to start chatting.**
-

@@ -350,3 +350,102 @@ def test_the_gateway_boots_the_migration(tmp_path):
 
     src = inspect.getsource(GatewayOrchestrator._init_cron)
     assert "migrate_and_arm" in src
+
+
+# ── 🔴 #461: the idempotency defect's THIRD half — the off switch ─────────────
+#
+# `test_a_re_migration_preserves_run_history` above closed `run_count`/`last_run_id`/health.
+# `enabled` was left out of `RUNTIME_FIELDS`, so it kept the original defect's shape: a user
+# disabled a trigger, the next boot re-migrated, and `crons.json`'s stale `enabled: true` came
+# back — re-enabled AND re-armed, because `needs_arming` then selected it.
+#
+# Whether an automation is switched on is a fact about what has HAPPENED to a trigger (a person
+# turned it off), not about what it IS. That is the same line the rest of this section draws.
+
+
+def test_a_re_migration_PRESERVES_a_user_disable(tmp_path):
+    """🔴 THE defect. Turning an automation off and restarting turned it back on."""
+    _crons(tmp_path, _job("j-cron"))  # legacy row says enabled: true
+    BM.migrate_and_arm(tmp_path, now=NOW)
+    store = TriggerStore(base_dir=tmp_path)
+    assert store.set_enabled("j-cron", False) is not None
+
+    BM.migrate_and_arm(tmp_path, now=NOW + 200)
+    after = TriggerStore(base_dir=tmp_path).get("j-cron").trigger
+    assert after.enabled is False, "the boot migration re-asserted the legacy enabled value"
+
+
+def test_a_re_enabled_trigger_is_ALSO_preserved(tmp_path):
+    """The mirror, and not redundant: the carry is a boolean now, so a test that only pinned
+    `False` would pass against a rule that carried nothing at all."""
+    _crons(tmp_path, _job("j-off", enabled=False))
+    BM.migrate_and_arm(tmp_path, now=NOW)
+    store = TriggerStore(base_dir=tmp_path)
+    assert store.set_enabled("j-off", True) is not None
+
+    BM.migrate_and_arm(tmp_path, now=NOW + 200)
+    assert TriggerStore(base_dir=tmp_path).get("j-off").trigger.enabled is True
+
+
+def test_a_preserved_disable_is_not_re_armed(tmp_path):
+    """The user-visible consequence, stated as a behaviour. A trigger that came back enabled also
+    came back ARMED, so it advertised a countdown and then fired — which is the harm, not the flag.
+    """
+    from personalclaw.triggers import service as SVC
+
+    _crons(tmp_path, _job("j-cron"))
+    BM.migrate_and_arm(tmp_path, now=NOW)
+    TriggerStore(base_dir=tmp_path).set_enabled("j-cron", False)
+
+    BM.migrate_and_arm(tmp_path, now=NOW + 200)
+    triggers = [r.trigger for r in TriggerStore(base_dir=tmp_path).load()]
+    assert SVC.due_ids(triggers, now=NOW + 86_400) == [], "a disabled trigger became due again"
+
+
+def test_False_is_carried_because_a_bool_is_never_ABSENT(tmp_path):
+    """🔴 The trap that makes this a two-line fix rather than a one-line one.
+
+    `_carry_runtime_state` skipped a field whose existing value was falsy, spelled
+    `value not in (None, "", 0)`. `False == 0` in Python, so `False in (None, "", 0)` is True:
+    adding `enabled` to `RUNTIME_FIELDS` and stopping there would have carried `enabled=True` and
+    silently dropped `enabled=False` — the one value that needed carrying.
+
+    Asserted at the unit rather than only through a migration, because the migration reads
+    `crons.json` and a future change to that reader could hide this again.
+    """
+    from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.store import RUNTIME_FIELDS, _carry_runtime_state
+
+    assert "enabled" in RUNTIME_FIELDS
+    assert False in (None, "", 0), "the premise: Python treats False as equal to 0"
+
+    def _t(**over):
+        base = dict(
+            id="j",
+            name="J",
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 60},
+            workflow={"provider": "notify", "config": {}},
+            capabilities={"providers": ["notify"]},
+        )
+        base.update(over)
+        return Trigger(**base)
+
+    incoming = _t(enabled=True)
+    _carry_runtime_state(_t(enabled=False), incoming)
+    assert incoming.enabled is False
+
+    # And the falsy-means-absent rule still holds for the counters, which is why the fix is
+    # `isinstance(value, bool) or …` and not "carry every falsy value".
+    incoming = _t(run_count=5)
+    _carry_runtime_state(_t(run_count=0), incoming)
+    assert incoming.run_count == 5, "a zero count must not overwrite a derived one"
+
+
+def test_a_re_migration_still_picks_up_a_legacy_ENABLED_change_for_a_NEW_row(tmp_path):
+    """Vacuity floor. `enabled` is carried only when the row is ALREADY in the store — a first
+    import must still take the legacy file's word for it, or `crons.json` stops being
+    authoritative for a job this home has never seen."""
+    _crons(tmp_path, _job("j-new", enabled=False))
+    BM.migrate_and_arm(tmp_path, now=NOW)
+    assert TriggerStore(base_dir=tmp_path).get("j-new").trigger.enabled is False

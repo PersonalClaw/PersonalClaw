@@ -29,10 +29,11 @@ import { join } from 'node:path'
 const SETTINGS = join(process.cwd(), 'src', 'pages', 'settings')
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-/** The four panels that read a config SECTION and render a form from it. */
+/** The panels that read a config SECTION and render a form from it. */
 const PANELS: Array<[string, string]> = [
   ['AgentDefaultsPanel.tsx', 'agent'],
   ['AmbientPanel.tsx', 'ambient'],
+  ['EvalsPanel.tsx', 'evals'],
   ['GuardrailsPanel.tsx', 'guardrails'],
   ['LegibilityPanel.tsx', 'legibility'],
 ]

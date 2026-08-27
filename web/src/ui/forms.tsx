@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { cx } from './cx'
 
@@ -326,9 +326,30 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel, di
 // import path.
 export { Segmented, type SegOption } from './Segmented'
 
-/** Tag / chip input — type + Enter (or comma) to add, × to remove. */
+/** Tag / chip input — type + Enter (or comma) to add, × to remove.
+ *
+ *  🔴 THE FIELD WAS 19.5px TALL INSIDE A 40px WELL. Measured on `#/tasks/new` and `#/prompts/new`
+ *  (834×1112, and identical at 1440): every other input in this family renders 36-40px — `TextInput`
+ *  40, `NumberField` 40, `DateInput` 40, the plain-textarea rows 36 — and this one was **19.5px**,
+ *  `min-height: auto`, the family's only sub-24px field. WCAG 2.2 SC 2.5.8 wants 24px, and the
+ *  undersized-target spacing exception cannot rescue it once a chip exists: chips are `h-7` (28px)
+ *  sitting `gap-1.5` (6px) away, so the 24px circles intersect. **12 call sites** — knowledge (×3),
+ *  prompts (×2), reports (×2), settings (×3), schedule, tasks.
+ *
+ *  Two things were wrong, and they are one defect: the control's own box was under the floor, and the
+ *  40px well that LOOKS like the field was not a way into it — 20 of its 40 pixels did nothing.
+ *
+ *   · `min-h-6` raises the hit box to 24px while the drawn text stays 13px. It is PIXEL-NEUTRAL: the
+ *     well is `min-h-10` with `py-2`, so its content box is already exactly 24px, and a chip row is
+ *     28px, which 24 still fits inside. Same move as the `sm` Toggle's 36×20 → 36×24 and the loop
+ *     composer's Scratch label — grow the target, leave the drawn size alone.
+ *   · clicking the well focuses the field, which is what the well's own `focus-within:ring` already
+ *     promises. Guarded to the well itself so a click on a chip's remove button is not hijacked; that
+ *     button removes its chip and focus then lands in the field, which is where typing should go next.
+ *     `preventDefault` on mousedown keeps the caret from being placed and then stolen. */
 export function ChipInput({ values, onChange, placeholder, max, suggestions, ariaLabel }: { values: string[]; onChange: (v: string[]) => void; placeholder?: string; max?: number; suggestions?: string[]; ariaLabel?: string }) {
   const [draft, setDraft] = useState('')
+  const fieldRef = useRef<HTMLInputElement>(null)
   const listId = useId()
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
@@ -341,7 +362,10 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
   // near-duplicate fragments like "Kubernetes" vs "kubernetes").
   const remaining = suggestions?.filter((s) => !values.includes(s)) ?? []
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-surface-container px-2 py-2 min-h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
+    <div
+      className="flex flex-wrap items-center gap-1.5 rounded-md bg-surface-container px-2 py-2 min-h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); fieldRef.current?.focus() } }}
+    >
       {values.map((v) => (
         <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var text-[0.8125rem]">
           {v}
@@ -352,11 +376,11 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
           <button type="button" aria-label={`Remove ${v}`} onClick={() => onChange(values.filter((x) => x !== v))} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
         </span>
       ))}
-      <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={values.length ? '' : placeholder}
+      <input ref={fieldRef} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={values.length ? '' : placeholder}
         list={remaining.length ? listId : undefined} name={`chip-${listId}`} aria-describedby={hintId} aria-labelledby={labelId} aria-label={labelId ? undefined : ariaLabel ?? 'Add a tag'}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } else if (e.key === 'Backspace' && !draft && values.length) onChange(values.slice(0, -1)) }}
         onBlur={add}
-        className="flex-1 min-w-[80px] bg-transparent text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none" />
+        className="flex-1 min-h-6 min-w-[80px] bg-transparent text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none" />
       {remaining.length > 0 && <datalist id={listId}>{remaining.map((s) => <option key={s} value={s} />)}</datalist>}
     </div>
   )

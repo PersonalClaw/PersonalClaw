@@ -119,7 +119,17 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    message = body.get("message", "").strip()
+    # `.get("message", "")` defends against a MISSING key, not a wrong TYPE — so a non-string
+    # `message` reached `.strip()` and raised `AttributeError`, answering a bare 500 with no JSON
+    # body while a MISSING message correctly answered 400 (#766). The right pattern is four lines
+    # down, on `meta`: check the type, then use it.
+    raw_message = body.get("message", "")
+    if not isinstance(raw_message, str):
+        # STRUCTURED (`json_error`): `test_wire_error_envelope_census` ratchets the flat
+        # `{"error": "<prose>"}` population DOWN, so a NEW refusal joins the shape the project
+        # converges on rather than the one it is retiring.
+        return json_error("invalid_request", message="message must be a string", status=400)
+    message = raw_message.strip()
     agent = body.get("agent", "")
     session_name = body.get("session")
     color_theme = body.get("color_theme", "")
