@@ -140,7 +140,10 @@ export function Composer({
   )
 
   // Right-hand action cluster: optimize · voice · send/stop/queue.
-  const micLabel = mic.state === 'recording' ? 'Stop recording' : mic.state === 'transcribing' ? 'Transcribing…' : 'Voice input'
+  // Two names, not three: "Stop recording" is a different ACTION, so it earns its own name.
+  // Transcription is the same action working — `loading` announces that as `aria-busy`, so the
+  // name stays the one the user can find the control by.
+  const micLabel = mic.state === 'recording' ? 'Stop recording' : 'Voice input'
   // The label states what the control does, never why it is unavailable — a reason
   // folded into the name makes the action unfindable by the name it has when it works.
   const handsFreeLabel = !listening
@@ -153,24 +156,34 @@ export function Composer({
       {/* The reason rides `disabledReason`, NOT the label. Folding it into the label mutates the
           accessible NAME, so the action stops being findable by the name it has when it works —
           the failure cycle 56 measured and ruled against. */}
+      {/* 🔑 THE SAME RULE, ONE STATE FURTHER. The comment above bans folding a REASON into the
+          name; this button was folding its PROGRESS in ("Optimizing…"), for the same reason the
+          reason used to live there — there was nowhere else to put it. `loading` is that place:
+          `aria-busy` says "working" and the primitive cross-fades the glyph to a spinner, so the
+          name stays "Optimize prompt (⌘↵)" in every state and the hand-rolled
+          `icon={optimizing ? Loader2 : …}` + `[&_svg]:animate-spin` swap is gone. The click guard
+          goes too — `loading` refuses it through the primitive's own `off` check. */}
       {controls.optimize && onOptimize && (
-        <IconButton icon={optimizing ? Loader2 : Sparkles}
-          label={optimizing ? 'Optimizing…' : 'Optimize prompt (⌘↵)'}
+        <IconButton icon={Sparkles}
+          label="Optimize prompt (⌘↵)"
           disabledReason="Type something first"
           active={optimizing} size={40}
           disabled={!optimizing && !canSend}
-          className={optimizing ? '[&_svg]:animate-spin' : undefined}
-          onClick={optimizing || !canSend ? undefined : onOptimize} />
+          loading={optimizing}
+          onClick={onOptimize} />
       )}
       {/* The in-app half of the capture indicator. Rendered from the recorder's LIVE
           state, so a denied microphone (no stream) shows nothing — and a capture that
           ends any way at all takes the chip with it. */}
       {mic.state === 'recording' && <MicCaptureChip onStop={mic.toggle} />}
+      {/* Its neighbour's twin: transcription is in flight, so it is `loading`. "Stop recording"
+          stays a real name change (the action genuinely differs); "Transcribing…" was progress
+          wearing the name, and `aria-busy` carries that now. */}
       {controls.mic && onTranscribe && !listening && (
-        <IconButton icon={mic.state === 'transcribing' ? Loader2 : Mic} label={micLabel}
+        <IconButton icon={Mic} label={micLabel}
           active={mic.state !== 'idle'} size={40}
-          className={mic.state === 'transcribing' ? '[&_svg]:animate-spin' : undefined}
-          onClick={mic.state === 'transcribing' ? undefined : mic.toggle} />
+          loading={mic.state === 'transcribing'}
+          onClick={mic.toggle} />
       )}
       {/* Screen context (MULTIMODAL-IO §5.2). Rendered only when the config master
           switch is on, so an install that never opted in has no capture affordance at

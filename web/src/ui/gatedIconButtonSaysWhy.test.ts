@@ -18,15 +18,27 @@ import { join } from 'node:path'
 //   ModelsPanel ×3 · PlanReview ×4     first/last, saving  self-evident or transient → left native
 //   6 × `testing`/`busy`/`rechecking`  in flight           already reads as busy → left alone
 //
+// ⚠️ THE LAST ROW OF THAT CENSUS WAS WRONG, and `iconButtonBusyNotDisabled.test.tsx` is the
+// correction: those gates did NOT "already read as busy". They read as UNAVAILABLE — 40% opacity,
+// `cursor: not-allowed`, `aria-disabled="true"`, no `aria-busy` — because `disabled` was the only
+// prop these two primitives had. Both now carry `loading`, and every in-flight gate moved onto it,
+// which is why this file's populations shrank: 25 gated tags → 16, 12 mute → 3. The remaining
+// three are genuine unavailability (a license gate, `disabled={false}`, an already-pinned widget).
+// A reason is still not wanted on any of them, so this rail's question is unchanged; only its
+// population is smaller and now consists solely of real gates.
+//
 // 🔑 THE CANONICAL FORM WAS ALREADY IN THE REPO. `ui/Composer`'s `send-disabled` case is the same
 // state (`canSend` false because the draft is empty) and it names the fix. Converging onto what ships
 // rather than inventing copy is the whole point; the two cockpit composers are hand-rolled textareas
 // that never inherited it.
 //
-// 🪤 A COMPOUND GATE GETS A CONDITIONAL REASON. `disabled={!text.trim() || busy}` mixes a state the
-// user can fix with one they cannot. The reason is passed ONLY for the `!text.trim()` branch —
-// announcing "Type a steer first" while a send is in flight would be a lie, and the busy branch
-// already reads as busy (spinner + label). The primitive's own doc asks for exactly this.
+// 🪤 A COMPOUND GATE GETS A CONDITIONAL REASON. `disabled={!text.trim() || busy}` mixed a state the
+// user can fix with one they cannot, so the reason was passed ONLY for the `!text.trim()` branch —
+// announcing "Type a steer first" while a send is in flight would be a lie. The compound gate is
+// now SPLIT at the source (`disabled={!text.trim()} loading={busy}`), which is the stronger form of
+// the same ruling: the two branches are two props, so the reason cannot fire on the wrong one. The
+// conditional is kept anyway — `disabledReason` is only read while `disabled`, and the ternary is
+// what documents which branch it belongs to.
 
 const SRC = join(process.cwd(), 'src')
 const walk = (d: string): string[] =>
@@ -47,8 +59,10 @@ function gatedTags(src: string): string[] {
 
 describe('a gated icon button whose gate the user can fix says so', () => {
   const ADOPTERS: [string, RegExp][] = [
-    ['pages/code/CodeCockpitPage.tsx', /disabled=\{!text\.trim\(\) \|\| busy\}/],
-    ['pages/code/CodeCockpitPage.tsx', /disabled=\{!text\.trim\(\) \|\| sending\}/],
+    // Both steer sends: the gate is now the fixable branch ALONE (`loading={busy}` carries the
+    // other half), so the pin follows the split rather than the pre-split compound expression.
+    ['pages/code/CodeCockpitPage.tsx', /disabled=\{!text\.trim\(\)\} disabledReason=[\s\S]*?loading=\{busy\}/],
+    ['pages/code/CodeCockpitPage.tsx', /disabled=\{!text\.trim\(\)\} disabledReason=[\s\S]*?loading=\{sending\}/],
     ['ui/FindBar.tsx', /label="Previous match"/],
     ['ui/FindBar.tsx', /label="Next match"/],
   ]
@@ -75,14 +89,23 @@ describe('a gated icon button whose gate the user can fix says so', () => {
     )
   })
 
-  it('an in-flight or self-evident gate is still left native — and there are plenty', () => {
-    // Not vacuous, and a guard against a future sweep "finishing the job": a spinner already reads as
-    // busy, and a move-up on the first row explains itself by position.
+  it('a self-evident gate is still left mute — and every one left is a REAL gate', () => {
+    // Not vacuous, and a guard against a future sweep "finishing the job": a move-up on the first
+    // row explains itself by position, and a license-gated download by the badge beside it.
     const mute = walk(SRC).flatMap((abs) => gatedTags(readFileSync(abs, 'utf8')))
       .filter((t) => !/disabledReason=/.test(t))
-    // Measured: 11 of the 20 gated tags stay mute on purpose (6 in-flight, 4 first/last, 1 saving).
-    expect(mute.length, 'the transient/self-evident gates keep their silence deliberately')
-      .toBeGreaterThanOrEqual(11)
+    // Measured 3 (was 11, when 8 of them were in-flight states miscast as unavailability — see the
+    // ⚠️ note at the top): a license gate, `disabled={false}`, and an already-pinned widget.
+    expect(mute.length, 'the self-evident gates keep their silence deliberately')
+      .toBeGreaterThanOrEqual(3)
+    // The half of the old claim that was false: none of the surviving silences may be in-flight
+    // vocabulary. That is `loading`'s job now, and a regression here means a busy button went back
+    // to announcing itself unavailable.
+    // No word boundaries on purpose — `savePending`/`isBusy` are the shapes these gates take, and a
+    // `\b`-anchored matcher reads camelCase as clean. (Checked against the three survivors: none of
+    // `gatedUndownloaded`, `false`, `pinned` matches.)
+    const inFlight = mute.filter((t) => /(?<!aria-)disabled=\{[^}]*(?:busy|saving|sending|testing|rechecking|reconnecting|deleting|pending|loading)/i.test(t))
+    expect(inFlight, 'an in-flight gate belongs on `loading`, not `disabled`').toEqual([])
   })
 
   it('both icon primitives keep the tab stop, which is what makes a reason audible at all', () => {

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { MoreRow } from '../../ui/MoreRow'
 import {
-  Plus, Cpu, Wifi, Pencil, Trash2, X, Eye, EyeOff, Loader2,
+  Plus, Cpu, Wifi, Pencil, Trash2, X, Eye, EyeOff,
   CheckCircle2, AlertTriangle, ChevronRight, RotateCcw,
 } from 'lucide-react'
 import { api, type ModelProvider, type AvailableModel, type ProviderTestResult, type ModelProviderTypeField } from '../../lib/api'
@@ -165,7 +165,9 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
         </div>
         <CredBadge status={provider.credential_status} />
         <div className="flex shrink-0 items-center gap-0.5">
-          <SquareIconButton label="Test connection" onClick={runTest} disabled={testing}>{testing ? <Loader2 size={14} className="animate-spin" /> : <Wifi size={14} />}</SquareIconButton>
+          {/* `loading`, not `disabled` + a hand-rolled glyph swap: the primitive owns the spinner
+              and the cross-fade, and a probe in flight is "working", not "unavailable". */}
+          <SquareIconButton label="Test connection" onClick={runTest} loading={testing}><Wifi size={14} /></SquareIconButton>
           {/* Both of these reveal content further down the card (`{showModels && …}` and
               `{editing && <EditInstanceForm/>}`), so they announce expansion rather than pressedness.
               Test connection and Delete claim no state at all. */}

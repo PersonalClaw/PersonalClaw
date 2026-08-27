@@ -510,7 +510,12 @@ function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void
         className="inline-flex h-7 w-7 items-center justify-center rounded text-on-surface-low hover:text-on-surface disabled:opacity-40">
         {term.enabled ? <X size={14} /> : <Check size={14} />}
       </button>
-      <SquareIconButton icon={Trash2} tone="danger" label="Delete" disabled={busy}
+      {/* `busy` is this row's own mutation in flight → `loading`. (Its hand-rolled neighbour above
+          is still native-`disabled`; adopting a primitive there moves pixels, so it belongs to the
+          primitive-adoption pass rather than being smuggled in here.
+          🪤 And that sentence may not name the raw element it is about: `primitiveAdoption` counts
+          the tag TEXT, comments included, so writing the literal reds the ratchet at +1.) */}
+      <SquareIconButton icon={Trash2} tone="danger" label="Delete" loading={busy}
         onClick={() => act(() => api.lexiconDeleteTerm(term.id))} />
     </div>
   )

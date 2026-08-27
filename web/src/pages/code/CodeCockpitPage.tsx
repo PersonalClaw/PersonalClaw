@@ -2021,13 +2021,14 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
                 placeholder={project.status === 'needs_input' ? 'Answer for this task…' : `Steer “${task.title.slice(0, 24)}${task.title.length > 24 ? '…' : ''}”…`}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}
                 className="max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />
-              {/* Compound gate, one reason: `!text.trim()` is the user's to fix, `busy` is in flight and
-                  already reads as busy (spinner + label). The canonical `ui/Composer` send button says
-                  "Type a bit more first" in exactly this state; this one said nothing. */}
-              <IconButton icon={busy ? Loader2 : Send} label="Send steer" filled size={28} iconSize={13}
-                disabled={!text.trim() || busy} disabledReason={!text.trim() ? 'Type a steer first' : undefined}
-                onClick={() => steer()}
-                className={busy ? 'shrink-0 [&_svg]:animate-spin' : 'shrink-0'} />
+              {/* Compound gate, SPLIT down the middle: `!text.trim()` is unavailable and the user can
+                  fix it, so it keeps `disabled` + the reason; `busy` is in flight, so it is `loading`.
+                  They used to be OR-ed into one `disabled`, which announced "unavailable" mid-send and
+                  made the hand-rolled `icon={busy ? Loader2 : Send}` + `[&_svg]:animate-spin` swap
+                  below necessary — the primitive owns the spinner now. */}
+              <IconButton icon={Send} label="Send steer" filled size={28} iconSize={13}
+                disabled={!text.trim()} disabledReason={!text.trim() ? 'Type a steer first' : undefined}
+                loading={busy} onClick={() => steer()} className="shrink-0" />
             </div>
           </>
         )}
@@ -3324,10 +3325,11 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
               placeholder={project.status === 'needs_input' ? 'Answer the worker…' : 'Steer the worker…'}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}
               className="max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />
-            <IconButton icon={sending ? Loader2 : Send} label="Send steer" filled size={28} iconSize={13}
-              disabled={!text.trim() || sending} disabledReason={!text.trim() ? 'Type a steer first' : undefined}
-              onClick={() => steer()}
-              className={sending ? 'shrink-0 [&_svg]:animate-spin' : 'shrink-0'} />
+            {/* Same split as the task-level steer box above: emptiness stays `disabled` (with the
+                reason), in-flight becomes `loading` and the primitive owns the spinner. */}
+            <IconButton icon={Send} label="Send steer" filled size={28} iconSize={13}
+              disabled={!text.trim()} disabledReason={!text.trim() ? 'Type a steer first' : undefined}
+              loading={sending} onClick={() => steer()} className="shrink-0" />
           </div>
         ) : project.status === 'ready' || project.status === 'review' ? (
           <p className="px-1.5 py-1 text-center text-on-surface-low text-[0.75rem]">Press Start to launch — steer the worker once it's running.</p>
