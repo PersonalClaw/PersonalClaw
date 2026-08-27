@@ -9,6 +9,7 @@ import { notify } from '../../app/appSdk'
 import { confirm } from '../../ui/dialog'
 import { useQuery } from '../../lib/data'
 import { PanelHeader, Section, RowGroup } from './settingsUI'
+import { PairingQr } from './PairingQr'
 import { Button } from '../../ui/Button'
 import { EmptyState, FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { relPast, absTime } from '../schedule/scheduleMeta'
@@ -80,9 +81,8 @@ function CopyButton({ value, label }: { value: string; label: string }) {
  *
  *  On the QR: `pair/start` returns a `pairing_url` that already contains the code, which is what
  *  makes it actionable on its own — the QR is a RENDERING of that URL, not a separate mechanism.
- *  This ships the URL and the code (what a second browser on the LAN actually needs) and marks
- *  where the image belongs; adding an encoder is a dependency decision, and the repo's own
- *  precedent is that TOTP enrollment ships no QR either (AccountPanel sends you to the CLI). */
+ *  `MC-8` supplies the image (`PairingQr` + `lib/qr.ts`, no new dependency); the URL and the code
+ *  stay on screen beside it, because a camera that will not focus must not be the only way in. */
 export function DevicesPanel() {
   const { data, error: loadErr, refresh } = useQuery('settings:devices', () => api.devices())
   const [pairing, setPairing] = useState<DevicePairStart | null>(null)
@@ -193,56 +193,58 @@ export function DevicesPanel() {
             </div>
           ) : (
             <div className="flex flex-col gap-l">
-              {/* Where the QR image belongs. Deliberately a labelled placeholder and not a
-                  silent omission: the owner should be able to see that the scannable form is
-                  not here yet, and still complete the pairing from the link and the code. */}
+              {/* The scannable form, from `pair/start`'s `pairing_url` verbatim (`MC-8`). One scan
+                  is enough because the code rides inside that URL; the code is shown beside it
+                  anyway, because a camera that will not focus must not be the only way in. */}
               <div className="flex flex-wrap items-start gap-l">
-                <div
-                  className="flex size-[148px] shrink-0 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-outline-variant px-2 text-center"
-                  role="img"
-                  aria-label="QR code not available — use the pairing link and code shown beside this"
-                >
-                  <QrCode size={28} className="text-on-surface-low" aria-hidden="true" />
-                  <span className="text-on-surface-low text-[0.75rem] leading-tight">
-                    No scannable code yet — use the link and code
-                  </span>
-                </div>
+                <PairingQr url={pairing.pairing_url} expired={expired} />
 
-                {/* The programmatic focus target: `tabIndex={-1}` + `role="group"` + a name, so landing
-                    here announces what it is rather than a bare container. It is NOT in the tab order
-                    (−1), so nothing changes for a user tabbing through the card. */}
-                {/* Suppressing the focus ring is correct here, and this is the one site
-                    `focusRingSurvival` still counts: it is a PROGRAMMATIC focus target
-                    (`tabIndex={-1}`, focused via `codeRef` so a screen reader announces the pairing
-                    code), not a keyboard stop. A ring would draw around the whole block for a focus
-                    the user never initiated. (Worded without the utility's literal name on purpose —
-                    that scanner reads comments as well as code.) */}
-                <div ref={codeRef} tabIndex={-1} role="group" aria-label="Pairing code and link"
-                  className="min-w-0 flex-1 flex flex-col gap-l outline-none">
-                  <div>
-                    <div className="text-on-surface-low text-[0.8125rem]">Code</div>
-                    <div className="mt-1 flex items-center gap-s">
-                      {/* No `aria-label` here: `<code>` carries no role, so an aria-label on it is
-                          ignored by assistive tech (and flagged by axe, which now scans this
-                          route). The grouped code reads correctly as text, and the visible label
-                          above names it. */}
-                      <code className="select-all font-mono text-on-surface text-[1.375rem] tracking-[0.12em]">
-                        {pairing.code}
-                      </code>
-                      <CopyButton value={pairing.code} label="pairing code" />
+                {/* AN EXPIRED PAYLOAD IS WITHDRAWN, NOT DIMMED. The gateway refuses a dead code
+                    (`redeem_code` → `expired`), so leaving it on screen invites the owner to carry
+                    a string to their phone that cannot possibly work, and to read the failure as
+                    "pairing is broken" rather than "that code ran out". */}
+                {expired ? (
+                  <p className="min-w-0 flex-1 text-on-surface-low text-[0.8125rem]">
+                    The code and link are no longer shown — this gateway refuses an expired code,
+                    so there is nothing here that would still work.
+                  </p>
+                ) : (
+                  /* The programmatic focus target: `tabIndex={-1}` + `role="group"` + a name, so landing
+                     here announces what it is rather than a bare container. It is NOT in the tab order
+                     (−1), so nothing changes for a user tabbing through the card. */
+                  /* Suppressing the focus ring is correct here, and this is the one site
+                     `focusRingSurvival` still counts: it is a PROGRAMMATIC focus target
+                     (`tabIndex={-1}`, focused via `codeRef` so a screen reader announces the pairing
+                     code), not a keyboard stop. A ring would draw around the whole block for a focus
+                     the user never initiated. (Worded without the utility's literal name on purpose —
+                     that scanner reads comments as well as code.) */
+                  <div ref={codeRef} tabIndex={-1} role="group" aria-label="Pairing code and link"
+                    className="min-w-0 flex-1 flex flex-col gap-l outline-none">
+                    <div>
+                      <div className="text-on-surface-low text-[0.8125rem]">Code</div>
+                      <div className="mt-1 flex items-center gap-s">
+                        {/* No `aria-label` here: `<code>` carries no role, so an aria-label on it is
+                            ignored by assistive tech (and flagged by axe, which now scans this
+                            route). The grouped code reads correctly as text, and the visible label
+                            above names it. */}
+                        <code className="select-all font-mono text-on-surface text-[1.375rem] tracking-[0.12em]">
+                          {pairing.code}
+                        </code>
+                        <CopyButton value={pairing.code} label="pairing code" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-on-surface-low text-[0.8125rem]">Link to open on the device</div>
+                      <div className="mt-1 flex items-start gap-s">
+                        <code className="min-w-0 select-all break-all font-mono text-on-surface text-[0.8125rem]">
+                          {pairing.pairing_url}
+                        </code>
+                        <CopyButton value={pairing.pairing_url} label="pairing link" />
+                      </div>
                     </div>
                   </div>
-
-                  <div>
-                    <div className="text-on-surface-low text-[0.8125rem]">Link to open on the device</div>
-                    <div className="mt-1 flex items-start gap-s">
-                      <code className="min-w-0 select-all break-all font-mono text-on-surface text-[0.8125rem]">
-                        {pairing.pairing_url}
-                      </code>
-                      <CopyButton value={pairing.pairing_url} label="pairing link" />
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* The countdown is stated in words as well as tone — an expiry communicated only

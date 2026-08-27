@@ -7,6 +7,7 @@ import { invalidateKeys } from '../../lib/data'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { api, type DeviceRec, type DevicePairStart } from '../../lib/api'
+import { encodeQr, qrPath } from '../../lib/qr'
 
 // ── Settings → Devices (COMPANION-APPS C2 / CA-2) ─────────────────────────────────────────────
 //
@@ -41,9 +42,14 @@ function device(over: Partial<DeviceRec> = {}): DeviceRec {
   }
 }
 
+// 🪤 NO `#` IN THE PATH. This fixture used to read `.../#/pair?code=…`, which the gateway never
+// emits (`handlers/devices.py::_pair_base_url` composes `{base}/pair?code={formatted}`) and which
+// would not WORK if it did: `/pair` is a standalone document whose script reads the code out of
+// `location.search`, and a code parked behind a `#` lands in the fragment instead. A fixture that
+// cannot happen is a QR payload nobody ever checked.
 const START: DevicePairStart = {
   code: 'ABCD-EFGH',
-  pairing_url: 'http://192.168.1.5:10000/#/pair?code=ABCD-EFGH',
+  pairing_url: 'http://192.168.1.5:10000/pair?code=ABCD-EFGH',
   expires_at: Math.floor(Date.now() / 1000) + 300,
   expires_in: 300,
 }
@@ -239,10 +245,12 @@ describe('pairing surfaces the code and the link', () => {
     expect(screen.getByRole('button', { name: /Copy pairing link/i })).toBeTruthy()
   })
 
-  it('marks where the scannable code belongs instead of silently omitting it', async () => {
-    // CA-2 ships the URL + code rather than a QR image (no encoder in either ecosystem, and the
-    // repo's own TOTP enrollment ships no QR either). The honest form of that is a LABELLED gap:
-    // the owner can see the scannable form is absent and still finish pairing.
+  it('renders a QR of the PAIRING URL — the payload, not the bare code (MC-8)', async () => {
+    // The clause is "renders a QR of {pairing_url, one-time code}", and the two are one thing:
+    // the URL already contains the code, which is what makes a single scan enough. So the
+    // assertion is on the PAYLOAD, and its counter-assertion is the mistake that would look
+    // identical on a screenshot — encoding the eight-character code, which a phone camera would
+    // resolve to a string with nowhere to go.
     vi.spyOn(api, 'devices').mockResolvedValue([])
     vi.spyOn(api, 'devicePairStart').mockResolvedValue(START)
     mount()
@@ -250,11 +258,21 @@ describe('pairing surfaces the code and the link', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
 
     await waitFor(() => expect(screen.getByText('ABCD-EFGH')).toBeTruthy())
-    const placeholder = screen.getByRole('img', { name: /QR code not available/i })
-    expect(placeholder.getAttribute('aria-label')).toMatch(/link and code/i)
+    const svg = screen.getByRole('img', { name: /scan it with the camera/i })
+    const drawn = svg.querySelector('path')?.getAttribute('d') ?? ''
+    const symbol = encodeQr(START.pairing_url)!
+    expect(drawn, 'the QR encodes the pairing URL').toBe(qrPath(symbol))
+    expect(drawn, 'and NOT the bare code').not.toBe(qrPath(encodeQr(START.code)!))
+    // Not an empty image dressed as one: a real symbol has hundreds of dark modules, and the
+    // viewBox must leave room for the quiet zone or most cameras will not lock on.
+    expect([...drawn.matchAll(/h1v1h-1z/g)].length).toBeGreaterThan(200)
+    expect(svg.getAttribute('viewBox')).toBe(`0 0 ${symbol.size + 8} ${symbol.size + 8}`)
   })
 
-  it('an EXPIRED code says so rather than counting into nonsense', async () => {
+  it('an EXPIRED code WITHDRAWS the payload instead of offering a dead one', async () => {
+    // The security half of MC-8. `redeem_code` refuses an expired code, so a dashboard that keeps
+    // showing the QR and the link is handing the owner something guaranteed to fail at the far
+    // end — where the failure reads as "pairing is broken", not "that code ran out".
     vi.spyOn(api, 'devices').mockResolvedValue([])
     vi.spyOn(api, 'devicePairStart').mockResolvedValue({
       ...START, expires_at: Math.floor(Date.now() / 1000) - 5, expires_in: 0,
@@ -266,6 +284,32 @@ describe('pairing surfaces the code and the link', () => {
     await waitFor(() => expect(screen.getByText(/This code has expired/i)).toBeTruthy())
     expect(screen.queryByText(/Expires in/i), 'not both at once').toBeNull()
     expect(screen.getByRole('button', { name: /Generate a new pairing code/i })).toBeTruthy()
+    // Nothing redeemable is left on screen, and the withdrawal is EXPLAINED rather than silent.
+    expect(screen.queryByRole('img', { name: /scan it with the camera/i })).toBeNull()
+    expect(screen.queryByText('ABCD-EFGH'), 'the code is gone').toBeNull()
+    expect(screen.queryByText(START.pairing_url), 'the link is gone').toBeNull()
+    expect(screen.queryByRole('button', { name: /Copy pairing code/i })).toBeNull()
+    expect(screen.getByText(/refuses an expired code/i)).toBeTruthy()
+  })
+
+  it('a gateway that cannot resolve its own address refuses the QR and keeps the code', async () => {
+    // `pair/start` returns `pairing_url: ""` when the request host is unusable. A blank square
+    // would read as "my camera is broken"; the sentence names the real problem, and the code —
+    // which still works when typed — stays.
+    vi.spyOn(api, 'devices').mockResolvedValue([])
+    vi.spyOn(api, 'devicePairStart').mockResolvedValue({ ...START, pairing_url: '' })
+    mount()
+    await waitFor(() => expect(screen.getByText(/No devices paired/i)).toBeTruthy())
+    fireEvent.click(screen.getAllByRole('button', { name: /Pair a device/i })[0])
+
+    await waitFor(() => expect(screen.getByText('ABCD-EFGH')).toBeTruthy())
+    expect(screen.queryByRole('img', { name: /scan it with the camera/i })).toBeNull()
+    expect(screen.getByText(/could not work out its own address/i)).toBeTruthy()
+    // Unlike an expired code, this one is still redeemable — so the code and its copy button stay.
+    // (The VACUITY leg for both refusals is the MC-8 test above: given a resolvable URL and time
+    // on the clock, the same `PairingQr` draws a real symbol, so "no QR" cannot pass by the QR
+    // never rendering at all.)
+    expect(screen.getByRole('button', { name: /Copy pairing code/i })).toBeTruthy()
   })
 
   it('a FAILED pair/start is reported, not swallowed into a blank panel', async () => {

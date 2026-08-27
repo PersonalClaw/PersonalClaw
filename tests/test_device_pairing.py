@@ -90,6 +90,21 @@ def test_a_pairing_code_round_trips_exactly_once(_isolated) -> None:
     assert pairing.redeem_code(code).result == pairing.RESULT_INVALID, "must be single-use"
 
 
+def test_the_pairing_ttl_is_five_minutes_and_the_deadline_honours_it(_isolated) -> None:
+    """`MC-8`'s clause is "single-use (TTL 5min) **verified**", and nothing verified the 5.
+
+    The route's own check is ``expires_in == pairing.PAIR_CODE_TTL_SECS``, which holds for any
+    value the constant happens to have — an hour would pass it. A pairing code's whole security
+    argument is "long enough to walk over, short enough that 32^8 is unguessable in the window",
+    so the WINDOW is the property, not the name of the variable holding it. Pinned here, together
+    with the minted deadline actually being that far out (a TTL nobody applies is a TTL of none).
+    """
+    assert pairing.PAIR_CODE_TTL_SECS == 300, "five minutes, the contract's number"
+    before = time.time()
+    _code, expires_at = pairing.issue_code()
+    assert 300 <= expires_at - before <= 305, f"deadline {expires_at - before:.1f}s from issue"
+
+
 def test_an_expired_code_is_told_apart_from_an_unknown_one(_isolated) -> None:
     """Two rejections, because they need two different sentences in the UI."""
     code, _exp = pairing.issue_code()
