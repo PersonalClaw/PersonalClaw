@@ -80,7 +80,10 @@ function fromChild(child: Window, data: unknown) {
 }
 
 function setKeyMessages(posted: ReturnType<typeof vi.spyOn>) {
-  return posted.mock.calls
+  // vitest 4 widens an un-parameterised spy's `mock.calls` to `any`, so the two callbacks
+  // below lose their inferred parameter types under noImplicitAny. One cast at the source
+  // restores both without pinning the spy's generics at every call site.
+  return (posted.mock.calls as unknown[][])
     .map((c) => c[0] as { type: string; edits?: { key: string; value: string }[] })
     .filter((m) => m.type === EDIT_MODE_SET_KEYS)
 }
