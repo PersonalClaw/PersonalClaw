@@ -1,7 +1,7 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
-  MonitorSmartphone, Plug2, FileType2,
+  MonitorSmartphone, Plug2, FileType2, LayoutDashboard, Smartphone, Rss, Package,
 } from 'lucide-react'
 import { verifiedScope } from './AuditPanel'
 import type { LucideIcon } from 'lucide-react'
@@ -11,8 +11,14 @@ import {
   type SettingsProvider, type NotificationSettings, type UpdateCheck,
   type PromptBindings, type SelVerify, type SavedAgent,
   type SearchProviderInfo,
-  type ToolsSavings, type DeviceRec,
+  type ToolsSavings, type DeviceRec, type InstalledPackRec,
 } from '../../lib/api'
+// One spelling for a poll cadence: `#/knowledge/sources` renders every source row's cadence
+// through THIS function (`SourcesPage.tsx:177`, `· every {fmtInterval(poll_interval_secs)}`), and
+// the number this tile shows is the DEFAULT those rows fall back to. A second formatter here would
+// print the same seconds two ways on two surfaces one click apart — the shape `lib/epoch.test.ts`
+// already rules for relative time. Reused, not re-derived.
+import { fmtInterval } from '../knowledge/sourceMeta'
 import { useQuery, invalidateSpecs, type CacheKeySpec } from '../../lib/data'
 import { useIdentity } from '../../app/identity'
 import { useAppearance } from '../../app/appearance'
@@ -160,6 +166,56 @@ const useAgentDefaults = () => useQuery('settings:agent-defaults', async () => {
   ])
   return { cfg, defaultAgent: agents }
 }, { persist: true })
+// ── The four subpages that had no card at all (see the block comment at their widgets) ───────
+//
+// FIVE reads for four tiles, and the rule per read is "match the PANEL exactly, or take a key of
+// your own" — never a third thing. Where a tile shares the panel's key its fetcher is BYTE-IDENTICAL,
+// for the two reasons this file already records: the hub tile and the panel become one read, and —
+// the sharper one — a DIFFERENT swallow here would prime the shared key with a substitute the panel
+// then reads as a success, making its `LoadError` branch unreachable
+// (`configReadNotFabricated.test.ts`, the legibility tile: `direct → the alert` but
+// `hub → the panel → 2 switches, no alert`). Measured against the four panels, the split is:
+//
+//   settings:ambient             shared, no `.catch`   AmbientPanel's fetcher, verbatim
+//   settings:packs               shared, no `.catch`   PacksPanel's config read, verbatim
+//   settings:packs:installed     shared, WITH `.catch` PacksPanel's ledger read, verbatim — see below
+//   settings:companion:discovery shared, no `.catch`   CompanionPanel's advertiser read, verbatim
+//   settings:sources-card        SEPARATE key          the panel's is a composite — see below
+//
+// So the honesty claim is per-key, not a blanket "no `.catch`": three of the four shared keys carry
+// no substitute and their tiles render a failure line instead, and the fourth copies the panel's own
+// swallow rather than diverging from it.
+//
+// ✅ DRIVEN, not just read. With `/api/config/personalclaw` held at 500 and the service worker
+// blocked, on the hub→panel journey (the one that defeated legibility's own fix): all four tiles say
+// "Couldn't load your … settings" — none shimmers forever, none shows a fabricated value — and
+// `#/settings/ambient` and `#/settings/packs` then render `LoadError` with **0 editable controls**,
+// so the shared keys are not poisoned. The companion tile is the one that still reports state at
+// 500, correctly: it reads no config at all.
+const useAmbient = () => useQuery('settings:ambient', () =>
+  api.personalclawConfig().then((c) => (c.ambient ?? {}) as Record<string, unknown>), { persist: true })
+// 🪤 A SEPARATE KEY FROM THE PANEL'S, deliberately — the `settings:devices-card` precedent, for the
+// reason stated there: one key with two fetchers makes which SHAPE you get depend on which surface
+// mounted first. `SourcesPanel`'s `settings:sources` is a COMPOSITE (`{ sources, scratchpadPath,
+// knowledge }`, three config sections in one read, because the panel edits all three), and this tile
+// needs only `sources.*`. Sharing the key would have this tile read `data.enabled` off an object
+// that has `data.sources.enabled` — undefined, i.e. "Parked", on every hub visit that followed a
+// panel visit. Same namespace, so the freshness policy is the one `lib/data/keys.ts` declares.
+const useSourcesCfg = () => useQuery('settings:sources-card', () =>
+  api.personalclawConfig().then((c) => (c.sources ?? {}) as Record<string, unknown>), { persist: true })
+const usePacksCfg = () => useQuery('settings:packs', () =>
+  api.personalclawConfig().then((c) => (c.packs ?? {}) as Record<string, unknown>), { persist: true })
+// The installed ledger, byte-identical to `PacksPanel`'s read — including its `.catch`, which is
+// what makes the key safe to share. Keeping the swallow means a failed ledger read shows `0` here
+// exactly as the panel shows "No packs installed yet"; de-swallowing it is the panel's fix to make,
+// not something to do from the hub in half.
+const usePacksInstalled = () => useQuery('settings:packs:installed', () =>
+  api.packsInstalled().catch(() => [] as InstalledPackRec[]), { persist: true })
+// The LIVE advertiser, not the flag that requests it — `CompanionPanel`'s own key and fetcher. The
+// two legitimately disagree (a loopback-only gateway advertises nothing by design), and a tile that
+// showed only `discovery_enabled` would render that disagreement as success. This read is why the
+// companion tile needs no config read at all: the record carries the instance name too.
+const useCompanionDiscovery = () => useQuery('settings:companion:discovery', () => api.companionDiscovery())
 
 /** Run an async mutation, then invalidate the widget's cache key(s) so its data re-reads the new
  *  value — so a REJECTED write reconciles: the control snaps back to the server's answer.
@@ -531,6 +587,75 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       )
     },
   },
+  // ── The four subpages the hub never had a card for ────────────────────────────────────────
+  //
+  // 🔑 THE HUB IS THE ONLY NAVIGATION. `SettingsHome` renders `SETTINGS_WIDGETS` and holds no
+  // second list, so a `SUBPAGES` entry with no widget here is reachable only by TYPING ITS URL —
+  // and invisible to the settings search, whose haystack is `${label} ${description} ${text}`
+  // (`SettingsHome.tsx`'s `Cell`), all three of which live on the widget. Measured on this tree:
+  // `ambient`, `companion`, `sources` and `packs` were four such entries, and a code grep for
+  // `'settings/(ambient|companion|sources|packs)'` across all of `web` returned ZERO hits — every
+  // textual match was prose inside a comment or a test header. So no other surface deep-linked
+  // them either. `settingsHubCoverage.test.ts` is the rail that keeps the count at zero.
+  //
+  // 🔑 EVERY TITLE AND DESCRIPTION BELOW IS THE PANEL'S OWN `PanelHeader`, VERBATIM — its
+  // `title`, and its `hint` up to the first sentence break. Checked byte-for-byte against all
+  // four panels. Writing fresh copy for a card would mean two answers to "what is this page", and
+  // the one on the card is the one a user reads FIRST.
+  //
+  // The BODY lines are borrowed too, but not all of them are verbatim, and the difference is
+  // worth stating rather than glossing:
+  //   · sources, off   — verbatim from the panel's own toggle hint ("Off parks the loop; sources
+  //                      you add are not fetched until you turn it back on"), including its word
+  //                      "Parked" for the pill, which says more than "Off": the loop is stopped,
+  //                      the sources you added are still there.
+  //   · ambient        — the three row labels are the panel's `ToggleRow label`s verbatim.
+  //   · companion      — `discovery.detail` is the BACKEND's sentence, the same string the panel's
+  //                      Status row shows as its hint. Not our prose at all.
+  //   · packs          — RECOMBINED from the panel's two sentences ("Let the zero-LLM scanner
+  //                      propose matching packs for a project" + "it never installs anything on
+  //                      its own"), because neither alone fits one line. Recombined, not invented:
+  //                      it asserts nothing the panel does not.
+  // The rule the whole block obeys is the same either way — the hub may not promise a capability
+  // the panel does not have.
+  //
+  // 🪤 AND NONE OF THE FOUR CARRIES A LIVE SWITCH, unlike Inbox/Notifications/Legibility. Not an
+  // omission: each of these master toggles spends something the card cannot explain — LAN
+  // discovery ANNOUNCES this gateway on your network, watched sources starts FETCHING third-party
+  // URLs on a schedule, fingerprinting SCANS your project directories, and `surfaces_max_layer`
+  // is the panel's own "safe-mode knob". A one-click flip on a hub tile, with the consent
+  // sentence one navigation away, is the wrong trade for all four. They report state and open the
+  // page that explains it — the `Documents`/`Diagnostics` shape, which is also a shipped one.
+  {
+    id: 'packs', group: 'Workspace', label: 'Packs', icon: Package, size: 'sm',
+    description: 'Importable capability bundles — skills, templates, agents and connector declarations one user can hand to another.',
+    // Beside Apps because they are the two INSTALL surfaces: an app is a running extension, a pack
+    // is a bundle you import. A user looking for either looks in one place.
+    useSearchText() {
+      const { data: p } = usePacksCfg()
+      const { data: installed } = usePacksInstalled()
+      const names = (installed ?? []).map((x) => x.name).join(' ')
+      return `packs pack capability bundles skills templates agents connectors connector declarations import export fingerprint fingerprinting project scan propose catalog installed setup interview ${p ? (p.fingerprint_enabled ? 'fingerprinting on' : 'fingerprinting off') : ''} ${names}`
+    },
+    render(query, go) {
+      const { data: p, error: packsErr, stale: pStale } = usePacksCfg()
+      const { data: installed } = usePacksInstalled()
+      const n = installed?.length ?? 0
+      return (
+        <BentoCard icon={Package} title="Packs" query={query} onClick={() => go('packs')}
+          loading={(p === undefined || installed === undefined) && !packsErr} stale={pStale}>
+          {!p && Boolean(packsErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your pack settings.</div>}
+          {p && installed && <>
+            <BigStat value={n} caption={n === 1 ? 'installed pack' : 'installed packs'} />
+            <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
+              {p.fingerprint_enabled
+                ? 'Matching packs are proposed for a project — never installed on their own'
+                : 'Fingerprinting off — no packs are proposed for a project'}
+            </div></>}
+        </BentoCard>
+      )
+    },
+  },
   {
     id: 'documents', group: 'Workspace', label: 'Documents', icon: FileType2, size: 'sm',
     description: 'Whether generated Word documents can be edited in place.',
@@ -553,6 +678,65 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
               {data.document_editing ? 'A save re-renders the file — the editor names what it cannot keep' : 'Turn on editing to change one in place'}
             </div>
           </>}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'sources', group: 'Workspace', label: 'Watched sources', icon: Rss, size: 'sm',
+    description: 'Poll feeds, pages and local directories into your knowledge library on a schedule.',
+    // Workspace, not AI & Models: the panel's other two sections govern `knowledge.*` (the artifact
+    // mirror) and `planning.scratchpad_path` (a notes file), so everything on it is about content
+    // arriving in the workspace — not about the model stack Memory/Prompts/Models configure.
+    useSearchText() {
+      const { data: s } = useSourcesCfg()
+      const live = s
+        ? `${s.enabled ? 'on enabled polling' : 'off disabled parked'} interval ${s.poll_interval_default_secs} floor ${s.network_floor_secs} max ${s.max_sources} sources ${s.max_items_per_poll} items budget ${s.daily_request_budget}`
+        : ''
+      return `watched sources poll polling feeds rss pages directories folders ingest knowledge library schedule interval network floor rate limit budget artifacts scratchpad ${live}`
+    },
+    render(query, go) {
+      const { data: s, error: srcErr, stale: sStale } = useSourcesCfg()
+      const on = !!s?.enabled
+      return (
+        <BentoCard icon={Rss} title="Watched sources" query={query} onClick={() => go('sources')} loading={s === undefined && !srcErr} stale={sStale}>
+          {!s && Boolean(srcErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your source settings.</div>}
+          {/* "Parked" rather than "Off" because that is the panel's own word for this state, and it
+              says more: the loop is stopped, the sources you added are still there. */}
+          {s && <><StatusPill query={query} label={on ? 'Polling' : 'Parked'} tone={on ? 'ok' : 'muted'} />
+            <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
+              {on
+                ? `Every ${fmtInterval(Number(s.poll_interval_default_secs) || 0)} by default, never faster than ${fmtInterval(Number(s.network_floor_secs) || 0)}`
+                : 'Sources you add are not fetched until you turn it back on'}
+            </div></>}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'ambient', group: 'Workspace', label: 'Ambient surfaces', icon: LayoutDashboard, size: 'sm',
+    description: 'Your composable home, agent-authored widgets, and the menu-bar companion.',
+    useSearchText() {
+      const { data: a } = useAmbient()
+      const live = a
+        ? `tiles ${a.tiles_enabled ? 'on' : 'off'} max ${a.max_tiles} refresh ${a.default_refresh_ttl_secs} genui ${a.genui_enabled ? 'on' : 'off'} layers ${a.surfaces_max_layer} tray ${a.tray_enabled ? 'on' : 'off'}`
+        : ''
+      return `ambient surfaces composable home dashboard tiles pinned artifacts refresh generative ui genui agent-authored widgets surface layers safe mode menu-bar menubar companion tray macos ${live}`
+    },
+    render(query, go) {
+      const { data: a, error: ambErr, stale: aStale } = useAmbient()
+      // Three independent switches and no headline among them, so the tile lists all three by the
+      // labels the panel gives them. On/Off in WORDS, not by tone: three coral-vs-grey pills would
+      // carry the whole state in hue (WCAG 1.4.1) on the one card whose content IS three booleans.
+      const onOff = (v: unknown) => (v ? 'On' : 'Off')
+      return (
+        <BentoCard icon={LayoutDashboard} title="Ambient surfaces" query={query} onClick={() => go('ambient')} loading={a === undefined && !ambErr} rows={3} stale={aStale}>
+          {!a && Boolean(ambErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your ambient settings.</div>}
+          {a && <KVList query={query} rows={[
+            { k: 'Composable home', v: onOff(a.tiles_enabled), vText: onOff(a.tiles_enabled) },
+            { k: 'Generative UI', v: onOff(a.genui_enabled), vText: onOff(a.genui_enabled) },
+            { k: 'Menu-bar companion', v: onOff(a.tray_enabled), vText: onOff(a.tray_enabled) },
+          ]} />}
         </BentoCard>
       )
     },
@@ -654,6 +838,31 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
                   <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">
                     <Highlight text={d.map((x) => x.name || 'Unnamed device').join(' · ')} query={query} />
                   </div></>}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'companion', group: 'System', label: 'Companion apps', icon: Smartphone, size: 'sm',
+    description: 'Native clients — phone or desktop — that connect to this gateway.',
+    // Beside Devices, and the `SUBPAGES` comment draws the line this card must not blur: Devices is
+    // the ONE device registry, this is the LAN/PWA transport. So the tile states the TRANSPORT's
+    // state — is this gateway announcing itself — and never a device count.
+    useSearchText() {
+      const { data: d } = useCompanionDiscovery()
+      const live = d ? `${d.advertising ? 'advertising' : 'not advertising'} ${d.reason} ${d.detail} ${d.instance_name}` : ''
+      return `companion apps native clients phone desktop mobile lan local network discovery advertise announce bonjour mdns zeroconf instance name install offline pwa app shell ${live}`
+    },
+    render(query, go) {
+      const { data: d, error: discErr, stale: dStale } = useCompanionDiscovery()
+      return (
+        <BentoCard icon={Smartphone} title="Companion apps" query={query} onClick={() => go('companion')} loading={d === undefined && !discErr} stale={dStale}>
+          {!d && Boolean(discErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t check LAN discovery.</div>}
+          {/* The advertiser's LIVE state plus the backend's own sentence for the reason code — the
+              same two things the panel's Status row shows, in the same vocabulary, so "on but
+              inert" can never read here as "on". State in words as well as tone (1.4.1). */}
+          {d && <><StatusPill query={query} label={d.advertising ? 'Advertising' : 'Not advertising'} tone={d.advertising ? 'ok' : 'muted'} />
+            <div className="mt-1.5 text-on-surface-low text-[0.75rem]"><Highlight text={d.detail} query={query} /></div></>}
         </BentoCard>
       )
     },

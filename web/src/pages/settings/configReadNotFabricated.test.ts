@@ -123,7 +123,17 @@ describe('a config panel does not present fabricated values as saved state', () 
     // on a failed read because the substituted `null` resolved the fetcher and cleared `loading`).
     // Measured on both sides: the population was 32 before — the floor had drifted BELOW the real count
     // again — and is 30 after. Lowered to the measured value, not to 30-because-two-left.
+    //
+    // 🔺 30 → 32. Re-measured while adding the four missing settings-hub tiles, and the floor had
+    // drifted below the real count for the THIRD time: `origin/main` scores **31**, not 30, so one
+    // swallow had already landed unrecorded. This PR adds ONE more — `settings:packs:installed` in
+    // `settingsWidgets.tsx`, which copies `PacksPanel`'s existing `.catch(() => [])` verbatim because
+    // the two share that cache key and a DIVERGENT fetcher on a shared key is the defect this whole
+    // file is about. That is a decorating read (the panel's own answer to a failed ledger read is
+    // "No packs installed yet"), so it keeps the fallback, and the floor moves to the measured 32.
+    // Per-file, this tree: ChatPanel 1 · DurabilityPanel 2 · PacksPanel 2 · AgentDefaults 1 ·
+    // settingsWidgets 26.
     expect(stillSubstituting, 'the decorating fallbacks in these five files, measured')
-      .toBeGreaterThanOrEqual(30)
+      .toBeGreaterThanOrEqual(32)
   })
 })
