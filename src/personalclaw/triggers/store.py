@@ -451,19 +451,33 @@ RUNTIME_FIELDS: tuple[str, ...] = (
     "health_status",
     "last_error_summary",
     "state",
+    # 🔴 `enabled` IS one of these, and leaving it out un-did the user's off switch. Whether an
+    # automation is switched on is a fact about what has happened TO a trigger — a person turned it
+    # off — not about what it IS, and `crons.json` has its own stale copy. So a boot that
+    # re-migrated re-asserted the legacy value and a disabled trigger came back enabled and armed
+    # (#461). It is last in the tuple because the tuple is also `snapshot.py`'s field list.
+    "enabled",
 )
 
 
 def _carry_runtime_state(existing: Trigger, incoming: Trigger) -> None:
     """Copy runtime state from the row already in the store onto a freshly converted one.
 
-    Only the fields in `RUNTIME_FIELDS`, and only when the existing row actually has a value — a
+    Only the fields in `RUNTIME_FIELDS`, and only when the existing row actually HAS a value — a
     blank existing field must not overwrite a converted one that carries something (the migration
     does set `health_status` from the legacy `last_status`, for instance).
+
+    🔴 "Has a value" cannot be spelled `value not in (None, "", 0)` once a boolean is in the tuple.
+    `False == 0` in Python, so `False in (None, "", 0)` is True: adding `enabled` to the tuple
+    while leaving that test alone would have carried `enabled=True` and silently dropped
+    `enabled=False` — the one value that needed carrying, and the whole point of #461. A bool is
+    ALWAYS set; `False` is an answer, not an absence. The falsy-means-absent rule stays for the
+    counters (`run_count=0` genuinely means "no runs recorded here", and must not overwrite a count
+    the migration derived from the legacy row).
     """
     for name in RUNTIME_FIELDS:
         value = getattr(existing, name, None)
-        if value not in (None, "", 0):
+        if isinstance(value, bool) or value not in (None, "", 0):
             setattr(incoming, name, value)
 
 

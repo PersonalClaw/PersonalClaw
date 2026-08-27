@@ -959,6 +959,12 @@ def _merge_triggers(src_path: Path, dst_path: Path) -> None:
             n += 1
         row["id"] = candidate
         # An imported automation must not fire until this home has armed it.
+        #
+        # Not redundant with the `RUNTIME_FIELDS` pop above, which now includes `enabled`: the pop
+        # discards whatever the SOURCE home said, and this states what THIS home means. Keep both.
+        # Dropping the pop would let a source's `enabled: true` through if the field ever leaves
+        # `RUNTIME_FIELDS`; dropping this line would leave the field absent and let
+        # `parse_trigger`'s default (enabled) decide — the opposite of the docstring's promise.
         row["enabled"] = False
         existing_ids.add(candidate)
         existing_names.add(name)
