@@ -3,13 +3,16 @@ import { FieldError } from '../../ui/forms'
 import { unavailableWhen } from '../../ui/unavailable'
 import {
   ShieldBan, ScanLine, FileCode2, EyeOff, Plus, X, Lock, Globe, MonitorOff, ShieldCheck, ShieldAlert,
+  KeyRound, Undo2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import {
   api, type DesktopCapabilityWire, type EgressPolicyConfig, type DenylistBaseline,
 } from '../../lib/api'
+import { confirm } from '../../ui/dialog'
 import { requestDesktopCapability } from '../../lib/desktopBridge'
 import { Button } from '../../ui/Button'
+import { Toggle } from '../../ui/Toggle'
 import { useQuery } from '../../lib/data'
 import { PanelHeader, Section } from './settingsUI'
 import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -78,9 +81,148 @@ export function SecurityPanel() {
           baseline={denied.baseline} userAdditions={denied.user_additions}
           onChange={onDeniedChange} />
       ) : null}
+      <CredentialStoreEditor />
       <EgressPolicyEditor />
       <DesktopCapabilitiesPanel />
     </div>
+  )
+}
+
+/** Settings -> Security -> Credential storage (SH-2).
+ *
+ *  Two controls with deliberately different weights. The TOGGLE is a plain config write: it
+ *  changes where the NEXT credential is written and touches nothing already stored. The MOVE
+ *  is a confirmed data operation on the user's secrets, so it goes through a danger dialog
+ *  that names the snapshot by filename before anything is written.
+ *
+ *  🔑 THE READ IS BARE — no `.catch(() => null)`. Same reasoning as this panel's other two
+ *  reads: "0 credentials in .env" is pixel-identical to a failed fetch, and on a surface
+ *  about where secrets are kept that is the one lie it must not tell.
+ *
+ *  The panel renders the RESOLVED backend, and `blocked` (computed server-side) is what
+ *  disables the move — so a machine that asked for a keychain it does not have shows the
+ *  reason instead of a button that would refuse. */
+function CredentialStoreEditor() {
+  const { data: cs, error, refresh } = useQuery(
+    'settings:credential-store', () => api.credentialStore(),
+  )
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [note, setNote] = useState('')
+
+  if (!cs) {
+    return (
+      <Section title="Credential storage">
+        {error ? <LoadError what="credential storage state" error={error} onRetry={refresh} />
+          : <CardGridSkeleton cards={1} cols={1} what="credential storage state" />}
+      </Section>
+    )
+  }
+
+  const run = async (label: string, fn: () => Promise<{ reason: string; moved: string[]; failed: string[] }>) => {
+    setBusy(true); setErr(''); setNote('')
+    try {
+      const r = await fn()
+      // A PARTIAL result is a 200 with `failed` — it did real work and the user has to see
+      // both halves, so the reason is surfaced as an error while the counts still report.
+      if (r.reason) setErr(r.reason)
+      setNote(`${label}: ${r.moved.length} credential${r.moved.length === 1 ? '' : 's'}.`)
+      refresh()
+    } catch (e) { setErr(e instanceof Error ? e.message : `${label} failed`) }
+    finally { setBusy(false) }
+  }
+
+  const move = async () => {
+    const names = cs.pending_keys.join(', ')
+    if (!(await confirm({
+      title: `Move ${cs.pending} credential${cs.pending === 1 ? '' : 's'} into the OS keychain?`,
+      // 🔴 THE SNAPSHOT STEP, STATED BEFORE THE ACTION. The atom's requirement is a VISIBLE
+      // snapshot confirm — so the body names the file that gets written, says the keys leave
+      // .env, and says the move is reversible. Every clause here is true of the handler:
+      // `_write_snapshot` writes that exact filename at 0600 before the first keychain write,
+      // and `rollback_credentials_to_keychain` restores those bytes verbatim.
+      body: `Your current .env is copied to ${cs.snapshot_name} first (mode 0600), then ${names} `
+        + 'move into the keychain and are removed from .env. No key leaves .env until its value has '
+        + 'been read back out of the keychain. Use Roll back to undo this and restore .env exactly.',
+      confirmLabel: 'Snapshot and move',
+      danger: true,
+    }))) return
+    await run('Moved', () => api.migrateCredentialsToKeychain())
+  }
+
+  const rollBack = async () => {
+    if (!(await confirm({
+      title: 'Restore .env from the pre-migration snapshot?',
+      body: `.env is rewritten from ${cs.snapshot_name} byte for byte, the keychain copies of those `
+        + 'keys are deleted, and the snapshot file is removed. Credentials you added to the keychain '
+        + 'after migrating are left alone.',
+      confirmLabel: 'Roll back',
+      danger: true,
+    }))) return
+    await run('Restored', () => api.rollbackCredentialsToKeychain())
+  }
+
+  const inKeychain = cs.backend === 'keychain'
+  return (
+    <Section title="Credential storage" hint="Where this instance keeps provider credentials. The default is ~/.personalclaw/.env at mode 0600; the OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Locker) is an opt-in upgrade. A machine with no usable secret service keeps using .env and says so — there is never a third location.">
+      <div className="flex flex-col gap-4">
+        <div className="flex items-start gap-3 rounded-lg bg-surface-container px-4 py-3">
+          <span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-md" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
+            {inKeychain ? <KeyRound size={17} className="text-primary" /> : <Lock size={17} className="text-primary" />}
+          </span>
+          <div className="min-w-0">
+            <div className="text-on-surface text-[0.8125rem]" style={fvs(600)}>
+              {inKeychain ? 'OS keychain' : '.env at mode 0600'}
+            </div>
+            <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">
+              {cs.keychain_keys} in the keychain · {cs.pending} still in .env
+            </div>
+            {cs.blocked && cs.requested === 'keychain' && (
+              <div className="mt-1 text-error text-[0.8125rem]">
+                The keychain was requested but no usable OS keyring backend answered on this
+                machine. Credentials stay in .env at mode 0600.
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex items-start gap-2.5 rounded-lg bg-surface-container px-3 py-2.5">
+          <Toggle on={cs.requested === 'keychain'} disabled={busy}
+            label="Store credentials in the OS keychain"
+            onChange={async (on) => {
+              setBusy(true); setErr(''); setNote('')
+              try { await api.setCredentialKeychain(on); refresh() }
+              catch (ex) { setErr(ex instanceof Error ? ex.message : 'Failed to save') }
+              finally { setBusy(false) }
+            }} />
+          <span className="min-w-0">
+            <span className="text-on-surface text-[0.8125rem]">Store credentials in the OS keychain</span>
+            <span className="block text-on-surface-low text-[0.8125rem]">Changes where NEW credentials are written. Secrets already in .env stay readable and stay put until you move them below.</span>
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Two of the three gate clauses are preconditions a user can fix, so the reason is
+              named rather than left to a control that silently leaves the tab order. */}
+          <Button onClick={move} disabled={busy || cs.blocked || cs.pending === 0}
+            disabledReason={cs.blocked
+              ? 'Turn on "Store credentials in the OS keychain" first — and this machine needs a working OS secret service'
+              : cs.pending === 0 ? 'There are no credentials left in .env to move' : undefined}>
+            <KeyRound size={15} /> Move {cs.pending > 0 ? cs.pending : ''} to keychain
+          </Button>
+          {cs.rollback_available && (
+            <Button variant="secondary" onClick={rollBack} disabled={busy}>
+              <Undo2 size={15} /> Roll back
+            </Button>
+          )}
+          {cs.pending === 0 && !cs.blocked && (
+            <span className="text-on-surface-low text-[0.8125rem]">
+              Nothing left in .env{cs.verification.checked > 0 ? ` — ${cs.verification.checked} verified in the keychain` : ''}.
+            </span>
+          )}
+        </div>
+        {note && <div className="text-on-surface-low text-[0.8125rem]" role="status">{note}</div>}
+        {err && <FieldError>{err}</FieldError>}
+      </div>
+    </Section>
   )
 }
 

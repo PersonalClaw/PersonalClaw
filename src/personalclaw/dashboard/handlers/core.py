@@ -574,6 +574,11 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "checkpoints.max_file_mb": {"type": "int", "min": 0, "max": 10_000},
     "security.denied_commands": {"type": "str_list", "max_items": 100, "each_regex": True},
     "security.egress": {"type": "egress"},
+    # SH-2. Flipping this changes where NEW credentials are written; it deliberately does
+    # NOT move the secrets already in `.env` — that is the separate, snapshot-backed,
+    # consented `credentials_to_keychain` action (`/api/security/credentials/migrate`). A
+    # PATCH that silently rewrote the credential store would be an unconfirmed data move.
+    "security.credential_keychain": {"type": "bool"},
     # AUTONOMY-GUARDRAILS: the runtime-editable guardrail subset (§7). Incident is
     # NOT here — it's its own endpoint (a later session). Budgets/breaker/scan are
     # plain scalars edited via Settings.

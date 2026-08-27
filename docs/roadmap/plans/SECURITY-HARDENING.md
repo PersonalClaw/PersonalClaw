@@ -136,6 +136,132 @@ def credential_backend() -> CredentialBackend: ...   # keychain if available+ena
 
 ## Execution log
 
+### 2026-08-26 — SH-2 (T1.2 / T1.3 / V1) consented credential move to the keychain — DONE
+
+- **[SH-2] DONE:** `config/credential_migration.py` owns `credentials_to_keychain` —
+  `migrate_credentials_to_keychain(confirm=)`, `rollback_credentials_to_keychain(confirm=)`,
+  `verify_credential_migration()` and `credential_migration_status()`. The gate is
+  `security.credential_keychain`; the surface is `GET|POST /api/security/credentials{,/migrate,
+  /rollback}` plus a "Credential storage" section in Settings → Security. 34 tests in
+  `tests/test_credential_migration.py`, 10 in
+  `web/src/pages/settings/credentialMoveConfirmsTheSnapshot.test.tsx`.
+
+- **[SH-2] The invariant the plan's T1.2 note demands ("silently losing a user's stored
+  credentials is not an acceptable clean break") is implemented as one rule: NO KEY LEAVES
+  `.env` UNTIL ITS VALUE HAS BEEN READ BACK OUT OF THE KEYCHAIN.** Snapshot first
+  (`.env.pre-keychain`, exact bytes, 0600, atomic, `IF NOT EXISTS`), then per key: write →
+  **re-read** → remove. Rollback writes the snapshot bytes back verbatim and clears exactly the
+  keys the snapshot named; a credential the user added to the keychain *after* migrating is left
+  alone. A partial rollback KEEPS the snapshot, because deleting it after a half-cleared keychain
+  would strand the user with copies in both stores and no way back.
+
+- **[SH-2] FINDING (fixed here, found by the lying-backend fixture) — leaving the key in `.env`
+  is NOT sufficient on a failed read-back.** `_keychain_save` returning True only means the
+  backend did not raise. With a fixture that accepts a write and returns different bytes, `.env`
+  was correctly left intact — and `get_credential` still returned the CORRUPTED value, because
+  SH-1's reads are the union of both stores with the **keychain preferred**. So the mismatch path
+  now also `_keychain_delete(key)`s the bad entry. Without that line the credential is lost in
+  practice while sitting on disk, which is the exact failure this atom exists to prevent.
+
+- **[SH-2] DEVIATION — re-scoped from "class-B gate + `m_*_credentials_to_keychain` migration" to
+  the same behaviour without lifecycle machinery.** `LIFECYCLE-DOCTRINE.md` was deleted in PR #897
+  and there is no `lifecycle/` package; `CONTRIBUTING.md` keeps the migration-backed regime as "a
+  mental model, not shipped machinery", deferred until the architecture stops moving. Hand-rolling
+  a `m_*` migration registry + gate here would have built a parallel mechanism the real one
+  deletes. Every substantive clause of the atom's own prose is implemented literally
+  (user-consented, snapshot-backed, reversible, idempotent, verified); only the `m_*_` naming and
+  the gate/dual-path/cleanup ceremony are dropped. The `credential_keychain` **config gate** is
+  real and is the persisted user opt-in — the plan asked for that in T1.3 and SH-1 explicitly
+  deferred it here.
+
+- **[SH-2] DEVIATION — `config/loader.py` was split.** Measured on `origin/main`: 5900 lines
+  against `scripts/generate_structural_baseline.py`'s `SIZE_CEILING_LINES = 6000`, with
+  `test_structural_baseline.py` asserting `ceiling - max_file_lines >= 100`. Headroom was exactly
+  100, so **+1 line reds CI** — that test's own docstring names this file and "adding one boolean
+  toggle would red CI". The credential store therefore moved to `config/credentials.py`
+  (selector, keychain helpers, dotenv helpers, `save_credential`/`get_credential`, plus SH-2's new
+  `_keychain_delete` and `_dotenv_remove_credentials`). No re-export shim: nine `src/` import
+  sites and two test files were updated. Precedent: `agents/native/decision_tool_defs.py`, split
+  from `builtin_tools.py` for the same rail. `loader.py` 5900 → 5647.
+
+- **[SH-2] PREMISE CORRECTION — "snapshot-backed" cannot mean `personalclaw snapshot`.**
+  `snapshot.py::_extra_restore_paths` **deliberately excludes every `secret=True` path from
+  restore** ("restoring `.env`/`credentials/`/`.local_secret` generically would re-plant credential
+  material into a home that may have deliberately rotated it"). So the generic snapshot captures
+  `.env` but will not give it back, and a rollback built on it would report success and restore
+  nothing. The migration therefore owns its own single-purpose backup. That file is claimed as a
+  `secret=True` inventory entry (`env_pre_keychain`) so `audit_home()` sees it and
+  `portability.EXPORT_EXCLUDE` — a projection of the secret set — excludes it, and it is ALSO a
+  literal in `_inventory_secrets()`'s fallback set, which exists precisely for when the inventory
+  cannot be imported.
+
+- **[SH-2] FINDING (P3, no fix needed — verified, not assumed) — `cli.py::main()` calls
+  `load_dotenv(<home>/.env)` and is not keychain-aware.** After a migration that file is empty, so
+  the pre-parse contributes nothing. Traced the consequence rather than patching it:
+  `gateway.py:336` calls `cfg.load_credentials()`, which is the union of both stores and
+  `setdefault`s every value into `os.environ`, so a migrated install still authenticates. The
+  macOS validation leg below confirms `get_credential` reads through after the move. Left alone
+  deliberately — adding a keyring read to `main()` before arg parsing would cost every CLI
+  invocation for a path `load_credentials()` already covers.
+
+- **[SH-2] V1 VALIDATION — macOS migrate/rollback, recorded.** Darwin 25.6.0, real `keyring`
+  25.7.0 installed into a worktree-local target (NOT the shared `.venv` — four sibling agents
+  share it), isolated `PERSONALCLAW_HOME` under `/private/tmp`, gate ON via `config.json`:
+  `keychain_available()=True`, `credential_backend()=keychain`, warning `''`. migrate#1 →
+  `ok=True moved=['SH2_VALIDATE_ANTHROPIC','SH2_VALIDATE_SLACK'] failed=[]`; `.env` left as
+  `'# provider credentials\n# keep this comment\n'` at 0600 (both comments preserved); keychain
+  holds both secrets + the key index; `get_credential` returns `'sk-ant-validate-0001'`; snapshot
+  0600 and byte-identical to the original; verify `True/2`. migrate#2 → `moved=[] already=[]`,
+  snapshot unchanged. rollback → `ok=True`, `.env` **byte-identical** to pre-migration at 0600,
+  keychain index back to `[]`, snapshot removed, `get_credential` reads `.env` again. `doctor`
+  printed `credentials: 🔐 OS keychain (keyring)`.
+  **Scope boundary, stated rather than glossed:** the OS-store leaf (`keyring.backends.macOS`) was
+  deliberately NOT exercised. keyring upstream IGNORES a specified keychain on macOS (`warn_keychain`,
+  issue #623), so the only way to reach the real Security framework is the owner's **login**
+  keychain, and writing credentials there is out of bounds. What ran instead is a real
+  `KeyringBackend` subclass registered through `keyring.set_keyring()`, so the real module
+  dispatch, `_usable_keyring()`'s backend classification and real `PasswordDeleteError` semantics
+  all executed; only the storage leaf was substituted.
+
+- **[SH-2] V1 VALIDATION — headless `.env` fallback, recorded.** Same driver with `keyring`
+  blocked at `sys.meta_path`: `keychain_available()=False`, `credential_backend()=dotenv` while
+  `requested=keychain`; migrate refused with *"no usable OS keyring backend is available on this
+  machine; credentials stay in .env at mode 0600"*; `.env` byte-identical and still 0600; rollback
+  refused with *"no pre-migration snapshot (.env.pre-keychain) — nothing to roll back to"*;
+  `doctor` printed the `.env` line **plus** the fallback warning. Real home untouched in both legs.
+
+- **[SH-2] Falsifications, each mutation grep-confirmed on the live line and restored from a file
+  copy:**
+  - Neutered the read-back guard to `if False and _keychain_get(key) != value:` →
+    `test_a_keychain_that_lies_about_a_write_keeps_that_key_in_env` red (`assert not True`): the
+    corrupted key was moved and deleted from `.env`.
+  - Moved `_write_snapshot()` below the per-key loop (snapshot AFTER the keys move) → the **Python
+    suite stayed GREEN (33 passed)** and the FE rail
+    `credentialMoveConfirmsTheSnapshot > the snapshot really is written first` went red. That
+    asymmetry is why the dialog-body rail reads the Python source: the ordering the confirm dialog
+    *claims* had no other guard.
+  - Flipped the inventory entry to `secret=False` and dropped the portability literal → 3 red,
+    including the end-to-end export, which really did carry
+    `personalclaw-export-…/.env.pre-keychain`.
+  - Deleted `"security.credential_keychain"` from `_EDITABLE_CONFIG` → **`test_config_roundtrip.py`
+    stayed GREEN (17 passed).** That file covers the dataclass, `load()` and `to_dict()`; the PATCH
+    allowlist is the point it does not reach, and a field missing from it is silently dropped, so
+    the toggle would report success and change nothing. Added
+    `test_the_gate_has_a_write_path_and_the_patch_allowlist_declares_it`; re-ran the same mutation
+    → red.
+  - Reverted the gate read to `bool(security_data.get(...))` → **8 green.** `_validate_config_data`
+    runs first and `config/schema.py`'s `SCHEMA_REGISTRY` (generated from the dataclass, so the new
+    bool got an entry for free) strips a type mismatch to the default. The `is True` read is the
+    second line of defence, not the enforcer; the test's docstring was corrected to say so rather
+    than left claiming a mechanism it does not exercise.
+
+- **[SH-2] PRE-EXISTING RED, not mine:**
+  `test_structural_baseline.py::test_three_simultaneous_structural_violations_report_as_three`
+  failed on arrival because `config-baseline.json` was stale for an unrelated reason, making a
+  FOURTH gate fail and breaking its `"SUMMARY: 3 of 6"` assertion. Regenerating
+  `config-baseline.json` (which my new field required anyway — the diff is exactly the one
+  `security.credential_keychain` entry) cleared it. All 6 gates pass.
+
 ### 2026-08-18 — SH-7 mode-independence matrix + deny-before-approval pin — DONE
 
 - **[SH-7] DONE:** all three clauses land in `tests/security/`, with no `src/` change needed.

@@ -68,6 +68,16 @@ async function mount(opts: { denied?: Over | 'reject'; stats?: 'reject' } = {}) 
       desktopState: () => Promise.resolve({
         connected: false, shell: null, capabilities: {}, registered_at: '', last_seen: '',
       }),
+      // SH-2's credential-storage section renders inside this SAME panel, and its read is
+      // deliberately BARE (a swallowed failure there would render as "0 credentials"), so an
+      // unstubbed read rejects and the section shows its error branch. `.env` with nothing
+      // pending is the right default here: this file is about the denylist.
+      credentialStore: () => Promise.resolve({
+        migration: 'credentials_to_keychain', backend: 'dotenv', requested: 'dotenv',
+        blocked: true, pending_keys: [], pending: 0, keychain_keys: 0,
+        rollback_available: false, snapshot_name: '.env.pre-keychain', verified: true,
+        verification: { checked: 0, missing: [], still_in_dotenv: [] },
+      }),
     },
   }))
   const { SecurityPanel } = await import('./SecurityPanel')

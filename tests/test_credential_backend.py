@@ -33,9 +33,8 @@ from pathlib import Path
 import pytest
 
 from personalclaw.config import loader
-from personalclaw.config.loader import (
+from personalclaw.config.credentials import (
     CREDENTIAL_BACKEND_ENV,
-    AppConfig,
     credential_backend,
     credential_backend_warning,
     get_credential,
@@ -43,6 +42,7 @@ from personalclaw.config.loader import (
     requested_credential_backend,
     save_credential,
 )
+from personalclaw.config.loader import AppConfig
 
 _KEY = "SH1_TEST_TOKEN"
 _OTHER = "SH1_TEST_OTHER"
@@ -370,7 +370,7 @@ def test_the_app_setup_context_reads_through_the_shared_chokepoint() -> None:
 
     src = Path(inspect.getsourcefile(app_cli) or "").read_text()
     assert "get_credential=get_credential" in src
-    assert "from personalclaw.config.loader import get_credential" in src
+    assert "from personalclaw.config.credentials import get_credential" in src
     assert "def _get_credential" not in src, "the ad-hoc .env parser must be gone, not shadowed"
 
 

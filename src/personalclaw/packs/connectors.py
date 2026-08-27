@@ -262,7 +262,7 @@ def _save_credentials(names: list[str], values: dict[str, str]) -> list[str]:
     store.save(descriptors)
     # Persist the actual secret to <home>/.env under the same key (0o600), the resolution
     # chain's file fallback that value_env → env → .env reads back.
-    from personalclaw.config.loader import save_credential
+    from personalclaw.config.credentials import save_credential
 
     for name in names:
         save_credential(name, values[name])

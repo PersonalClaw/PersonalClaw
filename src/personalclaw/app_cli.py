@@ -86,7 +86,7 @@ def run_app_setup_steps(only_app: str = "") -> None:
     ``only_app`` restricts the run to that one app (``personalclaw setup --app``).
     A step that raises prints ``⚠️ <app>: <err>`` and setup continues.
     """
-    from personalclaw.config.loader import get_credential, save_credential
+    from personalclaw.config.credentials import get_credential, save_credential
     from personalclaw.providers.settings import ProviderSettings
     from personalclaw.sel import sel
 

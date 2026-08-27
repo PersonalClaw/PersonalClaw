@@ -36,7 +36,7 @@ def home(tmp_path, monkeypatch):
 def test_a_freshly_created_credential_file_is_0600(home, monkeypatch):
     """End-to-end, under a deliberately loose umask so a umask-inherited mode would show."""
     monkeypatch.setattr(os, "umask", lambda _mask: 0o022, raising=False)
-    from personalclaw.config.loader import _dotenv_save_credential
+    from personalclaw.config.credentials import _dotenv_save_credential
 
     _dotenv_save_credential("OPENAI_API_KEY", "sk-secret-1")
     ep = home / ".env"
@@ -62,7 +62,7 @@ def test_the_write_asks_for_0600_UP_FRONT_and_fsyncs(home, monkeypatch):
         return real(path, content, **kw)
 
     monkeypatch.setattr(aw, "atomic_write", spy)
-    from personalclaw.config.loader import _dotenv_save_credential
+    from personalclaw.config.credentials import _dotenv_save_credential
 
     _dotenv_save_credential("KEY_A", "v1")
     assert seen, "the credential write did not go through atomic_write at all"
@@ -72,7 +72,7 @@ def test_the_write_asks_for_0600_UP_FRONT_and_fsyncs(home, monkeypatch):
 
 def test_a_failed_write_leaves_THE_PREVIOUS_credentials_intact(home, monkeypatch):
     """The truncation half. In-place rewriting loses every other key on a mid-write failure."""
-    from personalclaw.config.loader import _dotenv_save_credential
+    from personalclaw.config.credentials import _dotenv_save_credential
 
     _dotenv_save_credential("KEEP_ME", "original")
     ep = home / ".env"
@@ -98,7 +98,7 @@ def test_an_upsert_preserves_other_keys_and_comments(home):
     """The behaviour the function exists for, pinned so the rewrite cannot have changed it."""
     ep = home / ".env"
     ep.write_text("# a comment\nOTHER=untouched\nTARGET=old\n", encoding="utf-8")
-    from personalclaw.config.loader import _dotenv_save_credential
+    from personalclaw.config.credentials import _dotenv_save_credential
 
     _dotenv_save_credential("TARGET", "new")
     text = ep.read_text(encoding="utf-8")

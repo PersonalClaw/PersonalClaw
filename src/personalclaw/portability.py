@@ -66,6 +66,12 @@ def _inventory_secrets() -> frozenset[str]:
     """
     literals = {
         ".env",
+        # SH-2's rollback snapshot — a second PLAINTEXT copy of every credential, kept only
+        # while the keychain move is reversible. It is `secret=True` in the inventory, so the
+        # projection already covers it; it is named here as well because this fallback exists
+        # for the case where the inventory cannot be imported, and that is precisely when the
+        # file whose whole content is credentials must not become exportable.
+        ".env.pre-keychain",
         ".local_secret",
         "sel_hmac.key",
         "telemetry_salt",

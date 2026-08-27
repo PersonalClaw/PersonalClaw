@@ -77,6 +77,8 @@ def test_config_round_trips_security_section(tmp_path: Path, monkeypatch):
     assert c.to_dict()["security"] == {
         "denied_commands": [],
         "egress": {"allow_hosts": [], "deny_hosts": [], "allow_private": False},
+        # SH-2's credential-store gate. Default False = `.env` at 0600, the fail-closed side.
+        "credential_keychain": False,
         "autonomy_denylist": [],
     }
 

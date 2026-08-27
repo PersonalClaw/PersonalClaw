@@ -15,6 +15,7 @@ import json
 import pytest
 
 from personalclaw.auth import credentials as creds
+from personalclaw.config import credentials as cred_store
 from personalclaw.config.loader import AppConfig
 
 
@@ -120,13 +121,48 @@ def test_the_editable_allowlist_covers_the_intended_knobs() -> None:
         assert key in _EDITABLE_CONFIG, f"{key} should be runtime-editable"
 
 
+#: The one credential-WORDED key that carries no credential material. `security.credential_keychain`
+#: (SH-2) is a boolean naming WHERE secrets are written — the secrets themselves go through
+#: `save_credential`, never through a config PATCH. Listed explicitly so a second such key cannot
+#: appear without someone making the same argument out loud.
+_NON_SECRET_CREDENTIAL_WORDED_KEYS = frozenset({"security.credential_keychain"})
+
+
 def test_no_credential_field_is_ever_patchable() -> None:
-    """A password is not a setting. Nothing password-shaped may enter the PATCH allowlist."""
+    """A password is not a setting. Nothing password-shaped may enter the PATCH allowlist.
+
+    The forbidden-word list is a NAME heuristic for the real property — "does this key carry
+    secret material" — and SH-2 produced the first true false positive: a boolean gate whose name
+    contains "credential" but whose value is `True`/`False`. Rather than rename the field away
+    from the atom's own vocabulary, the rail now measures the property it always meant:
+
+    * a credential-worded key must be declared `{"type": "bool"}`, because secret material can
+      only travel through a STRING — a `str`/`str_list` spec is the hazard, and the substring
+      match never checked the type at all; and
+    * it must be named in :data:`_NON_SECRET_CREDENTIAL_WORDED_KEYS`, so the exemption is a
+      reviewed list of one rather than a widened pattern.
+
+    Strictly stronger than the version it replaces: `{"security.api_password": {"type": "str"}}`
+    fails on BOTH clauses, and a bool sneaking in unlisted fails on the second.
+    """
     from personalclaw.dashboard.handlers.core import _EDITABLE_CONFIG
 
     forbidden = ("password", "credential", "hash", "totp_secret", "secret")
-    offenders = [k for k in _EDITABLE_CONFIG if any(word in k.lower() for word in forbidden)]
-    assert offenders == []
+    worded = [k for k in _EDITABLE_CONFIG if any(word in k.lower() for word in forbidden)]
+
+    unlisted = [k for k in worded if k not in _NON_SECRET_CREDENTIAL_WORDED_KEYS]
+    assert unlisted == [], (
+        f"credential-worded key(s) in the PATCH allowlist: {unlisted}. A secret is not a setting. "
+        "If it genuinely carries no secret material, say so in _NON_SECRET_CREDENTIAL_WORDED_KEYS."
+    )
+    not_bool = [k for k in worded if _EDITABLE_CONFIG[k].get("type") != "bool"]
+    assert not_bool == [], (
+        f"credential-worded key(s) that are not booleans: {not_bool}. Secret material travels as "
+        "a string — a credential-worded key holding one is the defect this rail exists to catch."
+    )
+    # Vacuity floor: the population must be non-empty, or both assertions above pass by finding
+    # nothing and the rail says nothing about the allowlist it is meant to police.
+    assert worded, "the forbidden-word sweep matched nothing — the rail is vacuous"
 
 
 def test_every_auth_field_is_either_patchable_or_deliberately_not() -> None:
@@ -324,12 +360,11 @@ def test_totp_setup_needs_a_password_first(capsys) -> None:
 
 
 def test_totp_setup_prints_the_secret_once(monkeypatch, capsys) -> None:
-    import personalclaw.config.loader as loader
     from personalclaw.auth import totp
     from personalclaw.auth.cli import auth_cmd
 
     saved: dict[str, str] = {}
-    monkeypatch.setattr(loader, "save_credential", lambda k, v: saved.update({k: v}), raising=False)
+    monkeypatch.setattr(cred_store, "save_credential", lambda k, v: saved.update({k: v}))
     creds.set_password("jordan", "correct-horse-battery")
     assert auth_cmd(_Args(auth_command="totp", totp_action="setup")) == 0
 

@@ -1062,13 +1062,13 @@ async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
     floor the fallback promises. Read-only: the probe never repairs the mode (the next
     ``load_credentials()`` does) and never reads a secret VALUE — only names, modes, states.
     """
-    from personalclaw.config.loader import (
+    from personalclaw.config.credentials import (
         credential_backend,
         credential_backend_warning,
-        env_path,
         keychain_available,
         requested_credential_backend,
     )
+    from personalclaw.config.loader import env_path
 
     def _facts() -> dict[str, Any]:
         ep = env_path()

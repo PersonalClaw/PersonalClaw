@@ -12,12 +12,8 @@ from pathlib import Path
 from personalclaw import __version__ as _pc_version
 from personalclaw.agent import AGENT_FILENAME, AGENTS_DIR
 from personalclaw.config import AppConfig
-from personalclaw.config.loader import (
-    config_dir,
-    credential_backend,
-    credential_backend_warning,
-    env_path,
-)
+from personalclaw.config.credentials import credential_backend, credential_backend_warning
+from personalclaw.config.loader import config_dir, env_path
 from personalclaw.dashboard.origin import (
     auth_is_off,
     is_local_bind,
