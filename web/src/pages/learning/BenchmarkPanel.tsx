@@ -1,6 +1,7 @@
 import { ExternalLink, FlaskConical, ShieldAlert } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
+import { hasApiCode } from '../../lib/api'
 import type {
   BenchmarkArmAggregate, BenchmarkReport, BenchmarkTaskRow, BenchmarkView,
 } from '../../lib/api'
@@ -38,7 +39,7 @@ export function BenchmarkPanel({ view, error, onRetry }: {
   onRetry: () => void
 }) {
   if (view === undefined && error) {
-    if (hasCode(error, 'evals_disabled')) {
+    if (hasApiCode(error, 'evals_disabled')) {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="skillbench-heading">
           <Heading />
@@ -51,7 +52,7 @@ export function BenchmarkPanel({ view, error, onRetry }: {
         </section>
       )
     }
-    if (hasCode(error, 'learning_benchmark_absent')) {
+    if (hasApiCode(error, 'learning_benchmark_absent')) {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="skillbench-heading">
           <Heading />
@@ -297,13 +298,6 @@ function MethodologyLink({ doc }: { doc: string }) {
       Methodology: the benchmark protocol <ExternalLink size={12} aria-hidden="true" />
     </a>
   )
-}
-
-/** Matched on the backend's stable `code`, not on prose: the message is human copy and may be
- *  reworded, the code may not. */
-function hasCode(error: unknown, code: string): boolean {
-  const text = error instanceof Error ? error.message : String(error ?? '')
-  return text.includes(code)
 }
 
 /** Report rows in REGISTER order, with any row the report carries but the register does not

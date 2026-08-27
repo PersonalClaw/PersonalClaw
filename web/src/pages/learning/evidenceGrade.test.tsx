@@ -47,7 +47,7 @@ const evalStudies = vi.fn<() => Promise<never>>()
 const retrievalBench = vi.fn<() => Promise<never>>()
 const ablation = vi.fn<() => Promise<never>>()
 
-// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError`/`hasApiCode` are kept. The four eval
+// 🪤 PARTIAL mock, via `importOriginal`: the REAL `ApiError`/`hasApiCode` are kept. The five eval
 // panels branch on `hasApiCode(error, '<code>')`, so a factory that returned only `api` made the
 // mocked module throw "No \"hasApiCode\" export is defined" from inside the render — and a fixture
 // that rejected with a bare `Error` would carry no `.code`, so the branch under test would never
@@ -74,6 +74,15 @@ vi.mock('../../lib/api', async (importOriginal) => {
       // paint the ablation grade whether or not the identity report resolves, and if it ever grows a
       // dependency on that payload these tests should say so rather than silently pass.
       identityReport: () => Promise.reject(new Error('not under test')),
+      // LV-7's skill-impact benchmark, and the SECOND instance of the paragraph above — same
+      // shape, one PR later: LV-7 added the read to `LearningPage`, this file mocks only its own,
+      // and `api.learningBenchmark is not a function` killed both call-site tests in the union
+      // alone. Rejecting with the real `ApiError` code rather than a bare `Error`, because
+      // `BenchmarkPanel` branches on `hasApiCode` and a message-only double would quietly render
+      // the generic failure instead of the never-run empty state.
+      learningBenchmark: () => Promise.reject(
+        new ApiError('No skill-impact benchmark has run yet.', 404, 'learning_benchmark_absent'),
+      ),
     },
   }
 })

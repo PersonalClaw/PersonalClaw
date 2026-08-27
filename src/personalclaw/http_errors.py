@@ -130,6 +130,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "ablation_unreadable": "The ablation artifacts could not be read.",
     "retrieval_absent": "No retrieval-ablation report has been produced yet.",
     "retrieval_unreadable": "The retrieval benchmark artifacts could not be read.",
+    "learning_benchmark_absent": "No skill-impact benchmark report has been produced yet.",
+    "learning_benchmark_unreadable": "The skill-impact benchmark report could not be read.",
     "store_required": "The request must name one retrieval store (knowledge or memory).",
     "card_unavailable": "That retrieval store could not be read for labelling.",
     "store_mutated": "A read-only harness pass wrote to a store and was refused.",
