@@ -16,15 +16,19 @@ run inside. Its only job is to turn one operation into one OS call and report ho
 ``tests/test_computer_use_dispatch.py::test_the_driver_child_makes_no_policy_decision`` asserts
 that by AST.
 
-**Today every operation refuses, and the refusal is real rather than simulated.** No platform
-driver module exists yet — `DCU-3` owns the macOS one, `DCU-6` the Windows/Linux refusals — so
-:func:`resolve_driver` finds nothing importable and this module answers with a typed
-``ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`` naming the platform. §3 floor 6 is explicit about the
-alternative being unacceptable: an unsupported platform reports a typed refusal, *"never a
-silent no-op or a simulated success"*. The value of shipping the harness now is that the
-ceilinged spawn is a live, exercised path today — the dispatch really starts this child, really
-reads its answer, and really turns it into a refusal a model can read — so when `DCU-3` lands,
-what changes is one importable module, not the containment story.
+**Every platform in the map now resolves, and each answers for itself.** `DCU-3` landed the macOS
+driver and `DCU-6` the Windows and Linux ones, so :func:`resolve_driver` no longer returns
+``None`` for a mapped platform: macOS runs real accessibility calls, and Windows/Linux answer
+``ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`` naming the API a real driver there will use. §3 floor 6
+is explicit about the alternative being unacceptable: an unsupported platform reports a typed
+refusal, *"never a silent no-op or a simulated success"*.
+
+The ``None`` branch below is therefore **not** dead — it is what a platform *outside* the map
+gets (an unrecognised ``platform.system()``), and keeping the two answers apart is deliberate:
+``ERR_COMPUTER_USE_DRIVER_UNAVAILABLE`` means *this build has no driver for you and never claimed
+to*, while the Windows/Linux code means *you are on a platform this build names and intends, and
+the implementation is what is missing*. An operator acts on those differently, so they are not
+one code.
 """
 
 from __future__ import annotations
@@ -34,9 +38,10 @@ import platform
 import sys
 from typing import Any
 
-#: Platform → the driver module that would serve it. None of these exist yet; the mapping is
-#: here so the refusal can name the module an operator would be waiting for rather than saying
-#: "unsupported" about a platform PersonalClaw fully intends to support.
+#: Platform → the driver module that serves it. All three exist and all three import on any
+#: platform (`DCU-6`'s two never touch an OS library), so this mapping is a fact rather than an
+#: intention — which matters, because a name pointing at an absent module and a real driver
+#: raising ``ImportError`` reach :func:`resolve_driver` as the same ``None``.
 DRIVER_MODULES = {
     "Darwin": "personalclaw.computer_use.macos_driver",
     "Windows": "personalclaw.computer_use.windows_driver",
