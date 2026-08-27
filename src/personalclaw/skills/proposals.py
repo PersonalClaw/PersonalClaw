@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.record_ids import record_path
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,17 @@ def _proposals_dir() -> Path:
     from personalclaw.skills import loader as _loader
 
     return _loader.config_dir() / "skills" / _PROPOSALS_DIRNAME
+
+
+def _path(proposal_id: object) -> Path:
+    """The ONE expression turning a proposal id into a file in this store.
+
+    ``proposal_id`` reaches here from ``/api/skills/proposals/{id}`` unvalidated, which
+    gave a traversal a read and an ``unlink`` outside the home (#459). ``UnsafeRecordId``
+    is not an ``OSError``, so ``reject()``'s ``except OSError`` reports the refusal
+    instead of swallowing it into ``False``.
+    """
+    return record_path(_proposals_dir(), proposal_id, kind="proposal_id")
 
 
 def _last_review_path() -> Path:
@@ -280,7 +292,7 @@ def _resolve_inbox_item(pid: str, status: str) -> None:
 
 def _load(pid: str) -> SkillProposal | None:
     try:
-        data = json.loads((_proposals_dir() / f"{pid}.json").read_text(encoding="utf-8"))
+        data = json.loads(_path(pid).read_text(encoding="utf-8"))
         return SkillProposal(**data)
     except (OSError, ValueError, TypeError):
         return None
@@ -375,7 +387,7 @@ def reject(pid: str) -> bool:
     the item's terminal status is the only record of which one the user gave.
     """
     try:
-        (_proposals_dir() / f"{pid}.json").unlink()
+        _path(pid).unlink()
         logger.info("Rejected skill proposal %s", pid)
         _resolve_inbox_item(pid, "dismissed")
         return True

@@ -1579,6 +1579,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **A record id can no longer address a file outside its own store.** Projects, task lists, tasks,
+  task comments, learning proposals, skill proposals and attribution records were each stored as a
+  file named by putting an id into a directory — and in Python that expression is not a join: hand it
+  an absolute path and the directory is discarded entirely. So a URL could name any file on the disk.
+  Measured, not theorised: deleting a "project" removed an arbitrary **directory and everything under
+  it**, and reading or deleting a "task" reached any `.json` file on the machine.
+  **The refusal lives in the store, not at the door.** The tools, the workflow actions and the CLI all
+  reach these stores without passing through an HTTP handler, so a check on the way in would have left
+  three ways around it. One resolver now owns the question for every store, which is also what makes
+  the next store inherit the answer instead of having to remember it.
+  **A refused id says so, instead of looking like a missing record.** These stores answer a read they
+  cannot complete with "not found", which is how this survived being looked for — a rejected path and
+  a file that isn't there were indistinguishable. A malformed id is now a `400` naming the parameter
+  it came from, and the refusal is deliberately built so those "not found" fallbacks cannot swallow it.
+  **What changes for you:** an id containing a `/`, a `\`, a `..`, or more than 200 characters is
+  refused. No id PersonalClaw has ever generated looks like that, so ordinary use is unaffected.
+
 - **Ways *in* now share one gate instead of each inventing their own.** The read-only MCP endpoint
   used to be the only inbound surface, and it carried its own answer to "am I allowed to serve
   this?". Four more surfaces are on the way, so that answer moved into one place they all pass

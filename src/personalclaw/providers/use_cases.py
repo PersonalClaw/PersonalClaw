@@ -336,7 +336,16 @@ def _settings_dir() -> Path:
 
 
 def load_use_case_settings(use_case: str) -> dict[str, Any]:
-    """Load provider-agnostic settings for a use case (e.g. auto-speak for tts)."""
+    """Load provider-agnostic settings for a use case (e.g. auto-speak for tts).
+
+    The closed-set check mirrors :func:`save_use_case_settings`, which has always had
+    it. Load having none was the create-vs-update asymmetry that turns an id into a
+    filesystem address (#455's class): an unknown use case is a caller bug, and a use
+    case containing a separator is a path. Returning ``{}`` rather than raising keeps
+    every existing caller's contract — they all treat "no settings" as the default.
+    """
+    if use_case not in VALID_USE_CASES:
+        return {}
     path = _settings_dir() / f"{use_case}.json"
     if not path.is_file():
         return {}

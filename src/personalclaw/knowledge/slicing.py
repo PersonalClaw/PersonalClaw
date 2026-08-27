@@ -312,6 +312,12 @@ def _pointer_path(ref: SourceRef) -> Path:
     return source_cache_dir() / f"ref-{_digest(ref.url.encode('utf-8'))}.json"
 
 
+#: The only two shapes :func:`fetch_source` ever writes into a cached-original filename.
+#: :func:`cached_source` checks a pointer against these before interpolating it.
+_HEX64_RE = re.compile(r"[0-9a-f]{64}")
+_CACHED_SUFFIXES = frozenset({".pdf", ".bin"})
+
+
 def _original_path(sha256: str, suffix: str) -> Path:
     return source_cache_dir() / f"sha256-{sha256}{suffix}"
 
@@ -325,7 +331,13 @@ def cached_source(ref: SourceRef) -> FetchedSource | None:
         return None
     sha256 = str(record.get("sha256") or "")
     suffix = str(record.get("suffix") or "")
-    if not sha256:
+    # Verify the pointer rather than trusting it. Both fields are interpolated into a
+    # path, and both are re-read from a file on disk — so "we wrote it" is an assumption
+    # about the past, not a property of this call. The writer only ever emits a hex
+    # digest and one of two suffixes (`fetch_source`), which makes this check free and
+    # makes a hand-edited or restored-from-elsewhere pointer a cache miss instead of a
+    # path (#455's class, reached through our own cache rather than a route).
+    if not _HEX64_RE.fullmatch(sha256) or suffix not in _CACHED_SUFFIXES:
         return None
     path = _original_path(sha256, suffix)
     if not path.is_file():

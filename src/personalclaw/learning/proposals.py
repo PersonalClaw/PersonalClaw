@@ -58,6 +58,7 @@ from typing import Any
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.learning.hygiene import MIN_EVIDENCE_DEFAULT, fingerprint
+from personalclaw.record_ids import record_path
 
 logger = logging.getLogger(__name__)
 
@@ -290,6 +291,19 @@ def _dir() -> Path:
     return Path(config_dir()) / "learning" / _DIRNAME
 
 
+def _path(proposal_id: object) -> Path:
+    """The ONE expression turning a proposal id into a file in this store.
+
+    ``proposal_id`` reaches here from ``/api/learning/proposals/{id}`` unvalidated, and
+    the six sites that used to inline ``_dir() / f"<pid>.json"`` gave a traversal both a
+    read and an ``unlink`` outside the home (#459). :func:`record_path` raises
+    ``UnsafeRecordId`` — deliberately not a ``ValueError``, so ``_load``'s
+    ``except (OSError, ValueError, TypeError)`` cannot turn the refusal back into the
+    ``404`` that made this class look validated.
+    """
+    return record_path(_dir(), proposal_id, kind="proposal_id")
+
+
 def _decisions_path() -> Path:
     return _dir() / _DECISIONS_FILE
 
@@ -349,7 +363,7 @@ def record_decision(prop: Proposal, verdict: str) -> None:
 
 def _load(pid: str) -> Proposal | None:
     try:
-        data = json.loads((_dir() / f"{pid}.json").read_text(encoding="utf-8"))
+        data = json.loads(_path(pid).read_text(encoding="utf-8"))
         return Proposal(**data)
     except (OSError, ValueError, TypeError):
         return None
@@ -357,7 +371,7 @@ def _load(pid: str) -> Proposal | None:
 
 def _save(prop: Proposal) -> bool:
     try:
-        atomic_write(_dir() / f"{prop.id}.json", json.dumps(prop.to_dict(), indent=2))
+        atomic_write(_path(prop.id), json.dumps(prop.to_dict(), indent=2))
         return True
     except OSError:
         logger.debug("proposal write failed", exc_info=True)
@@ -728,7 +742,7 @@ def prune_superseded(keep: int = _SUPERSEDED_KEEP) -> int:
     removed = 0
     for prop in superseded[: max(0, len(superseded) - max(0, keep))]:
         try:
-            (_dir() / f"{prop.id}.json").unlink()
+            (_path(prop.id)).unlink()
             removed += 1
         except OSError:
             logger.debug("superseded prune failed for %s", prop.id, exc_info=True)
@@ -750,7 +764,7 @@ def _expire_oldest(existing: list[Proposal]) -> None:
         return
     victim = pending[0]
     try:
-        (_dir() / f"{victim.id}.json").unlink()
+        _path(victim.id).unlink()
         logger.info("proposal queue full; expired oldest %s", victim.id)
     except OSError:
         logger.debug("proposal expiry failed", exc_info=True)
@@ -931,7 +945,7 @@ def reject(pid: str, *, actor: str = "user") -> bool:
     prop.updated_at = _now()
     record_decision(prop, "rejected")
     try:
-        (_dir() / f"{pid}.json").unlink()
+        _path(pid).unlink()
     except OSError:
         logger.debug("proposal delete failed", exc_info=True)
     _resolve_inbox_item(pid, "dismissed")
@@ -1009,7 +1023,7 @@ def accept(pid: str, *, installer=None, actor: str = "user") -> Proposal:
     except Exception:
         logger.debug("attribution record failed for %s", pid, exc_info=True)
     try:
-        (_dir() / f"{pid}.json").unlink()
+        _path(pid).unlink()
     except OSError:
         logger.debug("proposal delete failed", exc_info=True)
     _resolve_inbox_item(pid, "handled")
