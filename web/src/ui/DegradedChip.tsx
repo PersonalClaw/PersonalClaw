@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { CloudOff } from 'lucide-react'
+import { ArrowRight, CloudOff } from 'lucide-react'
 import { api, type DegradedSurface } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { useIsMobile } from '../app/useIsMobile'
+import { TextLink } from './TextLink'
 
 // Prettify a surface slug for display ("search_ranking" → "Search ranking").
 function label(surface: string): string {
@@ -140,6 +141,36 @@ export function DegradedChip() {
               <div className="text-on-surface-low text-[0.8125rem]">
                 The degraded-surfaces check is not answering, so this chip cannot say whether any
                 surface is running without a model. It will clear itself when the check responds.
+              </div>
+            )}
+            {/* WHERE YOU FIX IT. Every row below names a missing binding ("No model for
+                Speech-to-text") and several issue instructions outright ("the composer shows how to
+                bind one") — and the panel offered nothing to act on: measured `button, a` = 0 and
+                zero focusable descendants, on the state a FRESH INSTALL sits in
+                (`/api/onboarding` → `needs_model: true`). The destination was never in doubt:
+                `USE_CASE_LABEL` above exists ONLY so these names match the rows of ModelsPanel's
+                `USE_CASE_META` you go bind them in. That word-matching was unusable without a link.
+
+                🪤 ABOVE THE ROWS, AND THAT IS MEASURED, NOT AESTHETIC. The panel has
+                `max-height: none` / `overflow-y: visible`, so at 12 degraded surfaces it renders
+                320×1729 from y=43 inside the FIXED shell corner, which nothing scrolls (1770 with
+                this line). A footer would land at y≈1750 — outside the viewport at 1440×900,
+                1280×800 AND 390×844, i.e. INERT in the only state it exists for. Here it measures
+                y=84 and is on screen at all three.
+
+                `TextLink` rather than a hand-rolled anchor: `#/settings/voice`'s `ManageLink` is
+                this exact job (navigate to Models to bind a missing model) and the owner already
+                settled it there as a convergence onto the primitive — which also carries the
+                `py-1 -my-1` hit box SC 2.5.8 needs. Closing on activate is not optional: `open` is
+                component state, not route-derived, so without it the panel and its full-viewport
+                `fixed inset-0` scrim stay mounted over the page the link just opened and swallow
+                every click on it. */}
+            {down.length > 0 && (
+              <div className="mb-2 border-b border-outline-variant/30 pb-2">
+                <TextLink href="#/settings/models" icon={ArrowRight} iconPosition="trailing" size="xs"
+                  onClick={() => { setOpen(false); triggerRef.current?.focus() }}>
+                  Bind a model in Settings → Models
+                </TextLink>
               </div>
             )}
             <div className="flex flex-col gap-2">
