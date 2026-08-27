@@ -307,13 +307,18 @@ def test_a_different_schema_version_is_still_refused_not_best_effort_parsed(keys
         ("version", '{"version": 9, "enabled": true, "apps": ["Mail"]}', "declares version 9"),
         ("enabled", '{"version": 1, "enabled": "yes", "apps": ["Mail"]}', "not the literal true"),
         ("apps", '{"version": 1, "enabled": true, "apps": "Mail"}', "not a list of app names"),
+        (
+            "unattended",
+            '{"version": 1, "enabled": true, "unattended": "computer_click"}',
+            "not a list of computer-use tool names",
+        ),
     ],
 )
 def test_every_allowed_key_is_actually_enforced(keystone, key, document, needle):
-    """The anti-vacuity half of the membership floor below. Pinning `_ALLOWED_KEYS` to three
+    """The anti-vacuity half of the membership floor below. Pinning `_ALLOWED_KEYS` to four
     names proves nothing on its own — an allowed key with no parser branch would be a scope
     an operator writes and this build silently ignores, which is the widening the whole
-    refuse-unknown-keys rule exists to prevent. So each of the three must be shown to have
+    refuse-unknown-keys rule exists to prevent. So each of the four must be shown to have
     teeth."""
     _write(keystone, document)
     state = ES.active_enable_state()
@@ -321,11 +326,18 @@ def test_every_allowed_key_is_actually_enforced(keystone, key, document, needle)
     assert needle in state.detail
 
 
-def test_the_allowed_key_set_is_exactly_these_three(keystone):
-    """The vacuity floor: a fourth key added later without a parser branch reds HERE, next to
+def test_the_allowed_key_set_is_exactly_these_four(keystone):
+    """The vacuity floor: a fifth key added later without a parser branch reds HERE, next to
     the comment explaining why that pairing is mandatory, rather than shipping as an accepted
-    field nothing enforces."""
-    assert ES._ALLOWED_KEYS == ("version", "enabled", "apps")
+    field nothing enforces.
+
+    ``unattended`` is `DCU-5`'s third grant — which tools a run with nobody watching may invoke.
+    It is deliberately NOT in ``ENABLE_DOCUMENT``: the quoted document has to be the SMALLEST one
+    that works, and an unattended grant is not needed to drive the desktop from a session a human
+    is present in. Its own refusal names the key, and the subset assertion below is what keeps
+    that choice honest rather than accidental."""
+    assert ES._ALLOWED_KEYS == ("version", "enabled", "apps", "unattended")
+    assert ES.UNATTENDED_KEY in ES._ALLOWED_KEYS
     assert set(json.loads(ES.ENABLE_DOCUMENT)) <= set(ES._ALLOWED_KEYS)
 
 

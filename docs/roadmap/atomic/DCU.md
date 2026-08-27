@@ -14,7 +14,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `DCU-2` | ✅ | Target policy, input-target screen, SEL-audit gate | `EXT:AUTONOMY-GUARDRAILS:SEL audit + safety profile` | Driving a non-allowlisted app refuses; typing or set-value into a secure/password field refuses; every attempt, allowed or refused, produces a SEL record. |
 | `DCU-3` | 🟡 | macOS accessibility driver (indexed AX tree) | `DCU-1`, `EXT:SECURITY-HARDENING:OS-input-layer class-B/S review` | With the enable on, snapshotting a TextEdit window then AXPress-ing a button by index and typing into a field succeeds without the pointer moving; a stale index (past TTL or changed fingerprint) refuses and forces a re-snapshot. |
 | `DCU-4` | ⬜ | Thin stdio shim, in-gateway dispatch, tool surface + ceilinged spawn | `DCU-1`, `DCU-2`, `DCU-3`, `EXT:PLATFORM-HARDENING-FLOORS:ceilinged driver subprocess`, `EXT:AUTONOMY-GUARDRAILS:approval ladder in dispatch` | The agent lists apps and clicks an element by index end-to-end; the shim holds no OS handles; the driver spawn carries the resource ceiling; V1 holds and is recorded — a real app driven by element index with the pointer staying put, a secure-field refusal, SEL records present, and an absent enable file blocking everything. |
-| `DCU-5` | ⬜ | Approval-ladder integration for desktop drive | `DCU-4`, `EXT:AUTONOMY-GUARDRAILS:approval ladder + unattended-profile grant` | An unattended run without the grant refuses and notifies; an interactive run prompts; validated. |
+| `DCU-5` | 🟡 | Approval-ladder integration for desktop drive | `DCU-4`, `EXT:AUTONOMY-GUARDRAILS:approval ladder + unattended-profile grant` | An unattended run without the grant refuses and notifies; an interactive run prompts; validated. |
 | `DCU-6` | 🟡 | Windows/Linux honest typed refusals | `DCU-4` | On non-macOS, every computer-use tool returns a typed refusal naming the platform; no silent no-op; validated. |
 | `DCU-7` | ⬜ | Human-facing live-view + cursor-motion overlay | `DCU-4` | The views render; neither adds any agent capability — asserted by confirming the tool surface is unchanged with the views on; validated. |
 
@@ -132,6 +132,75 @@ The stdio MCP shim (cli.py) that resolves session identity and forwards while ho
 Wire the approval ladder into policy (§3.4) so an unattended profile may drive the desktop only with a creation-time grant, while interactive sessions receive the approval prompt.
 
 **Done when:** An unattended run without the grant refuses and notifies; an interactive run prompts; validated.
+
+**DONE (2026-08-27) — every clause met. NO new rung name was minted.** `guardrails/autonomy.py`
+keeps its four rungs; what this adds is ONE declaration, `rungs.COMPUTER_USE_DRIVE`
+(`computer_use.drive`), at the existing `one_tap` — floor and ceiling both, `leaves_machine=True`,
+no `providers`, following the `_AFFORDANCE_SPECS` precedent for a governed behaviour nothing
+dispatches through the action-provider registry. The reasoning is `action.browse`'s one notch
+harder: not `autonomous` (a click in somebody's mail client is an irreversible external write),
+not `auto_with_undo` (that rung promises a reversal handle and no driver op here can un-press a
+button), not `draft_only` (the operator already armed this out-of-band, per application — with-
+holding every drive after that is a capability wearing a control's clothes), ceiling == floor so
+no accumulated track record can take the ask away from the highest-consequence capability in the
+product. `one_tap` → `ROUTE_ASK` is also what makes the "and notifies" half work at all:
+`announce_withheld` files an `agent_request` for `ask`/`draft` and **nothing** for a route that
+executes, which is why a rail pins the declaration rather than trusting it.
+
+The seam is `policy.check_autonomy`, step **4b** of the chain — the insertion point `DCU-4`'s log
+reserved, between `check_input_target` and the approved SEL row, inside the audited `try` so a
+refusal is recorded against the app it was aimed at. It makes **two** reads, both existing
+contracts: the ladder route, and `profile_for_session(...).approval`. *The ladder cannot make the
+second read, and that is a property of the ladder rather than an omission:*
+`rung_ceiling_for_profile` narrows an unattended run to `auto_with_undo`, which is ABOVE
+`one_tap`, so the composed rung is `one_tap` for a dashboard turn and `one_tap` for a cron fire
+alike — **measured**. One rung, two consequences (asked-and-answered vs. asked-with-nobody-home),
+and the seam is where that difference is known.
+
+**The grant reuses `DCU-1`'s enable surface** rather than a config field: a fourth key,
+`"unattended"`, listing the computer-use tools a run with nobody watching may invoke. Absent is
+the fail-closed default. It is out-of-band for the reason the keystone is — a grant the agent's
+process can PATCH is a grant the agent can give itself, and "may I drive the desktop while you
+sleep" is the last question that should be answerable in-band. The governance ceiling could not
+express it either (it may only NARROW a profile, so it cannot grant). `config/loader.py` is
+untouched: **5647 lines before, 5647 after.**
+
+Rather than a second copy of `apps`' validation, both lists now go through one
+`_parse_name_list` — so all the malformed shapes `DCU-1` refuses (non-list, non-string, empty,
+padded, duplicate) apply to both, and the `apps` detail strings stay byte-identical. `unattended`
+adds one rule `apps` cannot have: entries are checked against the CLOSED tool surface, so a typo
+refuses the whole document instead of failing closed invisibly.
+
+**`ERR_COMPUTER_USE_UNATTENDED_NOT_GRANTED`** appended to `ERROR_CODES`, and deliberately kept
+**OUT** of `service._CHILD_CODES` — the inverse of `DCU-3`/`DCU-6`, whose codes had to be added
+because only the child can determine them. This one is decided in the parent at step 4b before
+any child exists, so a child able to name it could dress a driver crash up as a policy verdict
+the parent never reached. A real-spawn test proves the exclusion bites: a child naming it comes
+back as `ERR_COMPUTER_USE_DRIVER_FAILED`.
+
+**DISCOVERY — a measured fail-open at the HTTP seam, closed here.** `caller_identity=""` (any
+authenticated client that simply did not send `X-Session-Key` — a script, an ACP CLI) resolved to
+the **INTERACTIVE** profile, so the ladder read "a human is watching" for a caller with nobody
+present. Fixed at the one seam that knows the header was absent (`handlers/computer_use.py`
+`_caller_identity`), by minting a sessionless identity through the same `unattended_dispatch_key`
+helper the trigger and hook seams use (PHF-8) — not by a special case inside `check_autonomy`,
+which should read one contract.
+
+**DISCOVERY — the ladder registry is lazy, and getting it wrong is invisible.** Without
+`ensure_core_action_types()` at the seam, `resolve_rung` fails closed to `draft_only` for a
+declared-but-unregistered key, and a computer-use dispatch never travels the provider-registration
+path that registers them. The refusal would still refuse — so nothing looks broken — but it would
+file a *proposal* ("here is what it would have done") instead of the *agent request* ("decide")
+the clause asks for, and say the wrong sentence. `test_the_hold_row_is_a_request_from_a_cold_registry`
+clears the registry and asserts the premise first, so the rail cannot go vacuous.
+
+*Real on this host:* the whole seam. Every refusal and every permitted leg goes in at the real
+`service.computer_dispatch` with the real keystone document, the real parser, the real screens,
+a real `SecurityEventLog` read back off disk, a real `InboxStore` row read back off disk, and one
+leg through the real ceilinged spawn with a real child. *Simulated:* only the platform driver
+(step 6 is an in-process double on the in-process legs, because the AX API needs the TCC grant
+`DCU-3` records as ungrantable by code). The `apps`-allowlist and keystone halves are untouched
+and their suites still pass, which is the floor this sits on.
 
 ### `DCU-6` — Windows/Linux honest typed refusals
 
