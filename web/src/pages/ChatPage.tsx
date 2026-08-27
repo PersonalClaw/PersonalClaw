@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ResultAnnouncement } from '../ui/ListControls'
 import { reportActionFailure, reportingWrite } from '../app/reportingWrite'
 import { unavailableWhen } from '../ui/unavailable'
@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, Brain, Gauge, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins, type LucideIcon } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -26,7 +26,6 @@ import { Button } from '../ui/Button'
 import { Checkbox } from '../ui/forms'
 import { QuietButton } from '../ui/QuietButton'
 import { SelectionToolbar } from '../ui/SelectionPill'
-import { TextLink } from '../ui/TextLink'
 import { Segmented } from '../ui/Segmented'
 import { ContextMenu, type ContextMenuItem } from '../ui/motion'
 import { ProjectPicker } from '../ui/ProjectPicker'
@@ -38,6 +37,7 @@ import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { OrganizeChip } from './chat/OrganizeChip'
+import { ContextLedger } from './chat/ContextLedger'
 import { ScreenShareChip } from '../ui/ScreenShareChip'
 import { useScreenShare } from '../ui/composer/useScreenShare'
 import { DotGlow } from '../ui/DotGlow'
@@ -65,7 +65,7 @@ import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, expandPasteMarkers, pruneBlocks } from './chat/pasteBlocks'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, learnedSurface, skillsUsedLabel, skillsUsedTitle, stampActivityOrigin } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, skillsUsedLabel, skillsUsedTitle, stampActivityOrigin } from './chat/chatTypes'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
 import { buildOptimizerContext } from './chat/optimizerContext'
 import { useIdentity, firstNameOf } from '../app/identity'
@@ -3828,79 +3828,6 @@ function SkillsUsedChip({ skills }: { skills: SkillUsed[] }) {
         {skillsUsedLabel(skills)}
         {reduced > 0 && <span className="opacity-80"> · {reduced} summarized</span>}
       </span>
-    </div>
-  )
-}
-
-/** Holistic per-turn context-transparency footer. Consolidates the three
- *  provenance signals — what context FED the turn (memory/lessons/knowledge/
- *  skills/workflows), what the turn LEARNED & saved (after-turn review), and the
- *  turn TELEMETRY — into one quiet, collapsed-by-default affordance. The
- *  high-signal "learned" flag stays visible even collapsed (so the user always
- *  sees, and can open to undo, what was persisted). On demand, never intrusive. */
-function ContextLedger({ fed, learned, learnedOrigin, stats }: { fed?: string; learned?: string; learnedOrigin?: string; stats?: string }) {
-  const [open, setOpen] = useState(false)
-  const fedChars = fed?.match(/([\d,]+)\s*chars/)?.[1] ?? ''
-  // "Learned: <text>" → just the text for the expanded row.
-  const learnedText = learned?.replace(/^Learned:\s*/i, '').trim() ?? ''
-  // Where a tap on this chip lands, decided by the EMITTER (T2.2) rather than by the one
-  // hardcoded Memory link this row used to carry for all three origins — which was right for
-  // a facet and wrong for a skill proposal. `null` for an absent/unknown origin: the row
-  // still renders its text, it just isn't a link, because we don't know which surface owns it.
-  const surface = learnedSurface(learnedOrigin)
-  const summary = open
-    ? 'Context & learning'
-    : [fed && 'recalled context', learned && 'learned 1', stats && 'telemetry'].filter(Boolean).join(' · ') || 'Turn details'
-  return (
-    <div className="mt-2 mb-1">
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
-        className="flex items-center gap-1.5 rounded-pill text-on-surface-low/80 text-[0.75rem] transition-colors hover:text-on-surface-low"
-        title={open ? 'Hide what fed this turn and what was learned' : 'What fed this turn · what was learned'}>
-        <motion.span animate={{ rotate: open ? 90 : 0 }} transition={spring.spatialFast} className="shrink-0 opacity-60">
-          <ChevronRight size={11} />
-        </motion.span>
-        <Brain size={11} className="shrink-0 opacity-70" />
-        <span>{summary}</span>
-        {!open && learned && <Sparkles size={11} className="shrink-0 text-primary/80" />}
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-            transition={spring.spatialFast} className="overflow-hidden">
-            <div className="mt-1.5 ml-1.5 flex flex-col gap-1.5 border-l border-outline-variant/40 pl-3 text-[0.75rem] text-on-surface-low">
-              {fed && (
-                <LedgerRow icon={Brain} label="Fed this turn">
-                  Recalled relevant context{fedChars ? ` · ${fedChars} chars` : ''} — saved memories, learned lessons, earlier conversation, and episodic history, assembled and prepended to the prompt.
-                </LedgerRow>
-              )}
-              {learned && (
-                <LedgerRow icon={Sparkles} label="Learned & saved">
-                  <span className="text-on-surface-var">{learnedText || 'A preference was captured.'}</span>
-                  {surface && <>{' '}<TextLink href={surface.href}>{surface.label}</TextLink></>}
-                </LedgerRow>
-              )}
-              {stats && (
-                <LedgerRow icon={Gauge} label="Telemetry">
-                  <span className="whitespace-pre-wrap break-words">{stats}</span>
-                </LedgerRow>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  )
-}
-
-/** One labeled row inside the {@link ContextLedger}. */
-function LedgerRow({ icon: Icon, label, children }: { icon: LucideIcon; label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-start gap-1.5">
-      <Icon size={11} className="mt-[0.15rem] shrink-0 opacity-70" />
-      <div className="min-w-0">
-        <span className="font-medium text-on-surface-low/90">{label}:</span>{' '}
-        {children}
-      </div>
     </div>
   )
 }

@@ -383,6 +383,73 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   `npm run typecheck:web` and `npm run build` green from the repo root. Probe sweep 16 hits,
   **0** introduced by this diff.
 
+- [2026-08-26][LV-2] **OWNER RULING — the link must be reachable WITHOUT the user opening the
+  disclosure first.** The taste call parked above as SURFACED, NOT DECIDED (this file's lines
+  358-361) asked whether "a visible learned-chip whose tap lands on the right approve/edit surface"
+  requires the link reachable without first expanding the collapsed `ContextLedger`. **RULED: yes.**
+  A learning the user has to go looking for is not visible, and visibility is this plan's entire
+  subject — a chip that points at something behind a closed disclosure moves the work from "hidden"
+  to "hinted", which is not what the criterion asks for. Recorded here because it was not yet in the
+  tree at `fc1aac08`.
+- [2026-08-26][LV-2] **DONE — one tap now opens the ledger AND lands focus on the approve/edit
+  link.** `ContextLedger` + `LedgerRow` moved out of `ChatPage.tsx` into
+  `web/src/pages/chat/ContextLedger.tsx` (exported, still rendered by the page) and gained a
+  `useEffect` keyed on `[open, learnedHref]` that scrolls the row's `<a>` into view
+  (`block: 'nearest'`, the app's 13-site idiom) and then `focus({ preventScroll: true })`. Scroll
+  before focus, and `preventScroll` on the focus, so the two halves are independently removable and
+  a test notices each. Keyed on the HREF, not the `surface` object: `learnedSurface` returns a fresh
+  literal per render, which would re-steal focus on every unrelated re-render. A row whose origin has
+  no known surface moves nothing — the ledger just opens, which is the pre-ruling behaviour and the
+  correct degrade. Accessibility: the target is a real `<a href>`, natively focusable, and it RECEIVES
+  focus, so the keyboard path lands there too instead of facing an unknown number of Tab stops; the
+  collapsed chip's `title` gains "…opens and jumps to where you can review it" and its accessible
+  name is unchanged (visible text, no `sr-only`). No backend change, no config field
+  (`config/loader.py` **5900 lines before and after**), no new WS/SSE channel.
+- [2026-08-26][LV-2] **DEVIATION — the extraction was the only way to assert the behaviour at the
+  CALL SITE.** `ChatPage.tsx` is ~4k lines, owns a socket and a composer, and is not mountable in the
+  vitest suite, so a contract like "the tap does both halves" cannot be proved while the component
+  lives inside it — only "a handler exists" can, which is what this ruling rejects.
+  `contextLedgerReach.test.tsx` (8 tests) mounts the real component with the real handler and taps it
+  as a user does. The complementary rail that the PAGE still renders it (so the extraction is not a
+  quiet deletion) lives in `skillsUsedChip.test.ts`, whose three ledger-side source scans were
+  retargeted to the new module in the same commit.
+- [2026-08-26][LV-2] **DISCOVERY — three of the atom's four citations had drifted**, measured
+  2026-08-25 and re-measured today at `fc1aac08`. `LEARNING-VISIBILITY.md:358-361` is CORRECT.
+  `ChatPage.tsx:3803` (chip) was really `3806-3838` — render at `:3737`, `SkillsUsedChip` defined at
+  `:3820`. Tap-through `:3832` was really `:3850` (`learnedSurface(learnedOrigin)`), now
+  `chat/ContextLedger.tsx:30`. `LoopCockpitPage.tsx:585` was CORRECT (`MetaPill` with
+  `skillsUsedLabel`). Nothing contradicted the atom; all four addresses were recoverable by grep.
+- [2026-08-26][LV-2] **DEVIATION — a GLOBAL design ratchet had to follow the moved file.**
+  `web/src/ui/rawToggleState.test.ts`'s disclosure census pinned the ledger's button by
+  `['ChatPage.tsx', 'open', 'aria-expanded={open}\n        className="flex items-center gap-1.5 rounded-pill']`.
+  Path-scoped vitest runs stay green over this; only the unscoped `npm run test:web` catches it
+  (1 failed / 5411 on the first full run). Retargeted to `chat/ContextLedger.tsx` with the anchor
+  unchanged, so the census still counts 10 disclosures and still measures the same button.
+- [2026-08-26][LV-2] **Falsification (four mutations on the LIVE file, each grep-confirmed applied,
+  each restored from a copy at `/tmp/lv2c-ledger.bak`, never `git checkout`).** (1) disclosure half —
+  `setOpen((v) => !v)` → `setOpen((v) => v)` reds **6 of 8**, HALF A first by name; (2) focus half —
+  dropping `link.focus({ preventScroll: true })` reds **3 of 8** and leaves **HALF A green**, so the
+  two halves are discriminated; (3) scroll half — dropping `link.scrollIntoView({ block: 'nearest' })`
+  reds the same 3, again with HALF A green, proving "brought into view" is not a side effect of the
+  focus call; (4) vacuity — `useState(false)` → `useState(true)` reds the VACUITY FLOOR leg, which is
+  what makes the positive assertions non-vacuous: without a genuinely CLOSED disclosure at first
+  paint, "the tap revealed it" is satisfiable by a component that renders open. Mutation (1)
+  necessarily reds HALF B too — with the disclosure wired shut there is no link in the DOM to focus —
+  which is the honest floor rather than a blunt assertion.
+- [2026-08-26][LV-2] **Gate:** `make lint` green (black 2138 files, isort, flake8, mypy 1054 source
+  files); **42 passed** across `test_lv2_skills_used_meta.py` (the zero-new-channel rail, still green,
+  untouched) + `test_structural_baseline.py`; `scripts/gate_report.py` **all 6 gates PASS**
+  (`structural-size` included, headroom unmoved); web **unscoped** `npm run test:web`
+  **506 files / 5412 tests passed** after the census retarget, plus `npm run typecheck:web` and
+  `npm run build` green from the repo root. Probe sweep **0** hits introduced by this diff.
+- [2026-08-26][LV-2] **ATOM COMPLETE — both `done_when` clauses met; `LV.md` row flipped to ✅.**
+  Clause 1 (chip with names on hover, zero new WS/SSE channels) shipped in `22f53646`/`c09a0e7d`/
+  `5d4250f2` and is re-verified green. Clause 2's last open question was this ruling and is now
+  implemented and proved. **DISCOVERY for the driver: `dag.json` still carries `status: "todo"` and
+  the now-stale `BLOCKED-OWNER (2026-08-25)` `blocked_reason` for `LV-2`** — that file is fenced to
+  the driver, so it is untouched here and must be set to `done` with the reason cleared, or the
+  readiness census will hand this atom out a fourth time.
+
 ## Execution log — `LV-3` (T2.3 digest learning block) — 2026-08-25
 
 - [2026-08-25][LV-3] **DONE.** The learning summary block (new / refined / pending counts + names)
