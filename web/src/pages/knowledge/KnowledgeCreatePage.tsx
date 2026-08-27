@@ -7,6 +7,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Button } from '../../ui/Button'
 import { ChipInput } from '../../ui/forms'
 import { PageTitle } from '../../ui/PageTitle'
+import { Meter } from '../../ui/Meter'
 import { api, type KnowledgeType } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { TYPES, typeMeta, createKind, ACCEPTED_MIMES, GIST_LANGUAGES, fmtBytes } from './knowledgeMeta'
@@ -261,9 +262,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
             <div className="flex shrink-0 items-center gap-2 text-[0.75rem] text-on-surface-var">
               <Loader2 size={13} className="shrink-0 animate-spin text-primary" />
               <span>Uploading… {uploadPct}%</span>
-              <span className="h-1 w-32 overflow-hidden rounded-full bg-surface-high">
-                <span className="block h-full rounded-full bg-primary transition-[width] duration-200" style={{ width: `${uploadPct}%` }} />
-              </span>
+              <Meter size="thin" className="w-32" label="Upload progress" pct={uploadPct} />
             </div>
           )}
         </div>

@@ -4,6 +4,7 @@ import { ArrowUpRight, Workflow } from 'lucide-react'
 import { api } from '../../lib/api'
 import { messageEnter } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
+import { Meter } from '../../ui/Meter'
 import { foldEvent, foldSnapshot, type WorkflowViewModel } from '../workflows/workflowFold'
 import { useWorkflowStream } from '../workflows/useWorkflowStream'
 import { fmtElapsed, isTerminal, nodeLook, runLook } from '../workflows/workflowMeta'
@@ -110,12 +111,8 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
 
       {vm && vm.totalCount > 0 && (
         <div className="flex items-center gap-s">
-          <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface-high">
-            <div
-              className="h-full rounded-full bg-primary transition-[width] duration-300"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
+          <Meter size="thin" className="flex-1" pct={pct}
+            label={`${vm.workflow || 'Workflow'} progress: ${vm.doneCount} of ${vm.totalCount} steps done`} />
           <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">
             {vm.doneCount}/{vm.totalCount}
           </span>
