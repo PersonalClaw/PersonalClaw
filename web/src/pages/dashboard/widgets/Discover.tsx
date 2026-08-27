@@ -41,13 +41,42 @@ const DECK_PAD = BEHIND * STEP_Y + 2
  *  hides (dismiss persists; an area auto-hides once used). It never enables or
  *  configures anything — the user acts. */
 export function Discover({ navigate }: RouteProps) {
-  const { discover, dismissDiscoverTip } = useDashboardLive()
+  const { discover, discoverErr, dismissDiscoverTip } = useDashboardLive()
   const reduce = useReducedMotion()
 
-  // Kill switch off, or nothing loaded yet: a slot with no tips reads as "nothing
-  // to learn" (the Section wrapper still shows its label).
-  if (!discover || !discover.enabled) {
-    return <SlotEmptyState icon={Compass}>Discover tips are off.</SlotEmptyState>
+  // 🔴 ONE SENTENCE ANSWERED THREE DIFFERENT QUESTIONS. A single gate ORed a falsy feed together
+  // with a disabled one onto "Discover tips are off.", and its own comment admitted the conflation
+  // ("Kill switch off, OR nothing loaded yet"). So on the app's first screen a
+  // FAILED read and a not-yet-arrived read both announced a setting the user never touched — and
+  // the genuinely-off case, the only one that sentence is true for, offered no way to change it.
+  // Measured on an empty home with `/api/legibility/discover` aborted: this slot said "Discover
+  // tips are off." while `#/discover`, on the identical rejection, said "Couldn't load your tips"
+  // with a Retry; and 1.6s into a delayed load it said the same thing again.
+  //
+  // Three conditions, three answers, all three borrowed from something already shipped:
+  //  · failed  → the honest read-error slot `OnThisMachine`/`PinnedArtifacts` already use, with
+  //              `#/discover`'s own noun for the thing ("your tips").
+  //  · unread  → nothing, exactly as `OnThisMachine` and `PinnedArtifacts` do for `!data`. A slot
+  //              that says nothing for a moment is not a claim; a wrong sentence is.
+  //  · off     → the fact PLUS the on-ramp `#/discover`'s off-branch already carries, to the same
+  //              route (`settings/legibility`) under the same label.
+  if (discoverErr && !discover) {
+    return <SlotEmptyState icon={Compass}>Couldn&rsquo;t load your tips.</SlotEmptyState>
+  }
+  if (!discover) return null
+  if (!discover.enabled) {
+    return (
+      <SlotEmptyState
+        icon={Compass}
+        action={
+          <Button variant="ghost" size="xs" onClick={() => navigate('settings/legibility')} className="self-start text-on-surface-var">
+            Open Settings
+          </Button>
+        }
+      >
+        Discover tips are off.
+      </SlotEmptyState>
+    )
   }
   const tips = discover.areas.flatMap((a) => a.tips)
   if (tips.length === 0) {
