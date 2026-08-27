@@ -14,6 +14,7 @@ from personalclaw.config.loader import config_dir
 from personalclaw.record_ids import record_path
 from personalclaw.tasks import reconcile
 from personalclaw.tasks.models import (
+    TASK_FIELD_COERCERS,
     Task,
     TaskComment,
     TaskDependency,
@@ -21,10 +22,15 @@ from personalclaw.tasks.models import (
     TaskStatus,
     WorkflowTaskBinding,
 )
+from personalclaw.tasks.models import coerce_task_field as models_coerce
 from personalclaw.tasks.provider import TaskProvider
 from personalclaw.workflows import pool
 
 logger = logging.getLogger(__name__)
+
+#: Fields an update never writes: identity and provenance. `project` is excluded separately in the
+#: update loop because it is DERIVED (re-resolved from the task list on every read), not immutable.
+_IMMUTABLE_FIELDS: frozenset[str] = frozenset({"id", "provider", "created_at"})
 
 
 def _coerce_binding(raw: Any) -> "WorkflowTaskBinding | None":
@@ -263,47 +269,61 @@ class NativeTaskProvider(TaskProvider):
         def _create() -> Task:
             task_id = f"t-{uuid.uuid4().hex[:8]}"
             now = _now_iso()
-            # Accept depends_on (flat) or dependencies (typed) — both → typed edges.
+
+            # 🔴 Every CALLER-supplied field goes through the same coercion table `from_dict` and
+            # `update_task` use. It used to be enumerated here with a per-field ad-hoc rule —
+            # `float()` on `order`, `str()` on `preview`, and nothing at all on `title`,
+            # `description` or `labels` — which is how `labels: "not-an-array"` was persisted bare
+            # by BOTH create and update (#386), and how create and update came to disagree about
+            # the same field (#456: POST 500'd on a non-string scalar where PUT `str()`-coerced it).
+            #
+            # It also closes the latent bug the `workflow_binding` comment below used to record:
+            # "this provider builds its Task field-by-field, so a new model field is dropped on
+            # create unless it is named". The coercion is shared now, so the only thing this list
+            # still owns is WHICH fields a caller may set — and the rail
+            # (`tests/test_task_field_coercion.py`) checks that against `Task`'s fields.
+            def _given(name: str, default: Any = None) -> Any:
+                return models_coerce(name, fields.get(name, default), strict=True)
+
+            # Accept depends_on (flat) or dependencies (typed) — both → typed edges. The coercer
+            # handles both shapes, including the legacy bare-id form.
             dep_src = fields.get("dependencies", fields.get("depends_on", []))
-            dependencies = self._coerce_dependencies(dep_src)
-            task_list_id = fields.get("task_list_id", "")
+            task_list_id = _given("task_list_id", "")
             task = Task(
                 id=task_id,
-                title=fields.get("title", "Untitled"),
-                status=TaskStatus(fields.get("status", "open")),
-                description=fields.get("description", ""),
+                title=_given("title", "Untitled"),
+                status=_given("status", "open"),
+                description=_given("description", ""),
                 provider=self.name,
                 # project is a derived, read-only label (the task list's project
                 # name) — resolved here and re-resolved on every read.
                 project=self._derive_project_label(task_list_id),
                 task_list_id=task_list_id,
-                dependencies=dependencies,
+                dependencies=models_coerce("dependencies", dep_src, strict=True),
                 # Attribution (TEAM-SHARED-ENTITIES §1): an explicit author wins;
                 # otherwise stamp the owner's handle. Unset handle → "" → today's
                 # behavior (no attribution).
-                author=fields.get("author") or _current_username(),
-                assignee=fields.get("assignee", ""),
-                priority=TaskPriority.normalize(fields.get("priority", "medium")),
-                labels=fields.get("labels", []),
-                due=fields.get("due", ""),
-                order=float(fields.get("order", 0.0) or 0.0),
-                exit_criteria=fields.get("exit_criteria", []),
-                action_plan=fields.get("action_plan", []),
-                notes=fields.get("notes", []),
-                research_notes=fields.get("research_notes", []),
-                execution_notes=fields.get("execution_notes", []),
-                agent_instructions_template=fields.get("agent_instructions_template", ""),
-                # Workflow projection (TASKS-SOPS §1, S55). Enumerated HERE as well as on the
-                # model:
-                # this provider builds its Task field-by-field, so a new model field is dropped on
-                # create unless it is named — measured, the binding round-tripped through
-                # `to_dict`/`from_dict` and still arrived empty from `create_task`.
-                workflow_binding=_coerce_binding(fields.get("workflow_binding")),
-                blocked_kind=str(fields.get("blocked_kind", "") or ""),
-                preview=str(fields.get("preview", "") or ""),
-                done_criterion=str(fields.get("done_criterion", "") or ""),
-                evidence=fields.get("evidence", []),
-                attempts=fields.get("attempts", []),
+                author=_given("author", "") or _current_username(),
+                assignee=_given("assignee", ""),
+                priority=_given("priority", "medium"),
+                labels=_given("labels", []),
+                due=_given("due", ""),
+                order=_given("order", 0.0),
+                exit_criteria=_given("exit_criteria", []),
+                action_plan=_given("action_plan", []),
+                notes=_given("notes", []),
+                research_notes=_given("research_notes", []),
+                execution_notes=_given("execution_notes", []),
+                agent_instructions_template=_given("agent_instructions_template", ""),
+                # Workflow projection (TASKS-SOPS §1, S55). Still enumerated: this list is what a
+                # caller may SET, and the binding once round-tripped through `to_dict`/`from_dict`
+                # and still arrived empty from `create_task` because it was missing here.
+                workflow_binding=_given("workflow_binding"),
+                blocked_kind=_given("blocked_kind", ""),
+                preview=_given("preview", ""),
+                done_criterion=_given("done_criterion", ""),
+                evidence=_given("evidence", []),
+                attempts=_given("attempts", []),
                 created_at=now,
                 updated_at=now,
             )
@@ -372,8 +392,42 @@ class NativeTaskProvider(TaskProvider):
                 elif key == "project":
                     # project is a derived label, never set directly.
                     continue
-                elif hasattr(task, key) and key not in ("id", "provider", "created_at"):
-                    setattr(task, key, val)
+                elif key in _IMMUTABLE_FIELDS:
+                    # Identity and provenance are not editable.
+                    continue
+                elif key not in TASK_FIELD_COERCERS:
+                    # NOT a task field. Ignored, as before — deliberately not a 400, because the
+                    # dashboard's own edit form posts `project_id`, which is not a `Task` field:
+                    # `_attach_project_general_list` resolves and POPS it on the create path and
+                    # is not called on update, so refusing unknown keys here would break Save on
+                    # the task detail screen. Logged rather than silent, since the same branch also
+                    # swallows a typo'd field name.
+                    #
+                    # (That `project_id` is accepted on create and ignored on update is its own
+                    # gap — choosing a project while editing silently discards the choice. Filed as
+                    # #2142; it belongs to that fix, not to the coercion this change is about.)
+                    logger.debug("update_task ignoring unknown field %r on %s", key, task_id)
+                    continue
+                else:
+                    # 🔴 EVERY OTHER FIELD IS COERCED, and an uncoercible value is REFUSED.
+                    #
+                    # This was `setattr(task, key, val)` behind a `hasattr` check: no type check at
+                    # all, and `__post_init__`/`from_dict`'s normalization runs only at
+                    # construction, so an update was the one write that never re-validated. What
+                    # that accepted, each measured:
+                    #
+                    #   `order: "abc"`        → 200, then every read raised and the task 404'd
+                    #                           everywhere while its file stayed on disk (#387)
+                    #   `labels: "a-string"`  → persisted bare; `labels.slice().map` took the whole
+                    #                           Tasks page into an error boundary (#386)
+                    #   `description: 12345`  → `(12345).lower()` in the search scorer, so EVERY
+                    #                           search answered 500 (#388)
+                    #   `exit_criteria: "x"`  → iterated CHARACTER BY CHARACTER, one un-meetable
+                    #                           criterion per letter, task never completable (#818)
+                    #
+                    # A refusal is a `ValueError`, which both handlers already map to a 400.
+                    task_setattr = models_coerce(key, val, strict=True)
+                    setattr(task, key, task_setattr)
             # Re-derive the project label if the task list changed.
             if "task_list_id" in fields:
                 task.project = self._derive_project_label(task.task_list_id)
