@@ -22,6 +22,41 @@ export function SlotEmptyState({ icon: Icon, children, action }: { icon: LucideI
   )
 }
 
+/** The on-ramp inside a `SlotEmptyState` — "+ New task", "+ New trigger", "Open Settings".
+ *
+ *  ONE definition, because the second slot to need one is what turns a call-site idiom into
+ *  drift. Tasks shipped this markup inline; Schedule needed the same affordance, and a
+ *  hand-rolled copy would have put two differently-inked on-ramps side by side on the app's
+ *  first screen.
+ *
+ *  Not only create actions: Discover's off-branch offers "Open Settings" — a remediation, not a
+ *  "+ New X". The role is the SLOT's, not the verb's. Anything in a slot's `action` position is a
+ *  slot action, because a user reading two slots side by side reads two controls that look alike
+ *  as one kind of thing; that is the whole claim, and a label cannot opt out of it.
+ *
+ *  Deliberately NOT `RowAction` and not `Button`, and the reason is measured, not stylistic:
+ *  `RowAction`'s default tone is `on-surface-var` on `surface-highest` hover and it carries
+ *  `-my-px`, so adopting it would have re-inked and re-sized the shipped Tasks on-ramp
+ *  (105×28 on `#/dashboard` at 1440×1000) to pay for a refactor. A slot action belongs to the
+ *  slot's own sentence, so it takes the slot's ink (`on-surface-low`) — the same relationship
+ *  `RowAction` has to a row. It clears SC 2.5.8 at 28px without `min-h-6`; `RowAction` needs
+ *  that floor because a row action is 22px painted.
+ *
+ *  `SlotEmptyState` already stops propagation around `action`, so this never double-fires
+ *  inside a clickable parent. */
+export function SlotAction({ icon: Icon, children, onClick }: { icon: LucideIcon; children: ReactNode; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-xs rounded-pill px-m py-xs text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface"
+      data-type="label-m"
+    >
+      <Icon size={13} /> {children}
+    </button>
+  )
+}
+
 /** A row in a widget list — a tappable surface with spring press feedback + a
  *  hover lift, matching the app's pressable idiom. Optional trailing actions. */
 export function WidgetRow({
