@@ -604,6 +604,33 @@ def test_the_packages_public_surface_is_pinned():
             "op_snapshot",
             "op_type",
         ],
+        # DCU-6's three modules — the honest platform story. `unsupported_platform` owns the ONE
+        # wording ("this platform is intended, its driver is not written, macOS is the one that
+        # works"), and the two platform modules are what `DRIVER_MODULES` resolves by name, each
+        # presenting the same seven-op protocol so a future real driver replaces handlers rather
+        # than inventing a module. They are enumerated here rather than generated precisely so
+        # this census can see them: a `setattr` loop would leave both modules looking empty.
+        # None is named `computer_*` — same reason as every other driver module: they run inside
+        # the ceilinged child, hold no authority, and cannot dispatch.
+        "unsupported_platform.py": ["refusal"],
+        "windows_driver.py": [
+            "op_click",
+            "op_list_apps",
+            "op_perform_action",
+            "op_scroll",
+            "op_set_value",
+            "op_snapshot",
+            "op_type",
+        ],
+        "linux_driver.py": [
+            "op_click",
+            "op_list_apps",
+            "op_perform_action",
+            "op_scroll",
+            "op_set_value",
+            "op_snapshot",
+            "op_type",
+        ],
     }, (
         "the computer_use package grew a public function/class. If it is a dispatchable "
         "tool, name it computer_* so the keystone ratchet covers it and call "

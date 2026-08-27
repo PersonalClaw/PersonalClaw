@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `DCU-3` | 🟡 | macOS accessibility driver (indexed AX tree) | `DCU-1`, `EXT:SECURITY-HARDENING:OS-input-layer class-B/S review` | With the enable on, snapshotting a TextEdit window then AXPress-ing a button by index and typing into a field succeeds without the pointer moving; a stale index (past TTL or changed fingerprint) refuses and forces a re-snapshot. |
 | `DCU-4` | ⬜ | Thin stdio shim, in-gateway dispatch, tool surface + ceilinged spawn | `DCU-1`, `DCU-2`, `DCU-3`, `EXT:PLATFORM-HARDENING-FLOORS:ceilinged driver subprocess`, `EXT:AUTONOMY-GUARDRAILS:approval ladder in dispatch` | The agent lists apps and clicks an element by index end-to-end; the shim holds no OS handles; the driver spawn carries the resource ceiling; V1 holds and is recorded — a real app driven by element index with the pointer staying put, a secure-field refusal, SEL records present, and an absent enable file blocking everything. |
 | `DCU-5` | ⬜ | Approval-ladder integration for desktop drive | `DCU-4`, `EXT:AUTONOMY-GUARDRAILS:approval ladder + unattended-profile grant` | An unattended run without the grant refuses and notifies; an interactive run prompts; validated. |
-| `DCU-6` | ⬜ | Windows/Linux honest typed refusals | `DCU-4` | On non-macOS, every computer-use tool returns a typed refusal naming the platform; no silent no-op; validated. |
+| `DCU-6` | 🟡 | Windows/Linux honest typed refusals | `DCU-4` | On non-macOS, every computer-use tool returns a typed refusal naming the platform; no silent no-op; validated. |
 | `DCU-7` | ⬜ | Human-facing live-view + cursor-motion overlay | `DCU-4` | The views render; neither adds any agent capability — asserted by confirming the tool surface is unchanged with the views on; validated. |
 
 ## Atom scopes
@@ -140,6 +140,34 @@ Wire the approval ladder into policy (§3.4) so an unattended profile may drive 
 Windows (UIA) and Linux (AT-SPI) driver stubs (windows_driver.py, linux_driver.py, §3.6) that return a typed 'not yet on this platform' refusal for every tool — an honest refusal, never a silent no-op or a simulated success. Real Windows/Linux drivers are a deliberate later split, sequenced behind the platform-reach ordering when the operator has those platforms to validate on.
 
 **Done when:** On non-macOS, every computer-use tool returns a typed refusal naming the platform; no silent no-op; validated.
+
+**DONE (2026-08-26) — every clause met, with each non-macOS leg labelled simulated.**
+`windows_driver.py` and `linux_driver.py` ship, so the `DRIVER_MODULES` entries that have named
+them since `DCU-4` — while neither module existed, which made `resolve_driver` answer `None` —
+now resolve. Both refuse with a newly registered code, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`,
+distinct from `..._DRIVER_UNAVAILABLE` because the two are acted on differently: that one means
+*this build has no driver for you and never claimed to* (still the honest answer for a platform
+outside the map, so its branch is live, not dead), while this one means *your platform is named
+and intended and the implementation is what is missing*. The FIX says so — it names macOS as the
+one implemented driver, tells the operator plainly that no local setting turns this on, and keeps
+the internal module path out of a user-facing sentence (the old fallback leaked
+`personalclaw.computer_use.windows_driver` at an operator and then said "nothing to configure").
+The wording lives ONCE in `unsupported_platform.py`, parameterised only by the platform name and
+the accessibility API a real driver there will speak (UIA / AT-SPI); a rail asserts by AST that
+neither platform module builds its own envelope, because two copies of a WHAT/WHY/FIX are the
+family the structural-duplication ratchet counts.
+
+*Real on this macOS host, no simulation:* resolution (all three platforms resolve; an unmapped
+one still answers `None`), and that importing either pending driver touches no OS library — that
+one is load-bearing rather than tidy, because `resolve_driver` runs **inside the gateway's
+process**, so a module-level `import comtypes` would turn "no desktop capability" into "no
+gateway". *Simulated, and only `platform.system()`:* the seven-operation refusal (in-process, real
+`driver_host.run_op`) and the end-to-end clause — all seven tools through the real
+`computer_dispatch`, the real keystone, the real screens, the real SEL row, the real ceilinged
+spawn, a real child process running the real `driver_host.main`, and the real `_run_driver`
+translation, with `platform.system` faked *inside the child* because a parent-side monkeypatch
+cannot cross `exec`. Every leg has a Darwin twin through the same code path asserting the refusal
+does **not** fire there.
 
 ### `DCU-7` — Human-facing live-view + cursor-motion overlay
 

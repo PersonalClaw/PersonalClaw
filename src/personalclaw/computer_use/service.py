@@ -75,15 +75,24 @@ ERR_STALE_INDEX = "ERR_COMPUTER_USE_STALE_INDEX"
 ERR_DRIVER_UNAVAILABLE = "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE"
 ERR_DRIVER_FAILED = "ERR_COMPUTER_USE_DRIVER_FAILED"
 ERR_AX_PERMISSION = "ERR_COMPUTER_USE_AX_PERMISSION"
+ERR_PLATFORM_UNSUPPORTED = "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED"
 
 #: The codes the driver child may name for itself. An allowlist, still — the reasoning in
 #: :func:`_run_driver` is that a child able to pick any code could dress a failure up as a
 #: verdict the policy never reached. Every member is a REFUSAL the child is the only party able
-#: to determine: it alone re-walked the tree at the moment of acting (stale index) and it alone
-#: asked the OS whether input access is granted (accessibility permission). A child naming one of
-#: these can only cause a refusal, never an approval, and the "approved" audit row is already
-#: written before the child runs — so honouring them cannot alter a decision, only explain it.
-_CHILD_CODES = (ERR_DRIVER_UNAVAILABLE, ERR_DRIVER_FAILED, ERR_AX_PERMISSION, ERR_STALE_INDEX)
+#: to determine: it alone re-walked the tree at the moment of acting (stale index), it alone
+#: asked the OS whether input access is granted (accessibility permission), and it alone resolved
+#: which platform driver this machine actually has (`DCU-6`'s Windows/Linux refusal — the parent
+#: never imports a driver, so it cannot know). A child naming one of these can only cause a
+#: refusal, never an approval, and the "approved" audit row is already written before the child
+#: runs — so honouring them cannot alter a decision, only explain it.
+_CHILD_CODES = (
+    ERR_DRIVER_UNAVAILABLE,
+    ERR_DRIVER_FAILED,
+    ERR_AX_PERMISSION,
+    ERR_STALE_INDEX,
+    ERR_PLATFORM_UNSUPPORTED,
+)
 
 #: How long a snapshot's element indices stay actable, in seconds.
 #:

@@ -1143,10 +1143,17 @@ TOOL_META: dict[str, dict[str, Any]] = {
     # is the ONLY answer any of them gives — a model reading this reference should learn that
     # here rather than by calling one. The screens each tool is subject to are declared in
     # `computer_use/tools.py`'s ToolSpec flags and enforced in one central dispatch, so the
-    # error codes below are the ones a caller can actually receive, not a superset.
+    # error codes below are the ones a caller can actually receive, not a superset. That is why
+    # every entry also lists `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED` (`DCU-6`): on Windows and
+    # Linux it is the answer EVERY one of the seven gives, so a model reading this reference
+    # learns the platform story here instead of by calling a tool and getting a surprise.
     "computer_list_apps": {
         "response_type": "computer_use.list_apps.result",
-        "error_codes": ["ERR_COMPUTER_USE_DISABLED", "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE"],
+        "error_codes": [
+            "ERR_COMPUTER_USE_DISABLED",
+            "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+            "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED",
+        ],
         "examples": [
             {"summary": "See which applications you are allowed to drive", "args": {}},
         ],
@@ -1157,6 +1164,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
             "ERR_COMPUTER_USE_DISABLED",
             "ERR_COMPUTER_USE_APP_NOT_ALLOWED",
             "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+            "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED",
         ],
         "examples": [
             {
@@ -1173,6 +1181,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
             "ERR_COMPUTER_USE_STALE_INDEX",
             "ERR_COMPUTER_USE_BAD_ARGUMENT",
             "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+            "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED",
         ],
         "examples": [
             {
@@ -1193,6 +1202,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
             "ERR_COMPUTER_USE_STALE_INDEX",
             "ERR_COMPUTER_USE_BAD_ARGUMENT",
             "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+            "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED",
         ],
         "examples": [
             {
@@ -1214,6 +1224,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
             "ERR_COMPUTER_USE_STALE_INDEX",
             "ERR_COMPUTER_USE_BAD_ARGUMENT",
             "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+            "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED",
         ],
         "examples": [
             {
@@ -1234,6 +1245,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
             "ERR_COMPUTER_USE_STALE_INDEX",
             "ERR_COMPUTER_USE_BAD_ARGUMENT",
             "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+            "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED",
         ],
         "examples": [
             {
@@ -1254,6 +1266,7 @@ TOOL_META: dict[str, dict[str, Any]] = {
             "ERR_COMPUTER_USE_STALE_INDEX",
             "ERR_COMPUTER_USE_BAD_ARGUMENT",
             "ERR_COMPUTER_USE_DRIVER_UNAVAILABLE",
+            "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED",
         ],
         "examples": [
             {

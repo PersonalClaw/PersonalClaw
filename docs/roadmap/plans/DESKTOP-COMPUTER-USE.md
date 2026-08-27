@@ -676,3 +676,83 @@ the platforms to validate on) — Session 1–2 ship macOS + honest refusals, pe
   the system dialog, and an agent-triggered permission prompt is a consent surface the agent chose
   the timing of, so `is_process_trusted()` only ever REPORTS. Two tests are already written to flip
   branch with no code change once granted, so the walk-through is a run, not a work item.
+
+- [2026-08-26][DCU-6] DONE: `computer_use/windows_driver.py` + `linux_driver.py` ship, so
+  `DRIVER_MODULES`'s Windows and Linux entries — which have named those modules since `DCU-4`
+  while neither existed — now resolve instead of returning `None`. Both answer every one of the
+  seven operations with a NEW registered code, `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED`. The whole
+  atom is the difference between two sentences, so it is worth stating why the code is new rather
+  than a reuse of `..._DRIVER_UNAVAILABLE`: that one means *this build has no driver for you and
+  never claimed to* — still the honest answer for a platform outside the map, so its branch stays
+  live and a rail says so — while this one means *your platform is named and intended and the
+  implementation is what is missing*, which an operator acts on differently. Measured, not
+  asserted: the previous Windows answer was the fallback's `fix`, "Nothing to configure — the
+  capability is armed but has no driver to run", which names a **python module path** at an
+  operator and then tells them nothing works. The new FIX names macOS as the only implemented
+  driver, says plainly that no local setting turns this on, and a rail asserts no `personalclaw.`
+  path appears in it. Wording lives ONCE in `unsupported_platform.py` parameterised by platform +
+  accessibility API (UIA / AT-SPI); an AST rail asserts neither platform module constructs a
+  `DriverError` or an `{"error": …}` dict of its own, because two copies of a WHAT/WHY/FIX are
+  precisely the family the structural-duplication ratchet counts (and the baseline stayed
+  byte-identical, so no new site was minted).
+
+- [2026-08-26][DCU-6] DEVIATION: added `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED` to
+  `errors.ERROR_CODES`, to `service._CHILD_CODES`, and to the `error_codes` list of all **seven**
+  tools in `manifest_meta.TOOL_META` — three surfaces the atom's file list does not name. The
+  `_CHILD_CODES` addition is not a preference: `DCU-3` measured that `_run_driver` rewrites any
+  code outside that allowlist as `ERR_COMPUTER_USE_DRIVER_FAILED`, and falsification (4) below
+  reproduces the flattening through the real spawn, so without it a Windows operator reads "the
+  driver failed" instead of "run this on macOS". The allowlist's invariant is preserved and worth
+  restating: this member is a REFUSAL only the child can determine (the parent never imports a
+  driver, so it cannot know which platform driver this machine has), the `approved` SEL row is
+  already written before the child runs, so honouring it can only explain a refusal and never
+  produce an approval. The `manifest_meta` addition is required by that block's own comment —
+  "the error codes below are the ones a caller can actually receive, not a superset" — since on
+  Windows/Linux this is the answer every one of the seven gives.
+
+- [2026-08-26][DCU-6] DISCOVERY (labelled honestly, because a simulated leg must never read as a
+  real one): this atom was executed on **macOS**, so every Windows/Linux leg is simulated and the
+  simulation is exactly one call, `platform.system()`. **Real, unsimulated:** all three platforms
+  resolve to their module and an unmapped platform (`Plan9`) still answers `None`; and neither
+  pending driver imports an OS library at module level — that is load-bearing rather than tidy,
+  because `resolve_driver` runs INSIDE the gateway's process, so a module-level `import comtypes`
+  would turn "this machine has no desktop capability" into "this machine has no gateway" (the
+  property `DCU-3` wrote `test_importing_the_ffi_touches_no_framework` about). **Simulated:** the
+  seven-operation refusal via the real `driver_host.run_op`, and the end-to-end clause via the
+  real `computer_dispatch` → real keystone → real screens → real SEL row → real
+  `create_subprocess_limited` spawn → real child process → real `driver_host.main` → real
+  `_run_driver` translation, with `platform.system` faked *inside the child* through the argv the
+  dispatch spawns. Faking it in the parent would have measured nothing: a monkeypatch cannot cross
+  `exec`. The child's `sys.path` is seeded with this repo's `src` for the same reason
+  `test_the_driver_argv_names_the_child_module_and_this_interpreter` exists — an ambient editable
+  install pointing at a different checkout would otherwise run *that* tree's `driver_host`.
+  Every leg has a Darwin twin through the same code path asserting the refusal does NOT fire
+  there; an over-broad platform check would break the one platform that works.
+
+- [2026-08-26][DCU-6] DISCOVERY (adjacent, deliberately NOT fixed): `service.py`'s module
+  docstring still says the child *"answers every operation with a typed 'no accessibility driver
+  for this platform' refusal"* and that *"`DCU-3` will ship"* the FFI. Both were made false by
+  `DCU-3` landing, not by this atom, and the task line here is the Windows/Linux refusal — so it
+  is recorded rather than patched. `driver_host.py`'s own docstring and `DRIVER_MODULES` comment
+  WERE updated, because those two describe `resolve_driver`'s behaviour, which this atom changes.
+  Separately: `resolve_driver` swallows a real driver's genuine `ImportError` into the same `None`
+  an absent module produced, so a future *implemented* Windows driver with a broken dependency
+  would report "no driver for this platform" rather than naming the import. Harmless while the two
+  drivers have no dependencies (and the mapping is now a fact rather than an intention, which is
+  what the updated comment records) — it becomes real work the day a driver acquires one.
+
+- [2026-08-26][DCU-6] DISCOVERY (falsification — four mutations, each verified applied by
+  `git grep` and restored from a file copy at the literal path): (1) `windows_driver.op_snapshot`
+  returns a simulated success `{"fingerprint": …, "elements": []}` instead of refusing — the exact
+  §3 floor 6 violation — → **8 red**, 6 of them through the real child spawn, and the acting tools
+  failed with `ERR_COMPUTER_USE_STALE_INDEX` because the fake empty tree had no element at the
+  requested index, which is what a silent simulated success degenerates into. (2)
+  `DRIVER_MODULES["Windows"]` pointed at `macos_driver` — a pass-through onto the working
+  platform's driver → **10 red**, including all seven end-to-end tools. (3)
+  `ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED` dropped from `_CHILD_CODES` → **8 red**, every one
+  showing the flattening to `ERR_COMPUTER_USE_DRIVER_FAILED`, and notably the *in-process* legs
+  stayed GREEN (they read the child's answer before the translation runs), which is why the
+  end-to-end leg is the one that proves this change is load-bearing. (4)
+  `DRIVER_MODULES["Linux"]` pointed at a module that does not exist, reproducing the exact
+  pre-atom state → **4 red**, one through the real spawn. In all four the **Darwin twins stayed
+  GREEN**, so the refusal is a platform check and not a driver that refuses everything.

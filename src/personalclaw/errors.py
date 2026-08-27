@@ -98,6 +98,13 @@ ERROR_CODES: dict[str, str] = {
         "only a human can fix it, in the OS's own privacy settings — a program cannot grant "
         "itself input access, and this build never pops the system prompt on its own."
     ),
+    "ERR_COMPUTER_USE_PLATFORM_UNSUPPORTED": (
+        "This platform's desktop driver is not implemented yet. macOS is the only implemented "
+        "driver; Windows (UI Automation) and Linux (AT-SPI) declare themselves and refuse. "
+        "Distinct from a driver being unavailable: the platform is intended, named and "
+        "resolvable — the implementation is simply absent, so nothing the operator configures "
+        "on that machine changes the answer. Nothing was clicked, typed or changed."
+    ),
     "ERR_BROWSE_CONFIG": (
         "A browse action's config is incomplete — it named no goal, or no page to start "
         "from. Refused before a browser is touched."
