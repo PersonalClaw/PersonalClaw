@@ -287,13 +287,20 @@ export function DateInput({ value, onChange }: { value: string; onChange: (v: st
 }
 
 /** Styled native select — matches the TextInput chrome. */
-export function Select({ value, onChange, options, disabled, name, ariaLabel }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; disabled?: boolean; name?: string
+export function Select({ value, onChange, options, disabled, name, ariaLabel, disabledReason }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; disabled?: boolean; name?: string
   /** The accessible name for a Select OUTSIDE any `Field` (a floating toolbar control, or a
    *  second control in a multi-control Field). Mirrors `TextInput`/`ChipInput`, which both
    *  already take one — Select was the odd primitive out, so an unlabelled select was the
    *  only way to render one here. An explicit ariaLabel WINS over the Field's label, same
    *  precedence as TextInput's. */
-  ariaLabel?: string }) {
+  ariaLabel?: string
+  /** Why this select is off, for a CONDITIONALLY disabled one. `Button` has carried this
+   *  since `unavailable.ts` (a natively disabled control leaves the tab order, so a
+   *  keyboard user tabs straight past it with no way to learn what is missing); Select was
+   *  the odd primitive out again, and a caller's only options were an unexplained dead
+   *  control or wrapping it in something that could hold a `title`. Applied only WHILE
+   *  disabled — a tooltip on a working select would be noise. */
+  disabledReason?: string }) {
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
   const autoId = useId()
@@ -302,6 +309,7 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel }: 
     <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={name || autoId}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
       aria-describedby={hintId}
+      title={disabled ? disabledReason || undefined : undefined}
       className="w-full h-10 appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50">
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>

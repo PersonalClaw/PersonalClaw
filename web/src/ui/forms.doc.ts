@@ -138,10 +138,12 @@ const docs: UiDoc[] = [
       { name: 'disabled', description: 'Dim + block the select.' },
       { name: 'name', description: 'Stable form name (also the id). When set the control uses its own name instead of claiming the Field label.' },
       { name: 'ariaLabel', description: 'The accessible name for a Select outside any Field (a floating toolbar control, or a second control in a multi-control Field). Wins over the Field label, same precedence as TextInput.' },
+      { name: 'disabledReason', description: 'Why the select is off, surfaced as a title WHILE disabled. Same carrier Button has: a natively disabled control leaves the tab order, so without it a keyboard user tabs past a dead control with no way to learn what is missing.' },
     ],
     bestPractices: [
       { guidance: true, description: 'Reach for Select for a short fixed set of options rather than a raw <select> — it matches the field family chrome and Field-label aria wiring.' },
       { guidance: true, description: 'Outside a Field, pass ariaLabel — a select with no enclosing Field and no ariaLabel has no accessible name.' },
+      { guidance: true, description: 'When `disabled` is CONDITIONAL, pass disabledReason — the disabled-reason census fails a new unexplained control, and the reason is the only thing a keyboard user can reach.' },
       { guidance: true, description: 'For a long or filterable option set, use Combobox instead — it adds type-to-filter and grouping.' },
       { guidance: false, description: 'Do not hardcode colors or px — surface, radius, chevron, and focus ring route through design tokens (the token-lint ratchet fails the build otherwise).' },
     ],

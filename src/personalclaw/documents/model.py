@@ -7,6 +7,7 @@ the same model, and what keeps the agent from having to know anything about file
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 #: Block kinds a text document can hold. A writer MUST handle every one of these —
@@ -192,15 +193,127 @@ class DocumentModel:
 
 
 @dataclass
-class SheetModel:
-    """Named sheets, each a list of rows.
+class SheetCell:
+    """One spreadsheet cell: a typed value, an optional formula, optional presentation.
 
-    Cell values keep their Python type (str / int / float / bool / None) so numbers stay
-    numbers in the output — a spreadsheet full of text-formatted numbers can't be summed,
-    which defeats the point of producing one.
+    **`value` and `formula` are separate fields, and that separation IS the fidelity.**
+    A spreadsheet cell holds either a literal or a computed expression, and the two are
+    different things in the file format — so a model that carried only a value would have
+    to guess from the text which one it had. Guessing gets it wrong in both directions:
+    ``"=SUM(A1)"`` typed as a value silently becomes a formula, and a literal label a user
+    typed as ``"=WORK IN PROGRESS"`` silently becomes a broken one (Excel shows
+    ``#NAME?``). Declaring the intent means neither can happen.
+
+    `formula` keeps its leading ``=`` because that is how a person writes it, how the
+    file stores it, and how every spreadsheet UI shows it — stripping it here would mean
+    re-adding it in the writer, the parser, and the editor, three places to disagree.
     """
 
-    sheets: dict[str, list[list[object]]] = field(default_factory=dict)
+    #: The literal, keeping its Python type (str / int / float / bool / None) so numbers
+    #: stay numbers — a spreadsheet full of text-formatted numbers can't be summed.
+    #: When `formula` is set this is the CACHED result, or None when none was recorded.
+    value: object = None
+    #: ``""`` means "not a formula". Anything else must start with ``=``.
+    formula: str = ""
+    #: An Excel number-format code (``"#,##0.00"``, ``"0.0%"``, ``"yyyy-mm-dd"``).
+    #: ``""`` means "the writer's default", never ``"General"`` — see ALIGNMENTS.
+    number_format: str = ""
+    bold: bool = False
+    italic: bool = False
+    #: ``RRGGBB`` hex, no ``#``. ``""`` means unset.
+    font_color: str = ""
+    #: ``RRGGBB`` hex solid fill, no ``#``. ``""`` means unset.
+    fill: str = ""
+    align: str = ""
+
+    def __post_init__(self) -> None:
+        if self.align not in ALIGNMENTS:
+            raise ValueError(f"unknown alignment {self.align!r}; expected one of {ALIGNMENTS}")
+        if self.formula and not self.formula.startswith("="):
+            raise ValueError(
+                f"formula {self.formula!r} must start with '='; "
+                "a literal that merely looks like one belongs in `value`"
+            )
+
+    @property
+    def display(self) -> object:
+        """What a reader sees: the formula if there is one, else the literal.
+
+        The formula wins because that is what a spreadsheet's formula bar shows and what
+        a plain-text export of the sheet should say — the cached value is a snapshot that
+        may already be stale.
+        """
+        return self.formula or self.value
+
+
+@dataclass
+class Sheet:
+    """One named sheet: a rectangle of cells plus the geometry Excel stores beside them."""
+
+    name: str = ""
+    #: Row-major, row 0 first. Rows need not be the same length; a writer pads nothing.
+    cells: list[list[SheetCell]] = field(default_factory=list)
+    #: Per-column width in Excel's own character units, index-aligned with `cells`
+    #: columns. ``0.0`` means "the writer's default" for that column, so a sheet that
+    #: sets only column C still needs the two zeros in front of it.
+    column_widths: list[float] = field(default_factory=list)
+    #: Merged regions as ``"A1:B2"`` refs. Kept as refs rather than index pairs because
+    #: that is what both the file format and a person use, and converting in the model
+    #: would put A1-notation arithmetic in three places instead of one.
+    merges: list[str] = field(default_factory=list)
+    #: Freeze the first row so a header stays visible while scrolling.
+    frozen_header: bool = False
+
+    @property
+    def rows(self) -> list[list[object]]:
+        """The plain display view — what a writer that knows nothing of formats emits.
+
+        A property, not a stored mirror field: a stored copy of the cells is a second
+        representation of the same data, and the first edit that updated one and not the
+        other would silently write stale content. Derived means it cannot go stale.
+        """
+        return [[cell.display for cell in row] for row in self.cells]
+
+
+@dataclass
+class SheetModel:
+    """A workbook: ordered named sheets.
+
+    Ordered (a list, not a dict keyed by name) because sheet order is part of the
+    document, and because a `Sheet` already carries its own name — a dict would make the
+    name two things that can disagree.
+    """
+
+    sheets: list[Sheet] = field(default_factory=list)
+
+    @classmethod
+    def from_rows(cls, rows_by_name: Mapping[str, Sequence[Sequence[object]]]) -> SheetModel:
+        """Build a plain, unformatted workbook from ``{name: rows}``.
+
+        The convenience form for a caller that has data and no opinion about
+        presentation (the agent's ``create_artifact`` path). A raw value that looks like
+        a formula stays a LITERAL here: promoting it would be exactly the guess
+        :class:`SheetCell` exists to avoid, and a caller that wants a formula says so by
+        building the cell.
+
+        Row 0 is the header by this constructor's contract, so it is marked bold and
+        frozen HERE rather than in the writer. The model is the whole story: a writer
+        that invented a bold row would be presentation the model could not see, and the
+        editor would show a header that looks plain and saves back plain.
+        """
+        return cls(
+            sheets=[
+                Sheet(
+                    name=str(name),
+                    cells=[
+                        [SheetCell(value=value, bold=index == 0) for value in row]
+                        for index, row in enumerate(rows)
+                    ],
+                    frozen_header=bool(rows),
+                )
+                for name, rows in rows_by_name.items()
+            ]
+        )
 
 
 @dataclass
