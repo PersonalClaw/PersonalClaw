@@ -14,6 +14,7 @@ import {
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
 import { Meter } from '../../ui/Meter'
+import { WavyProgress } from '../../ui/WavyProgress'
 import { SearchField } from '../../ui/SearchField'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { confirm } from '../../ui/dialog'
@@ -654,9 +655,22 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
               ) : (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-on-surface-var">Re-indexing embeddings — {reindex.phase}{reindex.total > 0 ? ` (${reindex.done}/${reindex.total})` : '…'}</span>
-                  <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-container">
-                    <div className="h-full rounded-pill bg-primary transition-[width]" style={{ width: reindex.total > 0 ? `${Math.min(100, Math.round((reindex.done / reindex.total) * 100))}%` : '40%' }} />
-                  </div>
+                  {/* 🔴 A bar must never invent a fill it cannot compute. While a phase has no
+                      total yet (`total === 0`) this parked the bar at a hardcoded 40% — a
+                      fabricated claim that the job is nearly half done, and one that then
+                      JUMPED backwards the moment a real total arrived. Determinate only when
+                      there is a denominator; otherwise the indeterminate wave, which is the
+                      one primitive that already expresses "running, extent unknown" (Meter
+                      deliberately has no indeterminate mode). The wave is aria-hidden on
+                      purpose — the sentence above it already reports the phase, so a second
+                      valueless progressbar would only repeat it. */}
+                  {reindex.total > 0 ? (
+                    <div className="h-1.5 w-full overflow-hidden rounded-pill bg-surface-container">
+                      <div className="h-full rounded-pill bg-primary transition-[width]" style={{ width: `${Math.min(100, Math.round((reindex.done / reindex.total) * 100))}%` }} />
+                    </div>
+                  ) : (
+                    <WavyProgress width={140} />
+                  )}
                 </div>
               )}
             </div>

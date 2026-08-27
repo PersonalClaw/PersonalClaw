@@ -28,6 +28,7 @@ import { QuietButton } from '../ui/QuietButton'
 import { SelectionToolbar } from '../ui/SelectionPill'
 import { TextLink } from '../ui/TextLink'
 import { Segmented } from '../ui/Segmented'
+import { Meter } from '../ui/Meter'
 import { ContextMenu, type ContextMenuItem } from '../ui/motion'
 import { ProjectPicker } from '../ui/ProjectPicker'
 import { HeaderActions, HeaderControl, HeaderSegmented, HeaderModePill } from '../ui/HeaderActions'
@@ -2519,10 +2520,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               <Loader2 size={13} className="shrink-0 animate-spin text-primary" />
               <span className="max-w-[40%] shrink-0 truncate" title={u.name}>{u.name}</span>
               {/* The bar takes the row's slack (prominent), pct + cancel stay compact —
-                  so it reads as one aligned progress control, not scattered bits. */}
-              <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-high">
-                <span className="block h-full rounded-full bg-primary transition-[width] duration-200" style={{ width: `${u.pct}%` }} />
-              </span>
+                  so it reads as one aligned progress control, not scattered bits. The
+                  hand-rolled track this replaced had no role at all, so with several
+                  uploads queued a screen reader heard a spinner and a filename and
+                  nothing about how far along any of them was. */}
+              <Meter size="thin" className="min-w-0 flex-1" label={`Uploading ${u.name}`} pct={u.pct} />
               <span className="shrink-0 tabular-nums text-on-surface-low">{u.pct}%</span>
               <IconButton icon={X} label="Cancel upload" onClick={() => uploadAbortRef.current?.abort()} size={20} iconSize={13}
                 className="shrink-0 hover:text-danger" />
@@ -3263,9 +3265,8 @@ function KnowledgeContextPicker({ attached, onPick, onRemove, onClose }: {
               {attachedTokens > 0 && <span className="tabular-nums">{pct}% of {MAX}</span>}
             </div>
             {attachedTokens > 0 && (
-              <div className="h-1 w-full overflow-hidden rounded-pill bg-surface-high">
-                <div className="h-full rounded-pill" style={{ width: `${pct}%`, background: pct > 90 ? 'var(--color-warn)' : 'var(--color-primary)' }} />
-              </div>
+              <Meter size="thin" label="Prompt budget used by attached knowledge" pct={pct}
+                tone={pct > 90 ? 'var(--color-warn)' : 'var(--color-primary)'} />
             )}
           </div>
         )}

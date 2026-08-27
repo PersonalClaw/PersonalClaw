@@ -12,6 +12,7 @@ import { ResultAnnouncement } from '../../ui/ListControls'
 import { Segmented, TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
+import { Meter } from '../../ui/Meter'
 import { api, type Artifact, type FsEntry, type ContentMatch } from '../../lib/api'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { confirm } from '../../ui/dialog'
@@ -372,9 +373,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                     <div key={u.name} className="flex items-center gap-2.5 text-[0.75rem] text-on-surface-var">
                       <Loader2 size={13} className="shrink-0 animate-spin text-primary" />
                       <span className="max-w-[40%] shrink-0 truncate" title={u.name}>{u.name}</span>
-                      <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-high">
-                        <span className="block h-full rounded-full bg-primary transition-[width] duration-200" style={{ width: `${u.pct}%` }} />
-                      </span>
+                      <Meter size="thin" className="min-w-0 flex-1" label={`Uploading ${u.name}`} pct={u.pct} />
                       <span className="shrink-0 tabular-nums text-on-surface-low">{u.pct}%</span>
                       <button type="button" aria-label="Cancel upload"
                         className="shrink-0 rounded p-0.5 text-on-surface-low hover:text-danger"

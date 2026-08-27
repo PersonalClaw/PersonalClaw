@@ -8,6 +8,7 @@ import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
+import { Meter } from '../../ui/Meter'
 import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { TextLink } from '../../ui/TextLink'
@@ -681,9 +682,14 @@ function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number;
       </div>
       {exit.length > 0 && (
         <div className="flex items-center gap-s">
-          {/* the exit-criteria progress fills with a spring on mount/change instead
-              of snapping to width — a small "progress earned" moment */}
-          <div className="flex-1 h-1 rounded-pill bg-surface-high overflow-hidden"><motion.div className="h-full rounded-pill" style={{ background: 'var(--color-ok)' }} initial={{ width: 0 }} animate={{ width: `${(exitDone / exit.length) * 100}%` }} transition={spring.spatialSlow} /></div>
+          {/* Exit-criteria progress now goes through the Meter primitive, so a card
+              announces "3 of 5 exit criteria met" instead of shipping a bar with no
+              role at all. The bar formerly sprang in from width 0 on mount; that
+              flourish fired once per card in a list of dozens, which is decoration
+              rather than state, so it is gone with the hand-rolled track. */}
+          <Meter size="thin" className="flex-1" tone="var(--color-ok)"
+            label={`Exit criteria: ${exitDone} of ${exit.length} met`}
+            pct={(exitDone / exit.length) * 100} />
           <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{exitDone}/{exit.length}</span>
         </div>
       )}
