@@ -31,6 +31,15 @@ export interface ChordBindResult {
   reason: string
 }
 
+/** What the shell says about one raised banner. `ok: false` is an ANSWER, not a throw —
+ *  the caller keeps the in-app bell rather than losing the note (`reason` says why: the OS
+ *  refused, or the note had no title). */
+export interface NativeNotifyResult {
+  ok: boolean
+  route: string
+  reason?: string
+}
+
 export interface DesktopBridge {
   onStatus?: (cb: (msg: string) => void) => () => void
   /** Push-to-talk (DC-3). Note what is NOT here: no `start()`. The shell cannot open
@@ -41,6 +50,15 @@ export interface DesktopBridge {
     bind: (chord: string) => Promise<ChordBindResult>
     setCapturing: (on: boolean) => Promise<boolean>
     on: (cb: (push: { action: 'toggle' | 'stop'; reason?: string }) => void) => () => void
+  }
+  /** Native OS notifications (DC-5) — plan-42's `native` delivery target. Deliberately not
+   *  a general "notify the user" API: `show()` is called only for a gateway note whose rule
+   *  named the target and whose `native.deliver` came back true, so the policy stays in the
+   *  rules engine. `on()` fires when a banner is TAPPED — the shell has already focused the
+   *  window, and the payload carries the route because the renderer owns the SPA's IA. */
+  notifications?: {
+    show: (note: { title: string; body: string; route: string }) => Promise<NativeNotifyResult>
+    on: (cb: (payload: { route: string }) => void) => () => void
   }
   capabilities: {
     names: () => string[]

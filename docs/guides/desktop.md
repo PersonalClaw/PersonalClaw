@@ -118,6 +118,35 @@ Probing the capability reflects this: `system_audio` reports `unavailable` with 
 reason on every platform, rather than reporting "not implemented" as though a later
 release will simply turn it on.
 
+## Native notifications
+
+The desktop app can deliver notifications as real OS notifications instead of only as a
+badge on the dashboard's bell. It is **per notification kind**, not a global switch:
+Settings → Notifications → the rules matrix → open a row's *detail* → tick **Desktop
+notification**. Nothing is ticked for you.
+
+Two things follow from where that switch lives:
+
+- **A kind you have set to Badge or Digest never raises one**, even with Desktop ticked.
+  Those modes mean "do not interrupt me", and an OS banner is an interruption. Only the
+  **Notify** mode delivers natively.
+- **The dashboard is always the record.** A native notification is an *addition* — the
+  note still lands in the bell and the notifications feed. So nothing is lost when the
+  desktop app is closed: the rule simply falls back to the dashboard delivery it would
+  have had anyway, and the note's stored detail says why (`the desktop shell is not
+  connected`).
+
+Clicking a notification brings PersonalClaw forward and opens the surface the note came
+from — an inbox alert opens Inbox, a loop's progress opens Loops, a skill proposal opens
+Skills. A kind with no surface of its own opens the notifications feed.
+
+macOS never tells an app whether notifications are authorized, so PersonalClaw cannot show
+you a truthful "granted" state for this one and does not pretend to (Settings → Security →
+Desktop capabilities says as much). The first notification asks; after that, **System
+Settings → Notifications → PersonalClaw** is the only control. If you have turned them off
+there, ticking Desktop in a rule will silently do nothing — that is macOS's answer, not a
+bug in the rule.
+
 ## Related
 
 - [Platforms](platforms.md) — which OSes the desktop shell targets.

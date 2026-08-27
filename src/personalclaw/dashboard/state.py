@@ -1337,6 +1337,10 @@ class DashboardState:
         note["mode"] = mode
         if rule is not None:
             note["targets"] = list(rule.targets)
+            # The rule key's source, not a prefix of `kind`. Legacy flat wire strings do
+            # not carry it (`app.route.drift` resolves to source `system`), so a consumer
+            # that split the kind would deep-link the wrong surface.
+            note["source"] = rule.source
 
         if mode == "never":
             logger.debug("Notification dropped by rule %s: %r", rule.key if rule else kind, title)
@@ -1350,6 +1354,28 @@ class DashboardState:
             self._notification_log.append(note)
             _persist_notification(note)
             return
+
+        # The `native` target (DC-5). Decided HERE, on the one delivery choke point, and
+        # only for `immediate` — the three quieter modes returned above, which is what makes
+        # "badge means no interruption" survive a rule that also names `native`.
+        #
+        # The gateway cannot raise an OS notification itself: it is an HTTP server that may
+        # equally be serving a browser tab. So the decision rides the note out over the WS
+        # and the Electron renderer hands it to the main process (`desktop/
+        # nativeNotifications.js`). A note with no `native` key reaches a shell that will not
+        # raise anything, so an unrelated rule cannot leak an OS notification.
+        #
+        # Fail OPEN, like every other layer in this method: a registry read that raises
+        # degrades to the dashboard delivery below (which is the documented fallback anyway)
+        # rather than dropping the note. A native banner is the nice-to-have here; the note
+        # reaching the bell is not.
+        try:
+            native = rules.native_delivery(rule, self.desktop.capability(rules.NATIVE_CAPABILITY))
+        except Exception:
+            logger.debug("native delivery decision failed; dashboard only", exc_info=True)
+            native = None
+        if native is not None:
+            note["native"] = native
 
         self._notification_log.append(note)
         self._broadcast(note)

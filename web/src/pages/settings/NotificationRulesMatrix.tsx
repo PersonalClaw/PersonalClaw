@@ -13,16 +13,20 @@ const MODES: { key: NotificationMode; label: string }[] = [
   { key: 'digest', label: 'Digest' },
 ]
 
-// push/native are accepted and persisted but inert until the mobile and desktop plans
-// land. Showing them as choices you can make now would promise delivery that won't happen,
-// so they're labelled rather than hidden — the setting survives, the expectation is honest.
+// `push` is accepted and persisted but inert until MOBILE-COMPANION lands. Showing it as a
+// choice you can make now would promise delivery that won't happen, so it's labelled rather
+// than hidden — the setting survives, the expectation is honest.
+//
+// `native` came OFF that list with DC-5: it now raises a real OS notification whenever the
+// desktop app is running, and falls back to this dashboard's own bell when it isn't. Leaving
+// it dimmed would have been the opposite lie to the one the dimming was there to prevent.
 const TARGET_LABELS: Record<NotificationTarget, string> = {
   dashboard: 'Dashboard',
   channel_dm: 'Channel DM',
   push: 'Push (mobile app required)',
-  native: 'Desktop (desktop app required)',
+  native: 'Desktop notification (when the desktop app is running)',
 }
-const INERT_TARGETS: NotificationTarget[] = ['push', 'native']
+const INERT_TARGETS: NotificationTarget[] = ['push']
 
 /** Per-(source, kind) delivery rules.
  *

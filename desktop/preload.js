@@ -113,4 +113,31 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
     /** Resolves {ok, enabled, changed, supported, reason?}. */
     set: (enabled) => ipcRenderer.invoke(IPC_CHANNELS.loginItemSet, Boolean(enabled)),
   },
+
+  /** Native OS notifications (DC-5) — plan-42's `native` delivery target.
+   *
+   * Deliberately NOT a general "notify the user" API: the renderer calls `show()` only for
+   * a gateway note whose rule named the `native` target and whose `native.deliver` came
+   * back true, so the policy lives in the rules engine and this is the actuator. The main
+   * process coerces and truncates every field again — the shaping below is a courtesy. */
+  notifications: {
+    /** Raise one notification. Resolves {ok, route, reason?} — a refusal is an answer, so
+     * the renderer can keep the in-app bell as the fallback instead of losing the note. */
+    show: (note) =>
+      ipcRenderer.invoke(IPC_CHANNELS.notify, {
+        title: String((note && note.title) ?? ""),
+        body: String((note && note.body) ?? ""),
+        route: String((note && note.route) ?? ""),
+      }),
+
+    /** Subscribe to taps. The shell has already focused the window; the payload carries
+     * the route so the renderer — the only process that knows the SPA's surfaces — can
+     * navigate. Returns an unsubscribe fn. */
+    on: (cb) => {
+      if (typeof cb !== "function") return () => {};
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on(IPC_CHANNELS.notificationActivate, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.notificationActivate, handler);
+    },
+  },
 });

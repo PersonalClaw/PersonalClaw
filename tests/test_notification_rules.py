@@ -869,3 +869,200 @@ def test_digest_cron_does_not_reconverge_on_every_startup(home):
         reconcile_digest_cron(store)
     after_row = store.get(DIGEST_JOB_NAME).trigger
     assert (after_row.spec.get("expr"), after_row.next_fire_at, len(store.load())) == before
+
+
+# ── the `native` target (DESKTOP-CAPABILITIES DC-5) ──────────────────────
+#
+# `native` sat in TARGETS from T1.3 as an accepted-and-persisted string with no dispatch
+# behind it: the only consumer of `rule.targets` anywhere in `src/` was `state.py`'s
+# `note["targets"] = list(rule.targets)` annotation, and `desktop/main.js` imported
+# Electron's `Notification` solely to call `isSupported()` in a capability probe. So the
+# tests below are deliberately paired — a positive leg AND the vacuity leg through the same
+# code path — because a target that fires for every note is exactly as wrong as one that
+# never fires, and only the second leg can tell them apart.
+
+_NATIVE_RULE_DOC = {
+    "rules": {
+        "system/error": {"mode": "immediate", "targets": ["dashboard", "native"]},
+        "system/info": {"mode": "immediate", "targets": ["dashboard"]},
+        "system/warning": {"mode": "badge", "targets": ["dashboard", "native"]},
+    }
+}
+
+
+def _cap(available=True, reason=""):
+    """A shell-reported `native_notifications` entry as the registry normalizes it."""
+    return {
+        "native_notifications": {
+            "available": available,
+            "granted": "granted" if available else "unavailable",
+            "requestable": False,
+            "reason": reason,
+        }
+    }
+
+
+def test_native_delivery_is_none_when_the_rule_does_not_name_native(home):
+    """The vacuity property, at the pure-function level: no `native` target ⇒ no decision.
+
+    `None` and not `{"deliver": False}` on purpose — the caller puts no key on the note at
+    all, so nothing downstream can even see that a native path exists for this note.
+    """
+    rule = nr.Rule("system", "info", "immediate", ("dashboard",))
+    assert nr.native_delivery(rule, _cap()["native_notifications"]) is None
+    assert nr.native_delivery(None, _cap()["native_notifications"]) is None
+
+
+def test_native_delivery_falls_back_when_no_shell_is_connected(home):
+    rule = nr.Rule("system", "error", "immediate", ("dashboard", "native"))
+    verdict = nr.native_delivery(rule, None)
+    assert verdict == {"deliver": False, "reason": "the desktop shell is not connected"}
+
+
+def test_native_delivery_relays_the_shells_own_reason_when_unavailable(home):
+    """A refusal has to be quotable, or "I asked for native and got a bell" has no answer."""
+    rule = nr.Rule("system", "error", "immediate", ("dashboard", "native"))
+    cap = _cap(available=False, reason="the OS does not support notifications")
+    verdict = nr.native_delivery(rule, cap["native_notifications"])
+    assert verdict == {"deliver": False, "reason": "the OS does not support notifications"}
+
+
+def test_native_delivery_has_a_sentence_even_when_the_shell_gave_none(home):
+    rule = nr.Rule("system", "error", "immediate", ("dashboard", "native"))
+    verdict = nr.native_delivery(rule, _cap(available=False)["native_notifications"])
+    assert verdict["deliver"] is False
+    assert verdict["reason"] == "the desktop shell cannot show native notifications"
+
+
+def test_native_delivery_ignores_granted_when_available(home):
+    """`available` is the whole check.
+
+    macOS never reports notification authorization (`desktop/capabilities.js` says so and
+    reports `not-determined` forever), so gating on `granted == "granted"` would refuse to
+    deliver on the one platform that cannot answer.
+    """
+    rule = nr.Rule("system", "error", "immediate", ("native",))
+    cap = {"available": True, "granted": "not-determined", "requestable": False, "reason": "x"}
+    assert nr.native_delivery(rule, cap) == {"deliver": True, "reason": ""}
+
+
+# -- the CALL SITE: does a rule naming `native` actually reach the shell? --
+
+
+@pytest.fixture()
+def native_state(home, tmp_path, monkeypatch):
+    """A DashboardState whose notify() path is fully redirected into `home`.
+
+    Both bindings of `config_dir` are patched — `notification_rules` reads the rules file
+    through its own import and `dashboard.state` persists the JSONL through a second one, so
+    patching either alone leaves half the path writing to the real `~/.personalclaw`.
+    """
+    from tests.chat_test_helpers import _make_state
+
+    _write_rules(home, _NATIVE_RULE_DOC)
+    monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+    state = _make_state(tmp_path)
+    sent: list[dict] = []
+    monkeypatch.setattr(state, "_broadcast", sent.append)
+    # Assert the redirect rather than trust it: a leaked path would write to the real home.
+    from personalclaw.dashboard import state as state_mod
+
+    assert state_mod._notifications_path().parent == tmp_path
+    return state, sent
+
+
+def _connect_shell(state, **kwargs):
+    return state.desktop.register(
+        shell={"version": "0.1.0", "platform": "darwin"}, capabilities=_cap(**kwargs)
+    )
+
+
+def test_a_rule_naming_native_reaches_the_shell(native_state):
+    """The positive leg: `targets: [..., "native"]` + a connected shell ⇒ `deliver: True`.
+
+    This is the whole atom on the Python side. The note that goes out over the WS is the
+    only thing the Electron renderer ever sees, so `native.deliver` on THAT dict — not a
+    mapping table entry — is what makes the target real.
+    """
+    state, sent = native_state
+    _connect_shell(state)
+    state.notify("error", "Loop stalled", "needs an answer")
+    assert len(sent) == 1
+    assert sent[0]["native"] == {"deliver": True, "reason": ""}
+
+
+def test_a_rule_not_naming_native_never_fires_it(native_state):
+    """🪤 THE VACUITY LEG. Same shell, same connected capability, same code path.
+
+    Without this the test above proves only that a native notification happens, not that
+    the *rule* caused it — a dispatch that ignored `targets` entirely would pass it.
+    """
+    state, sent = native_state
+    _connect_shell(state)
+    state.notify("info", "Backup finished", "nothing to do")
+    assert len(sent) == 1
+    assert "native" not in sent[0]
+
+
+def test_native_falls_back_to_the_dashboard_when_no_shell_is_connected(native_state):
+    """The fallback is not a different code path — it is the dashboard delivery running anyway."""
+    state, sent = native_state
+    assert state.desktop.connected is False
+    state.notify("error", "Loop stalled", "needs an answer")
+    assert len(sent) == 1, "the dashboard delivery IS the fallback"
+    assert sent[0]["native"]["deliver"] is False
+    assert sent[0]["native"]["reason"] == "the desktop shell is not connected"
+    assert state.unread_count() >= 0  # the bell path stayed intact
+
+
+def test_unregistering_the_shell_stops_native_delivery(native_state):
+    """Rotation/quit has to take the target with it, or a dead shell keeps being addressed."""
+    state, sent = native_state
+    token = _connect_shell(state)
+    state.notify("error", "first", "")
+    assert state.desktop.unregister(token) is True
+    state.notify("error", "second", "")
+    assert [n["native"]["deliver"] for n in sent] == [True, False]
+
+
+def test_badge_mode_never_raises_native_even_when_targeted(native_state):
+    """`badge` said "do not interrupt me". A native OS notification is an interruption.
+
+    So the decision runs only on the `immediate` path, after the quieter modes have
+    returned — and the note carries no `native` key for a shell to act on.
+    """
+    state, sent = native_state
+    _connect_shell(state)
+    state.notify("warning", "Disk filling", "78% used")
+    assert sent == [], "badge persists without broadcasting"
+    assert "native" not in state._notification_log[-1]
+
+
+def test_the_source_on_the_note_is_the_rules_source_not_a_kind_prefix(native_state):
+    """The tap's deep link is derived from `source`; a split of `kind` would be wrong.
+
+    `app.route.drift` is a legacy flat wire string whose rule key is `system/route_drift`,
+    so splitting on the first dot would name a non-existent `app` surface.
+    """
+    state, sent = native_state
+    state.notify("app.route.drift", "App route drift", "one route moved")
+    assert sent[0]["source"] == "system"
+
+
+def test_a_broken_registry_still_delivers_to_the_dashboard(native_state, monkeypatch):
+    """Fail OPEN, like every other layer in `notify()`.
+
+    A native banner is the nice-to-have; the note reaching the bell is not. So a registry
+    read that raises degrades to the dashboard delivery (which IS the documented fallback)
+    rather than dropping a note the user asked to be interrupted by.
+    """
+    state, sent = native_state
+    _connect_shell(state)
+
+    def boom(_cap):
+        raise RuntimeError("registry wedged")
+
+    monkeypatch.setattr(state.desktop, "capability", boom)
+    state.notify("error", "Loop stalled", "needs an answer")
+    assert len(sent) == 1
+    assert "native" not in sent[0]
