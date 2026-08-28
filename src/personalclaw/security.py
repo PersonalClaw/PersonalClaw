@@ -66,6 +66,9 @@ _SENSITIVE_HOME_DIRS: list[str] = [
     ".pypirc",
     ".netrc",
     ".git-credentials",
+    # The macOS user keychain — the OS credential store, and the one third-party secret
+    # location the list missed. It was an accepted PTY working directory (#643).
+    "Library/Keychains",
     ".personalclaw/.env",
     # The governance ceiling (guardrails/ceiling.py) — the operator's hard bound on every
     # run. Listed here so every agent-reachable path check (the action denylist, the files
@@ -74,6 +77,93 @@ _SENSITIVE_HOME_DIRS: list[str] = [
     # protection is PERSONALCLAW_CEILING_FILE pointing at a root-owned file outside $HOME.
     ".personalclaw/governance",
 ]
+
+#: PersonalClaw's OWN auth and audit material, refused by BASENAME wherever it sits.
+#:
+#: 🔴 These were known to be secret in exactly one place and unknown here (#643).
+#: ``handlers/files.py`` refuses every one of them, so ``/api/file-read`` answered
+#: ``400 invalid or forbidden path`` — while this function, which the terminal cwd guard,
+#: the bash read/write hooks and the action denylist all consult, returned False for all
+#: of them. Measured against the shipped guard: only ``~/.personalclaw/.env`` was blocked;
+#: ``sel_hmac.key``, ``.local_secret``, ``telemetry_salt`` and ``credentials/`` were not.
+#:
+#: What each one costs:
+#:   ``sel_hmac.key``   signs the append-only security log. With it, log rows can be forged
+#:                      and the chain still verifies — the one record that cannot be repaired.
+#:   ``.local_secret``  the loopback auth rail (``auth/cli.py``, ``mcp_core``, ``mcp_shared``).
+#:   ``telemetry_salt`` de-anonymizes recorded telemetry.
+#:
+#: BASENAME rather than a path, deliberately: ``PERSONALCLAW_HOME`` is user-settable, so
+#: these files are not confined to one directory and a home-relative entry cannot follow
+#: them. These three names are unique to PersonalClaw, so no realistic file elsewhere
+#: legitimately carries one — unlike a suffix rule (``.key``/``.pem``), which would refuse a
+#: project's own public certificate. ``files.py`` keeps that stricter suffix tier, scoped to
+#: the dashboard's allowlisted roots where it belongs.
+#:
+#: ``session_key`` and ``sessions.json`` are deliberately NOT here — see
+#: ``_SENSITIVE_PCLAW_HOME_ENTRIES``. The split is by a real property (is the name ours
+#: alone?), not by which module happened to define it, which is what let the two lists
+#: drift apart in the first place.
+OWN_SECRET_BASENAMES: frozenset[str] = frozenset(
+    {
+        "sel_hmac.key",
+        ".local_secret",
+        "telemetry_salt",
+    }
+)
+
+#: Secret-bearing entries INSIDE the PersonalClaw home, resolved from ``config_dir()`` at
+#: check time rather than from ``$HOME``.
+#:
+#: 🔴 The ``.personalclaw/…`` entries above are home-relative, so with a custom
+#: ``PERSONALCLAW_HOME`` they match nothing. Measured: with ``PERSONALCLAW_HOME`` pointed
+#: elsewhere, ``.env`` AND ``governance`` were both allowed — so on every dev home and
+#: every user override, the governance ceiling was agent-writable, which is precisely the
+#: "a bound the agent can rewrite is not a bound" the entry above exists to prevent.
+#:
+#: The home itself is NOT listed: it is a browsable dashboard root holding the knowledge
+#: DB, apps and logs, so refusing it wholesale would break the files area. Only the
+#: secret-bearing entries are refused.
+#:
+#: ``session_key`` and ``sessions.json`` live here rather than in
+#: :data:`OWN_SECRET_BASENAMES` because they are secret by LOCATION, not by name: a user's
+#: own project may reasonably hold a ``sessions.json``, and blocking that name everywhere
+#: would make the agent's bash guard refuse an ordinary file. Reading OURS forges a session
+#: token or leaks live nonces, so the path is what has to be refused.
+_SENSITIVE_PCLAW_HOME_ENTRIES: tuple[str, ...] = (
+    ".env",
+    "credentials",
+    "governance",
+    "session_key",
+    "sessions.json",
+)
+
+
+def _pclaw_home_sensitive_paths() -> list[str]:
+    """Absolute paths of the secret-bearing entries in the ACTIVE PersonalClaw home.
+
+    Resolved per call because ``PERSONALCLAW_HOME`` is read from the environment and a
+    process can legitimately see it change (tests, a dev gateway). Best-effort: if the
+    home cannot be resolved the caller still has the ``$HOME``-relative tier, so a
+    config hiccup narrows the guard rather than removing it.
+
+    🔴 Deliberately NOT ``config.loader.config_dir()``, which calls ``_ensure_dir`` and so
+    CREATES the directory. A read-only path predicate that makes a directory is a bug in
+    itself, and it was measurably one: with ~70 call sites, merely checking a path
+    materialized the home. It surfaced as a file-listing test failing on an unexpected
+    ``.personalclaw`` entry appearing inside a fixture's fake ``$HOME`` — the guard had
+    created it mid-assertion. This mirrors the same resolution rules without the mkdir.
+    """
+    override = os.environ.get("PERSONALCLAW_HOME")
+    try:
+        if override:
+            home = Path(override).expanduser()
+        else:
+            home = Path.home() / ".personalclaw"
+    except (OSError, ValueError, RuntimeError):
+        return []
+    return [str(home / entry) for entry in _SENSITIVE_PCLAW_HOME_ENTRIES]
+
 
 # Regex for bash commands that read sensitive paths, followed by a path containing any
 # sensitive dir. The list is every command that RETURNS FILE CONTENT (or copies it
@@ -157,7 +247,26 @@ def _build_sensitive_regex() -> re.Pattern[str]:
     )
 
 
+def _build_own_secret_regex() -> re.Pattern[str]:
+    """Bash reads of PersonalClaw's own auth/audit files, by basename and at any path.
+
+    A second pattern rather than a new entry in :func:`_build_sensitive_regex`, because that
+    one anchors every alternative on ``$HOME`` — and these files follow
+    ``PERSONALCLAW_HOME``, so a ``$HOME``-anchored alternative would miss every custom home.
+    Measured before the fix: ``wc -c < <home>/sel_hmac.key`` was clean.
+
+    Only :data:`OWN_SECRET_BASENAMES` is used here. Names that are ordinary elsewhere are
+    refused by path instead, so this pattern cannot fire on a file the user owns.
+    """
+    names = "|".join(re.escape(n) for n in sorted(OWN_SECRET_BASENAMES))
+    return re.compile(
+        rf"(?:{_READ_CMDS}.*|{_SCRIPT_OPEN}.*|.*[<>|]\s*)\S*(?:{names})(?:/|\s|$|['\"),;])",
+        re.IGNORECASE,
+    )
+
+
 _SENSITIVE_RE: re.Pattern[str] | None = None
+_OWN_SECRET_RE: re.Pattern[str] | None = None
 
 
 def _get_sensitive_re() -> re.Pattern[str]:
@@ -165,6 +274,13 @@ def _get_sensitive_re() -> re.Pattern[str]:
     if _SENSITIVE_RE is None:
         _SENSITIVE_RE = _build_sensitive_regex()
     return _SENSITIVE_RE
+
+
+def _get_own_secret_re() -> re.Pattern[str]:
+    global _OWN_SECRET_RE
+    if _OWN_SECRET_RE is None:
+        _OWN_SECRET_RE = _build_own_secret_regex()
+    return _OWN_SECRET_RE
 
 
 def is_sensitive_path(path_str: str) -> bool:
@@ -200,9 +316,23 @@ def is_sensitive_path(path_str: str) -> bool:
     # credentials would be refused, which is the safe direction for a credential guard and
     # the error a user can see and report.
     resolved_cmp = resolved.casefold()
+    # PersonalClaw's own auth/audit material, by basename, wherever it sits. Casefolded for
+    # the same reason as everything else here: on macOS/Windows the filesystem is
+    # case-insensitive, so `.LOCAL_SECRET` resolves to the real bytes (#690's finding).
+    if os.path.basename(resolved_cmp) in {n.casefold() for n in OWN_SECRET_BASENAMES}:
+        return True
     for sensitive_dir in _SENSITIVE_HOME_DIRS:
         sensitive_path = os.path.join(home, sensitive_dir).casefold()
         if resolved_cmp == sensitive_path or resolved_cmp.startswith(sensitive_path + os.sep):
+            return True
+    # The ACTIVE PersonalClaw home's secret entries — which the `$HOME`-relative tier above
+    # cannot reach when `PERSONALCLAW_HOME` points elsewhere.
+    for entry in _pclaw_home_sensitive_paths():
+        try:
+            entry_cmp = str(Path(entry).resolve()).casefold()
+        except (OSError, ValueError):
+            entry_cmp = entry.casefold()
+        if resolved_cmp == entry_cmp or resolved_cmp.startswith(entry_cmp + os.sep):
             return True
     return False
 
@@ -327,8 +457,13 @@ def is_sensitive_bash_command(command: str) -> str | None:
 
     Returns denial reason string, or None if clean.
     """
-    if _get_sensitive_re().search(strip_shell_quotes(_normalise_for_matching(command))):
+    normalised = strip_shell_quotes(_normalise_for_matching(command))
+    if _get_sensitive_re().search(normalised):
         return "Blocked: command accesses sensitive credential path"
+    # PersonalClaw's own auth/audit files, which the pattern above cannot express: it
+    # anchors on `$HOME` and these follow `PERSONALCLAW_HOME`.
+    if _get_own_secret_re().search(normalised):
+        return "Blocked: command accesses PersonalClaw's own credential or audit key"
     return None
 
 

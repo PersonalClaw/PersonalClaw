@@ -262,3 +262,160 @@ def test_the_home_cd_rewrite_needs_a_home_cd_to_fire():
 
     assert "~/" not in _normalise_for_matching("cat .ssh/id_rsa")
     assert "~/.ssh/" in _normalise_for_matching("cd ~ && cat .ssh/id_rsa")
+
+
+# ── 3. PersonalClaw's own secrets: two lists that disagreed (#643) ─────────
+#
+# Same family, third shape. Not "the control did not fire on a respelling" but "the
+# control did not know these files existed": `handlers/files.py` refused every one of
+# them by basename, so `/api/file-read` answered 400 — while `is_sensitive_path`, which
+# the terminal cwd guard and the bash read hook both consult, returned False.
+#
+# Measured against the shipped guard, default home: only `~/.personalclaw/.env` was
+# blocked. `sel_hmac.key`, `.local_secret`, `telemetry_salt` and `credentials/` were all
+# allowed, and the issue's repro read the SEL signing key through a real PTY.
+
+
+@pytest.fixture
+def pclaw_home(tmp_path, monkeypatch):
+    """A PERSONALCLAW_HOME that is NOT under `$HOME`.
+
+    Deliberately elsewhere: the `.personalclaw/…` entries are `$HOME`-relative, so this is
+    the configuration in which they match nothing — a dev home, or any user override.
+    """
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    return tmp_path
+
+
+@pytest.mark.parametrize("name", ["sel_hmac.key", ".local_secret", "telemetry_salt"])
+def test_our_own_secret_names_are_refused_wherever_they_sit(name, tmp_path):
+    """By basename, because `PERSONALCLAW_HOME` moves and a copy can be made anywhere.
+
+    Each of these has a specific cost: `sel_hmac.key` signs the append-only security log
+    (with it, a forged row still verifies, and that log cannot be repaired afterwards);
+    `.local_secret` is the loopback auth rail; `telemetry_salt` de-anonymizes telemetry.
+    """
+    assert is_sensitive_path(str(tmp_path / name))
+    assert is_sensitive_path(f"{_HOME}/.personalclaw/{name}")
+    assert is_sensitive_path(f"/tmp/a-copy-someone-made/{name}")
+    # Case, for the reason the top of this file establishes.
+    assert is_sensitive_path(str(tmp_path / name.upper()))
+
+
+@pytest.mark.parametrize(
+    "entry", [".env", "credentials", "governance", "session_key", "sessions.json"]
+)
+def test_the_active_pclaw_home_is_covered_even_when_it_is_not_under_home(entry, pclaw_home):
+    """The sharper half of the finding. The `$HOME`-relative entries cannot follow
+    `PERSONALCLAW_HOME`, so with a custom home `.env` AND `governance` were both allowed —
+    meaning on every dev home and every user override the governance ceiling was
+    agent-writable, which is exactly what its entry in `_SENSITIVE_HOME_DIRS` exists to
+    prevent ("a bound the agent can rewrite is not a bound").
+    """
+    assert is_sensitive_path(str(pclaw_home / entry))
+    assert is_sensitive_path(str(pclaw_home / entry / "nested-file"))
+
+
+def test_the_home_itself_and_its_ordinary_contents_stay_readable(pclaw_home):
+    """Scope check. The PersonalClaw home is a browsable dashboard root holding the
+    knowledge DB, installed apps and logs, so refusing it wholesale would break the files
+    area. Only the secret-bearing entries are refused."""
+    assert not is_sensitive_path(str(pclaw_home))
+    for ordinary in ("knowledge.db", "gateway.log", "config.json", "apps"):
+        assert not is_sensitive_path(str(pclaw_home / ordinary)), ordinary
+
+
+@pytest.mark.parametrize("ordinary", ["sessions.json", "session_key"])
+def test_a_name_that_is_ours_only_by_location_does_not_block_a_users_own_file(
+    ordinary, tmp_path, pclaw_home
+):
+    """Why the two tiers are split by name-uniqueness rather than by module.
+
+    `sessions.json` is a plausible filename in someone's own project, so blocking it by
+    NAME everywhere would make the agent's bash guard refuse an ordinary file. Ours is
+    refused by PATH; theirs is not touched.
+    """
+    project = tmp_path.parent / "someones-project"
+    project.mkdir(exist_ok=True)
+    assert is_sensitive_path(str(pclaw_home / ordinary))
+    assert not is_sensitive_path(str(project / ordinary))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "wc -c < {home}/sel_hmac.key",  # the issue's own repro
+        "cat {home}/sel_hmac.key",
+        "od -c {home}/.local_secret",
+        "cp {home}/telemetry_salt /tmp/exfil",
+        "grep -a . {home}/sel_hmac.key",
+        "cat ~/.personalclaw/sel_hmac.key",
+    ],
+)
+def test_the_bash_hook_refuses_a_read_of_our_own_keys(command, pclaw_home):
+    """The bash pattern anchors every alternative on `$HOME`, so it could not express a
+    file that follows `PERSONALCLAW_HOME`. A second pattern covers these by basename.
+
+    This is the boundary that actually holds for an AGENT. A raw PTY is a real shell with
+    the owner's uid and can read any file they can — see the honesty note below.
+    """
+    assert is_sensitive_bash_command(command.format(home=pclaw_home))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat /tmp/proj/sessions.json",
+        "wc -c < /tmp/proj/server.key",
+        "cat /tmp/proj/public.pem",
+        "ls ~/.personalclaw",
+        "cat ./notes.md",
+    ],
+)
+def test_the_new_pattern_does_not_block_ordinary_work(command):
+    """The cost of over-blocking is a guard people route around. A project's own
+    `sessions.json`, private key and certificate are its business — `files.py` keeps the
+    stricter suffix tier, scoped to the dashboard's allowlisted roots where it belongs."""
+    assert is_sensitive_bash_command(command) is None
+
+
+def test_the_pty_gap_is_recorded_rather_than_claimed_closed(pclaw_home):
+    """🔴 What this fix does NOT do.
+
+    An interactive terminal session is a real shell running as the owner, so it can read
+    any file the owner can — no path guard in this process can prevent that, and the
+    issue says so too. What is closed here is every AGENT-MEDIATED path: `/api/file-read`
+    (already), the bash read hook, the action denylist, and the terminal's `cwd` guard,
+    which no longer accepts a credential directory as a PTY working directory.
+
+    Recorded as an assertion so the limit stays visible: the cwd guard is the thing that
+    changed for the terminal, not the shell's own reach.
+    """
+    from personalclaw.security import is_sensitive_path as guard
+
+    assert guard(str(pclaw_home / "credentials")), "a credential dir must be a refused cwd"
+    assert not guard(str(pclaw_home)), "the home itself remains a legitimate cwd"
+
+
+def test_the_guard_creates_nothing(tmp_path, monkeypatch):
+    """🔴 A read-only predicate must not touch the filesystem.
+
+    The first version of this fix resolved the home through
+    ``config.loader.config_dir()``, which calls ``_ensure_dir`` — so with ~70 call sites,
+    merely CHECKING a path created the PersonalClaw home. It surfaced as an unrelated
+    file-listing test failing on an unexpected `.personalclaw` entry inside a fixture's
+    fake `$HOME`: the guard had created it mid-assertion.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(fake_home / "pclaw"))
+
+    before = sorted(p.name for p in fake_home.iterdir())
+    is_sensitive_path(str(fake_home / "notes.md"))
+    is_sensitive_path(str(fake_home / "pclaw" / ".env"))
+    is_sensitive_bash_command(f"cat {fake_home}/pclaw/sel_hmac.key")
+
+    assert sorted(p.name for p in fake_home.iterdir()) == before
+    assert not (fake_home / "pclaw").exists(), "the guard created the home it was checking"
+    # ...and it still blocks, i.e. the fix is not "stop resolving the home".
+    assert is_sensitive_path(str(fake_home / "pclaw" / ".env"))
