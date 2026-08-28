@@ -396,15 +396,15 @@ async def test_a_resume_CONSUMES_the_gate_token(isolated, monkeypatch):
     """The complement, observed on the continuation store rather than on the output: the token was
     CLAIMED, which is what makes the answer single-use.
 
-    Asserted on the FILES rather than on `list_continuations`, because that function does not answer
-    this question — see `test_list_continuations_still_reports_a_CLAIMED_gate`. The claim is a
-    rename to a `.claimed` suffix, so "consumed" means the bare token file is gone and the claimed
-    one exists.
+    Asserted on the FILES rather than on `list_continuations`, because that function reports only
+    PENDING gates — see `test_list_continuations_EXCLUDES_a_claimed_gate`. The claim is a move
+    into the `claimed/` subdirectory, so "consumed" means the bare token file is gone from the
+    pending directory and the audit copy exists under `claimed/`.
     """
     run, watchdog = await _parked_run()
     _attach(monkeypatch, watchdog)
 
-    from personalclaw.workflows.human_input import _dir, list_continuations
+    from personalclaw.workflows.human_input import _claimed_dir, _dir, list_continuations
 
     token = list_continuations(run.id)[0].token
     assert (_dir(run.id) / f"{token}.json").is_file()
@@ -412,35 +412,34 @@ async def test_a_resume_CONSUMES_the_gate_token(isolated, monkeypatch):
     assert (await _fire(run.id, answer=True)).outcome == Outcome.RAN.value
 
     assert not (_dir(run.id) / f"{token}.json").exists(), "the gate answer was not claimed"
-    assert (_dir(run.id) / f"{token}.claimed.json").is_file(), "the claim left no audit trail"
+    assert (_claimed_dir(run.id) / f"{token}.json").is_file(), "the claim left no audit trail"
 
 
 @pytest.mark.anyio
-async def test_list_continuations_still_reports_a_CLAIMED_gate(isolated, monkeypatch):
-    """🔴 **A PRE-EXISTING DEFECT, pinned here so this wiring does not silently depend on it.**
+async def test_list_continuations_EXCLUDES_a_claimed_gate(isolated, monkeypatch):
+    """🔴 **The INVERSE of a defect pin this file used to carry.**
 
-    `consume_continuation` claims a token by renaming `<token>.json` → `<token>.claimed.json`, and
-    `list_continuations` globs `*.json` — which MATCHES the claimed name. So an
-    already-answered gate keeps reading as pending.
+    `consume_continuation` used to claim a token by renaming it to a `<token>.claimed.json`
+    SIBLING, which `list_continuations`' `*.json` glob still matched — so an already-answered
+    gate kept reading as pending, and this file pinned that defect as current behaviour. The
+    claim is now a move into the `claimed/` subdirectory, which the non-recursive glob cannot
+    match, so the pin inverts: an answered gate must vanish from the pending listing.
 
-    Not fixed here: it lives in `workflows/human_input.py`, outside this change's scope, and the fix
-    is a contract change for every `list_continuations` caller. But it shapes two
-    `service.resume_run` branches and is worth stating: a run whose only gate was answered reports
-    `WF_RESUME_UNKNOWN_TOKEN` rather than `WF_NO_PENDING_GATE`, and a run with one live gate plus
-    one previously-answered gate reports `WF_AMBIGUOUS_GATE` — so a token-less "approve it" stops
-    working on any run that has ever answered a gate before.
-
-    This test asserts the CURRENT behaviour. When the defect is fixed it should fail, and that is
-    the point: whoever fixes it is told that a trigger resume reads this seam.
+    Why THIS seam cares (the reason the original pin lived here): `loop._RESUME_NOT_YET` maps
+    `WF_NO_PENDING_GATE` to DEFERRED. With the claimed record excluded, a fire on a run whose
+    only gate was already answered reaches exactly that branch — postponed to the trigger's next
+    cadence — instead of REFUSING with `WF_RESUME_UNKNOWN_TOKEN` about a token nobody named.
+    `test_a_run_with_NO_PENDING_GATE_is_DEFERRED_not_refused` drives that mapping; this test
+    proves the state it needs is the one an answered gate actually leaves behind.
     """
     run, watchdog = await _parked_run()
     _attach(monkeypatch, watchdog)
     from personalclaw.workflows.human_input import list_continuations
 
     assert (await _fire(run.id, answer=True)).outcome == Outcome.RAN.value
-    assert len(list_continuations(run.id)) == 1, (
-        "if this now reports 0, the human_input claimed-glob defect was fixed — re-check the "
-        "DEFERRED vs REFUSED mapping in loop._RESUME_NOT_YET"
+    assert list_continuations(run.id) == [], (
+        "a claimed gate is reading as pending again — the token-less resolver, the ambiguity "
+        "check, and the DEFERRED mapping in loop._RESUME_NOT_YET all mis-answer on that state"
     )
 
 
@@ -450,8 +449,12 @@ async def test_TWO_fires_resume_the_run_ONCE(isolated, monkeypatch):
 
     `human_input.consume_continuation` claims the token with `os.rename` BEFORE reading it, so
     exactly one caller can ever see the payload — measured, against a read-then-unlink version that
-    let multiple callers through in 36 of 40 races. The loser gets `WF_RESUME_ALREADY_USED` or
-    `WF_RESUME_UNKNOWN_TOKEN` and is REFUSED, not silently counted as a success.
+    let multiple callers through in 36 of 40 races. A SEQUENTIAL second token-less fire never even
+    reaches the claim: the answered gate is no longer listed as pending, so it reports
+    `WF_NO_PENDING_GATE` and is DEFERRED to the trigger's next cadence — where the then-terminal
+    run REFUSES it ("has finished", pinned below). Only a genuine race on one token produces a
+    claim LOSER, which is REFUSED (`WF_RESUME_ALREADY_USED`/`WF_RESUME_UNKNOWN_TOKEN`) — the
+    CONCURRENT test drives that shape. Neither is ever silently counted as a success.
 
     So `concurrency.single_flight` is deliberately NOT wrapped around this: it is the weaker guard
     (advisory, non-blocking, released the instant the block ends) and the authoritative claim
@@ -465,9 +468,9 @@ async def test_TWO_fires_resume_the_run_ONCE(isolated, monkeypatch):
 
     assert first.outcome == Outcome.RAN.value, first.reason
     assert second.outcome != Outcome.RAN.value, "the second fire re-answered one gate"
-    assert second.outcome == Outcome.REFUSED.value, second.outcome
-    assert second.reported in ("WF_RESUME_ALREADY_USED", "WF_RESUME_UNKNOWN_TOKEN"), second.reported
-    assert second.reason, "a refusal must carry a reason"
+    assert second.outcome == Outcome.DEFERRED.value, second.outcome
+    assert second.reported == "WF_NO_PENDING_GATE", second.reported
+    assert second.reason, "a deferral must carry a reason"
 
     controller = watchdog.controller(run.id)
     assert await controller.wait_for_terminal(timeout=20) == RunStatus.COMPLETE
@@ -578,11 +581,10 @@ async def test_a_run_with_NO_PENDING_GATE_is_DEFERRED_not_refused(isolated, monk
     _attach(monkeypatch, watchdog)
     from personalclaw.workflows.human_input import _dir
 
-    # Cleared by unlinking the files rather than through `consume_continuation` or
-    # `drop_continuations`: NEITHER can produce a genuinely empty pending set, because both leave
-    # (or skip) the `.claimed.json` that `list_continuations` still globs — see
-    # `test_list_continuations_still_reports_a_CLAIMED_gate`. Constructing the state directly is the
-    # only way to exercise the branch this test is about.
+    # Cleared by unlinking the files directly. `consume_continuation` now reaches this state on
+    # its own (a claimed record moves under `claimed/` and stops being listed — see
+    # `test_list_continuations_EXCLUDES_a_claimed_gate`), but constructing it by hand keeps this
+    # test about the DEFERRED branch alone, independent of the claim mechanics.
     for path in _dir(run.id).glob("*.json"):
         path.unlink()
 

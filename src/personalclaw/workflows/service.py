@@ -1788,13 +1788,19 @@ def resume_run(
             f"run {run_id!r} has no live controller to apply the answer to",
         )
     if not token:
+        # `list_continuations` yields only UNANSWERED gates, so both branches below mean what
+        # they say. They did not always: a claimed record used to keep reading as pending, which
+        # made "no gate left to answer" arrive as an unknown-token error and turned one earlier
+        # answer into a permanent `WF_AMBIGUOUS_GATE` for every later token-less approval.
         pending = list_continuations(run_id)
         if not pending:
             return _service_failure("WF_NO_PENDING_GATE", "this run has no gate awaiting an answer")
         if len(pending) > 1:
+            named = ", ".join(c.node_id or c.instance_path for c in pending)
             return _service_failure(
                 "WF_AMBIGUOUS_GATE",
-                f"{len(pending)} gates are pending — name one with a resume token",
+                f"{len(pending)} gates are awaiting an answer ({named}) — answer one by its "
+                "resume token, listed under `pending`",
                 pending=[
                     {"node_id": c.node_id, "token": c.token, "prompt": c.ask.get("prompt", "")}
                     for c in pending
