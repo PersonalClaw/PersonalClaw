@@ -82,6 +82,31 @@ describe('DegradedChip width in the shell corner', () => {
     expect(btn.getAttribute('aria-label')).toMatch(/degraded/i)
   })
 
+  // ── The TOOLTIP's own count, which nothing asserted ────────────────────────────────────────
+  //
+  // 🪤 Every name assertion in this file matches `/degraded/i`, which is satisfied by any wording —
+  // so the `title` clause "N surface(s) running without a model" hedged its count under a green rail.
+  // Both sides of the boundary, because a hedge and a correct plural are identical above 1.
+  //
+  // 🪤 And note what is NOT the argument here: the accessible NAME is `summary` (via `aria-label`, and
+  // only at mobile width), and `summary` already special-cases one surface by naming it. This clause
+  // is the `title`, so "a screen reader speaks the parenthesis" would be the wrong claim.
+  it('the tooltip agrees with its own count — singular at one surface', async () => {
+    vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces: [SURFACES[0]] } as never)
+    render(<DegradedChip />)
+    const btn = await waitFor(() => screen.getByRole('button', { name: /degraded/i }))
+    // `summary` had already got this right, which is what made the appended clause inconsistent.
+    expect(btn.getAttribute('title')).toMatch(/1 surface running without a model/)
+    expect(btn.getAttribute('title'), 'and not the hedge it replaced').not.toMatch(/surface\(s\)/)
+  })
+
+  it('and plural above one', async () => {
+    vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces: SURFACES } as never)
+    render(<DegradedChip />)
+    const btn = await waitFor(() => screen.getByRole('button', { name: /degraded/i }))
+    expect(btn.getAttribute('title')).toMatch(/2 surfaces running without a model/)
+  })
+
   it('keeps its text label on desktop, where the corner has room', async () => {
     setViewport(false)
     render(<DegradedChip />)
