@@ -21,6 +21,7 @@ user state**. Copy can change freely; only a dead end coming back reds the gate.
 """
 
 import re
+from pathlib import Path
 
 from personalclaw import suggestions
 
@@ -64,6 +65,14 @@ def test_the_list_is_a_real_population():
     )
 
 
+#: The bound the PROMPT states ("a single sentence (under 60 characters)"), stricter than the 80
+#: the parser enforces. The parser is deliberately lenient about the model's output — showing a
+#: slightly long generated suggestion beats dropping it — but these six are hand-written, so they
+#: are held to the standard we ask the model for. Measured 2026-08-28: the longest is 36 chars,
+#: so this has 24 chars of headroom and is a ratchet rather than a fix.
+_PROMPT_CHAR_BOUND = 60
+
+
 def test_every_suggestion_survives_the_parser_that_would_drop_it():
     """`_parse_suggestions` discards anything over 80 characters and takes only the first six.
     A fallback entry that the generated path would reject is a fallback the two code paths
@@ -74,4 +83,34 @@ def test_every_suggestion_survives_the_parser_that_would_drop_it():
     assert len(suggestions._FALLBACK_SUGGESTIONS) <= 6, (
         "more than six fallback suggestions — `_parse_suggestions` caps the generated list at "
         "six, so the fallback would show a longer row than the real thing ever does."
+    )
+
+
+def test_the_handwritten_list_meets_the_bound_the_prompt_asks_the_model_for():
+    """The prompt says "under 60 characters"; the parser only enforces 80.
+
+    So a hand-written fallback could sit in the 60-80 gap and be longer than anything the prompt
+    ever asked for, on the one surface where these strings are guaranteed to appear. Nothing
+    violates it today — this pins the headroom so it stays that way.
+    """
+    prompt = (
+        Path(suggestions.__file__).parent / "config" / "prompts" / "task-suggestions.md"
+    ).read_text(encoding="utf-8")
+    stated = re.search(r"under (\d+) characters", prompt)
+    assert stated, (
+        "the suggestions prompt no longer states a character bound, so the number below is "
+        "unanchored — re-read the prompt and re-derive it."
+    )
+    assert int(stated.group(1)) == _PROMPT_CHAR_BOUND, (
+        f"the prompt now asks for under {stated.group(1)} characters, not {_PROMPT_CHAR_BOUND}. "
+        f"Update the constant — it exists to stay equal to the prompt, not to outlive it."
+    )
+    long = [
+        f"{s!r} ({len(s)})"
+        for s in suggestions._FALLBACK_SUGGESTIONS
+        if len(s) > _PROMPT_CHAR_BOUND
+    ]
+    assert not long, (
+        f"these exceed the {_PROMPT_CHAR_BOUND} characters the prompt asks the model for, so "
+        f"they are longer than any generated suggestion is meant to be:\n  " + "\n  ".join(long)
     )

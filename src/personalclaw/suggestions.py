@@ -43,11 +43,30 @@ _REFRESH_INTERVAL_SECS = 30 * 60
 #
 # ``test_suggestions_fallback_needs_no_data.py`` holds the criterion, not the strings — so this
 # list can be re-worded freely and only a *dead-end* re-appearing reds the gate.
+#
+# 🔑 AND EACH ENTRY NAMES SOMETHING THIS PRODUCT DISTINCTIVELY DOES. That is a copy JUDGMENT,
+# not a defect, so it is stated here rather than asserted in a test: this list is the product's
+# first self-description, on the surface a new user opens most.
+#
+# Three entries used to be generic text generation — "Generate sunrise haiku", "Give me a
+# three-word farewell", "Help me brainstorm an idea". Any chat box can serve those, so half the
+# list taught nothing about a self-hosted agentic OS with tools, tasks, automations, knowledge
+# and local execution. Every entry now points at a shipped surface:
+#
+#     Show health-check status               the doctor / system surface
+#     Break a goal into tasks                Tasks
+#     Save a note to my knowledge base       Knowledge (ingest works on an empty base)
+#     Run a command and explain the output   Terminal + tools — the local-execution thesis
+#     What can you help me with?             orientation, the one thing a new user always asks
+#     Set up a daily briefing                Triggers / automations
+#
+# Nothing here promises a capability the product lacks — the one hard rule a suggestion list has,
+# because a chip that leads to "I can't do that" is worse than a generic one.
 _FALLBACK_SUGGESTIONS = [
     "Show health-check status",
-    "Generate sunrise haiku",
-    "Give me a three-word farewell",
-    "Help me brainstorm an idea",
+    "Break a goal into tasks",
+    "Save a note to my knowledge base",
+    "Run a command and explain the output",
     "What can you help me with?",
     "Set up a daily briefing",
 ]
