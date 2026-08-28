@@ -329,7 +329,11 @@ export function NavRail({
             e.preventDefault()
             setWidth(Math.max(MIN_W, Math.min(MAX_W, next)))
           }}
-          className="absolute right-0 top-0 z-10 h-full w-1 cursor-col-resize outline-none transition-colors hover:bg-primary/30 focus-visible:bg-primary/60" />
+          // 4px WIDE, ON EVERY SURFACE: measured on `main` at 4x900 (desktop) and 4x1112
+        // (tablet), i.e. 20px short of the 24px floor in the one axis that is short
+        // (WCAG 2.2 SC 2.5.8). `hit-24-x` widens only the PRESSABLE band, leaving the 1px
+        // seam and the resize arithmetic below untouched.
+        className="absolute right-0 top-0 z-10 h-full w-1 cursor-col-resize outline-none transition-colors hover:bg-primary/30 focus-visible:bg-primary/60 hit-24-x" />
       )}
     </div>
   )

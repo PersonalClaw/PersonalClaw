@@ -705,6 +705,35 @@
   pointer-events: auto;
 }
 
+/* The same 24px floor (WCAG 2.2 SC 2.5.8) for a THIN VERTICAL control, where `.hit-24`'s
+   symmetric inset is the wrong shape. On a 4x900 rail handle that inset would add ~10px ABOVE the
+   rail's top edge — invisible but hit-testable, and a band overhanging into the header is how a fix
+   for one stolen target creates another. This pins the band to the element's own vertical extent and
+   centres `--hit-min` of width on it, so no call site restates the control's drawn width.
+   Measured: reachable width 4px -> 24px at 1440x900 and 834x1112, element box unchanged.
+   Note that axe still reports the small size — it reads the element's rect, not the pressable
+   area. That is the tool's limit, not an unfixed defect; see design/hitTargetThinHandle.test.ts. */
+.hit-24-x {
+  /* Deliberately sets no `position`: the call site is already positioned, and forcing `relative`
+     here drops an absolutely-placed handle out of its placement (measured: the rail handle moved
+     from left:192,top:0 to left:0,top:900, and the reachable band went 4px -> 1px). The containing
+     block is therefore a precondition this class requires rather than one it provides. */
+  --hit-min: 24px;
+}
+.hit-24-x::before {
+  content: "";
+  position: absolute;
+  /* Pinned to the element vertically — this is what keeps the band off the neighbouring surface. */
+  top: 0;
+  bottom: 0;
+  /* Centred, so a control of any width gets the floor without repeating its width here. */
+  left: 50%;
+  width: var(--hit-min);
+  transform: translateX(-50%);
+  /* Forwards events to the element, exactly as `.hit-24`'s does. */
+  pointer-events: auto;
+}
+
 /* A persisted reading highlight (KNOWLEDGE-LIBRARY T3.1). A `<mark>` painted around
    a re-anchored passage — see pages/knowledge/readingAnchors.ts. Unlayered for the
    same reason as the scale above: it sits inside ui/Markdown's utility-styled prose.
