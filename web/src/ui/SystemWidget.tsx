@@ -158,7 +158,23 @@ export function SystemWidget() {
 function RunningAgents({ open }: { open: boolean }) {
   const [agents, setAgents] = useState<SpawnedAgent[] | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const load = () => { api.spawnedAgents().then(setAgents).catch(() => setAgents([])) }
+  const [failed, setFailed] = useState(false)
+  // 🔑 A FAILED READ IS NOT AN EMPTY FLEET. This used to be
+  // `.catch(() => setAgents([]))`, and the guard below hides the section when the list is empty — so
+  // one failed `/api/spawn` made the whole Background-agents section VANISH, and a user with five
+  // running agents saw nothing and was told nothing. The failure and the genuine empty case were the
+  // same value.
+  //
+  // Two things change. The catch no longer CLOBBERS a known-good list, so a transient failure keeps
+  // showing the last one it read instead of blanking it; and the failure is now its own state, so the
+  // render can say so. This is the rule this very file already states for the system read 115 lines
+  // above — a failed `api.system()` sets `disconnected` and the card still renders, because "still
+  // give the click a useful result". The fleet section was the one read that gave none.
+  const load = () => {
+    api.spawnedAgents()
+      .then((a) => { setAgents(a); setFailed(false) })
+      .catch(() => setFailed(true))
+  }
   // Load on open; poll every 4s while open so a running agent's completion shows.
   useEffect(() => {
     if (!open) return
@@ -166,6 +182,22 @@ function RunningAgents({ open }: { open: boolean }) {
     const t = window.setInterval(load, 4000)
     return () => clearInterval(t)
   }, [open])
+  // Failed before we ever read the fleet: say that, rather than looking like an empty one. Hiding is
+  // still right for a genuinely empty fleet — there is nothing to monitor — but only once the server
+  // has actually told us it is empty.
+  if (failed && !agents) {
+    return (
+      <div className="mt-3 border-t border-outline-variant/30 pt-2.5">
+        <div className="mb-1.5 flex items-center gap-1.5 text-[0.75rem]">
+          <Bot size={12} className="text-on-surface-low" />
+          <span className="text-on-surface-var" style={fvs(600)}>Background agents</span>
+        </div>
+        <div className="px-2 py-1 text-on-surface-low text-[0.75rem] italic">
+          Couldn’t read the background agents — retrying every few seconds.
+        </div>
+      </div>
+    )
+  }
   if (!agents || agents.length === 0) return null
   const running = agents.filter((a) => !a.done)
   const doneCount = agents.length - running.length
@@ -200,7 +232,11 @@ function RunningAgents({ open }: { open: boolean }) {
       <div className="mb-1.5 flex items-center gap-1.5 text-[0.75rem]">
         <Bot size={12} className="text-on-surface-low" />
         <span className="text-on-surface-var" style={fvs(600)}>Background agents</span>
-        <span className="ml-auto text-on-surface-low">{running.length} running · {doneCount} done</span>
+        {/* When the poll is failing we are showing the LAST KNOWN list, so the counts must not read as
+            live — otherwise a frozen list looks like a quiet one. */}
+        <span className="ml-auto text-on-surface-low">
+          {running.length} running · {doneCount} done{failed ? ' · not updating' : ''}
+        </span>
       </div>
       {/* the live subagent fleet — rows stagger in and animate out as background
           agents spawn/finish, so the monitor reads as a living list */}
