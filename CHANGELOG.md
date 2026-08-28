@@ -690,6 +690,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   field, instead of succeeding and dropping it. This applies to every action setting of that kind, on
   both the trigger and the lifecycle-hook forms.
 
+- **Editing an artifact and navigating away lost the edit.** Typing in an artifact's editor and then
+  clicking anywhere else in the app discarded the change: no prompt on the way out, nothing restored on
+  return. The editor already knew the text was unsaved — the Save button had enabled — and the buffer was
+  dropped anyway. Unsaved artifact edits are now kept for the rest of the session, so leaving the page
+  and coming back brings them with you, and saving clears them as you would expect.
+  Viewing an older version of an artifact is unaffected: it shows that version, never a pending edit to
+  the current one. And the recovery is held in memory only, so reloading the page still starts clean.
+
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it
   had.** It always reported *re-embedded 0 item(s)* — in every install, whatever your library held. Two
   independent faults: it handed the re-index a plain function where an embedding model was expected, so
