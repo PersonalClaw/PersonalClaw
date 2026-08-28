@@ -18,6 +18,21 @@
 # backend-only push skips the frontend chain and vice versa. Ref ranges arrive on
 # stdin per githooks(5).
 #
+# The tree/ref guard exists because those two facts do not agree by themselves.
+# Scope is decided from the outgoing REFS, but both halves then check the WORKING
+# TREE (`git rev-parse --show-toplevel`) — and those are the same thing only when
+# the ref being pushed is what this worktree has checked out. With many
+# `git worktree`s in play they routinely are not: `git push origin some-branch`
+# from a checkout sitting on `main` scopes the gate by some-branch's diff and then
+# validates main's tree. It goes green and proves nothing about what shipped.
+# Batching pushes (`git push origin br1 br2 br3`) to pay the ~20-minute `npm ci` +
+# render-smoke cost once instead of three times is exactly how that happens. So
+# every outgoing ref must resolve to this worktree's HEAD commit or the push is
+# refused — one push per worktree, from the worktree that owns the branch. Refs are
+# peeled to a commit first (`^{commit}`): an annotated tag's own object SHA is never
+# a commit, and tagging the merge commit on `main` from a `main` checkout is the
+# documented release step (docs/maintainers/release-runbook.md).
+#
 # Bypass: none built in. `git push --no-verify` exists for owner-declared
 # emergencies only (AGENTS.md) — a red gate means the push ships something broken.
 set -eu
@@ -33,12 +48,31 @@ needs_gate=0
 needs_lint=0
 if [ -t 0 ]; then
   # Manual invocation from a terminal (no ref ranges on stdin) — run the full
-  # gate unconditionally rather than blocking on read.
+  # gate unconditionally rather than blocking on read. Nothing named a ref here,
+  # so the tree/ref guard below has nothing to compare and correctly never runs:
+  # a manual run is a check of this tree, which is exactly what it claims to be.
   needs_gate=1
   needs_lint=1
 fi
-while [ ! -t 0 ] && read -r _local_ref local_sha _remote_ref remote_sha; do
+head_commit=$(git rev-parse --verify HEAD 2>/dev/null || echo unknown)
+while [ ! -t 0 ] && read -r local_ref local_sha _remote_ref remote_sha; do
   [ "$local_sha" = "$ZERO" ] && continue  # branch deletion — nothing outgoing
+  # Refuse to gate a tree that is not the thing being pushed. Peel to a commit so
+  # an annotated tag compares as the commit it points at, and fall back to the raw
+  # SHA (which cannot equal HEAD) so an unpeelable ref is refused, not crashed on.
+  pushed_commit=$(git rev-parse --verify --quiet "$local_sha^{commit}" || echo "$local_sha")
+  if [ "$pushed_commit" != "$head_commit" ]; then
+    echo "" >&2
+    echo "pre-push: refusing to gate a tree that is not what you are pushing." >&2
+    echo "          $local_ref resolves to $pushed_commit" >&2
+    echo "          this worktree's HEAD is $head_commit" >&2
+    echo "          Both halves of this gate check the working tree, not the pushed" >&2
+    echo "          commits, so running them here would prove nothing about what ships." >&2
+    echo "          Fix: push from the worktree that has that ref checked out — see" >&2
+    echo "          'git worktree list' — and push one ref per worktree rather than" >&2
+    echo "          batching several refs into one push." >&2
+    exit 1
+  fi
   if [ "$remote_sha" = "$ZERO" ]; then
     # New remote branch: compare against the shared history with origin/main
     # when we have it; otherwise gate unconditionally rather than skip blind.
