@@ -163,7 +163,7 @@ export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, 
  *  cannot appear quietly. */
 export function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   const hintId = useId()
-  // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (69 hinted rows, and
+  // 🪤 A `Row` deliberately does NOT publish a label id — its control names itself (77 hinted rows, and
   // ux-690 recorded the divided-row layout as a distinction, not drift). The hint is independent of
   // that: a control with its own `aria-label` still needs the sentence beside it to be its description,
   // so this provides the hint id without claiming to name anything.
