@@ -37,12 +37,28 @@ from personalclaw.dashboard.state import DashboardState
 
 class TestDiagnosticsLogRedaction:
     def test_redact_log_text_helper(self):
-        """_redact_log_text redacts raw API keys, tokens, and git credentials."""
+        """_redact_log_text redacts raw API keys, tokens, and git credentials.
+
+        🔴 This claimed "git credentials" while planting a GitHub TOKEN as the
+        password, and `ghp_…` is a shape `_CREDENTIAL_PATTERNS` already matched — so
+        it passed because of the token's shape, not because URL userinfo was
+        handled at all. An ordinary password in the same position went straight
+        through (#406). The second case below is the one that fails on the old
+        patterns, and it is why both are here.
+        """
         token_part = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"
         raw = f"app registry: git fetch errored for https://user:{token_part}@github.com/repo.git"
         redacted = _redact_log_text(raw)
         assert token_part not in redacted
         assert "[REDACTED" in redacted
+
+        # An ARBITRARY password — no recognisable provider shape, so only a
+        # positional rule catches it.
+        plain = "app registry: git fetch errored for https://alice:hunter2@github.com/repo.git"
+        redacted_plain = _redact_log_text(plain)
+        assert "hunter2" not in redacted_plain, "an ordinary password in a URL still leaks"
+        # …and the host survives, or the log stops being diagnosable.
+        assert "github.com/repo.git" in redacted_plain
 
     def test_redact_log_text_exfiltration_url(self):
         """_redact_log_text redacts suspicious URLs with long query parameters."""

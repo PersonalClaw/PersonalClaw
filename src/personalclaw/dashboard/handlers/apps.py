@@ -101,16 +101,34 @@ def register_app_routes(app: web.Application) -> None:
 
 
 def _sel_log(op: str, outcome: str, resources: str, request: web.Request, error: str = "") -> None:
+    """Append one app-lifecycle row to the security event log.
+
+    🔴 `resources` carries the app SOURCE, which for a git app is a URL — and a URL may carry
+    credentials in its userinfo (`https://user:token@host/repo.git`). This wrote it verbatim into an
+    HMAC-chained, append-only log (#406), which is the one surface here that CANNOT be cleaned up
+    afterwards: rewriting a row breaks the chain, so a leaked secret is in the audit trail
+    permanently. That is why this call site is screened even though the source is also refused at
+    `catalog.add_git_source` — the refusal stops new ones, and this stops the ones that arrive by
+    any other route.
+
+    Screened ONCE, here, at the point of entry to the log. Deliberately not at a shared trailing
+    chokepoint: `redact_credentials` is not idempotent over a composed `key: [REDACTED: …]` line —
+    it garbles the text and takes the field NAME with it — so a second sweep over already-screened
+    text is a corruption, not a belt-and-braces.
+    """
     try:
+        from personalclaw.security import redact_credentials
         from personalclaw.sel import sel as _s
 
+        safe_resources, _ = redact_credentials(resources)
+        safe_error, _ = redact_credentials(error)
         _s().log_api_access(
             caller=request.get("user", "dashboard"),
             operation=op,
             outcome=outcome,
             source="apps",
-            resources=resources,
-            error=error,
+            resources=safe_resources,
+            error=safe_error,
         )
     except Exception:
         pass

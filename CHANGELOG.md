@@ -1715,6 +1715,32 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **A password inside a URL was invisible to every place PersonalClaw redacts secrets.** The
+  redaction knows what a secret *looks like* — the key formats the big providers use, and lines of the
+  form `api_key = …`. A credential carried by *position* instead, in the `user:password@` part of a
+  URL, matched none of those. So a git remote like `https://you:yourtoken@github.com/you/repo.git`
+  went through the diagnostics log, the security audit log, agent output and confirmation previews
+  completely intact.
+  **It looked covered, and that is worth saying.** One test claimed to check exactly this — and
+  planted a GitHub token as the password, which the existing rules already recognised on shape alone.
+  It passed for the wrong reason. Substitute an ordinary password and it fails. Both cases are checked
+  now.
+  **The host is deliberately kept.** Only the credential is replaced, so "the clone of
+  github.com/acme/repo failed" is still readable in your logs. Removing a secret should not cost you
+  the ability to see what went wrong.
+  **The security audit log gets this first**, because it is the one place that cannot be cleaned up
+  afterwards: it is a tamper-evident chain, so rewriting an old entry would break it. A secret written
+  there is there for good.
+  **And a source URL carrying a password is now refused outright** when you add an app source, rather
+  than accepted and then redacted downstream. The message says why. Ordinary remotes are unaffected —
+  including `git@github.com:owner/repo.git` and `ssh://git@host/repo`, where the username before the
+  `@` is a username and not a secret.
+
+- **Adding an app source no longer accepts anything you type.** `not-a-git-url` was stored silently
+  and then appeared in the Store as its own source heading with no apps under it and nothing saying it
+  was broken. It is refused now, with a message naming the forms that work. (A *valid* source that
+  turns out to be unreachable still shows as an empty group; that part is unchanged.)
+
 - **Three more ways a path could leave the folders PersonalClaw is allowed to touch.** All three are
   the same mistake as the record-id one above, reached differently, and all three were reproduced
   before being fixed.
