@@ -216,7 +216,12 @@ export function validateInvocation(
       kind: 'missing-required',
       component: name,
       keys: missing,
-      message: `${name} is missing required arg(s): ${missing.join(', ')}.`,
+      // The audience here is a MODEL (§5.2 — surfaced for one-shot self-correction), not a reader,
+      // so this is the least user-facing member of the family. Converted anyway: `missing.length` is
+      // already in hand, the two rails match on `'missing required arg'` as a SUBSTRING so both
+      // forms satisfy them, and a verdict that models its own grammar is a better example for the
+      // thing reading it.
+      message: `${name} is missing required arg${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}.`,
     }
   }
   const excess = argKeys.filter((k) => !declared.has(k))
@@ -225,7 +230,7 @@ export function validateInvocation(
       kind: 'excess-args',
       component: name,
       keys: excess,
-      message: `${name} got unknown arg(s): ${excess.join(', ')}. Allowed: ${[...declared].join(', ')}.`,
+      message: `${name} got unknown arg${excess.length === 1 ? '' : 's'}: ${excess.join(', ')}. Allowed: ${[...declared].join(', ')}.`,
     }
   }
   return null

@@ -120,7 +120,19 @@ describe('the step scans on mount and offers what it found', () => {
 
   it('says how many credentials will be withheld — a count, never a value', async () => {
     await mounted()
-    expect(screen.getByText(/2 credential value\(s\) or file\(s\) will not be imported/)).toBeTruthy()
+    // 🔁 Was pinned as `2 credential value(s) or file(s)`. The fixture is fixed at 2, so this rail
+    // could never have told the hedge from a correct plural — they differ only at n === 1.
+    expect(screen.getByText(/2 credential values or files will not be imported/)).toBeTruthy()
+  })
+
+  it('and reads SINGULAR when exactly one credential is withheld', async () => {
+    // The boundary the fixture above never crosses. One withheld secret is the ordinary case on a
+    // first import — most machines carry a single API key for the tool being imported from.
+    // `scan()` already takes per-source overrides; `mounted()` does not, so the mock is re-pointed
+    // before mounting rather than widening a helper eleven other tests depend on.
+    onboardingImportScan.mockResolvedValue(scan({ secrets_skipped: 1 }))
+    await mounted()
+    expect(screen.getByText(/1 credential value or file will not be imported/)).toBeTruthy()
   })
 
   it('imports NOTHING on mount', async () => {
