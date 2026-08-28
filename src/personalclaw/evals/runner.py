@@ -31,6 +31,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw.evals import gate as gate_lib
 from personalclaw.evals import overlay as overlay_lib
 from personalclaw.evals import pinning
 from personalclaw.evals import scenarios as scenario_lib
@@ -119,6 +120,7 @@ def _spawn_cell(
     cell_index: int,
     timeout_secs: float,
     pin: pinning.RunPin,
+    artifact_arm: "gate_lib.ArtifactArm | None" = None,
 ) -> CellResult:
     """Run ONE cell in a child process and map its outcome to a ``CellResult``.
 
@@ -154,6 +156,11 @@ def _spawn_cell(
     cell_overlay = _cell_overlay(spec, coords)
     if cell_overlay is not None:
         descriptor["overlay"] = cell_overlay.to_dict()
+    # ES-6: which gate ARM this cell is (the candidate artifact rides the spawn env, not the
+    # descriptor — the content can be large and the descriptor is a retained artifact). The
+    # LABEL is recorded so a surprising cell says which side of the before/after it was.
+    if artifact_arm is not None:
+        descriptor["arm"] = artifact_arm.label
     descriptor_path.write_text(json.dumps(descriptor, indent=2, sort_keys=True), encoding="utf-8")
     artifact_ref = str(cell_dir)
 
@@ -171,6 +178,10 @@ def _spawn_cell(
         # of "child-process overlay toggling": nothing in the parent applies the overlay,
         # so no code path here can reach the live spec/config.
         env = overlay_lib.spawn_env_for(env, cell_overlay)
+        # The ES-6 gate arm rides the SAME copy. Nothing in the parent stages the candidate, so
+        # no code path here can reach the live home — the child's `throwaway_home()` refusal is
+        # what actually enforces that.
+        env = gate_lib.spawn_env_for(env, artifact_arm)
         try:
             proc = subprocess.run(
                 [sys.executable, "-m", "personalclaw.evals.child", str(descriptor_path)],
@@ -225,6 +236,7 @@ def run_matrix(
     *,
     matrix_id: str,
     timeout_secs: float = DEFAULT_CELL_TIMEOUT_SECS,
+    artifact_arm: "gate_lib.ArtifactArm | None" = None,
 ) -> MatrixResult:
     """Execute ``spec`` cell-by-cell in child processes; persist + return the result.
 
@@ -234,6 +246,10 @@ def run_matrix(
     child spawn with the per-cell workspace in the child's env only. Persists
     ``aggregates.json`` + ``trials.json``, appends a ``results.tsv`` row, and
     SEL-logs matrix-run start + completion (best-effort).
+
+    ``artifact_arm`` (ES-6) is the Loop-2 gate's before/after arm: a set of home-relative files
+    the CHILD stages into its throwaway home. It is threaded here rather than given its own
+    runner because a second spawn path would be a second isolation contract to keep true.
 
     ES-2: the pin is computed FIRST, before any cell runs, and persisted as
     ``matrices/<id>/pin.json``. A scenario that cannot be resolved — or that names a
@@ -270,6 +286,7 @@ def run_matrix(
                 cell_index=cell_index,
                 timeout_secs=timeout_secs,
                 pin=pin,
+                artifact_arm=artifact_arm,
             )
         )
 

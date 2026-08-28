@@ -87,6 +87,51 @@ export function evidenceLabel(row: LearningRow): string {
   return `${row.evidence_refs.length} evidence ref(s) · ${grade}`
 }
 
+// ── The Loop-2 gate: before/after, or an honest "ungated" ──
+// EVALUATION-SUBSTRATE amendment E2 (ES-6). The gate re-runs a cheap scenario subset over the home
+// as it is and again with the candidate staged, so a reviewer sees whether the change made things
+// worse BEFORE accepting it. Three facts have to survive to the screen and they are all separate:
+//
+//  * a proposal with NO gate run reads `ungated` + the backend's reason — never a blank cell, and
+//    never a 0. It stays fully acceptable: a gate that blocked on its own absence would stop a user
+//    shipping a change because the GATE broke.
+//  * a gated proposal whose arms produced no score reads `not measured`, the same string
+//    JudgeBenchPanel / AblationPanel / StudiesPanel already use for a null mean. One vocabulary for
+//    "the number does not exist", not a second one per surface.
+//  * a measured DROP is called out, because that is the whole point of the columns.
+
+/** Format one gate score. `null` is "not measured" — the house string for an absent number. */
+export function gateScore(value: number | null): string {
+  return value === null ? 'not measured' : value.toFixed(3)
+}
+
+/** The gate clause on a proposal row: before → after, or why there is no pair.
+ *
+ *  A missing `gate` object (an older cached row) is treated as ungated rather than crashing or
+ *  rendering nothing: an absent measurement and an absent FIELD mean the same thing to a reviewer,
+ *  and neither is evidence of a passing gate. */
+export function gateLabel(row: LearningRow): string {
+  const gate = row.gate
+  if (!gate || gate.state !== 'gated') {
+    const reason = gate?.reason ? ` — ${gate.reason}` : ''
+    return `ungated${reason}`
+  }
+  const pair = `${gateScore(gate.before)} → ${gateScore(gate.after)}`
+  const delta = gate.delta === null
+    ? ''
+    : ` (${gate.delta > 0 ? '+' : ''}${gate.delta.toFixed(3)})`
+  const scope = ` over ${gate.scenarios} gate scenario(s)`
+  const halted = gate.halted ? ' · stopped early on the eval budget' : ''
+  return `gate ${pair}${delta}${scope}${halted}`
+}
+
+/** Whether the row should shout. A measured drop only — a tie is not a regression, and an
+ *  UNMEASURED pair is not one either: flagging one would be the same dishonesty as drawing an
+ *  unmeasured mean as 0, just pointing the other way. */
+export function gateRegressed(row: LearningRow): boolean {
+  return row.gate?.state === 'gated' && row.gate.delta !== null && row.gate.delta < 0
+}
+
 // ── The staging week panel ──
 /** How a day should render. `silent` is the alarming one: no passes at all means capture did not run,
  *  and an aggregate view cannot see it — which is the whole reason this panel exists. */

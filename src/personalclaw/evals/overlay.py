@@ -184,12 +184,17 @@ def spawn_env_for(base_env: dict, overlay: ComponentOverlay | None) -> dict:
 # ── the child side ───────────────────────────────────────────────────────────
 
 
-def _cell_home() -> Path:
-    """The throwaway home this child was pointed at — or refuse.
+def throwaway_home() -> Path:
+    """The throwaway per-cell home this child was pointed at — or refuse.
 
     The refusal is the load-bearing rail: an overlay applied against the operator's real
     home is precisely the "live config mutated" failure §3.1 forbids, and it is a spawn
     bug (missing env), not something the child can safely paper over.
+
+    PUBLIC because a second child-side stager needs the identical rail: ES-6's gate arm
+    (:mod:`personalclaw.evals.gate`) writes a candidate artifact into the same throwaway home,
+    and a private copy of this check would be a second answer to "may I write here" — which is
+    exactly one answer too many for a guard whose whole job is to have no exceptions.
     """
     raw = os.environ.get("PERSONALCLAW_HOME", "")
     if not raw:
@@ -250,7 +255,7 @@ def _patch_child_config(dotted: str, value: object) -> str:
     The file is the throwaway home's, created if absent. Nested paths are created as
     needed, so a field the fixture home never wrote is still overridable.
     """
-    home = _cell_home()
+    home = throwaway_home()
     home.mkdir(parents=True, exist_ok=True)
     path = home / "config.json"
     data: dict = {}
@@ -292,7 +297,7 @@ def apply_in_child(overlay: ComponentOverlay | None) -> list[str]:
     # Verified BEFORE any write, for every non-baseline arm and every kind — including the
     # env-only kinds, so a cell spawned against the real home fails loudly rather than
     # running a measurement whose isolation was never established.
-    _cell_home()
+    throwaway_home()
 
     if overlay.kind == KIND_SKILL:
         if overlay.arm == ARM_CHEAP:

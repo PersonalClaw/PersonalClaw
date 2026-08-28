@@ -119,7 +119,13 @@ def test_the_unclassified_remainder_is_visible_not_silent() -> None:
         or any(good in word for good in AUDIT_OUTCOME_SUCCESS)
     }
     unclassified = sorted(set(emitted) - classified)
-    assert len(unclassified) <= 32, (
+    # 33 (was 32) — ES-6's `halted_on_budget`, and the raise is the decision this rail exists to
+    # force rather than a way around it. A gate that stopped on its declared ceiling is the control
+    # WORKING: nothing was denied to a caller (so not `denied`), the mechanism did not break (so not
+    # `failed`), and the sweep is incomplete (so not a success either). It stays unclassified for
+    # the same reason `expired` does — putting it in a family would make the audit log assert a
+    # refusal or a fault that never happened.
+    assert len(unclassified) <= 33, (
         "a new outcome word appeared — classify it into a family, into "
         f"AUDIT_OUTCOME_SUCCESS, or raise this ceiling deliberately:\n{unclassified}"
     )

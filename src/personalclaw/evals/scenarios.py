@@ -24,9 +24,13 @@ lives BESIDE the scenarios dir, not inside it: every reader of that dir
 (``personalclaw eval``, the matrix runner) globs scenario files, and a manifest sitting
 among them would parse as a broken scenario.
 
-Two scenario fields are load-bearing here:
+Three scenario fields are load-bearing here:
 
 * ``version`` (int) — drives the backfill comparison above;
+* ``tiers`` (list[str]) — which evaluation tiers the scenario opted into. ``"gate"`` is
+  ES-6's Loop-2 cheap subset (:mod:`personalclaw.evals.gate`); the manifest records it so
+  membership is answerable from the home alone, and a shipped scenario that joins a tier
+  bumps its ``version`` so the backfill actually reinstalls it;
 * ``fixture_home`` (str) — the NAME of a ``tests_fixtures/`` seed the run is
   executed over, so a scenario runs from a known clean state rather than from
   whatever the user's home happens to contain. The child seeds it into a per-cell
@@ -150,6 +154,21 @@ def origin_of(path: Path, data: dict) -> str:
     return "local"
 
 
+def tiers_of(data: dict) -> list[str]:
+    """The tiers a scenario declares, normalized to a list (empty when it declares none).
+
+    ES-6's Loop-2 gate subset is opted into with ``"tiers": ["gate"]``. Read by INSPECTING the
+    scenario, like :func:`origin_of` — a side list of gate scenario names would be a second
+    place the truth lives, and the one that goes stale is always the list.
+    """
+    raw = data.get("tiers")
+    if isinstance(raw, str):
+        return [raw] if raw else []
+    if isinstance(raw, (list, tuple)):
+        return [str(t) for t in raw if str(t)]
+    return []
+
+
 def fixture_home_of(data: dict) -> str:
     """The scenario's declared seed-fixture NAME (default :data:`DEFAULT_FIXTURE_HOME`)."""
     raw = data.get("fixture_home") or DEFAULT_FIXTURE_HOME
@@ -197,6 +216,10 @@ def install_library() -> dict:
             "sha256": sha256_of_scenario_data(data),
             "fixture_home": fixture_home_of(data),
             "origin": origin_of(path, data),
+            # ES-6: which tiers the scenario opted into (``["gate"]`` for the Loop-2 cheap
+            # subset). Recorded here so "what is in the gate subset" is answerable from the
+            # manifest, the same way ``origin``/``fixture_home`` already are.
+            "tiers": tiers_of(data),
         }
 
     manifest = {"library_version": LIBRARY_VERSION, "scenarios": installed}

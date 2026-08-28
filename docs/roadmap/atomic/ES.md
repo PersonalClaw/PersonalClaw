@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `ES-3` | ⬜ | Retrieval eval harness with per-arm P@k/R@k ablation (both stores, read-only) | `ES-1`, `EXT:MEMORY-GRAPH-AND-VAULT:memory-side graph arm + push-context resolver arms for the memory ablation` | arm-masked runner reports P@5/R@5 per arm-mask for BOTH knowledge (HybridRetriever FTS5/graph/vector) and memory recall, run separately and read-only, from a personal-scale qrels set mined from surfacing/volunteer events plus a hand-label card; per-arm marginal contribution is a number and a dark-shipped arm gets its offline verdict before enablement; reports land in matrices/ via scorer:qrels |
 | `ES-4` | ✅ | Judge benchmark harness → tier-recommendation table | `ES-1` | fixture set (real judged runs, deliberately-bad null probes, forbidden-success-mode cases) runs through the matrix over fixtures × judge tiers × judge_samples 1/3/5; the tier-recommendation table shows agreement-with-known-verdict, strong-vs-null separation, position-swap flip rate, cost and wall time per (rubric-class × tier × samples) with honest failure-mode notes, rendered on a Settings/Learning panel; rebinding a judge to the cheapest adequate tier is one user action on the Models panel |
 | `ES-5` | ✅ | Pre-registered template A/B studies (the re-opened eval gate) | `ES-1`, `EXT:WORKFLOWS-V2:Run Ledger Slices 0-3 (§5 event table) for real-run input sampling + verdict events`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:proposal queue + LEARN-R2 harvested regression suite` | a flywheel template-diff runs a pre-registered study: k=5 paired old-vs-new over the harvested suite, immutable registration.json (rubric_sha256 pinned; mid-study rubric edit → invalidated), blinded median-of-3 position-swapped judging with agreement floor and judge_unreliable routing, locked/ checks executed supervisor-side in the child output workspace (never rendered into any worker prompt — regression-tested); verdict + agreement rate + per-run artifacts inspectable from the Learning page; a pass emits an evidence unit + results.tsv row, a fail auto-files a demotion/revert proposal |
-| `ES-6` | ⬜ | Loop-2 cheap gate subset + before/after score columns on self-modification proposals (amendment E2) | `ES-2`, `ES-5`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:self-modification proposal cards (GateOK arm)` | a curated dozen fast assertion-heavy scenarios re-run before a prompt/skill/routing proposal ships; a planted regression in a candidate skill edit shows a score drop on its own proposal card ({before,after,pin}) before the user accepts; gate-run cost is bounded and metered via SpendMeter, and a proposal with no gate run renders 'ungated' honestly (never blocks) |
+| `ES-6` | 🟡 impl landed | Loop-2 cheap gate subset + before/after score columns on self-modification proposals (amendment E2) | `ES-2`, `ES-5`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:self-modification proposal cards (GateOK arm)` | a curated dozen fast assertion-heavy scenarios re-run before a prompt/skill/routing proposal ships; a planted regression in a candidate skill edit shows a score drop on its own proposal card ({before,after,pin}) before the user accepts; gate-run cost is bounded and metered via SpendMeter, and a proposal with no gate run renders 'ungated' honestly (never blocks) |
 | `ES-7` | ⬜ | Harness ablation runner + skills bench + model-upgrade watchdog | `ES-1`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R9 retirement proposal kind + proposal queue`, `EXT:WORKFLOWS-V2:WF2-R13 consulted ledger event (for §3.3)` | the periodic ablation runner produces a keep/remove/lighten report for one component per cadence with measured on-vs-off deltas via child-process overlay toggling (live spec/config never mutated), and a no-delta component's report attaches as the ablation-grade evidence on a LEARN-R9 retirement proposal; the §3.3 skills bench replays consulted runs with a skill surfaced-vs-suppressed; the watchdog computes a model fingerprint on active_models.json changes, queues small-budget re-benchmarks, and emits exactly ONE digest notification, with per-fingerprint results.tsv baselines |
 | `ES-8` | ⬜ | Trust-graduation ladder: trust records, graduation/revocation, rungs, attention accounting | `ES-1`, `ES-5`, `ES-7`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R11 maturity + LEARN-R16 verdicts + LEARN-R10 nodding-loop + proposal queue`, `EXT:WORKFLOWS-V2-UNIVERSAL-PLANNING:UP-R6 approval gate reads the trust record`, `EXT:WORKFLOWS-V2:Run Ledger attention events (gate_rejected, user_edited_mid_flight, needs-input continuation)` | a template reaches 'unattended' ONLY via flywheel-computed L3 + a passing unexpired §2 study + a human-accepted, SEL-audited graduation proposal; a HARMFUL LEARN-R16 verdict, failed study, nodding-loop flag, or watchdog fingerprint expiry revokes the trust record mechanically and the next run falls back to per-stage; rung chips render on template rows and the approval dialog; attention_events_per_run (plus resolved_after_secs ledger addition) trends on the Learning page, graduation proposals cite the trend, and a post-grant attention rise files a demotion signal |
 | `ES-9` | ⬜ | Loop-3 live field metrics beside lab results + lab_field_divergence (amendment E3) | `ES-8`, `EXT:FEEDBACK-SIGNAL:plan-58 S1 👍/👎 + edit-before-approve records`, `EXT:AUTONOMY-GUARDRAILS:earned-autonomy ledger (autonomy_rungs.json) + SEL approval outcomes` | per-template/per-action-type 👍/👎 and edit-before-approve rates (query-computed, stored nowhere new) render beside Loop-1 lab score and Loop-2 gate status as one row per subject on the Learning tab; a subject whose lab score rose while its field trend fell is flagged lab_field_divergence and files a §4.2 trust-record demotion signal mechanically |
@@ -140,9 +140,34 @@ the judge at the one named `JudgeCaller` seam.
 
 ### `ES-6` — Loop-2 cheap gate subset + before/after score columns on self-modification proposals (amendment E2)
 
-**Status:** todo
+**Status:** todo — 🟡 implementation landed 2026-08-28, atom stays open on ONE clause word
 
 Amendment 2026-07-26 E2 — evals/scenarios/gate/ + §8.3 proposal emission score columns + proposal card FE
+
+**[2026-08-28] 🟡 IMPLEMENTATION LANDED.** `evals/gate.py` owns the Loop-2 tier: the subset is
+declared IN each scenario as `"tiers": ["gate"]` (not a `scenarios/gate/` subdir — the installed
+library is a flat dir three readers glob and none descends), twelve shipped scenarios carry the tag
+at a bumped `version`, and `install_library` records the tier in the manifest. Selection is
+structurally filtered, not promised: over `MAX_GATE_TURNS` turns → excluded with a reason, and a
+tagged scenario with no non-judge assertion → excluded, because the child runs
+`EvalRunner(judge_enabled=False)` and a judge-only scenario reaches `total_assertions == 0` and
+publishes a fabricated `1.0`. Scores come from the existing `run_matrix`/child (one matrix per
+arm × scenario, `trial_count=1`) via a new `artifact_arm=` kwarg; the child stages the arm through
+the SAME `throwaway_home()` refusal the ablation overlay uses (`overlay._cell_home` was promoted to
+that public name — one answer to "may I write here"). The bound is enforced at the meter: no
+positive `evals.default_budget_usd` ⇒ **ungated, not unbounded**; `check_run` before every cell and
+`meter.charge` of the child's own reported spend after it, so the ceiling STOPS the sweep and names
+what did not run. `Proposal.gate` + `inbox.Row.gate` carry `{before, after, pin}` to the card, which
+renders "ungated" + a reason when nothing ran and "not measured" (the eval panels' own string) for a
+null mean — never `0.0`, never a synthesized pin.
+
+**What keeps the atom `todo`:** clause 1 says a gate re-runs *"before a prompt/skill/routing
+proposal ships"*. Only the **skill** half is wired — `Kind.SKILL` is the one kind whose candidate
+artifact is renderable through its own install rail (`skill_promotion.candidate_files` →
+`SkillsLoader.create_auto_skill`). A `prompt` proposal's body is a JSON fence an accept re-parses into
+`prompts/<name>.yaml`, and a `template_diff`'s is a typed ops list applied by
+`_apply_accepted_template_diff`; neither declares a stageable file today, so both render an honest
+`ungated` naming the kind. Extending `_CANDIDATE_RENDERERS` to those two closes the row.
 
 **Done when:** a curated dozen fast assertion-heavy scenarios re-run before a prompt/skill/routing proposal ships; a planted regression in a candidate skill edit shows a score drop on its own proposal card ({before,after,pin}) before the user accepts; gate-run cost is bounded and metered via SpendMeter, and a proposal with no gate run renders 'ungated' honestly (never blocks)
 

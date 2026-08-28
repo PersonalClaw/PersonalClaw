@@ -18,6 +18,11 @@ const row = (over: Partial<LearningRow> = {}): LearningRow => ({
   evidence_refs: ['r1'], evidence_strength: 'correlated', reinforcements: 4, confidence: 0.8,
   manifest_valid: true, manifest_issues: [], risk_tier: 'review',
   status: 'pending', renderable: true, bulk_acceptable: true,
+  gate: {
+    state: 'ungated', reason: 'no gate run yet', before: null, after: null, delta: null,
+    regressed: false, scenarios: 0, halted: false, dollars_est: 0, spend_observed: false,
+    pin: {}, ran_at: '',
+  },
   ...over,
 })
 

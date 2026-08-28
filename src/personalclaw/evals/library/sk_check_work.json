@@ -37,5 +37,8 @@
       ]
     }
   ],
-  "version": 1
+  "tiers": [
+    "gate"
+  ],
+  "version": 2
 }

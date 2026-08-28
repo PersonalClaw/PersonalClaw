@@ -201,6 +201,12 @@ class Row:
     manifest_issues: list[str] = field(default_factory=list)
     risk_tier: str = "review"
     status: str = "pending"
+    #: The Loop-2 gate's compact ``{before, after, pin}`` (ES-6 — `evals.gate.summary`). ALWAYS
+    #: populated: a proposal with no gate run projects to `state: "ungated"` with a reason, so
+    #: the row says "no gate ran and here is what that means" rather than leaving an empty cell
+    #: a reader will fill in with an assumption. It is evidence, never a gate on the row's
+    #: acceptability — `bulk_acceptable` deliberately does not consult it.
+    gate: dict[str, Any] = field(default_factory=dict)
 
     @property
     def renderable(self) -> bool:
@@ -248,6 +254,7 @@ class Row:
             "manifest_issues": list(self.manifest_issues),
             "risk_tier": self.risk_tier,
             "status": self.status,
+            "gate": dict(self.gate),
             "renderable": self.renderable,
             "bulk_acceptable": self.bulk_acceptable,
         }
@@ -264,6 +271,8 @@ def row_from_proposal(prop: Any, *, risk_tier: str = "") -> Row:
     derive it from, so guessing one for a lesson would stamp a number that means nothing.
     """
     tier = risk_tier or "review"
+    from personalclaw.evals import gate as gate_lib
+
     return Row(
         id=str(getattr(prop, "id", "") or ""),
         kind=str(getattr(prop, "kind", "") or ""),
@@ -281,6 +290,9 @@ def row_from_proposal(prop: Any, *, risk_tier: str = "") -> Row:
         manifest_issues=[str(i) for i in (getattr(prop, "manifest_issues", None) or [])],
         risk_tier=tier,
         status=str(getattr(prop, "status", "pending") or "pending"),
+        # Projected through `gate.summary`, which turns an ABSENT report into an honest
+        # `ungated` + reason rather than an empty dict the frontend has to guess about.
+        gate=gate_lib.summary(getattr(prop, "gate", None)),
     )
 
 

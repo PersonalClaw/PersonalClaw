@@ -882,6 +882,46 @@ no-delta verdict files a retirement proposal — removing anything stays your ca
         help="Print the cell preflight and exit without calling a model",
     )
 
+    # eval-gate (EVALUATION-SUBSTRATE amendment E2 / ES-6 — the Loop-2 cheap gate)
+    gate_parser = sub.add_parser(
+        "eval-gate",
+        help="Re-run the cheap gate subset before/after a proposal's change",
+        epilog="""
+Examples:
+  personalclaw eval-gate --list                  # the gate subset and its turn cost
+  personalclaw eval-gate skill-1a2b3c --dry-run  # the cell preflight, nothing called
+  personalclaw eval-gate skill-1a2b3c            # measure, and attach {before, after, pin}
+
+The scores land ON the proposal, so its card shows the before/after columns before you
+accept. A proposal with no gate run reads "ungated" and stays acceptable — the gate is
+evidence, never a lock.
+""",
+        formatter_class=_fmt,
+    )
+    gate_parser.add_argument(
+        "proposal", nargs="?", default="", help="The learning-proposal id to gate"
+    )
+    gate_parser.add_argument(
+        "--list",
+        action="store_true",
+        dest="list_subset",
+        help="List the gate subset (and every tagged scenario excluded from it, with the reason)",
+    )
+    gate_parser.add_argument(
+        "--budget",
+        type=float,
+        default=0.0,
+        help="Hard spend cap in USD for this run (0 = use evals.default_budget_usd)",
+    )
+    gate_parser.add_argument(
+        "--trials", type=int, default=1, help="Trials per scenario per arm (default: 1)"
+    )
+    gate_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the cell preflight and exit without calling a model",
+    )
+
     # retrieval-eval (EVALUATION-SUBSTRATE §5 / ES-3)
     ret_parser = sub.add_parser(
         "retrieval-eval",
@@ -1318,6 +1358,8 @@ Examples:
         asyncio.run(_study(args))
     elif args.command == "ablation":
         _ablation(args)
+    elif args.command == "eval-gate":
+        _eval_gate(args)
     elif args.command == "retrieval-eval":
         _retrieval_eval(args)
     elif args.command == "security":
@@ -1411,6 +1453,7 @@ from personalclaw.cli_commands import (  # noqa: E402
     _automation,
     _cron,
     _discover,
+    _eval_gate,
     _eval_harvest,
     _handle_agent,
     _judge_bench,
