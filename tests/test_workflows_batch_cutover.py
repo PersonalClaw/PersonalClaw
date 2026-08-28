@@ -584,6 +584,48 @@ def test_the_leaf_ENV_is_secret_filtered():
     assert env["__wf_depth"] == "1"
 
 
+def test_a_leaf_keeps_its_native_library_search_path_and_loses_a_PAT():
+    """Both directions of the filter over the names that actually collide.
+
+    `leaf_env`'s docstring rejects an allowlist because it "would drop the PATH-shaped vars a
+    subprocess needs and the failure would look like a broken leaf" — then the denylist did
+    exactly that: `pat` was spelled as the substring `_pat`, which also matches `..._PATH`, so
+    every native-library search path was stripped and a native extension failing to load
+    presented as a broken leaf rather than a missing env var.
+
+    Bare `PATH` is deliberately NOT the probe here: it has no `_pat` in it, so it always
+    survived, and testing it is what let this ship. The `_PATH`-SUFFIXED names are the ones
+    that broke.
+    """
+    from personalclaw import mcp_shared
+
+    env = mcp_shared.leaf_env(
+        {
+            "DYLD_LIBRARY_PATH": "/opt/homebrew/lib",
+            "LD_LIBRARY_PATH": "/usr/local/lib",
+            "PKG_CONFIG_PATH": "/usr/local/lib/pkgconfig",
+            "DYLD_FRAMEWORK_PATH": "/Library/Frameworks",
+            "RE_PATTERN": "^a.*z$",
+            "COMPAT_MODE": "legacy",
+            "GITHUB_PAT": "ghp_should_not_travel",
+            "GH_PAT": "ghp_nor_this_one",
+        },
+        {"__wf_depth": "1"},
+    )
+    for needed in (
+        "DYLD_LIBRARY_PATH",
+        "LD_LIBRARY_PATH",
+        "PKG_CONFIG_PATH",
+        "DYLD_FRAMEWORK_PATH",
+        "RE_PATTERN",
+        "COMPAT_MODE",
+    ):
+        assert needed in env, f"{needed} was stripped from the leaf env as if it were a credential"
+    assert env["DYLD_LIBRARY_PATH"] == "/opt/homebrew/lib"
+    for leaked in ("GITHUB_PAT", "GH_PAT"):
+        assert leaked not in env, f"{leaked} reached the leaf env"
+
+
 def test_the_spawn_path_WRITES_the_flags_the_seam_reads(monkeypatch):
     """The inert-control check. A gate on a value nobody writes is not a gate, so this asserts the
     WRITER: `leaf_spawn_env` must emit the depth and the read-only flag the handler reads, with the

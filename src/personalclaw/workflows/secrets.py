@@ -35,7 +35,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 #: Config keys whose values are credentials. Matched case-insensitively as a substring,
-#: so `api_key`, `openai_api_key` and `apiKey` are all covered by one entry.
+#: so `api_key`, `openai_api_key` and `apiKey` are all covered by one entry. Substring
+#: matching is deliberate and stays: `apikey` has no separator to split on, and
+#: `ACCESSTOKEN` would stop matching under any token-equality rule — a hint that only
+#: matched whole tokens would quietly narrow this list into letting those through.
 SECRET_KEY_HINTS = (
     "api_key",
     "apikey",
@@ -53,14 +56,34 @@ SECRET_KEY_HINTS = (
     # declaring inherit-from-host would have passed a GitHub personal access token straight into a
     # leaf subagent's environment. A hint list is only as good as its worst-covered credential, and
     # the ones with bespoke names are exactly the ones a generic list misses.
-    "_pat",
-    "pat_",
     "session_key",
     "access_key",
     "refresh",
     "signing",
     "webhook",
 )
+
+#: Hints that mean a WORD, not a character run — matched against the `_`-delimited segments
+#: of a name instead of the whole string. Exactly one hint needs this, and it needs it
+#: badly: `pat` (a personal access token) was originally spelled as the substring pair
+#: `_pat` / `pat_` to hand-roll a boundary, which also matched every `..._PATH`, `_PATTERN`
+#: and `COMPAT_...` name. That made `DYLD_LIBRARY_PATH`, `LD_LIBRARY_PATH` and
+#: `PKG_CONFIG_PATH` read as credentials, so `mcp_shared.leaf_env` stripped a batch leaf's
+#: native-library search path and a native extension failing to load presented as a broken
+#: leaf — the exact failure that function's docstring rejects an allowlist to avoid.
+#:
+#: Only this hint moves. A trailing digit still counts as part of the word so `GITHUB_PAT2`
+#: keeps matching, because the collision family is always `pat` followed by a LETTER.
+SECRET_KEY_WORD_HINTS = ("pat",)
+
+#: `_`-delimited segments of a name, for `SECRET_KEY_WORD_HINTS`. Split on any non-alphanumeric
+#: run so a `github-pat` or `github.pat` config key segments the same way a `GITHUB_PAT` env
+#: var does — a separator the author did not think of is not a reason to let a token through.
+_WORD_SEP_RE = re.compile(r"[^a-z0-9]+")
+
+#: `pat`, `pat2` — the word plus an optional index, which is how a second account's token
+#: gets named.
+_WORD_HINT_RES = tuple(re.compile(rf"{re.escape(h)}\d*") for h in SECRET_KEY_WORD_HINTS)
 
 #: Keys that LOOK secret-bearing but hold a reference, not a value. Stripping these would
 #: destroy the very indirection that keeps credentials out of the spec.
@@ -87,12 +110,30 @@ _INLINE_SECRET_RES = (
 )
 
 
+def matches_secret_hint(name: str) -> bool:
+    """Does this name's SHAPE mark it as credential-bearing?
+
+    The one matcher over the one hint list. `is_secret_key` (spec config keys) and
+    `workspace.looks_secret` (env var names) both route through here rather than each
+    running their own `any(hint in name)` loop: a second matcher is a second policy, and
+    the copy that drifted would be the one deciding whether a token reached a child.
+
+    Two match modes, because the hints are not all the same kind of thing. Most are
+    substrings (`api_key` has to match inside `openai_api_key`; `apikey` has no separator
+    to split on at all). `pat` is a word — as a character run it matches `PATH`.
+    """
+    lowered = str(name or "").lower()
+    if any(hint in lowered for hint in SECRET_KEY_HINTS):
+        return True
+    return any(rx.fullmatch(word) for word in _WORD_SEP_RE.split(lowered) for rx in _WORD_HINT_RES)
+
+
 def is_secret_key(key: str) -> bool:
     """Does this config key hold a credential VALUE (not a reference)?"""
     low = str(key or "").lower()
     if low in SECRET_REF_KEYS:
         return False
-    return any(hint in low for hint in SECRET_KEY_HINTS)
+    return matches_secret_hint(low)
 
 
 def has_flag_name(key: str) -> str:
