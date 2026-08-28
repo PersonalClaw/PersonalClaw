@@ -204,6 +204,172 @@ rather than deferring them past it.
 
 ## Execution log
 
+- **2026-08-27 — `PP-16` seam 4 (retire `loop/store.py`'s parallel `loops` row) BLOCKED, with the
+  column-level measurement that decides it. No implementation written. Atom stays `todo`.**
+  The seam was taken as a measure-first with authority to stop before writing, and it stops: the row
+  cannot be retired onto the run store without the three owner decisions recorded 2026-08-18 and the
+  one recorded 2026-08-22, because the columns those decisions govern are `NOT NULL` columns with
+  live writers. Recorded here so the next attempt inherits the measurement instead of re-deriving it.
+
+  **The decisive number: `loops` has 39 columns, `runs` has 26, and 31 of the 39 have no column on
+  `runs` at all.** Only eight names overlap, and of those eight only **four port unchanged**
+  (`id`, `project_id`, `elapsed_seconds`, `error_message`). Three more are a TYPE change the field
+  map already recorded but which is worth stating as schema: `created_at`/`started_at`/`completed_at`
+  are `REAL` epoch floats on `loops` and `TEXT` ISO-8601 on `runs`. The eighth is `status`, which is
+  owner decision 2. So "retire the row" is not a move of a mostly-compatible table; it is the
+  creation of 31 destinations, 15 of which are governed by an open decision.
+
+  **They are also two separate SQLite databases** — `config_dir()/loop/loops.db`
+  (`loop/store.py:60`) and `config_dir()/workflows/runs.db` (`workflows/store.py:52`) — so no
+  variant of this is a single-transaction move, and any backfill is a cross-database write.
+
+  **`loop/store.py` is TWO stores in one file, and only one of them is this seam's target.** Measured
+  by AST over its 79 top-level functions: **31 functions / 456 lines** touch the `loops` TABLE, and
+  **48 functions / 478 lines** are a per-loop FILESYSTEM store (`loop_dir`, the jsonl ledger,
+  deliverable/log/guidance/question/nudge/verdict/findings/plan-session/stop-sentinel) that has
+  nothing to do with the row. Caller-side the split is just as clean: **20 `src/` modules call the
+  ROW surface, 19 call the FILE surface, and 7 of the 27 touch ONLY the file surface.** The
+  "1,253-line row" framing carried in this log since 2026-08-18 overstates the target by roughly
+  half — the row is ~456 lines of the file. (The 20-module ROW count independently reproduces the
+  2026-08-18 census's "20 modules outside `loop/`".)
+
+  **DISCOVERY — the field map's five `POLICY` rows are true at the TYPE level and false at the
+  PERSISTENCE level.** `SupervisorPolicy` has **zero** persistence: it appears nowhere in
+  `workflows/store.py` or `workflows/models.py`, the `runs` table has no policy column, and
+  `policy_for_kind(kind, kind_config)` (`supervisor_policy.py:680`) is a pure function of the KIND
+  resolved from a declared table. But `attended`, `autopilot`, `max_cycles`, `idle_secs` and
+  `success_criteria` are per-INSTANCE columns, user-set through `_EDITABLE_SPEC_COLS`
+  (`loop/store.py:491`), and read live in `manager.py:214-215,505-506`, `kinds/design.py:151`,
+  `kinds/general.py:76`, `kinds/goal.py:239,251`, `kinds/sdlc.py:381,432,764,1236`. So these five
+  fields have **no persisted home**, not a mapped one. `POLICY_KNOB_MAP` names the axis; nothing
+  stores the value per run. Whether a run carries a policy overlay is a design gap that reads as
+  PP-14's, and it is a fifth blocker on the row.
+
+  **The user-editable write path is the sharpest way to state the gap: 9 of the 23
+  `_EDITABLE_SPEC_COLS` have no persisted destination** — the four homeless spec fields
+  (`name`, `provider_agent`, `strategy_id`, `strategy_config`) plus those five policy knobs. A row
+  retirement that shipped without them would silently drop nine controls a user can set today.
+
+  **DISCOVERY — `kind_config` is not only spec, so the map's `NODE_CONFIG → config` row understates
+  it.** It also carries per-cycle RUNTIME state: `marginal_scores` (`store.py:1139`),
+  `quality_scores` (`store.py:1161`) and supervisor flags via `set_kind_config_key`
+  (`store.py:1181`). Those are cycle trails the supervisor accumulates, not authoring-time template
+  config, so they cannot land in a node's static `config` dict — they need the same treatment as the
+  `PROJECTION` rows.
+
+  **DISCOVERY — the row is the liveness oracle for the FILE store, which is a coupling no
+  field-level map could see.** `reap_orphan_dirs` (`store.py:1227`) deletes per-loop directories that
+  have "NO backing DB row", deriving the live set from `list_all()`. Retiring the row therefore
+  removes the file store's GC oracle. Measured coupling in both directions inside the module: 9 row
+  functions call file functions (`create`/`update_status` → `write_status`, `get_redacted` → six
+  file readers) and 8 file functions call row functions (five of them call `get()`).
+
+  **The committed fixture pins the schema.** `src/personalclaw/tests_fixtures/demo-home/loop/loops.db`
+  is a 12 KB binary SQLite file carrying all 39 columns and one row (`status='complete'`,
+  `total_cycles=6`), so every column change regenerates a committed binary. It IS regenerable —
+  `scripts/generate_demo_home_fixture.py:228` is the single creation site — so this is a cost, not a
+  blocker. Production row creation is only four sites (`loop_routes.py:360`, `sdlc_tools.py:207,323`,
+  `prompts.py:404`); the CLI creates none.
+
+  **DISCOVERY — `loops.db` is a DECLARED durability artifact, so retiring the table is not confined
+  to the loop package.** `durability/inventory.py:221-236` declares it as `id="loops_db"`,
+  `kind=KIND_SQLITE`, `merge=MERGE_SQLITE_ATTACH_IGNORE`, with the sibling `loop` tree entry naming
+  it in `derived_within` precisely because "it needs the sqlite backup API, not a copy". It is named
+  again in `portability.py:463,609` and `snapshot.py:146,525,1127` (the snapshot-row-vs-live-row
+  merge hazard). Three subsystems the field map could not see, because it maps FIELDS and these are
+  facts about the TABLE.
+
+  **The HTTP and frontend surface, measured.** The loop API is **22 registered routes over 17
+  distinct path patterns** (`loop_routes.py:1041-1066`, file 1,066 lines), and **18 of the 22 return
+  Loop-only state**. Six of them return the whole redacted Loop (`store.get_redacted`/`list_redacted`)
+  — that payload carries the **31 fields with no `WorkflowRun` counterpart plus 7 view-only extras**
+  (`findings`, `nudges`, `feedback_producer`, `pending_question`, `verdicts`, `marginal_scores`,
+  `files_dir`) with only 8 fields surviving as-is. Frontend: **25 non-test consumers** of the
+  `uLoop*` client (`web/src/lib/api.ts:5309-5351`), and the two cockpits are **`LoopCockpitPage.tsx`
+  1,358 lines vs `WorkflowRunDetail.tsx` 537** — the run detail page has no equivalent of the
+  cockpit's findings rail, verdict/ROI rail, steer box, plan walkthrough, file tree or design-token
+  canvas. That 2.5x gap is the honest size of "one cockpit contract", and it is the clause that makes
+  the row retirement a product change rather than a storage change.
+
+  **The status vocabulary has FOUR tables, not the two the 2026-08-18 slice retired.** Beyond
+  `LOOP_PHASES` (`loop.py:78`, the one exhaustive declaration all six membership sets derive from):
+  `ACTION_SOURCE_STATES` (`loop.py:147`, 4 actions → legal source statuses) has a **verbatim frontend
+  copy** in `web/src/lib/loopStatus.ts:155-160`, and `tasks/hierarchy_handlers.py:277-288` holds
+  `_LOOP_STATE`, a full **12-member map keyed on status STRINGS** onto `containers.BoardState`. The
+  watchdog adds two more string-keyed tables (`_NOTIFY_EVENTS` at `watchdog.py:266-279`,
+  `_ATTENTION_EVENTS` at `:288-292`) and publishes raw status strings on the SSE wire
+  (`watchdog.py:938,944,1066`). One genuine convergence already exists and is worth recording:
+  `LifecyclePhase` is SHARED — `loop.py:27` imports it from `workflows/models.py`.
+
+  **What the map got exactly right, verified rather than trusted.** `LOOP_FIELD_MAP` is exhaustive
+  and correct at the field level: 39 rows against 39 `Loop` dataclass fields, empty in both
+  directions, and every `RUN`-kind destination resolves against a real `WorkflowRun` field. The
+  destination histogram is `run` 10, `node_config` 7, `none` 6, `projection` 6, `policy` 5, `def` 2,
+  `run_input` 2, `intent` 1.
+
+  **Two premises corrected.** (1) This log's "`LoopStatus` 13 vs `RunStatus` 8" (2026-08-18 UNMET
+  entry) is wrong: `LoopStatus` has **12** members. `loop_run_map`'s docstring says twelve and the
+  code agrees; the log's 13 is stale. (2) A naive grep for the policy knobs inflates the writer set,
+  because `autonudge.py`'s `NudgeLoop` declares its own `idle_secs`/`max_cycles`/`cycle_count`
+  (`autonudge.py:64-72`) — `autonudge.py:234-236`, `gateway.py:2440-2441` and
+  `dashboard/handlers/autonudge.py:111-112` are NOT `loops`-row writers. A name shadow, not a caller.
+
+  **Checked whether the status gap is smaller than recorded — it is not.** All seven loop-only
+  statuses are live (2-6 `src/` references each), and five have live `update_status` writers:
+  `STOPPED` (`manager.py:282`), `PLANNING` (`plan_walkthrough.py:170,348,358`), `REVIEW`
+  (`plan_walkthrough.py:291`), `STAGNANT` (`watchdog.py:1060`). And `update_status`
+  (`store.py:428`) is a five-invariant state machine — terminal-transition refusal, elapsed banking
+  on leaving `RUNNING`, `started_at` stamping plus stale-error clearing, `completed_at` stamp on
+  ENDED **and its clearing on leaving a resumable ENDED state**, plus the `write_status` sidecar —
+  where the run side's `save()` (`workflows/store.py:223`) is a blind upsert with none of them, and
+  `RESUMABLE_ENDED_RUN_STATUSES` is `frozenset()` (`models.py:475`), so resuming a failed unit is
+  not expressible in `RunStatus` at all.
+
+  **The decomposition, in dependency order.** Startable with no ruling: **(4a)** retire the
+  `total_cycles` column — see the next entry; **(4b)** split `loop/store.py` into the row store and
+  the per-loop file store, which converts "who reads the row" from an ad-hoc AST census into a static
+  import fact and is the precondition for measuring any later sub-seam (the row/file coupling above
+  is the work). Blocked on the recorded owner decisions: **(4c)** `name` → decision 1 (a run has no
+  title); **(4d)** `status` → decision 2 (the vocabulary orphans); **(4e)** `tasks_project_id` +
+  `task_list_ids` → the 2026-08-22 `task_list_id` decision, which **is** load-bearing here because
+  `set_tasks_links` (`store.py:642`) writes both columns in one call. That decision's premise is
+  re-confirmed rather than assumed: `WorkflowRun.task_list_id` has **zero writers and zero readers**
+  — no `WorkflowRun(...)` construction anywhere in `src/`, `tests/` or `scripts/` passes it, and its
+  only eight mentions are the field declaration, the `_KNOWN` tuple, `to_dict`/`from_dict`, the DDL
+  column, the column list, and `loop_run_map`'s own declaration; the frontend's run types never
+  declare it. The plural loop-side field is by contrast live across **15 `src/` sites and 4 frontend
+  sites**. So the singular destination is inert AND the wrong shape; **(4f)** the five policy
+  columns → the persistence gap above. Then, and only then: **(4g)** the 12 columns that move only
+  when a loop launches as a graph (7 `node_config`, 2 `def`, 2 `run_input`, 1 `intent`) and
+  **(4h)** the remaining 5 `PROJECTION` columns, each of which needs its projection built.
+
+- **2026-08-27 — `PP-16` seam 4a NAMED as the one completable unit, with its destination measured.**
+  `loops.total_cycles` is a denormalized cache of a ledger derivation, and the derivation already
+  ships. The watchdog computes `count = len(store.get_findings(cid))` (`watchdog.py:951-952`), and
+  `get_findings` (`store.py:1000`) is documented as and is a pure projection off the ledger's
+  `step_completed` events (PP-5). Both writers write exactly that derived value
+  (`watchdog.py:968`, `watchdog.py:1073`). There are **2 writers and 7 readers**
+  (`investigate.py:560`, `kinds/design.py:152`, `kinds/goal.py:54`, `kinds/sdlc.py:780,823`,
+  `manager.py:317`, `watchdog.py:836`). The generic destination is shipped and already used this way
+  by the run side: `ledger.run_totals` (`ledger/reader.py:61`) returns `steps_completed` and its
+  docstring is *"aggregate a run's ledger into the counters the run row carries"*; `loop_store` is
+  already a `LedgerStore` (`loop/journal.py:82`). So this column needs no owner decision, no new
+  state shape and no destination to invent — it needs seven reads rewired, one column dropped, and
+  the committed fixture DB regenerated. It is the only one of the 39 columns in that position.
+  Named, not taken: the projection is an O(events) jsonl scan where the column was an indexed read,
+  so the seam owes a measurement of the read cost at `watchdog` poll frequency before it ships.
+
+  **The destination claim is FALSIFIED, not asserted.** A throwaway probe against an isolated home
+  emitted four real cycles through `LoopJournal.cycle` and measured
+  `len(get_findings()) == run_totals()['steps_completed'] == row.total_cycles == 4`. Mutating the live
+  derivation (`ledger/reader.py:75`, `steps += 1` → `steps += 2`, mutation grepped back to confirm it
+  applied) moved `run_totals` to 8 and RED the equality, while the vacuity partners — `get_findings()`
+  and the row column, which reach the count by a different path — both stayed at 4, so the probe reads
+  the shipped derivation rather than one number twice. Under the same mutation
+  `test_workflows_controller.py` + `test_workflows_introspection.py` went **2 failed / 149 passed of
+  151 collected**, both failures on `steps_completed`. Restored from a file copy at the literal path;
+  `git diff --stat HEAD` empty afterwards and the probe green again.
+
 - **2026-08-20 — `PP-16` slice DONE: one action-guard vocabulary (the backend mirror the
   2026-08-18 census left "whole rather than half-converged"). Atom stays `todo`.** The status
   slice unified how a loop's state is *narrated*; this unifies what a state *permits*.

@@ -341,6 +341,19 @@ Two members are missing from `Action`, and the second is the sharper gap:
 
 **Status:** todo
 
+**2026-08-27 — PARTIAL. Seams 1-3 shipped (supervisor policy table, one adoption/reaping path, one
+attention path); seam 4 (retire `loop/store.py`'s parallel `loops` row) measured and BLOCKED, no
+implementation written.** The row has **39 columns against the run store's 26, and 31 of the 39 have
+no `runs` column at all** — only four port unchanged (`id`, `project_id`, `elapsed_seconds`,
+`error_message`); three are an epoch-float→ISO-string type change; the eighth is `status`. Fifteen of
+the 31 are governed by open owner decisions (title, status vocabulary, the task/project links) or by
+a persistence gap (`SupervisorPolicy` has no per-run storage, so the five policy columns have no home
+rather than a mapped one). One sub-seam is completable with no ruling and is named in the plan's
+execution log: retire `total_cycles`, a denormalized cache of a ledger projection that already ships.
+Full column-level measurement, the caller census (20 `src/` modules on the row surface, 19 on the
+per-loop file surface) and the eight-way decomposition are in
+[`../plans/PLATFORM-PRIMITIVES.md`](../plans/PLATFORM-PRIMITIVES.md) `## Execution log`.
+
 The capstone. `materialize.py` already proves the direction ("tasks as a projection of run state") and `containers.py` is the Work board projection; loops are the holdout, with their own row, status enum, store, watchdog and adoption path. Consequence today: restart-adoption is implemented twice (`loop/manager.reap_orphaned_loops` and `workflows/watchdog` adoption), park-on-human twice, budget twice, cancel twice — so every future feature touching work units costs 2x. LOOPS-EVOLUTION always intended kinds to become templates; this is the half it did not name, the NOUN change rather than the brain change.
 
 **Done when:** A Loop is a `WorkflowRun` carrying a `SupervisorPolicy`; the five kinds are bundled templates plus policies, so the domain intelligence lives in the policy and the supervisor stops being pluggable Python. One status vocabulary, one adoption/reaping path, one attention path, one ledger, one projection to tasks, one cockpit contract. `loop/store.py`'s parallel row is retired (clean break under the pre-1.0 banner; release notes advise `personalclaw snapshot`). Verified as a user: each of the five kinds is driven end-to-end through the unified path with its cockpit intact, a kill mid-run is adopted by the single watchdog, and the flywheel produces a proposal from a loop run's ledger. Explicitly NOT in scope: `triggers/` stays a separate scheduler — it answers whether to START, and folding it in would put wall-clock into a pure core.
