@@ -621,6 +621,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   corrupted — writing is atomic — but "atomic" only means never half-written, not that someone else's
   edit survives. Both paths now take the same lock, and only for the read-change-write itself: a request
   that is going to be rejected is still rejected immediately rather than queueing behind a save.
+- **Renaming an automation replaced what it does.** Changing the name of a scheduled automation whose
+  action was anything other than an agent prompt — a notification, a digest, a remediation — silently
+  swapped that action for an empty agent task and saved successfully. The notification title was gone,
+  the list row changed to "Invoke Agent", and there was no warning of any kind. One character of a name
+  was enough.
+  The cause was that the edit form could not tell what kind of action the automation had, so it assumed
+  an agent prompt and sent one. It now reads the real action, says plainly that the action is left as it
+  is when you save changes from there, and sends nothing that could overwrite it. Editing an agent
+  prompt is unchanged, including clearing one.
 
 - **A too-long file or folder name reported a server error instead of telling you the name was too
   long.** Typing a name past the length the filesystem allows into the explorer's New file or New folder

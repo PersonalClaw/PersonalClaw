@@ -64,9 +64,13 @@ export function toDraft(j: ScheduleJob): ScheduleDraft {
  *  every/cron + agent fields; `at`, `script`, `command` ride along so the
  *  payload is forward-compatible once the backend lands them (gated SoonTag). */
 export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
+  // 🔴 `message` is omitted in 'other' mode, and that omission is the signal. This form cannot
+  // edit a non-agent action provider, so it must send nothing that describes one — otherwise
+  // `_scheduleBodyToWire` builds a blank `invoke-agent` from these fields and the server, which
+  // correctly applies any action it is sent, replaces a `notify` action with it (issue 689).
+  // Renaming a notification trigger destroyed its action that way.
   const body: Record<string, unknown> = {
     name: d.name.trim(),
-    message: d.message.trim(),
     timezone: d.timezone || '',
     silent: d.silent,
     strict_schedule: d.strict_schedule,
@@ -77,6 +81,7 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
   if (d.kind === 'cron') body.cron = d.cron.trim()
   else if (d.kind === 'every') body.every = intervalToSecs(d.intervalValue, d.intervalUnit)
   else if (d.kind === 'at') body.at = d.at  // backend-soon
+  if (d.mode !== 'other') body.message = d.message.trim()
   if (d.mode === 'agent') { body.agent = d.agent; body.model = d.model }
   else if (d.mode === 'script') body.script = d.script.trim()       // backend-soon
   else if (d.mode === 'command') body.command = d.command.trim()    // backend-soon
@@ -129,9 +134,21 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly }: { draft:
       {/* ── WHAT (omitted in triggerOnly — action is configured separately) ── */}
       {!triggerOnly && (
         <>
-          <Field label="Runs" right={mm.soon ? <SoonTag /> : undefined} hint={mm.hint}>
-            <Segmented options={EXEC_MODES.map((m) => ({ key: m.key, label: m.label, tone: m.tone, icon: m.icon }))} value={draft.mode} onChange={(v) => set('mode', v as ScheduleExecMode)} />
-          </Field>
+          {/* 'other' is not offered as a choice — it means "this action is a provider this form
+              cannot edit", so showing the picker would invite switching to Agent and losing it.
+              The note names what the action IS instead of misreporting it as a prompt. */}
+          {draft.mode === 'other' ? (
+            <Field label="Runs" hint={mm.hint}>
+              <div className="text-on-surface-var text-[0.8125rem]">
+                This automation runs a configured action, not an agent prompt. Its action is left
+                exactly as it is when you save changes here.
+              </div>
+            </Field>
+          ) : (
+            <Field label="Runs" right={mm.soon ? <SoonTag /> : undefined} hint={mm.hint}>
+              <Segmented options={EXEC_MODES.map((m) => ({ key: m.key, label: m.label, tone: m.tone, icon: m.icon }))} value={draft.mode} onChange={(v) => set('mode', v as ScheduleExecMode)} />
+            </Field>
+          )}
           {draft.mode === 'agent' && (
             <>
               <Field label="Prompt" hint="What the agent should do each run.">
