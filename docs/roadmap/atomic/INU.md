@@ -4,7 +4,7 @@
 **Code:** `INU`  
 **Source status:** in_progress
 
-8 atoms: all 8 done (S1-S5 as PRs #111-#115; S6 verification gate, S7 Proposals contract and S8 inbox provider-seam resolution closed since). No blocking cross-plan deps — plan owns the attention contracts; all cross-plan edges are downstream consumers.
+9 atoms: 8 done (S1-S5 as PRs #111-#115; S6 verification gate, S7 Proposals contract and S8 inbox provider-seam resolution closed since), 1 todo — `INU-9`, filed 2026-08-27 for the capability every existing source lacks: an inbox item a **user authored**, rather than one the system synthesized from a fired rule, a run needing input, or an app-contributed source. No blocking cross-plan deps — plan owns the attention contracts; all cross-plan edges are downstream consumers.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -20,6 +20,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ## Atom scopes
 | `INU-8` | ✅ | Resolve app-contributed inbox sources through the app registry's manifest factory (`InboxTypeHandler`) + make the `PROVIDER_TYPES`/handler guard bidirectional | — | An app declaring `{"type":"inbox","implementation":"mod:factory"}` has its provider resolved+registered at enable-time by a real `InboxTypeHandler` (the same `load_factory` path every other type uses) and deregistered on disable/uninstall; `get_default_provider` resolves app sources with documented precedence and the class-vs-instance mismatch handled explicitly; a fixture app's source is driven end-to-end; the #47 guard asserts BOTH directions with a reason-carrying allowlist and `agent` / `notification` / `skills` are each resolved (handler, removal, or allowlist naming the real mechanism) |
+| `INU-9` | ⬜ | A user-authored note reaches the inbox — the create-from-free-text capability the tray's quick-capture promises | — | A user can create an inbox item from free text through a real endpoint, and the item appears in the inbox list carrying a typed kind that identifies it as user-authored rather than synthesized from a system source (the typed-kind registry gains the kind, and the notification-rules vocabulary does NOT gain a phantom source it cannot deliver); the tray's quick-capture affordance reaches that endpoint so `?capture=1` (or its replacement) stops being an inert control, proven by a test that reds when the reader is removed while a sibling asserting plain inbox navigation stays green; the item survives a gateway restart, read back off disk rather than from memory; and a new wire error code, if any, carries its HTTP_ERROR_CODES row with a user-actionable meaning in the same change. Validated as a user: capture from a running shell, see the item in the inbox, act on it, restart, confirm it is still there. |
 
 ### `INU-1` — Kind registry + rules engine (S1)
 

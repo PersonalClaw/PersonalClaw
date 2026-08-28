@@ -1676,3 +1676,65 @@ remains open — nothing here touches `loop_run_map`'s destinations or the homel
 It does not fall out of this work — `_poll_once` iterates RUNNING rows and a PLANNING pass needs its
 own budget/attention/stagnation coverage plus a classifier-advance path, which is a separate
 completable slice against files seam 2 currently owns. Left for a later seam.
+
+### `PP-16` seam 4 — MEASURED, then split. Two owner rulings recorded. 2026-08-27
+
+**Seam 4 is not a table move, and the earlier framing (including this log's own) overstated the target by
+about half.** Measured: `loops` has **39 columns**, `runs` has **26**, and **31 of the 39 have no `runs`
+column at all**. Only four port unchanged (`id`, `project_id`, `elapsed_seconds`, `error_message`); three
+more are an epoch-float→ISO-string type change; the eighth shared name is `status`, which is its own
+out-of-scope seam. The two tables are **separate SQLite files**, so nothing here is one transaction.
+Retiring the row means creating **31 destinations**, fifteen of them governed by open decisions.
+
+**Premise corrections, so nobody re-derives them.** `loop/store.py` is **two stores sharing a file** —
+~31 functions / **456 lines** on the SQLite row, and ~48 functions / **478 lines** of per-loop *filesystem*
+store, with 19 `src/` modules on the file surface (7 exclusively). So the target is ~456 lines, **not
+1253**. `loop/manager.py` is **578** lines, not 653. **`LoopStatus` has 12 members, not the 13 this log
+says elsewhere** — the code wins. Row-surface census: 20 `src/` modules, 52 distinct fn-uses, 24 test
+files; only **4** production row-creation sites, and the CLI creates none.
+
+**So seam 4 splits.** `4a` — retire `total_cycles` — is the only sub-seam needing no owner ruling and
+inventing no state shape: it is a denormalized cache of a projection that already ships (`watchdog`
+computes `len(get_findings(cid))`, `get_findings` is a pure projection over `step_completed` from `PP-5`,
+and `ledger.run_totals` already returns `steps_completed`; 2 writers, 7 readers). `4a` is in flight. `4b`
+splits the two stores. `4c`–`4f` were blocked on the two rulings below. `4g`/`4h` last.
+
+#### OWNER RULING 1 — `WorkflowRun.task_list_id` is DELETED, not populated
+
+Open since 2026-08-22. Measured: **zero writers and zero readers** outside 8 plumbing lines, while the
+loop-side **plural** field is live across **15 `src/` and 4 frontend** sites. The singular field is
+therefore both *inert* and *the wrong shape*. Populating it would buy one state-shape change now and a
+second to pluralise later, when the standing ruling is that state-shape work is cheapest done early and
+**exactly once**. A run that projects to tasks carries the **plural** shape, matching the live field.
+Plain clean break under the pre-1.0 banner — drop it, no gate, no migration. **This unblocks `4e`.**
+
+#### OWNER RULING 2 — the `SupervisorPolicy` persistence gap is closed by a SPARSE PER-RUN OVERLAY
+
+A finding this seam surfaced, and a **fifth** decision absent from the 2026-08-18 list: the field map's
+five `POLICY` rows are true at the *type* level and **false at the persistence level**. `SupervisorPolicy`
+has **zero** persistence — no column on `runs`, absent from `workflows/store.py` and `models.py` — and
+`policy_for_kind(kind, kind_config)` is a pure function of the **kind**. Yet `attended`, `autopilot`,
+`max_cycles`, `idle_secs` and `success_criteria` are per-**instance**, user-settable through
+`_EDITABLE_SPEC_COLS`, and read live at ~12 sites. So **9 of the 23 user-editable spec columns have no
+persisted destination.**
+
+RULED: a template is **shared** across runs, so it structurally cannot hold a per-instance user setting —
+putting `max_cycles` on a template would make one user's edit change every future run of that kind. The
+declared `KIND_CONVERGENCE` table stays the **default** source (that is what seam 3 bought) and the run
+persists only its **overrides**, so the policy is still computed once, from *kind defaults + run
+overrides*. That preserves "one admission core, N policies". The overlay is naturally **sparse**: a run
+that overrides nothing persists nothing, so the common case adds no state at all.
+
+#### Three couplings a field-level map structurally cannot see
+
+`reap_orphan_dirs` uses `list_all()` as the **filesystem store's GC oracle**, so changing row listing can
+affect garbage collection. `kind_config` carries per-cycle **runtime** trails (`marginal_scores`,
+`quality_scores`), not only spec. And `loops.db` is a declared **durability artifact**
+(`durability/inventory.py`, `MERGE_SQLITE_ATTACH_IGNORE`, `portability.py`, `snapshot.py`) — so any column
+change touches backup, restore and merge.
+
+#### Cost input for "one cockpit contract"
+
+`LoopCockpitPage.tsx` is **1358** lines against `WorkflowRunDetail.tsx`'s **537**, with no run-side
+equivalent of the findings rail, verdict/ROI rail, steer box, plan walkthrough, file tree or design-token
+canvas. That seam is a build, not a merge.

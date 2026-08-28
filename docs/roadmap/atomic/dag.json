@@ -218,6 +218,14 @@
           "done_when": "An app declaring {\"type\":\"inbox\",\"implementation\":\"mod:factory\"} in app.json has its provider resolved and registered at enable-time by a real InboxTypeHandler (registered via register_type_handler(\"inbox\", ...), the same load_factory path every other app provider type uses) and DEREGISTERED on disable/uninstall so no phantom source survives; inbox_providers.get_default_provider(name) resolves app-contributed sources with a documented precedence (app-registry factory -> entry-point group -> native -> filesystem) and its SEAM LIMIT docstring is replaced by the real contract; the class-vs-instance shape mismatch is handled explicitly (entry points yield a CLASS, a manifest factory yields an INSTANCE) rather than by duck-typing at the call site; a fixture app's inbox source is driven end-to-end (declare -> enable -> messages flow through the generic seam -> disable -> source gone); test_provider_types_equal_registered_handlers asserts BOTH directions with an explicit reason-carrying allowlist, and each of the three remaining unhandled types (agent, notification, skills) is resolved per type: given a handler, or removed from PROVIDER_TYPES, or allowlisted with the mechanism that actually serves it named in the reason (skills ship via apps/skill_seed.py, not a provider) \u2014 no type is left silently declarable-and-dead",
           "deps": [],
           "evidence": "InboxTypeHandler graduates `inbox` off EntitySeamHandler's no-op register (which ran the manifest factory then discarded the instance); new inbox_providers/registry.py holds INSTANCES keyed by source_name; get_default_provider precedence app-instance -> entry-point cls() -> native -> filesystem, SEAM LIMIT docstring replaced by the contract; deregister on disable/uninstall proven by an e2e fixture app driven through real app_manager install/enable/disable/uninstall; the #47 guard now reads the BUILT registry (not the single-line regex that under-counted 18 as 14) and asserts BOTH directions, with a synthetic ghost_type test proving the reverse can fail; agent/notification/skills KEPT after a census found native-skills/native-agents/filesystem-inbox declare them. Live, not inert: bundled filesystem-inbox declares type:inbox so the gateway now resolves the app-registered instance."
+        },
+        {
+          "id": "INU-9",
+          "status": "todo",
+          "title": "A user-authored note reaches the inbox \u2014 the create-from-free-text capability the tray's quick-capture promises",
+          "deps": [],
+          "scope": "OWNER RULING 2026-08-27, minted rather than left unowned. DC-4 shipped a tray 'quick capture' item that deep-links `${DEEP_LINKS.inbox}?capture=1`, and NOTHING in web/src reads that flag - so the affordance navigates and writes nothing. The natural assumption is that the reader belongs to INBOX-NOTIFICATIONS-UNIFICATION, and that was my own claim in the DC-4 brief. It is WRONG: this plan is 8/8 atoms done and none of them covers a user-AUTHORED item. Every existing inbox source is synthesized by the system (a rule fired, a run needs input, an app contributed a source). So 'owned elsewhere' would have orphaned it, which is why it is filed here as new scope instead of recorded as a note in DC-4's reason - a backlog keyed on what was found cannot drain. This atom owns the CAPABILITY, not the entry point. The tray is merely its first consumer; a compose affordance in the dashboard is the same endpoint. DC-4 is NOT a dependency: its deep link already ships on main, and its own remaining clause is device-gated (a signed bundle plus a reboot), which has nothing to do with this. Until this lands, the `?capture=1` flag is a known inert control with a named owner.",
+          "done_when": "A user can create an inbox item from free text through a real endpoint, and the item appears in the inbox list carrying a typed kind that identifies it as user-authored rather than synthesized from a system source (the typed-kind registry gains the kind, and the notification-rules vocabulary does NOT gain a phantom source it cannot deliver); the tray's quick-capture affordance reaches that endpoint so `?capture=1` (or its replacement) stops being an inert control, proven by a test that reds when the reader is removed while a sibling asserting plain inbox navigation stays green; the item survives a gateway restart, read back off disk rather than from memory; and a new wire error code, if any, carries its HTTP_ERROR_CODES row with a user-actionable meaning in the same change. Validated as a user: capture from a running shell, see the item in the inbox, act on it, restart, confirm it is still there."
         }
       ]
     },
@@ -5471,7 +5479,8 @@
           "done_when": "tray/menu-bar icon+menu shows pending-approvals count (click-through deep-links into the SPA), running loops, quick-capture note->inbox, open dashboard, quit; counts live-update over the loopback WS/API; login-item toggle (Settings via bridge) survives reboot; graceful gateway shutdown on quit leaves no orphan gateway (process table verified). AMBIENT-SURFACES menu-bar tiles render here only when that plan is available (non-blocking).",
           "deps": [
             "DC-2"
-          ]
+          ],
+          "status_note": "PARTIAL 2026-08-27 (PR #2188). Two of the three gaps are CLOSED, and the third is now owned by INU-9. The login-item clause is met: the Settings surface was not absent, it was LYING - login_item is in the capability vocabulary and SecurityPanel's DESKTOP_CAPABILITY_LABELS already mapped it, so probe() drew a green 'Open at login - Granted' on a machine with nothing registered and no control to change it. Wired-but-wrong, not missing, which also means BOTH horns of this plan's logged 'OWNER DECISION NEEDED' (new desktop subpage vs shoehorn into Security) rested on a false premise - the toggle belongs in the row that already carries its name. A THIRD gap was found and fixed: the tray and Settings shared a WRITER but not a VIEW (the tray rendered from a cache refreshed only at startup and by its own click, so a Settings flip left the menu-bar checkbox stale until restart); there is now exactly one writer. Login-item state is OS state, not config, so no field was added and the round-trip contract does not bind. REMAINING: whether macOS honours the login item at reboot is unverifiable by code - it needs a signed bundle (DC-1), a real login session and a restart; setLoginItemSettings is a fake in every test by design. The quick-capture write is INU-9's, filed 2026-08-27."
         },
         {
           "id": "DC-5",
@@ -5968,7 +5977,8 @@
             "MC-4",
             "MC-2",
             "EXT:INBOX-NOTIFICATIONS-UNIFICATION:rules-engine push target must exist"
-          ]
+          ],
+          "blocked_reason": "PARTIAL, recorded 2026-08-27. NOTE for anyone reading the branch: the MC-5 branch's own copy of this field claimed clause 1 was waiting on an owner decision to split config/loader.py. That claim is FALSE and was never in main's dag.json. It came from the branch putting the ceiling holder at 5965 lines with only 35 of headroom against the >=100 rail - which is exactly the 'assert 35 >= 100' CI red it produced - and it needed no owner decision at all: SH-2's config/credentials.py extraction paid the headroom, and a rebase alone took the holder to 5646 with 354 of headroom (measured live through scripts.generate_structural_baseline.scan(), never read from the baseline JSON; watch-band headroom 179 either way). Against newer main it lands at ~316, so it is not marginal. Nothing was raised, widened or regenerated. WHAT REMAINS is device-gated, not code-gated: the content-free push has no way to be observed here without a real phone accepting a VAPID subscription. The code half is implemented and railed and the atom is NOT superseded - main has no VAPID/web-push at all (a case-insensitive grep for vapid|web.?push across src/ and web/src returns zero; main's push_* files are durability-sync, memory, and push-to-talk audio). ONE CROSS-PLAN INTEGRATION FAILURE was found and fixed on the way, worth recording because it is not a merge conflict and no rebase would have surfaced it: DC-5's rail nativeNotifications.test.tsx::'covers every source the backend can send' parses NotificationKind(\"<source>\" out of the Python and requires every source to have a native route, so MC-5's new `approval` source reddened it. Routed approval -> 'chat' because pages/chat/ApprovalCard is where a DESKTOP user answers the decision, and companion sits deliberately outside App.tsx's ROUTABLE set. Also corrected while here: notification_rules.py's doc prose had main and this branch making CONTRADICTORY claims about which targets are live (main: native live / push reserved; this branch the reverse), so neither side alone was true post-merge. Composed a third version stating both are live and naming channel_dm as the one remaining inert target."
         },
         {
           "id": "MC-6",
@@ -7552,7 +7562,8 @@
             "PP-15",
             "PP-5",
             "PP-13"
-          ]
+          ],
+          "blocked_reason": "PARTIAL. Three of six owner-approved seams are done (supervisor-as-declared-policy, one adoption/reaping path, one ledger, one attention path). SEAM 4 WAS MEASURED 2026-08-27 and is NOT a table move: `loops` has 39 columns, `runs` has 26, and 31 of the 39 have NO runs column at all - only four port unchanged (id, project_id, elapsed_seconds, error_message), three more are an epoch-float -> ISO-string type change, and the eighth shared name is `status` (its own out-of-scope seam). The two tables are separate SQLite files, so nothing here is one transaction. Retiring the row means creating 31 destinations, 15 of them governed by open decisions. PREMISE CORRECTIONS from that measurement, because the earlier framing overstated the target by about half: `loop/store.py` is TWO stores sharing a file - ~31 functions / 456 lines on the SQLite row, and ~48 functions / 478 lines of per-loop FILESYSTEM store with 19 src/ modules on the file surface (7 exclusively). So the target is ~456 lines, not 1253. `loop/manager.py` is 578 lines, not 653. `LoopStatus` has 12 members, not the 13 the plan log says. Row surface census: 20 src/ modules, 52 distinct fn-uses, 24 test files; only 4 production row-creation sites and the CLI creates none. SEAM 4 THEREFORE SPLITS. 4a (retire total_cycles) is the ONLY sub-seam needing no ruling and inventing no state shape - it is a denormalized cache of a ledger projection that already ships (2 writers, 7 readers; watchdog computes len(get_findings(cid)), get_findings is a pure projection over step_completed which PP-5 ships, and ledger.run_totals already returns steps_completed). 4a is IN FLIGHT. Then 4b splits the two stores. 4c-4f are blocked on the two rulings now recorded below; 4g/4h last. OWNER RULING 1 of 2, 2026-08-27 - `WorkflowRun.task_list_id` is DELETED, not populated. The open question since 2026-08-22 was whether to retire it. Measured: zero writers and zero readers outside 8 plumbing lines, while the loop-side PLURAL field is live across 15 src/ and 4 frontend sites. So the singular field is both inert AND the wrong shape. Migrating onto it would buy one state-shape change now and a second to pluralise later, when the standing ruling is that state-shape work is cheapest done early and exactly ONCE. A run that projects to tasks carries the PLURAL shape, matching the live field. Plain clean break under the pre-1.0 banner: drop it, no gate, no migration. This unblocks 4e. OWNER RULING 2 of 2, 2026-08-27 - the SupervisorPolicy persistence gap is closed by a SPARSE PER-RUN OVERLAY, not by template inputs. The measurement found the field map's five POLICY rows are true at the type level and false at the persistence level: SupervisorPolicy has ZERO persistence and policy_for_kind(kind, kind_config) is a pure function of the KIND, yet attended / autopilot / max_cycles / idle_secs / success_criteria are per-INSTANCE, user-settable via _EDITABLE_SPEC_COLS and read live at ~12 sites - so 9 of the 23 user-editable spec columns have no persisted destination. That is a FIFTH decision, absent from the 2026-08-18 list. RULED: a template is SHARED across runs, so it structurally cannot hold a per-instance user setting - putting max_cycles on a template would make one user's edit change every future run of that kind. The declared KIND_CONVERGENCE table stays the DEFAULT source (that is what seam 3 bought) and the run persists only its OVERRIDES, so the policy is still computed once, from kind-defaults + run-overrides, preserving one admission core with N policies. The overlay is naturally sparse: a run overriding nothing persists nothing, so the common case adds no state. THREE COUPLINGS a field-level map cannot see, recorded so the next session inherits them: reap_orphan_dirs uses list_all() as the FILESYSTEM store's GC oracle; kind_config carries per-cycle RUNTIME trails (marginal_scores, quality_scores), not only spec; and loops.db is a declared durability artifact (durability/inventory.py, MERGE_SQLITE_ATTACH_IGNORE, portability.py, snapshot.py), so any column change touches backup/restore/merge. COST INPUT for 'one cockpit contract': LoopCockpitPage.tsx is 1358 lines vs WorkflowRunDetail.tsx 537, with no run-side equivalent of the findings rail, verdict/ROI rail, steer box, plan walkthrough, file tree or design-token canvas."
         }
       ]
     }
@@ -7748,6 +7759,11 @@
         "id": "ET-8",
         "title": "Registry surface on personalclaw.dev generated from `registry.json`",
         "plan": "ET"
+      },
+      {
+        "id": "INU-9",
+        "title": "A user-authored note reaches the inbox \u2014 the create-from-free-text capability the tray's quick-capture promises",
+        "plan": "INU"
       },
       {
         "id": "LMMV-7",
@@ -8164,6 +8180,7 @@
       "INU-6",
       "INU-7",
       "INU-8",
+      "INU-9",
       "KL-1",
       "KL-2",
       "KL-3",
@@ -9576,10 +9593,10 @@
       {
         "code": "INU",
         "plan": "INBOX-NOTIFICATIONS-UNIFICATION",
-        "total_atoms": 8,
+        "total_atoms": 9,
         "done": 8,
         "in_progress": 0,
-        "todo": 0,
+        "todo": 1,
         "blocked": 0
       },
       {
