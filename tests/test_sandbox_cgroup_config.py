@@ -16,7 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
-from personalclaw.config.loader import AppConfig, SandboxConfig
+from personalclaw.config.loader import AppConfig
+from personalclaw.config.safety import SandboxConfig
 
 FIELD_NAME = "cgroup_scopes"
 

@@ -37,7 +37,7 @@ def surfaces() -> tuple[str, ...]:
     """The five inbound surfaces. Re-exported from the config loader, which owns the
     single declaration, so this module cannot drift into its own shorter list — which
     is exactly what `_SURFACES = ("mcp",)` was before EA-1 widened the seam."""
-    from personalclaw.config.loader import EXTERNAL_ACCESS_SURFACES
+    from personalclaw.config.external_access import EXTERNAL_ACCESS_SURFACES
 
     return EXTERNAL_ACCESS_SURFACES
 

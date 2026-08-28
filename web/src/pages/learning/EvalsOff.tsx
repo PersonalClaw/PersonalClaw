@@ -19,7 +19,7 @@ import { TextLink } from '../../ui/TextLink'
  *  dead-end version pointed at.
  *
  *  🔑 IT NAMES THE CONTROL, NOT THE CONFIG PATH. "Evals enabled" is that field's own `_meta` label
- *  in `config/loader.py`, which is the string the Settings row renders — so the words a user reads
+ *  in `config/learning.py`, which is the string the Settings row renders — so the words a user reads
  *  here are the words they then look for on the page. A dotted path is the right instruction for a
  *  terminal and the wrong one for a link: `evals.enabled` appears nowhere on the destination.
  *

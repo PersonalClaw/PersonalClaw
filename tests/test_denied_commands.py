@@ -70,7 +70,8 @@ class TestUserDenylistMerge:
 def test_config_round_trips_security_section(tmp_path: Path, monkeypatch):
     """SecurityConfig (denied_commands + egress) survives load → to_dict round-trip."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    from personalclaw.config.loader import AppConfig, SecurityConfig
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.config.safety import SecurityConfig
 
     c = AppConfig()
     assert isinstance(c.security, SecurityConfig)
