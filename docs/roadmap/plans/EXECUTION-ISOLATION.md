@@ -1305,3 +1305,43 @@ D0 is documentation and should land immediately — an inaccurate security claim
   branch adding a config field carries this same red. Everything else in this change is green:
   `make lint` clean (black/isort/flake8/mypy, 1031 files), `gate_report.py` 6/6, and the full suite red
   ONLY on this one leg.
+
+### OWNER RULING — `EI-10`'s WORK-CONTAINERS dependency is STRUCK; the per-project rows are its own. 2026-08-28
+
+`EI-10` carries `EXT:WORK-CONTAINERS:WORK-R19 secrets store + per-project keychain backend`. Audited: **no
+WORK-CONTAINERS atom owns R19.** That plan is 11/12 done and the single open atom is the container one
+(`WF2WOR-12`, deliberately deferred/opt-in). So R19 has no producer and never will under that plan.
+
+The global half is already built and live: `config/credentials.py`'s keychain backend behind the
+`security.credential_keychain` config (`SH-1`, done), `{{secret:KEY}}` resolution
+(`workflows/secrets.py`, `triggers/secrets.py`'s `SECRET_REF_RE`, `bindings.py`'s `secret_resolver`, resolved
+at dispatch), and a secret-filtered leaf env (`mcp_shared.leaf_env`, `WF2WOR-5` done). What is absent is the
+**per-project** half — zero hits for `project_secrets` or any secret handling in `projects.py` /
+`project_context.py`, and no `/api/secrets` route anywhere.
+
+**And `EI-10`'s own `done_when` already assigns it:** *"the vault lists global + per-project secrets with
+presence-only values."*
+
+**RULED: strike the dep.** `EI-10` owns the per-project rows, layered over the keychain backend `SH-1`
+already shipped. The **global-scope** vault — listing, the presence-only API, inherit-from-host rows,
+consumer links — is buildable **today** and is the majority of the atom.
+
+**One clause does remain genuinely blocked, and it is not the struck dep:** *"a secret granted to sandboxed
+runs reaches a docker leaf's env while an ungranted sibling does not"* needs a container to be inside.
+`provisioning.py` still answers `Mode.CONTAINER` with a scratch dir and the comment that §4.4 is
+owner-deferred to `WF2WOR-12`, and `sandbox_providers/` contains no docker provider. So `EI-10` should be
+scheduled as **the vault plus the presence-only API**, with the grant-to-sandbox clause explicitly deferred
+to whenever a container provider exists — not held back whole for it.
+
+
+#### The general principle this applies
+
+**An `EXT:` dependency that points at nobody is not a dependency — it is unassigned work inside the atom.**
+`EXT:` deps are prose, nothing machine-checks them, and several were written as if a sibling plan would
+eventually decompose the capability they name. When no sibling atom ever does, the atom sits `todo` forever
+waiting on a plan that is not coming. The test is simple: *does any atom own the thing this dep names?* If
+not, and the atom's own `done_when` already describes it, the dep is redundant and gets struck. If not, and
+nothing describes it, it gets **filed** — not left as a dep. Either way it stops being a phantom blocker.
+
+Two atoms this week were parked exactly this way (`MC-6`, which owes its own `sound` field, and this one).
+Four more were found by a read-only audit of the 29 `EXT:`-only atoms.
