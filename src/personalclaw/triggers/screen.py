@@ -493,6 +493,22 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # text. That is both the untrusted-input boundary §8 fences and an unbounded unattended
         # spend, and either alone earns the opt-in.
         "browse",
+        # WF2KNO-9: `net-fetch` performs a GET, and a GET is NOT read-only for this table's purpose.
+        # Three reasons, each sufficient on its own:
+        #   * it LEAVES THE MACHINE. Every other id in the read-only set above stays local (a
+        #     dashboard row, a task row, a knowledge query, a run's own artifacts). A request to a
+        #     third party is observable by that third party, and on a schedule it is a repeating
+        #     signal about when this machine is awake and what it watches.
+        #   * its OUTPUT is attacker-controlled. The provider fences and bounds the body, but the
+        #     next node in the template is free to feed that text to a model — the same
+        #     untrusted-input boundary that puts `source-digest` and `browse` on this side.
+        #   * `provider_is_read_only` fails CLOSED, so omitting the line entirely would land it here
+        #     anyway. Spelling it out is what makes the decision reviewable instead of accidental —
+        #     which is this table's stated whole value, and what `test_capability_table_ids`
+        #     enforces in both directions.
+        # The egress allow-list is a real control but it is the OPERATOR's, set once globally; this
+        # opt-in is the per-trigger one, and neither substitutes for the other.
+        "net-fetch",
         # EI-7: the second-opinion handoff spawns a cataloged runner (or a subagent) one-shot
         # with write access to a real workspace — the strictest side of this table is the only
         # honest one for it. Note the disk re-diff that gates ACCEPTANCE is not a substitute for

@@ -162,7 +162,16 @@ chokepoint:
 
 - Named policies: `STRICT`, `CONNECTOR` (knowledge scraping), `WEBHOOK`
   (user-configured POSTs), `LOOPBACK_INTERNAL` (loopback only — **never
-  widened** by config), `REGISTRY`/`LISTED` (exclusive allow-lists).
+  widened** by config), `REGISTRY`/`LISTED` (exclusive allow-lists),
+  `FETCH_ACTION` (the `net-fetch` action provider — exclusive over an EMPTY
+  base list, so an unconfigured instance reaches nowhere).
+- The **exclusive** profiles — `LISTED`, `SYNC`, `FETCH_ACTION`, and the derived
+  `capture`/`a2a-outbound` — are the ones where a caller, not a person, picks the
+  URL. Each is `allow_only=True` over an empty base, so "nothing named yet" means
+  "nowhere to go". `METADATA_SERVICE_HOSTS` is denied on the two that can be
+  pointed at an operator-named host (`SYNC`, `FETCH_ACTION`): a deny is evaluated
+  before the allow-list AND before DNS, so it survives an operator who lists the
+  cloud metadata service by hand.
 - `egress_policy_for(base)` is the single config-layering seam: the Security
   panel's allow/deny hosts and `allow_private` are layered onto a base policy
   at the `web_fetch`/`web_extract`/render entry (`web/fetch.py`) and at

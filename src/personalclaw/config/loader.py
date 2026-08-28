@@ -2258,7 +2258,11 @@ class EgressConfig:
             "Allowed Egress Hosts",
             "Hosts (bare domain covers subdomains) permitted to be reached even if "
             "they resolve to a private/LAN address. For homelab webhooks/services on "
-            "your own network. Applies to all egress surfaces.",
+            "your own network. Applies to all egress surfaces. On the EXCLUSIVE "
+            "surfaces this list is the only reach there is, not a waiver on top of "
+            "the public internet: automated fetches (the net-fetch action) and "
+            "outbound A2A calls can reach these hosts and nothing else, so leaving it "
+            "empty means those surfaces reach nowhere.",
         ),
     )
     deny_hosts: list[str] = field(

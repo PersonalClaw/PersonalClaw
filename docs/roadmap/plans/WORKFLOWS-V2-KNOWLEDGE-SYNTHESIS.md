@@ -1078,3 +1078,47 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   it. Verified by content: the original blocked record IS on main, this section was NOT. Rule for next
   time — once a PR's content appears on main, treat that branch as spent and open a FRESH branch for
   any addition, rather than amending and force-pushing into a PR the train has already drained.
+
+- [2026-08-28][unblocked] **`WF2KNO-9`'s named blocker is closed: `net-fetch` is a dispatchable
+  HTTP-egress action provider.** The atom's `done_when` says it is blocked because *"net.fetch is a
+  library egress function, not a dispatchable action provider"*. Re-measured against `origin/main`
+  before designing, and the premise held in full: `ALLOWED_HOOK_PROVIDERS` (30 entries) had no
+  fetch/http/net member; none of the ~20 modules in `action_providers/` performed a network GET;
+  `net.fetch` had library callers only (`triggers/web_poll.py`, the knowledge connectors, the HF
+  token cascade, `packs/catalog_marketplace.py`); and `webhook` is POST-only and lives in
+  `apps/webhook-action`. No atom owned it — the only atom naming an egress provider is `EA-8`, which
+  is A2A-specific and sits behind the External-Access capstone.
+
+  Shipped: `action_providers/net_fetch_provider.py` (one bounded, guarded, fenced GET), the
+  `FETCH_ACTION` egress profile + `fetch_action_egress_policy()` in `net/policy.py`, and the four
+  registration points that must move together — `ALLOWED_HOOK_PROVIDERS`, the registry, the
+  write-capable capability table in `triggers/screen.py`, and the `action.web_fetch` autonomy
+  declaration in `guardrails/rungs.py`. A workflow action node resolves it by name through the
+  registry, so the four monitor/ingest templates (market-monitor, trending-repo-digest, the
+  dual-sink watcher, paper-ingest) now have a real HTTP-egress node to dispatch. Those templates are
+  `WF2KNO-9`'s own remaining work and are deliberately NOT in this change.
+
+  Security posture, since this is the first agent-influenced egress surface in core: the policy is
+  `LISTED`-derived (`allow_only=True` over an EMPTY host list), so an unconfigured instance reaches
+  **nowhere** — the same fail-closed reading `inbound/capture_proxy.capture_policy` and
+  `inbound/a2a.outbound_policy` both record, and deliberately NOT a `STRICT`/`CONNECTOR` base, on
+  which `egress_policy_for`'s UNION is an additive private-range waiver that would have left the
+  allow-list decorative. Reachability is the operator's EXISTING `security.egress.allow_hosts`
+  rather than a new field: that list is already unioned onto `SOURCE`, which an unattended
+  `web_watch` poll fetches under, and `SOURCE` is `allow_only=False` — so this provider's reach is a
+  strict SUBSET of a shipped unattended-GET surface, and a new field would be a sixth allow-list for
+  a consent decision already made once with a frontend control behind it. `METADATA_SERVICE_HOSTS`
+  (renamed from `SYNC_DENY_HOSTS`, now shared by both exclusive surfaces) is denied ahead of the
+  allow-list and ahead of DNS.
+
+- [2026-08-28][deviation] **No atom id at authoring time.** This was unowned scope: no atom existed
+  for the provider, and `docs/roadmap/atomic/dag.json` was deliberately left untouched. The owner is
+  filing the atom separately and will link it.
+
+- [2026-08-28][discovery] **Two premises in the briefing were already stale, both in
+  `triggers/screen.py`.** `APP_DELIVERED_PROVIDERS` does not exist anywhere in the repository (zero
+  hits across `src`, `tests` and `docs`), and there is no `EA-8` comment block in that file — `EA-8`
+  is still `todo` and only its `outbound_policy()` half landed, in `inbound/a2a.py`. The capability
+  tables are still exactly `READ_ONLY_PROVIDERS` / `WRITE_CAPABLE_PROVIDERS`, and a core-native
+  provider needs one line in one of them. Recorded because the same two claims will otherwise be
+  re-derived by the next session.

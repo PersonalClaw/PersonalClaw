@@ -917,6 +917,14 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # without this entry a hook, trigger or workflow naming `browse` is rejected at
         # create time, so the provider would be dispatchable by nothing at all.
         "browse",
+        # AUTOMATION-SUBSTRATE / WF2KNO-9: the dispatchable HTTP-egress action (one bounded,
+        # guarded, fenced GET). This entry is the load-bearing half of the atom, exactly as it
+        # is for `browse`
+        # above: without it a hook, trigger or workflow naming `net-fetch` is rejected at CREATE
+        # time, so the provider would be dispatchable by nothing at all and the four monitor/ingest
+        # templates would stay blocked on a provider that exists. Registered in
+        # `action_providers.registry` in the SAME commit as this line.
+        "net-fetch",
         # EXECUTION-ISOLATION §4.1 (EI-7): the stalled-node handoff to a DIFFERENT cataloged
         # runner. A workflow gate's `on_stall: second_opinion` policy is an ordinary trigger
         # action, so it goes through this same validation — registered in the action-provider
