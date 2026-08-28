@@ -241,10 +241,28 @@ function NativeRow({ agent, index, isDefault, onClick }: { agent: SavedAgent; in
           {agent.description && <span className="truncate" title={agent.description}>{agent.model ? '· ' : ''}{agent.description}</span>}
         </div>
       </div>
+      {/* Three bare integers, and an 11px glyph deciding which dimension each belongs to. Measured on
+          the live DOM (`demo-home`): `personalclaw-loop` exposed "1" and `personalclaw-template-refiner`
+          exposed "2", with NO `title`, NO `aria-label` and no `<title>` in the svg — so a screen-reader
+          user gets the numbers and nothing that says what is being counted, and 1 skill is
+          indistinguishable from 1 tool.
+
+          🔑 `role="img"` + a label is this repo's DECLARED form for exactly this case, and this is the
+          fourth adopter rather than a new idea:
+            · `settings/FeedbackPanel` — `<span role="img" aria-label={`${row.ups} marked accurate`}>` for
+              the same shape (two bare counts, a 10px ThumbsUp/ThumbsDown as the only carrier)
+            · `settings/ModelsPanel`'s breaker dot — "the dot is the ONLY carrier of the state"
+            · `settings/UsagePanel`'s bar row
+          🪤 AND THE ROLE IS LOAD-BEARING, NOT DECORATION: on a role-less `<span>`, `aria-label` is a
+          PROHIBITED attribute and the name is DISCARDED (`ModelsPanel` records this) — so labelling
+          these without `role="img"` would look correct in the diff and change nothing in the tree.
+
+          The visible text is untouched: this is an accessibility-tree fix and the captures are
+          identical. The wording names the dimension the row's own detail view uses. */}
       <div className="hidden sm:flex shrink-0 items-center gap-m text-on-surface-low text-[0.75rem]">
-        {(agent.skills?.length ?? 0) > 0 && <span className="inline-flex items-center gap-1"><Sparkles size={11} /> {agent.skills!.length}</span>}
-        {(agent.tools?.length ?? 0) > 0 && <span className="inline-flex items-center gap-1"><Wrench size={11} /> {agent.tools!.length}</span>}
-        {(agent.triggers?.length ?? 0) > 0 && <span className="inline-flex items-center gap-1"><Zap size={11} /> {agent.triggers!.length}</span>}
+        {(agent.skills?.length ?? 0) > 0 && <span role="img" aria-label={`${agent.skills!.length} skill${agent.skills!.length === 1 ? '' : 's'}`} className="inline-flex items-center gap-1"><Sparkles size={11} /> {agent.skills!.length}</span>}
+        {(agent.tools?.length ?? 0) > 0 && <span role="img" aria-label={`${agent.tools!.length} tool${agent.tools!.length === 1 ? '' : 's'}`} className="inline-flex items-center gap-1"><Wrench size={11} /> {agent.tools!.length}</span>}
+        {(agent.triggers?.length ?? 0) > 0 && <span role="img" aria-label={`${agent.triggers!.length} trigger${agent.triggers!.length === 1 ? '' : 's'}`} className="inline-flex items-center gap-1"><Zap size={11} /> {agent.triggers!.length}</span>}
       </div>
     </ListRow>
     </ContextMenu>
