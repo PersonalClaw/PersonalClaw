@@ -1392,7 +1392,7 @@
     {
       "plan": "DOCUMENT-FIDELITY-EDITOR",
       "code": "DFE",
-      "status": "in_progress",
+      "status": "done",
       "summary": "DESIGNED, not started \u2014 verified against code (no documents/parsers/, no Run/Cell/ParagraphStyle/PageSetup in model.py, only GET /raw exists, no document_editing config, no DFE commits; empty execution log is accurate). Decomposed into 8 atoms along the plan's S0\u2013S4 session seams, splitting S1, S2, and S4 at natural feature boundaries. The only pause point is the editor atom (DFE-5), gated on owner task 2's editing-library decision (E5).",
       "atoms": [
         {
@@ -1450,32 +1450,35 @@
         {
           "id": "DFE-6",
           "title": "Layout control: page setup, paragraph layout, headers/footers, page-geometry preview",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 T3.1\u2013T3.4; PageSetup/ParagraphStyle model\u2192docx writer\u2192parser\u2192editor controls; \u00a76 (preview is a labelled approximation \u2014 no rasterizer)",
           "done_when": "A4 landscape with 2cm margins round-trips correctly on python-docx read-back; alignment/space-before-after/line-spacing/indents/keep-with-next each round-trip and the editor's controls reflect the loaded document's real values (not defaults); a header round-trips and one the model can't represent is reported not dropped; the geometry preview reflects configured size/margins and is labelled an approximation. V3 gate holds.",
           "deps": [
             "DFE-5"
-          ]
+          ],
+          "status_note": "Verified clause-by-clause on origin/main 2026-08-27: PageSetup closed size set + per-edge margins round-trip at +-1 twip on the REOPENED file with a vacuity floor asserting the python-docx template default is not what is measured; all eight paragraph props write and read back (first_line_indent guarded != 0 so a hanging indent survives); header writes a real fldSimple PAGE, reads BOTH spellings, and an unrepresentable header raises a header_footer LossItem instead of flattening; geometry preview renders per-axis insets, nothing when no size is named, labelled in prose AND aria-label. Controls reflect the LOADED document (DocumentEditor passes page=pageOf(model), style=styleOf(block)), every positive FE case has a foil."
         },
         {
           "id": "DFE-7",
           "title": "Sheets: styled SheetModel + xlsx parser + grid editor (formulas stay formulas)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 T4.1\u2013T4.2; SheetModel per-cell format (font/fill/number-format/alignment), column widths, merges, formulas-as-formulas; parsers/xlsx_parser.py; the sheet grid editor over the model",
           "done_when": "a formula stays a formula through the round trip (today \"=SUM(A1)\" is written as a string); a cell edit + a number format survive download/read-back. V4 gate (sheet half) holds.",
           "deps": [
             "DFE-5"
-          ]
+          ],
+          "status_note": "Verified clause-by-clause on origin/main 2026-08-27: SheetCell keeps value and formula separate, __post_init__ refuses a formula without a leading '=', the writer pins data_type='s' for a value-only cell and the parser reads data_type=='f' off the FILE rather than sniffing '='; test_a_formula_stays_a_formula and test_a_label_that_looks_like_a_formula_stays_a_label are each other's vacuity leg. Wider scope also shipped: xlsx_parser, SheetGrid registered live as xlsx in the EDITORS table, _MODEL_KINDS=('docx',) replaced by model_codec.MODEL_KINDS=('docx','xlsx')."
         },
         {
           "id": "DFE-8",
           "title": "Decks: DeckModel/Slide layout+geometry+bullet levels + pptx parser + slide editor",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 T4.3\u2013T4.4; DeckModel/Slide layout selection, per-shape geometry, bullet levels; parsers/pptx_parser.py; the deck editor (slide list + per-slide fields)",
           "done_when": "bullet depth round-trips (the writer hardcodes level=0 today); a slide edit survives download/read-back. V4 gate (deck half) holds.",
           "deps": [
             "DFE-5"
-          ]
+          ],
+          "status_note": "Verified myself on origin/main 2026-08-28. documents/model.py's Bullet carries `level` and its docstring records the defect it closes: 'Before this, a slide body was list[str] and the writer pinned level = 0, so every deck came out flat no matter what went in.' writers/pptx_writer.py now contains ZERO `level=` occurrences (the hardcode is gone); deck_json.py reads level with a default; tests/test_decks.py asserts level=1 and level=2 round-tripping; deckModelEdit.ts + slideDeckContract.test.tsx cover the slide-edit read-back clause. Merged 40eaf502 (flattened off its stacked base at ship time, taking main's focus-ring class since main forbids an alpha ring)."
         }
       ]
     },
@@ -1497,13 +1500,14 @@
         {
           "id": "BA-2",
           "title": "CDP browser integration + per-page safety-script injection + BROWSE egress policy + redirect re-eval",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a73 Per-Page Safety Script Injection; \u00a74 Stealth Stack; \u00a76 Egress Chokepoint Integration (6.1 BROWSE policy, 6.2 redirect re-eval, 6.3 headless bypass gap); Session 2",
           "done_when": "Every CDP navigation is pre-flighted through net/guard.py:evaluate against a new BROWSE profile in net/policy.py; a denied host is blocked before Page.navigate fires and the block is recorded in the SEL; the injected safety script makes a test page's fetch()/media.play()/navigator.bluetooth throw or return blocked; client-side redirects re-evaluated per Page.frameNavigated \u2014 SC 4, SC 5",
           "deps": [
             "BA-1",
             "EXT:AUTONOMY-GUARDRAILS:net/guard egress chokepoint + HEADLESS safety profile"
-          ]
+          ],
+          "status_note": "Verified clause-by-clause on origin/main 2026-08-27: BROWSE profile at net/policy.py registered, GatedCdpSession._gate -> egress_policy_for(BROWSE) -> net/guard.evaluate with a LIVE non-test caller (browse_provider constructs it, registry registers BrowseActionProvider); the block returns BEFORE the Page.navigate send and writes a browse_egress SEL row; safety_script guards fetch/HTMLMediaElement.play/navigator.bluetooth injected via addScriptToEvaluateOnNewDocument; FRAME_NAVIGATED re-judged with stopLoading+about:blank teardown."
         },
         {
           "id": "BA-3",
@@ -1555,13 +1559,14 @@
         {
           "id": "BA-7",
           "title": "user_browser execution-target selector on the browse action config (default gateway, no silent fallback, unattended refusal)",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-29 (a) A second execution target behind one selector + (d) rung cap interactive-only; task B1",
           "done_when": "browse action config gains target: 'gateway'|'user_browser' (default 'gateway', byte-identical existing behavior under regression test); an unconnected user_browser task returns outcome='skip' with a typed actionable reason and NEVER silently falls back to the gateway profile; a scheduled/unattended/cron plan naming user_browser is refused at registration time with a typed error, not at run time \u2014 task B1",
           "deps": [
             "BA-3",
             "EXT:AUTONOMY-GUARDRAILS:earned-autonomy ladder rung floor (never-unattended)"
-          ]
+          ],
+          "status_note": "Verified on origin/main 2026-08-28: merged as 3e684d8a. browse/target.py selects the execution target, permits_unattended + unattended_refusal refuse user_browser unattended, triggers/tools.py refuses at REGISTRATION (create AND update - the update hole was real), browse.user_browser_enabled passes all five config round-trip points with a Settings control. Its log: 'DONE - all three clauses met.' Byte-identical existing behaviour was proved by running main's provider and the branch's as two live modules over the same 12-case matrix, 6 of which reached a connect."
         },
         {
           "id": "BA-8",
@@ -1732,7 +1737,7 @@
             "ES-1",
             "EXT:MEMORY-GRAPH-AND-VAULT:memory-side graph arm + push-context resolver arms for the memory ablation"
           ],
-          "blocked_reason": "PARTIAL \u2014 six of seven clauses hold and are SHIPPED on main (evals/retrieval_bench.py, the arms= mask on both retrievers, `personalclaw retrieval-eval`, three /api/evals/retrieval* routes and RetrievalBenchPanel.tsx). Two real gaps closed in PR #2091: the read-only rail guarded only the store the run OPENED, so a knowledge run that wrote to memory.db -- the one write the KNOWLEDGE/MEMORY boundary exists to forbid -- passed; and the qrels provenance was on disk but absent from table.json, the API view and the panel, so P@5/R@5 were published with no statement of which labels produced them. BLOCKED (E6, external): clause 4's source (a) for the knowledge store needs `surfacing_events`, which appears in the entire tree exactly ONCE and only as prose in dashboard/handlers/learning.py -- no table, no schema, no reader, no writer. Mining it means minting LEARN-R4's schema AND its writer inside ES-3, which is LEARNING-FLYWHEEL section 2.5's deliverable. Clears when that lands. OWNER CALL, surfaced not decided (carried from 2026-08-25): RunPin requires a non-empty model_fingerprint, but a retrieval score is a function of the EMBEDDING model -- whether the pin narrows to the embedding binding for this subject is the owner's call. Source (c) stays declined on circularity grounds, and push-context resolver arms have a second blocker beyond the signature mismatch: mem_volunteer_events stores entity_name/arm but never the surface text that triggered the match, so there is no stored input to replay."
+          "blocked_reason": "UNBLOCKED 2026-08-27 \u2014 the named external blocker has CLEARED and this atom is STARTABLE. The reason previously recorded that clause 4 source (a) needed `surfacing_events`, which 'appears in the entire tree exactly ONCE and only as prose'. That is no longer true: LEARN-R4 landed (PR #2134) and on main `surfacing_events` now has a real table (learning/surfacing_events.py CREATE TABLE), a real writer (skills/allocation.py _record_surfacing_events, INSERT INTO), and evals/retrieval_bench.py already reads it \u2014 seven files reference it across src/ and tests/. So the E6 external dependency is discharged and nothing needs minting inside ES-3. OWNER RULING 2026-08-27 on the question this atom surfaced but did not decide: RunPin requires a non-empty model_fingerprint, and the atom asked whether the pin may narrow to the EMBEDDING binding for a retrieval subject. RULED YES, it must. A retrieval score is a function of the embedding model, so the embedding binding is the thing whose change invalidates the score; pinning a generation-model fingerprint would make baselines incomparable across an embedding swap while still LOOKING comparable. That is the same poisoning ES-11's ruling forbids when it refuses an invented fingerprint. Narrow the pin to the embedding binding for retrieval subjects and say so at the read surface. Source (c) stays declined. No owner input remains; the six shipped clauses plus PR #2163's two rail fixes stand."
         },
         {
           "id": "ES-4",
@@ -2947,7 +2952,8 @@
           "done_when": "The filtered knowledge Decision-Journal view shows pending (horizon countdown + overdue flag), resolved (expectation-vs-outcome side-by-side + linked lesson chip), and a per-domain calibration strip computed from knowledge.db alone (count-caveat under n=10, no LLM/new store); too_early defers at most twice then shows stale-pending; grep-audit confirms neither store writes the other (criteria 5/6/7/8)",
           "deps": [
             "PA-4"
-          ]
+          ],
+          "blocked_reason": "PARTIAL. Clauses 1-3 MET and criterion 10 driven end to end, on a backend that had already declared the IA with ZERO frontend consumers (the approval-rules routes shipped with PA-1 unconsumed, and ProactiveConfig was wired through all four round-trip points with no UI control, so proactive.triage_enabled was unreachable). Clause 4 holds for TWO of three legs - rule revocation and quiet-hours deferral were DRIVEN through the real frontend; the third leg's positive case (a second tap on a still-pending proposal ACKING rather than re-executing) is asserted by TEST ONLY, because this environment has no bound model provider, so the proposal stage refuses and no digest with pending proposals can be produced here. NEEDS A BOUND MODEL. Four defects were found on the way, three only by driving: the ordinal contract was not redeemable across a process boundary (Manifest was never persisted, so a card opened after the minting process exited resolved an ordinal against a RENUMBERED window - criterion 9's wrong-target execution with no adversary), and the reconcile silently rewrote a user's edited cron."
         }
       ]
     },
@@ -4231,7 +4237,8 @@
           "deps": [
             "CA-6",
             "EXT:REMOTE-USER-AUTH:S4 remote/TLS boundary (public_url, Secure/wss) \u2014 already shipped 2026-07-30"
-          ]
+          ],
+          "blocked_reason": "PARTIAL, verified 2026-08-27. The MECHANISM holds: api_ws -> _check_ws_origin -> _paired_device_session with token_auth writing session_nonce, and 'no new origin exemption' holds by ABSENCE (build_allowed_origins has no public_url term, pinned by a byte-identical rail). What is UNMET is REMOTENESS, not mechanism: no shipped client dials a remote wss - desktop/main.js hardcodes http://localhost:${port} and nothing under mobile/ opens a WebSocket. The helper this atom shipped, web/src/lib/endpoints.ts endpointSocket, has ZERO production consumers. The reconnect/changed-IP path works but the client that reconnects is the TEST client. SMALLEST REMAINING UNIT: give endpointSocket its first consumer - one shipped shell dialling the active registry row's wss instead of the local backendUrl; it lands naturally with CA-8. Rough edge the eventual human drive will hit: public_url reaches the CSP but NOT allowed_origins, so a WebView is refused until dashboard.url matches."
         },
         {
           "id": "CA-8",
@@ -4312,14 +4319,14 @@
         {
           "id": "EA-5",
           "title": "External-agent capture proxy (/capture/v1) + telemetry import",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a77 (Dialect 5 capture proxy): \u00a77.1 dual-wire OpenAI/Anthropic proxy, \u00a77.2 recording + fence-at-ingestion; \u00a78 telemetry import. Session 4.",
           "done_when": "/capture/v1/chat/completions + /capture/v1/messages forward verbatim to a client-record `upstream` ProviderEntry (standard credential order) with passthrough fallback; loopback-only always; SSE piped via a dedicated streaming client that pre-flights guard.evaluate against an operator-visible upstream host allowlist (web/render.py:76 pattern); stream-first, record-async off hot path (asyncio.to_thread), recording failure never fails the forwarded request; capture/<id>.jsonl (0600) turn records + full-content sidecar; read-skill attribution via skill_path_map; redact()\u2192fence_untrusted(source=capture:<client_id>) BEFORE persist; new `capture` staging source in learning.db (records durably even if flywheel steps 1-3 absent \u2014 hookup is one adapter); retention prune at capture.retention_days (default 30) on curator tick; `personalclaw capture import <file> --format jsonl|json|sse` + POST /capture/import normalize\u2192redact\u2192fence\u2192stage, idempotent by content hash, malformed-lines skipped-and-counted (Success Criteria 5,6).",
           "deps": [
             "EA-1",
             "EXT:LEARNING-FLYWHEEL:learning.db staging tier + capture_hygiene fence rule (records without it; mining hookup is one adapter)"
           ],
-          "blocked_reason": "PARTIAL (2026-08-25). The 'forward to a client-record upstream ProviderEntry' clause is NOW CLOSED -- InboundClient.upstream ships, create_client takes it, and capture_proxy resolves it through the shared credential ladder with a pre-flight egress guard at capture_proxy.py:534. TWO clauses remain, both found while closing that one. (1) POST /capture/import DOES NOT EXIST: git grep add_post finds only the two /capture/v1/* routes, while the CLI half ships at cli.py:621-628. That is an independent unmet done_when clause and it alone keeps this atom todo. (2) upstream_allowlist has NO FRONTEND CONTROL: backend round-trip is 4-of-5 (dataclass+_meta at loader.py:3894, load() :5178, to_dict asserted in test_ea5_capture_store.py:793, PATCH allowlist core.py:718) but git grep upstream_allowlist -- web/src is EMPTY, while the neighbouring capture_retention_days has a control at ExternalAccessPanel.tsx:206. Consequence worth stating: the default allowlist is EMPTY and an empty list DENIES EVERYTHING (fail-closed, correctly), so a user who enables capture hits a total refusal with no UI to fix it. Clears when /capture/import lands and the allowlist gets a control; the second is a web/ change with its own gate."
+          "status_note": "Verified on origin/main 2026-08-27: every clause is merged. The 2026-08-25 blocked_reason listing TWO remaining clauses was stale. POST /capture/import is registered at inbound/capture_proxy.py (add_post ROUTE_IMPORT inside register_routes, beside the two /capture/v1/* dialects) and delegates to the same _admit gate and the same import_capture_file the CLI uses, so there is one pipeline and one report dialect; the path is deliberately NOT under /capture/v1/ because v1 names the vendor wire protocol an agent's SDK speaks while the import report is this project's own shape. The upstream_allowlist control ships at ExternalAccessPanel.tsx as a StrListField that was PROMOTED out of AgentDefaultsPanel into the shared settings UI rather than duplicated, completing the five-point round trip. Its empty state states the consequence rather than implying it. Two sibling clauses the stale reason also listed (a capture staging source in learning.db, and prune() being inert) landed in a0bc0bf9. SECURITY RULING preserved: the CLI takes any path while the route reads only imports_dir(), because the route's bearer is a low-privilege capture token and a caller-chosen path would make the gateway a file-read oracle - the two entry points share one pipeline, not one path set."
         },
         {
           "id": "EA-6",
@@ -5174,7 +5181,8 @@
           "pr": 1392,
           "scope": "\u00a72.1 The core: sampling.py helper; \u00a72.2 The skill: skills/bundled/best-of-n/SKILL.md",
           "done_when": "best_of_n(prompt,n,judge_criteria,use_case) fires N temperature-varied parallel one_shot_completion calls through the ModelCallGuard chokepoint, LLMJudge scores each and returns winner+candidates+judgments, and appends a bounded record (ts,n,criteria_digest,winner_idx,score_spread,tokens_total) to ~/.personalclaw/sampling_outcomes.jsonl (snapshot-excluded); skills/bundled/best-of-n/SKILL.md confirms N (cap 5)+criteria naming the N-call cost multiplier (grill ambiguous-trigger precedent), presents winner with collapsible runners-up and a working 'use #2' choice; chat 'give me 3 versions and pick the best' validated end-to-end with all N calls visible in model_calls.jsonl (SC 3, 4).",
-          "deps": []
+          "deps": [],
+          "blocked_reason": "Status `blocked` is CORRECT and the blocker is an OWNER LIVE RUN, re-verified 2026-08-27 - do not re-implement. best_of_n(prompt, n=3, judge_criteria, use_case) is genuinely parallel (create_task per candidate + gather), proven by peak_in_flight==4 AND a wall-clock span assertion so a for-await loop fails both; every sample goes through the wrap_model_call_guard chokepoint; the judge picks deterministically with ties to the lowest index, pinned across opposite completion orders; the outcomes file is bounded; and snapshot exclusion is WIRED (StateEntry(derived=True) -> backup_entries filters not e.derived -> snapshot iterates that). The bundled skill carries the cap, the cost multiplier inside the gate, and a numbering rule that makes 'use #2' fixed. MEASURED FINDING: one_shot_completion had NO temperature parameter, so 'temperature-varied' was unbuildable as written - it was added and threaded; documented caveat, an extended-thinking model DROPS a custom temperature and collapses the ladder to zero spread. UNMET: the live run, which needs a real paid model and spends real money, so no agent may do it. SMALLEST REMAINING UNIT: the owner starts the dev gateway on an isolated home with a real credential, asks for 3 versions and a pick, confirms the gate names 3x cost and that <home>/model_calls.jsonl shows 3 sample calls plus the judge pass, then records it in the plan's Execution log."
         },
         {
           "id": "HC-4",
@@ -5461,7 +5469,8 @@
           "deps": [
             "DC-2"
           ],
-          "status_note": "PARTIAL (2026-08-16) \u2014 T3.1/T3.2/T3.3 implemented and gated; stays `todo` for V3. The renderer half is driven end to end in tests (chord push -> grant -> capture -> chunked upload -> insert at cursor, and every track stopped on release). THREE LEGS ARE UNEXERCISED because they need a launched shell on a real Mac: (1) that macOS delivers the global chord at all (globalShortcut is stubbed; Electron was never launched), (2) the real TCC prompt, (3) a real microphone (jsdom has neither getUserMedia nor MediaRecorder, so both are fakes). Also outstanding: owner task 3 (mic-privacy sanity pass) and owner task 4 (approve the default chord). DEVIATION: the global chord TOGGLES rather than reading key-release -- Electron exposes no global key-up event, so \"held\" is unreachable without an accessibility-class input tap we deliberately do not request; the done_when allows \"held/toggled\" and a 2-minute capture ceiling bounds a forgotten toggle."
+          "status_note": "PARTIAL (2026-08-16) \u2014 T3.1/T3.2/T3.3 implemented and gated; stays `todo` for V3. The renderer half is driven end to end in tests (chord push -> grant -> capture -> chunked upload -> insert at cursor, and every track stopped on release). THREE LEGS ARE UNEXERCISED because they need a launched shell on a real Mac: (1) that macOS delivers the global chord at all (globalShortcut is stubbed; Electron was never launched), (2) the real TCC prompt, (3) a real microphone (jsdom has neither getUserMedia nor MediaRecorder, so both are fakes). Also outstanding: owner task 3 (mic-privacy sanity pass) and owner task 4 (approve the default chord). DEVIATION: the global chord TOGGLES rather than reading key-release -- Electron exposes no global key-up event, so \"held\" is unreachable without an accessibility-class input tap we deliberately do not request; the done_when allows \"held/toggled\" and a 2-minute capture ceiling bounds a forgotten toggle.",
+          "blocked_reason": "PARTIAL, verified 2026-08-27 - CODE IS COMPLETE; what remains is an environment gate plus two owner tasks, so do NOT schedule an implementation slot. Shipped and live: makePushToTalk registered in main.js, the global_hotkey capability, a Settings control, the config field through its round-trip points, and an indicator with ONE writer where capture always wins, driven from real renderer state rather than 'we sent a press'. The composer path is real end to end and stops the tracks. UNVERIFIABLE-BY-CODE: that macOS delivers the chord (globalShortcut is stubbed) and that the real TCC prompt appears. TWO residuals worth recording: the done_when's wording says chunk upload but useMicRecorder calls rec.start() with NO timeslice, so it posts ONE blob - the wording is wrong, not the code; and '<=2s on faster-whisper local' is UNMEASURED. SMALLEST REMAINING UNIT: one dogfood pass on a real Mac, plus owner tasks 3 (mic-privacy pass) and 4 (approve the chord). Nothing to build."
         },
         {
           "id": "DC-4",
@@ -5471,7 +5480,8 @@
           "done_when": "tray/menu-bar icon+menu shows pending-approvals count (click-through deep-links into the SPA), running loops, quick-capture note->inbox, open dashboard, quit; counts live-update over the loopback WS/API; login-item toggle (Settings via bridge) survives reboot; graceful gateway shutdown on quit leaves no orphan gateway (process table verified). AMBIENT-SURFACES menu-bar tiles render here only when that plan is available (non-blocking).",
           "deps": [
             "DC-2"
-          ]
+          ],
+          "blocked_reason": "PARTIAL, verified 2026-08-27 - and UNLIKE its siblings this one has REAL CODE GAPS, so it IS schedulable. (1) The login-item clause says 'Settings via bridge': the bridge exists (preload loginItem.get/set + registerLoginItemIpc) with ZERO renderer consumers - grep loginItem over web/ returns nothing and desktopBridge.ts does not even declare it. The only user-reachable control is the TRAY checkbox, which bypasses the bridge. (2) Quick-capture is an INERT CONTROL: main.js deep-links `${DEEP_LINKS.inbox}?capture=1` and NOTHING in web/src reads a capture query flag, so the note->inbox write never happens. What DOES hold: the tray menu is complete, presence polls /api/approvals + /api/loops every 5s and renders 'not connected' rather than 0 on a failed poll, and graceful quit was genuinely closed by the later commit - gateway spawned detached, shutdown signals the GROUP with readPgid verification and probes with signal 0, MEASURED for real (pgid==pid, exited in 18ms, no survivors) with the pre-fix leak reproduced first. SMALLEST REMAINING UNIT: decide where 'Open at Login' lives in Settings, declare loginItem in desktopBridge.ts, render one toggle against the existing IPC. The ?capture=1 half belongs to INBOX-NOTIFICATIONS-UNIFICATION, not this plan."
         },
         {
           "id": "DC-5",
@@ -5482,7 +5492,8 @@
           "deps": [
             "DC-2",
             "EXT:INBOX-NOTIFICATIONS-UNIFICATION:native notification target registered in the rules engine"
-          ]
+          ],
+          "blocked_reason": "PARTIAL, and the remaining legs are HARDWARE, not code. The native target was declared-but-inert on three layers at once and all three are now wired: notification_rules.TARGETS carried `native` with the comment 'accepted and persisted but inert', its only consumer being a metadata annotation nothing read; desktop/main.js imported Electron's Notification solely for isSupported(); and the frontend listed native in INERT_TARGETS so a user could tick a checkbox that did nothing. native_delivery(rule, capability) is now one pure function with three outcomes, wired at the single delivery choke point on the immediate path only, consulting `available` rather than `granted` because macOS never reports notification authorization. UNOBSERVED: whether macOS actually draws the banner and whether a real click fires the handler - Electron was never launched, so those are proven against a recording double. Pairs with DC-1's dmg and DC-3/DC-4/DCU-3's identical on-device remainders: ONE launched signed shell closes four plans' V-clauses at once."
         },
         {
           "id": "DC-6",
@@ -5980,7 +5991,8 @@
             "MC-3",
             "MC-4",
             "EXT:INBOX-NOTIFICATIONS-UNIFICATION:per-(source,kind) sound/badge rules field + inbox resolve API"
-          ]
+          ],
+          "blocked_reason": "PARTIAL, verified 2026-08-27. Clause 1 is FULLY SHIPPED and gated (the MC.md glyph understates it; the honest mark is a partial, not an empty box): CompanionSections ships RunningLoops/Tasks/Inbox/Recent in the asserted order, MC-3's 'Not on the phone yet' stub list is DELETED rather than flagged off, useCompanionAction owns revert AND reconcile once for all four, and every endpoint has a real client. Loops are read-only-plus-actions deliberately because PP-16 is unifying Loops concurrently. Clause 2 is UNMET on three independent absences, any one decisive: web/src/sw.ts is 122 lines with install/activate/fetch and NO push handler at all; web/src/app/pushPolicy.ts - the clause's actual call site for notificationFor() - does not exist; and the `rules` field the clause reads FROM does not exist, because notification_rules.Rule is mode/targets/conditions/verify with no `sound` and no per-kind badge key. SMALLEST REMAINING UNIT: land MC-5 first (it owns the sw.ts push handler and pushPolicy.notificationFor), then add `sound` to Rule + _coerce_rule + rules_document() + the PUT guard + a control in NotificationRulesMatrix, naming a voice from the EXISTING closed set in web/src/design/soundCues.ts rather than minting a vocabulary. This is entity_settings state, so the config round-trip contract does not apply and loader.py does not grow. Platform constraint for whoever takes it: a service worker CANNOT play audio, so 'a distinct sound fires' means silent/vibrate on the notification plus a message to an open client that plays the voice."
         },
         {
           "id": "MC-7",
@@ -5991,7 +6003,8 @@
           "deps": [
             "MC-3",
             "MC-2"
-          ]
+          ],
+          "blocked_reason": "PARTIAL, verified 2026-08-27 - the shell is COMPLETE and the gap is a toolchain, so do NOT schedule an implementation slot. mobile/ ships 14 tracked files wrapping the SERVED route (COMPANION_ROUTE='#/companion'); the gateway URL is deliberately RUNTIME state with capacitor.config.json OMITTING server.url/hostname (a rail asserts their absence) because baking it means one store build per owner; the device session needs no new contract since the shell hands the WebView to the gateway's own /pair page so the httponly cookie lands in the jar the companion reads (a rail asserts no fetch(...pair/complete...) exists under mobile/ and that ?token= stays forbidden); safe areas use two mechanisms for two documents against a measured premise (web/src has ZERO env(safe-area-inset-*)); no forked UI, enforced three ways. It is the FIRST consumer of web/src/lib/endpoints.ts, which previously had zero production importers. SUB-GAP logged for MC-8: rows this shell creates carry device_session_ref:'' and it is never filled, because pair/complete returns device_id/name/kind/expires_in and not the nonce. UNVERIFIABLE-BY-CODE: mobile/ios and mobile/android are deliberately gitignored (generated by `cap add`; a committed copy forks the template), so nothing in the repo could be built and no code change closes this. SMALLEST REMAINING UNIT: an Xcode + CocoaPods + Android SDK pass on a Mac - npm ci from the root, npm run add:ios/add:android, install to a simulator, enter a gateway address, confirm live #/companion renders. Neither native safe-area key can be proven by any test in this repo."
         },
         {
           "id": "MC-8",
@@ -6088,13 +6101,12 @@
         {
           "id": "DL-6",
           "title": "T3.4: launch-post draft (architecture-receipts narrative)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 \u2014 Launch assets (T3.4)",
           "done_when": "src/content/blog/launch.md draft complete citing threat model, scanner gate, egress chokepoint, zero telemetry, plus an honest limitations paragraph; owner sign-off recorded",
           "deps": [
             "EXT:SECURITY-LEGIBILITY:threat model + scanner gate + egress chokepoint narrative"
-          ],
-          "blocked_reason": "READY TO FLIP, unmerged only (2026-08-27). Both clauses are closed. Owner sign-off on the draft was given 2026-08-26. The cross-repo clause is closed in personalclaw.dev@36fe0f0 (branch feature-dl6-launch-post, base 3cc45c8): the blog collection is defined, /blog and /blog/launch build and are contracted as a third differently-held tier (metadata + runtime + axe WCAG A/AA + Lighthouse, deliberately no pixel baseline), and the post is at src/content/blog/launch.md \u2014 the exact path done_when names. Full local gate green under Node 22.12.0: test:prepush exit 0, 112 Playwright passed, Lighthouse 100/100/100 on both new routes, 30 visual baselines unchanged. Flip when that website branch merges. NOTE: ten claim families in the core draft were TRUE ON MAIN AND FALSE AT v0.1.3 and were cut from the published post with the cut list published on the page \u2014 see the plan's 2026-08-27 DISCOVERY entry. /blog has no in-site inbound link yet, deliberately, to avoid invalidating the Linux shell baselines; that is a named follow-up."
+          ]
         },
         {
           "id": "DL-7",
@@ -6463,22 +6475,20 @@
           "done_when": "fixture home with seeded lessons/facets/skills yields a truthful report whose counts byte-match store contents with zero writes to any learning store (inspected before/after); no-model fixture still produces the deterministic sections; compressed-clock fixture fires the job, item lands in inbox linking the artifact, quiet-hours suppresses the ping but not the artifact, config round-trips and 'off' disables cleanly",
           "deps": [
             "LV-3",
-            "EXT:INBOX-NOTIFICATIONS-UNIFICATION:emit_attention_item kind=report (pre-42 source=learning InboxItem fallback)",
-            "PHF-14"
+            "EXT:INBOX-NOTIFICATIONS-UNIFICATION:emit_attention_item kind=report (pre-42 source=learning InboxItem fallback)"
           ],
-          "blocked_reason": "OWNER RULING 2026-08-26 on the config-headroom question this atom raised. compose/render/narrate/deliver + both routes + FE panel are shipped and railed; counts, zero-writes, no-model floor, inbox item and quiet-hours are MET. UNMET: the clock job firing, cadence monthly|weekly|off, and 'off' disables cleanly \u2014 all three need a learning.identity_report_* config field, which cannot be added because config/loader.py is 5900 lines against an ABSOLUTE 6000-line ceiling with a >=100 headroom rail (tests/test_structural_baseline.py::test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance). The owner was offered three options \u2014 compress loader.py, split LearningConfig out, or raise the ceiling. RULED: SPLIT, and generalised beyond LearningConfig. Raising the ceiling defeats the rail whose own docstring predicted this exact arrival; compressing buys one field. The split is now PHF-14, added as a dep. LV-4 is unblocked the moment PHF-14 lands and needs no further owner input."
+          "blocked_reason": "UNBLOCKED 2026-08-27 - the 2026-08-26 ruling's PREMISE IS NOW STALE and this atom is STARTABLE. That ruling said config/loader.py was 5900 lines against an ABSOLUTE 6000-line ceiling with a >=100 headroom rail, so learning.identity_report_* could not be added, and it made PHF-14 (the split) a dep. Re-measured on origin/main 2026-08-27: loader.py is 5581 lines, headroom 419. PHF-15 and SH-2 shaved 300+ lines out of it. So the field can be added end-to-end TODAY with no split, and PHF-14 has been REMOVED as a dep - it remains worth doing on its own hygiene merits but it is no longer this atom's blocker. Remaining work unchanged otherwise: the clock job firing, cadence monthly|weekly|off, and 'off' disabling cleanly, all three riding on the new config field through the five round-trip points plus the existing FE panel. compose/render/narrate/deliver, both routes, counts, zero-writes, no-model floor, inbox item and quiet-hours are already MET."
         },
         {
           "id": "LV-5",
           "title": "S3 refinement arm: stumble detector -> refine proposal (unified diff) -> diff render + versioned accept",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 (T3.1 stumble detector at after-turn seam when skills loaded: correction/failure-retry/rejection, env-failures excluded; T3.2 build unified diff vs current SKILL.md, enqueue kind=refine capped 1/skill/day; T3.3 diff rendering + accept applies with provenance frontmatter; V3)",
           "done_when": "unit tests per stumble trigger pass and the env-failure fixture never triggers; a stumble fixture yields exactly one refine proposal with a valid diff; approving applies the diff and writes provenance frontmatter while reject leaves the skill untouched; V3 arc (flawed skill->stumble->refine->approve->re-run succeeds) observed",
           "deps": [
             "LV-1",
             "EXT:LEARNING-FLYWHEEL:refiner statistical gates slot behind same queue/kind (coordination, non-blocking)"
-          ],
-          "blocked_reason": "OWNER RULING 2026-08-26: 'provenance frontmatter' does NOT require a literal SKILL.md frontmatter write. The deviation the implementation reported is RATIFIED \u2014 provenance recorded on the overlay record (version + date + trigger in the rendered refinement heading, plus the SEL accept row) satisfies the clause. Reasoning: WF2LEA-6 made the base skill immutable precisely so verify_skill_integrity / .pclaw-lock.json stays valid, so a frontmatter write would break a marketplace-locked skill, and doing it only for auto/ skills would be two paths for one concern \u2014 which the clean-break tenet refuses. All four done_when clauses are therefore satisfied. STILL todo for one mechanical reason only: the implementation lives on branch feature-lv5-refinement-arm and is NOT on main. Flip it when that branch lands; no owner input remains."
+          ]
         },
         {
           "id": "LV-6",
@@ -6500,7 +6510,7 @@
             "EXT:EVALUATION-SUBSTRATE:S1-2 template-study machinery",
             "EXT:DISCOVERABILITY-LAUNCH:site content publish path (plan 36 sync)"
           ],
-          "blocked_reason": "PARTIAL \u2014 the machinery is COMPLETE and railed (frozen task set v1 of ten sk_*.json scenarios, evals/learning_bench.py, harness/learning_verdict.py, the one command scripts/learning_benchmark.py, GET /api/evals/learning-benchmark, and a BenchmarkPanel asserted at its LearningPage call site). Nothing was cloned: the sibling IMPORTS and calls harness/fanout_measure.compare(), and structural-duplication passes. \ud83d\udd34 THE PLAN'S OWN BLOCKING FINDING IS STALE and is corrected here: LV-6's log and the protocol's sec7 both say there is no way to run a skills-off arm and that `arm_mask` 'appears nowhere in src/, harness/ or tests/'. Measured on main: `arm_mask` is in SIX src files, ARM_AXIS is defined at evals/overlay.py:61, skills/suppression.py is the child-side choke point, and run_matrix has production callers (ablation.py, judge_bench.py). G1 and G2 are closed; G5 is half-closed. UNMET clauses, named: (1) V4 'an independent re-run' needs an INDEPENDENT PARTY -- running the same command twice measures determinism, not independence. The machinery (--reproduce, --check-reproduction, per-condition rendering with citation) was built and exercised end to end, correctly returning reproduces:false on a changed verdict class. Owner action: run it from two independent homes, or wire the CI nightly. (2) Clause 1 is met as a MECHANISM but produced NO NUMBER: an unbound home is refused by design, and the zero-cost scripted provider replays byte-identical output regardless of prompt, so both arms would score identically and report a 0.0 delta -- the fabricated comparison sec1 exists to prevent. No model was called and no cost incurred. (3) T4.3's public results page lives in personalclaw.dev, outside core. (4) The honest README one-liner was deliberately NOT written: there is no number to be honest about, and announcing a benchmark with no result is the overclaim this plan's soul guardrail forbids. VARIANCE IS STATED and is not a number: the protocol's sec8 line 139 gives five categorical equalities, and stated_variance_source ships that citation to the panel -- nothing invented a tolerance. OWNER DECISION SURFACED: sec2.2's register was frozen against FOURTEEN bundled skills and skills/bundled/ now holds SIXTEEN. All ten register skills still ship so task set v1 is intact and comparable, but 'one task per bundled skill family' no longer describes the tree. Expanding it mints v2 and invalidates v1 for comparison (sec2.3), so it was left alone."
+          "blocked_reason": "PARTIAL. The harness ships and is railed (scripts/learning_benchmark.py, the three /api/evals/* routes, BenchmarkPanel.tsx, the LV-6 methodology protocol). UNMET is clause 3: 'an independent re-run reproduces within stated variance' - and NO results artifact exists anywhere in the tree (the script writes reports into $PERSONALCLAW_HOME/evals/learning_bench/, which is not committed). So the benchmark has never been RUN, only built. That same absence is exactly what DL-7 is blocked on. NEEDS AUTHORIZED MODEL SPEND: the protocol is 100 paired cells. Also worth knowing for whoever runs it: the branch's own falsification was INVALID - BenchmarkPanel.test.tsx never mocked identityReport, which LearningPage reads, so the call-site test failed with a TypeError regardless of the mutation and its 'RED' count was identical to the unmutated count. Fixed on main; re-falsify honestly if that rail is touched again."
         }
       ]
     },
@@ -6596,14 +6606,15 @@
         {
           "id": "OU-9",
           "title": "Structured approval brief over the ChannelDelivery.request_approval seam",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 T3.3 (Wave 2); Contracts C2; existing ChannelDelivery seam; apps-repo slack renderer (minimal)",
           "done_when": "the same brief fields (tool + blast-radius line) flow through ChannelDelivery.request_approval payloads as additive meta; apps-repo slack renderer minimally updated to show what it can today; dashboard remains the rich surface",
           "deps": [
             "OU-7",
             "OU-8",
             "EXT:CHANNEL-EXPANSION:ChannelDelivery.request_approval + apps-repo slack renderer consume the structured brief"
-          ]
+          ],
+          "status_note": "Verified on origin/main 2026-08-28. ChannelDelivery.request_approval is on the Protocol; approval_brief compose/attach + derive_blast_radius + blast_radius_line ship (OU-7); attach_approval_brief is called at the gateway immediately before the channel call; dashboard/state.py is the implementer. Core half landed bc530ccd and the apps-repo Slack renderer landed 2026-08-27. Its log says it plainly: 'the core half was ALREADY ON main; this session built only the missing apps-repo renderer... What never landed was one character: the OU-9 row, still unchecked while the code shipped two days earlier.'"
         },
         {
           "id": "OU-10",
@@ -6648,12 +6659,13 @@
         {
           "id": "SH-2",
           "title": "credential_keychain gate (class B) + m_*_credentials_to_keychain migration (snapshot-backed, rollback restores .env) + Settings 'move to keychain' action",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 1 T1.2/T1.3/V1; Contracts C1 migration m_*_credentials_to_keychain; owner task 1 (macOS Keychain validation)",
           "done_when": "migration fixture (fake keyring) moves .env secrets to keychain and removes the keys, idempotent + verify passes; rollback restores .env; portability export still excludes secrets; Settings action runs the migration with a visible snapshot-confirm step; macOS migrate/rollback + headless .env-fallback validation both recorded",
           "deps": [
             "SH-1"
-          ]
+          ],
+          "status_note": "Verified all five clauses on origin/main 2026-08-27: migrate is confirm-gated and snapshot-first -> per-key write -> RE-READ -> remove, with the strongest rail being a fixture whose keychain accepts a write then returns different bytes (that key stays in .env); rollback restores .env.pre-keychain byte-for-byte and REFUSES rather than emptying .env when no snapshot exists; env_pre_keychain is StateEntry(secret=True) so export filters it; the Settings danger dialog names the snapshot file BEFORE any write, pinned by an FE rail that reads the PYTHON source to assert snapshot-first (its falsification left the Python suite green and only that rail red). CAVEAT, from the log not glossed: the real keyring.backends.macOS leaf was deliberately not exercised (keyring ignores a specified keychain on macOS, upstream #623) - only the owner's login keychain can reach it. Doctrine-correct re-scope recorded: shipped WITHOUT lifecycle machinery; 'snapshot-backed' could not mean `personalclaw snapshot` because its restore excludes every secret=True path, so the migration owns a single-purpose backup."
         },
         {
           "id": "SH-3",
@@ -6800,7 +6812,8 @@
           "deps": [
             "EI-5",
             "EXT:WORK-CONTAINERS:WORK-R8 lease convention (flock under locks/) + WORK-R7 suspended-liveness path"
-          ]
+          ],
+          "blocked_reason": "PARTIAL. Runner lifecycle landed WHOLE (pool.claim -> _record_lease -> claim_runner -> a flock lease under config_dir()/locks/leases, swept in the live _health_loop, read back by runners.lease_for and rendered as 'held by {holder}'; both config fields pass all round-trip points with a [60,86400] clamp). The DURABLE-SESSION clause is a LIVE READER OF AN UNWRITTEN KEY: _durable_substrate is called first from _substrate_for, tmux is in Substrate.isolated, sweep_decision yields SUSPENDED and the journal 'resumed' kind pre-exists - but NOTHING IN CORE SPAWNS A DURABLE WORKER. durable_session_name, the only producer of the pclaw-<project>-<run>-<session> shape, has exactly ONE production caller: the READER. Core's sole tmux spawn uses a DIFFERENT name shape. NOTE FOR THE NEXT AUDITOR: a later EXT-dep audit reported this atom 'SATISFIED and LANDED' - it was answering the narrower question 'is the WORK-CONTAINERS dep met?', not 'is the atom done'. The clause-by-clause reading wins. UPSTREAM-BLOCKED on EI-2's container provider (ACP runners are stdio-bound and the sandbox-interior shell is EI-2's); do NOT schedule standalone."
         },
         {
           "id": "EI-7",
@@ -6811,7 +6824,8 @@
           "deps": [
             "EI-1",
             "EI-5"
-          ]
+          ],
+          "blocked_reason": "PARTIAL, verified 2026-08-27 - nothing remains INSIDE this atom, so do NOT schedule it. The second-opinion clause HOLDS: select_target drops the origin runner via is_same_runner BEFORE any other filter, backends launch through sandbox_providers.registry.resolve_provider (never a bare subprocess), the re-diff uses content digests rather than `git diff` and is consumed as `accepted = bool(result.ok and result.diff_verified)`, with SEL rows and all four wiring points on main. CAVEAT: no stall detector fires it - the three declared consumers (loop watchdog 'stagnant' offer, gate on_stall: second_opinion, cockpit stalled banner) do not exist (grep on_stall returns two comments and zero implementation), so it is operator-wired, never automatic. The sandbox-interior clause is UNMET and structurally so: sandbox_providers/ has NO docker or lima provider, so there is no sandbox to be inside, and the shipped half is INERT - grep tool_gateway|pclaw_tool over src/ web/ returns ONE hit, a docstring cross-reference inside tool_gateway.py itself, and install_shim is called only from tests because SandboxHandle is a 3-method ABC with no copy_file_in to deliver the shim. What DOES hold host-side is the real refusal: _refusal enforces SafetyProfile.tool_grants via task_mode_denies. SMALLEST REMAINING UNIT: none here - dependency-blocked on EI-2/EI-4 plus a copy_file_in on SandboxHandle."
         },
         {
           "id": "EI-8",
@@ -7045,7 +7059,8 @@
           "deps": [
             "DCU-1",
             "EXT:SECURITY-HARDENING:OS-input-layer class-B/S review"
-          ]
+          ],
+          "blocked_reason": "PARTIAL, verified 2026-08-27 - code is complete AND LIVE; the unmet clause is a TCC grant, so do NOT schedule an implementation slot. types.py/macos_ffi.py/macos_driver.py all exist and sit on a live dispatch path: DRIVER_MODULES['Darwin'] (resolve_driver returned None on every prior commit) -> DRIVER_CHILD_MODULE -> spawned via create_subprocess_limited, entered from POST /api/computer-use/dispatch and the tool registry. 'Without the pointer moving' IS code-provable: op_click's auto branch calls ffi.press() and nothing else, with no coordinate fallback, and CGWarpMouseCursorPosition has a single caller pinned by test_only_one_function_warps_the_real_cursor. Staleness is real on both sides: a 30s snapshot TTL raising ERR_STALE_INDEX, plus a fingerprint re-verify in the driver that refuses an ABSENT fingerprint rather than reading it as 'no check requested'. UNMET: the live AX walkthrough - the log measured AXIsProcessTrusted()==False and a real AXWindows call against Finder returning kAXErrorAPIDisabled (-25211). SMALLEST REMAINING UNIT: nothing in code. A human adds the python binary running the gateway (the interpreter, not the terminal) to Privacy & Security -> Accessibility, restarts, runs the TextEdit walkthrough; two tests already flip branch on the grant. Deliberately never prompted from code - that would be an agent-timed consent surface."
         },
         {
           "id": "DCU-4",
@@ -7064,13 +7079,14 @@
         {
           "id": "DCU-5",
           "title": "Approval-ladder integration for desktop drive",
-          "status": "todo",
+          "status": "done",
           "scope": "Wire the approval ladder into policy (\u00a73.4) so an unattended profile may drive the desktop only with a creation-time grant, while interactive sessions receive the approval prompt.",
           "done_when": "An unattended run without the grant refuses and notifies; an interactive run prompts; validated.",
           "deps": [
             "DCU-4",
             "EXT:AUTONOMY-GUARDRAILS:approval ladder + unattended-profile grant"
-          ]
+          ],
+          "status_note": "Verified on origin/main 2026-08-28, merged ef0e0cc8. done_when is 'an unattended run without the grant refuses and notifies; an interactive run prompts; validated'. ERR_COMPUTER_USE_UNATTENDED_NOT_GRANTED is at computer_use/policy.py with check_autonomy consulted from service.py's dispatch. ZERO rung names were minted (a test AST-walks computer_use/ for any RUNG* assignment); the parent verdict is deliberately EXCLUDED from _CHILD_CODES so a child cannot dress a crash as a policy answer. It also closed a FAIL-OPEN found on the way: caller_identity=='' resolved to INTERACTIVE for any authenticated client omitting X-Session-Key, so the ladder read 'a human is watching' for a caller with nobody present. Its author marked the row partial only because flipping dag.json is the driver's job, not because a clause was unmet; nothing in the done_when requires the AX/TCC step."
         },
         {
           "id": "DCU-6",
@@ -7118,7 +7134,8 @@
           "done_when": "On a Linux fixture a fork bomb hits pids.max and dies contained; on macOS one warning states pids/RSS are not enforced; the probe never raises under any environment.",
           "deps": [
             "PHF-1"
-          ]
+          ],
+          "blocked_reason": "PARTIAL, verified 2026-08-27. The mechanism HOLDS and is REACHABLE: cgroup_scope_argv emits systemd-run --user --scope with TasksMax/MemoryMax/MemorySwapMax=0, called from spawn_shim_argv - the live chokepoint imported by 9 production modules - and the scope is the OUTER layer so it contains the NOFILE shim. The probe never raises (total inside a defensive except Exception) and the doctor wiring is VERIFIED NOT INERT (probe id sandbox.cgroup_scopes, Tier.CAPABILITY, registered inside _register_builtin_probes which executes at import time). UNMET as an OBSERVATION: there is no fork-bomb fixture anywhere. test_sandbox_cgroup_scopes.py has zero fork-bomb tests and its only platform gates are skipif(platform != 'darwin'), so they SKIP on CI; no test anywhere execs systemd-run - every hit is an argv assertion or a monkeypatched shutil.which. A Linux CI leg exists (all 22 runs-on lines are ubuntu-latest) but has no test to run, and GitHub runners have no systemd user bus anyway. The macOS warning clause HOLDS BUT CONDITIONALLY: _warn_unenforced_ceilings is latched once and names RLIMIT_AS/NPROC honestly, but it returns EARLY unless max_pids>0 or max_rss_mb>0 and BOTH default to 0 - so a DEFAULT macOS install emits NO warning, while the clause reads unconditional. Recorded caveat at sandbox.py: a readable root controller list does NOT prove pids/memory are DELEGATED, so TasksMax can be inert even where the probe reports available. SMALLEST REMAINING UNIT: a Linux-gated fork-bomb containment test that actually execs systemd-run and skips cleanly when probe_cgroup_scopes() is False, so the clause has a fixture at all."
         },
         {
           "id": "PHF-3",
@@ -7242,15 +7259,17 @@
           "status": "todo",
           "scope": "The floor that PHF-5's and PHF-8's own rails predicted and that has now arrived. config/loader.py is 5900 lines against the ABSOLUTE 6000-line SIZE_CEILING_LINES, and tests/test_structural_baseline.py::test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance asserts ceiling - max_file_lines >= 100. Headroom is exactly 100, so ONE added line reds the gate \u2014 and that test's own docstring names this file and this exact scenario ('adding one boolean toggle would red CI and demand a 5,427-line split as its price'). The file was 5427 when that rail was written; it has since grown 473 lines and spent all of it. Because the config round-trip contract (dataclass + _meta, load(), to_dict(), a write path, a frontend control) touches loader.py on EVERY new field, the whole remaining roadmap is blocked from adding user-facing configuration. Extract cohesive per-domain config sections into sibling modules under src/personalclaw/config/ and update their importers, following the src/personalclaw/agents/native/decision_tool_defs.py precedent created for this same rail at the 2800-line watch band. Clean break: no re-export shim. NOT in scope: raising the ceiling, widening the watch band, or regenerating the structural baseline to make the red go away \u2014 each of those retires the rail instead of paying it.",
           "done_when": "config/loader.py is at most 5400 lines (>= 600 lines of ceiling headroom, i.e. room for several ordinary config fields rather than one) with the extracted sections living in sibling modules under src/personalclaw/config/ and every importer updated \u2014 no re-export shim, proven by a RUNTIME import sweep with a stated count, not by mypy (ignore_missing_imports=true cannot see a stranded first-party import); tests/test_structural_baseline.py green including test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance and test_the_watch_band_is_not_sitting_on_a_cliff, with the ceiling and the watch band UNCHANGED and structural-baseline.json regenerated only for the moved-file rows; tests/test_config_roundtrip.py green and the committed config-schema baseline (PHF-5) shows ZERO schema drift, proving the split moved code without changing one observable config key; and a NEW config field is added end-to-end in the same change as the proof that headroom was really restored \u2014 LV-4's learning.identity_report_* field, wired through all four round-trip points plus its frontend control, which also closes LV-4's only unmet clause.",
-          "deps": []
+          "deps": [],
+          "blocked_reason": "NOT-DONE and the id was COLLIDED, established 2026-08-27. All four clauses are unmet: loader.py is 5581 on origin/main (headroom 419, not the >=600 the clause demands) and is still the largest file in src/; config/ holds only __init__, credential_migration, credentials, edit_spec, migrations, schema - and credentials/credential_migration came from SH-2, migrations from PHF-15, edit_spec/schema from earlier work. NONE is a loader.py section split. Clauses 2 and 3 are not even satisfiable because no split happened (there are no moved-file rows to regenerate). Clause 4's proof field, LV-4's learning.identity_report_*, does not exist anywhere. THE COLLISION: commit f6281199 (2026-08-21) is titled 'PHF-14 structural ratchets' but `git show f6281199:dag.json` contains NO PHF-14 atom at all - this atom was created five days later by 0b40b3f4 for a different deliverable. That commit touched loader.py ZERO times; it merely CREATED the rail clause 2 references. So the 15 [PHF-14] plan entries dated 2026-08-21 document other work. Also note the motivating urgency is gone: PHF-14 no longer blocks LV-4 (dep removed). It is now standalone hygiene - do it because loader.py should be smaller, not because anything waits on it."
         },
         {
           "id": "PHF-15",
           "title": "AppConfig.load() must be a pure read \u2014 and the real-home rail must be able to see a metadata-preserving writer",
-          "status": "todo",
+          "status": "done",
           "scope": "Two defects found together on 2026-08-27 while root-causing a CI-only real-home-rail failure, where the second is what hid the first. (1) AppConfig.load() IS NOT A PURE READ: when needs_migration is true it does shutil.copy2(path, path.with_suffix('.json.bak')) then cfg.save() (config/loader.py, inside load()'s try, best-effort with a warning on failure). So ANY caller that merely reads config mutates the user's config.json and drops a .bak beside it \u2014 including a module imported for an unrelated reason. That delivery mechanism was fixed separately (mcp_core's module-level _API constant became a call-time _api_base(), the 4th instance of the import-time-constant shape tests/conftest.py::_isolate_real_home_writers documents as beyond a fixture's reach), but the impurity itself remains and any future reader re-arms it. (2) THE REAL-HOME RAIL UNDER-REPORTS AGAINST copy2: the walk detects changes by mtime-since-session-start, and shutil.copy2 preserves the SOURCE mtime, so the .bak the migration writes looks older than the session and is invisible. That is why CI reported '1 entries changed' when two things changed, and it is a general blind spot for any metadata-preserving writer, not a quirk of this one. Both are invisible on a developer machine: the write only fires when config.json exists AND is pre-migration, and a developer's config is already migrated, so the rail is green locally however broken the code is. NOT in scope: deleting the migration itself (it is load-bearing for real upgrades) or redesigning the rail's single-walk performance choice.",
           "done_when": "AppConfig.load() performs NO write under any input \u2014 proven by a fresh-interpreter subprocess rail (the shape tests/test_import_time_config_writes.py establishes) that seeds a genuinely pre-migration config.json, calls load(), and asserts (mtime_ns, contents) unchanged AND no .bak created, with a vacuity leg that observes the write when the migration is invoked through its new explicit entry point; the migration still runs for real upgrades through that explicit call from a startup path that a test can point at tmp_path, with a regression proving a pre-migration config IS migrated when the gateway boots and IS NOT when a library reader imports; every existing load() caller audited by a RUNTIME import sweep with a stated count (mypy cannot see a stranded first-party import) and none left depending on the write-back side effect; the real-home rail additionally detects a metadata-preserving write \u2014 a planted shutil.copy2 of a tracked file is REPORTED, proven by a probe that reds before the fix and passes after, with ALLOWED_RESIDUE still frozenset() and tests/real_home_guard.py's cost documented; and config/loader.py ends at or below its starting line count, since the 6000-line ceiling rail leaves it 100 lines of headroom (see PHF-14).",
-          "deps": []
+          "deps": [],
+          "status_note": "Verified all five clauses on origin/main 2026-08-27: load() delegates to load_with_migration_state which applies migrations IN MEMORY ONLY (zero copy2/save/.bak inside loader.py), proven by a fresh-interpreter subprocess rail asserting (mtime_ns, contents) unchanged and no .bak, PAIRED with a vacuity leg that requires the write to be observed through load_and_persist_migrations(); that function is the only writer and its one production caller is cli_server._boot_config(); 259 load() call sites across 147 src files audited by a 1029-module runtime import sweep, 0 failures; the real-home rail now uses max(mtime_ns, ctime_ns) so a metadata-preserving copy2 is REPORTED (probe plants a real copy2 and asserts a vacuity leg that copy2 preserved mtime on this filesystem), ALLOWED_RESIDUE still frozenset(); loader.py 5682 -> 5581. The PP-16 cross-branch collision is resolved on main: the later commit carries the re-pointed test."
         }
       ]
     },
@@ -7552,7 +7571,8 @@
             "PP-15",
             "PP-5",
             "PP-13"
-          ]
+          ],
+          "blocked_reason": "PARTIAL, verified 2026-08-27 - THREE of the six owner-approved seams have landed; the capstone noun change has not. HOLDS: the supervisor is no longer pluggable Python (all four dispatch sites retired into ONE evaluator reading a closed DONE_SIGNALS vocabulary plus a nine-row KIND_CONVERGENCE table; zero kinds retain a supervisor method; recorded DEVIATION - the policy is a TABLE, deliberately not a `supervisor:` block in template JSON, because TWO of the five kinds ship no `loop` node at all and declaring there would have shipped three-fifths of the seam); one adoption/reaping path (boot_sweep is the ONE primitive, reap_orphaned_loops DELETED, the gateway's separate boot hook gone and its absence guarded by a test); one ledger; one attention path. UNMET: a Loop is still a standalone @dataclass with nothing subclassing or aliasing WorkflowRun (loop_run_map is a FIELD MAP of 39 fields to their future homes - the design recorded as code, not the noun change); TWO status enums still live (LoopStatus 12 members, RunStatus 8) - seam 1 derived terminality from a shared LifecyclePhase, which is real progress and not one enum; the tasks projection still has loop/tasks_link.provision beside workflows/materialize.plan_materialization; all THREE frontend pairs still exist (useRunStream/useWorkflowStream, runFold/workflowFold, LoopCockpitPage/WorkflowRunDetail); and loop/store.py is still 1253 lines with its own CREATE TABLE loops and full CRUD. SMALLEST REMAINING UNIT: seam 4 - retire loop/store.py's loops row onto the run store (the log's own dependency order, and the single largest remaining piece at 1253 lines plus loop/manager.py's 653). Then seam 5 (the three frontend pairs) and seam 6 (five-kind user validation) as separate sessions. STILL OPEN and owner-gated: the WorkflowRun.task_list_id decision recorded 2026-08-22 - retiring an inert field is an owner call and it has not been made."
         }
       ]
     }
@@ -7570,18 +7590,13 @@
         "plan": "AR"
       },
       {
-        "id": "BA-2",
-        "title": "CDP browser integration + per-page safety-script injection + BROWSE egress policy + redirect re-eval",
-        "plan": "BA"
-      },
-      {
         "id": "BA-4",
         "title": "Browser-session credential handoff (persistent per-site profiles, request_login needs-input flow, session-validity check)",
         "plan": "BA"
       },
       {
-        "id": "BA-7",
-        "title": "user_browser execution-target selector on the browse action config (default gateway, no silent fallback, unattended refusal)",
+        "id": "BA-8",
+        "title": "Browser extension connector: loopback-only typed local contract, paired via COMPANION-APPS device-session machinery, shipped as an app bundle",
         "plan": "BA"
       },
       {
@@ -7625,21 +7640,6 @@
         "plan": "DCU"
       },
       {
-        "id": "DFE-6",
-        "title": "Layout control: page setup, paragraph layout, headers/footers, page-geometry preview",
-        "plan": "DFE"
-      },
-      {
-        "id": "DFE-7",
-        "title": "Sheets: styled SheetModel + xlsx parser + grid editor (formulas stay formulas)",
-        "plan": "DFE"
-      },
-      {
-        "id": "DFE-8",
-        "title": "Decks: DeckModel/Slide layout+geometry+bullet levels + pptx parser + slide editor",
-        "plan": "DFE"
-      },
-      {
         "id": "DIST-11",
         "title": "Owner clean-machine walkthroughs V1\u2013V4 (wheel install, getting-started, container, per-kind self-update)",
         "plan": "DIST"
@@ -7655,13 +7655,13 @@
         "plan": "DL"
       },
       {
-        "id": "DL-6",
-        "title": "T3.4: launch-post draft (architecture-receipts narrative)",
+        "id": "DL-7",
+        "title": "S4 T4.1: comparison data file + peer-product /compare pages",
         "plan": "DL"
       },
       {
-        "id": "DL-7",
-        "title": "S4 T4.1: comparison data file + peer-product /compare pages",
+        "id": "DL-8",
+        "title": "S4 T4.2+T4.3: listing submissions + P0 launch checklist",
         "plan": "DL"
       },
       {
@@ -7670,8 +7670,8 @@
         "plan": "DL"
       },
       {
-        "id": "EA-5",
-        "title": "External-agent capture proxy (/capture/v1) + telemetry import",
+        "id": "EA-6",
+        "title": "Local A/B replay harness \u2014 evidence generator on captured sessions",
         "plan": "EA"
       },
       {
@@ -7755,8 +7755,8 @@
         "plan": "LMMV"
       },
       {
-        "id": "LV-5",
-        "title": "S3 refinement arm: stumble detector -> refine proposal (unified diff) -> diff render + versioned accept",
+        "id": "LV-4",
+        "title": "Periodic identity report: compose_identity_report + delivery/schedule/config/FE (amendment)",
         "plan": "LV"
       },
       {
@@ -7783,11 +7783,6 @@
         "id": "MI-2",
         "title": "Cloning-capable TTS engine app beside piper + capability flags (supports_cloning/supports_voice_design) + typed refusal",
         "plan": "MI"
-      },
-      {
-        "id": "OU-9",
-        "title": "Structured approval brief over the ChannelDelivery.request_approval seam",
-        "plan": "OU"
       },
       {
         "id": "OU-11",
@@ -7825,11 +7820,6 @@
         "plan": "PHF"
       },
       {
-        "id": "PHF-15",
-        "title": "AppConfig.load() must be a pure read \u2014 and the real-home rail must be able to see a metadata-preserving writer",
-        "plan": "PHF"
-      },
-      {
         "id": "PP-16",
         "title": "A Loop becomes a WorkflowRun (retire the second work-unit noun)",
         "plan": "PP"
@@ -7838,11 +7828,6 @@
         "id": "PUBL-10",
         "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
         "plan": "PUBL"
-      },
-      {
-        "id": "SH-2",
-        "title": "credential_keychain gate (class B) + m_*_credentials_to_keychain migration (snapshot-backed, rollback restores .env) + Settings 'move to keychain' action",
-        "plan": "SH"
       },
       {
         "id": "SH-4",
@@ -8192,6 +8177,7 @@
       "LV-1",
       "LV-2",
       "LV-3",
+      "LV-4",
       "LV-5",
       "LV-6",
       "LV-7",
@@ -8301,7 +8287,6 @@
       "PHF-12",
       "PHF-13",
       "PHF-14",
-      "LV-4",
       "PHF-15",
       "PL-1",
       "PL-2",
@@ -9667,18 +9652,18 @@
         "code": "DFE",
         "plan": "DOCUMENT-FIDELITY-EDITOR",
         "total_atoms": 8,
-        "done": 5,
+        "done": 8,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 0,
         "blocked": 0
       },
       {
         "code": "BA",
         "plan": "BROWSE-AUTOMATION",
         "total_atoms": 9,
-        "done": 2,
+        "done": 4,
         "in_progress": 0,
-        "todo": 7,
+        "todo": 5,
         "blocked": 0
       },
       {
@@ -9910,9 +9895,9 @@
         "code": "EA",
         "plan": "EXTERNAL-ACCESS",
         "total_atoms": 9,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
@@ -10072,9 +10057,9 @@
         "code": "DL",
         "plan": "DISCOVERABILITY-LAUNCH",
         "total_atoms": 9,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
@@ -10108,27 +10093,27 @@
         "code": "LV",
         "plan": "LEARNING-VISIBILITY",
         "total_atoms": 7,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
         "code": "OU",
         "plan": "ONBOARDING-UX",
         "total_atoms": 11,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
         "code": "SH",
         "plan": "SECURITY-HARDENING",
         "total_atoms": 10,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 1
       },
       {
@@ -10153,18 +10138,18 @@
         "code": "DCU",
         "plan": "DESKTOP-COMPUTER-USE",
         "total_atoms": 7,
-        "done": 2,
+        "done": 3,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
         "code": "PHF",
         "plan": "PLATFORM-HARDENING-FLOORS",
         "total_atoms": 15,
-        "done": 12,
+        "done": 13,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -10186,6 +10171,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 883
+    "edge_count": 882
   }
 }
