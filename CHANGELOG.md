@@ -740,6 +740,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   `pat` is now matched as a whole word, so a path stays a path. Nothing stopped being protected:
   `GITHUB_PAT`, `GH_PAT`, `PAT_GITHUB` and a plain `PAT` are all still withheld from a branch, and a
   bare `PAT` is newly recognised where before only the underscored spellings were.
+- **Saying "approve it" stopped working for good once a run had answered its first gate.** Answering a
+  workflow's approval without quoting a resume token — just "approve it" — works by finding the one gate
+  still waiting. Gates that had already been answered were still being counted as waiting, so from the
+  second approval onward the run looked like it had two open questions and refused to guess between
+  them, telling you to name one by token instead. That never came back on its own: every later approval
+  in that run had to be answered by token, and the more gates the run had answered, the more it
+  complained about. A run whose only gate had already been answered was told its token was unknown,
+  which pointed at the wrong thing entirely — the token was fine, there was simply nothing left to
+  answer, and it now says that.
+  Genuine ambiguity still refuses, because two gates really waiting at once is a question only you can
+  settle — and it now names them, rather than just asking for a token it did not tell you where to find.
+  Answered approvals are still kept on disk for the audit trail; they are simply no longer mistaken for
+  open ones, and a rewind can now clear them instead of leaving them behind forever.
 
 - **Creating a knowledge intent could silently delete one you already had.** An intent is identified by
   a name derived from the goal you type, so two goals worded almost the same — "track homelab drive

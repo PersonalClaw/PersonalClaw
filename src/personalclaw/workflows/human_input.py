@@ -17,10 +17,11 @@ step with the inputs it had already resolved, rather than re-executing the enclo
 subgraph. Without it, answering an approval an hour later silently redoes the work that led
 up to the question.
 
-**Atomic, single-use answers.** An answer is consumed by deleting the record in the same
-step that applies it. A double-resume (two clicks, a retried POST, a widget and an inbox
-racing) must not replay the answer — replayed approvals are how one "yes" becomes two
-deployments.
+**Atomic, single-use answers.** An answer is consumed by MOVING the record out of the
+pending directory in the same step that applies it — one `os.rename`, which decides the
+winner before anything is read. A double-resume (two clicks, a retried POST, a widget and
+an inbox racing) must not replay the answer — replayed approvals are how one "yes" becomes
+two deployments.
 
 **Expiry is typed, never silent.** A stale token produces a `resume_expired` needs-input
 item offering a re-run from the node. A dead token that simply does nothing is
@@ -48,6 +49,16 @@ from personalclaw.workflows import store
 logger = logging.getLogger(__name__)
 
 CONTINUATION_DIR = "continuations"
+
+#: Claimed records live in a SUBDIRECTORY of the pending one, not under a filename suffix.
+#: This is what makes "pending" answerable by a plain non-recursive listing: a directory
+#: cannot be matched by `*.json`, so no reader has to know the claim convention to exclude
+#: it. A suffix (`<token>.claimed.json`) was the original shape and it was a real defect —
+#: `list_continuations` globbed `*.json`, matched the claimed file, and an already-answered
+#: gate kept reading as pending, so a token-less "approve it" reported `WF_AMBIGUOUS_GATE`
+#: forever on any run that had ever answered a gate. Filtering the glob would have re-coupled
+#: every listing to a sibling's naming; moving the record decouples them by construction.
+CLAIMED_DIR = "claimed"
 
 #: Background gates time out FAST and surface. A background run parked forever on an
 #: approval nobody is watching is wedged, not waiting.
@@ -318,7 +329,13 @@ def handoff_bundle(
 
 
 def _dir(run_id: str):
+    """The PENDING continuations for a run. Everything in here is answerable."""
     return store.run_dir(run_id) / CONTINUATION_DIR
+
+
+def _claimed_dir(run_id: str):
+    """Where a consumed continuation is moved. Retained for audit, never listed as pending."""
+    return _dir(run_id) / CLAIMED_DIR
 
 
 def save_continuation(cont: Continuation) -> Continuation:
@@ -375,6 +392,14 @@ def load_continuation(run_id: str, token: str) -> Continuation | None:
 
 
 def list_continuations(run_id: str) -> list[Continuation]:
+    """Every PENDING continuation for a run — the gates that can still be answered.
+
+    Six surfaces read this (the token-less "approve it" resolver, the needs-input HTTP route,
+    the blocking-mode response body, the introspection open-asks projection, the controller's
+    per-epoch idempotency check, and the rewind drop), so a claimed record leaking in here is
+    not one wrong number — it is an answered gate rendered as an open question on every one of
+    them. Claimed records are under `CLAIMED_DIR`, which this non-recursive glob cannot match.
+    """
     directory = _dir(run_id)
     if not directory.is_dir():
         return []
@@ -400,15 +425,21 @@ def consume_continuation(run_id: str, token: str) -> Continuation | None:
     unlinking anyway. That is the exact double-approval replay the single-use rule exists to
     prevent: two resumes both carrying one clarification into downstream steps.
 
-    `os.rename` measured 0 of 40 trials with more than one winner. The claimed file is left on
-    disk under a `.claimed` suffix rather than deleted, so a resolution that crashes mid-resume is
-    recoverable and auditable instead of silently gone.
+    `os.rename` measured 0 of 40 trials with more than one winner. The claimed file is kept rather
+    than deleted, so a resolution that crashes mid-resume is recoverable and auditable instead of
+    silently gone — but it is moved into `CLAIMED_DIR` rather than given a `.claimed` suffix,
+    because a sibling file is something every listing has to remember to exclude and a
+    subdirectory is one no listing can accidentally match. The destination is inside the same
+    directory tree, so the rename stays a single atomic same-filesystem operation.
     """
     if not token or "/" in token or "\\" in token or ".." in token:
         return None
     path = _dir(run_id) / f"{token}.json"
-    claimed = _dir(run_id) / f"{token}.claimed.json"
+    claimed = _claimed_dir(run_id) / f"{token}.json"
     try:
+        # Not part of the claim: `mkdir` is idempotent and decides nothing. The rename below is
+        # still the single step that picks the winner.
+        claimed.parent.mkdir(parents=True, exist_ok=True)
         # THE claim. Whoever completes this rename owns the answer; everyone else loses here,
         # before reading, which is what makes the single-use guarantee real.
         os.rename(path, claimed)
@@ -433,6 +464,11 @@ def drop_continuations(run_id: str, *, instance_prefix: str = "") -> int:
     Called on rewind: a token for a node that is about to re-run would resume a step that no
     longer exists in that form. Better a typed `resume_expired` than a token that silently
     lands in the wrong epoch.
+
+    Only PENDING records are dropped. An already-claimed record is history, not a live token —
+    it cannot resume anything, so dropping it would destroy the audit trail without closing any
+    hole. Those are reaped with the run directory by the retention sweep
+    (`watchdog._sweep_run_dir`), which is why this does not need a second sweeper.
     """
     dropped = 0
     for cont in list_continuations(run_id):

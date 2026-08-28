@@ -17,6 +17,7 @@ is safe; auto-rejecting a needs-input question throws away the work that was wai
 the answer.
 """
 
+import json
 import threading
 
 import pytest
@@ -94,13 +95,23 @@ def test_a_SEQUENTIAL_second_claim_gets_nothing(tmp_path, monkeypatch):
 def test_the_claimed_record_is_RETAINED_for_audit(tmp_path, monkeypatch):
     """A resolution that crashes mid-resume should be recoverable and auditable, not silently
     gone —
-    which is why the claim renames rather than deletes."""
+    which is why the claim MOVES the record rather than deleting it.
+
+    Asserted on the claimed record's own path and content, not on a substring of a name in the
+    pending directory: that weaker form now passes merely because the subdirectory is *called*
+    `claimed`, so it would keep passing if the record itself were dropped.
+    """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     from personalclaw.workflows import human_input as hi
 
     cont = hi.create_continuation("rx", node_id="a", instance_path="p", epoch=1)
     hi.consume_continuation("rx", cont.token)
-    assert any("claimed" in f.name for f in hi._dir("rx").iterdir())
+
+    retained = hi._claimed_dir("rx") / f"{cont.token}.json"
+    assert retained.is_file(), "the claim destroyed the record it was supposed to retain"
+    assert json.loads(retained.read_text(encoding="utf-8"))["token"] == cont.token
+    # ...and it is NOT left where a pending listing would find it.
+    assert list(hi._dir("rx").glob("*.json")) == []
 
 
 def test_a_TRAVERSAL_token_is_refused(tmp_path, monkeypatch):
