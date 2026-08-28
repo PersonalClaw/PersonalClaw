@@ -104,7 +104,9 @@ export function Toggle({
   // sr-only describedby target being concatenated into the accessible NAME instead. `title` is the
   // only carrier here, and per accname a resolved `aria-describedby` wins outright.
   //
-  // Measured: 7 call sites pass a `disabledReason` to a switch, and 5 of the 58 hinted switches were
+  // Measured: 8 call sites pass a `disabledReason` to a switch (DC-4's "Open at login" is the 8th,
+  // and it is soft-off only where Electron implements no login item — so the 5 below is unchanged:
+  // on macOS, its seeded state, it is a live switch), and 5 of the 58 hinted switches were
   // soft-off in the seeded state — soft-off is a STATE, not a call site, so that 5 moves with the
   // precondition while the 7 does not. On 3 of the 5 the row hint and the reason say the same thing
   // ("No model bound for this use case — bind one in Models to use this." vs "No model is bound for

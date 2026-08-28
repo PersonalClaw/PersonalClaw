@@ -10,11 +10,13 @@ import {
   api, type DesktopCapabilityWire, type EgressPolicyConfig, type DenylistBaseline,
 } from '../../lib/api'
 import { confirm } from '../../ui/dialog'
-import { requestDesktopCapability } from '../../lib/desktopBridge'
+import {
+  desktopBridge, getLoginItem, requestDesktopCapability, setLoginItem,
+} from '../../lib/desktopBridge'
 import { Button } from '../../ui/Button'
 import { Toggle } from '../../ui/Toggle'
 import { useQuery } from '../../lib/data'
-import { PanelHeader, Section } from './settingsUI'
+import { PanelHeader, Section, SavedToast } from './settingsUI'
 import { CardGridSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
 
@@ -241,6 +243,82 @@ const DESKTOP_CAPABILITY_LABELS: Record<string, string> = {
 const capabilityLabel = (cap: string) =>
   DESKTOP_CAPABILITY_LABELS[cap] ?? cap.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
 
+/** The one row in this section that is a PREFERENCE, not a permission (DC-4 T4.3).
+ *
+ *  🪤 WHAT THIS FIXES. `login_item` is a `kind: "shell"` capability, and `probe()` answers
+ *  those with `granted` the moment the shell is running — correctly, because the question
+ *  it asks is "can this shell register a login item?". Rendered through
+ *  `GRANT_PRESENTATION` like its neighbours, that came out as a green **"Open at login —
+ *  Granted"** on a machine where nothing was registered: a true sentence about the
+ *  facility that every user reads as a false one about their own preference. And the row
+ *  offered no control, because `requestable: false` is also correct — the capability
+ *  bridge cannot request this. So the surface named the setting, mis-stated it, and could
+ *  not change it.
+ *
+ *  This row reports the OS's actual REGISTRATION instead, and writes it with the same call
+ *  the menu-bar item's own "Open at Login" checkbox uses — one mechanism, two surfaces, so
+ *  flipping either is reflected by the other.
+ *
+ *  NO CONFIG KEY BEHIND IT, deliberately. The OS is the authority: the user can remove the
+ *  registration in System Settings → General → Login Items while PersonalClaw is not
+ *  running, so a mirror in `config.json` would be a second source for one fact and would
+ *  go stale the first time that happened. Every read here goes to the OS. */
+function LoginItemRow({ label }: { label: string }) {
+  const { data: state, refresh } = useQuery('settings:login-item', () => getLoginItem())
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  // `undefined` while the read is in flight; `null` if the shell answered nothing. Either
+  // way there is no registration to state, and inventing one is the defect above.
+  if (!state) return null
+
+  const flip = async (next: boolean) => {
+    setBusy(true)
+    setErr('')
+    const res = await setLoginItem(next)
+    if (!res) setErr('The desktop app is no longer connected.')
+    else if (!res.ok) setErr(res.reason || 'macOS did not apply the change.')
+    else { setSaved(true); window.setTimeout(() => setSaved(false), 1500) }
+    setBusy(false)
+    // Read the registration back rather than trust the write. The OS is the authority, so
+    // a refused write has to leave this toggle showing what is actually registered — the
+    // alternative is a switch that sits in the position the user chose while the machine
+    // does the opposite.
+    refresh()
+  }
+
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-lg bg-surface-container px-4 py-3">
+      <div className="min-w-0">
+        <div className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{label}</div>
+        <div className={`mt-0.5 text-[0.8125rem] ${state.enabled ? 'text-success' : 'text-on-surface-low'}`}>
+          {state.enabled
+            ? 'On — PersonalClaw starts when you log in'
+            : 'Off — PersonalClaw starts only when you open it'}
+        </div>
+        {/* `describes` names the exact registration this touches. A login item is a
+            persistent change to the user's machine, so the sentence belongs BEFORE the
+            flip, not in a confirmation after it. */}
+        <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{state.describes}</div>
+        {err && <FieldError>{err}</FieldError>}
+      </div>
+      <div className="flex items-center gap-2">
+        <SavedToast show={saved} />
+        {/* TWO disabled classes, deliberately kept apart. An unsupported platform is a
+            PRECONDITION — nothing the user does here will ever enable it — so it carries the
+            reason and stays keyboard-reachable rather than going dark unexplained. `busy` is
+            IN-FLIGHT and stays native: re-clicking mid-write is the failure being prevented,
+            and a reason there would soften it. They cannot co-occur — an unsupported switch
+            cannot be clicked, so `busy` never rises on one. */}
+        <Toggle on={state.enabled} onChange={flip} label={label}
+          disabled={!state.supported || busy}
+          disabledReason={state.supported ? undefined : state.describes} />
+      </div>
+    </div>
+  )
+}
+
 /** How each grant state reads to a user, and how it looks. `unavailable` and
  *  `not-determined` are deliberately NOT styled as failures — neither is a problem.
  *  `granted` uses `text-success`, not `text-primary`: the brand primary is a coral in
@@ -269,6 +347,9 @@ function DesktopCapabilitiesPanel() {
   )
   const [busyCap, setBusyCap] = useState('')
   const [err, setErr] = useState('')
+  // Read in render, not in state: the bridge is either injected before the first paint or
+  // not at all (`contextBridge` runs at preload), so there is nothing to subscribe to.
+  const loginItemBridge = !!desktopBridge()?.loginItem
   if (!ds) return null
 
   const caps = Object.entries(ds.capabilities)
@@ -308,6 +389,11 @@ function DesktopCapabilitiesPanel() {
           {caps.map(([cap, state]) => {
             const p = GRANT_PRESENTATION[state.granted] ?? GRANT_PRESENTATION.unavailable
             const label = capabilityLabel(cap)
+            // The login item is a preference this panel can actually WRITE, so it renders
+            // its own row against the login-item bridge. A shell too old to carry that
+            // namespace falls through to the plain capability row below rather than
+            // mounting a toggle that would call through `undefined`.
+            if (cap === 'login_item' && loginItemBridge) return <LoginItemRow key={cap} label={label} />
             return (
               <div key={cap} className="flex items-start justify-between gap-3 rounded-lg bg-surface-container px-4 py-3">
                 <div className="min-w-0">

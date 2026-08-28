@@ -40,6 +40,37 @@ export interface NativeNotifyResult {
   reason?: string
 }
 
+/** The OS's answer about "open PersonalClaw at login" (DC-4).
+ *
+ *  The truth lives in the OS, not in `config.json`: the shell reads it back out of
+ *  `app.getLoginItemSettings()` on every call, and the user can remove the registration in
+ *  System Settings → General → Login Items while PersonalClaw is not even running. A
+ *  mirrored config field would be a second source for one fact and would go stale the
+ *  first time that happened, so there is deliberately no config key behind this.
+ *
+ *  `supported: false` is a PLATFORM statement, not a failure — Electron implements login
+ *  items on macOS and Windows only. `describes` names exactly what the toggle touches, so
+ *  Settings can say it before the user flips a persistent change to their machine. */
+export interface LoginItemState {
+  enabled: boolean
+  supported: boolean
+  describes: string
+}
+
+/** The result of writing the login item. `ok: true, changed: false` is the idempotent
+ *  no-op (it was already in the requested state, so nothing was written and no second
+ *  entry could be minted). `ok: false` carries `reason` and is an ANSWER — the caller
+ *  renders the OS's refusal instead of leaving a toggle that claims a registration that
+ *  does not exist. `enabled` is always what the OS reports AFTER the write, never what was
+ *  asked for. */
+export interface LoginItemResult {
+  ok: boolean
+  enabled: boolean
+  changed: boolean
+  supported: boolean
+  reason?: string
+}
+
 export interface DesktopBridge {
   onStatus?: (cb: (msg: string) => void) => () => void
   /** Push-to-talk (DC-3). Note what is NOT here: no `start()`. The shell cannot open
@@ -59,6 +90,18 @@ export interface DesktopBridge {
   notifications?: {
     show: (note: { title: string; body: string; route: string }) => Promise<NativeNotifyResult>
     on: (cb: (payload: { route: string }) => void) => () => void
+  }
+  /** "Open at login" (DC-4). Deliberately NOT under `capabilities`: that vocabulary is
+   *  ratcheted to probe/request/snapshot and answers "may we?", while this answers
+   *  "should we?" — a preference, not an OS permission.
+   *
+   *  Optional like the rest, and for a second reason beyond the browser: a shell built
+   *  before this namespace existed exposes no `loginItem`, and a Settings surface that
+   *  assumed it would call through `undefined`. Absent here reads the same as absent
+   *  bridge — say so, do not offer the control. */
+  loginItem?: {
+    get: () => Promise<LoginItemState>
+    set: (enabled: boolean) => Promise<LoginItemResult>
   }
   capabilities: {
     names: () => string[]
@@ -89,5 +132,43 @@ export async function requestDesktopCapability(cap: string): Promise<DesktopGran
     return await bridge.capabilities.request(cap)
   } catch (e) {
     return { granted: false, state: 'unavailable', prompted: false, reason: e instanceof Error ? e.message : 'The desktop shell did not answer' }
+  }
+}
+
+/** Read the login-item registration from the OS through the shell.
+ *
+ *  Null means "there is nobody to ask" — a browser tab, or a shell too old to carry the
+ *  namespace. The caller states that rather than rendering a toggle it cannot honour.
+ *  A thrown IPC error also resolves to null: an unanswered read is not a "disabled"
+ *  answer, and reporting it as one is how a control comes to lie. */
+export async function getLoginItem(): Promise<LoginItemState | null> {
+  const bridge = desktopBridge()
+  if (!bridge?.loginItem) return null
+  try {
+    return await bridge.loginItem.get()
+  } catch {
+    return null
+  }
+}
+
+/** Register or un-register the login item through the shell. The SAME registration the
+ *  menu-bar item's "Open at Login" checkbox drives — one mechanism, two surfaces.
+ *
+ *  Null means there was nobody to ask (see `getLoginItem`). Anything else is the OS's own
+ *  answer read back after the write, so a caller can never be told "enabled" when nothing
+ *  was registered. */
+export async function setLoginItem(enabled: boolean): Promise<LoginItemResult | null> {
+  const bridge = desktopBridge()
+  if (!bridge?.loginItem) return null
+  try {
+    return await bridge.loginItem.set(enabled)
+  } catch (e) {
+    return {
+      ok: false,
+      enabled: !enabled,
+      changed: false,
+      supported: true,
+      reason: e instanceof Error ? e.message : 'The desktop app did not answer',
+    }
   }
 }

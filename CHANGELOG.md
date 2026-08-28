@@ -30,6 +30,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   automation somewhere else.
   It fetches only — it never posts, updates or deletes. Sending data outward is still the separate
   Webhook action.
+- **"Open at login" is now a working switch in Settings, and it agrees with the menu bar.** Settings →
+  Security → Desktop capabilities already listed **Open at login** — but it read "Granted" whenever the
+  desktop app was running, whether or not PersonalClaw was actually registered to start at login, and
+  there was no way to change it from there. The only real control was the menu bar's own checkbox.
+  It is a live switch now, and both places drive the *same* registration: flip either one and the other
+  follows. Previously a flip in one surface would have left the other showing a stale value until you
+  restarted the app.
+  macOS owns this setting, so PersonalClaw keeps no copy of it — both surfaces read it back from the OS
+  every time they draw. Removing PersonalClaw from System Settings → General → Login Items shows up here
+  instead of leaving a switch stuck on, and if macOS declines the change the switch says so and stays
+  where the OS left it. On Windows and Linux the switch is visible but disabled, with the reason.
+  In a browser tab there is no switch at all: registering a login item needs the desktop app, and a
+  toggle that could not do anything would be worse than an honest absence.
 
 - **Notification rules can now deliver as real OS notifications.** The **Desktop** delivery target in
   Settings → Notifications was accepted and stored from the day the rules matrix shipped, but nothing

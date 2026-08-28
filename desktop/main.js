@@ -698,6 +698,22 @@ const loginItem = makeLoginItem({
 });
 
 /**
+ * The ONE place the tray's checkbox learns what the OS did.
+ *
+ * Two surfaces can write this registration — the tray checkbox and Settings over the
+ * bridge — and the tray renders from a cached state, so every writer must land here
+ * or the two disagree. It re-READS rather than taking the requested value: the OS is
+ * the authority, and a refused write must leave the checkbox showing what is
+ * actually registered.
+ */
+function syncLoginItemToTray() {
+  trayPresence.setLoginItemState({
+    supported: loginItem.supported,
+    enabled: loginItem.isEnabled(),
+  });
+}
+
+/**
  * The menu-bar item. Electron's pieces are injected so the menu, the title
  * arbitration and the degradation paths are unit-testable without launching an app
  * (`test/trayPresence.test.js`).
@@ -725,9 +741,7 @@ const trayPresence = makeTrayPresence({
     toggleLoginItem: (next) => {
       const result = loginItem.set(next);
       if (!result.ok && result.reason) console.warn(`login item unchanged: ${result.reason}`);
-      // Re-read rather than assume: the checkbox must show what the OS did, not what
-      // the click asked for.
-      trayPresence.setLoginItemState({ supported: loginItem.supported, enabled: loginItem.isEnabled() });
+      syncLoginItemToTray();
     },
     quit: () => {
       isQuitting = true;
@@ -955,8 +969,10 @@ if (!app.requestSingleInstanceLock()) {
     // gateway), so the shell never has to parse config to know what to listen for.
     registerPushToTalkIpc(ipcMain, pushToTalk, IPC_CHANNELS);
     // The login item's bridge half (DC-4), so Settings can drive the same toggle the
-    // tray checkbox drives. Its own channels, not the capability vocabulary's.
-    registerLoginItemIpc(ipcMain, loginItem, IPC_CHANNELS);
+    // tray checkbox drives. Its own channels, not the capability vocabulary's. The
+    // fourth argument is what keeps the two surfaces agreeing: a Settings flip
+    // re-renders the tray checkbox instead of leaving it stale until restart.
+    registerLoginItemIpc(ipcMain, loginItem, IPC_CHANNELS, syncLoginItemToTray);
     // The `native` notification target's actuator (DC-5). Registered before any window
     // loads, like the rest: the first gateway note can arrive as soon as the WS opens.
     registerNativeNotificationIpc(ipcMain, nativeNotifications, IPC_CHANNELS);
@@ -966,7 +982,7 @@ if (!app.requestSingleInstanceLock()) {
     if (!trayPresence.start()) {
       console.warn("running without menu-bar presence — the window will close on close");
     }
-    trayPresence.setLoginItemState({ supported: loginItem.supported, enabled: loginItem.isEnabled() });
+    syncLoginItemToTray();
     const win = createWindow();
 
     try {
