@@ -7,6 +7,7 @@ import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, SlotAction, WidgetRow, RowAction } from './kit'
 import { signalPriority } from '../../tasks/taskMeta'
 import type { RouteProps } from '../../../app/useQueryState'
+import { reportingWrite } from '../../../app/reportingWrite'
 
 /** Tasks — ready-to-work tasks with inline complete. A one-tap check marks the
  *  task done (updateTask status → done) and it leaves the list; the live feed
@@ -16,11 +17,21 @@ export function TasksWidget({ navigate }: RouteProps) {
   const [done, setDone] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<Set<string>>(new Set())
 
-  const complete = async (id: string) => {
+  // 🔑 `/* leave in place */` described the state and was the entire failure path. Leaving the row is
+  // right, but success REMOVES it — so a refused complete looked exactly like a tick that never
+  // registered, on a widget whose rows are one line tall. The title is threaded in because the widget
+  // is a LIST: "couldn't complete that task" names nothing when four are showing.
+  //
+  // `refreshAll()` is gated too. It is this write's only other visible consequence, and re-running it
+  // after a failure re-renders the identical row — "nothing happened, twice", the rule this family
+  // recorded for data-driven controls.
+  const complete = async (id: string, title: string) => {
     setBusy((s) => new Set(s).add(id))
-    try { await api.updateTask(id, { status: 'done' }); setDone((s) => new Set(s).add(id)) }
-    catch { /* leave in place */ }
+    let ok = false
+    try { ok = await reportingWrite(`complete “${title}”`, () => api.updateTask(id, { status: 'done' })) }
     finally { setBusy((s) => { const n = new Set(s); n.delete(id); return n }) }
+    if (!ok) return
+    setDone((s) => new Set(s).add(id))
     refreshAll()
   }
 
@@ -50,7 +61,7 @@ export function TasksWidget({ navigate }: RouteProps) {
               busy.has(t.id)
                 ? <span data-type="label-m" className="px-s text-on-surface-low">…</span>
                 : (
-                  <RowAction tone="ok" onClick={() => complete(t.id)} title="Mark complete"
+                  <RowAction tone="ok" onClick={() => complete(t.id, t.title)} title="Mark complete"
                     ariaLabel={`Mark complete: ${t.title}`}><CheckCircle2 size={15} /></RowAction>
                 )
             }

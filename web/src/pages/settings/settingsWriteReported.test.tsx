@@ -134,7 +134,19 @@ describe('the shared settings mutation reports as well as reconciles', () => {
     const offenders: string[] = []
     for (const n of files) {
       const code = codeOf(join('pages/settings', n))
-      for (const m of code.matchAll(/await api\.(save|patch|set|start|delete|create|update)\w*\([^;]{0,200}?catch \{\s*\}/g)) {
+      // 🪤 THIS MATCHER USED `[^;]` AND THEREFORE ONLY SAW A SINGLE-STATEMENT TRY BODY. Two real
+      // offenders sat in this very directory and the sweep reported the area clean for both:
+      //
+      //   MemoryPanel      `await api.saveMemoryDoc(...); setContent(draft); setSaved(true); ...`
+      //   DiagnosticsPanel `await api.setLogLevel(l); setLevel(r.level)`
+      //
+      // The first `;` after the write ended the character class, so the `catch {}` was never reached.
+      // A swallowed write is MORE likely to have a multi-statement body, not less — the statements
+      // after the await are exactly the success signals (`setSaved(true)`, a row removal, a value
+      // update) whose absence is what makes the failure invisible. Widened to `[\s\S]`, measured
+      // against this directory before and after: 0 → 2 offenders on the unfixed tree, and **no false
+      // positives across all 52 files**, because the quantifier is lazy and bounded at 200 chars.
+      for (const m of code.matchAll(/await api\.(save|patch|set|start|delete|create|update)\w*\([\s\S]{0,200}?catch \{\s*\}/g)) {
         offenders.push(`${n}: ${m[0].slice(0, 60)}`)
       }
     }
