@@ -243,6 +243,10 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
   const [marketplace, setMarketplace] = useQueryParam(query, setQuery, 'mkt', '') // '' = all
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
   const [results, setResults] = useState<SkillSearchResult[] | null>(null)
+  // Catalogues the last search could install FROM — excluding the two `native` mirrors of what
+  // is already here. `null` = not searched yet. Zero of these is a different empty state from
+  // zero matches, and the two looked identical.
+  const [installableSources, setInstallableSources] = useState<number | null>(null)
   // Per-source matched counts from the search (computed server-side BEFORE the global
   // cap), so the source filter shows how many of a large catalog matched — not just how
   // many of its rows survived into this page of results.
@@ -254,14 +258,15 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
 
   async function search() {
     const query = q.trim()
-    if (!query) { setResults(null); setCounts({}); return }
+    if (!query) { setResults(null); setCounts({}); setInstallableSources(null); return }
     setLoading(true)
     try {
-      const { results: rows, counts: bySource } = await api.searchSkillsCounted(query, marketplace || undefined)
+      const { results: rows, counts: bySource, installableSources: reached } = await api.searchSkillsCounted(query, marketplace || undefined)
       setResults(rows)
+      setInstallableSources(reached)
       setCounts(bySource)
     }
-    catch { setResults([]); setCounts({}) }
+    catch { setResults([]); setCounts({}); setInstallableSources(null) }
     finally { setLoading(false) }
   }
   // Live-search as the user types (debounced) and when the marketplace scope changes.
@@ -305,6 +310,13 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {loading ? <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]"><Loader2 size={15} className="animate-spin" /> Searching…</div>
           : results === null ? <EmptyState icon={Store} title="Browse skills" hint={`Search ${marketplace || 'all marketplaces'} for skills to install — the agent loads them when relevant.`} />
+          : results.length === 0 && installableSources === 0
+            // Nothing to install FROM. Saying "no results" here blames the query for the
+            // absence of any catalogue to query — our own "a failed fetch renders as an empty
+            // state" shape. `=== 0` and not `!installableSources`, so a FAILED request (back to
+            // null) keeps the ordinary wording rather than asserting a configuration fact it
+            // never learned.
+            ? <EmptyState icon={Store} title="No skill catalogue configured" hint="The store installs skills from a catalogue, and none is set up yet — so there is nothing to search. Install a skill-source app to add one. Your own skills and the bundled ones are unaffected." />
           : results.length === 0 ? <EmptyState icon={Search} title="No results" hint="Try a different search term or marketplace." />
           : (
             <div className="flex flex-col gap-s">

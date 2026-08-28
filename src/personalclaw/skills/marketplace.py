@@ -15,6 +15,7 @@ Additional marketplaces (skills.sh, custom registries) register via
 ``get_default_skills_registry().register(name, marketplace)``.
 """
 
+import builtins
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -363,7 +364,13 @@ class SkillsRegistry:
     def list(self) -> "list[str]":
         return sorted(self._marketplaces)
 
-    def info(self) -> "list[dict[str, str]]":  # type: ignore[valid-type]  # CI-1
+    # `builtins.list`, not `list`: this class defines a method named `list` (just above), which
+    # shadows the builtin inside its own annotation scope — so `"list[dict[str, str]]"` resolved
+    # to the METHOD and mypy read the return type as uniterable. That was silenced with a
+    # `type: ignore[valid-type]` and went unnoticed for as long as nobody iterated the result;
+    # the first caller that did got `"list?[dict[str, str]]" has no attribute "__iter__"`.
+    # Qualifying the name states the type correctly instead of suppressing the complaint.
+    def info(self) -> "builtins.list[dict[str, str]]":
         return [
             {"name": n, "type": mp.marketplace_type, "trust_tier": mp.trust_tier}
             for n, mp in sorted(self._marketplaces.items())

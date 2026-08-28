@@ -666,6 +666,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Searching the skill store said "No results" when there was nothing to search.** The store installs
+  skills from a catalogue, and none ships by default — so every search came back empty and told you to
+  try a different search term, which blamed your query for the absence of anything to look in. It now
+  says that no catalogue is set up and what to do about it, and it keeps saying "No results" in the case
+  that actually means that. A failed search still reads as a failed search rather than claiming anything
+  about your configuration.
+  Your own skills and the bundled ones are unaffected, and the integrity badge on installed skills is
+  unchanged.
+
 - **The check that keeps installed apps off PersonalClaw's internals had never actually run.** Apps are
   meant to reach core only through the published SDK, and one test enforces that. It looked for the apps
   folder in a place that does not exist — in a clone, in a git worktree, or in a development workspace
