@@ -35,16 +35,17 @@ const read = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
  *  judgement on record rather than a silent narrowing of scope (the pattern `emptyStateRollout.test.tsx`
  *  uses). Both are queued; neither is fixed here, because one concern per change:
  *
- *   · `projects/ProjectsSection.tsx:922` — a task's STATUS inside a project card is a ternary of
- *     `Check` / `AlertTriangle` / `Circle` with no name, so done/blocked/open is glyph-only. That is a
- *     status-vocabulary question across the project board, not this row's approval flag.
+ *   · ~~`projects/ProjectsSection.tsx`~~ — **FIXED, exemption removed.** The card was not merely unnamed:
+ *     it hand-rolled a rival status table that disagreed with `taskMeta.statusMeta` on three of five
+ *     statuses (`in_progress` coral instead of info, `blocked` the wrong icon, `cancelled` unhandled and
+ *     rendering as "not started"). Now reads the canonical map, which names the glyph as a side effect.
+ *     See `projects/taskStatusFromCanonicalMap.test.ts`.
  *   · `settings/settingsUI.tsx:332` — `{danger && on && <AlertTriangle/>}` beside a `Toggle`, marking
  *     "this switch is dangerous AND currently on". The Toggle itself is labelled; the danger is not.
  *     It sits in the settings row primitive, so it changes every panel that uses it.
  *
  *  🪤 Keep this set SMALL and dated. An exemption list that grows is how a sweep stops being one. */
 const RECORDED_NOT_FIXED = new Set([
-  'projects/ProjectsSection.tsx: <AlertTriangle>',
   'settings/settingsUI.tsx: <AlertTriangle>',
 ])
 
@@ -145,7 +146,8 @@ describe('the approval shield names itself', () => {
         .some((m) => /text-(warn|danger)|--color-(warn|danger)/.test(m[1]) && !/aria-label=|\baria-hidden\b/.test(m[1]))
       expect(found, `${entry} is exempted but no longer matches — drop the exemption`).toBe(true)
     }
-    expect(RECORDED_NOT_FIXED.size, 'the exemption list should shrink, never grow').toBeLessThanOrEqual(2)
+    // Ratcheted down as each is fixed — 2 → 1. It may only ever shrink.
+    expect(RECORDED_NOT_FIXED.size, 'the exemption list should shrink, never grow').toBeLessThanOrEqual(1)
   })
 
   it('the pages sweep reads a real tree (vacuity floor)', () => {
