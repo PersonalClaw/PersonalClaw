@@ -867,3 +867,117 @@ Status stays DESIGNED — implementation deferred to its natural roadmap positio
   so no `make` leg applies. `dag.json` untouched — that flip is the owner's, and the atom's remaining
   clause is still the one no local environment can close: a real OpenAI-family run, plus a Bedrock
   inference-profile id that resolves to a price row.
+- **2026-08-28 — PCS-3 CLAUSE CLOSED, and a TRACKING CORRECTION that matters more than the one-line fix:
+  `PCS-3` has read `status: "done"` in `dag.json` (PR #885) while one of its own `done_when` clauses was
+  UNMET.** The clause: *"OpenAI adapter declares AUTOMATIC and translates nothing."* It was not partly
+  met or met-in-spirit; the declaration did not exist. Measured on `main` at `0315bd61e` before touching
+  anything: `git grep "PromptCache\|AUTOMATIC" -- src/personalclaw/llm/openai.py` → **zero hits**; every
+  `AUTOMATIC` occurrence in `src/` was the enum definition (`prompt_cache.py:38`), a docstring or a
+  comment, so **`PromptCache.AUTOMATIC` was never assigned anywhere in core** — an enum member nobody
+  writes. `llm/anthropic.py:359` declared `EXPLICIT`; `llm/openai.py` declared nothing, so it inherited
+  `ModelProvider.prompt_cache = NONE` (`base.py:55`) and the native loop's
+  `getattr(self._model, "prompt_cache", PromptCache.NONE)` (`runtime.py:780`) resolved **"this provider
+  does not cache" for the one provider family the enum's own docstring names as the AUTOMATIC case**
+  (`prompt_cache.py:31`: "(OpenAI-family.)").
+  **Why this is a trust problem and not a typo.** A stale `todo` gets re-read; a `done` atom is never
+  looked at again. This one was *worse than unnoticed*: the gap was recorded TWICE, both times on the
+  CONSUMER instead of the owner. `PCS-7`'s `blocked_reason` in `dag.json` says its V2 half is "coupled to
+  `PCS-3`'s still-unmet clause that the OpenAI adapter declare AUTOMATIC (today `llm/openai.py` declares
+  no posture and inherits `PromptCache.NONE`)", and this log's own 2026-08-22 entry says the same. So the
+  finding was correct, written down, and still could not move `PCS-3`'s row — because nothing reconciles a
+  consumer's `blocked_reason` against an owner atom's `status`. **A `done` atom needs a rail that re-reads
+  its clauses, or a clause-level status; a note filed on a downstream atom is not a correction.**
+  **Fixed:** `OpenAIProvider.prompt_cache: PromptCache = PromptCache.AUTOMATIC` (`llm/openai.py`), mirroring
+  `AnthropicProvider`'s declaration site exactly. One line plus its comment. `dag.json` was NOT touched and
+  the `PCS.md` glyph was NOT changed (`test_roadmap_atomic_status_sync` compares the two) — **both flips are
+  the driver's**; the dated correction sits in `PCS.md`'s `PCS-3` section body instead.
+  **Is AUTOMATIC right? The repo already asserted it, in the apps repo, and disagreed with itself.**
+  `PromptCache.AUTOMATIC` means "the provider caches a stable prompt PREFIX on its own, with no per-request
+  marker" (`prompt_cache.py:28-31`), which is OpenAI's automatic prompt caching. Corroboration is explicit
+  rather than inferred: in `PersonalClawApps` (apps `main`), the `openai-models` app's `provider.py` already
+  sets `prompt_cache=PromptCache.AUTOMATIC` on `OPENAI_CAPABILITY` (lines 52-56) with the comment *"OpenAI caches a stable
+  prompt PREFIX server-side with no per-request marker and no opt-in, which is precisely what AUTOMATIC
+  means; **the plan's C4 assigns the same value to core's OpenAI adapter**"*. So the apps repo had been
+  asserting for a while that core's adapter carries this value. It did not.
+  **TWO homes, and the clause names the one that was missing.** The posture rides on two surfaces by design:
+  the declarative twin (`ProviderCapability.prompt_cache` / `BrandedProviderSpec.prompt_cache`) and the
+  `ModelProvider` INSTANCE attr, which `prompt_cache.py:22-24` calls "the attr the native loop reads".
+  `capabilities.py:66-71` requires them to carry **the same grade**. For OpenAI they did not: the app set the
+  spec, and `_factory` then builds **core's `OpenAIProvider`** (`openai.py`'s own module docstring: the
+  capability descriptor and factory live in `apps/openai-models`, the class lives here), whose instance attr
+  was `NONE`. So the *runtime* posture was NONE while the *catalog* posture was AUTOMATIC. `bedrock-models`
+  is the precedent for doing it properly — its own `provider.py` sets BOTH (line 581 the instance attr, line
+  968 the spec) and its comment calls them twins that "must" agree.
+  **Chosen home: the core adapter's instance attr**, because it
+  is the surface the clause names, the surface the loop reads, and the missing half of that pair.
+  **The branded-spec home needs nothing** — it is already `AUTOMATIC` on apps `main` and railed there by
+  `.github/scripts/check_prompt_cache_posture.py` (R1: every model-provider app must name a posture), so
+  `PCS-8` is genuinely landed on that side.
+  **Honest scope: NOTHING OBSERVABLE CHANGES ON THE WIRE, and the PR says so rather than implying a win.**
+  `mark_cacheable_prefix` returns the input object unchanged for both `NONE` and `AUTOMATIC`
+  (`prompt_cache.py:101-104`), so the served payload is byte-identical. Full census of every reader of
+  `prompt_cache` in `src/` and what each now does differently: (1) `runtime.py:780` — the ONLY behavioural
+  reader; now resolves `AUTOMATIC` instead of `NONE`, `effective_cache_mode` passes it through, and
+  `mark_cacheable_prefix` returns **the same list object** — so the only observable delta is the DEBUG line
+  at `runtime.py:782` printing `automatic` instead of `none`. (2) `sdk/provider_helpers.py:363` — threads
+  `spec.prompt_cache` into a `ProviderCapability`; reads the SPEC, not the adapter; unchanged. (3)
+  `branded_specs.py:85/97/108` — `to_dict`/`from_dict` of the spec; unchanged. Nothing else in `src/` reads
+  the field. **Correcting a premise while I am here:** there is no telemetry/pricing reader of `prompt_cache`
+  at all — `stats.py` and `pricing.py` never consult it — so the "expect cache telemetry" coupling to `PCS-7`
+  is a HUMAN/spec coupling (a live OpenAI run only proves "vendor reads with no marker sent" once the posture
+  is declared), not an `if prompt_cache == ...` branch someone could point at.
+  **Byte-identity is now railed, because this change moves OpenAI OUT of "undeclared"** and `PCS-3`'s last
+  clause only ever covered *undeclared* providers. Three tests in `tests/test_prompt_cache_marker.py`:
+  `test_openai_adapter_declares_automatic` (asserts the class attr AND an instance's `getattr`, behind a
+  `fake_openai_module` fixture mirroring `fake_anthropic_module`, since `openai` is an OPTIONAL SDK);
+  `test_the_openai_posture_leaves_the_message_list_byte_identical` (differential — the same input through
+  `NONE` and through `AUTOMATIC` yields the SAME object, not an equal one); and
+  `test_runtime_hands_same_object_to_complete_under_the_openai_posture` (end-to-end through the real
+  middleware: what `complete()` receives IS `rt._messages`).
+  **Falsified — two legs, each with a vacuity partner that stayed green, each mutation grepped back before
+  running and restored from a file COPY at the literal path (never `git checkout`).** Unmutated baseline:
+  **37 items, 37 passed**. (i) Declaration reverted to `PromptCache.NONE` → **1 failed, 36 passed**, the red
+  being exactly `test_openai_adapter_declares_automatic`; **both byte-identity tests stayed GREEN** (correct:
+  `NONE` is also byte-identical, so they cannot detect a missing declaration — which is why the declaration
+  needs its own test). (ii) `mark_cacheable_prefix`'s guard changed from `is not EXPLICIT` to `is NONE` so
+  `AUTOMATIC` falls through and marks → **3 failed, 34 passed**: `test_the_openai_posture_leaves_the_message_
+  list_byte_identical`, `test_runtime_hands_same_object_to_complete_under_the_openai_posture` (which caught
+  a real `_cache_hint` reaching `complete()`), and the pre-existing
+  `test_none_and_automatic_return_same_object[automatic]`; **the declaration test stayed GREEN.** Leg (ii)
+  is the one that protects the wire payload. Every leg's count differs from the 37 baseline.
+  **A FOURTH place this was already recorded, and the one that proves it mechanically: the committed
+  inert-surface census.** `inert-surface-baseline.json` carried
+  `"src/personalclaw/llm/prompt_cache.py": {"inert": 1, "surfaces": ["enum:PromptCache.AUTOMATIC"]}`. The
+  repo's own census had already classified this exact enum member as an INERT SURFACE — declared and never
+  written — and committed that number as the floor. So the gap was measured, named, and version-controlled,
+  and `PCS-3` still read `done`. Closing it makes the ratchet move DOWN: `enum` 9 → 8, total inert 240 → 239,
+  and `inert-surface-baseline.json` was regenerated in THIS commit, which is what
+  `test_committed_baseline_is_not_stale_on_the_shrink_side` instructs on a legitimate shrink ("Run
+  `python scripts/generate_inert_surface_baseline.py` in the cleanup commit"). The regenerated diff is
+  **only** that one entry plus its two roll-up counters; no other file moved, and no ceiling was raised.
+  **Contracts checked and not needed:** no new `json_error` code, so no `HTTP_ERROR_CODES` row. No config
+  field — a provider capability is a code-level declaration on a class, not user state; the plan's config
+  field (`agent.prompt_cache_enabled`) already exists from `PCS-5` and is untouched, so the five-point
+  round-trip is not in play. `config/loader.py` not touched. `llm/prompt_cache.py` is a neutral module with
+  zero SDK imports and the new import in `openai.py` only pulls that neutral module, so Property 11 holds.
+  **DISCOVERY (tracking, not code): `PCS-8`'s glyph and its own section body disagree.** `dag.json` says
+  `done` and `PCS.md`'s table shows `✅ (apps#42)`, but `PCS.md`'s `PCS-8` section body still reads
+  **"Status: todo"**. The glyph matches `dag.json`, so the sync rail is green and the stale line is invisible
+  to it. Left for the driver — flagging it rather than editing another atom's row. `PCS.md`'s header
+  paragraph also lists `PCS-8` under **Landed** while the body says `todo`, which is the same drift.
+  **METHOD NOTE, because it nearly produced a false finding of my own.** My first apps-repo probe reported
+  ZERO hits for `prompt_cache`/`PromptCache`/`AUTOMATIC` and would have "confirmed" that `PCS-8` was a second
+  false `done`. It was wrong: that checkout sat on a stale feature branch. Re-run against apps `origin/main`,
+  the postures are all there plus a CI rail. **Grep the ref, not the working tree.**
+
+- **OWNER RULING 2026-08-28 — `PCS-7` is SPLIT.** Three independent audit passes recommended it and it is
+  accepted. `PCS-7`'s numbers half is complete and railed (`_turn_complete_line` carries the four cache
+  fields from a live call site; `stats.cache_hit_pct` returns an honest `None` on a zero denominator;
+  `pricing.cache_savings_usd` computes both sides *through* `estimate_cost` so the rate lookup cannot drift
+  and returns `None`, never `0.0`, for an unpriced model; the frontend reader is now railed by PR #2197). Its
+  **V2 live-provider half cannot be closed from this environment at all** — no Bedrock inference-profile id
+  resolves to a price row, and there is no `OPENAI_API_KEY` here. Holding a finished deliverable hostage to
+  an environment gate makes the roadmap permanently understate itself, and the two halves have genuinely
+  different gates (code vs credentials), which is exactly what an atom boundary should separate. So the
+  numbers half stays `PCS-7`, and the live-provider verification becomes its own atom — which this change
+  unblocks by supplying the OpenAI posture it depends on. The new atom id is the driver's to mint.
