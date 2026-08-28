@@ -67,8 +67,25 @@ def test_from_dict_derives_id_from_goal_when_absent():
     assert _ID_RE.match(derived.id)
     # Explicit id wins; symbol-only goals still yield a valid slug.
     assert Intent.from_dict({"id": "custom", "goal": "x"}).id == "custom"
-    assert slugify_goal("  ???  ") == "intent"
+    assert slugify_goal("  ???  ").startswith("intent-")
+    assert _ID_RE.match(slugify_goal("  ???  "))
     assert _ID_RE.match(slugify_goal("中文 only"))
+
+
+def test_slug_fallback_separates_goals_it_cannot_transliterate():
+    """The fallback is derived, so a non-Latin script does not collapse every goal onto
+    one id. It used to be the constant ``intent``, which gave every Japanese, Chinese,
+    Korean, Greek, Hebrew and Cyrillic goal the SAME id — so a user writing in any of
+    those could hold exactly one intent and the second silently replaced the first."""
+    from personalclaw.knowledge.intents import _ID_RE, slugify_goal
+
+    unslugifiable = ["健康診断", "日本語", "건강 검진", "Привет", "עברית", "???", "!!!"]
+    slugs = [slugify_goal(g) for g in unslugifiable]
+    assert len(set(slugs)) == len(slugs), f"goals collapsed onto one id: {slugs}"
+    assert all(_ID_RE.match(s) for s in slugs)
+    # Stable: the create path derives the id from the goal on every POST, so the same
+    # goal must keep resolving to the same row rather than accumulating duplicates.
+    assert slugs == [slugify_goal(g) for g in unslugifiable]
 
 
 # ── store CRUD ──
@@ -87,10 +104,38 @@ def test_get(store):
 
 
 def test_upsert_replaces_same_id(store):
+    """`replace=True` is the edit path — the caller named the id, so it means that row."""
     store.upsert(Intent(id="a", goal="first"))
-    store.upsert(Intent(id="a", goal="second"))
+    store.upsert(Intent(id="a", goal="second"), replace=True)
     intents = store.load()
     assert len(intents) == 1 and intents[0].goal == "second"
+
+
+def test_create_refuses_to_overwrite_a_different_goal(store):
+    """The invariant: no write ever reduces the intent count. The id is DERIVED from the
+    goal, so two differently-worded goals can slugify onto one id — and the create path
+    overwrote the first, destroying it, while answering as if it had created something."""
+    first = Intent.from_dict({"goal": "track homelab drive health"})
+    second = Intent.from_dict({"goal": "Track homelab drive health!"})
+    assert first.id == second.id, "precondition: these goals must collide"
+
+    store.upsert(first)
+    with pytest.raises(ValueError, match=f"intent_id_taken:{first.id}"):
+        store.upsert(second)
+
+    survived = store.load()
+    assert len(survived) == 1
+    assert survived[0].goal == "track homelab drive health"
+
+
+def test_create_of_an_identical_goal_stays_idempotent(store):
+    """Refusing a collision must not break re-posting the SAME goal: the create path
+    derives the id on every POST, so an unchanged goal has to keep resolving to its own
+    row (and carry a changed flag with it) rather than raising."""
+    store.upsert(Intent.from_dict({"goal": "track drive health"}))
+    store.upsert(Intent.from_dict({"goal": "track drive health", "propose_skill": True}))
+    rows = store.load()
+    assert len(rows) == 1 and rows[0].propose_skill is True
 
 
 def test_upsert_rejects_bad_id(store):
@@ -346,3 +391,66 @@ def test_reingest_does_not_duplicate_outcome(tmp_path):
     _run(ingest_item(s, iid, insights_pool=_StubPool(match)))
     _run(ingest_item(s, iid, insights_pool=_StubPool(match)))
     assert len(s.outcomes_for_item(iid)) == 1  # not 2
+
+
+# ── the POST endpoint's create-vs-edit split ──
+
+
+def _upsert(knowledge_store, body):
+    """Drive `POST /api/knowledge/intents` the way the panel does."""
+    import json
+    from types import SimpleNamespace
+
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import knowledge as H
+
+    app = web.Application()
+    app["state"] = SimpleNamespace(knowledge_store=knowledge_store)
+    req = make_mocked_request("POST", "/api/knowledge/intents", app=app)
+
+    async def _json():
+        return body
+
+    req.json = _json
+    resp = _run(H.upsert_intent(req))
+    return resp, json.loads(resp.body)
+
+
+@pytest.fixture
+def knowledge_store(tmp_path):
+    from personalclaw.knowledge.store import KnowledgeStore
+
+    return KnowledgeStore(tmp_path / "k.db")
+
+
+def test_creating_a_colliding_goal_is_a_typed_409_not_a_201(knowledge_store):
+    """A body with no id is a create, and the derived slug can land on a stranger's
+    intent. It used to overwrite that intent and answer 201, so the UI reported success
+    for a write that destroyed data. The message must name the OTHER goal — the id is
+    derived and never shown, so quoting it would be unactionable."""
+    first, second = "track homelab drive health", "Track homelab drive health!"
+    resp, _ = _upsert(knowledge_store, {"goal": first})
+    assert resp.status == 201
+
+    resp, body = _upsert(knowledge_store, {"goal": second})
+
+    assert resp.status == 409
+    assert body["error"]["code"] == "intent_id_taken"
+    assert first in body["error"]["message"]
+
+
+def test_editing_an_intent_may_still_change_its_goal(knowledge_store):
+    """The refusal above must not block the edit path: a body carrying an explicit id
+    means that row, and rewording the goal is the whole point of the edit."""
+    resp, body = _upsert(knowledge_store, {"goal": "track drive health"})
+    intent_id = body["id"]
+
+    resp, _ = _upsert(knowledge_store, {"id": intent_id, "goal": "track drive health, weekly"})
+
+    assert resp.status == 201
+    from personalclaw.knowledge.intents import IntentStore
+
+    rows = IntentStore(knowledge_store.db_path.parent / "intents.json").load()
+    assert len(rows) == 1 and rows[0].goal == "track drive health, weekly"

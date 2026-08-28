@@ -551,6 +551,65 @@ def test_merge_reparents_children_of_the_source(store):
     assert by_name["kid"]["parent_name"] == "dst", "a child must follow, not be orphaned"
 
 
+def _tag_cycles(store) -> list[str]:
+    """Names of tags that can reach themselves by walking up. Empty is the invariant."""
+    rows = store.list_tags()
+    by_id = {t["id"]: t for t in rows}
+    bad = []
+    for tag in rows:
+        seen, cursor = set(), tag
+        while cursor is not None:
+            if cursor["id"] in seen:
+                bad.append(tag["name"])
+                break
+            seen.add(cursor["id"])
+            cursor = by_id.get(cursor.get("parent_id"))
+    return bad
+
+
+def test_merging_a_tag_into_one_nested_under_it_leaves_no_cycle(store):
+    """The invariant no merge may break: afterwards, no tag can reach itself walking up.
+
+    Folding a tag into one below it is a legitimate merge ("these are the same thing, keep
+    the child's name"), and the blanket `parent_id = target WHERE parent_id = source`
+    pointed the survivor's own ancestor chain back at the survivor. At depth 1 that is a
+    self-cycle; at depth 2 it is a two-node loop, which is why this asserts the general
+    property rather than `parent_id != id`. `set_tag_parent` refuses both via the same
+    ancestor walk; this path had no guard at all.
+
+    A tag inside a cycle is neither a root (`parent_id === null`) nor any root's child, so
+    `TagManager.tsx` cannot place it and appends it as a bottom-of-list straggler, flat and
+    detached from where the user filed it, along with everything beneath it."""
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["a", "b", "c"])
+    ids = _tag_ids(store)
+    assert store.set_tag_parent(ids["b"], ids["a"]) is True
+    assert store.set_tag_parent(ids["c"], ids["b"]) is True
+
+    store.merge_tags(ids["a"], ids["c"])  # fold the GRANDPARENT into its grandchild
+
+    assert _tag_cycles(store) == []
+    rows = {t["name"]: t for t in store.list_tags()}
+    assert "a" not in rows
+    # `c` inherits the merged-away tag's position — a root here, since `a` was one.
+    assert not rows["c"].get("parent_name")
+    assert rows["b"]["parent_name"] == "c", "the child still follows the merge"
+
+
+def test_a_merged_away_parent_hands_its_branch_position_to_the_survivor(store):
+    """The generalization: the survivor takes the SOURCE's place, so a merge inside a
+    branch keeps the branch where the user put it instead of promoting it to a root."""
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["p", "a", "b"])
+    ids = _tag_ids(store)
+    assert store.set_tag_parent(ids["a"], ids["p"]) is True
+    assert store.set_tag_parent(ids["b"], ids["a"]) is True
+
+    store.merge_tags(ids["a"], ids["b"])  # fold `a` into its child, under `p`
+
+    assert _tag_cycles(store) == []
+    rows = {t["name"]: t for t in store.list_tags()}
+    assert rows["b"]["parent_name"] == "p", "the survivor stayed inside the branch"
+
+
 def test_delete_reparents_children_to_root_rather_than_cascading(store):
     """Deleting a parent must not silently destroy the branch beneath it."""
     store.create_typed_item(item_type="note", title="N", content="c", tags=["parent", "child"])

@@ -1850,14 +1850,35 @@ async def upsert_intent(request: web.Request) -> web.Response:
         return web.json_response({"error": "JSON body must be an object"}, status=400)
     if not str(body.get("goal") or body.get("description") or "").strip():
         return web.json_response({"error": "goal required"}, status=400)
+    # An explicit id means the caller is EDITING that row, so a goal change is the edit
+    # being saved. No id means a create whose id `from_dict` derives from the goal, and
+    # only that path can land on a stranger's intent — which used to overwrite it and
+    # answer 201 (#758). `api.ts` already documents this exact split: "New intents omit
+    # id (the backend derives the slug from the goal); edits send it."
+    replace = bool(str(body.get("id") or "").strip())
     try:
         # The id is derived from the goal when absent (the user never types one) —
         # from_dict owns the slug, so a caller may send only {goal}.
         intent = Intent.from_dict(body)
         store = _intent_store(request)
-        store.upsert(intent)
+        store.upsert(intent, replace=replace)
     except ValueError as e:
-        return web.json_response({"error": str(e)}, status=400)
+        detail = str(e)
+        if detail.startswith("intent_id_taken:"):
+            # 409, not 400: the body is well-formed and the request would be valid at any
+            # other moment. Name the OTHER intent's goal, because the id is derived and
+            # invisible in the UI, so "intent-a1b2c3d4 is taken" would be unactionable.
+            existing = _intent_store(request).get(detail.split(":", 1)[1])
+            return json_error(
+                "intent_id_taken",
+                message=(
+                    "An intent for “"
+                    + ((existing.goal if existing else "").strip() or "another goal")
+                    + "” already covers this. Edit that one, or reword this goal."
+                ),
+                status=409,
+            )
+        return web.json_response({"error": detail}, status=400)
     _sel_log("intent.upsert", intent_id=intent.id)
     return web.json_response({"intents": _intents_payload(request), "id": intent.id}, status=201)
 
