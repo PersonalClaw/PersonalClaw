@@ -193,12 +193,27 @@ describe('the seven OU-6 surfaces route their empty case through the primitive',
 //   'degenerate' only reachable on an install missing its own bundled data. Kept honest (the
 //                fact plus whatever path exists) but not worth a preset grid.
 //
-// 🚧 OFF-LIMITS, recorded not fixed: `pages/triggers/*` and the Automations surface were being
-// changed concurrently by TSE-4, so this atom did not touch them. Two findings there for a
-// follow-up: (a) PEP-1's own execution log records that a fresh home is NOT trigger-empty —
-// `reconcile_digest_cron` registers `system:notification-digest` at every boot, so a newcomer's
-// first visit is one machine-named system row and NO empty state, since the preset grid is gated
-// on `counts.all === 0`; (b) `WeekGridView`'s "No fires this week" has no on-ramp.
+// 🚧 THE TRIGGERS FENCE, NARROWED 2026-08-28 — its original reason has EXPIRED. It read:
+// "`pages/triggers/*` and the Automations surface were being changed concurrently by TSE-4, so this
+// atom did not touch them." TSE-4 is ✅ done (`docs/roadmap/atomic/TSE.md`) and no open PR touches
+// `pages/triggers/*`, so concurrency is no longer a reason to leave two files unclassified — and an
+// `offLimits` entry whose stated cause is gone is indistinguishable from an unexamined surface.
+//
+// Of the two findings it recorded, ONE is now classified and one still cannot be:
+//
+//   (b) `WeekGridView`'s "No fires this week" has no on-ramp → **classified 'derived' below, which
+//       means it is NOT a defect.** Only the 'on-ramp' verdict is. The grid plots projected fires of
+//       triggers the user owns on the sibling List view, one `Segmented` away — the same shape as
+//       `Tasks › Graph`. The finding was recorded before the taxonomy could be applied to it,
+//       precisely because the file was fenced.
+//   (a) A fresh home is NOT trigger-empty — `reconcile_digest_cron` registers
+//       `system:notification-digest` at every boot, so a newcomer's first visit is machine-named
+//       system rows and NO empty state, since the preset grid is gated on `counts.all === 0`.
+//       `TriggersListPage.tsx` therefore stays fenced, but for a DIFFERENT reason than before: its
+//       code does carry an on-ramp (`PresetEmptyState` + `TRIGGER_PRESETS`), so 'on-ramp' would pass
+//       this file's own assertion while being unreachable in practice. Classifying it either way
+//       would assert something false, and whether those rows are hidden, counted separately, or
+//       renamed is an owner scope call (tracked as TC-8). **Do not classify it to close the hole.**
 const PEP2_CENSUS: {
   surface: string
   file: string
@@ -251,6 +266,8 @@ const PEP2_CENSUS: {
   { surface: 'Companion › sections', file: 'pages/companion/CompanionSections.tsx', verdict: 'derived',
     why: 'Four projections (running loops, open tasks, pending inbox, recent notifications) of collections owned by #/loops, #/tasks, #/inbox and #/notifications. A phone triages what already exists; the create flows belong to those surfaces, and the page footer links out to them rather than growing four CTAs that would each be a second entrance to someone else\'s flow.' },
   { surface: 'Files', file: 'pages/files/FilesSection.tsx', verdict: 'derived', why: '"No file open" is a selection state, not an empty collection.' },
+  { surface: 'Automations › Week', file: 'pages/triggers/WeekGridView.tsx', verdict: 'derived',
+    why: 'A projection of the schedules owned by the sibling List view, one `Segmented` control away — the same shape as Tasks › Graph. Its hint already teaches why the grid can be empty while triggers exist (only enabled INTERVAL schedules are plotted; a cron expression is not projected yet; a disabled one has no fires), so a CTA here would offer to create a trigger in the one place that cannot show whether the new one will appear.' },
   // ── only reachable on a broken install ──
   { surface: 'Tools', file: 'pages/tools/ToolsPage.tsx', verdict: 'degenerate',
     why: 'Built-in action tools always exist, so a successful index read cannot be empty — and the failed read already branches to LoadError (the swallow was removed earlier). When importable MCP servers exist, ImportSuggestions is the on-ramp.' },
@@ -280,7 +297,10 @@ describe('PEP-2 · every list surface\'s genuinely-empty branch is classified', 
     const classified = new Set(PEP2_CENSUS.map((r) => r.file))
     // 🚧 The Automations/triggers surfaces are deliberately out of this atom's fence (see the
     // header): they are named here so the diff is honest rather than silently short.
-    const offLimits = new Set(['pages/triggers/TriggersListPage.tsx', 'pages/triggers/WeekGridView.tsx'])
+    // Narrowed 2026-08-28: `WeekGridView` is classified above. Only the file with an open owner
+    // question (TC-8 — the preset grid is unreachable because a fresh home is never trigger-empty)
+    // is still fenced, and the header says why.
+    const offLimits = new Set(['pages/triggers/TriggersListPage.tsx'])
     const unswept = [...rendering].filter((f) => !classified.has(f) && !offLimits.has(f))
     expect(unswept, 'every empty-state file needs a PEP-2 verdict').toEqual([])
   })
