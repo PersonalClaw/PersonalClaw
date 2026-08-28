@@ -851,6 +851,70 @@ These loop-engine behaviors are baked into `gateway._fire`, the watchdog, and th
 
 ## Execution log
 
+- **[2026-08-28][WF2LOO-9] BLOCKER CLOSED — a trigger fire can now RESUME a parked run.**
+  `WF2LOO-9`'s fourth clause (the `goal-pursuit-monitor` template) was unmet because there was no
+  parked-run resume target. There is one now. *(Atom id follows — this landed as unowned scope; the
+  owner is filing it.)*
+  **Re-measured before writing, and the audit's central claim held: `wakeup.resume_for` had ZERO
+  production callers.** Only `wakeup_for` was reachable, from `dispatch_fires`, and it always built
+  a `wake` — so `WakeKind.RESUME`, `Disposition.REQUEUED`, `dispatch.droppable` and
+  `wakeup.retry_queue` were a complete decision layer with no call site. Two of the audit's
+  citations were wrong and are corrected here: **`wakeup.py`/`dispatch.py` live in `triggers/`, not
+  `workflows/`**, and **`workflows/leases.py` has no `single_flight`** — it *imports* one from
+  `concurrency.py` and owns `read_claim`/`acquire_claim`/`release_claim` instead.
+  **The consumer half was worse than absent, and this is the finding that shaped the design.**
+  `executor.drain` never dispatches on `Wakeup.kind` (`grep -n kind executor.py` → one hit, inside
+  a prose docstring). So a resume queued onto a session inbox is drained and handed to the
+  trigger's ordinary action runner — a resume reporting success while doing entirely different
+  work, unattended. A resume target therefore never reaches `deliver()` at all
+  (`Disposition.RESUME_TARGET`, the one new member; `summary()` already keys every member) and
+  `loop._execute_delivery` applies it to the run directly, branching on kind BEFORE disposition.
+  **What identifies the target:** `Trigger.workflow["resume"] = {run_id, project_id?,
+  resume_token?, answer?}` — trigger STATE in the existing automation-substrate dict, not config,
+  so the config round-trip contract does not bind (no dataclass field, no `_meta`, no `load()`/
+  `to_dict()`, no PATCH allowlist entry). No new `json_error` code either, so the
+  `HTTP_ERROR_CODES` rail does not bind: this rides `service.resume_run`'s existing `WF_*`
+  service-result vocabulary.
+  **Fail-CLOSED on a bad target, because it fires unattended.** Gone / finished / foreign →
+  `Outcome.REFUSED` with a mandatory reason (`require_reason`) at `logger.warning`. Fail-open would
+  mean "start a new run instead" — work the author never asked for, hourly, possibly mutating.
+  `WF_RUN_NOT_LIVE`/`WF_NO_PENDING_GATE` → `Outcome.DEFERRED`: states a parked run leaves on its
+  own, re-evaluated by the trigger's own cadence rather than by `pending_resumes` (which feeds
+  `deliver_all` → the inbox this path exists to avoid).
+  **Admission is INHERITED, with one exception worth recording.** Every fire reaching the resume
+  passed `firepath.evaluate`'s full walk, because `service.tick` only builds a `DueFire` for an
+  ALLOWED decision — so a resume gets incident/screen/spacing/rate/quiet/duty/budget/claim/slot/
+  active/yield/capability identically to a start. `droppable` is the one deliberate asymmetry and is
+  not an admission bypass (the overlap admission is the `claim` gate, already run). **The exception:
+  `gate_policy.may_answer` returns `True` unconditionally when `channel` is empty, so a trigger
+  resume inherits the LOCAL "already authenticated by the gateway" posture and the owner binding
+  never runs.** Not papered over: `responder=f"trigger:{id}"` is passed for attribution, and the
+  only real scope guard available is the opt-in `project_id` comparison. A trigger that can name a
+  run id can answer that run's gate.
+  **Idempotence is inherited, not re-implemented.** `human_input.consume_continuation` claims the
+  token with `os.rename` before reading it (measured 0/40 double-winners against the read-then-
+  unlink version's 36/40), so the second of two fires gets `WF_RESUME_ALREADY_USED`.
+  `concurrency.single_flight` is deliberately NOT wrapped around it — the weaker guard, and a second
+  lock would be two mechanisms disagreeing about who won.
+  **DISCOVERY (pre-existing, NOT fixed — out of scope):** `consume_continuation` renames to
+  `<token>.claimed.json` and `list_continuations` globs `*.json`, which matches it — so an answered
+  gate keeps reading as pending. Consequence in shipped code: a run with one live gate plus one
+  previously-answered gate reports `WF_AMBIGUOUS_GATE`, so a token-less "approve it" stops working
+  on any run that has ever answered a gate. Pinned by
+  `test_list_continuations_still_reports_a_CLAIMED_gate` so the fixer is told a trigger resume reads
+  this seam.
+  **Proof is the run's own state, not an enqueue.** The central test drives a real run to a real
+  approval gate, fires a real trigger through `dispatch_fires` → `_execute_delivery`, and reads the
+  node BEHIND the gate out of the store. Falsified: neutering `service.resume_run` to
+  `{"ok": True}` leaves the outcome `ran` while the run stays `NEEDS_INPUT` — 2 of 4 red, the
+  no-target wake staying green. 44/44 green on the file; `_supervisor()` is resolved per fire
+  because the gateway attaches `svc.workflows` only after the clock loop is constructed, and a
+  captured None would have made the whole path inert.
+  **NOT done (by scope):** the `goal-pursuit-monitor` template itself — still `WF2LOO-9`'s remaining
+  clause, now unblocked. Also unobserved: `tick_once` discards `_execute_delivery`'s return, so a
+  refused resume's `RunOutcome` reaches the log but not a ledger row. Pre-existing (the `NO_SESSION`
+  path has the same gap) and deliberately not widened here.
+
 - **[2026-08-14][WF2LOO-16] DONE — the THIRD verdict vocabulary is deleted, not bridged.**
   `loop/judge.CycleVerdict{done, done_reason, marginal_value, quality_score, regressed, reasoning,
   adversarial, band_used}` is gone. `assess_cycle`/`assess_cycle_skeptic` now return
