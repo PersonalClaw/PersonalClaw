@@ -452,7 +452,32 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
                           identifier is losing the word that says what it does. Same reasoning as the
                           agent-row fix; the app's settled recovery for a truncating element. */}
                       <span className="truncate font-mono text-on-surface text-[0.8125rem]" title={t.name}>{t.name}</span>
-                      {t.requires_approval && <ShieldAlert size={12} className="text-warn shrink-0" />}
+                      {/* 🔴 THIS SHIELD IS THE ONLY THING THAT SAYS "THIS TOOL WILL ASK FIRST", and it
+                          said it in a 12px glyph and nothing else. Measured on the live tree against
+                          `demo-home`: **82 of these render, 0 carried an accessible name** — no
+                          `aria-label`, no `title`, no `<title>` in the svg — so a screen-reader user
+                          learned nothing about approval on any of 114 tools.
+
+                          The inconsistency is on this very line: its neighbour `RiskBadge` states its
+                          dimension in VISIBLE text (`Caution` / `Destructive`, 41 rendered) while this
+                          one, a security-relevant behaviour, stayed mute.
+
+                          Named directly on the glyph, which is the settled form here for an
+                          informational lucide icon — `AuditPanel:296` names this same `ShieldAlert`
+                          ("Integrity check failed…"), `SkillsPage:161` pairs `role="img"` with
+                          `aria-label` on its integrity shield, and `ProjectsSection`/`KnowledgeListPage`
+                          name their `Star`/`Lock` glyphs the same way. `role="img"` is included because
+                          `design/ariaProhibitedAttr.test.ts` declares it for "a graphic whose label is
+                          its only text".
+
+                          🪤 NO `title` — lucide's `LucideProps` rejects it (TS2322), which is why all six
+                          precedent sites carry `aria-label` alone or `aria-label` + `role`. A hover would
+                          need a wrapping element none of them use, so the label is the whole fix here.
+
+                          NOT a visible badge: this row already truncates the tool NAME (`truncate` on a
+                          font-mono identifier whose tail is the distinguishing part), and a second chip
+                          beside `RiskBadge` would take width from it. Same call as the agent-row counts. */}
+                      {t.requires_approval && <ShieldAlert size={12} className="text-warn shrink-0" role="img" aria-label="Asks for approval before it runs" />}
                       <RiskBadge risk={t.risk_level} />
                       {off && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">Disabled</span>}
                     </div>
