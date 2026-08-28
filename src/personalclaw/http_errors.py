@@ -328,6 +328,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The artifact moved since it was read, so the write would have destroyed somebody "
         "else's edit. Fix: reload and re-apply. The `error` object names the current version."
     ),
+    # Same family as `version_conflict` above: a write refused because it would have
+    # destroyed data the caller never saw. An intent's id is DERIVED from its goal, so two
+    # differently-worded goals can slugify onto one id — and the create path used to
+    # overwrite the first goal and answer 201. The message names the other intent's goal
+    # rather than the id, which no user ever sees.
+    "intent_id_taken": (
+        "Another intent already covers this goal. Fix: edit that intent, or reword this "
+        "goal so the two are distinguishable."
+    ),
     "content_length_required": (
         "The request declared no `Content-Length`, so its size cannot be checked before the "
         "body is read. Fix: send a length-delimited body, not a chunked one."

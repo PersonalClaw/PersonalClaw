@@ -593,6 +593,27 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Creating a knowledge intent could silently delete one you already had.** An intent is identified by
+  a name derived from the goal you type, so two goals worded almost the same — "track homelab drive
+  health" and "Track homelab drive health!" — resolved to the same one. The second replaced the first
+  and the app reported it as created, so the intent you lost was gone with no message, no trace, and
+  nothing gathered against it any more. Saving a goal that would land on an existing intent now says so
+  and names the goal already covering it, so you can edit that one or reword this one. Editing an
+  intent's goal is untouched: rewording is the point of an edit.
+  **Anyone writing in a non-Latin script was much worse off than that.** The derived name keeps only
+  letters a-z and digits, so a goal in Japanese, Chinese, Korean, Greek, Hebrew or Cyrillic left nothing
+  to derive from and every single one of them got the *same* name. In practice you could keep one
+  intent, and each new one destroyed it. Those goals now get distinct names, so they behave like any
+  other.
+
+- **Merging a knowledge tag into one nested underneath it made the tag disappear from the tree.**
+  Folding a parent tag into its own child is a reasonable thing to do — it means "these are the same
+  thing, keep the child's name" — but it left the surviving tag pointing back at itself through its own
+  parents. A tag in that state is neither top-level nor beneath one, so the tag manager could not place
+  it: it fell to the bottom of the list, flat and detached from where you had filed it, and took
+  everything nested under it along. The survivor now takes the place of the tag that was merged away, so
+  the branch stays where you put it.
+
 - **Knowledge search's keyword fallback never returned anything, in any install.** When the smarter
   search is unavailable — no embedding model configured, or it fails — searching your knowledge is
   meant to fall back to plain keyword matching. That fallback matched two database columns that can

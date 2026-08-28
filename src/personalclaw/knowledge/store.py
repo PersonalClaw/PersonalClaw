@@ -4260,6 +4260,29 @@ class KnowledgeStore:
         self._resync_fts(snapshot)
         return True
 
+    def _tag_ancestors(self, tag_id: int) -> list[int]:
+        """Every id above ``tag_id``, nearest parent first. Empty for a root.
+
+        Shared by the two guards that keep the taxonomy acyclic — ``set_tag_parent``, which
+        refuses an edge that would close a loop, and ``merge_tags``, which has to notice
+        that the tag it is folding away sits ABOVE the survivor. They had one walk between
+        them and only one of them had it.
+
+        The visited set is load-bearing rather than defensive: these are the guards that
+        prevent cycles, so they cannot assume the data has none yet, and a walk without it
+        would hang on exactly the rows they exist to clean up.
+        """
+        out: list[int] = []
+        seen: set[int] = set()
+        row = self.db.execute("SELECT parent_id FROM tags WHERE id = ?", (tag_id,)).fetchone()
+        cursor: int | None = row["parent_id"] if row else None
+        while cursor is not None and cursor not in seen:
+            out.append(cursor)
+            seen.add(cursor)
+            row = self.db.execute("SELECT parent_id FROM tags WHERE id = ?", (cursor,)).fetchone()
+            cursor = row["parent_id"] if row else None
+        return out
+
     def set_tag_parent(self, tag_id: int, parent_id: int | None) -> bool:
         """Re-parent a tag. ``None`` makes it a root.
 
@@ -4274,18 +4297,9 @@ class KnowledgeStore:
                 raise ValueError("tag_cycle")
             if not self.db.execute("SELECT id FROM tags WHERE id = ?", (parent_id,)).fetchone():
                 raise ValueError(f"no such parent tag: {parent_id}")
-            # Walk up from the proposed parent: if we reach tag_id, this edge closes a
-            # loop. The visited set also stops a pre-existing cycle from hanging us.
-            seen: set[int] = set()
-            cursor: int | None = parent_id
-            while cursor is not None and cursor not in seen:
-                if cursor == tag_id:
-                    raise ValueError("tag_cycle")
-                seen.add(cursor)
-                row = self.db.execute(
-                    "SELECT parent_id FROM tags WHERE id = ?", (cursor,)
-                ).fetchone()
-                cursor = row["parent_id"] if row else None
+            # If tag_id is already above the proposed parent, this edge closes a loop.
+            if tag_id in self._tag_ancestors(parent_id):
+                raise ValueError("tag_cycle")
         self.db.execute("UPDATE tags SET parent_id = ? WHERE id = ?", (parent_id, tag_id))
         self.db.commit()
         return True
@@ -4301,7 +4315,9 @@ class KnowledgeStore:
         """
         if source_id == target_id:
             raise ValueError("cannot merge a tag into itself")
-        src = self.db.execute("SELECT id FROM tags WHERE id = ?", (source_id,)).fetchone()
+        src = self.db.execute(
+            "SELECT id, parent_id FROM tags WHERE id = ?", (source_id,)
+        ).fetchone()
         tgt = self.db.execute("SELECT id FROM tags WHERE id = ?", (target_id,)).fetchone()
         if not src or not tgt:
             return {"moved": 0, "already": 0}
@@ -4336,9 +4352,36 @@ class KnowledgeStore:
                         (row["item_id"], target_id, row["source"] or "user", now),
                     )
                     moved += 1
-            # Children of the source follow it to the target rather than being orphaned.
+            # 🔴 THE SURVIVOR TAKES THE SOURCE'S PLACE FIRST, or the merge mints a cycle.
+            # Folding a tag into one nested underneath it is a legitimate merge ("these are the
+            # same thing; keep the child's name"), and the blanket re-parent below pointed the
+            # target's own ancestor chain back at the target. Measured, both shapes:
+            #
+            #   parent into its child        `zfs` > `homelab`      → homelab.parent = homelab
+            #   grandparent into grandchild  `a` > `b` > `c`        → b.parent = c, c.parent = b
+            #
+            # so the depth-1 case is a self-cycle and deeper ones are longer loops (#761). Neither
+            # is cosmetic: `TagManager.tsx` builds roots as `parent_id === null` and children one
+            # level below them, so a tag inside a cycle is neither and falls through to the
+            # straggler append at the bottom of the list — rendered flat and detached from where
+            # the user filed it, along with everything beneath it. Any `WITH RECURSIVE` consumer
+            # of `parent_id` added later would not terminate at all.
+            #
+            # `set_tag_parent` refuses exactly this via `_tag_ancestors`; this path had no guard at
+            # all. Reassigning rather than refusing, because the merge itself is valid: the source
+            # is being deleted, so the target inherits its position in the tree. That generalizes
+            # the depth-1 answer (a root's child becomes a root) instead of special-casing it, and
+            # it keeps the branch where the user had it when the source was not a root.
+            if source_id in self._tag_ancestors(target_id):
+                self.db.execute(
+                    "UPDATE tags SET parent_id = ? WHERE id = ?",
+                    (src["parent_id"], target_id),
+                )
+            # Children of the source follow it to the target rather than being orphaned. `id != ?`
+            # keeps this correct independently of the statement above rather than by ordering alone.
             self.db.execute(
-                "UPDATE tags SET parent_id = ? WHERE parent_id = ?", (target_id, source_id)
+                "UPDATE tags SET parent_id = ? WHERE parent_id = ? AND id != ?",
+                (target_id, source_id, target_id),
             )
             self.db.execute("DELETE FROM item_tags WHERE tag_id = ?", (source_id,))
             self.db.execute("DELETE FROM tags WHERE id = ?", (source_id,))
