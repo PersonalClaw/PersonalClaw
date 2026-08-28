@@ -394,4 +394,7 @@ def test_deck_titles_and_bodies_stay_plain_strings() -> None:
     deck = deck_from_markdown("# My **deck**\n\n## Slide *one*\n\n- a `b` c")
     assert deck.title == "My deck"
     assert deck.slides[0].title == "Slide one"
-    assert deck.slides[0].body == ["a b c"]
+    # DFE-8 replaced `Slide.body: list[str]` with `bullets: list[Bullet]` so a bullet can
+    # carry its indent depth. The claim here is unchanged and is still the point of this
+    # file: inline runs (**bold**, *em*, `code`) are FLATTENED to plain text on the way in.
+    assert [b.text for b in deck.slides[0].bullets] == ["a b c"]
