@@ -38,6 +38,24 @@ interface ViewerProps {
   defaultDetailsOpen?: boolean
 }
 
+/** Unsaved artifact drafts, keyed by slug, owned at MODULE scope so they outlive the viewer.
+ *
+ *  🔴 Navigating away from an artifact mid-edit discarded the edit with no warning and no
+ *  recovery (issue 691): `ContentSurface` supports draft persistence and it is entirely
+ *  opt-in, and this call site passed nothing. Measured — the surface knew it was dirty
+ *  (Save enabled, view lines 16 → 20) and the buffer was dropped anyway.
+ *
+ *  Module scope, not a `useRef`: a ref dies with the component, and the component is exactly
+ *  what unmounts on navigation. The Code cockpit passes a ref-held store because its problem
+ *  is switching TABS while the page stays mounted; the artifact problem is the page going away.
+ *
+ *  `ContentSurface` clears an entry as soon as the draft matches the saved content, so a
+ *  successful save empties this. An abandoned draft persists for the session — which is the
+ *  point (it is the recovery) — and is bounded by how many artifacts one session edits. It is
+ *  in memory only: a reload starts clean, which is the honest limit of this fix.
+ */
+const artifactDrafts = new Map<string, { draft: string; base: string; warned?: boolean }>()
+
 export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, commentTarget, initialVersion, onVersionChange, defaultDetailsOpen = false }: ViewerProps) {
   const [art, setArt] = useState<Artifact | null>(null)
   const [versions, setVersions] = useState<number[]>([])
@@ -313,6 +331,13 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
               docId={art.slug}
               path={art.source_path || undefined}
               readOnly={!editable}
+              // 🔴 Only when EDITABLE. `renderPreview` feeds the preview `content: draft`, and
+              // the surface seeds `draft` from this store on mount regardless of read-only —
+              // so passing it unconditionally would render a pending draft of the CURRENT
+              // version as though it were the historical version being viewed. The remount key
+              // includes the version but `docId` (the slug) does not, so the store cannot tell
+              // them apart on its own.
+              draftStore={editable ? artifactDrafts : undefined}
               onSave={editable ? onSave : undefined}
               // Renderer-driven iteration (AS-3): an EDITMODE tweak saves through the
               // SAME snapshot path the Snapshot action uses, so the new version and
