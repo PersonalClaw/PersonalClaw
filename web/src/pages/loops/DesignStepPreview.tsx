@@ -3,6 +3,7 @@ import { fvs } from '../../design/fontWeight'
 import { Palette } from 'lucide-react'
 import { Segmented } from '../../ui/Segmented'
 import { api } from '../../lib/api'
+import { reportingWrite } from '../../app/reportingWrite'
 import { TokensView, ContrastView, type ResolvedTokens, type Scheme } from './DesignCockpitPage'
 
 /** D3 — in the design planning walkthrough, a token-bearing step (foundations / palette
@@ -55,7 +56,12 @@ export function DesignStepPreview({ loopId, stepKind, overrides }: {
   // Edit any token: deep-set the path into the loop's token_overrides (empty = reset),
   // then reload the resolved preview. Mirrors the cockpit's setTokenOverride.
   const setOverride = useCallback(async (path: string, value: string) => {
-    try {
+    // 🔑 A USER EDIT, not the mount-time merge above. This is wired to `TokensView`'s `onOverride`, so
+    // somebody typed a value; the old `catch { /* keep the current preview */ }` then left the OLD
+    // value on screen with no sentence, so the edit silently did not stick. Same shape as the three
+    // `/* leave dirty */` editors #2237 converted. The auto-merge in the effect above stays silent
+    // deliberately — nobody asked for that one.
+    const ok = await reportingWrite(`save the ${path} override`, async () => {
       const loop = await api.uLoop(loopId)
       const kc = (loop.kind_config || {}) as Record<string, unknown>
       const ov = JSON.parse(JSON.stringify(kc.token_overrides || {}))
@@ -70,8 +76,10 @@ export function DesignStepPreview({ loopId, stepKind, overrides }: {
         for (let i = chain.length - 1; i > 0; i--) { if (Object.keys(chain[i]).length === 0) delete chain[i - 1][segs[i - 1]]; else break }
       }
       await api.updateULoop(loopId, { kind_config: { ...kc, token_overrides: ov } })
-      await loadTokens()
-    } catch { /* keep the current preview */ }
+    })
+    // Gated: refetching after a failed save re-renders the value the user just tried to change,
+    // which is the "nothing happened, twice" shape this family records.
+    if (ok) await loadTokens()
   }, [loopId, loadTokens])
 
   return (
