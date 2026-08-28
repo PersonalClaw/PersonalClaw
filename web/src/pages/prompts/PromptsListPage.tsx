@@ -200,7 +200,25 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
                       <span>{sourceLabel(r.source)}</span>
                       {vars.length > 0 && <span>{vars.length} var{vars.length > 1 ? 's' : ''}</span>}
-                      {r.description && <span className="truncate">· {r.description}</span>}
+                      {/* 🪤 NO LITERAL `· ` HERE, AND A CONDITIONAL ONE WOULD NOT HELP. This read
+                          `· {r.description}` — a separator hard-coded onto the description inside a
+                          `flex-wrap` container, so the moment the description wrapped onto its own
+                          line that line BEGAN with a bare middle dot. Measured on the demo fixture,
+                          39 rows carry a description:
+
+                            1920px   0 stranded        ← the width it was authored at
+                            1440px   8
+                            1024px  33
+                             834px  39  (every row)
+                             390px  39  (every row)
+
+                          The canonical sibling (`TasksListPage`'s `MetaLine`) guards this with
+                          `(lead.length > 0 || i > 0) ? '· ' : ''` — but that tests PRESENCE, not line
+                          position, and `sourceLabel` here always renders, so the conditional form
+                          would still strand all 39. A content separator cannot survive wrapping;
+                          only a gap can. So this row now uses the one mechanism it ALREADY uses
+                          between its first two items — `gap-x-m` alone, no glyph. */}
+                      {r.description && <span className="truncate">{r.description}</span>}
                     </div>
                   </div>
                   {(r.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{r.tags!.slice(0, 2).map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{t}</span>)}</div>}
