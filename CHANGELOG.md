@@ -698,6 +698,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   Viewing an older version of an artifact is unaffected: it shows that version, never a pending edit to
   the current one. And the recovery is held in memory only, so reloading the page still starts clean.
 
+- **`personalclaw snapshot` left your custom themes behind.** A theme you save from Settings › Design is
+  kept on the server, and the manifest that decides what a snapshot contains did not know that folder
+  existed — so every theme you had authored was missing from the backup, and restoring brought back an
+  instance without them. This matters more than an ordinary gap: the release notes tell you to run
+  `personalclaw snapshot` before upgrading, so the one command offered as the safety net was not covering
+  this. Themes are now part of it, and of an export, and two instances syncing keep both sides' themes
+  rather than one replacing the other.
+  **A check now walks the source and fails if a new location is added without deciding whether it
+  belongs in a backup.** The nine folders fixed before this one, and this tenth, were all found by
+  somebody noticing. That is what the check replaces. It also records, out loud, roughly twenty further
+  locations that are still missing from backups — each needs its own decision about how two copies should
+  be merged, and guessing that is worse than leaving it visible.
+
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it
   had.** It always reported *re-embedded 0 item(s)* — in every install, whatever your library held. Two
   independent faults: it handed the re-index a plain function where an embedding model was expected, so
