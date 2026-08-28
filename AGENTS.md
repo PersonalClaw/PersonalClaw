@@ -20,6 +20,15 @@ npm run typecheck:web && npm run test:web && npm run build   # when web/ changed
 npm run smoke:render    # then: mount the BUILT bundle in headless Chromium
 ```
 
+**`uv.lock` decides the tool versions, not your resolver.** CI installs with
+`uv sync --locked --extra dev`; the `pip install` above ignores the lock and resolves freely, so the two
+can disagree. The formatter/linter majors are bounded in `pyproject.toml` to keep that gap narrow — if
+you ever need to widen a bound, bump the lock in the same change.
+
+If `make lint` flags **files you did not touch**, check the tool version before investigating the code:
+that is the signature of a version skew, not a real red. `isort 9` reports eight such files on a clean
+tree where the locked `8.0.1` reports none.
+
 Definition of done for any change: `make lint` green · targeted `pytest` green ·
 `make test` green before the final commit · the web gate **including the render
 smoke** when `web/` or the npm manifest/lockfile changed · new behavior has
