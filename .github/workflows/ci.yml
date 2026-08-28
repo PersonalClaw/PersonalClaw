@@ -322,6 +322,77 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  browse-live:
+    # ── BA-2's BEHAVIOURAL proof, finally EXECUTED on the merge gate ─────────────────────────────
+    # Two of BROWSE-AUTOMATION `BA-2`'s `done_when` clauses can only be proven by a real browser:
+    # the injected safety script making a page's `fetch()` / `media.play()` / `navigator.bluetooth`
+    # throw or return blocked, and a client-side redirect being re-evaluated per
+    # `Page.frameNavigated`. tests/test_browse_safety_script.py (layer 2) and
+    # tests/test_browse_cdp_live.py drive a real Chromium over raw CDP to assert them.
+    #
+    # The `test` job installs NO browser, so on the one machine that gates every merge those cases
+    # `pytest.skip` — MEASURED: 20 of them, and a skip is reported as a pass. The clauses were
+    # proven only on a developer laptop that happened to have a Chromium, and nothing would have
+    # noticed if they broke. That is the false green this job closes.
+    #
+    # WHY ITS OWN JOB rather than a step on `web` / `e2e-pwa` / `e2e-a11y` (the three legs that
+    # already install chromium):
+    #   · Steps are sequential and fail-fast, so a browse step appended to `e2e-pwa` would only run
+    #     when the service-worker spec passed. Making this proof's EXECUTION conditional on an
+    #     unrelated frontend contract is the same defect in a new costume.
+    #   · A red here names the contract ("the browse safety script / redirect re-eval broke")
+    #     instead of "the frontend job is red" — the argument `e2e-pwa`'s own comment makes.
+    #   · Not folded into `test` either: that job is the longest on the critical path, and the
+    #     no-node route to a browser (`--extra js-render`) would put `playwright` INTO the tested
+    #     environment, where the suite's own js-render capability probes can see it.
+    # It reuses `e2e-pwa`'s install pattern verbatim, and runs in parallel, so it adds a runner
+    # rather than wall-clock. Measured locally: 30 cases, 0 skips, 38s.
+    runs-on: ubuntu-latest
+    # A wedged Chromium must not hold a runner for the default 360 minutes. The suite's own
+    # launch waits cap at 30s each and pytest's addopts cap a case at 120s, so 15 is slack.
+    timeout-minutes: 15
+    env:
+      # THE lever, and the reason this job cannot pass by proving nothing. Without it a missing,
+      # renamed or unlaunchable browser makes browse_chrome.missing() skip; with it, that same
+      # state FAILS. So "the browser install broke" and "the guard broke" both go red here, and
+      # neither can arrive as a green check. Set ONLY here: a contributor with no Chromium still
+      # gets a skip, because failing on a laptop would take the whole suite down over an
+      # environment. tests/test_browse_live_legs_run_in_ci.py rails this line's continued
+      # existence — deleting it would restore the silent skip and nothing else would notice.
+      PERSONALCLAW_REQUIRE_BROWSE_PROOF: "1"
+      # Same reason as the `test` job: no PERSONALCLAW_HOME (the no-global-home contract), and
+      # app backends are not part of what these three modules assert.
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828). Node is here for
+      # ONE reason: the lock-pinned playwright CLI is what downloads the browser. The suite itself
+      # speaks raw CDP and imports no playwright, in either language — which is also why the
+      # browser must come from the same pin the other three chromium jobs use, rather than a
+      # floating `uvx playwright`: two Chromium revisions in one repo is a difference nobody would
+      # think to look for when a behavioural assertion starts disagreeing.
+      - name: npm ci (root)
+        run: npm ci
+      - name: install chromium
+        run: npx playwright install --with-deps chromium
+      # `-n0`: the live fixture is module-scoped and launches a browser, so xdist would launch one
+      # per worker for no gain over 38 seconds. The three modules are named explicitly rather than
+      # globbed — a glob that matches nothing exits clean, and "the proof ran" is a claim about
+      # specific files. test_browse_live_legs_run_in_ci.py asserts this line names every module
+      # that imports browse_chrome, and that each path it names exists.
+      - name: BA-2 behavioural proof in a REAL browser (safety script · redirect re-eval)
+        run: uv run pytest tests/test_browse_safety_script.py tests/test_browse_cdp_live.py tests/test_browse_behavioural_proof_is_reachable.py -n0
+
   rails:
     # Cheap anti-regression rails: the machine-checked invariants roadmap plans add.
     # Today: provider-boundary residue sweep (present on main).

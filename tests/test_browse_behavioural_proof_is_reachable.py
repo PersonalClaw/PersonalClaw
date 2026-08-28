@@ -70,10 +70,15 @@ def test_an_installed_chromium_is_discoverable() -> None:
     """
     installed = browse_chrome.installed_revision_dirs()
     if not installed:
-        pytest.skip(
+        # Through browse_chrome.missing(), NOT a bare pytest.skip: this case is the one that
+        # answers "installed, but invisible", so on the leg that installs a browser and sets
+        # PERSONALCLAW_REQUIRE_BROWSE_PROOF its silence is the failure — a marker-less install
+        # would otherwise leave the rail itself inert while the job went green.
+        browse_chrome.missing(
+            "THE installed-is-discoverable RAIL",
             "no Playwright Chromium installed here, so there is nothing for the lookup to be "
             "blind to. The synthetic cases below carry this rail on such a machine. Install one "
-            "with `npx playwright install chromium` to exercise this case for real."
+            "with `npx playwright install chromium` to exercise this case for real.",
         )
 
     found = browse_chrome.find_chrome()
