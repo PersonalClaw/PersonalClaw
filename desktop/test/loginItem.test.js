@@ -2,6 +2,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { makeLoginItem, registerLoginItemIpc, SUPPORTED_PLATFORMS } = require("../loginItem");
+const { buildTrayMenuTemplate } = require("../trayPresence");
 
 /**
  * A fake Electron `app`. NOTHING in this file may reach the real login-item registry:
@@ -163,5 +164,111 @@ describe("login item — IPC surface", () => {
     assert.ok(SUPPORTED_PLATFORMS.length >= 1);
     assert.ok(SUPPORTED_PLATFORMS.includes("darwin"));
     assert.ok(!SUPPORTED_PLATFORMS.includes("linux"));
+  });
+});
+
+/**
+ * ONE registration, TWO surfaces (DC-4 T4.3).
+ *
+ * The tray checkbox and the Settings toggle must not be two mechanisms. The bar these
+ * cases hold is the one that makes them one: drive each surface against a single
+ * `makeLoginItem` over a single fake `app`, and read the OTHER surface's rendered
+ * state afterwards. If either write could be removed without reddening a case here,
+ * they would be two mechanisms wearing one label.
+ *
+ * `buildTrayMenuTemplate` is imported deliberately: the tray's rendered checkbox is
+ * the observable the Settings path has to move, and asserting on `loginItem.isEnabled()`
+ * instead would pass even while the menu showed a stale value — which is exactly the
+ * bug this closes.
+ */
+describe("login item — one registration, two surfaces", () => {
+  /** The `checked`/`enabled` the menu-bar item would actually draw. */
+  const trayCheckbox = (state) =>
+    buildTrayMenuTemplate({ loginItem: state }).find((row) => row.label === "Open at Login");
+
+  /** The wiring `main.js` performs: one writer of the tray's cached state, called by
+   * every surface that can write the registration. */
+  function wire({ platform = "darwin" } = {}) {
+    const app = fakeApp();
+    const item = makeLoginItem({ app, platform });
+    let trayState = { supported: item.supported, enabled: item.isEnabled() };
+    const syncToTray = () => {
+      trayState = { supported: item.supported, enabled: item.isEnabled() };
+    };
+    const handlers = new Map();
+    const channels = { loginItemGet: "pclaw:login-item-get", loginItemSet: "pclaw:login-item-set" };
+    registerLoginItemIpc({ handle: (ch, fn) => handlers.set(ch, fn) }, item, channels, syncToTray);
+    return {
+      app,
+      item,
+      // The Settings surface: the renderer's `pclawDesktop.loginItem.set()`.
+      settingsSet: (v) => handlers.get(channels.loginItemSet)(null, v),
+      settingsGet: () => handlers.get(channels.loginItemGet)(null),
+      // The tray surface: the checkbox's own click path from `main.js`.
+      trayClick: (next) => { item.set(next); syncToTray(); },
+      tray: () => trayCheckbox(trayState),
+    };
+  }
+
+  it("a Settings flip moves the tray checkbox (the stale-menu bug)", async () => {
+    const w = wire();
+    assert.equal(w.tray().checked, false, "vacuity floor: it must start unchecked");
+
+    await w.settingsSet(true);
+
+    assert.equal(w.tray().checked, true, "the tray checkbox must follow a Settings write");
+    assert.equal(w.app.state.openAtLogin, true, "and the OS must actually hold the registration");
+  });
+
+  it("a tray click is visible to Settings' next read", async () => {
+    const w = wire();
+    w.trayClick(true);
+    assert.deepStrictEqual(
+      await w.settingsGet(),
+      { enabled: true, supported: true, describes: w.item.describe() },
+      "Settings must read the registration the tray wrote, not a cache of its own",
+    );
+  });
+
+  it("the two surfaces write the SAME registration, not one each", async () => {
+    const w = wire();
+    // Settings on, tray off, Settings on again — if these were two mechanisms the
+    // second write would not see the first one's state and the writes would not
+    // alternate.
+    await w.settingsSet(true);
+    w.trayClick(false);
+    await w.settingsSet(true);
+    assert.deepStrictEqual(
+      w.app.writes.map((s) => s.openAtLogin),
+      [true, false, true],
+      "each write must observe the previous one — one registration, not two",
+    );
+    assert.equal(w.tray().checked, true);
+  });
+
+  it("a Settings write the OS refuses leaves BOTH surfaces showing the truth", async () => {
+    const app = fakeApp({ ignoreWrites: true });
+    const item = makeLoginItem({ app, platform: "darwin" });
+    let trayState = { supported: item.supported, enabled: item.isEnabled() };
+    const handlers = new Map();
+    const channels = { loginItemGet: "g", loginItemSet: "s" };
+    registerLoginItemIpc({ handle: (ch, fn) => handlers.set(ch, fn) }, item, channels, () => {
+      trayState = { supported: item.supported, enabled: item.isEnabled() };
+    });
+
+    const res = await handlers.get("s")(null, true);
+
+    assert.equal(res.ok, false, "a write the OS drops is not ok");
+    assert.equal(res.enabled, false, "and it reports the OS's state, not the request");
+    assert.equal(trayCheckbox(trayState).checked, false, "the tray must not show a registration that does not exist");
+  });
+
+  it("an unsupported platform disables the checkbox on both surfaces", async () => {
+    const w = wire({ platform: "linux" });
+    const got = await w.settingsGet();
+    assert.equal(got.supported, false);
+    assert.equal(w.tray().enabled, false, "an unsupported platform must not offer a live checkbox");
+    await w.settingsSet(true);
+    assert.deepStrictEqual(w.app.writes, [], "and nothing may be written there");
   });
 });

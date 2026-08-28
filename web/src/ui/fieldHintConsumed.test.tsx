@@ -33,7 +33,7 @@ import { Row } from '../pages/settings/settingsUI'
 // the accessible NAME). So a Toggle that claimed the hint unconditionally would have *deleted* the
 // reason from what a screen reader announces — a silent regression that looks like a fix. 5 of the 58
 // are soft-off; on 3 the hint is a paraphrase of the reason, on 2 it adds real information. The reason
-// still wins, and the hint returns by itself once the precondition clears. (7 call sites pass a
+// still wins, and the hint returns by itself once the precondition clears. (8 call sites pass a
 // `disabledReason` to a switch; soft-off is a STATE, so how many of them are soft-off at once moves
 // with the preconditions. 5 were, in the seeded state that was measured.)
 

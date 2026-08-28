@@ -170,7 +170,15 @@ describe('the triage, pinned per site', () => {
     // re-clicking mid-flight IS the failure being prevented and a reason there would soften it.
     // PA-5's two triage switches are PRECONDITION switches (one waits on the config read, the other
     // on triage being enabled at all), so both name what unlocks them. 5 + 0 + 2 = 7.
-      expect(sites.length).toBe(24)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'seven carry a reason; seventeen stay native').toBe(7)
+    // 🔺 24 → 25 (DC-4): Settings → Security → Desktop capabilities gained the "Open at login"
+    // switch, and it is BOTH classes in one control — which is why it is worth a line here. It is
+    // `disabled` for two unrelated reasons: an unsupported platform (Electron implements login
+    // items on macOS/Windows only) and its own in-flight write. Those are the precondition and
+    // in-flight classes, so the site passes a reason ONLY on the precondition
+    // (`disabledReason={state.supported ? undefined : state.describes}`) and stays native while
+    // busy. They cannot co-occur — an unsupported switch is never clickable, so `busy` never
+    // rises on one. Reasoned sites 7 → 8.
+    expect(sites.length).toBe(25)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'eight carry a reason; seventeen stay native').toBe(8)
   })
 })

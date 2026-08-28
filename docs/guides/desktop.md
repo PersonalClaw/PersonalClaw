@@ -39,11 +39,23 @@ never end up with a running app you have no way to reach.
 
 ## Open PersonalClaw at login
 
-**Off by default.** Turn it on from the menu bar's **Open at Login**, and off from the
-same place. It registers this app with macOS Login Items — the same list in **System
-Settings → General → Login Items**, where you can also remove it without launching
-PersonalClaw. It needs no administrator password, writes no launch agent of its own, and
-turning it on twice cannot leave two entries behind.
+**Off by default.** There are two places to turn it on, and they are the same switch:
+the menu bar's **Open at Login**, and **Settings → Security → Desktop capabilities →
+Open at login**. Flip either and the other follows — there is one registration, not one
+per surface.
+
+It registers this app with macOS Login Items — the same list in **System Settings →
+General → Login Items**, where you can also remove it without launching PersonalClaw. It
+needs no administrator password, writes no launch agent of its own, and turning it on
+twice cannot leave two entries behind.
+
+macOS owns this setting, so PersonalClaw keeps no copy of it. Both surfaces read the
+registration from the OS every time they draw, which is why removing it in System
+Settings shows up here rather than leaving a switch stuck on. If macOS declines the
+change, the switch says so and stays where the OS actually left it.
+
+In a browser tab there is no switch: registering a login item needs the desktop app, and
+a toggle that could not do anything would be worse than an honest absence.
 
 ## Quitting shuts the gateway down, not off
 
