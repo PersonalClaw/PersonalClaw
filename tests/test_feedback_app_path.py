@@ -29,7 +29,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw import feedback as fb
 from personalclaw.apps import manager
-from personalclaw.apps.permissions import checker_for
+from personalclaw.apps.permissions import APP_SCOPED_PREFIXES, app_request_denial
 from personalclaw.dashboard.handlers.feedback import api_feedback_record
 
 FIXTURE_APP = "feedback-fixture"
@@ -51,6 +51,12 @@ def _write_fixture_app(tmp_path, *, api_scope: list[str]) -> None:
         ),
         encoding="utf-8",
     )
+    (appdir / "installed.json").write_text(
+        # No `installed.json` means NOT installed (`_read_installed`), which the boundary
+        # now refuses — a fixture without one models a partial install.
+        json.dumps({"name": FIXTURE_APP, "version": "1.0.0", "enabled": True}),
+        encoding="utf-8",
+    )
 
 
 @asynccontextmanager
@@ -69,10 +75,13 @@ async def _client(tmp_path, *, api_scope: list[str]):
     # Mirror server.py's app_permission_middleware (the enforcement half).
     @web.middleware
     async def app_permission_middleware(request, handler):
+        # Calls the REAL decision (`permissions.app_request_denial`) rather than
+        # re-deriving it. The old copy inlined `if c is not None and ...`, which is the
+        # fail-open shape the boundary itself had: a mirror that reproduces the bug it is
+        # meant to catch. Only the logging/response half is local, as in `server.py`.
         app_name = request.get("app", "")
-        if app_name and request.path.startswith(("/api/", "/apps/")):
-            c = checker_for(app_name)
-            if c is not None and not c.can_use_api(request.path):
+        if app_name and request.path.startswith(APP_SCOPED_PREFIXES):
+            if app_request_denial(app_name, request.path):
                 raise web.HTTPForbidden(text="denied")
         return await handler(request)
 

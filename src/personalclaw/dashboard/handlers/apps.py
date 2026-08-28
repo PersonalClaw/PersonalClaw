@@ -797,9 +797,18 @@ async def api_app_config_put(request: web.Request) -> web.Response:
 
 
 def _app_agent_allowed(name: str) -> bool:
-    """Whether the installed app declares the `agent` permission."""
-    from personalclaw.apps.permissions import checker_for
+    """Whether the app may run an agent: installed, enabled, and declaring `agent`.
 
+    The lifecycle half is not redundant with ``app_permission_middleware``. That runs
+    only for a request carrying an app identity, and ``_agent_run_identity`` falls back
+    to the path segment for OWNER-initiated calls — which the dashboard makes whenever
+    app-token minting failed, and minting is exactly what refuses a disabled app. So the
+    fallback was the one way to start an agent run for an app the owner had switched off.
+    """
+    from personalclaw.apps.permissions import app_lifecycle_denial, checker_for
+
+    if app_lifecycle_denial(name):
+        return False
     checker = checker_for(name)
     return checker is not None and checker.can_use_agent()
 
@@ -840,12 +849,19 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
-    task = str((body or {}).get("task", "")).strip()
+    # `(body or {}).get(...)` reads as a None-guard and is not one: a body of `[1]`,
+    # `"x"` or `5` is valid JSON and truthy, so `.get` raised AttributeError and the
+    # route answered 500 for what is plainly a malformed request. An empty list slipped
+    # through only because it is falsy, which is the tell that the guard was accidental.
+    if body is not None and not isinstance(body, dict):
+        return web.json_response({"error": "JSON body must be an object"}, status=400)
+    body = body or {}
+    task = str(body.get("task", "")).strip()
     if not task:
         return web.json_response({"error": "task is required"}, status=400)
-    agent = str((body or {}).get("agent", "")) or ""
+    agent = str(body.get("agent", "")) or ""
     try:
-        max_turns = int((body or {}).get("max_turns", 0) or 0)
+        max_turns = int(body.get("max_turns", 0) or 0)
     except (TypeError, ValueError):
         max_turns = 0
 
