@@ -644,6 +644,30 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   The pool now says which of the two happened, and all three surfaces report accordingly. A model that
   genuinely answers nothing is still just that — nothing is now reported as a failure that wasn't one,
   which is the distinction the whole fix rests on.
+- **Anything named like a path was treated as a credential — which broke a bundled template and
+  stripped native libraries out of a workflow's leaves.** PersonalClaw decides whether a name holds a
+  secret by its shape, so `OPENAI_API_KEY` is hidden and `LANG` is not. One of those shape rules looked
+  for `pat` — a personal access token — as a bare run of characters, which also matched every name
+  containing **path**, **pattern**, **patch** or **compat**. Three things followed from that, and none
+  of them said anything about credentials:
+  **The bundled Project planning template could not be saved.** It declares an expected output field
+  called `critical_path`, which read as a secret-named field holding a literal — and a spec with a
+  literal credential in it is refused outright, on purpose. So saving that template failed with "the
+  spec contains literal credentials — use {{secret:KEY}} instead", pointing at a field whose value is
+  the word `array`. Any workflow of your own with a `file_path`, `output_path` or `script_path` setting
+  was refused the same way.
+  **A workflow's own settings came back blank when you opened it.** Values that read as secrets are
+  replaced by "a value is set" before a workflow is shown to you, so a step configured with a file path
+  displayed as configured-but-hidden instead of the path you typed. The agent running that workflow
+  read the same redacted copy, so it could not see its own paths either.
+  **And a batch's parallel branches lost their native-library search path.** A branch runs with the
+  parent's environment minus its credentials, so `DYLD_LIBRARY_PATH`, `LD_LIBRARY_PATH`,
+  `PKG_CONFIG_PATH` and the rest were removed as if they were tokens. A branch that needed a compiled
+  extension then failed to load it and reported broken code rather than a missing setting. Plain `PATH`
+  was never affected, which is why this was easy to miss.
+  `pat` is now matched as a whole word, so a path stays a path. Nothing stopped being protected:
+  `GITHUB_PAT`, `GH_PAT`, `PAT_GITHUB` and a plain `PAT` are all still withheld from a branch, and a
+  bare `PAT` is newly recognised where before only the underscored spellings were.
 
 - **Creating a knowledge intent could silently delete one you already had.** An intent is identified by
   a name derived from the goal you type, so two goals worded almost the same — "track homelab drive

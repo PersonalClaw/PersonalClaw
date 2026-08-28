@@ -239,20 +239,81 @@ def test_the_secret_hint_list_covers_a_provider_specific_credential_shape():
     assert looks_secret("REFRESH_TOKEN") is True
 
 
-@pytest.mark.parametrize("name", ["NODE_ENV", "PORT", "PATTERN_FILE", "COMPATIBILITY", "LANG"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        # a bare `PAT`, and the same token under every naming convention a second account gets
+        "PAT",
+        "GH_PAT",
+        "PAT_GITHUB",
+        "GITHUB_PAT_2",
+        "GITHUB_PAT2",
+    ],
+)
+def test_a_PAT_is_credential_bearing_however_it_is_spelled(name):
+    """`GITHUB_PAT` is the MEASURED credential this hint exists for, so the narrowing that fixed
+    the `..._PATH` collision has to leave every spelling of a personal access token matching. A
+    trailing index counts as part of the word: `GITHUB_PAT2` is a second account's token, not a
+    different kind of name."""
+    assert looks_secret(name) is True
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "NODE_ENV",
+        "PORT",
+        "PATTERN_FILE",
+        "COMPATIBILITY",
+        "LANG",
+        # The native-library search paths. `pat` used to be spelled as the substring `_pat`, so
+        # every one of these read as a credential and was stripped from a batch leaf's env — a
+        # native extension then failed to load and presented as a broken leaf. Bare `PATH` is not
+        # in this list on purpose: it has no `_pat` in it, so it never broke, and probing it is
+        # what hid the defect.
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "DYLD_FRAMEWORK_PATH",
+        "PKG_CONFIG_PATH",
+        "C_INCLUDE_PATH",
+        "NODE_PATH",
+        "GEM_PATH",
+        # the other two shapes `pat` as a character run swept up
+        "RE_PATTERN",
+        "COMPAT_MODE",
+    ],
+)
 def test_the_widened_hint_list_has_no_false_POSITIVES(name):
     """A false positive withholds a harmless var and makes the child fail for a reason the user
     cannot see — the widening had to be checked in both directions."""
     assert looks_secret(name) is False
 
 
-def test_the_hint_list_is_SHARED_with_the_spec_secret_scanner():
-    """Two lists would disagree about a credential shape eventually, and the one that
-    disagreed would
-    be the one deciding whether it reached a child."""
-    from personalclaw.workflows.secrets import SECRET_KEY_HINTS
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("GITHUB_PAT", True),
+        ("DYLD_LIBRARY_PATH", False),
+        ("apiKey", True),
+        ("OPENAI_API_KEY", True),
+        ("ACCESSTOKEN", True),
+        ("RE_PATTERN", False),
+    ],
+)
+def test_the_env_filter_and_the_spec_scanner_AGREE(name, expected):
+    """One hint list, one matcher. Env var names and spec config keys are classified by the same
+    predicate, so a fix to either reaches both — two matchers over one list is the same hazard as
+    two lists one indirection later, and is how `pat` came to be spelled `_pat` in one place only.
 
-    assert any("_pat" in h for h in SECRET_KEY_HINTS)
+    `apiKey` and `ACCESSTOKEN` are here as the guard on the OTHER risk: most hints must keep
+    matching as SUBSTRINGS. A token-split rule applied to the whole list would stop matching both
+    — silently narrowing credential protection while fixing a false positive.
+    """
+    from personalclaw.workflows import secrets
+
+    assert looks_secret(name) is expected
+    assert secrets.is_secret_key(name) is expected
 
 
 # ── presence flags, never values ──
