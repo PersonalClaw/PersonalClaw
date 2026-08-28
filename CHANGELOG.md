@@ -1815,6 +1815,27 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **A "read-only" background task could write to your memory, open a webhook, and schedule itself.**
+  Work PersonalClaw starts on its own — a scheduled research run, a parallel investigation branch — is
+  marked read-only, and the check enforcing that guessed from the tool's name: anything containing
+  *write*, *delete*, *create* and a dozen similar words was blocked. Tools named after what they do
+  rather than how they do it slipped through, and most tools are. Counting across every tool that ships,
+  **59 of 70 were treated as harmless**, among them saving to your memory, forgetting from it,
+  registering a webhook that lets an outside system message you later, scheduling a recurring task,
+  cancelling or rewinding a workflow run, saving an artifact, generating an image, stopping a loop, and
+  notifying you on Slack or Discord. Read-only work could also start more background work, so one task
+  could quietly become many.
+  Every tool that ships is now classified individually, from what its own documentation says it does
+  rather than from its name — which cut both ways: two tools that read like writers state plainly that
+  they only read, and are still allowed. Read-only work keeps every genuine read, because a research
+  task that cannot read is useless.
+  **A new tool can no longer be added without deciding.** A test walks the live tool registries and
+  fails, naming the tool, if one is neither a known read nor a classified write. That check is what
+  makes "blocked unless we said otherwise" true, rather than a comment claiming it.
+  One deliberate exception: a tool that *proposes* something for you to accept or dismiss stays
+  available, because a proposal is not a change until you accept it, and one of PersonalClaw's own
+  shipped workflows is built precisely to propose and nothing else.
+
 - **Uninstalling or disabling an app did not stop it, and uninstalling briefly gave it more access
   than it had.** An app proves who it is with a short-lived token it holds for up to an hour, and the
   gateway checks each of its requests against the permissions the app declared at install. That check
