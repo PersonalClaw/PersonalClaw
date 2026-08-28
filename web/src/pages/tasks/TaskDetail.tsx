@@ -207,8 +207,29 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
             tone="var(--color-ok)" className="mb-2" />
           <ul className="flex flex-col gap-1">
             {exit.map((e, i) => { const m = isExitComplete(e); return <li key={i} className="flex items-start gap-s text-[0.8125rem]">
+              {/* 🔴 A 16px TICK IN A 4px-GAPPED STACK. Found by the first audit of this surface that had
+                  data: `tasks-detail` is `needsData` and the harness pinned a task id that 404s against
+                  the shipped fixture, so every prior sweep measured an empty panel. Re-pointed at a real
+                  task, axe reported `target-size` [serious] on all three of these — the button was
+                  `size-4` (16×16) against SC 2.5.8's 24px, and the undersized-target SPACING exception
+                  cannot rescue it either, because the `<ul>` is `gap-1` so the 24px circles intersect.
+                  The button is now the 24px TARGET and the 16px painted square moved to an inner span.
+                  🪤 NOT `-my-*` to keep the row's height, which is the idiom `Toggle` uses and the one I
+                  reached for first. It is wrong HERE: these targets are stacked 4px apart, so reclaiming
+                  the vertical would make consecutive 24px boxes OVERLAP — a click landing on whichever is
+                  painted on top, which is worse than a small target. A vertical stack has to spend the
+                  height (measured: the list grew 66.5px → 80px). `-mx-1` reclaims only the horizontal,
+                  which is safe because the neighbour to the right is TEXT, and it is what keeps the row
+                  byte-identical across: without it the square shifted right 4px and the tick-to-text gap
+                  loosened from 8px to 12px. `mt-0.5` goes too — the square is centred in a 24px box now,
+                  so the button carries the alignment the margin used to. */}
               <button type="button" disabled={readOnly} onClick={() => toggleExit(i)} aria-label={m ? 'Mark criterion incomplete' : 'Mark criterion complete'}
-                className="mt-0.5 shrink-0 inline-flex size-4 items-center justify-center rounded-sm enabled:hover:ring-2 enabled:hover:ring-ok/40 disabled:cursor-default transition-shadow" style={{ background: m ? 'var(--color-ok)' : 'var(--color-surface-high)' }}>{m && <Check size={11} className="text-white" />}</button>
+                className="group -mx-1 shrink-0 inline-flex size-6 items-center justify-center disabled:cursor-default">
+                {/* The hover ring stays on the PAINTED square, not on the 24px box — a ring drawn on the
+                    hit area would be a 24px halo where there used to be a 16px one. `group-disabled`
+                    keeps the read-only case ringless, which is what `enabled:` did before. */}
+                <span className="inline-flex size-4 items-center justify-center rounded-sm transition-shadow group-hover:ring-2 group-hover:ring-ok/40 group-disabled:ring-0" style={{ background: m ? 'var(--color-ok)' : 'var(--color-surface-high)' }}>{m && <Check size={11} className="text-white" />}</span>
+              </button>
               <span className={m ? 'text-on-surface-low line-through' : 'text-on-surface'}>{e.description}</span></li> })}
           </ul>
         </SectionLabel>
@@ -218,9 +239,16 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
         <SectionLabel label="Action plan">
           <ol className="flex flex-col gap-1">
             {task.action_plan!.map((a, i) => <li key={i} className="flex items-start gap-s text-[0.8125rem]">
+              {/* Same fix as the criterion tick above, same reasoning: this numbered step marker was
+                  `size-5` (20×20) against the 24px floor. axe does NOT flag it — the steps list is
+                  `gap-1.5`, so the spacing exception rescues it — but 20px is still under the floor, and
+                  leaving it at 20 beside a criterion tick now at 24 would put two target sizes in one
+                  panel. The 24px box is the target, the 20px pill stays the paint. */}
               <button type="button" disabled={readOnly} onClick={() => toggleStep(i)} aria-label={a.completed ? 'Mark step incomplete' : 'Mark step done'}
-                className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill text-[0.75rem] tabular-nums enabled:hover:ring-2 enabled:hover:ring-primary disabled:cursor-default transition-shadow"
-                style={{ background: a.completed ? 'var(--color-ok)' : 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{a.completed ? <Check size={11} className="text-white" /> : i + 1}</button>
+                className="group -mx-0.5 shrink-0 inline-flex size-6 items-center justify-center disabled:cursor-default">
+                <span className="inline-flex size-5 items-center justify-center rounded-pill text-[0.75rem] tabular-nums transition-shadow group-hover:ring-2 group-hover:ring-primary group-disabled:ring-0"
+                  style={{ background: a.completed ? 'var(--color-ok)' : 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{a.completed ? <Check size={11} className="text-white" /> : i + 1}</span>
+              </button>
               <span className={a.completed ? 'text-on-surface-low line-through' : 'text-on-surface'}>{a.content ?? a.description}</span></li>)}
           </ol>
         </SectionLabel>
