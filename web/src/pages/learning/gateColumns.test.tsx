@@ -109,7 +109,8 @@ describe('the gate clause names which of the three states a row is in', () => {
     const label = gateLabel(row({ gate: gated() }))
     expect(label).toContain('0.900 → 0.400')
     expect(label).toContain('-0.500')
-    expect(label).toContain('12 gate scenario(s)')
+    // 🔁 Was `12 gate scenario(s)`.
+    expect(label).toContain('12 gate scenarios')
   })
 
   it('signs an IMPROVEMENT so a rise cannot be misread as a drop', () => {
