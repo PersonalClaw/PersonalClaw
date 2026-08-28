@@ -1771,6 +1771,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Uninstalling or disabling an app did not stop it, and uninstalling briefly gave it more access
+  than it had.** An app proves who it is with a short-lived token it holds for up to an hour, and the
+  gateway checks each of its requests against the permissions the app declared at install. That check
+  needed to read the app's manifest, and when it could not read one it allowed the request instead of
+  refusing it. Uninstalling removes the manifest. So for up to an hour after you uninstalled an app, its
+  token still worked and it was no longer confined to the permissions you approved: it could reach any
+  endpoint, including your saved credentials. The same held for an app whose manifest stopped being
+  readable, which an app that can write its own folder could arrange for itself.
+  **Disabling had the mirror-image problem.** Enabling and disabling are recorded separately from the
+  permissions file, and the check only ever read the permissions, so a disabled app kept exactly the
+  access it had. Issuing a *new* token to a disabled app was already refused, so this only affected a
+  token it already held, for the remainder of that hour.
+  An app's lifecycle is now checked on every request, and a request that cannot be positively
+  authorized is refused rather than allowed. Disabling takes effect on the next request, uninstalling
+  ends access immediately, and an unreadable manifest is a refusal. Every refusal is recorded in the
+  security log with which of the reasons applied. Nothing changes for an app you have installed and
+  enabled: it keeps precisely the access it declared, and no more.
+
 - **PersonalClaw's own keys were protected in the files area and nowhere else.** The file browser
   refuses to read them — the key that signs your security log, the loopback auth secret, the session
   signing key. The guard that the agent's shell commands and the terminal both consult had never been

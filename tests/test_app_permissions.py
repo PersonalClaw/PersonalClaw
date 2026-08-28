@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import re
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import MISSING, fields
 from pathlib import Path
 from unittest.mock import patch
@@ -22,7 +22,12 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.apps import manager
 from personalclaw.apps.manifest import Permissions
-from personalclaw.apps.permissions import PermissionChecker, checker_for
+from personalclaw.apps.permissions import (
+    APP_SCOPED_PREFIXES,
+    PermissionChecker,
+    app_request_denial,
+    checker_for,
+)
 
 
 def _checker(**perms) -> PermissionChecker:
@@ -155,6 +160,13 @@ async def _client(tmp_path, *, app_identity: str, permissions: dict):
         ),
         encoding="utf-8",
     )
+    (appdir / "installed.json").write_text(
+        # An app dir with no `installed.json` is NOT installed (`_read_installed`), and the
+        # boundary now refuses that — so a fixture without one models a partial install and
+        # would be denied before any permission check ran.
+        json.dumps({"name": name, "version": "1.0.0", "enabled": True}),
+        encoding="utf-8",
+    )
 
     @web.middleware
     async def stub_identity(request, handler):
@@ -164,10 +176,13 @@ async def _client(tmp_path, *, app_identity: str, permissions: dict):
     # Re-create the enforcement middleware standalone (mirrors server.py).
     @web.middleware
     async def app_permission_middleware(request, handler):
+        # Calls the REAL decision (`permissions.app_request_denial`) rather than
+        # re-deriving it. The old copy inlined `if c is not None and ...`, which is the
+        # fail-open shape the boundary itself had: a mirror that reproduces the bug it is
+        # meant to catch. Only the logging/response half is local, as in `server.py`.
         app_name = request.get("app", "")
-        if app_name and request.path.startswith(("/api/", "/apps/")):
-            c = checker_for(app_name)
-            if c is not None and not c.can_use_api(request.path):
+        if app_name and request.path.startswith(APP_SCOPED_PREFIXES):
+            if app_request_denial(app_name, request.path):
                 raise web.HTTPForbidden(text="denied")
         return await handler(request)
 
@@ -236,6 +251,13 @@ async def _none_mode_client(tmp_path, *, permissions: dict):
         ),
         encoding="utf-8",
     )
+    (appdir / "installed.json").write_text(
+        # An app dir with no `installed.json` is NOT installed (`_read_installed`), and the
+        # boundary now refuses that — so a fixture without one models a partial install and
+        # would be denied before any permission check ran.
+        json.dumps({"name": name, "version": "1.0.0", "enabled": True}),
+        encoding="utf-8",
+    )
 
     @web.middleware
     async def dev_user_middleware(request, handler):
@@ -255,10 +277,13 @@ async def _none_mode_client(tmp_path, *, permissions: dict):
 
     @web.middleware
     async def app_permission_middleware(request, handler):
+        # Calls the REAL decision (`permissions.app_request_denial`) rather than
+        # re-deriving it. The old copy inlined `if c is not None and ...`, which is the
+        # fail-open shape the boundary itself had: a mirror that reproduces the bug it is
+        # meant to catch. Only the logging/response half is local, as in `server.py`.
         app_name = request.get("app", "")
-        if app_name and request.path.startswith(("/api/", "/apps/")):
-            c = checker_for(app_name)
-            if c is not None and not c.can_use_api(request.path):
+        if app_name and request.path.startswith(APP_SCOPED_PREFIXES):
+            if app_request_denial(app_name, request.path):
                 raise web.HTTPForbidden(text="denied")
         return await handler(request)
 
@@ -417,3 +442,110 @@ async def test_declared_grants_reach_the_installed_app_consent_wire(tmp_path, mo
     assert apps["worker-app"]["permissions"]["eventSubscriptions"] == ["task.completed"]
     assert "backgroundTasks" not in apps["quiet-app"]["permissions"]
     assert "eventSubscriptions" not in apps["quiet-app"]["permissions"]
+
+
+# ── the boundary FAILS CLOSED (#410 residual) ─────────────────────────────────
+#
+# `app_request_denial` is the whole decision, so these drive it directly. Every check
+# used to read `if checker is not None and not checker.can_use_...`, which skipped ALL
+# of them when the manifest could not be resolved — so an app-scoped token for an
+# uninstalled app reached any path at all, including `/api/security/credentials`.
+
+
+def _install_on_disk(tmp_path, name, *, permissions, enabled=True, manifest_text=None):
+    """An app as it exists on disk: `app.json` (permissions) + `installed.json` (lifecycle).
+
+    Both files matter and they answer different questions. `checker_for` reads only
+    `app.json`, and enable/disable writes only `installed.json`, which is why a
+    permission check alone cannot see a disabled app.
+    """
+    appdir = tmp_path / "apps" / name
+    appdir.mkdir(parents=True, exist_ok=True)
+    body = (
+        manifest_text
+        if manifest_text is not None
+        else json.dumps(
+            {
+                "name": name,
+                "version": "1.0.0",
+                "displayName": name,
+                "description": "x",
+                "permissions": permissions,
+            }
+        )
+    )
+    (appdir / "app.json").write_text(body, encoding="utf-8")
+    (appdir / "installed.json").write_text(
+        json.dumps({"name": name, "version": "1.0.0", "enabled": enabled}), encoding="utf-8"
+    )
+    return appdir
+
+
+@contextmanager
+def _isolated_apps(tmp_path):
+    # `manager.config_dir` is the only patch point that matters: `app_manager` never
+    # imports it and resolves every path through `manager.app_dir`. Patching a name a
+    # module does not have raises, and ASSIGNING one silently creates a no-op.
+    with (
+        patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
+        patch.object(manager, "config_dir", return_value=tmp_path),
+    ):
+        yield
+
+
+#: Paths an app in this test declares nothing for. `/api/security/credentials` is the
+#: point: the fail-open hole was not scoped to harmless routes.
+_OFF_LIMITS = ("/api/memory/all", "/api/security/credentials", "/api/apps/other/agent-run")
+
+
+def test_a_declared_path_is_still_allowed(tmp_path):
+    """The floor. If this breaks, the tests below prove nothing about failing closed."""
+    with _isolated_apps(tmp_path):
+        _install_on_disk(tmp_path, "demo", permissions={"api": ["/api/notes"]})
+        assert app_request_denial("demo", "/api/notes") == ""
+        assert app_request_denial("demo", "/api/notes/sub") == ""
+        assert app_request_denial("demo", "/api/secrets") == "api path not in declared permissions"
+
+
+def test_an_uninstalled_app_is_refused_rather_than_unscoped(tmp_path):
+    """The owner's own remediation was the escalation. App tokens carry the app claim in
+    the token and live an hour, so uninstalling cannot revoke one — and with the manifest
+    gone every check was skipped, leaving the app MORE reach than it declared."""
+    with _isolated_apps(tmp_path):
+        for path in _OFF_LIMITS:
+            assert app_request_denial("ghost", path) == "app is not installed"
+
+
+def test_an_app_that_corrupts_its_own_manifest_does_not_escape_its_sandbox(tmp_path):
+    """Self-inflicted escalation: an app that can write its install dir could unparse its
+    own `app.json` and, under the old predicate, be scoped by nothing."""
+    with _isolated_apps(tmp_path):
+        _install_on_disk(tmp_path, "broken", permissions={}, manifest_text="{ not json")
+        for path in _OFF_LIMITS:
+            assert app_request_denial("broken", path) == "app manifest could not be read"
+
+
+def test_disabling_an_app_takes_effect_on_the_next_request(tmp_path):
+    """`enable`/`disable` write `installed.json`; `checker_for` reads `app.json`. So a
+    disabled app's permissions were unchanged, and while minting refuses a disabled app,
+    a token minted before the flip kept working for the rest of its hour."""
+    with _isolated_apps(tmp_path):
+        _install_on_disk(tmp_path, "off", permissions={"api": ["/api/notes"]}, enabled=False)
+        assert app_request_denial("off", "/api/notes") == "app is disabled"
+        for path in _OFF_LIMITS:
+            assert app_request_denial("off", path) == "app is disabled"
+
+
+def test_an_owner_request_carries_no_app_identity_and_is_not_scoped(tmp_path):
+    """The distinction the old code could not make: no app identity is the OWNER, and an
+    unresolvable app identity is a refusal. Both used to reach the handler."""
+    with _isolated_apps(tmp_path):
+        assert app_request_denial("", "/api/security/credentials") == ""
+
+
+def test_lifecycle_is_reported_before_capability(tmp_path):
+    """An app that is gone should say so, not "path not declared" — the reason is what a
+    SEL row records and what the owner reads when an app stops working."""
+    with _isolated_apps(tmp_path):
+        _install_on_disk(tmp_path, "off", permissions={"api": []}, enabled=False)
+        assert app_request_denial("off", "/api/anything") == "app is disabled"
