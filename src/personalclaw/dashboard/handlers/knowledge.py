@@ -2805,22 +2805,37 @@ async def rename_tag(request: web.Request) -> web.Response:
             if not store.set_tag_parent(tid, parent):
                 return web.json_response({"error": "tag not found"}, status=404)
     except (TypeError, ValueError) as exc:
-        code = str(exc)
-        # `tag_cycle` and `tag_name_taken:<name>` are typed codes the frontend keys on;
-        # anything else is a plain argument problem.
-        return web.json_response(
-            {
-                "error": {
-                    "code": (
-                        code.split(":", 1)[0]
-                        if code.startswith(("tag_cycle", "tag_name_taken"))
-                        else "invalid_tag_update"
-                    ),
-                    "message": code,
-                }
-            },
-            status=400,
-        )
+        raw = str(exc)
+        # `tag_cycle` and `tag_name_taken:<name>` are the typed codes the store raises; anything
+        # else is a plain argument problem.
+        #
+        # 🔴 `message` USED TO BE THE CODE ITSELF. That was a backend degrading its own sentence to
+        # work around a frontend limitation: `TagManager` matched `msg.includes('tag_cycle')`, so
+        # the message had to BE the token for the match to fire, and the fallback then rendered
+        # `Couldn't update the tag: tag_name_taken:archive` — a machine token shown to a person.
+        # `ApiError` now carries `code` and `lib/api.hasApiCode` exists so a caller keys on the
+        # code, and its own docstring states the rule: "Match on the code, NEVER on `.message`:
+        # the message is human copy that gets reworded, the code is the registry key." So the code
+        # goes in `code` and a sentence goes in `message`, composed HERE — one source for the
+        # wording, rather than the same two sentences in the handler and the panel.
+        if raw.startswith("tag_cycle"):
+            code = "tag_cycle"
+            message = "That would make a tag its own ancestor. Pick a different parent."
+        elif raw.startswith("tag_name_taken"):
+            code = "tag_name_taken"
+            # The store appends the colliding name; it is the most useful half of the sentence.
+            taken = raw.split(":", 1)[1] if ":" in raw else ""
+            message = (
+                f'A tag named "{taken}" already exists. Merge them instead of renaming.'
+                if taken
+                else "A tag with that name already exists. Merge them instead of renaming."
+            )
+        else:
+            code = "invalid_tag_update"
+            # Deliberately NOT the raw exception text. A `TypeError`/`ValueError` string is Python's
+            # words, never user copy, and it was reaching the notification verbatim.
+            message = "That tag update wasn't valid."
+        return web.json_response({"error": {"code": code, "message": message}}, status=400)
     _sel_log("tag_update", tag_id=tid, fields=sorted(body.keys()))
     return web.json_response({"ok": True, "tags": store.list_tags()})
 
