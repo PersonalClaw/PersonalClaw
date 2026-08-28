@@ -200,6 +200,16 @@ npm run hooks:install
 npx playwright install chromium
 ```
 
+**`uv.lock` decides the tool versions, not your resolver.** CI installs with `uv sync --locked --extra
+dev`, so the lockfile is what actually judges a PR; the `pip install` above ignores it and resolves
+freely. To keep the two from disagreeing, the formatter/linter majors in `pyproject.toml` are bounded to
+the major the lock resolves — widening a bound means bumping the lock in the same change.
+
+If `make lint` flags **files you did not touch**, suspect a tool-version skew before you read the code.
+Measured: `isort 9` reports eight incorrectly-sorted files on a byte-clean tree where the locked `8.0.1`
+reports none. Check the tool's version first; that is a one-command answer to what otherwise looks like
+a mysterious repo-wide red.
+
 Useful Makefile targets (see `make help` for the full list):
 
 | Target | What it does |
