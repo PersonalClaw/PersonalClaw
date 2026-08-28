@@ -14,6 +14,7 @@ import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { TextArea } from '../../ui/forms'
 import { useCompanionAction } from './useCompanionAction'
+import { signalPriority } from '../tasks/taskMeta'
 
 /** `#/companion`'s non-approval sections (MOBILE-COMPANION `MC-6`, the former S2
  *  T2.1/T2.2 breadth deferred by the 2026-07-26 amendment).
@@ -255,7 +256,14 @@ export function TasksSection() {
           const working = busy.has(t.id)
           return (
             <Row key={t.id} title={t.title} sub={t.description}
-              meta={[t.status.replace(/_/g, ' '), t.priority, t.project].filter(Boolean).join(' · ')}
+              // 🔑 `signalPriority`, not `t.priority`. The raw value was rendered verbatim, which put a
+              // lowercase "medium" on nearly every row — `medium` is the backend default
+              // (`models.py`: `priority: TaskPriority = MEDIUM`) so it is indistinguishable from never
+              // set, and the helper exists to return null for exactly that. It also carries the
+              // canonical label, so the rung reads "High" rather than "high".
+              meta={[t.status.replace(/_/g, ' '), signalPriority(t.priority)?.label, t.project]
+                .filter(Boolean)
+                .join(' · ')}
               actions={<>
                 {t.status === 'open' && (
                   <Button size="sm" variant="secondary" loading={working} ariaLabel={`Start ${t.title}`}
