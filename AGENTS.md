@@ -35,6 +35,14 @@ clean-install chain automatically when outgoing commits touch `web/`,
 `package.json`, or `package-lock.json`; CI repeats it on every PR. Never bypass
 a red gate with `--no-verify` — that is reserved for owner-declared emergencies.
 
+**Push from the worktree that owns the branch.** The outgoing commits decide
+*which* halves of the hook run; what those halves then check is the **working
+tree**. So the hook refuses outright when the ref you are pushing is not this
+worktree's `HEAD` — pushing `some-branch` from a checkout sitting on `main` used
+to gate `main`'s tree and go green, and batching refs into one `git push origin
+br1 br2 br3` to pay the ~20-minute chain once did it three times over. One push
+per worktree.
+
 ## Doctrine (non-negotiable)
 
 - **Clean break.** No backward-compat shims, dual paths, dead code, or
