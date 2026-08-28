@@ -79,8 +79,9 @@ class _State:
 
 
 def _configure(monkeypatch, *, persistent: bool):
-    from personalclaw.config.loader import AgentConfig, AppConfig, ExternalAccessConfig
-    from personalclaw.config.loader import ExternalAccessSurfaceConfig as Surface
+    from personalclaw.config.external_access import ExternalAccessConfig
+    from personalclaw.config.external_access import ExternalAccessSurfaceConfig as Surface
+    from personalclaw.config.loader import AgentConfig, AppConfig
     from personalclaw.inbound.clients import InboundClient
 
     cfg = AppConfig()

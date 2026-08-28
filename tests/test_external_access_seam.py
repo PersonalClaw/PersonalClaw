@@ -51,8 +51,9 @@ def _isolate(tmp_path, monkeypatch):
 
 
 def _cfg(monkeypatch, *, master=True, surface="mcp", enabled=True, **kw):
-    from personalclaw.config.loader import AppConfig, ExternalAccessConfig
-    from personalclaw.config.loader import ExternalAccessSurfaceConfig as Surface
+    from personalclaw.config.external_access import ExternalAccessConfig
+    from personalclaw.config.external_access import ExternalAccessSurfaceConfig as Surface
+    from personalclaw.config.loader import AppConfig
 
     cfg = AppConfig()
     cfg.external_access = ExternalAccessConfig(
@@ -87,7 +88,10 @@ class TestConfigFourPoints:
         """(a) `_meta(label, help)` on every field, for the schema-reachability tests."""
         from dataclasses import fields
 
-        from personalclaw.config.loader import ExternalAccessConfig, ExternalAccessSurfaceConfig
+        from personalclaw.config.external_access import (
+            ExternalAccessConfig,
+            ExternalAccessSurfaceConfig,
+        )
 
         for cls in (ExternalAccessConfig, ExternalAccessSurfaceConfig):
             for f in fields(cls):
@@ -925,8 +929,9 @@ class TestLayeredKillSwitches:
     # ── the bridge's structural exception ──
 
     def test_the_bridge_ignores_allow_remote_entirely(self, monkeypatch):
-        from personalclaw.config.loader import AppConfig, ExternalAccessConfig
-        from personalclaw.config.loader import ExternalAccessSurfaceConfig as Surface
+        from personalclaw.config.external_access import ExternalAccessConfig
+        from personalclaw.config.external_access import ExternalAccessSurfaceConfig as Surface
+        from personalclaw.config.loader import AppConfig
 
         cfg = AppConfig()
         cfg.external_access = ExternalAccessConfig(

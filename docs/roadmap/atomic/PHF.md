@@ -279,6 +279,20 @@ the next reader lands (the detector docstring + the plan log), plus rails that k
 
 ### `PHF-14` — Decompose `config/loader.py` below the ceiling
 
+**Status:** ✅ implemented 2026-08-28 (#PENDING). The table row above deliberately still reads
+`⬜`: `tests/test_roadmap_atomic_status_sync.py::test_every_row_mark_agrees_with_the_dag_status`
+requires the row mark and `dag.json`'s status to agree, and this change is scoped not to touch
+`dag.json`. Flip both in one edit at merge — `⬜` here is a sync artefact, not a verdict on the
+work. Result: `loader.py` **5652 → 4285** (−1367) across five
+sibling modules under `src/personalclaw/config/`; ceiling headroom **348 → 713** on the rail's
+holder (which the split handed to `workflows/controller.py` at 5287) and **1715** on `loader.py`
+itself; watch-band headroom unchanged at **179**. `structural-baseline.json` regenerated
+**byte-identical** — no row changed at all. Equivalence proven differentially: `to_dict()`, the
+JSON schema and all **393** schema-registry entries are byte-for-byte identical to `origin/main`.
+Runtime import sweep **1056 modules, 0 failures**. See the plan's execution log for the two
+premise corrections (the atom's line count and its clause-4 proof field) and the gate-breadth
+regression the split exposed.
+
 The floor that PHF-5's and PHF-8's own rails predicted and that has now arrived. config/loader.py is 5900 lines against the ABSOLUTE 6000-line SIZE_CEILING_LINES, and tests/test_structural_baseline.py::test_the_ceiling_leaves_the_biggest_file_room_for_ordinary_maintenance asserts ceiling - max_file_lines >= 100. Headroom is exactly 100, so ONE added line reds the gate — and that test's own docstring names this file and this exact scenario ('adding one boolean toggle would red CI and demand a 5,427-line split as its price'). The file was 5427 when that rail was written; it has since grown 473 lines and spent all of it. Because the config round-trip contract (dataclass + _meta, load(), to_dict(), a write path, a frontend control) touches loader.py on EVERY new field, the whole remaining roadmap is blocked from adding user-facing configuration. Extract cohesive per-domain config sections into sibling modules under src/personalclaw/config/ and update their importers, following the src/personalclaw/agents/native/decision_tool_defs.py precedent created for this same rail at the 2800-line watch band. Clean break: no re-export shim. NOT in scope: raising the ceiling, widening the watch band, or regenerating the structural baseline to make the red go away — each of those retires the rail instead of paying it.
 
 **Why this is a floor, not a cleanup.** The config round-trip contract touches `loader.py` on every

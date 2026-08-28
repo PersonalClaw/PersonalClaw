@@ -466,7 +466,7 @@ def test_a_heading_never_renders_without_entries_under_it():
 
 
 def test_the_gate_exists_and_defaults_on():
-    from personalclaw.config.loader import LearningConfig
+    from personalclaw.config.learning import LearningConfig
 
     assert "self_model_enabled" in LearningConfig.__dataclass_fields__
     assert LearningConfig().self_model_enabled is True

@@ -311,6 +311,13 @@ SIZE_WATCH_BAND_LINES = 2800
 # max drifts by a few lines, so the byte-compare test does not demand a regeneration on every
 # routine commit. Lower it one step when the max legitimately drops below the previous step —
 # ``stale_high()`` asks for exactly that via ``ceiling_slack_steps``.
+#
+# RE-MEASURED 2026-08-28 (PHF-14, the decomposition the paragraph above predicted): ``config/
+# loader.py`` was split into per-domain sibling modules and went 5652 -> 4285, so the ceiling
+# HOLDER is now ``workflows/controller.py`` at 5287 (headroom 713). The ceiling stays at 6000 and
+# needs no regeneration: 5287 is still inside the top step, so ``ceiling_slack_steps`` is still 0.
+# Note the holder is no longer the config round-trip's file, so the "boolean toggle costs a split"
+# argument above now describes a risk that has been paid down rather than one being carried.
 SIZE_CEILING_STEP_LINES = 1000
 SIZE_CEILING_LINES = 6000
 

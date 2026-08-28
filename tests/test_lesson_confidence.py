@@ -89,7 +89,7 @@ def test_the_default_gate_is_the_evidence_floor_rather_than_a_chosen_number():
 
 
 def test_the_shipped_config_default_matches_the_derived_floor():
-    from personalclaw.config.loader import LearningConfig
+    from personalclaw.config.learning import LearningConfig
 
     assert LearningConfig().min_lesson_confidence == pytest.approx(lc.DEFAULT_MIN_CONFIDENCE)
 

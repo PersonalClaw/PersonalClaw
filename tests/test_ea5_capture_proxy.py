@@ -68,8 +68,9 @@ def _enable(
     Both are exercised because this module reads whichever exists and neither field is
     owned here.
     """
-    from personalclaw.config.loader import AppConfig, ExternalAccessConfig
-    from personalclaw.config.loader import ExternalAccessSurfaceConfig as Surface
+    from personalclaw.config.external_access import ExternalAccessConfig
+    from personalclaw.config.external_access import ExternalAccessSurfaceConfig as Surface
+    from personalclaw.config.loader import AppConfig
 
     cfg = AppConfig()
     surface = Surface(enabled=enabled, allow_remote=allow_remote)

@@ -1986,3 +1986,149 @@ presence assertion so the next move fails with a sentence instead of `ValueError
 24 passed at `-n0`.
 
 **Every `done_when` clause met.** `loader.py` ends **below** its starting count (5799 vs 5900).
+
+- [2026-08-28][PHF-14] **THE 2026-08-21 `[PHF-14]` ENTRIES ABOVE DESCRIBE DIFFERENT WORK — read this
+  before reading them.** `PHF-14` is an **ID COLLISION**. The ~15 entries dated 2026-08-21 and tagged
+  `[PHF-14]` belong to the commit that built the three structural ratchets (`f6281199`, "PHF-14
+  structural ratchets"); `git show f6281199:docs/roadmap/atomic/dag.json` contains **no `PHF-14` atom
+  at all**, and that commit touched `config/loader.py` **zero** times. This atom was created five days
+  later, on 2026-08-26 (`0b40b3f4`), for the decomposition, and reuses the id. So none of those
+  entries is this atom's history and none of its clauses was partly done by them. `scripts/
+  generate_structural_baseline.py`'s own module docstring still opens "(PLATFORM-HARDENING-FLOORS
+  PHF-14)" and refers to the RATCHETS, not to this split — left as-is, because renaming a citation to
+  a since-reused id is its own change.
+- [2026-08-28][PHF-14] DONE — `config/loader.py` decomposed into five per-domain sibling modules.
+  **Measured, because the number in this plan's own 2026-08-26 entry is wrong.** That entry (and the
+  atom's `scope`/`done_when`) say **5900** lines and "headroom is exactly 100". On `origin/main` at
+  `06861fc2` the file is **5652** lines, so headroom was **348**, not 100. Three other numbers were
+  in circulation the same day (5581, 5619, 5647), each correct when taken. The atom was never
+  one-line-from-red; it was ~348 lines from red. The floor argument is unaffected and the target was
+  met with room: **5652 → 4285 (−1367, −24.2%)**.
+  **The split, by domain and not by line count** (`credentials.py`/`SH-2` as the precedent — clean
+  break, no re-export shim, importers updated in the same change):
+  `coercion.py` (131) the shared `_meta` + value-coercion leaf; `validation.py` (212) the JSON-Schema
+  pass over raw config data; `safety.py` (409) egress/budget/breaker/autonomy/guardrails/auth/
+  security/sandbox; `learning.py` (518) loops/learning/feedback/planning/evals/proactive; and
+  `external_access.py` (232) the access + capture surfaces. **`coercion.py` is the enabling move, not
+  a line-count dodge**: a dependency census showed every one of the ~60 `*Config` dataclasses depends
+  on exactly one loader symbol, `_meta`, so leaving that 3-line function behind would have forced
+  every extracted section to import its own parent (`loader` → `safety` → `loader`) and **no section
+  could have moved at all**. `AppConfig`, `load()`, `to_dict()` and the path helpers (`config_dir`,
+  `config_path`, `env_path`, `workspace_root`) all deliberately STAY — ~290 tests monkeypatch
+  `"personalclaw.config.loader.config_dir"` and friends by string, and moving those names would have
+  silently detached every one of those patches.
+  **Rails, measured:** ceiling `SIZE_CEILING_LINES = 6000` and band `SIZE_WATCH_BAND_LINES = 2800`
+  both UNCHANGED. `structural-baseline.json` regenerates **byte-identical** — stronger than the
+  `done_when`'s "regenerated only for the moved-file rows", and the reason is that the size block
+  stores no raw line counts: `loader.py` stays a band member at 4285, no new module comes near 2800
+  (largest is 518), and `ceiling_slack_steps` stays 0 because `workflows/controller.py` (5287, which
+  I do not touch) becomes the holder and is still inside the top step. Watch-band headroom unchanged
+  at **179** — note that rail's docstring claims 217; the live figure has been 179 for some time.
+  `loader.py` also carried **zero** rows in the import-direction and duplication ratchets, so no
+  moved chunk could carry an upward edge or a duplicate site into a new file.
+- [2026-08-28][PHF-14] EQUIVALENCE, proven differentially rather than re-asserted. Captured
+  `AppConfig.load().to_dict()`, `JSON_SCHEMA` and the flattened `SCHEMA_REGISTRY` from `origin/main`
+  BEFORE touching anything, then re-rendered after: **byte-identical on all three** (10113 / 182141 /
+  190948 bytes; 393 registry entries), and identical again after `black`/`isort`. Not vacuous —
+  changing one default in a moved section (`evals.study_default_k` 5 → 6) flips all three to
+  non-identical. `tests/test_config_baseline.py` (PHF-5's schema baseline) green, and the generator
+  writes the committed file unchanged: **ZERO schema drift**.
+  This mattered more than it looks. `config/schema.py::_resolve_field_type` resolves a STRING
+  annotation with `eval(tp, vars(config.loader))` behind `except Exception: return str` — so a moved
+  section that used `from __future__ import annotations` would render every one of its fields as
+  `"string"` in the JSON schema **with no error anywhere**. The three section modules therefore omit
+  that import deliberately, each says why in its docstring, and
+  `test_a_section_module_never_postpones_its_annotations` pins it shut. Three quoted annotations
+  already existed in `AppConfig` (`durability`, `evals`, `proactive`) and two of them name moved
+  classes; they still resolve only because `loader.py` imports those names as a consumer.
+- [2026-08-28][PHF-14] DISCOVERY — **the split silently narrowed an ERROR-level gate, and nothing
+  red.** `harness/scanner.py::check_config_four_points` hardcoded `config/loader.py` for BOTH halves
+  of its check: the `_meta` field declarations and `AppConfig.load()`'s mapping. Those used to be one
+  file. After the split it kept passing while checking **280 of 367** fields (76%) — the 87 moved
+  fields became invisible — and a diff touching only `config/safety.py` did not run the check at all.
+  Proven by measurement, not inspection: with the `max_pids` load mapping deleted, the OLD scan
+  reports **0** findings and the new one reports **1**, on the identical tree. Fixed by reading
+  declarations from every `config/*.py` while keeping the mapping anchored in `loader.py` (where
+  `AppConfig` lives), and by triggering on any config module. Breadth restored to **367**.
+  A gate that narrows without redding is worse than one that is absent, because the green reads as
+  coverage. `scripts/generate_inert_surface_baseline.py::_inert_config_surfaces` looked like the same
+  defect and is NOT: it derives its leaf list from the live `AppConfig` dataclass tree via
+  `generate_config_baseline`, so it is location-agnostic. Its baseline regenerates byte-identical.
+- [2026-08-28][PHF-14] DEVIATION — two source-text rails had to follow the code they guard, and both
+  named their own remedy. (1) `test_the_loader_imports_jsonschema_unconditionally` greps `loader.py`
+  for `^import jsonschema$`; `_validate_config_data` and that import moved to `validation.py`, so the
+  rail is re-pointed and renamed `test_the_validator_imports_jsonschema_unconditionally`. Pointed at
+  `loader.py` it would have "failed" on the move and been fixable only by re-adding an import
+  `loader` does not use — i.e. by writing the shim the tenet forbids. (2)
+  `test_an_ordinary_config_field_addition_to_the_largest_file_stays_green` asserted
+  `biggest == "src/personalclaw/config/loader.py"`, which the split falsifies by design; its own
+  failure text says "Re-point this test". I did better than re-point it: the holder is now **derived**
+  and the hard-coded path is gone, with the existing band-member assertion keeping the derivation
+  honest. A hard-coded holder prices every legitimate split as a red whose cheapest fix is editing
+  that line — the same defect the band's docstring already records for a hard-coded 2,600-line probe
+  that fell below the moved band. The ceiling and the band themselves are untouched.
+- [2026-08-28][PHF-14] CLAUSE 4 (the "add a NEW field end-to-end as proof" clause) — **discharged by
+  `LV-4`, plus a rail, because the named field is spent.** The clause asks for "LV-4's
+  `learning.identity_report_*` field" to land in this change; `LV-4` shipped
+  `learning.identity_report_cadence` separately in `06861fc2`, which **is** the commit this branch
+  forks from, so adding it again is not available. I did not substitute an unrelated invented field:
+  the strongest candidate (`evals.study_low_power_cases`, promoting `evals/studies.py`'s arbitrary
+  `LOW_POWER_CASES = 3` and closing EVALUATION-SUBSTRATE's open Owner decision A) needs 4 readers
+  retargeted and a field threaded through `StudyRegistration`, which is a semantic change to the eval
+  substrate's verdict labelling and does not belong inside a 1400-line refactor. Filed as its own
+  work instead.
+  What the clause actually protects against is a decomposition that leaves the file unable to carry a
+  field, and a one-off new field demonstrates that **once**. `tests/test_config_section_modules.py`
+  demonstrates it **on every run, for all 87 moved fields at once**, and does it end-to-end for a real
+  user-facing field that now sits on the far side of the seam:
+  `test_lv4s_field_still_reaches_all_five_points_from_its_new_home` asserts
+  `learning.identity_report_cadence`'s declaration+`_meta` in `config/learning.py`, its `load()`
+  mapping, its `to_dict()` output, its `_EDITABLE_CONFIG` entry, and the `api.patchConfig` call in
+  `IdentityReportPanel.tsx`. It is the same five points the clause wanted, asserted on the post-split
+  tree, and it keeps guarding the seam afterwards.
+  This also closes the two contract points `test_config_roundtrip.py` provably misses. Measured:
+  deleting the `learning.identity_report_cadence` allowlist entry leaves `test_config_roundtrip.py`
+  at **17 passed** while the new file reds — so the gap is real and is now covered, not duplicated.
+- [2026-08-28][PHF-14] FALSIFIED, every red observed live with its count, each mutation `git grep`-ed
+  back to prove it applied, and each restored from a file copy at the literal path.
+  (1) **A dropped `load()` mapping reds.** Deleted `max_pids=...` from `AppConfig.load()`:
+  `tests/test_config_section_modules.py` **2 failed / 15 passed** (was 17 passed) — the static rail
+  and the behavioural save→load rail both caught it, and the `learning`/`external_access` params
+  stayed green, so the sweep is per-module and not smeared.
+  (2) **A dropped `_EDITABLE_CONFIG` entry reds.** **1 failed / 16 passed**, with
+  `test_config_roundtrip.py` **17 passed** on the same tree (the documented 3-of-5 gap, measured).
+  (3) **A stranded import — and the brief's premise about this is only half right, which is worth
+  the record.** The claim is that `mypy` cannot see a stranded first-party import because
+  `ignore_missing_imports` is true. Two mutations, opposite results:
+  a stranded **attribute** (`from personalclaw.config.loader import EXTERNAL_ACCESS_SURFACES`, a name
+  that no longer lives there) → **`mypy` REDS with 1 error**, and the **runtime sweep is blind: 0
+  failures**, because that importer's import is *function-local* and importing the module never
+  executes it. A stranded **module** (`config.coercion` → `config.coercion_helpers`, at module level)
+  → **`mypy`: "Success: no issues found in 1088 source files"**, and the sweep reds with **127
+  failures**. So the two are complementary and neither alone is sufficient: `mypy` misses a missing
+  MODULE, the sweep misses a function-local import. Also read the sweep's DISCOVERY count, not just
+  its failure count — it fell 1056 → **838** under mutation (2), because `pkgutil.walk_packages`
+  cannot descend past a package whose import raises.
+  (4) **The equivalence proof is not vacuous** — see the differential entry above.
+- [2026-08-28][PHF-14] GATE (branch `improvement-phf14-decompose-loader`, off `origin/main` at
+  `06861fc2`): `make lint` rc=0 (black 2203 files, isort, flake8, **mypy 1088 source files clean**);
+  `tests/test_structural_baseline.py` at `-n 0 --timeout=900` **31 passed**; the config contract
+  cluster — `test_config_roundtrip.py`, `test_config_load_purity.py`, `test_config_baseline.py`,
+  `test_config_schema.py`, `test_config_section_modules.py`,
+  `test_config_validation_is_not_optional.py`, `test_inert_surface_baseline.py` — **84 passed**, real-
+  home rail clean; runtime import sweep **1056 modules, 0 failures**. No `web/` change, so no web
+  chain. `PERSONALCLAW_HOME` left unset throughout (exporting it fakes ~12 unrelated failures); the
+  venv is pinned to `isort>=8,<9` because a fresh resolve takes 9.0.1 and reds 8 files on a clean
+  tree.
+- [2026-08-28][PHF-14] BLOCKED-ADJACENT, resolved without guessing, recorded because the next atom
+  hits it too: **"mark the atom done in `atomic/PHF.md`" and "do NOT touch `dag.json`" are jointly
+  unsatisfiable.** `tests/test_roadmap_atomic_status_sync.py::test_every_row_mark_agrees_with_the_dag_status`
+  asserts every atomic-table row mark agrees with `dag.json`'s status for that atom, so flipping
+  `PHF-14`'s row to `✅` while `dag.json` still says `todo` reds the suite (measured: 1 failed, 6
+  passed). The repo's real convention is that both move in the same edit — `PHF-13` carries
+  `✅ (#PENDING)` and passes, which means its `dag.json` status is already `done`. Resolution: the row
+  stays `⬜` so the rail stays green and `dag.json` stays untouched as instructed, and the dated status
+  goes in the atom's SECTION BODY (`**Status:** ✅ implemented 2026-08-28 (#PENDING)`), which the rail
+  does not parse. The body line says explicitly that the `⬜` is a sync artefact and that both marks
+  flip together at merge, so nobody reads the row as a verdict on the work. Not a silent skip and not
+  a weakened gate: the honest state is "implemented, not yet marked", and that is what is written.

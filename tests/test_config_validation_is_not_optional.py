@@ -43,17 +43,26 @@ def test_jsonschema_is_a_declared_core_dependency():
     )
 
 
-def test_the_loader_imports_jsonschema_unconditionally():
-    """No `try/except ImportError` guard, because a guard is what made the pass skippable."""
-    src = (Path(__file__).resolve().parent.parent / "src/personalclaw/config/loader.py").read_text(
-        encoding="utf-8"
-    )
+def test_the_validator_imports_jsonschema_unconditionally():
+    """No `try/except ImportError` guard, because a guard is what made the pass skippable.
+
+    Reads ``config/validation.py``, which is where ``_validate_config_data`` and its
+    ``import jsonschema`` live since PHF-14 split the validation machinery out of
+    ``config/loader.py``. The rail has to follow the code it guards: pointed at ``loader.py``
+    it would now red on the move itself, and "fix" it by re-adding an import ``loader`` does
+    not use — which is the shim this codebase forbids.
+    """
+    src = (
+        Path(__file__).resolve().parent.parent / "src/personalclaw/config/validation.py"
+    ).read_text(encoding="utf-8")
     # CODE only. The name legitimately survives in the comment that explains what was removed,
     # and a rail that counts comment text fails on its own documentation — which it did on the
     # first run of this test.
     code = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("#"))
     assert "_HAS_JSONSCHEMA" not in code, "the optional-dependency flag is back in code"
-    assert re.search(r"^import jsonschema$", code, re.M), "loader no longer imports jsonschema"
+    assert re.search(
+        r"^import jsonschema$", code, re.M
+    ), "the config validator no longer imports jsonschema"
 
 
 @pytest.fixture
@@ -84,7 +93,7 @@ def test_a_retired_field_is_pruned_rather_than_carried(home):
     `agent.streaming` was removed from `AgentConfig` with zero consumers; a pre-removal config
     should load cleanly and be rewritten without it, not warn on every load forever.
     """
-    from personalclaw.config.loader import _validate_config_data
+    from personalclaw.config.validation import _validate_config_data
 
     data = {"agent": {"streaming": True, "model": "gpt-9"}, "default_memory_store": "x"}
     _validate_config_data(data)
@@ -97,7 +106,7 @@ def test_an_unrecognized_top_level_key_is_reported(home, caplog):
     """The third skipped pass. Silence here is how a typo'd section looks like it applied."""
     import logging
 
-    from personalclaw.config.loader import _validate_config_data
+    from personalclaw.config.validation import _validate_config_data
 
     with caplog.at_level(logging.WARNING, logger="personalclaw.config.loader"):
         _validate_config_data({"definitely_not_a_section": {"x": 1}})
@@ -112,7 +121,7 @@ def test_the_validation_pass_can_still_fail(home):
     Without this, every test above could pass against a validator that accepts everything — which
     is precisely the state this change repairs.
     """
-    from personalclaw.config.loader import _validate_config_data
+    from personalclaw.config.validation import _validate_config_data
 
     data = {"agent": {"max_subagents": "not-a-number"}}
     _validate_config_data(data)

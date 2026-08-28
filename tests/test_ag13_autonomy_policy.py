@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 
-from personalclaw.config.loader import LoopsConfig
+from personalclaw.config.learning import LoopsConfig
 from personalclaw.guardrails import ceiling as C
 from personalclaw.guardrails.budgets import Budget
 from personalclaw.guardrails.policy import (
