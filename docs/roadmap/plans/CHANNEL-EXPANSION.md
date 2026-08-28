@@ -498,3 +498,24 @@ Extends **Sessions 7-8** (the ramp — the guide/kit are being written there any
   **Also still open, and genuinely an owner item:** `WF2LEA-10`'s dep
   `EXT:OWNER-RULING:skill-md-conformance` is the dashboard's one `unresolved` edge — it names an owner
   ruling that has not been made.
+
+### OWNER RULING — the `CE-9` ⇄ `ET-7` deadlock is broken by cutting ONE edge. 2026-08-28
+
+A 2026-08-22 DISCOVERY in this plan recorded that `CE-9` and `ET-7` are in a real dependency cycle, so
+neither can ever reach the ready frontier, and deliberately did not fix it. Fixing it is an owner call, so:
+
+`CE-9` depends on `EXT:ECOSYSTEM-TOOLING:channel scaffold template + bounty board`. `ET-7` depends on
+`EXT:CHANNEL-EXPANSION:channel wants-list (T7.3) + channel scaffold template`. The scaffold half is
+satisfied for both — `cli_app_new.py` derives its type table from the manifest `PROVIDER_TYPES` and names
+`channel → ChannelTransportProvider`, and `docs/guides/build-a-channel-app.md` shipped with `CE-7`. The
+cycle is entirely between **the wants-list** (T7.3, this plan's deliverable) and **the bounty board**
+(`ET-7`'s deliverable).
+
+**RULED: cut `CE-9`'s dependency on the bounty board.** The dependency is the wrong way round on the
+merits — a *wants-list* does not need a bounty *board* in order to exist; the board references the list.
+So the edge that survives is `CE-9` → `ET-7`: this plan publishes the channel wants-list and the scaffold
+registration, and `ET-7` then files `bounty`-labelled issues that point at it.
+
+Consequence: **`CE-9` becomes startable** on the scaffold half alone, and `ET-7` stays legitimately blocked
+until the wants-list lands — which is a real ordering rather than a deadlock. The `dag.json` dep edit
+follows in the next tracking batch.

@@ -795,3 +795,28 @@ the platforms to validate on) — Session 1–2 ship macOS + honest refusals, pe
   child can determine them; this one is a parent verdict reached before any child exists, so a
   child able to name it could dress a crash up as a policy answer. Proved by a real-spawn leg where
   a child naming it comes back as `ERR_COMPUTER_USE_DRIVER_FAILED`.
+
+### OWNER RULING — `DCU-3`'s SECURITY-HARDENING dependency is STRUCK. 2026-08-28
+
+`DCU-3` carries `EXT:SECURITY-HARDENING:OS-input-layer class-B/S review`. Audited: **nothing produces it.**
+SECURITY-HARDENING's ten atoms contain no OS-input-layer review, and `SH-9` — the external-review *scoping*
+doc that would be its closest relative — is itself `blocked`. So the dep names a deliverable no atom owns,
+which is how `DCU-3` came to look cross-plan-gated when it is not.
+
+Meanwhile the substance that dep was reaching for **was delivered inside this plan**: `DCU-1` shipped the
+out-of-band enable document (agent-unwritable, absent = fail closed) and `DCU-2` shipped the target policy
+plus the SEL gate. `DCU-5` then added the approval-ladder refusal and closed a fail-open at the HTTP seam
+(`caller_identity=""` had resolved to INTERACTIVE for any caller omitting `X-Session-Key`).
+
+**RULED: strike the dependency.** A review that no atom produces cannot gate anything, and asserting
+otherwise makes the roadmap lie about why an atom is parked. The OS-input-layer security floors are this
+plan's own and they have shipped.
+
+**`DCU-3` is therefore HARDWARE-gated only**, and precisely: a human adds the **python binary running the
+gateway** (the interpreter, not the terminal) to System Settings → Privacy & Security → Accessibility, then
+restarts the gateway and runs the TextEdit walkthrough. The driver itself landed in `95cec31e` and
+`driver_host.resolve_driver("Darwin")` now returns a module; the measurement that parks it is
+`AXIsProcessTrusted()` returning `False` with `AXUIElementCopyAttributeValue(AXWindows)` returning
+`kAXErrorAPIDisabled (-25211)`. TCC's database is SIP-protected, so **no code path can grant it** — and it
+is deliberately never prompted from code, because an agent-timed consent dialog is the wrong surface for
+this. Two tests already flip branch on the grant. The `dag.json` dep edit follows in the next tracking batch.
