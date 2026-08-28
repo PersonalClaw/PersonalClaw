@@ -1056,3 +1056,91 @@ class ElementRef:
   surface and it already renders; the banner and the live mirror are `BA-5`'s declared scope.
   (c) No new `AgentError`/`json_error` code, so no `HTTP_ERROR_CODES` row is owed — a login park is
   `success=True` with `outcome="needs_input"`, matching every other park.
+- [2026-08-27][BA-2] **The live legs now execute on the MERGE GATE — the false green the closure pass
+  left to the owner is closed.** `BA-2`'s 2026-08-25 entry ended with the gap named and deferred:
+  *"the CI pytest job installs no browser, so the behavioural clauses are still proven only on a
+  developer machine that happens to have one."* Two of the four clauses — the injected safety script
+  making `fetch()` / `media.play()` / `navigator.bluetooth` throw or return blocked, and client-side
+  redirects re-evaluated per `Page.frameNavigated` — were therefore gated by nothing.
+
+  **Re-measured before designing.** `ci.yml`'s `test` job is `uv run pytest` on `ubuntu-latest` with
+  no browser step; the three jobs that DO run `npx playwright install --with-deps chromium` (`web`'s
+  render smoke, `e2e-pwa`, `e2e-a11y`) run Playwright `.ts` specs, not pytest. On a browser-less tree
+  the count is **20 skipped, not the 22 that entry claims**: 10 in `test_browse_safety_script.py`, 9
+  in `test_browse_cdp_live.py`, and — the part that made it invisible — **1 in
+  `test_browse_behavioural_proof_is_reachable.py`, the rail's own load-bearing
+  `test_an_installed_chromium_is_discoverable`**, which reached for a bare `pytest.skip` and so was
+  the one skip `PERSONALCLAW_REQUIRE_BROWSE_PROOF` could not turn into a failure. The rail built to
+  catch "installed but invisible" was itself inert on the only machine that gates a merge.
+
+  **Landed.** (i) `ci.yml` gains a `browse-live` job: `e2e-pwa`'s install pattern verbatim
+  (`uv sync --locked --extra dev` + root `npm ci` + `npx playwright install --with-deps chromium`),
+  then `uv run pytest` on the three modules at `-n0`, with `PERSONALCLAW_REQUIRE_BROWSE_PROOF: "1"`.
+  (ii) `browse_chrome._missing` is now public `missing()`, and the rail's load-bearing case routes
+  through it, so **every** skip in this family is require-aware. (iii)
+  `tests/test_browse_live_legs_run_in_ci.py` (29 cases) rails the wiring, because the require-env
+  protects nothing if the workflow stops setting it: it locates the leg **by behaviour** (the job
+  that runs pytest on the browse-proof modules, so a rename is not a red), derives the module
+  inventory from the AST (`chrome_or_skip` / `websockets_or_skip` / `missing` CALLS, not
+  `import browse_chrome` — which would have dragged the static rail itself onto the browser leg),
+  and asserts the leg installs a browser, sets the env to a value `browse_chrome._falsey` reads as
+  ON, names every gate-calling module, names only paths that EXIST, and that ci.yml still triggers on
+  `pull_request`. It also asserts the strictness is **absent** from `Makefile`, `pyproject.toml`,
+  `tests/conftest.py`, `scripts/run_prepush.sh` and `.env.example` — a contributor with no Chromium
+  still gets a skip, which is the property `browse_chrome`'s docstring promises.
+
+  **Why a job and not a step on an existing chromium leg.** Steps are sequential and fail-fast, so a
+  browse step appended to `e2e-pwa`/`e2e-a11y` would only run when the frontend spec ahead of it
+  passed — making this proof's EXECUTION conditional on an unrelated contract, i.e. the same defect
+  in a new costume. Not on `test` either: that is the longest job on the critical path, and the
+  no-node route to a browser (`--extra js-render`) would put `playwright` INTO the tested
+  environment, where the suite's own js-render capability probes can see it. The job reuses the
+  pinned-by-`package-lock.json` Playwright CLI rather than a floating `uvx playwright`, so the
+  browser revision matches the other three chromium jobs and the dev machine.
+
+  **Falsification — five mutations, each grepped back, each restored from a file copy at the literal
+  path (`/private/tmp/ba2-ci-BACKUP.yml`), `git diff --stat HEAD` empty after every one.**
+  Rail baseline on the unmutated tree: **29 passed / 0 failed**.
+  · **(i) THE load-bearing leg — the guard actually fires.** Same tree, same browser-less
+  environment (a fake `HOME`, so `browsers_roots()` finds nothing), the env the only difference:
+  without `PERSONALCLAW_REQUIRE_BROWSE_PROOF` the three modules are **31 passed / 20 skipped / 0
+  failed — exit 0, GREEN**, which is today's merge gate; with it set they are **1 failed / 19 errors
+  / 31 passed — RED**. The same 20 cases, opposite verdicts. The 19 are fixture-level (the browser
+  gate sits in a module-scoped fixture) and the 1 direct failure is
+  `test_an_installed_chromium_is_discoverable` — i.e. the rail case that only converts because it
+  now routes through `missing()`; before this change it would have stayed a silent skip.
+  · **(ii) Deleting the env line** from `ci.yml` → `test_the_leg_demands_the_proof_actually_ran`,
+  **1 failed / 28 passed**.
+  · **(iii) Deleting the install step** → `test_the_leg_actually_puts_a_browser_on_the_runner`,
+  **1 failed / 28 passed**.
+  · **(iv) Dropping one module from the pytest line** →
+  `test_every_browse_proof_module_runs_on_the_merge_gate`, **1 failed / 28 passed**; typo'ing a path
+  instead (`test_browse_cdp_liv.py`, the `[0 items]` trap) reds that one AND
+  `test_every_path_the_leg_names_exists`, **2 failed / 27 passed**.
+  · **(v) Deleting the whole job** → **4 failed / 25 passed**, all four naming *"no job in ci.yml
+  runs pytest on any browse-proof module"*. So each half of the wiring has its own red rather than
+  one assertion standing for four.
+  **Positive direction, the CI leg's exact invocation run locally** (browser present, `-n0`,
+  `PERSONALCLAW_REQUIRE_BROWSE_PROOF=1`): **collected 51, 51 passed, 0 skipped**.
+
+  **Gate.** `make lint` 0 (black 2195 files, isort, flake8, mypy 1082 source files) ·
+  `scripts/gate_report.py` **6/6** · all ten browse files + the three CI-shape rails
+  (`test_ci_tier_enforcement`, `test_e2e_specs_are_executed`, `test_browser_gate_stays_out_of_pytest`)
+  **276 passed / 0 skipped** at `-n0` · `make test` **28361 passed / 3 failed / 31 skipped / 12
+  xfailed**. All three reds reproduce IDENTICALLY on a detached worktree at bare `origin/main`
+  (`ca8e3c09`) under the same interpreter: `test_connector_pack.py` ×2 (the known Python-3.14 red —
+  this venv is 3.14.7) and `test_agent_reference.py::test_checked_in_reference_matches_a_fresh_render`
+  (*"index.md: differs from a fresh render"* — a stale generated baseline, already in flight on
+  another branch). Real-home rail: `~/.personalclaw` unchanged.
+  The `test_ci_tier_enforcement` rail is worth naming because this change touches its subject: its
+  vacuity floor pins the literal `uv run pytest` as a single-line `run:` step, so the new job was
+  added *beside* the `test` job's invocation rather than by rewriting it into a block scalar.
+
+  **Honest limit on the workflow change itself.** `ci.yml` carries no `paths:` filter (verified —
+  `grep -n "paths:" .github/workflows/*.yml` is empty), so a PR that touches only this workflow does
+  run every job from the PR's head ref, and the new job's first execution is on the PR that adds it.
+  What CANNOT be proven from a laptop is the Linux half: whether `chrome-headless-shell` launches
+  sandboxed under the runner's kernel. The design makes that failure LOUD by construction — with the
+  require-env set, a browser that will not launch is a red, not twenty skips — but the first run is
+  the measurement, not this entry. `dag.json` untouched; the standing owner question from 2026-08-24
+  (flip `BA-2` on `done_when`, or wait for §4 Stealth Stack + §10 launcher) is unchanged.
