@@ -197,7 +197,8 @@ describe('the preview gates the destructive call', () => {
 
     await waitFor(() => expect(screen.getByText('config.json')).toBeTruthy())
     expect(previewCall).toHaveBeenCalledWith('config', 'rollback', 'a'.repeat(40))
-    expect(screen.getByText(/2 later change\(s\) would be set aside/i)).toBeTruthy()
+    // 🔁 Was `2 later change(s)`.
+    expect(screen.getByText(/2 later changes would be set aside/i)).toBeTruthy()
     expect(screen.getByText(/"theme": "light"/)).toBeTruthy()
     expect(applyCall).not.toHaveBeenCalled()
   })
@@ -241,7 +242,7 @@ describe('the preview gates the destructive call', () => {
     // The dialog names what is set aside and reassures about credentials — the two facts a
     // user needs before hard-resetting a tree they live in.
     const text = dialog.textContent ?? ''
-    expect(text).toMatch(/2 change\(s\) made since are set aside/i)
+    expect(text).toMatch(/2 changes made since are set aside/i)
     expect(text).toMatch(/credentials are untouched/i)
     const go = Array.from(dialog.querySelectorAll('button')).find((b) => /^roll back$/i.test(b.textContent?.trim() ?? ''))
     go!.click()
