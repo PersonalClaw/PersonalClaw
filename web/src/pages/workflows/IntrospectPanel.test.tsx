@@ -29,7 +29,7 @@ function payload(over: Partial<WorkflowIntrospection> = {}): WorkflowIntrospecti
     verification_debt: 0.75, cache_hit_rate: 0.2,
   }
   const proof = {
-    summary: '4 step(s) completed, 1 failed, 1 served from cache',
+    summary: '4 steps completed, 1 failed, 1 served from cache',
     verified_steps: 1, total_steps: 4, coverage: 0.25,
     // The caveat string VERBATIM from `proof_section` — the fixture matching production text is
     // what makes this a test of the panel rather than of a paraphrase.
@@ -173,7 +173,7 @@ describe('the edge-decision distribution (PP-8)', () => {
     // Verbatim, for the same reason as the said-no badge: the SAMPLE rule that earns each string
     // lives in the backend, and a second phrasing here would drift from the rule that fired.
     const degenerate =
-      '`router` routed to `bug` in all 12 runs that reached it — its other 1 case(s) are declared but never chosen, so the selector is doing no work'
+      '`router` routed to `bug` in all 12 runs that reached it — its one other case is declared but never chosen, so the selector is doing no work'
     introspect = async () =>
       payload({
         edges: {
