@@ -84,7 +84,8 @@ const EVIDENCE_GRADE: Record<string, string> = {
 export function evidenceLabel(row: LearningRow): string {
   if (!row.evidence_refs.length) return 'no evidence'
   const grade = EVIDENCE_GRADE[row.evidence_strength] ?? 'ungraded'
-  return `${row.evidence_refs.length} evidence ref(s) · ${grade}`
+  const refs = row.evidence_refs.length
+  return `${refs} evidence ref${refs === 1 ? '' : 's'} · ${grade}`
 }
 
 // ── The Loop-2 gate: before/after, or an honest "ungated" ──
@@ -120,7 +121,7 @@ export function gateLabel(row: LearningRow): string {
   const delta = gate.delta === null
     ? ''
     : ` (${gate.delta > 0 ? '+' : ''}${gate.delta.toFixed(3)})`
-  const scope = ` over ${gate.scenarios} gate scenario(s)`
+  const scope = ` over ${gate.scenarios} gate scenario${gate.scenarios === 1 ? '' : 's'}`
   const halted = gate.halted ? ' · stopped early on the eval budget' : ''
   return `gate ${pair}${delta}${scope}${halted}`
 }

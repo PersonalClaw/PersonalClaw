@@ -12,7 +12,7 @@ import type { LearningInbox, LearningRow, StagingWeek } from '../../lib/api'
 // and stamps `evidence_strength: "ablation"` to say which KIND of claim it is. Measured before this
 // suite: the tier had nine `enqueue` call sites across eight modules and ZERO readers anywhere — no
 // gate, no inbox projection, no API payload, no frontend. So the row a human decides a RETIREMENT
-// on read `1 evidence ref(s)` whether the null result was measured or merely co-occurred, and the
+// on read `1 evidence ref` whether the null result was measured or merely co-occurred, and the
 // deleted stamp would have reddened nothing but an assertion on the returned object.
 //
 // Two rails, because either alone is satisfiable by dead code: the LABEL distinguishes the tiers,
@@ -101,7 +101,8 @@ describe('the evidence clause names the tier, not only the count', () => {
     // would make these two strings identical — which is the defect this closes.
     expect(measured).not.toBe(correlated)
     expect(correlated).toContain('correlated')
-    expect(measured).toContain('2 evidence ref(s)')
+    // 🔁 Was `2 evidence ref(s)`. Two refs is plural, so the clause reads "2 evidence refs".
+    expect(measured).toContain('2 evidence refs')
   })
 
   it('names a controlled study and an anecdote as themselves', () => {
