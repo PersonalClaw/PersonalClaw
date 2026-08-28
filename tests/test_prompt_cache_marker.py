@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import inspect
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -28,6 +30,7 @@ from personalclaw.llm import prompt_cache as pc_module
 from personalclaw.llm.anthropic import _VOLATILE_MESSAGE_KEY, _translate_messages
 from personalclaw.llm.base import ModelProvider
 from personalclaw.llm.capabilities import Capability, ProviderCapability
+from personalclaw.llm.credentials import Credential
 from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, AgentEvent
 from personalclaw.llm.prompt_cache import (
     CACHE_HINT_KEY,
@@ -243,6 +246,91 @@ async def test_runtime_explicit_builds_new_list_without_mutating_history():
     assert model.seen is not rt._messages
     assert sum(1 for m in model.seen if CACHE_HINT_KEY in m) == 1
     # ...and self._messages itself carries no hint (never mutated).
+    assert not any(CACHE_HINT_KEY in m for m in rt._messages)
+
+
+# ── OpenAI: the adapter declares AUTOMATIC and translates nothing ─────────────
+#
+# PCS-3's clause "OpenAI adapter declares AUTOMATIC and translates nothing" was the one
+# clause of that atom left unmet while it read `done`. The two tests below are the two
+# halves of it, and they are deliberately INDEPENDENT: reverting the declaration reds
+# only the first, and making AUTOMATIC mutate the list reds only the second.
+
+
+@pytest.fixture
+def fake_openai_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    """Stand in for the OPTIONAL ``openai`` SDK so ``OpenAIProvider`` can be built.
+
+    ``__init__`` imports openai lazily (Property 11) and only needs ``AsyncOpenAI``.
+    Mirrors ``fake_anthropic_module`` in test_prompt_cache_wire_translation.py.
+    """
+
+    class _FakeAsyncOpenAI:
+        def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+            self.api_key = api_key
+            self.base_url = base_url
+
+    fake = types.ModuleType("openai")
+    fake.AsyncOpenAI = _FakeAsyncOpenAI  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "openai", fake)
+    return fake
+
+
+def test_openai_adapter_declares_automatic(fake_openai_module):
+    """OpenAI caches a stable prefix server-side with no marker → AUTOMATIC.
+
+    Read it the way the native loop reads it: by ``getattr`` off the provider INSTANCE
+    (runtime.py:780, mirroring how it reads ``supports_tools``). That is the surface
+    that picks the mode, and leaving the attr unset does not fail loudly — it silently
+    resolves to ``ModelProvider.prompt_cache`` = NONE, i.e. "this provider does not
+    cache" for a provider that does.
+    """
+    from personalclaw.llm.openai import OpenAIProvider
+
+    assert OpenAIProvider.prompt_cache is PromptCache.AUTOMATIC
+    inst = OpenAIProvider(
+        model="gpt-4o",
+        credential=Credential(name="x", kind="api_key", secret="sk-test", source="env"),
+    )
+    assert getattr(inst, "prompt_cache", PromptCache.NONE) is PromptCache.AUTOMATIC
+
+
+def test_the_openai_posture_leaves_the_message_list_byte_identical():
+    """Declaring a posture must not move one byte on the wire.
+
+    PCS-3's last clause holds every UNDECLARED provider byte-identical, and declaring
+    AUTOMATIC moves OpenAI out of "undeclared" — so the guarantee has to be re-proven
+    for the posture it moved TO. Differential: the same input through NONE (what OpenAI
+    resolved to before) and through AUTOMATIC (what it declares now) is the SAME object,
+    not merely an equal one.
+    """
+    from personalclaw.llm.openai import OpenAIProvider
+
+    msgs = _sample_messages()
+    before = mark_cacheable_prefix(msgs, PromptCache.NONE)
+    after = mark_cacheable_prefix(msgs, PromptCache.AUTOMATIC)
+    assert before is msgs  # the pre-change path
+    assert after is msgs  # identity, not equality
+    assert after is before
+    assert not any(CACHE_HINT_KEY in m for m in after)
+    # ...and whatever posture the adapter actually declares takes that untouched path.
+    assert mark_cacheable_prefix(msgs, OpenAIProvider.prompt_cache) is msgs
+
+
+@pytest.mark.asyncio
+async def test_runtime_hands_same_object_to_complete_under_the_openai_posture():
+    """End-to-end through the real middleware, not just the helper.
+
+    The OpenAI posture reaches ``complete()`` carrying the loop's OWN list, exactly as
+    an undeclared provider does. This is the assertion that protects the wire payload.
+    """
+    from personalclaw.llm.openai import OpenAIProvider
+
+    model = _RecordingModel(prompt_cache=OpenAIProvider.prompt_cache)
+    rt = NativeAgentRuntime(definition=_defn(), model_provider=model, tool_providers=[])
+    await rt.start()
+    await _drain(rt)
+    assert model.seen is rt._messages
     assert not any(CACHE_HINT_KEY in m for m in rt._messages)
 
 

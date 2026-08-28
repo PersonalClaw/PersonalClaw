@@ -27,6 +27,7 @@ from personalclaw.llm.base import (
     ModelProvider,
 )
 from personalclaw.llm.credentials import Credential
+from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import CredentialMissing
 from personalclaw.llm.stream_tags import KIND_OUTSIDE, make_think_splitter
 
@@ -57,6 +58,22 @@ class OpenAIProvider(ModelProvider):
     # The Chat Completions API accepts a multi-message history + tool schemas,
     # so the native loop can drive a stateless tool-enabled turn via complete().
     supports_tools: bool = True
+
+    # Graded prompt-cache posture (PCS-3 / §C4). OpenAI caches a stable prompt PREFIX
+    # server-side on its own — no per-request marker, no opt-in — which is exactly what
+    # AUTOMATIC means, and PCS-1 already ordered the prompt so that prefix is stable
+    # across turns. So this adapter translates NOTHING: `mark_cacheable_prefix` returns
+    # the caller's list unchanged (same object) for AUTOMATIC just as it does for NONE,
+    # and the wire payload is byte-identical to what an undeclared provider sends.
+    #
+    # The value is therefore purely DECLARATIVE, and that is the point: the native loop
+    # reads this attr by getattr (runtime.py:780, mirroring how it reads supports_tools),
+    # so leaving it unset made the loop resolve `ModelProvider.prompt_cache` = NONE and
+    # report "this provider does not cache" for a provider that does. It is also the
+    # instance-side twin of the declarative `prompt_cache` the openai-models app already
+    # sets on its ProviderCapability; capabilities.py's field comment requires the two to
+    # carry the SAME grade, and until now they disagreed.
+    prompt_cache: PromptCache = PromptCache.AUTOMATIC
 
     def __init__(
         self,
