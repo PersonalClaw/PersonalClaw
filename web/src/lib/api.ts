@@ -1019,7 +1019,10 @@ export interface NotificationItem {
 // Three orthogonal axes: schedule KIND (every/cron/at), the action (provider +
 // config), and delivery/context (channel, silent, timezone, skip_dates, strict).
 export type ScheduleKind = 'every' | 'cron' | 'at'
-export type ScheduleExecMode = 'agent' | 'script' | 'command'
+// 'other' is a STATE, not a choice: the automation's action is a provider this form cannot
+// edit (notify, digest, remediation, …). It exists so the form stops presenting such a trigger
+// as an agent prompt — and so `_scheduleBodyToWire` knows not to invent an action for it.
+export type ScheduleExecMode = 'agent' | 'script' | 'command' | 'other'
 export interface ScheduleJob {
   id: string; name: string; message: string; enabled: boolean
   // attribution (TSE-4) — see the same pair on `Trigger`. A schedule row is served by the same
@@ -1795,6 +1798,18 @@ function _scheduleBodyToWire(body: Record<string, unknown>): Record<string, unkn
   let act: TriggerAction
   if (script) act = { provider: 'run-script', config: { script, timeout: Number(zt_timeout) || 0 } }
   else if (command) act = { provider: 'bash', config: { command, timeout: Number(zt_timeout) || 0 } }
+  // 🔴 No `message` key means the form was in 'other' mode: the automation's action is a
+  // provider this form cannot edit, so there is nothing here that describes an action and we
+  // must send none. The server only replaces an action it is actually sent, so omitting it
+  // PRESERVES the stored one.
+  //
+  // The `else` used to be unconditional, and that is what destroyed data (issue 689): a `notify`
+  // trigger has no `script` and no `command`, so renaming it built a blank `invoke-agent` from
+  // empty legacy fields and replaced the notification — 200, no warning, `task_template` (the
+  // provider's required field) empty. Note the test is the PRESENCE of the key, not its
+  // truthiness: an agent trigger legitimately has an empty prompt, and `'' ?? ''` must still
+  // produce an agent action rather than silently skipping the update.
+  else if (!('message' in body)) return rest
   else act = { provider: 'invoke-agent', config: { task_template: message ?? '', agent: agent ?? '', model: model ?? '', approval_mode: approval_mode ?? '' } }
   return { ...rest, action: act }
 }
