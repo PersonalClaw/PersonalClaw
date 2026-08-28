@@ -393,3 +393,74 @@ def test_the_shared_validator_rejects_a_bool_for_a_numeric_field():
     with pytest.raises(ConfigValueError):
         coerce_edit_value("agent.max_subagents", True, {"type": "int", "min": 0, "max": 16})
     assert coerce_edit_value("agent.max_subagents", 4, {"type": "int", "min": 0, "max": 16}) == 4
+
+
+# ── both write paths serialise under ONE lock (#754) ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_put_waits_on_the_same_lock_patch_holds(cfg_file, sel_rows):
+    """PUT and PATCH both read-modify-write the WHOLE file, and only PATCH took the lock.
+
+    `atomic_write` guarantees the file is never half-written; it says nothing about a
+    concurrent modifier's change surviving. Interleaved, the later writer's read predates the
+    earlier writer's write, so it serialises a `data` that never saw it and one field silently
+    reverts — a write that reports success having done something other than what was asked,
+    which is this file's whole subject.
+
+    Asserted by HOLDING the lock and showing PUT blocks, rather than by racing two requests:
+    a race that happens to run sequentially passes whether or not the lock is there, and a
+    test that can pass on the broken code is not evidence. This one cannot.
+    """
+    import asyncio
+
+    from personalclaw.dashboard.handlers.agents import _get_config_lock
+
+    async with TestClient(TestServer(_config_app())) as client:
+        async with _get_config_lock():
+            task = asyncio.ensure_future(
+                client.put("/api/config/personalclaw", json={"agent": {"max_subagents": 4}})
+            )
+            # Give the handler every chance to reach the lock and get stuck on it.
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+            assert not task.done(), "PUT did not wait on the lock PATCH holds"
+
+        # Released — the same request now completes and applies.
+        resp = await task
+        assert resp.status == 200, await resp.text()
+        assert _section(cfg_file, "agent")["max_subagents"] == 4
+
+
+@pytest.mark.asyncio
+async def test_a_put_still_applies_when_nothing_holds_the_lock(cfg_file, sel_rows):
+    """The vacuity floor. "PUT blocks on a held lock" is one `await` away from "PUT never
+    completes", and the test above cannot tell those apart on its own."""
+    async with TestClient(TestServer(_config_app())) as client:
+        resp = await client.put(
+            "/api/config/personalclaw", json={"agent": {"subagent_max_turns": 7}}
+        )
+
+    assert resp.status == 200, await resp.text()
+    assert _section(cfg_file, "agent")["subagent_max_turns"] == 7
+    assert any(r["operation"] == "config.update" and r["outcome"] == "ok" for r in sel_rows.rows)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_put_does_not_hold_the_lock(cfg_file, sel_rows):
+    """Validation is deliberately OUTSIDE the lock: it touches no shared state, and holding a
+    lock across it would serialise every rejected request for no benefit. Proven by refusing a
+    PUT while the lock is held — it must answer 400 without waiting for the holder."""
+    import asyncio
+
+    from personalclaw.dashboard.handlers.agents import _get_config_lock
+
+    async with TestClient(TestServer(_config_app())) as client:
+        async with _get_config_lock():
+            resp = await asyncio.wait_for(
+                client.put("/api/config/personalclaw", json={"agent": {"nonsense": 1}}),
+                timeout=2.0,
+            )
+            # Read the body inside the client's lifetime — `resp.json()` needs the connection.
+            assert resp.status == 400
+            assert "nonsense" in (await resp.json())["error"]

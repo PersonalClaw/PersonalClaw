@@ -614,6 +614,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Two settings saved at the same moment could lose one of them.** Both ways PersonalClaw writes its
+  config file read the whole file, change one thing, and write it all back. One of the two took a lock
+  while it did that and the other did not, so if they overlapped, the second one to finish wrote a copy
+  that had never seen the first one's change and that setting quietly reverted. The file was never
+  corrupted — writing is atomic — but "atomic" only means never half-written, not that someone else's
+  edit survives. Both paths now take the same lock, and only for the read-change-write itself: a request
+  that is going to be rejected is still rejected immediately rather than queueing behind a save.
+
 - **A too-long file or folder name reported a server error instead of telling you the name was too
   long.** Typing a name past the length the filesystem allows into the explorer's New file or New folder
   field failed with a generic server error from three of the four write actions, while the fourth
