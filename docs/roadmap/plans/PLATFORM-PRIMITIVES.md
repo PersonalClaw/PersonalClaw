@@ -204,6 +204,96 @@ rather than deferring them past it.
 
 ## Execution log
 
+- **2026-08-27 — `PP-16` sub-seam 4a DONE: `loops.total_cycles` retired. Atom stays `todo`
+  (PARTIAL).** Seam 4 ("retire `loop/store.py`'s parallel row") is not a table move — `loops` has
+  **39** columns against `WorkflowRun`'s **26**, and 31 of the 39 have no `runs` column at all, with
+  fifteen of those governed by open owner decisions. 4a is the one sub-seam that needs no ruling and
+  invents no new state shape: a column that was a **cache of a projection that already ships**.
+
+  **The premise held, re-measured on `origin/main` @ `ca8e3c09`.** Two writers, both in
+  `loop/watchdog.py` (`:968` in the progress branch, `:1072` in the budget-exhausted branch), and
+  both wrote *exactly* `count`, where `count = len(store.get_findings(cid))` three lines earlier
+  (`:954`). `get_findings` is a pure projection over the ledger's `step_completed` records
+  (`store.py:1000`), which `PP-5` already ships; `ledger.reader.run_totals` already returns
+  `steps_completed` from the same records. Seven readers: `investigate.py:560`,
+  `kinds/design.py:152`, `kinds/goal.py:54`, `kinds/sdlc.py:780` and `:823`, `manager.py:317`,
+  `watchdog.py:836`. `loop/tick.py`'s four hits are a DIFFERENT `total_cycles` — a field on its own
+  pure `TickState` snapshot, never persisted.
+
+  🔴 **The strongest evidence was in the shipped wheel.** The `demo-home` fixture stored
+  `total_cycles = 6` on a loop whose ledger held **zero** events. Measured directly: the row said 6,
+  the projection said 0. So the cache was not merely redundant, it had *already diverged* in the
+  artifact users seed from — and the divergence was visible, because `LoopCockpitPage.tsx:882` has a
+  branch for exactly that state and rendered *"6 cycles ran — no per-cycle detail recorded for this
+  loop."* The fixture now ships six real ledger cycles keyed to its three plan phases, so the demo is
+  truthful and the assertion that used to read the column reads the projection.
+
+  🔴 **A second finding: the cache was STALE, not just duplicated.** `_poll_once` reads its `Loop`
+  rows from `store.list_all()` at the top of the poll and wrote `set_total_cycles` mid-poll, so the
+  row handed to `run_cycle_hook` carried the count as of the **previous** progress poll.
+  `kinds/design.py`'s phase fallback, `kinds/sdlc.py`'s tick snapshot and `kinds/goal.py`'s active
+  phase therefore all read a value one progress-poll behind the projection. Recorded as a
+  **DEVIATION**: replacing them with `len(findings)` / `cycles_completed()` is a behaviour change —
+  it fixes a latent off-by-one rather than preserving it. Verified not to move any existing
+  assertion (786 loop-side tests pass unchanged).
+
+  **No migration, and no backfill — stated rather than assumed.** `_connect`'s `CREATE TABLE IF NOT
+  EXISTS` cannot drop a column from an existing table and PP-16 4a deliberately adds no DROP path: a
+  pre-change home keeps the column, unread and unwritten (the INSERT names its columns, so the
+  leftover takes its `NOT NULL DEFAULT 0`; reads go through `Loop.from_dict`, which drops keys naming
+  no field). Measured on a real 39-column DB: reads return rows, the `Loop` has no attribute, an
+  INSERT lands, and a row carrying a bogus `99` still reports the ledger's count. Dropping it for
+  real would have been strictly worse for restore — `snapshot._merge_sqlite_attach` does
+  `INSERT OR IGNORE … SELECT *` and **skips a table whose column set differs**, so normalising every
+  home would make a pre-change snapshot's `loops` rows unrestorable in both directions; leaving the
+  vestige lets an upgraded home converge instead. Backup/restore/merge otherwise verified green:
+  754 durability + snapshot + portability tests, and the `loop` tree entry
+  (`MERGE_UNION_BY_ID`) already carries `events.jsonl`, so the new source of truth was **already** a
+  declared durability artifact.
+
+  **A perf premise had to be re-derived, and it inverted a nearby claim.** Deriving inside
+  `_row_to_loop` was rejected: `watchdog._poll_once` calls `store.list_all()` every
+  `POLL_INTERVAL_SECS = 5`, so it would have added one full `events.jsonl` parse per loop row per
+  five seconds, and `api_loop_get` already carries an explicit "one JSONL scan per loop, so putting
+  it on `api_loop_list` would be N scans per poll" rule (MRT-3). Instead the count is derived at the
+  consumer. On the two API paths it is **free**: `get_redacted`/`list_redacted` already call
+  `get_findings` per row, so `len()` of the projection in hand adds nothing —
+  and `list_redacted`'s docstring claim that it "does NOT touch the filesystem per loop" was
+  therefore *already false*, corrected in the same change.
+
+  **`store.cycles_completed()` routes through `ledger.reader.run_totals`** rather than counting
+  locally, so "a completed step" keeps one meaning across both ledger producers. That leaves two code
+  paths to one number (`run_totals` vs `len(get_findings)`), which is exactly the drift this seam
+  removes reintroduced one level down — so a rail pins them equal.
+
+  **Falsification, both legs.** (1) *The projection is the source*: mutating
+  `ledger/reader.py`'s `steps += 1` → `+= 2` (grepped back to prove it applied) turned the rail file
+  **4 failed / 7 passed**, with the four reds being exactly the tests that reach the count through
+  `run_totals`; the vacuity partner
+  `test_a_legacy_row_with_the_retired_column_still_writes`, which reaches `total_cycles` only via
+  `len(get_findings())`, stayed **green**. (2) *No writer survives*: planting the deleted
+  `store.set_total_cycles` back verbatim turned it **2 failed / 9 passed** — and the first attempt
+  caught only `test_the_setter_is_gone`, because the AST census's SQL-marker arm did **not** match
+  the writer's real shape (a bare `"total_cycles"` literal handed to the generic `_simple_set`). The
+  detector gained a positional-argument arm and now names the file and line; without planting the
+  exact deleted line, the census would have reported clean against a resurrected cache. Both
+  mutations restored from a file copy at the literal path, `git diff --stat HEAD` empty after each.
+
+  **Also fixed, because 4a could not be done without it:** `scripts/generate_demo_home_fixture.py`
+  could not be re-run at all. It copies the committed fixture into a temp home and then drives the
+  real writers additively, so a second run duplicated the five knowledge items and died on
+  `UNIQUE constraint failed: loops.id` — while its own docstring promises that "re-running this after
+  a schema change is how the fixture is kept current". It now discards its previous output first.
+  `knowledge.db`'s regeneration churn (253,952 → 315,392 bytes, page layout not content) was
+  restored to `HEAD` rather than committed as unrelated noise.
+
+  **Still open on seam 4, unchanged:** the other 30 columns (15 owner-gated), the two status
+  vocabularies (**`LoopStatus` 12, `RunStatus` 8** — the 2026-08-22 entry below says 13 and is
+  wrong), the tasks projection, the three frontend pairs, and splitting `loop/store.py`'s two stores
+  (~31 functions / 456 lines of SQLite row vs ~48 / 478 of per-loop filesystem store). **Unobserved:**
+  no gateway/UI drive of a live multi-cycle loop was performed — the derived count is proved by
+  789 tests including a seeded `demo-home`, not by a browser.
+
 - **2026-08-20 — `PP-16` slice DONE: one action-guard vocabulary (the backend mirror the
   2026-08-18 census left "whole rather than half-converged"). Atom stays `todo`.** The status
   slice unified how a loop's state is *narrated*; this unifies what a state *permits*.

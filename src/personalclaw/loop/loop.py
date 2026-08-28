@@ -231,7 +231,10 @@ class Loop:
     started_at: float | None = None  # start of the CURRENT running stretch (reset each resume)
     completed_at: float | None = None
     elapsed_seconds: float = 0.0  # banked running time from PRIOR stretches (excludes pauses)
-    total_cycles: int = 0
+    # NO `total_cycles` here. It was a stored copy of the ledger's `step_completed` count, and
+    # PP-16 seam 4a retired it: ask `store.cycles_completed(id)` (or `len(get_findings(id))` when
+    # you already hold the projection). The redacted views still PUBLISH `total_cycles`, derived —
+    # the API shape is unchanged, the second source of truth is gone.
     error_message: str | None = None
 
     # ── integration links (shared) ──

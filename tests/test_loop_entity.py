@@ -384,7 +384,6 @@ class TestKindRegistry:
             kind="goal",
             task="t",
             skill_ids=["base"],
-            total_cycles=0,
             kind_config={
                 "execution_plan": [
                     {
