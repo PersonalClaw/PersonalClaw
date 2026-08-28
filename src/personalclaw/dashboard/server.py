@@ -1376,6 +1376,11 @@ async def start_dashboard(
     )
 
     register_security_credential_routes(app)
+    # EI-10: the secrets vault — presence-only reads over the same credential store, plus the
+    # one-way write path. Owner-only for the same reason the two surfaces above are.
+    from personalclaw.dashboard.handlers.secrets import register_secrets_routes
+
+    register_secrets_routes(app)
     app.router.add_get("/api/approvals", handlers.api_approvals)
     app.router.add_post("/api/approvals/{id}/{action}", handlers.api_approval_resolve)
 

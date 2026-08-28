@@ -14,6 +14,12 @@ their place.
   The exclude-set is `portability.EXPORT_EXCLUDE`, which is itself a projection of the state
   inventory's `secret=True` entries. Reusing it is the whole point: a second hand-maintained list is
   exactly the drift that let stores escape coverage before.
+  Secrets reach an export by TWO routes, and both end in a presence flag: a secret-named FILE inside
+  the project is excluded by `excluded()` and flagged by its basename, and a project's VAULT keys
+  (EI-10) arrive as `plan_export(secret_names=…)` — those have no file at all, because a project
+  secret lives in the credential store under a namespaced key. The second route exists because the
+  first cannot see it: a file-exclusion loop over a project directory will never encounter a
+  credential that was never in a file, so an export would silently report none.
 * **Workspace directories are excluded** (too large). Only metadata, templates and
   digests — an export
   that tried to carry a `node_modules` would be an export nobody completes.
@@ -226,14 +232,28 @@ def plan_export(
     files: dict[str, bytes] | None = None,
     artifact_metadata: list[dict[str, Any]] | None = None,
     run_digests: list[dict[str, Any]] | None = None,
+    secret_names: list[str] | None = None,
 ) -> ExportPlan:
     """Decide what travels, hashing each entity as it goes.
 
     Takes the file CONTENTS rather than a directory, so the exclusion and hashing rules are testable
     without a project on disk — and so a caller that already read the files does not
     read them twice.
+
+    *secret_names* are the project's VAULT key names (EI-10). They are presence flags with no file
+    behind them: a project secret lives in the credential store under a namespaced key, not in a
+    file inside the project, so the file-exclusion loop below can never see one and the archive has
+    nothing to leave out. Without this argument a project's secrets would be invisible to an
+    export — the importer would report "0 credentials to re-enter" for a project with five, which
+    is the one wrong answer here, because the user acts on it by not re-entering anything.
+
+    They are NAMES only, and the caller supplies them from
+    ``secrets_vault.project_secret_names`` — a function whose whole read path is name-based. There
+    is no code path from an export to a credential VALUE.
     """
     plan = ExportPlan(project_id=project_id, project_name=project_name)
+    for name in secret_names or []:
+        plan.secrets_present.append(name)
     for rel_path, data in sorted((files or {}).items()):
         is_excluded, reason = excluded(rel_path)
         if is_excluded:

@@ -403,6 +403,20 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # machinery broke", which is retryable, and never on "your file was rubbish", which
     # is not. A refused `file` is `invalid_request`: the name, not the machinery.
     "capture_import_failed": "Staging an exported agent log into the capture store failed.",
+    # ── secrets vault (handlers/secrets.py — EI-10) ──
+    # Each sentence says what to DO, because the vault is a surface a user reaches by hand and a
+    # restatement of the identifier ("the secret name is invalid") leaves them guessing which
+    # character offended. `secret_absent` is a 404 on DELETE only: a GET never 404s, because an
+    # empty vault is a legitimate state with its own empty-state copy, not an error.
+    "secret_name_invalid": "A secret's name must look like an environment variable — letters, "
+    "digits and underscores, not starting with a digit.",
+    "secret_value_required": "Storing a secret needs a non-empty value; to remove one, "
+    "use DELETE instead.",
+    "secret_project_invalid": "The project id cannot be used to scope a secret — it must be a "
+    "plain id without '__' in it.",
+    "secret_absent": "No secret is stored under that name in the scope you asked for.",
+    "secret_host_readonly": "That row is inherited from the host environment, so the vault "
+    "cannot change or remove it — unset it where the gateway's environment is defined.",
 }
 
 

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -51,6 +52,8 @@ from personalclaw.workflows.project_export import (
     run_digest,
     safe_member,
 )
+
+logger = logging.getLogger(__name__)
 
 #: The manifest's name inside the archive. Fixed rather than discovered: a reader that globs for
 #: "something ending in manifest.json" will one day find a project's own note by that name.
@@ -155,7 +158,32 @@ def collect_project(
         files=files,
         artifact_metadata=[artifact_digest(a) for a in (artifacts or [])],
         run_digests=[run_digest(r) for r in (runs or [])],
+        secret_names=_vault_secret_names(project_id),
     )
+
+
+def _vault_secret_names(project_id: str) -> list[str]:
+    """The project's vault key NAMES, for the manifest's presence flags (EI-10).
+
+    Tolerant by design: an unreadable credential store must not make a project unexportable. It
+    does mean the manifest under-reports which credentials the far side needs, so the failure is
+    logged rather than swallowed silently — but the alternative, refusing the export, would trade
+    the user's whole project against a list of names.
+
+    Cannot leak a value: `project_secret_names` reads the store's key namespace through
+    `credential_names`, and no value-bearing call exists in that path.
+    """
+    from personalclaw.secrets_vault import project_secret_names
+
+    try:
+        return project_secret_names(project_id)
+    except Exception:  # noqa: BLE001 - an unreadable store costs flags, not the export
+        logger.warning(
+            "credential store unreadable while listing project %s's secret names; the export's "
+            "presence flags will under-report what must be re-entered",
+            project_id,
+        )
+        return []
 
 
 # ── writing the archive ──
@@ -241,6 +269,7 @@ def export_project_archive(
         files=files,
         artifact_metadata=artifact_meta,
         run_digests=run_meta,
+        secret_names=_vault_secret_names(project_id),
     )
     raw = write_archive(plan, files, artifact_metadata=artifact_meta, run_digests=run_meta)
     if passphrase:
