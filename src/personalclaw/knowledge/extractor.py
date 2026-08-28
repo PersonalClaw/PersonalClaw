@@ -4,6 +4,8 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+from personalclaw.knowledge.llm_pool import WorkerError
+
 if TYPE_CHECKING:
     from personalclaw.knowledge.llm_pool import LLMPool
 
@@ -35,12 +37,27 @@ class EntityExtractor:
         self._pool = pool
 
     async def extract(self, chunk: str) -> dict:
+        """Extract from one chunk. A model/transport failure propagates as
+        :class:`WorkerError`; everything else degrades to an empty result.
+
+        The split matters because the two are reported differently and only one of them
+        is the model's answer. ``_run_entities_stage`` catches an exception and reports
+        the phase as ``failed`` — which its own docstring promises ("an errored
+        extraction reports ``failed``") and which could not happen: this ``except
+        Exception`` swallowed the pool's failure into an empty result, so a cold model
+        reported ``done``, i.e. "extraction ran and found nothing new" (#759).
+
+        A parse failure stays an empty result on purpose. A model that answered with
+        junk DID answer, and the graph gaining nothing from it is the honest outcome.
+        """
         if not self._pool or not chunk.strip():
             return _empty_result()
         try:
             prompt = _extraction_prompt(chunk[:_MAX_CHARS])
             response = await self._pool.send(prompt, timeout=EXTRACTION_TIMEOUT)
             return self._parse_response(response)
+        except WorkerError:
+            raise
         except Exception:
             return _empty_result()
 

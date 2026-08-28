@@ -593,6 +593,19 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **When the model was unavailable, knowledge enrichment told you it had found nothing.** Every failure
+  and timeout in the knowledge model pool was turned into an empty answer, and an empty answer is
+  indistinguishable from a model that ran perfectly well and found nothing to say. So a model that was
+  still warming up, or unreachable, or too slow, was reported to you as a clean result with nothing in
+  it. Three places already knew how to say the truthful thing and none of them could be reached:
+  running an intent over your library said *"No matches in your existing items"* instead of *"Couldn't
+  evaluate N items — the model may still be warming up"*; an item finished as fully enriched instead of
+  being flagged **Incomplete** with *"insights: model unavailable"*; and the live progress view showed
+  entity extraction as done rather than failed.
+  The pool now says which of the two happened, and all three surfaces report accordingly. A model that
+  genuinely answers nothing is still just that — nothing is now reported as a failure that wasn't one,
+  which is the distinction the whole fix rests on.
+
 - **Creating a knowledge intent could silently delete one you already had.** An intent is identified by
   a name derived from the goal you type, so two goals worded almost the same — "track homelab drive
   health" and "Track homelab drive health!" — resolved to the same one. The second replaced the first
