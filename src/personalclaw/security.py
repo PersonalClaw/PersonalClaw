@@ -562,13 +562,80 @@ def _decode_b64_safe(text: str) -> str:
     return ""
 
 
+# 🔴 URL USERINFO — the one credential shape every pattern above is blind to.
+#
+# `_CREDENTIAL_PATTERNS` is entirely SHAPE- or NAME-based: it recognises provider key formats
+# (`sk-ant-…`, `ghp_…`) and `name = value` assignments. A credential carried POSITIONALLY, in the
+# userinfo slot of a URL, matches neither — so `https://user:s3cr3t@github.com/a/b.git` survived
+# every surface in this tree that "redacts" (#406): the diagnostics log stream, the SEL audit
+# `resources` field, agent output, and the ConfirmationRequest preview.
+#
+# Measured before writing this:
+#
+#   https://user:s3cr3t@github.com/acme/repo.git    -> unchanged        LEAK
+#   git clone https://alice:hunter2@git.example…    -> unchanged        LEAK
+#   ssh://deploy:pa55@host:22/repo                  -> unchanged        LEAK
+#   postgres://admin:dbpass@db.internal:5432/app    -> unchanged        LEAK
+#   https://oauth2:ghp_AAAA…@github.com/a/b.git     -> redacted        …by ACCIDENT
+#
+# That last row is the tell: it was caught only because the password happened to be a GitHub token
+# whose SHAPE one of the patterns knows. Any other provider's secret, or any human password, went
+# through untouched. A positional rule is the only thing that closes the class.
+#
+# **A dedicated pre-pass, not another alternative in `_CREDENTIAL_PATTERNS`.** That regex's matches
+# are replaced whole, so folding userinfo in would swallow the scheme and host too and turn a
+# diagnosable "clone of github.com/acme/repo failed" into `[REDACTED: credential]`. Removing the
+# secret must not remove the ability to read the log. So only the userinfo is replaced.
+#
+# It runs BEFORE the shape-based pass for the same reason the accident above is bad: otherwise a
+# `ghp_`-shaped password and an arbitrary one redact to visibly different text.
+#
+# Scope of the match, deliberately narrow:
+#   * anchored on `<scheme>://`, so `alice@example.com` in prose is untouched — a bare email is not
+#     a credential and redacting it would make the logs worse;
+#   * userinfo cannot contain `/`, `?`, `#`, `@` or whitespace, which is what keeps an `@` inside a
+#     query string or a path from being mistaken for a userinfo delimiter;
+#   * a bare `token@host` with no colon matches too. That is not over-reach: it is exactly how a
+#     GitHub PAT is passed in a clone URL (`https://<token>@github.com/…`), so treating userinfo as
+#     secret only when it has two parts would miss the most common real case.
+_URL_USERINFO_RE = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)(?P<userinfo>[^/?#\s@]+)@")
+
+#: What replaces the userinfo. Contains a space, which the `userinfo` class above excludes — so
+#: re-running the pre-pass over its own output cannot match again. Idempotence by construction
+#: rather than by a guard someone could delete: `redact_credentials` is NOT idempotent in general
+#: (a composed `key: [REDACTED: …]` line garbles and loses the field name), so a new pass must not
+#: add another way for a second application to corrupt text.
+_URL_USERINFO_TAG = "[REDACTED: url credential]"
+
+
+def redact_url_userinfo(text: str) -> tuple[str, list[str]]:
+    """Replace `<scheme>://userinfo@` with a redaction tag, keeping scheme and host.
+
+    Separate and public so a caller that only handles URLs (an audit `resources` field, a source
+    URL about to be persisted) can use it without the shape-based sweep, and so its behaviour is
+    testable on its own.
+    """
+    warnings: list[str] = []
+
+    def _sub(m: "re.Match[str]") -> str:
+        warnings.append(f"Redacted credential in a {m.group('scheme')[:-3]} URL")
+        return f"{m.group('scheme')}{_URL_USERINFO_TAG}@"
+
+    return _URL_USERINFO_RE.sub(_sub, text), warnings
+
+
 def redact_credentials(text: str) -> tuple[str, list[str]]:
     """Redact raw credential patterns from text, including base64-encoded.
 
     Returns (cleaned_text, list_of_warnings).
     """
     warnings: list[str] = []
-    result = text
+
+    # 0. URL userinfo, positionally — see `_URL_USERINFO_RE`. FIRST, so a credential in a URL
+    #    redacts the same way whatever its shape, instead of only when the shape-based patterns
+    #    below happen to recognise it.
+    result, url_warnings = redact_url_userinfo(text)
+    warnings.extend(url_warnings)
 
     # 1. Redact plaintext credential patterns
     for m in _CREDENTIAL_PATTERNS.finditer(result):

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -598,15 +599,82 @@ def _read_user_sources() -> list[str]:
     return _read_sources()["git"]
 
 
+#: Schemes a git remote may use. `file` is load-bearing rather than defensive: a bare repo at
+#: `file:///…/apps.git` is a real source and the test fixtures use exactly that form.
+_GIT_SOURCE_SCHEMES: frozenset[str] = frozenset({"https", "http", "ssh", "git", "file"})
+
+#: `git@github.com:owner/repo.git` — the SCP-like remote, which has NO scheme and is the
+#: commonest way an ssh remote is written. A rule that only understood `<scheme>://…` rejects it.
+_SCP_LIKE_REMOTE_RE = re.compile(r"^[A-Za-z0-9._~-]+@[A-Za-z0-9.-]+:(?!//).+")
+
+
+def _validate_git_source(url: str) -> str:
+    """Return *url* unchanged, or raise `ValueError` naming what is wrong with it.
+
+    Two independent problems this closes, in one function because they are one line of defence.
+
+    🔴 **A credential in the URL (#406).** `https://user:token@host/repo.git` was accepted and then
+    written verbatim into `app-sources.json` AND into the HMAC-chained append-only audit log, where
+    it cannot be cleaned up afterwards. The precedent is already shipped at
+    `cli_app_new.py:_validated_template_url`, which refuses userinfo and allowlists the scheme for
+    exactly this reason; this is the same three lines on the source path.
+
+    The rule distinguishes a USERNAME from a SECRET, because `ssh://git@github.com/owner/repo.git`
+    is an ordinary remote and refusing all userinfo would break it:
+      * userinfo containing `:` is a password, and is refused for every scheme;
+      * for `http`/`https`, ANY userinfo is refused — nobody puts a bare username in an https git
+        remote except to carry a token (`https://<PAT>@github.com/…` is the documented GitHub form).
+
+    🔴 **Any string at all was accepted (#280).** `not-a-git-url` persisted silently and then
+    rendered in the Store as its own source group with no apps under it and no error, which reads as
+    a working source that happens to be empty. It is refused at the point of entry now.
+
+    NOT covered here, deliberately: a syntactically valid but UNREACHABLE source still renders as an
+    empty group rather than an errored one. That is #280's other half and it is a Store rendering
+    question, not a validation one.
+    """
+    from urllib.parse import urlsplit
+
+    u = url.strip()
+    if not u:
+        raise ValueError("empty source URL")
+
+    if _SCP_LIKE_REMOTE_RE.match(u):
+        # `user@host:path`. The userinfo here is an ssh USER, and scp-like syntax has no password
+        # field at all, so there is nothing to refuse.
+        return u
+
+    parts = urlsplit(u)
+    if parts.scheme not in _GIT_SOURCE_SCHEMES:
+        raise ValueError(
+            f"not a git remote: scheme {parts.scheme or '(none)'!r} is not one of "
+            f"{', '.join(sorted(_GIT_SOURCE_SCHEMES))} — expected something like "
+            "https://github.com/owner/repo.git or git@github.com:owner/repo.git"
+        )
+    if parts.scheme != "file" and not parts.hostname:
+        raise ValueError("not a git remote: the URL names no host")
+    if parts.password:
+        raise ValueError(
+            "the source URL carries a password in its userinfo — remove it and use a credential "
+            "helper or an ssh key. A URL stored here is written to the audit log, which is "
+            "append-only and cannot be cleaned up afterwards."
+        )
+    if parts.username and parts.scheme in ("http", "https"):
+        raise ValueError(
+            "the source URL carries credentials in its userinfo — an https git remote needs no "
+            "username, and a token placed there would be persisted and audit-logged. Use a "
+            "credential helper, or an ssh remote."
+        )
+    return u
+
+
 def add_git_source(url: str) -> list[str]:
     """Add a user git source URL; returns the updated USER git list (excludes defaults).
 
     Idempotent by :func:`_git_source_key`: re-adding a repo already configured — as a
     user entry OR as a bundled default, with or without a ``.git`` suffix — is a no-op,
     so the Store never lists one repository twice or clones it twice per refresh."""
-    u = url.strip()
-    if not u:
-        raise ValueError("empty source URL")
+    u = _validate_git_source(url)
     src = _read_sources()
     key = _git_source_key(u)
     known = {_git_source_key(x) for x in (*_DEFAULT_GIT_SOURCES, *src["git"])}
