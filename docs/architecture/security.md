@@ -14,15 +14,31 @@ tamper-evident audit log. Paths are relative to
 
 ## Auth modes
 
-`auth/modes.py` defines four modes, selected via `PERSONALCLAW_AUTH_MODE`
-(default `local_token`):
+`auth/modes.py` defines four modes, but **only two are selectable today**.
+`AuthConfig.from_env()` recognises `PERSONALCLAW_AUTH_MODE=none` and otherwise
+returns the `local_token` default — so `api_key` and `oauth2` cannot be reached
+from configuration even though their request-side halves are built.
 
-| Mode | Behavior |
-|---|---|
-| `none` | No token auth — **bind is forced to loopback** (an unauthenticated gateway must never leave the host). Dev convenience. |
-| `local_token` | The default: token auth with a login page; static assets bypass the check (the real asset surface only — `dashboard/token_auth.py`). An opt-in, IP-gated local-network bypass exists. |
-| `api_key` | Header key auth. |
-| `oauth2` | OIDC via `auth/oidc.py` (loaded only in this mode). |
+| Mode | Selectable | Behavior |
+|---|---|---|
+| `none` | ✅ | No token auth — **bind is forced to loopback** by `effective_bind` (an unauthenticated gateway must never leave the host). Dev convenience. |
+| `local_token` | ✅ | The default: token auth with a login page; static assets bypass the check (the real asset surface only — `dashboard/token_auth.py`). An opt-in, IP-gated local-network bypass exists. |
+| `api_key` | ❌ **not selectable** | Header key auth. Validation is implemented (`dashboard/token_auth.py` checks `Authorization: Bearer` against the configured key) but no env value reaches it. |
+| `oauth2` | ❌ **not selectable** | OIDC JWT verification is implemented (`auth/oidc.py`, imported lazily only in this mode) but no env value reaches it. |
+
+**What that means in practice.** Setting `PERSONALCLAW_AUTH_MODE=api_key` leaves
+the gateway on `local_token` and silently ignores `PERSONALCLAW_API_KEY`. It fails
+**closed** — a client presenting `Authorization: Bearer <that key>` is refused, not
+admitted — so the cost is lost access, not weakened auth. But it is a configuration
+that reads as working and is not, which is why it is stated here rather than left to
+be discovered.
+
+Wiring the selector is tracked as roadmap scope, and it carries one design question
+worth settling deliberately rather than in passing: whether an unhonourable mode
+should **refuse at startup** or fall back. Refusing is the honest posture for a
+security control, but `from_env()` is also called as a fallback inside a request path
+(`dashboard/origin.py`), so a naive raise would turn a misconfiguration into a 500
+rather than a clean boot failure. The fix belongs with that atom, not in a doc change.
 
 ### The `AUTH_MODE=none` sandbox fix
 
