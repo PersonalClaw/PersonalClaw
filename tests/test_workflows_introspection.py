@@ -469,8 +469,55 @@ def test_the_summary_states_the_counts_rather_than_a_verdict():
     """A summary that said "succeeded" would be the run grading itself; the counts let the reader
     grade it."""
     summary = proof_section(RunStats(run_id="r", steps_completed=3, steps_failed=1)).summary
-    assert "3 step(s) completed" in summary
+    assert "3 steps completed" in summary
     assert "1 failed" in summary
+
+
+def test_the_summary_and_the_failed_warning_each_agree_with_their_OWN_count():
+    """Both sides of n === 1, on OPPOSING counts.
+
+    A single fixture cannot prove this: with every count on the same side of the boundary, a
+    sentence that borrowed a sibling's number would still read correctly. So `completed` and
+    `failed` are deliberately on opposite sides in each case, and the possessive in the warning is
+    asserted too — "check what the run did with their outputs" is as wrong at n === 1 as "step(s)"
+    was.
+    """
+    one_completed = proof_section(RunStats(run_id="r", steps_completed=1, steps_failed=4))
+    assert "1 step completed" in one_completed.summary
+    assert "1 steps" not in one_completed.summary
+    assert "4 steps failed — check what the run did with their outputs" in one_completed.warnings
+
+    many_completed = proof_section(RunStats(run_id="r", steps_completed=4, steps_failed=1))
+    assert "4 steps completed" in many_completed.summary
+    assert "1 step failed — check what the run did with its output" in many_completed.warnings
+    assert not any("their outputs" in w for w in many_completed.warnings)
+
+    # And no sentence anywhere in the section may reintroduce the hedge.
+    for stats in (one_completed, many_completed):
+        assert "(s)" not in stats.summary
+        assert not any("(s)" in w for w in stats.warnings)
+
+
+def test_a_two_case_branch_says_one_other_case_not_1_case_s():
+    """`others` is >= 1 by the guard, so the singular is this sentence's COMMON shape.
+
+    A two-case branch is the smallest thing the warning fires on, which is exactly where
+    "its other 1 case(s) are declared" read worst — and the rail that used to cover this pinned
+    the hedge AT that count, so the guard agreed with the defect.
+    """
+    runs = EDGE_STATS_MIN_RUNS
+    two = BranchStats(path="router", cases={"bug": runs, "feat": 0}, routed_runs=runs)
+    assert "its one other case is declared but never chosen" in two.degenerate_warning()
+    assert "case(s)" not in two.degenerate_warning()
+    assert " 1 case" not in two.degenerate_warning()
+
+    four = BranchStats(path="router", cases={"bug": runs, "a": 0, "b": 0, "c": 0}, routed_runs=runs)
+    assert "its other 3 cases are declared but never chosen" in four.degenerate_warning()
+
+    # The guard itself is unchanged: one declared case is a spec shape, not a do-nothing selector.
+    assert (
+        BranchStats(path="router", cases={"bug": runs}, routed_runs=runs).degenerate_warning() == ""
+    )
 
 
 # ── PP-8: edge-decision statistics (per-`branch` case + per-judge verdict distribution) ──
