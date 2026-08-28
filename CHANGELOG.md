@@ -674,6 +674,22 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   about your configuration.
   Your own skills and the bundled ones are unaffected, and the integrity badge on installed skills is
   unchanged.
+- **Selecting many conversations at once could file them under a tag or folder that doesn't exist.**
+  Tagging or moving one conversation checks that the tag or folder is real — moving one into a folder
+  that isn't there answers "folder not found". Doing the same to a selection of them checked nothing and
+  reported success. Nothing broke on screen, because the list quietly ignores a tag it doesn't recognise
+  and shows an unknown folder as ungrouped, so the stored result was wrong while looking right. Both now
+  refuse with a message naming what wasn't found, and refuse before anything is written, so a selection
+  of forty is never half-changed. Clearing a folder by passing no folder at all still works — that isn't
+  a missing folder, it's "ungrouped".
+
+- **Two knowledge shelves could have the same name, with nothing to tell them apart.** Tags have always
+  refused a duplicate name and offer to merge instead; shelves accepted one silently, so the Library rail
+  could show two identical chips and only the address bar distinguished them. A duplicate name is now
+  refused, naming the shelf that already has it, on both creating and renaming — and names that differ
+  only by capitals or surrounding spaces count as duplicates, since a reader cannot tell those apart
+  either. Re-saving a shelf under its own name, which is what happens when you change its icon, is not
+  treated as a clash with itself.
 
 - **The check that keeps installed apps off PersonalClaw's internals had never actually run.** Apps are
   meant to reach core only through the published SDK, and one test enforces that. It looked for the apps
