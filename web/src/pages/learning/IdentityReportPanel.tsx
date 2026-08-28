@@ -1,10 +1,31 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertTriangle, ExternalLink, FileText, UserRound } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { LoadError } from '../../ui/ListScaffold'
+import { Segmented } from '../../ui/Segmented'
 import { fvs } from '../../design/fontWeight'
-import type { IdentityReport } from '../../lib/api'
+import type { IdentityReportView } from '../../lib/api'
 import { api } from '../../lib/api'
+
+/** A settable cadence. `''` is excluded on purpose: it is the server saying "I could not read your
+ *  config", which is a state to REPORT and never a value to write. */
+type Cadence = Exclude<IdentityReportView['cadence'], ''>
+
+/** The cadence strip's options. The keys are `learning.identity_report_cadence`'s enum members —
+ *  `off` is a MEMBER, not a sibling switch, so there is no second control that could disagree
+ *  with this one. `test_lv4_identity_report_schedule.py` asserts these three against the backend's
+ *  `IDENTITY_REPORT_CADENCES`, so this copy cannot drift from the vocabulary. */
+const CADENCE_OPTIONS: { key: Cadence; label: string }[] = [
+  { key: 'monthly', label: 'Monthly' },
+  { key: 'weekly', label: 'Weekly' },
+  { key: 'off', label: 'Off' },
+]
+
+/** The one wording both audiences get. Used verbatim as the visible label AND as the group's
+ *  accessible name: a different `ariaLabel` would make the spoken name disagree with the words on
+ *  screen, which is the label-in-name failure a bare `Segmented` already cost this app seven times
+ *  (`ui/segmentedNamed.test.tsx`). */
+const CADENCE_LABEL = 'Write one automatically'
 
 /** The periodic identity report — "how I've adapted to you" (LV-4).
  *
@@ -25,7 +46,7 @@ import { api } from '../../lib/api'
  *  narrative was attempted and no model answered; the figures are unaffected and the panel says
  *  exactly that, because a blank space reads as "nothing to say". */
 export function IdentityReportPanel({ report, error, onRetry, onDelivered }: {
-  report: IdentityReport | undefined
+  report: IdentityReportView | undefined
   error: unknown
   onRetry: () => void
   onDelivered: () => void
@@ -33,6 +54,12 @@ export function IdentityReportPanel({ report, error, onRetry, onDelivered }: {
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState('')
   const [slug, setSlug] = useState('')
+  // The cadence is held locally so the strip moves on click rather than after a refetch, and
+  // re-synced from the server value whenever the report reloads — GuardrailsPanel's shape. A
+  // strip that waited for the round trip would look broken on a slow save; one that never
+  // re-synced would keep showing an optimistic value a failed PATCH never persisted.
+  const [cadence, setCadence] = useState(report?.cadence ?? '')
+  useEffect(() => { if (report?.cadence !== undefined) setCadence(report.cadence) }, [report?.cadence])
 
   // A failed fetch renders as an EMPTY STATE unless the error is read — and "nothing has been
   // learned" is the one claim this panel must never make by accident.
@@ -40,6 +67,33 @@ export function IdentityReportPanel({ report, error, onRetry, onDelivered }: {
     return <LoadError what="identity report" error={error} onRetry={onRetry} />
   }
   if (!report) return null
+
+  const setCadenceTo = async (next: string) => {
+    // Narrowed against the strip's OWN option list rather than cast. `Segmented` hands back a
+    // bare string, and a cast would let a future typo'd option key reach the PATCH and come back
+    // a 400 the user has to interpret.
+    const chosen = CADENCE_OPTIONS.find((o) => o.key === next)?.key
+    if (!chosen) return
+    const previous = cadence
+    setCadence(chosen)
+    setFailure('')
+    try {
+      await api.patchConfig('learning.identity_report_cadence', chosen)
+      // Re-read: the window the header states is DERIVED from the cadence server-side, so a
+      // saved change that left "last 30 days" beside "Weekly" would be the panel disagreeing
+      // with the document its own button writes.
+      onRetry()
+    } catch (e) {
+      // Reverted, not left optimistic. A strip showing "Off" after a failed save is a settings
+      // panel presenting a value it never persisted — the exact claim GuardrailsPanel's 🔴
+      // comment records as the defect worth a rail.
+      setCadence(previous)
+      // Named with the control's OWN visible words, not with the config path: GuardrailsPanel's 🪤
+      // records the defect of saying "Couldn't save budgets.max_dollars_per_day" about a control
+      // the UI calls "Max dollars / day".
+      setFailure(`Couldn't save “${CADENCE_LABEL}”: ${String((e as Error)?.message || e)}`)
+    }
+  }
 
   const write = async () => {
     setBusy(true)
@@ -82,6 +136,38 @@ export function IdentityReportPanel({ report, error, onRetry, onDelivered }: {
         >
           <FileText size={14} /> {busy ? 'Writing…' : 'Write it up'}
         </Button>
+      </div>
+
+      {/* The cadence — the ONE switch. `off` is a member of this strip, so there is no second
+          control that could disagree with it, and the strip is what makes the scheduled half
+          discoverable at all: before this the job existed and nothing on any surface said so. */}
+      <div className="flex flex-wrap items-baseline gap-s">
+        <span data-testid="cadence-label" className="text-on-surface-var text-[0.8125rem]">
+          {CADENCE_LABEL}
+        </span>
+        {report.cadence === '' ? (
+          // A settings control must not present a FABRICATED value as saved state. An unreadable
+          // config gives `''`, and rendering the strip at its first option would claim "Monthly"
+          // is what you saved — indistinguishable from the truth, and wrong.
+          <span className="text-warn text-[0.8125rem]">
+            Your settings could not be read, so this cannot be shown or changed here.
+          </span>
+        ) : (
+          <>
+            <Segmented
+              size="sm"
+              ariaLabel={CADENCE_LABEL}
+              value={cadence}
+              options={CADENCE_OPTIONS}
+              onChange={setCadenceTo}
+            />
+            <span className="text-on-surface-low text-[0.8125rem]">
+              {cadence === 'off'
+                ? 'Nothing is scheduled — use “Write it up” whenever you want one.'
+                : 'Saved to your inbox on this cadence, with a versioned copy you can reread.'}
+            </span>
+          </>
+        )}
       </div>
 
       {failure && (

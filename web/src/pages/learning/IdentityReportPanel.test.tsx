@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { IdentityReportPanel } from './IdentityReportPanel'
-import { api, type IdentityReport } from '../../lib/api'
+import { api, type IdentityReportView } from '../../lib/api'
 
 // ── LV-4's periodic identity report panel ─────────────────────────────────────────────
 //
@@ -17,7 +17,7 @@ import { api, type IdentityReport } from '../../lib/api'
 //  4. "Write it up" calls the POST — the delivery that persists the artifact and raises the
 //     inbox item. If nothing called it, the whole delivery half would be an inert control.
 
-function report(overrides: Partial<IdentityReport> = {}): IdentityReport {
+function report(overrides: Partial<IdentityReportView> = {}): IdentityReportView {
   return {
     period: { window_days: 30, since: '2026-07-21T12:00:00+00:00', until: '2026-08-20T12:00:00+00:00' },
     window_days: 30,
@@ -39,6 +39,9 @@ function report(overrides: Partial<IdentityReport> = {}): IdentityReport {
     narrative: '',
     narrative_status: 'skipped',
     markdown: '# How I\'ve adapted to you\n',
+    // The DELIVERY cadence, not a gathered fact (LV-4's schedule half). `monthly` is the
+    // shipped default; `identityReportCadence.test.tsx` drives the control itself.
+    cadence: 'monthly',
     ...overrides,
   }
 }

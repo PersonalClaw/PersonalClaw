@@ -228,11 +228,19 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
             "source-digest",
         ),
     ),
+    # LV-4's `identity-report` shares this class rather than minting its own, on the reasoning the
+    # sibling comments use: what it ultimately does is write ONE versioned artifact, through the
+    # same store as `render-report` beside it — which is also a scheduled report, also persists a
+    # document, and also surfaces it. The inbox row the report raises is a POINTER at that
+    # artifact, not a second governed effect, and `action.digest`'s members already treat one
+    # local notification write as inside their class. Its extra power (one background model call
+    # over fenced prose) is governed where it can be evaluated: the write-capable fence in
+    # `triggers/screen.py` and `_MAX_NARRATIVE_CHARS`.
     ActionTypeSpec(
         key="action.artifact_write",
         floor=RUNG_AUTONOMOUS,
         ceiling=RUNG_AUTONOMOUS,
-        providers=("artifact-update", "render-report"),
+        providers=("artifact-update", "render-report", "identity-report"),
     ),
     # `usage-recap` (MRT-3) shares this class rather than minting its own: both are
     # local-only notification writers, so a separate key would be a second name for one governed

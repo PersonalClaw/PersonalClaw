@@ -85,6 +85,19 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(SelfRemediationActionProvider())
+    if "identity-report" not in _providers:
+        # LEARNING-VISIBILITY T2.5 (LV-4): the periodic "how I've adapted to you" report.
+        # Registered unconditionally rather than behind the cadence, for the reason
+        # `self-remediation` records directly above: the trigger row exists either way (the
+        # reconciler disables it for `off` instead of deleting it, so the switch stays visible)
+        # and a live row naming an unregistered provider validates, saves, and then fails at fire
+        # time. Added to `ALLOWED_HOOK_PROVIDERS`, to `triggers/screen.py`'s write-capable set and
+        # to `guardrails/rungs.py`'s action table in the SAME commit.
+        from personalclaw.action_providers.identity_report_provider import (
+            IdentityReportActionProvider,
+        )
+
+        register_action_provider(IdentityReportActionProvider())
     if "source-digest" not in _providers:
         # WATCHED-SOURCES §6.2 (WS-7's caller). Registered unconditionally, not behind
         # `sources.enabled`: the bundled clock trigger that names it exists whether or not a

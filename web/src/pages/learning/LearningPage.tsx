@@ -7,7 +7,7 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
-import { api, type AblationView, type BenchmarkView, type IdentityReport, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
+import { api, type AblationView, type BenchmarkView, type IdentityReportView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
 import { AblationPanel } from './AblationPanel'
 import { BenchmarkPanel } from './BenchmarkPanel'
 import { HealthPanel } from './HealthPanel'
@@ -89,13 +89,15 @@ export function LearningPage() {
     RETRIEVAL_BENCH_KEY,
     () => api.retrievalBench(),
   )
-  // LV-4's identity report, on the DETERMINISTIC read: 30 days because the report's cadence is
-  // monthly, and no model call, so opening the page costs nothing. `error` is read for the same
-  // reason every panel above reads its own — an unread failure renders as "nothing was learned",
-  // which is the one answer this panel must never give by accident.
-  const { data: identityReport, error: identityError, refresh: refreshIdentity } = useQuery<IdentityReport>(
+  // LV-4's identity report, on the DETERMINISTIC read: no model call, so opening the page costs
+  // nothing. The window is NOT passed — the server derives it from the configured cadence, so the
+  // period the panel states is the period the scheduled job delivers. Passing 30 here made a
+  // weekly install's panel disagree with its own cron. `error` is read for the same reason every
+  // panel above reads its own — an unread failure renders as "nothing was learned", which is the
+  // one answer this panel must never give by accident.
+  const { data: identityReport, error: identityError, refresh: refreshIdentity } = useQuery<IdentityReportView>(
     IDENTITY_REPORT_KEY,
-    () => api.identityReport(30),
+    () => api.identityReport(),
   )
 
   // The keep/remove/lighten ablation report (ES-7). `error` is read for the judge table's two

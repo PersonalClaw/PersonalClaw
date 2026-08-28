@@ -956,6 +956,15 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # reverts. Live-editable for the same reason — a user who does not want the flywheel
     # measuring its own accepted proposals should be able to stop it without a restart.
     "learning.attribution_enabled": {"type": "bool"},
+    # LV-4: the periodic identity report's cadence, and its ONLY switch (`off` is a member, not
+    # a sibling bool). Live-editable because the reconciler CONVERGES it — `reconcile_digest_cron`'s
+    # contract — so changing it on the Learning page re-arms the trigger without the user knowing
+    # one exists. The `values` list is asserted equal to `learning_report.IDENTITY_REPORT_CADENCES`
+    # by `test_lv4_identity_report_schedule.py`, so this copy cannot drift from the vocabulary.
+    "learning.identity_report_cadence": {
+        "type": "enum",
+        "values": ["monthly", "weekly", "off"],
+    },
     # KNOWLEDGE-SYNTHESIS: the write-semantics knobs worth changing without a restart.
     # `require_citations` is here deliberately — an owner mid-research may need to store an
     # unsourced note and should not have to restart the gateway to do it.

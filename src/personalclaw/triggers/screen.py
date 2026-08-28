@@ -455,6 +455,12 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # also spends a model call over SCRAPED text, which is the untrusted-input boundary §8
         # fences — the strictest side of this table is the only honest one for it.
         "source-digest",
+        # LV-4's periodic identity report: writes a versioned artifact AND raises an inbox item,
+        # on a cron, forever, and spends one background model call over FENCED user prose (a
+        # facet's text came from a turn and a turn can carry an injection —
+        # `narrate_identity_report` fences it for exactly that reason). Same side of the table as
+        # `source-digest` above and for the same three reasons.
+        "identity-report",
         # Propose-don't-write is about the KNOWLEDGE store, not about this fence: filing still
         # writes a durable proposal row and raises an inbox item, exactly like
         # `notification-digest` above. A path that puts things in front of the user unattended

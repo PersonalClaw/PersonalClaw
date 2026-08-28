@@ -313,6 +313,12 @@ _SPECIAL = {
     # resilience.mid_turn_policy is enum-constrained — a generated value would fail
     # load()'s validation and fall back to the default.
     ("resilience", "mid_turn_policy"): "cancel_and_replace",
+    # learning.identity_report_cadence is enum-constrained (LV-4: monthly|weekly|off) — the
+    # generated "monthly-x" is refused by load() and falls back to the default, which this
+    # test correctly reported as a dropped field. `weekly` is the non-default that round-trips;
+    # `off` is deliberately not used here, since a fixture should not model "the periodic report
+    # is switched off" as the normal case.
+    ("learning", "identity_report_cadence"): "weekly",
     # security.autonomy_denylist is a list[dict] — the generic list rule would
     # append a bare string, which load() filters out (isinstance dict). Supply a
     # real rule dict so the round-trip preserves it.

@@ -947,6 +947,12 @@
     "type": "bool"
   },
   {
+    "default": "monthly",
+    "path": "learning.identity_report_cadence",
+    "sensitive": false,
+    "type": "str"
+  },
+  {
     "default": 3,
     "path": "learning.min_evidence",
     "sensitive": false,

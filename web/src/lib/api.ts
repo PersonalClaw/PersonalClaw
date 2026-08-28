@@ -2318,6 +2318,17 @@ export interface IdentityReport {
   narrative_status: 'skipped' | 'written' | 'unavailable'
   markdown: string
 }
+/** The READ route's body: the report plus the delivery cadence beside it.
+ *
+ *  A separate type rather than an optional field on `IdentityReport`, because the two shapes are
+ *  genuinely different: the GET answers with a report AND a setting about future deliveries, while
+ *  the POST answers with what it just WROTE. An optional `cadence?` would let the panel's control
+ *  render off `undefined` on either shape without the compiler noticing which one it had. */
+export interface IdentityReportView extends IdentityReport {
+  /** `learning.identity_report_cadence`. `''` means the server could not READ the config, which
+   *  the panel must state rather than render as a saved value. */
+  cadence: '' | 'monthly' | 'weekly' | 'off'
+}
 export interface IdentityReportDelivery {
   artifact_slug: string
   artifact_version: number
@@ -5575,14 +5586,22 @@ export const api = {
   learningHealth: (days = 7) =>
     get<LearningHealth>(`/api/learning/health?days=${days}`),
   /** The identity report, DETERMINISTIC (LV-4). No model call — a panel mounting must not
-   *  spend one, so the narrative is only composed by the POST below. */
-  identityReport: (days = 30) =>
-    get<IdentityReport>(`/api/learning/identity-report?days=${days}`),
+   *  spend one, so the narrative is only composed by the POST below.
+   *
+   *  `days` is OMITTED by default so the server derives the window from the configured cadence.
+   *  It used to default to 30 here, which made a weekly install's panel say "last 30 days" about
+   *  a document its own cron writes over 7 — the FE quietly overriding a setting it also renders. */
+  identityReport: (days?: number) =>
+    get<IdentityReportView>(`/api/learning/identity-report${days === undefined ? '' : `?days=${days}`}`),
   /** Compose, narrate, persist the versioned artifact and raise ONE inbox item. Separate from
    *  the GET because it spends a model call and writes two durable things; the scheduled job
-   *  (when it lands) calls the same backend function, so there is one owner, not two. */
-  deliverIdentityReport: (days = 30) =>
-    post<IdentityReportDelivery>(`/api/learning/identity-report?days=${days}`, {}),
+   *  calls the same backend function, so there is one owner, not two. `days` is omitted by
+   *  default for the same reason as the GET — the hand-run's period is the cadence's period. */
+  deliverIdentityReport: (days?: number) =>
+    post<IdentityReportDelivery>(
+      `/api/learning/identity-report${days === undefined ? '' : `?days=${days}`}`,
+      {},
+    ),
   /** The judge tier-recommendation table (ES-4). Read-only: the RUN is
    *  `personalclaw judge-bench`, because the full matrix is 540 judge calls and a click
    *  must not start one. 404 carries a distinct code for "no benchmark yet" vs "evals off". */
