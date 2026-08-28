@@ -1,7 +1,7 @@
 {
   "totals": {
     "driftHits": 8,
-    "filesScanned": 564,
+    "filesScanned": 598,
     "filesWithDrift": 7
   },
   "byCategory": {
@@ -14,8 +14,8 @@
   "ranked": [
     {
       "file": "pages/ChatPage.tsx",
-      "score": 39,
-      "detail": "15 raw-button, 9 raw-input"
+      "score": 37,
+      "detail": "14 raw-button, 9 raw-input"
     },
     {
       "file": "pages/projects/ProjectsSection.tsx",
@@ -214,11 +214,11 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 144,
-    "outlineNoneFiles": 69,
-    "localFocusVisibleFiles": 35,
+    "outlineNoneCount": 146,
+    "outlineNoneFiles": 71,
+    "localFocusVisibleFiles": 37,
     "reducedMotionFiles": 13,
-    "animatedFiles": 170,
+    "animatedFiles": 176,
     "hasGlobalReducedMotion": true,
     "hasGlobalFocusRing": true
   },
@@ -290,7 +290,7 @@
       "raw-dialog": 0
     },
     "pages/ChatPage.tsx": {
-      "raw-button": 15,
+      "raw-button": 14,
       "raw-input": 9,
       "raw-dialog": 0
     },
@@ -332,6 +332,11 @@
     "pages/chat/ChatActivityPanel.tsx": {
       "raw-button": 3,
       "raw-input": 1,
+      "raw-dialog": 0
+    },
+    "pages/chat/ContextLedger.tsx": {
+      "raw-button": 1,
+      "raw-input": 0,
       "raw-dialog": 0
     },
     "pages/chat/MessageActions.tsx": {
@@ -410,7 +415,12 @@
       "raw-dialog": 0
     },
     "pages/dashboard/widgets/TasksWidget.tsx": {
-      "raw-button": 2,
+      "raw-button": 1,
+      "raw-input": 0,
+      "raw-dialog": 0
+    },
+    "pages/dashboard/widgets/kit.tsx": {
+      "raw-button": 1,
       "raw-input": 0,
       "raw-dialog": 0
     },
@@ -579,11 +589,6 @@
       "raw-input": 0,
       "raw-dialog": 0
     },
-    "pages/settings/AgentDefaultsPanel.tsx": {
-      "raw-button": 1,
-      "raw-input": 1,
-      "raw-dialog": 0
-    },
     "pages/settings/AlwaysOnConventions.tsx": {
       "raw-button": 0,
       "raw-input": 2,
@@ -690,8 +695,8 @@
       "raw-dialog": 0
     },
     "pages/settings/settingsUI.tsx": {
-      "raw-button": 1,
-      "raw-input": 0,
+      "raw-button": 2,
+      "raw-input": 1,
       "raw-dialog": 0
     },
     "pages/skills/SkillInspector.tsx": {
@@ -807,7 +812,7 @@
     },
     {
       "file": "pages/settings/NotificationRulesMatrix.tsx",
-      "line": 94,
+      "line": 98,
       "category": "duration",
       "snippet": "<ChevronDown size={12} style={{ transform: isOpen ? 'rotate(180deg)' : undefined, transition: 'trans"
     },
@@ -825,7 +830,7 @@
     },
     {
       "file": "ui/widget/WidgetFrame.tsx",
-      "line": 280,
+      "line": 284,
       "category": "spacing",
       "snippet": "style={{ height: expanded ? 'calc(100% - 36px)' : height }}"
     }
