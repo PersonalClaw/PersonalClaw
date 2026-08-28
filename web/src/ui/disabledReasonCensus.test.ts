@@ -71,9 +71,23 @@ function elementWithChildren(src: string, i: number): string {
   return src.slice(a, k)
 }
 
-/** file:line for every conditionally-disabled control with no reason in its element. */
-function unexplained(): string[] {
-  const out: string[] = []
+/** A site's identity: its FILE plus its own `disabled=` expression — never its line number.
+ *
+ *  🔑 THIS IS THE FOURTH RE-KEY AND THE LAST ONE. The comments below record three renumbers in which
+ *  nothing about any control changed; #2234 then added one import to `TaskDetail.tsx` and shifted all
+ *  four of its sites by +1, reding this rail from a PR that never touched a disabled control. A key is
+ *  supposed to say WHICH site is excused; a line number says WHERE IT SAT, and those stop being the
+ *  same thing the moment anyone edits above it. The expression is what the exemption is actually about.
+ *
+ *  Line numbers are still reported in the failure message — losing them would trade a false-alarm
+ *  problem for an unnavigable one — they are simply not what identity is computed from. */
+type Site = { key: string; rel: string; line: number }
+
+const siteKey = (rel: string, expr: string) => `${rel}  disabled={${expr}}`
+
+/** Every conditionally-disabled control with no reason in its element. */
+function unexplained(): Site[] {
+  const out: Site[] = []
   for (const abs of walk(SRC)) {
     const src = readFileSync(abs, 'utf8')          // ORIGINAL text: line numbers match the file
     for (const m of src.matchAll(/disabled=\{([^}]{1,90})\}/g)) {
@@ -81,65 +95,70 @@ function unexplained(): string[] {
       const ids = (expr.match(/[A-Za-z_$][\w$]*/g) ?? []).filter((x) => !['true', 'false', 'null', 'undefined', 'length'].includes(x))
       if (!ids.length || BUSY.test(expr)) continue
       if (REASON.test(elementWithChildren(src, m.index!))) continue
-      out.push(`${abs.replace(SRC + '/', '')}:${src.slice(0, m.index!).split('\n').length}`)
+      const rel = abs.replace(SRC + '/', '')
+      out.push({ key: siteKey(rel, expr), rel, line: src.slice(0, m.index!).split('\n').length })
     }
   }
-  return out.sort()
+  return out.sort((a, b) => a.key.localeCompare(b.key) || a.line - b.line)
 }
 
-/** The remainder, each with why it is not a defect. Thirteen today. */
-const CLASSIFIED: Record<string, string> = {
+/** The remainder, each with why it is not a defect. Thirteen sites, twelve keys.
+ *
+ *  Keyed by the control's own `disabled=` expression (see `siteKey`), with `n` where one file has more
+ *  than one site sharing an expression. The count is part of the exemption: a THIRD `disabled={readOnly}`
+ *  in `TaskDetail.tsx` is a new unexplained control and must red, not inherit an excuse. */
+const CLASSIFIED: Record<string, { n?: number; why: string }> = {
   // The carrier itself: these two lines ARE the soft-off implementation `disabledReason` drives.
-  'ui/Button.tsx:161': 'the Button carrier implementing soft-off',
-  'ui/Button.tsx:163': 'the Button carrier implementing soft-off',
+  'ui/Button.tsx  disabled={softOff || undefined}': { why: 'the Button carrier implementing soft-off' },
+  'ui/Button.tsx  disabled={softOff ? undefined : off}': { why: 'the Button carrier implementing soft-off' },
   // LOADING, not missing input: `=== null` is "not fetched yet", which `unavailable.ts` sends natively
   // disabled on purpose. (Two copies because the inbox settings panel exists twice — an open taste call.)
-  'pages/inbox/InboxSettingsPanel.tsx:67': 'loading (sourcesOn === null)',
-  'pages/inbox/InboxSettingsPanel.tsx:73': 'loading (engagementOn === null)',
-  // 91 → 129 / 95 → 133 (PA-5): the proactive-triage section was inserted ABOVE these two, so the
-  // SITES are unchanged and only their line numbers moved. This map keys on file:line, so an edit
-  // above a classified site rots the key; the shape assertion below re-proves each one.
-  'pages/settings/InboxSettingsPanel.tsx:129': 'loading (sourcesOn === null)',
-  'pages/settings/InboxSettingsPanel.tsx:133': 'loading (engagementOn === null)',
+  'pages/inbox/InboxSettingsPanel.tsx  disabled={sourcesOn === null}': { why: 'loading (sourcesOn === null)' },
+  'pages/inbox/InboxSettingsPanel.tsx  disabled={engagementOn === null}': { why: 'loading (engagementOn === null)' },
+  'pages/settings/InboxSettingsPanel.tsx  disabled={sourcesOn === null}': { why: 'loading (sourcesOn === null)' },
+  'pages/settings/InboxSettingsPanel.tsx  disabled={engagementOn === null}': { why: 'loading (engagementOn === null)' },
   // The reason is the button's own visible text — "(removed — insight kept)" — not an attribute.
-  // Line moved 918 → 941 when `KL-8` added the Home lens above it; the SITE is unchanged and the
-  // shape assertion below re-proves it. This map keys on file:line, so any edit above a classified
-  // site is a mechanical re-point — not a re-classification.
-  'pages/knowledge/KnowledgeListPage.tsx:953': "the reason is the button's own label text",
+  'pages/knowledge/KnowledgeListPage.tsx  disabled={!o.item_id}': { why: "the reason is the button's own label text" },
   // Section-level explanation: the panel renders "Managed by project — read-only" with a lock icon, so
   // the surface states it once rather than repeating it on every checkbox.
-  // 🪤 THESE FOUR ARE PINNED BY LINE NUMBER, so ANY edit above them in TaskDetail.tsx moves all four
-  // and reds this rail. They shifted 197/208/226/254 → 210/221/239/267 when the exit-criteria bar
-  // adopted `ui/Meter` (the same control at each, verified by reading the line). Nothing about the
-  // controls changed. Noted rather than silently renumbered: a census keyed on `path:line` is exact
-  // about WHICH site it excuses, which is its strength, but it makes an unrelated insertion look like
-  // a new offender. Worth re-keying on the control's own text if it bites a third time.
-  // 🪤 THIRD RENUMBER, and nothing about these four controls changed any of the three times. They are
-  // keyed by LINE, so any edit above them in TaskDetail.tsx moves all four and reds this rail:
-  // 197/208/226/254 -> 210/221/239/267 (the exit-criteria Meter adoption) -> 226/247/267/295 (raising the
-  // two tick targets to 24px). Each new line was READ to confirm it is the same control
-  // (`disabled={readOnly}` x2, `disabled={!dep || !onOpenTask}`, `disabled={!onOpenTask}`).
-  // A census keyed on `path:line` is exact about WHICH site it excuses — its strength — but it makes an
-  // unrelated insertion look like a new offender. RE-KEY IT ON THE CONTROL'S OWN TEXT (its aria-label, or
-  // its `disabled=` expression). This is the third bite; the fix is overdue and belongs in its own change.
-  'pages/tasks/TaskDetail.tsx:227': 'read-only task; the panel states it once with a lock',
-  'pages/tasks/TaskDetail.tsx:248': 'read-only task; the panel states it once with a lock',
+  'pages/tasks/TaskDetail.tsx  disabled={readOnly}': { n: 2, why: 'read-only task; the panel states it once with a lock' },
   // Display-only rows: with no navigation handler the row is not a button, and `disabled:cursor-default`
   // says exactly that rather than "blocked".
-  'pages/tasks/TaskDetail.tsx:296': 'no navigation handler → informational row (cursor-default)',
-  'pages/tasks/TaskDetail.tsx:268': 'no navigation handler → informational row (cursor-default)',
+  'pages/tasks/TaskDetail.tsx  disabled={!onOpenTask}': { why: 'no navigation handler → informational row (cursor-default)' },
+  'pages/tasks/TaskDetail.tsx  disabled={!dep || !onOpenTask}': { why: 'no navigation handler → informational row (cursor-default)' },
   // A sequence dependency whose cause is the field directly above it.
-  'pages/tasks/TaskForm.tsx:181': 'depends on the Project field rendered immediately above',
+  'pages/tasks/TaskForm.tsx  disabled={!projectId}': { why: 'depends on the Project field rendered immediately above' },
   // The reason is the control's own NAME, which flips with the state: "Pin to dashboard" when it can
   // be pressed, "Pinned to dashboard" when it cannot — plus `aria-pressed` saying the same thing.
   //
-  // 🔍 THIS SITE IS NOT NEW; IT WAS HIDDEN. It read `disabled={pinPending || pinned}`, and
-  // `pinPending` is in the BUSY list above, so the whole compound expression was skipped as
-  // in-flight. Giving the icon tiers a `loading` prop split it into `disabled={pinned}` +
-  // `loading={pinPending}`, and the pre-existing unexplained half surfaced. A compound gate with one
-  // in-flight term is a blind spot for any in-flight-keyed scan, this one included.
-  'ui/widget/WidgetFrame.tsx:250': "the reason is the button's own name, which flips to \"Pinned to dashboard\"",
+  // 🔍 THIS SITE IS NOT NEW; IT WAS HIDDEN. It read `disabled={pinPending || pinned}`, and `pinPending`
+  // is in the BUSY list above, so the whole compound expression was skipped as in-flight. Giving the icon
+  // tiers a `loading` prop split it into `disabled={pinned}` + `loading={pinPending}`, and the
+  // pre-existing unexplained half surfaced. A compound gate with one in-flight term is a blind spot for
+  // any in-flight-keyed scan, this one included.
+  'ui/widget/WidgetFrame.tsx  disabled={pinned}': { why: "the reason is the button's own name, which flips to \"Pinned to dashboard\"" },
 }
+
+/** 📓 WHY THE KEYS ARE NOT LINE NUMBERS — the history, kept because it is the evidence for the change.
+ *
+ *  This map was keyed `path:line` and was renumbered FOUR times without a single control changing:
+ *
+ *    · `pages/settings/InboxSettingsPanel.tsx`  91 → 129 / 95 → 133   (PA-5 inserted a section above)
+ *    · `pages/knowledge/KnowledgeListPage.tsx`  918 → 941 → 953       (KL-8 added the Home lens above)
+ *    · `pages/tasks/TaskDetail.tsx`  197/208/226/254 → 210/221/239/267 (exit-criteria bar adopted
+ *      `ui/Meter`) → 226/247/267/295 (two tick targets raised to 24px) → 227/248/268/296 (#2234 added
+ *      ONE import line)
+ *
+ *  The last one is the clearest: a PR whose whole subject was reporting failed writes shifted four
+ *  exemptions by +1 and reded this rail. Each time the fix was to read the new line, confirm it was the
+ *  same control, and renumber — bookkeeping that taught nobody anything and that the next insertion
+ *  undoes. The previous note here concluded "RE-KEY IT ON THE CONTROL'S OWN TEXT … the fix is overdue
+ *  and belongs in its own change". This is that change.
+ *
+ *  🪤 What is DELIBERATELY preserved: the old keying's real strength was being exact about which site it
+ *  excused, so this does not loosen to a per-file allowance. `file + expression + count` is exact about
+ *  the shape AND the number of sites, so a new unexplained control reds even when it shares an
+ *  expression with an excused one — verified by mutation. */
 
 /** Pass-through primitives: `disabled` arrives as a prop and the reason belongs to the CALLER. Counted
  *  separately because "explain yourself" is not a rule a primitive can satisfy. */
@@ -155,36 +174,65 @@ describe('the disabled-reason census', () => {
   })
 
   it('every unexplained control is classified or a pass-through', () => {
-    const found = unexplained().filter((k) => !PASSTHROUGH.test(k))
-    const surprises = found.filter((k) => !(k in CLASSIFIED))
-    expect(surprises, 'a control disabled for a reason nobody states').toEqual([])
-    // 🪤 EXACT, not "at most". A `<=` passes when a site gains a reason and its entry above becomes dead
-    // weight — an exemption list nobody prunes is how the next reader inherits stale excuses.
-    expect(found.sort(), 'the classification must match the remainder exactly')
-      .toEqual(Object.keys(CLASSIFIED).sort())
+    const found = unexplained().filter((s) => !PASSTHROUGH.test(`${s.rel}:`))
+    const where = (k: string) =>
+      found.filter((s) => s.key === k).map((s) => `${s.rel}:${s.line}`).join(', ')
+
+    const surprises = [...new Set(found.map((s) => s.key))].filter((k) => !(k in CLASSIFIED))
+    expect(
+      surprises.map((k) => `${k}   at ${where(k)}`),
+      'a control disabled for a reason nobody states',
+    ).toEqual([])
+
+    // 🪤 EXACT, not "at most", and now exact on the COUNT too. A `<=` passes when a site gains a reason
+    // and its entry above becomes dead weight — an exemption list nobody prunes is how the next reader
+    // inherits stale excuses. Counting also keeps the old line-keying's precision: two excused
+    // `disabled={readOnly}` sites do not silently excuse a third.
+    const actual: Record<string, number> = {}
+    for (const s of found) actual[s.key] = (actual[s.key] ?? 0) + 1
+    const expected = Object.fromEntries(Object.entries(CLASSIFIED).map(([k, v]) => [k, v.n ?? 1]))
+    expect(actual, 'the classification must match the remainder exactly, count included').toEqual(expected)
   })
 
   it('each classified site still has the shape it is excused for', () => {
-    // 🪤 The vacuity half. A line number rots the moment a file is edited above it, so this asserts the
-    // CODE at each site rather than trusting the key — an exemption pointing at the wrong line is worse
-    // than none, because it silently excuses whatever moved into place.
-    const at = (rel: string, line: number) => readFileSync(join(SRC, rel), 'utf8').split('\n')[line - 1] ?? ''
-    expect(at('ui/Button.tsx', 161)).toMatch(/softOff/)
-    expect(at('pages/knowledge/KnowledgeListPage.tsx', 953)).toMatch(/disabled=\{!o\.item_id\}/)
-    expect(readFileSync(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'), 'utf8'),
+    // 🪤 The vacuity half. The KEY already proves the `disabled=` expression is present — that is what it
+    // is computed from — so what this adds is the CORROBORATION each reason claims: the label, the cursor,
+    // the neighbouring field, the paired prop. None of it reads a line number, so an insertion above any
+    // of these sites cannot red it.
+    const code = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
+
+    expect(code('ui/Button.tsx'), 'the carrier really implements soft-off').toMatch(/softOff/)
+
+    expect(code('pages/knowledge/KnowledgeListPage.tsx'),
       'and its label really does explain the state').toMatch(/\(removed — insight kept\)/)
-    expect(at('pages/tasks/TaskDetail.tsx', 296)).toMatch(/disabled=\{!onOpenTask\}/)
-    expect(readFileSync(join(SRC, 'pages/tasks/TaskDetail.tsx'), 'utf8'),
+
+    expect(code('pages/tasks/TaskDetail.tsx'),
       'the cursor says "not a button", not "blocked"').toMatch(/disabled:cursor-default/)
-    expect(at('ui/widget/WidgetFrame.tsx', 250)).toMatch(/disabled=\{pinned\} loading=\{pinPending\}/)
-    expect(at('ui/widget/WidgetFrame.tsx', 250),
+    expect(code('pages/tasks/TaskDetail.tsx'),
+      'and the read-only state is stated once for the section').toMatch(/read-only|readOnly/)
+
+    // The compound is the point here: `pinned` gates the press while `pinPending` is the in-flight half.
+    // Splitting them is what surfaced this site, so assert they are still split rather than recombined.
+    expect(code('ui/widget/WidgetFrame.tsx'),
+      'pinned gates the press; pinPending stays the in-flight prop').toMatch(/disabled=\{pinned\}\s+loading=\{pinPending\}/)
+    expect(code('ui/widget/WidgetFrame.tsx'),
       'and the name really does state the gate').toMatch(/pinned \? 'Pinned to dashboard'/)
-    expect(at('pages/tasks/TaskForm.tsx', 181)).toMatch(/disabled=\{!projectId\}/)
-    expect(readFileSync(join(SRC, 'pages/tasks/TaskForm.tsx'), 'utf8'),
+
+    expect(code('pages/tasks/TaskForm.tsx'),
       'and the Project field it depends on is right above').toMatch(/<Field label="Project">/)
+
     for (const rel of ['pages/settings/ProjectionRulesPanel.tsx', 'pages/settings/DurabilityPanel.tsx']) {
-      expect(readFileSync(join(SRC, rel), 'utf8'), `${rel} takes disabled from a caller`)
+      expect(code(rel), `${rel} takes disabled from a caller`)
         .toMatch(/disabled\??:\s*boolean|disabled\s*\}/)
     }
+  })
+
+  it('the keys carry no line numbers — the property this change exists to establish', () => {
+    // The regression guard for the change itself. Four renumbers happened because identity was
+    // positional; if a later edit reintroduces a `path:123` key, that clock starts again.
+    const positional = Object.keys(CLASSIFIED).filter((k) => /:\d+/.test(k))
+    expect(positional, 'a classified key must identify a control, not a position').toEqual([])
+    expect(Object.keys(CLASSIFIED).every((k) => k.includes('disabled={')),
+      'every key names the expression it excuses').toBe(true)
   })
 })
