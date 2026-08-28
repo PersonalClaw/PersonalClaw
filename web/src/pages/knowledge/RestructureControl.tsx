@@ -412,12 +412,29 @@ function PlanReview({ plan, relink, onRelink }: {
 /** What the verb actually did, in its own numbers — never a bare "Done". */
 function Consequences({ result }: { result: KnowledgeRestructureResult }) {
   const lines: string[] = []
-  if (result.created?.length) lines.push(`${result.created.length} new item(s) created and linked back`)
-  if (result.annotations_moved) lines.push(`${result.annotations_moved} highlight(s) followed their text`)
-  if (result.citations_widened) lines.push(`${result.citations_widened} citation(s) widened to cite the whole item`)
-  if (result.wikilinks_relinked?.links) lines.push(`${result.wikilinks_relinked.links} wikilink(s) relinked`)
-  if (result.moved?.relations) lines.push(`${result.moved.relations} relation(s) moved to the survivor`)
-  if (result.moved?.citations) lines.push(`${result.moved.citations} citation(s) repointed`)
+  // 🔑 EVERY ONE OF THESE GUARDS IS TRUTHY, so n === 1 is not an edge case here — it is the FIRST
+  // case a reader meets. Splitting one item, moving one highlight, repointing one citation are all
+  // ordinary single-item outcomes of these verbs, and each line read `1 new item(s) created` with
+  // the count sitting one token to its left. This panel's whole job is stated above it — "what the
+  // verb actually did, in its own numbers, never a bare Done" — so hedging the noun undercuts the
+  // one thing it exists to do.
+  // 🪤 And deliberately NOT a local `plural()` helper, though six sites would justify one on size
+  // alone. The tree already carries TWO page-local copies (`settings/PortabilityPanel`,
+  // `settings/MemoryGraph`) against 156 inline conditionals, so a third makes the eventual
+  // consolidation bigger rather than smaller — the same call the two prior passes over this family
+  // recorded. The count is hoisted instead, which is what makes the inline form readable here.
+  const created = result.created?.length ?? 0
+  const moved = result.annotations_moved
+  const widened = result.citations_widened
+  const relinked = result.wikilinks_relinked?.links ?? 0
+  const relations = result.moved?.relations ?? 0
+  const repointed = result.moved?.citations ?? 0
+  if (created) lines.push(`${created} new item${created === 1 ? '' : 's'} created and linked back`)
+  if (moved) lines.push(`${moved} highlight${moved === 1 ? '' : 's'} followed their text`)
+  if (widened) lines.push(`${widened} citation${widened === 1 ? '' : 's'} widened to cite the whole item`)
+  if (relinked) lines.push(`${relinked} wikilink${relinked === 1 ? '' : 's'} relinked`)
+  if (relations) lines.push(`${relations} relation${relations === 1 ? '' : 's'} moved to the survivor`)
+  if (repointed) lines.push(`${repointed} citation${repointed === 1 ? '' : 's'} repointed`)
   if (result.logical_key) lines.push(`Logical identity is now ${result.logical_key}`)
   if (!lines.length) return null
   return (
