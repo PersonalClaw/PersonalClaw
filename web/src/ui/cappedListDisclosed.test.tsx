@@ -260,8 +260,22 @@ describe('every list whose label states a total discloses its cap', () => {
     // page, nothing persists, and the list is regenerated — so "… 12 more" would name items the user
     // cannot reach and would recast a curated prompt list as a truncated inventory. Pinned so a later
     // pass does not "finish the set".
+    //
+    // 🪤 THIS USED TO PIN `slice(0, 5)` AND THE 5 WAS NEVER THE POINT. Everything above is about
+    // DISCLOSURE — no `MoreRow` on a regenerated feed — and the assertion below is labelled "still
+    // capped", not "capped at five". The literal got baked in anyway, so when the cap moved to 6 to
+    // match the producer (the parser caps at `[:6]`, the shipped fallback list is exactly 6, and
+    // `ChatPage`'s `SuggestionChips` — the other consumer of this same endpoint — already rendered 6)
+    // this test reported a disclosure regression that had not happened.
+    //
+    // So it now asserts what it says: that a cap EXISTS. The number itself has a stricter owner than
+    // a literal here ever was — `pages/dashboard/suggestionCapMatchesProducer.test.ts` ties it to the
+    // producer's cap and to the other consumer, so 4, 5 or 7 all red there. The exclusion this test
+    // exists to protect is untouched and still fully enforced.
     const src = strip(readFileSync(join(SRC, 'pages/dashboard/widgets/Suggestions.tsx'), 'utf8'))
-    expect(src, 'still capped').toMatch(/items\.slice\(0, 5\)/)
+    expect(src, 'still capped — the count is owned by suggestionCapMatchesProducer.test.ts').toMatch(
+      /items\.slice\(0, \d+\)/,
+    )
     expect(src, 'and still silent, on purpose').not.toMatch(/MoreRow/)
     expect(src, 'its own copy says it is a feed, which is why').toMatch(/they build from your activity/)
   })
