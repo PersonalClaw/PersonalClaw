@@ -199,7 +199,6 @@ class TestPhaseMatchTolerantOfOrdinalPrefix:
                 ],
                 phase_status={"foundations": "done", "palette": "done", "components": "active"},
                 max_cycles=30,
-                total_cycles=2,
             )
         )
         ctx = _Ctx()

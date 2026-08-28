@@ -244,3 +244,46 @@ async def test_agent_run_status_allows_own_run(tmp_path):
         d = await r2.json()
         assert d["done"] is True
         assert d["result"] == "Summarized: summarize my notes"
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_app_cannot_start_an_agent_run(tmp_path):
+    """Disabling an app must stop it running agents, including through the OWNER path.
+
+    `app_permission_middleware` only scopes a request that carries an app identity, and
+    `_agent_run_identity` falls back to the ``{name}`` path segment for owner-initiated
+    calls — which the dashboard makes precisely when app-token minting failed, and minting
+    is what refuses a disabled app. So the fallback was the one route into an agent run for
+    an app the owner had switched off. The permission check alone cannot see it:
+    `checker_for` reads `app.json`, and `disable` writes `installed.json`.
+    """
+    async with _client(tmp_path) as client:
+        _install(tmp_path, "runner", agent_perm=True)
+        with (
+            patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
+            patch.object(manager, "config_dir", return_value=tmp_path),
+        ):
+            assert app_manager.disable("runner") is True
+
+        r = await client.post("/api/apps/runner/agent-run", json={"task": "do a thing"})
+
+        assert r.status == 403, await r.text()
+        assert client.app["state"].subagents._runs == {}, "nothing may have been spawned"
+
+
+@pytest.mark.asyncio
+async def test_a_non_object_json_body_is_a_400_not_a_500(tmp_path):
+    """`(body or {}).get(...)` reads as a None-guard and is not one: a JSON body of
+    `[1]`, `"x"` or `5` is valid and truthy, so `.get` raised `AttributeError` and the
+    route answered 500 for a plainly malformed request. `[]` slipped through only because
+    it is falsy, which is the tell that the guard was accidental rather than a type check.
+    """
+    async with _client(tmp_path) as client:
+        _install(tmp_path, "runner", agent_perm=True)
+        for body in ([1], "a string", 5, True):
+            r = await client.post("/api/apps/runner/agent-run", json=body)
+            assert r.status == 400, f"body={body!r} answered {r.status}: {await r.text()}"
+        # An empty body or an empty object is still the ordinary "task is required" 400.
+        for body in ({}, []):
+            r = await client.post("/api/apps/runner/agent-run", json=body)
+            assert r.status == 400, await r.text()

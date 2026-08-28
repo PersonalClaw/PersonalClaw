@@ -8,7 +8,21 @@ import type { RouteProps } from '../../../app/useQueryState'
 
 /** Today's Suggestions — LLM prompt-starter cards personalized from memory +
  *  recent activity. One tap launches the suggestion as a fresh chat; a refresh
- *  regenerates (force=1). */
+ *  regenerates (force=1).
+ *
+ *  🪤 THE CAP IS SIX, AND IT IS SIX BECAUSE THE PRODUCER SAYS SO — not because six rows happen to
+ *  look right. It read `slice(0, 5)` and quietly dropped one suggestion every render, with no
+ *  affordance to reach it. Four independent things all say six:
+ *
+ *    · `suggestions.py`'s parser caps the model's reply at `[:6]`
+ *    · `_FALLBACK_SUGGESTIONS` is exactly six, so on a brand-new install the sixth was ALWAYS lost
+ *    · `ChatPage`'s `SuggestionChips` — the other consumer of this same endpoint — renders `slice(0, 6)`
+ *    · every sibling dashboard widget preview caps at six (`TasksWidget`, `ScheduleWidget`,
+ *      `PinnedArtifacts`)
+ *
+ *  So `#/dashboard` and `#/chat` showed different amounts of one list. If this ever needs to be five
+ *  again, change the producer too — a consumer cap below the producer's is discarded work by
+ *  construction, and this one is generated per user from their own memory. */
 export function Suggestions({ navigate }: RouteProps) {
   const [items, setItems] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -36,7 +50,7 @@ export function Suggestions({ navigate }: RouteProps) {
 
   return (
     <div className="flex flex-col gap-xs pt-xs">
-      {items.slice(0, 5).map((s, i) => (
+      {items.slice(0, 6).map((s, i) => (
         <motion.button
           key={s}
           type="button"

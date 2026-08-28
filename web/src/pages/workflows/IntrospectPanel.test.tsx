@@ -135,11 +135,99 @@ describe('an empty answer is still an answer', () => {
     expect(screen.getByText('Nothing is waiting on you')).toBeTruthy()
   })
 
+  // ── The five ANSWER sentences, which nothing asserted before ──────────────────────────────
+  //
+  // 🪤 `riskyText` is a pure function and was the only composed prose this file checked. The panel
+  // ALSO builds five sentences inline — nodes active, journal events, nodes blocked, nodes failed,
+  // gates never rejecting — and every one hedged its noun with no rail watching. 54 render calls in
+  // this file and not one of them read those counts.
+  //
+  // Asserted on BOTH sides of the boundary, for the reason the degraded/gate pair above proves: a
+  // hedge and a correct plural are indistinguishable at every value except 1.
+  const one = {
+    running: { status: 'running', workflow: 'weekly-report', nodes: [{ node_id: 'draft' }] },
+    changed: [], blocked: [{ node_id: 'wait' }], approval: [], failed: [{ node_id: 'publish' }],
+  }
+  const many = {
+    running: { status: 'running', workflow: 'weekly-report', nodes: [{ node_id: 'a' }, { node_id: 'b' }] },
+    changed: [], blocked: [{ node_id: 'w1' }, { node_id: 'w2' }], approval: [],
+    failed: [{ node_id: 'p1' }, { node_id: 'p2' }, { node_id: 'p3' }],
+  }
+
+  it('the answer sentences read SINGULAR at one', async () => {
+    const base = payload()
+    introspect = async () => ({
+      ...base,
+      timeline: base.timeline.slice(0, 1),
+      answers: { ...base.answers, ...one },
+    })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText(/1 node active/)).toBeTruthy()
+    expect(screen.getByText(/1 journal event — see Timeline/)).toBeTruthy()
+    expect(screen.getByText(/1 node waiting on something external/)).toBeTruthy()
+    expect(screen.getByText(/^1 node failed$/)).toBeTruthy()
+  })
+
+  it('and PLURAL above one, with no hedge left anywhere on the panel', async () => {
+    const base = payload()
+    introspect = async () => ({ ...base, answers: { ...base.answers, ...many } })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText(/2 nodes active/)).toBeTruthy()
+    expect(screen.getByText(/2 journal events — see Timeline/)).toBeTruthy()
+    expect(screen.getByText(/2 nodes waiting on something external/)).toBeTruthy()
+    expect(screen.getByText(/^3 nodes failed$/)).toBeTruthy()
+    // 🪤 Scoped to the panel's OWN prose: the fixture's `proof.summary` is a BACKEND string this
+    // surface renders verbatim by design (see the edge-decision test's note), and it still carries
+    // `4 step(s)`. Asserting over the whole body would fail on copy this repo does not own here.
+    const own = [...document.querySelectorAll('[data-type], p, span')]
+      .map((e) => e.textContent || '')
+      .filter((t) => /node|journal event|gate/.test(t))
+      .join(' | ')
+    expect(own, 'the panel composes no hedged noun of its own').not.toMatch(/\((s|es)\)/)
+  })
+
+  // 🪤 AND A MIXED CASE, BECAUSE THE TWO ABOVE CANNOT SEE A SWAPPED COUNT. A mutation that made
+  // "nodes failed" read `blocked.length` passed both of them: in the singular fixture every count is
+  // 1 and in the plural fixture every count is >1, so the two nouns agree either way and the wrong
+  // number is invisible. Only counts on OPPOSITE sides of the boundary pin each sentence to its own
+  // number — the same mixed-case reasoning the roll-back dialogs needed ("1 of 2 files" beside "the
+  // 1 file you picked").
+  it('each answer takes ITS OWN count, not a neighbour of the same grammatical number', async () => {
+    const base = payload()
+    introspect = async () => ({
+      ...base,
+      timeline: base.timeline,                       // 2 -> plural
+      answers: {
+        ...base.answers,
+        running: { status: 'running', workflow: 'weekly-report', nodes: [{ node_id: 'draft' }] },  // 1
+        blocked: [{ node_id: 'w1' }, { node_id: 'w2' }, { node_id: 'w3' }],                        // 3
+        failed: [{ node_id: 'publish' }],                                                          // 1
+        changed: [], approval: [],
+      },
+    })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    // Four sentences, three distinct counts, two grammatical numbers — a swap between any pair reds.
+    expect(await screen.findByText(/1 node active/)).toBeTruthy()
+    expect(screen.getByText(/2 journal events — see Timeline/)).toBeTruthy()
+    expect(screen.getByText(/3 nodes waiting on something external/)).toBeTruthy()
+    expect(screen.getByText(/^1 node failed$/)).toBeTruthy()
+  })
+
   it('riskyText always produces a sentence, including with no risk', () => {
     expect(riskyText(0, 0, 0)).toMatch(/nothing flagged/i)
-    expect(riskyText(2, 0, 0)).toMatch(/2 node\(s\) ran degraded/)
-    expect(riskyText(0, 1, 0)).toMatch(/may not be checking/)
+    // 🔁 Was pinned as `2 node(s) ran degraded`. `riskyText` is a pure function from counts to prose,
+    // so BOTH sides of the grammar's boundary are asserted — the hedge and the correct plural differ
+    // only at n === 1, so a fixture fixed at 2 could never have told them apart. The singular call on
+    // the line below already existed and matched only `/may not be checking/`, leaving its noun free.
+    expect(riskyText(1, 0, 0)).toMatch(/1 node ran degraded/)
+    expect(riskyText(2, 0, 0)).toMatch(/2 nodes ran degraded/)
+    expect(riskyText(0, 1, 0)).toMatch(/1 gate may not be checking/)
+    expect(riskyText(0, 3, 0)).toMatch(/3 gates may not be checking/)
     expect(riskyText(0, 0, 0.75)).toMatch(/75% of completed steps are unverified/)
+    // And no hedge survives in any combination this function can produce.
+    for (const [d, f] of [[0, 0], [1, 0], [2, 0], [0, 1], [0, 3], [1, 1], [4, 7]]) {
+      expect(riskyText(d, f, 0.5), `riskyText(${d}, ${f})`).not.toMatch(/\((s|es)\)/)
+    }
   })
 })
 

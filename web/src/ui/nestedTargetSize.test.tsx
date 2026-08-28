@@ -81,7 +81,7 @@ describe("the task row's checkbox paints 20px and clicks 24px", () => {
 //
 //   projects-detail   21×21  "Rename"                    ← fixed here
 //   projects-detail   16×16  "Open Context in Files"      ← fixed here
-//   tasks-board       21×21  "Collapse column" ×3         ← NOT fixed; see the trade-off below
+//   tasks-board       21×21  "Collapse column" ×3         ← the margin cannot fix it; `.hit-24` did
 //
 // (The other ten are a different family each: nine 16×16 `Select proposal` CHECKBOXES on
 // `#/inbox?kind=proposal`, already logged, and one 307×18 `Go to path` INPUT on `#/files` whose
@@ -103,6 +103,26 @@ describe("the task row's checkbox paints 20px and clicks 24px", () => {
 // percentages are real reflow, not noise. Left alone deliberately rather than trading a WCAG note for
 // a 1px reflow across every card on the board; it needs either a new hit-area idiom (an overlay
 // pseudo-element) or an owner call on the 1px.
+//
+// 🔁 THE FIRST OF THOSE TWO IS NOW BUILT, and this note's own words are what specified it: `.hit-24`
+// in `design/tokens.css`. A pseudo-element is part of its originating element's rendering and
+// hit-testing rather than a node of its own, so an inset-negative `::before` enlarges what the pointer
+// can hit while the element's box — and the layout around it — is untouched. Measured on
+// `#/tasks?view=board` at 1440×1000, before → after:
+//
+//     button box                 21×21          →  21×21        (identical)
+//     button position            419,157        →  419,157      (identical)
+//     column-header row height   25             →  25           (identical)
+//     EFFECTIVE pointer target   21.75×21.75    →  24.5×24.5    ← scanned outward in 0.25px steps
+//
+// So the reflow this note refused to trade for is not paid at all, and the button padding stays
+// exactly as the assertion below pins it.
+//
+// ⚠️ AND WHAT IT DOES NOT DO, so nobody re-measures hoping otherwise: axe — and any
+// `getBoundingClientRect` check, including this file's own census — reads the ELEMENT's box, which does
+// not change. A `target-size` report on a `.hit-24` control does not go away. SC 2.5.8 is about the
+// target a person can hit, and that is what moved; the tool cannot see it. So the margin idiom stays
+// preferred wherever slack exists, precisely because there the measurable number improves too.
 describe('the detail routes added after the first census', () => {
   const SRC = join(process.cwd(), 'src')
   const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
@@ -127,5 +147,59 @@ describe('the detail routes added after the first census', () => {
   it('BoardCollapse is deliberately still padding-based', () => {
     expect(read('ui/BoardCollapse.tsx'), 'if this changes, re-measure the board row height first')
       .toMatch(/rounded-md p-1 /)
+  })
+
+  it('and it reaches 24px through the overlay idiom instead of a margin', () => {
+    const src = read('ui/BoardCollapse.tsx')
+    expect(src, 'the collapse button should carry .hit-24').toMatch(/\bhit-24\b/)
+    // The margin idiom is what this file measured as a 1px board-wide reflow. If it ever appears here,
+    // the reflow is back and the numbers in the note above are stale.
+    expect(src, 'a negative margin here reflows the whole board — that is the measured trade-off')
+      .not.toMatch(/-m[xy]?-/)
+  })
+})
+
+// ── The `.hit-24` utility itself ────────────────────────────────────────────────────────
+//
+// The idiom is only trustworthy if the inset is DERIVED. A hand-tuned `-1.5px` per call site would be
+// the raw-px class the note above rejected, and it would silently be wrong on any control that is not
+// 21px. `--hit-min` is the floor and `--hit-size` is the drawn size, so the pseudo-element grows by
+// half the shortfall — which is why applying it to a 16px control is a one-line `--hit-size` override
+// rather than new arithmetic.
+describe('.hit-24 expands the pointer target without touching layout', () => {
+  const tokens = readFileSync(join(process.cwd(), 'src/design/tokens.css'), 'utf8')
+  const rule = tokens.slice(tokens.indexOf('.hit-24 {'), tokens.indexOf('}', tokens.indexOf('.hit-24::before')) + 1)
+
+  it('the utility exists and is not vacuous', () => {
+    expect(tokens, '.hit-24 is not defined').toMatch(/^\.hit-24 \{/m)
+    expect(tokens, '.hit-24::before is not defined').toMatch(/^\.hit-24::before \{/m)
+    expect(rule.length, 'the slice found no rule body').toBeGreaterThan(80)
+  })
+
+  it('the host is positioned, or an absolute ::before escapes to the wrong ancestor', () => {
+    expect(rule).toMatch(/\.hit-24 \{[^}]*position:\s*relative/s)
+  })
+
+  it('the inset is DERIVED from the floor, never a hand-tuned pixel', () => {
+    expect(rule, 'the floor must be a variable so a call site can state its own drawn size')
+      .toMatch(/--hit-min:\s*24px/)
+    expect(rule).toMatch(/--hit-size:/)
+    // half the shortfall per side, clamped so an already-large control is unaffected
+    expect(rule, 'inset must compute from --hit-min and --hit-size').toMatch(/inset:\s*calc\([^)]*var\(--hit-min\)/)
+    expect(rule, 'the shortfall must be halved — a full inset overshoots by 2x').toMatch(/\/\s*2\s*\)/)
+    expect(rule, 'clamp at 0 so a control already at the floor does not shrink').toMatch(/max\(0px,/)
+  })
+
+  it('the ::before paints nothing and forwards its events', () => {
+    expect(rule, 'content is required or the pseudo-element does not generate a box').toMatch(/content:\s*""/)
+    expect(rule).toMatch(/position:\s*absolute/)
+    // pointer-events:none would defeat the entire purpose.
+    expect(rule, 'the overlay must accept pointer events on its host\'s behalf').not.toMatch(/pointer-events:\s*none/)
+  })
+
+  it('it states what it cannot do, so the caveat is not rediscovered', () => {
+    // axe reads the element's own box. A tool-visible fix needs the margin idiom; this one is
+    // real-target-only, and saying so in the source is what stops a later pass "fixing" the report.
+    expect(tokens, 'the axe caveat must be recorded beside the utility').toMatch(/axe[\s\S]{0,400}does not change/)
   })
 })

@@ -119,8 +119,21 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
             right={
               <HeaderActions>
                 <HeaderControl icon={Lightbulb} label={proposalCount > 0 ? `Proposals (${proposalCount})` : 'Proposals'} variant="secondary" onClick={onProposals} />
-                <HeaderControl icon={Plus} label="New skill" variant="secondary" priority="primary" onClick={() => setCreating(true)} />
-                <HeaderControl icon={Store} label="Browse" variant="primary" onClick={onBrowse} />
+                {/* 🔑 `New skill` IS the primary here, and it is the canonical spelling. Every other list
+                    destination writes its create action `variant="primary" priority="primary"` — `New
+                    chat`, `New task`, `New trigger`, `New project` (×2), `New agent`, `New report`, `New
+                    intent`, `Add knowledge`, `Install from URL`, `Start from template`. Skills was the
+                    sole outlier: it SPLIT the two attributes across two different controls, declaring
+                    `priority="primary"` here while rendering `variant="secondary"`, and giving the coral
+                    `variant="primary"` to a `Browse` button instead.
+
+                    🪤 AND THAT `Browse` BUTTON WAS THE MODE TAB, RENDERED TWICE. Same label, same `Store`
+                    icon, same `onBrowse` handler as the `ModeToggle` segment in the `left` slot ~870px
+                    away — one action with two affordances in one 40px strip, and the duplicate was the
+                    one wearing the primary colour. Deleted, not re-styled: `ModeToggle` already owns the
+                    action AND shows which mode you are in, which a button cannot. It stays reachable at
+                    every width (the toggle goes `iconOnly` on mobile rather than collapsing away). */}
+                <HeaderControl icon={Plus} label="New skill" variant="primary" priority="primary" onClick={() => setCreating(true)} />
               </HeaderActions>
             }
           />

@@ -8,6 +8,7 @@ import { withWeight } from '../../design/fontWeight'
 import { api } from '../../lib/api'
 import { accentChip } from '../../design/accent'
 import { PanelHeader, Section } from './settingsUI'
+import { reportActionFailure } from '../../app/reportingWrite'
 
 /** A single streamed log entry (backend emits {level, msg} JSON per SSE frame,
  *  msg already formatted as "<ts> <LEVEL> <logger>: <message>"). */
@@ -87,8 +88,15 @@ export function DiagnosticsPanel() {
   const changeLevel = async (l: Level) => {
     if (levelBusy) return
     setLevelBusy(true)
-    try { const r = await api.setLogLevel(l); setLevel(r.level) } catch { /* leave prior */ }
-    finally { setLevelBusy(false) }
+    // 🔑 THE PILL'S VALUE COMES FROM THE RESPONSE, so `/* leave prior */` meant a refused change moved
+    // nothing and said nothing — the family's data-driven shape, where a failure leaves the user with
+    // no evidence at all and clicking again is the only reasonable guess. `setLevel` stays gated on the
+    // response so the pill can never claim a level the backend rejected; `reportActionFailure` is the
+    // documented form here rather than `reportingWrite`, because this call's RESULT is what sets state.
+    await api.setLogLevel(l)
+      .then((r) => setLevel(r.level))
+      .catch(reportActionFailure(`set the log level to ${l}`))
+    setLevelBusy(false)
   }
 
   return (

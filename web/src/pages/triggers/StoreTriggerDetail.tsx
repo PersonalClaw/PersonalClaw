@@ -8,6 +8,7 @@ import { api, type Trigger as WireTrigger } from '../../lib/api'
 import { RunHistory } from '../schedule/ScheduleDetail'
 import { triggerHealthMeta } from '../schedule/scheduleMeta'
 import { actionLabel } from './triggerMeta'
+import { reportingWrite } from '../../app/reportingWrite'
 
 /** Inspector for a store-backed trigger (file/web_watch/idle/…) in the SidePanel.
  *
@@ -102,7 +103,7 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
     if (!(await confirmDelete('automation', trigger.name))) return
     setBusy(true)
     try {
-      await api.deleteStoreTrigger(trigger.raw_id)
+      if (!(await reportingWrite(`delete ${trigger.name}`, () => api.deleteStoreTrigger(trigger.raw_id)))) return
       onDeleted()
     } finally {
       setBusy(false)

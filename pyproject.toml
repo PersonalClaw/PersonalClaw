@@ -189,10 +189,23 @@ dev = [
     "personalclaw[models]",
     "personalclaw[mcp]",
     "personalclaw[bedrock]",
+    # Formatter/linter majors are pinned to the SAME major CI resolves from uv.lock,
+    # because CI runs `uv sync --locked` while the documented dev install is
+    # `pip install -e ".[dev]"` — which ignores the lock and resolves freely. An
+    # unbounded spec therefore lets a local gate run a different tool major than the
+    # gate that decides the merge, in either direction:
+    #   * isort was `>=5` and pip resolved 9.0.1, which flags 8 files on a BYTE-CLEAN
+    #     tree at origin/main (measured; 8.0.1 flags zero). Every agent building a
+    #     fresh venv saw that phantom red and had to investigate it.
+    #   * mypy was `>=1.5` while the lock has 2.3.0, so a local gate could type-check
+    #     under 1.x rules against a CI running 2.x — the same skew, aged the other way.
+    # `black` was already bounded for exactly this reason; the others were the oversight.
+    # Upgrading a major is now a deliberate PR (bump lock + bound together) rather than
+    # something that arrives with whoever installed most recently.
     "black>=26,<27",
-    "isort>=5",
-    "flake8>=7",
-    "mypy>=1.5",
+    "isort>=8,<9",
+    "flake8>=7,<8",
+    "mypy>=2,<3",
     "build>=1.0",
 ]
 test = [

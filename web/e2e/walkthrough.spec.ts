@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, THEMES, type Theme } from './routes'
+import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, THEMES, type Theme } from './routes'
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
 
 // ── V3: the full-app keyboard-only / reduced-motion / phone-viewport walkthrough ─────────────
@@ -46,7 +46,7 @@ const TAB_CAP = 60
  *  the route axis: each settings panel is a plain `#/settings/<id>` route that mounts only when
  *  visited, so scanning `settings` covered 1 of 33, and 3 of one cycle's 5 hand-found defects lived
  *  there. Keyboard focus is at least as panel-local as axe's findings were. */
-const SURFACES = [...ROUTES, ...SETTINGS_ROUTES, ...VIEW_ROUTES]
+const SURFACES = [...ROUTES, ...SETTINGS_ROUTES, ...VIEW_ROUTES, ...NON_NAV_ROUTES]
 
 /** Focus stops allowed to have no visible indicator.
  *

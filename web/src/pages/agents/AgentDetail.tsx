@@ -131,6 +131,7 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [err, setErr] = useState('')
   useEffect(() => {
     let alive = true
     api.agentMetadata(agentName).then((c) => { if (alive) { setContent(c); setDraft(c) } }).catch(() => { if (alive) { setContent(''); setDraft('') } })
@@ -139,8 +140,11 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
   const dirty = content !== null && draft !== content
   const save = async () => {
     setBusy(true)
+    setErr('')
+    // Keeping the draft on failure is right; being silent about it was not. `Saved ✓` appears only on
+    // success, so without this a refused save was indistinguishable from a click that never landed.
     try { await api.saveAgentMetadata(agentName, draft); setContent(draft); setSaved(true); setTimeout(() => setSaved(false), 1800) }
-    catch { /* leave dirty */ }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') }
     setBusy(false)
   }
   return (
@@ -153,6 +157,7 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={save} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Check size={14} /> {busy ? 'Saving…' : 'Save notes'}</Button>
             {saved && <span className="text-ok text-[0.75rem]">Saved ✓</span>}
+            {err && <span role="alert" className="text-danger text-[0.75rem]">{err}</span>}
           </div>
         </div>
       )}
@@ -167,6 +172,7 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
 function RoutingStatusView({ agentName }: { agentName: string }) {
   const [muted, setMuted] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
   useEffect(() => {
     let alive = true
     api.routingStatus()
@@ -176,8 +182,12 @@ function RoutingStatusView({ agentName }: { agentName: string }) {
   }, [agentName])
   const unmute = async () => {
     setBusy(true)
+    setErr('')
+    // Staying muted is right — `setMuted(false)` must never claim a state the backend refused. But
+    // "the row stays so the user can retry" was the whole failure path, and the row staying is also
+    // exactly what a click that never landed looks like. Retryable is not the same as legible.
     try { await api.routingUnmute(agentName); setMuted(false) }
-    catch { /* leave muted; the row stays so the user can retry */ }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Unmute failed') }
     setBusy(false)
   }
   if (muted === null) return <Section label="Routing status"><Skeleton className="h-6 w-40 rounded-md" /></Section>
@@ -189,6 +199,7 @@ function RoutingStatusView({ agentName }: { agentName: string }) {
             <VolumeX size={14} /> Muted — the auto-router stopped suggesting this agent.
           </span>
           <Button size="sm" onClick={unmute} disabled={busy}>{busy ? 'Unmuting…' : 'Unmute'}</Button>
+          {err && <span role="alert" className="text-danger text-[0.75rem]">{err}</span>}
         </div>
       ) : (
         <p className="text-on-surface-low text-[0.75rem]">Active — eligible for auto-routing suggestions.</p>

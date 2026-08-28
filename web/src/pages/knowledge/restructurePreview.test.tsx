@@ -240,8 +240,33 @@ describe('the undo is offered where the change happened', () => {
       fireEvent.click(screen.getByRole('button', { name: /split this item/i }))
     })
 
-    await waitFor(() => expect(screen.getByText(/1 new item\(s\) created and linked back/)).toBeInTheDocument())
-    expect(screen.getByText(/1 highlight\(s\) followed their text/)).toBeInTheDocument()
+    // 🔁 Was pinned as `1 new item(s)` / `1 highlight(s)`. This rail asserted the HEDGE at exactly
+    // n === 1 — the one value where it is wrong — and so called the defect correct for as long as
+    // it shipped. Every guard in `Consequences` is truthy, so one item is the FIRST case a reader
+    // meets, not an edge case.
+    await waitFor(() => expect(screen.getByText('1 new item created and linked back')).toBeInTheDocument())
+    expect(screen.getByText('1 highlight followed their text')).toBeInTheDocument()
+    expect(document.body.textContent, 'no hedged noun survives on this panel').not.toMatch(/\((s|es)\)/)
+  })
+
+  // 🔑 THE BOUNDARY THIS FILE NEVER CROSSED. A fixture fixed at 1 cannot tell `item(s)` from
+  // `item`, and one fixed above 1 cannot either — the two forms differ ONLY at n === 1. Asserting
+  // the same lines on BOTH sides of it is what makes the singular assertion above evidence rather
+  // than a coincidence.
+  it('and the same lines read PLURAL when the verb touched more than one', async () => {
+    apply.mockResolvedValue({
+      ok: true, confirmed: true, kept: ITEM.id, created: ['child-1', 'child-2'],
+      undo_token: 'tok-abc', summary: 'Split into 3 items', idempotent: false,
+      annotations_moved: 3,
+    })
+    await openPanel()
+    await previewSplit()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /split this item/i }))
+    })
+
+    await waitFor(() => expect(screen.getByText('2 new items created and linked back')).toBeInTheDocument())
+    expect(screen.getByText('3 highlights followed their text')).toBeInTheDocument()
   })
 })
 

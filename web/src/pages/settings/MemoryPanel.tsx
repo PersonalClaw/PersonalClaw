@@ -794,12 +794,21 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [err, setErr] = useState('')
   useEffect(() => { setContent(null); api.memoryDoc(which).then((c) => { setContent(c); setDraft(c) }).catch(() => { setContent(''); setDraft('') }) }, [which])
   const dirty = content !== null && draft !== content
   const save = async () => {
     setBusy(true)
+    setErr('')
+    // 🔑 `/* leave dirty */` was the right STATE decision and the whole of the failure path. Keeping
+    // the draft is correct — reverting would destroy text the user is still editing — but on its own
+    // it made a refused save render EXACTLY like a click that never happened: the button re-enables,
+    // "Unsaved changes" is still showing because it never stopped, and `Saved ✓` simply does not
+    // appear. Success has an explicit signal; failure had none, so the two states were told apart
+    // only by the ABSENCE of something. `AddLessonForm`, in this same file, already reports a failed
+    // save inline beside its button — this adopts that form rather than inventing a toast.
     try { await api.saveMemoryDoc(which, draft); setContent(draft); setSaved(true); window.setTimeout(() => setSaved(false), 1800); onSaved() }
-    catch { /* leave dirty */ }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') }
     setBusy(false)
   }
   if (content === null) return <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]"><Loader2 size={14} className="animate-spin" /> Loading…</div>
@@ -812,6 +821,7 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
         <Button size="sm" onClick={save} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Save size={14} /> {busy ? 'Saving…' : 'Save'}</Button>
         {dirty && <span className="text-on-surface-low text-[0.75rem]">Unsaved changes</span>}
         {saved && <span className="text-ok text-[0.75rem]">Saved ✓</span>}
+        {err && <span role="alert" className="text-danger text-[0.75rem]">{err}</span>}
       </div>
     </div>
   )

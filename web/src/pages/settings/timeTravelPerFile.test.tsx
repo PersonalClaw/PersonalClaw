@@ -335,9 +335,12 @@ describe('the confirmation tells the truth about its blast radius', () => {
     await openPreview()
     const text = await confirmApply()
     expect(text).toMatch(/Everything in config goes back/i)
-    expect(text).toMatch(/2 change\(s\) made since are set aside/i)
+    // 🔁 Was `2 change(s)`. The parenthetical is retired on this surface; two changes is plural.
+    // 🪤 Note every count in THIS file is 2 or 3 — never 1 — which is exactly why `file(s)` was
+    // invisible to it for so long: the hedge and the real plural differ ONLY at n === 1.
+    expect(text).toMatch(/2 changes made since are set aside/i)
     expect(text).toMatch(/credentials are untouched/i)
-    expect(text, 'no count is invented where the whole root is meant').not.toMatch(/of 3 file\(s\)/i)
+    expect(text, 'no count is invented where the whole root is meant').not.toMatch(/of 3 files?/i)
   })
 
   it('a SUBSET rollback names the count, the files, and still discards later edits', async () => {
@@ -347,8 +350,8 @@ describe('the confirmation tells the truth about its blast radius', () => {
     await tick('memory/notes.md')
     const text = await confirmApply()
     // The count — "roll back to this point?" over 2 of 3 files would be a lie.
-    expect(text).toMatch(/2 of 3 file\(s\)/i)
-    expect(text).toMatch(/Only the 2 file\(s\) you picked/i)
+    expect(text).toMatch(/2 of 3 files/i)
+    expect(text).toMatch(/Only the 2 files you picked/i)
     // WHICH files.
     expect(text).toContain('config.json')
     expect(text).toContain('memory/notes.md')
@@ -364,7 +367,7 @@ describe('the confirmation tells the truth about its blast radius', () => {
     await openPreview('revert')
     await tick('config.json', 'revert')
     const text = await confirmApply('revert')
-    expect(text).toMatch(/1 of 3 file\(s\)/i)
+    expect(text).toMatch(/1 of 3 files/i)
     expect(text).toContain('config.json')
     // 🔑 The other half of the distinction: revert KEEPS later edits, and says so.
     expect(text).toMatch(/Anything edited afterwards is kept/i)

@@ -21,7 +21,15 @@ export const EXEC_MODES: ModeMeta[] = [
   { key: 'script', label: 'Script', icon: FileCode2, tone: 'var(--color-info)', hint: 'Zero-token: run a Python entrypoint (path/to/file.py:func) under ~/.personalclaw/crons/.', soon: true },
   { key: 'command', label: 'Command', icon: TerminalSquare, tone: 'var(--color-ok)', hint: 'Zero-token: run a shell command in the sandbox.', soon: true },
 ]
-export function modeMeta(m?: ScheduleExecMode): ModeMeta { return EXEC_MODES.find((x) => x.key === m) ?? EXEC_MODES[0] }
+// NOT in EXEC_MODES: that list is the picker, and 'other' is not something to pick.
+export const OTHER_MODE: ModeMeta = {
+  key: 'other', label: 'Action', icon: Rocket, tone: 'var(--color-on-surface-var)',
+  hint: "This automation runs an action provider (a notification, a digest, a remediation) rather than an agent prompt.",
+}
+export function modeMeta(m?: ScheduleExecMode): ModeMeta {
+  if (m === 'other') return OTHER_MODE
+  return EXEC_MODES.find((x) => x.key === m) ?? EXEC_MODES[0]
+}
 
 /** Derive the schedule kind from the wire job (cron_expr > every_secs > at). */
 export function deriveKind(j: ScheduleJob): ScheduleKind {
@@ -29,11 +37,27 @@ export function deriveKind(j: ScheduleJob): ScheduleKind {
   if (j.every_secs != null) return 'every'
   return 'at'
 }
-/** Derive the execution mode (script > command > agent). */
+/** Derive the execution mode from the job's ACTUAL action provider.
+ *
+ *  🔴 This used to fall through to 'agent' for every provider it did not recognise, and that
+ *  default destroyed data: the edit form then rendered agent fields, `draftToPayload` emitted
+ *  `message`/`agent`/`model`, and `_scheduleBodyToWire` turned those into a blank
+ *  `invoke-agent` action — so renaming a `notify` trigger replaced its action and lost the
+ *  notification (issue 689). The list row went from "Notify" to "Invoke Agent" with a 200.
+ *
+ *  The provider was always available on the wire (`ScheduleJob.action.provider`); only this
+ *  function ignored it. The legacy `script`/`command` fields are still checked first so a row
+ *  written before the canonical `action` existed keeps resolving.
+ */
 export function deriveMode(j: ScheduleJob): ScheduleExecMode {
   if (j.script) return 'script'
   if (j.command) return 'command'
-  return 'agent'
+  const provider = j.action?.provider || ''
+  if (provider === 'run-script') return 'script'
+  if (provider === 'bash') return 'command'
+  // No provider at all is a legacy agent row; anything else is a provider this form cannot edit.
+  if (!provider || provider === 'invoke-agent') return 'agent'
+  return 'other'
 }
 
 // ── last-run status dot ──

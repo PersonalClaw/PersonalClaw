@@ -69,7 +69,7 @@ export function HealthPanel({ health, error, onRetry }: {
       <p className="text-on-surface-low text-[0.75rem]">
         Context budget: {utilization.mean === null
           ? 'no ambient render recorded yet'
-          : `${pct(utilization.mean)} used across ${utilization.samples} render(s)`}
+          : `${pct(utilization.mean)} used across ${utilization.samples} render${utilization.samples === 1 ? '' : 's'}`}
         {' · '}ideal band {pct(low)}–{pct(high)}
       </p>
 
@@ -122,7 +122,7 @@ function MaePanel({ mae, runsScanned, verdicts }: {
       <span data-type="title-s" className="text-on-surface">Judge calibration</span>
       {mae.buckets.length === 0 || verdicts === 0 ? (
         <p className="text-on-surface-low text-[0.75rem]">
-          No judge verdicts in the last {runsScanned} run(s) — nothing to calibrate yet.
+          No judge verdicts in the last {runsScanned} run{runsScanned === 1 ? '' : 's'} — nothing to calibrate yet.
         </p>
       ) : (
         <>
@@ -130,7 +130,7 @@ function MaePanel({ mae, runsScanned, verdicts }: {
             {mae.buckets.map((bucket) => <MaeBucketCell key={bucket.bucket} bucket={bucket} />)}
           </div>
           <p className="text-on-surface-low text-[0.75rem]">
-            {mae.labelled} human-labelled of {verdicts} verdict(s) across {runsScanned} run(s)
+            {mae.labelled} human-labelled of {verdicts} verdict{verdicts === 1 ? '' : 's'} across {runsScanned} run{runsScanned === 1 ? '' : 's'}
             {mae.unlabelled > 0 && ` · ${mae.unlabelled} awaiting a label`}
             {mae.no_confidence > 0 && ` · ${mae.no_confidence} recorded no samples`}
             . Error is only reported where a human overrode the judge — silence is not agreement.
@@ -145,7 +145,7 @@ function MaeBucketCell({ bucket }: { bucket: MaeBucket }) {
   return (
     <div
       className="flex min-w-[92px] flex-1 flex-col items-center gap-1 rounded-lg bg-surface-container px-m py-m"
-      title={`Predicted confidence ${bucket.bucket}: ${bucket.n} verdict(s), ${bucket.labelled} human-labelled`}
+      title={`Predicted confidence ${bucket.bucket}: ${bucket.n} verdict${bucket.n === 1 ? '' : 's'}, ${bucket.labelled} human-labelled`}
     >
       <span className="text-on-surface-low text-[0.75rem]">{bucket.bucket}</span>
       <span data-type="title-s" className="text-on-surface" style={fvs(600)}>
@@ -225,7 +225,7 @@ function CostPanel({ rows, total }: { rows: LearningHealth['cost_by_op']; total:
         <ul className="flex flex-col gap-1">
           {rows.map((row) => (
             <li key={row.op} className="text-on-surface-var text-[0.75rem]">
-              {row.op}: ${row.cost_usd.toFixed(4)} over {row.passes} pass(es)
+              {row.op}: ${row.cost_usd.toFixed(4)} over {row.passes} pass{row.passes === 1 ? '' : 'es'}
               {row.cost_usd === 0 && ' — unpriced or free'}
             </li>
           ))}

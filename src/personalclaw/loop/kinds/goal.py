@@ -40,10 +40,18 @@ class GoalKind(LoopKindStrategy):
 
     def _active_phase_index(self, loop: Loop) -> int:
         """Index of the execution_plan phase the UPCOMING cycle belongs to (cycle-count
-        based): walk each phase's cumulative min_cycles window; -1 with no plan."""
+        based): walk each phase's cumulative min_cycles window; -1 with no plan.
+
+        The cycle count comes from the ledger projection (PP-16 seam 4a) rather than the retired
+        ``loops.total_cycles`` column. Read only when there IS a plan, so the common no-plan goal
+        pays nothing.
+        """
         plan = list((loop.kind_config or {}).get("execution_plan", []) or [])
         if not plan:
             return -1
+        from personalclaw.loop import store
+
+        cycles = store.cycles_completed(loop.id)
         elapsed = 0
         for i, phase in enumerate(plan):
             try:
@@ -51,7 +59,7 @@ class GoalKind(LoopKindStrategy):
             except (TypeError, ValueError):
                 need = 1
             elapsed += need
-            if loop.total_cycles < elapsed:
+            if cycles < elapsed:
                 return i
         return len(plan) - 1
 

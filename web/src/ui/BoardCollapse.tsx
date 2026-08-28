@@ -65,7 +65,7 @@ export function CollapseColumnButton({ onCollapse }: { onCollapse: () => void })
     // halves of one disclosure announce the same state model instead of only one of them doing so.
     <button type="button" aria-label="Collapse column" title="Collapse column" aria-expanded
       onClick={(e) => { e.stopPropagation(); onCollapse() }}
-      className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-highest hover:text-on-surface transition-colors">
+      className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-highest hover:text-on-surface transition-colors hit-24">
       <ChevronsRightLeft size={13} />
     </button>
   )

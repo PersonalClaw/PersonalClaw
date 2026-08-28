@@ -777,7 +777,10 @@ class CodeKind(LoopKindStrategy):
             metric=metric,
             prior_step_floor=prior_floor,
             rollbacks_on_step=rollbacks,
-            total_cycles=loop.total_cycles or 0,
+            # The tick's own `total_cycles` counter, fed from the ledger projection this method
+            # was handed (PP-16 seam 4a retired the cached `loops.total_cycles` column, which
+            # additionally lagged by one progress poll — see design.py's note).
+            total_cycles=len(findings),
         )
         return tick.evaluate(tcfg, state, time.time())
 
@@ -820,7 +823,7 @@ class CodeKind(LoopKindStrategy):
             return None
         if verdict is None:
             return None
-        cycle = int((stage_findings[-1] or {}).get("cycle", loop.total_cycles or 0))
+        cycle = int((stage_findings[-1] or {}).get("cycle", len(findings)))
         store.record_quality_score(loop.id, verdict.quality_score)
         store.write_verdict(loop.id, cycle, {"cycle": cycle, "stage": stage, **verdict.to_dict()})
         ctx.publish(

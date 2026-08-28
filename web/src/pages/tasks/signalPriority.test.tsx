@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { signalPriority, priorityMeta } from './taskMeta'
 
@@ -56,16 +56,100 @@ describe('signalPriority', () => {
 
 const read = (rel: string) => readFileSync(join(process.cwd(), 'src/pages/tasks', rel), 'utf8')
 
+/** The whole `src/` tree, for the derived census below. Anchored on `import.meta.dirname` rather than
+ *  `process.cwd()`, which differs between a root `npm run test:web` and a `cd web && vitest`. */
+const SRC_ROOT = join(import.meta.dirname, '..', '..')
+const stripComments = (t: string) =>
+  t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+/** The rival shape: a `Record`-style literal keying priority rungs straight to colours. ONE
+ *  definition, used by both the census and the synthetic guard below — a guard holding a copy of the
+ *  pattern proves a copy correct while the census drifts. `critical` + `high` are the two rungs that
+ *  carry a semantic colour, so two of them in one literal is a tone map rather than an unrelated
+ *  lookup. Not `/g` — a stateful regex would skip every other call to `.test`. */
+const RIVAL_TONE_MAP = /critical:\s*'var\(--color-[^)]+\)'[\s\S]{0,160}?high:\s*'var\(--color-/
+
+const walkSrc = (d: string = SRC_ROOT): string[] =>
+  readdirSync(d).flatMap((n) => {
+    const p = join(d, n)
+    if (statSync(p).isDirectory()) return walkSrc(p)
+    return /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n) ? [p] : []
+  })
+
 describe('every BROWSING view is signal-only; the detail view is not', () => {
-  // The four views of #/tasks — List, Cards, Kanban, Dependency graph — plus the panel.
+  // 🪤 THIS LIST WAS COMPLETE FOR `pages/tasks/` AND THAT WAS THE PROBLEM. `read()` resolves against
+  // `src/pages/tasks`, so a browsing view of tasks living anywhere ELSE was not merely missing from the
+  // list — it was structurally unreachable by this census. The dashboard's `TasksWidget` was exactly
+  // that: it kept a rival four-rung `PRIORITY_TONE` map, painted `--color-info` on every `medium` task
+  // (the backend default, so indistinguishable from unset — the very thing `signalPriority` exists to
+  // stop) and dropped `trivial` entirely. An enumerated population cannot catch a member outside the
+  // directory it enumerates, so the tree-wide check below derives the population instead.
+  //
+  // The four views of #/tasks — List, Cards, Kanban, Dependency graph — plus the two browsing views
+  // of tasks that live OUTSIDE this directory and were therefore invisible to the original list.
+  // Paths are relative to `src/`, so a member anywhere in the tree can be named.
   it.each([
-    ['TasksListPage.tsx', 2],   // MetaLine (list rows) + TaskCard (cards view)
-    ['TaskBoard.tsx', 1],       // kanban card
-    ['TaskGraph.tsx', 1],       // dependency-graph node
+    ['pages/tasks/TasksListPage.tsx', 2],                 // MetaLine (list rows) + TaskCard (cards)
+    ['pages/tasks/TaskBoard.tsx', 1],                     // kanban card
+    ['pages/tasks/TaskGraph.tsx', 1],                     // dependency-graph node
+    ['pages/dashboard/widgets/TasksWidget.tsx', 1],       // the home dashboard's task preview
+    ['pages/companion/CompanionSections.tsx', 1],         // the companion's open-task list
   ])('%s calls signalPriority (%i site(s))', (rel, n) => {
-    const src = read(rel)
+    const src = readFileSync(join(SRC_ROOT, rel), 'utf8')
     expect([...src.matchAll(/signalPriority\(/g)].length, `${rel} must use the signal-only helper`).toBeGreaterThanOrEqual(n)
     expect(src, `${rel} must not fall back to the always-render helper`).not.toMatch(/=\s*priorityMeta\(/)
+  })
+
+  it('NOWHERE in the tree keeps a rival priority→tone map', () => {
+    // The derived half. Rather than listing browsing views — which is what let a whole directory slip
+    // past — this asks the whole tree a mechanical question: does any file other than `taskMeta`
+    // define an object literal mapping the priority rungs to colours? That is precisely the shape the
+    // dashboard widget had, and it is what makes a second source of truth possible at all.
+    const offenders: string[] = []
+    for (const abs of walkSrc()) {
+      if (abs.endsWith('taskMeta.tsx')) continue
+      const src = stripComments(readFileSync(abs, 'utf8'))
+      // Two rungs keyed to a `var(--color-…)` inside one literal is enough to be a tone map; one
+      // could be an unrelated lookup. `critical`/`high` are the two that carry a semantic colour.
+      if (RIVAL_TONE_MAP.test(src)) {
+        offenders.push(abs.slice(abs.indexOf('/src/') + 5))
+      }
+    }
+    expect(
+      offenders,
+      'these files map priority rungs to colours themselves. `taskMeta` owns that map — import ' +
+        '`signalPriority` (browsing) or `priorityMeta` (an editor) instead:\n  ' + offenders.join('\n  '),
+    ).toEqual([])
+  })
+
+  it('and the tree-wide scan actually reads the tree (vacuity floor)', () => {
+    // Without this, a broken walk makes the check above pass over nothing — the exact failure mode
+    // that let the original census miss a directory.
+    const files = walkSrc()
+    expect(files.length, 'the .tsx sweep found nothing — the scan root is wrong').toBeGreaterThan(200)
+  })
+
+  it('the rival-map detector fires on the shape it was written from', () => {
+    // 🪤 SYNTHETIC, AND IT HAS TO BE. My first attempt anchored this on `taskMeta.tsx` — "the detector
+    // must match the canonical map" — and it failed against correct code, because the two shapes are
+    // NOT the same: the canonical form is a keyed ARRAY (`{ key: 'critical', tone: … }`) while the
+    // rival was a `Record<string, string>` (`critical: 'var(…)'`). Once the rival is deleted there is
+    // no real file left holding that shape, so the only honest way to prove the detector still fires
+    // is to hand it a sample. Both directions are pinned, because a detector that matched the
+    // canonical array too would red `taskMeta` the moment someone dropped the exclusion.
+    const rival = `const PRIORITY_TONE: Record<string, string> = {
+      critical: 'var(--color-danger)', high: 'var(--color-warn)',
+      medium: 'var(--color-info)', low: 'var(--color-on-surface-low)',
+    }`
+    expect(RIVAL_TONE_MAP.test(rival), 'the detector no longer catches a rival Record map').toBe(true)
+
+    const canonicalShape = `export const PRIORITIES: PriorityMeta[] = [
+      { key: 'critical', label: 'Critical', tone: 'var(--color-danger)' },
+      { key: 'high', label: 'High', tone: 'var(--color-warn)' },
+    ]`
+    expect(
+      RIVAL_TONE_MAP.test(canonicalShape),
+      'the detector matches the canonical keyed-array form, so it would red taskMeta itself',
+    ).toBe(false)
   })
 
   it('TaskDetail deliberately keeps priorityMeta — a field value belongs in its editor', () => {

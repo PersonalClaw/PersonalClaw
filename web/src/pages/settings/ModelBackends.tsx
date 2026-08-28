@@ -14,6 +14,7 @@ import { InlineError } from '../../ui/InlineError'
 import { TextInput } from '../../ui/forms'
 import { OllamaModelManager } from './OllamaModelManager'
 import { fvs } from '../../design/fontWeight'
+import { reportingWrite } from '../../app/reportingWrite'
 
 // Provider types + their config forms are NOT hardcoded here — they come from
 // the installed model apps' manifests via /api/model-provider-types (see
@@ -145,7 +146,15 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
       body: `Models it provides will no longer be available.${selections}${key}`,
     }))) return
     setBusy(true)
-    try { await api.deleteModelProvider(provider.name); onChanged() } catch { setBusy(false) }
+    // `catch { setBusy(false) }` restored the row's opacity and said NOTHING, so a failed removal
+    // was pixel-identical to never having clicked. The dialog above spells out three consequences
+    // (models unavailable, use-case selections lost, the credential stays) — a user who accepted
+    // those is owed the outcome.
+    if (!(await reportingWrite(`remove ${provider.name}`, () => api.deleteModelProvider(provider.name)))) {
+      setBusy(false)
+      return
+    }
+    onChanged()
   }
 
   return (

@@ -79,7 +79,7 @@ describe('the four metrics reach the DOM', () => {
       score: 82.5,
       components: [
         { name: 'precision', score: 60, weight: 0.4, detail: '60% of surfacings were used' },
-        { name: 'capture', score: 90, weight: 0.3, detail: '9 of 10 pass(es) clean' },
+        { name: 'capture', score: 90, weight: 0.3, detail: '9 of 10 passes clean' },
         { name: 'utilization', score: 100, weight: 0.2, detail: '65% of the context budget used (ideal 50%-80%)' },
         { name: 'judge', score: 90, weight: 0.1, detail: '10% of judged work was wrongly passed' },
       ],
@@ -127,7 +127,11 @@ describe('the four metrics reach the DOM', () => {
     render(<HealthPanel health={measured} error={null} onRetry={() => {}} />)
     expect(screen.getByText('82.5')).toBeTruthy()
     expect(screen.getByText(/of 100, from 4 of 4 components/)).toBeTruthy()
-    expect(screen.getByText(/65% used across 12 render\(s\)/)).toBeTruthy()
+    // 🔁 Was pinned as `12 render(s)`. The parenthetical is gone surface-wide; what this rail
+    // cares about is that the mean and its sample size both reach the DOM, so it now asserts the
+    // AGREEMENT (12 → plural) rather than one spelling of it.
+    expect(screen.getByText(/65% used across 12 renders\b/)).toBeTruthy()
+    expect(screen.queryByText(/render\(s\)/), 'the parenthetical form is retired here').toBeNull()
   })
 
   it('renders every component under its label', () => {
@@ -155,8 +159,9 @@ describe('the four metrics reach the DOM', () => {
 
   it('renders per-op cost aggregates, and says when an op is unpriced', () => {
     render(<HealthPanel health={measured} error={null} onRetry={() => {}} />)
-    expect(screen.getByText(/session_end: \$0\.1234 over 4 pass\(es\)/)).toBeTruthy()
-    expect(screen.getByText(/run_end: \$0\.0000 over 2 pass\(es\) — unpriced or free/)).toBeTruthy()
+    // 🔁 Was `4 pass(es)`. 4 is plural, so the sentence reads "4 passes".
+    expect(screen.getByText(/session_end: \$0\.1234 over 4 passes\b/)).toBeTruthy()
+    expect(screen.getByText(/run_end: \$0\.0000 over 2 passes — unpriced or free/)).toBeTruthy()
   })
 
   it('renders the ablation sweep, naming a heuristic that earns nothing', () => {

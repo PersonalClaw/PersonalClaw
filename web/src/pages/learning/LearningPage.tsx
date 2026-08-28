@@ -386,7 +386,7 @@ function WeekPanel({ week }: { week: StagingWeek }) {
             <div
               key={day.day}
               className="flex min-w-[72px] flex-1 flex-col items-center gap-1 rounded-lg bg-surface-container px-m py-m"
-              title={`${day.day} — ${DAY_HINT[state]} (${day.passes} pass(es), ${day.produced} produced, ${day.errors} error(s))`}
+              title={`${day.day} — ${DAY_HINT[state]} (${day.passes} pass${day.passes === 1 ? '' : 'es'}, ${day.produced} produced, ${day.errors} error${day.errors === 1 ? '' : 's'})`}
             >
               <span className="text-on-surface-low text-[0.75rem]">{dayLabel(day.day)}</span>
               <span data-type="title-s" style={{ ...fvs(600), color: DAY_TONE[state] }}>
@@ -400,7 +400,7 @@ function WeekPanel({ week }: { week: StagingWeek }) {
         })}
       </div>
       <p className="text-on-surface-low text-[0.75rem]">
-        {week.produced_total} proposal(s) filed
+        {week.produced_total} proposal{week.produced_total === 1 ? '' : 's'} filed
         {week.cost_usd > 0 ? ` · $${week.cost_usd.toFixed(4)} spent` : ''}
         {week.error_days.length ? ` · errors on ${week.error_days.join(', ')}` : ''}
       </p>

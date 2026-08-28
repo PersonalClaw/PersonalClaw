@@ -833,7 +833,9 @@ class LoopWatchdog:
         # (fewer cycles than the budget implies), not a template that simply under-produced.
         try:
             store.record_watcher_reaped(
-                loop.id, cycles=loop.total_cycles, reason="worker process lost to restart"
+                loop.id,
+                cycles=store.cycles_completed(loop.id),
+                reason="worker process lost to restart",
             )
         except Exception:
             logger.debug("loop: watcher_reaped emit failed for %s", loop.id, exc_info=True)
@@ -949,6 +951,10 @@ class LoopWatchdog:
             # Idempotent (keyed by source file), so calling it every poll is safe.
             store.record_cycle_findings(cid)
             findings = store.get_findings(cid)
+            # The cycle count, full stop. This poll used to also write it back to a
+            # `loops.total_cycles` column; PP-16 seam 4a deleted that column and both of its
+            # writers, so `count` is now the only place the number exists and every reader
+            # projects it the same way. Do not re-add a write here.
             count = len(findings)
 
             # Seed/refresh liveness on first observation or after a (re)start.
@@ -965,7 +971,6 @@ class LoopWatchdog:
                 self._last_activity[cid] = time.time()
                 self._running_since.pop(cid, None)
                 self._consec_errors[cid] = 0
-                store.set_total_cycles(cid, count)
                 latest = findings[-1]
                 store.clear_guidance(cid)
                 store.mark_nudges_applied(cid, count)
@@ -1070,7 +1075,6 @@ class LoopWatchdog:
                 if session is None or not getattr(session, "running", False):
                     if self._loop_exhausted(cid, loop.max_cycles):
                         if count > 0:
-                            store.set_total_cycles(cid, count)
                             await self._complete(
                                 cid, reason="cycle budget exhausted", genuine=False
                             )

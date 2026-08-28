@@ -123,14 +123,28 @@ function makeLoginItem({ app, platform = process.platform, log = () => {} } = {}
  *
  * The renderer can only ask for `true`/`false`; the coercion happens here, in the
  * process that owns the boundary, and not in the preload (which is a courtesy check).
+ *
+ * `onChanged` is how the OTHER surface finds out. The tray checkbox and this bridge
+ * write the SAME registration, but the tray renders from a cached
+ * `loginItemState` — so without this callback a flip in Settings left the menu-bar
+ * checkbox showing the stale value until the next restart, and the user had two
+ * controls disagreeing about one fact. It fires on every `set`, including a refused
+ * or no-op one, because the point is to re-read the OS rather than to mirror the
+ * request.
+ *
+ * @param {(result: object) => void} [onChanged]
  */
-function registerLoginItemIpc(ipcMain, loginItem, channels) {
+function registerLoginItemIpc(ipcMain, loginItem, channels, onChanged = () => {}) {
   ipcMain.handle(channels.loginItemGet, () => ({
     enabled: loginItem.isEnabled(),
     supported: loginItem.supported,
     describes: loginItem.describe(),
   }));
-  ipcMain.handle(channels.loginItemSet, (_e, enabled) => loginItem.set(Boolean(enabled)));
+  ipcMain.handle(channels.loginItemSet, (_e, enabled) => {
+    const result = loginItem.set(Boolean(enabled));
+    onChanged(result);
+    return result;
+  });
 }
 
 module.exports = { makeLoginItem, registerLoginItemIpc, SUPPORTED_PLATFORMS };

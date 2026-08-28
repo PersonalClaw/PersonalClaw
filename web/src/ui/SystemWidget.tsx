@@ -7,6 +7,7 @@ import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { spring, stagger, listItemEnter } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { Meter } from './Meter'
+import { reportingWrite } from '../app/reportingWrite'
 
 /** Live system + auth health — the app shell's top-right corner dot.
  *  - Collapsed (resting): a single connectivity dot. GREEN + pulsing = gateway
@@ -168,8 +169,32 @@ function RunningAgents({ open }: { open: boolean }) {
   if (!agents || agents.length === 0) return null
   const running = agents.filter((a) => !a.done)
   const doneCount = agents.length - running.length
-  const cancel = async (id: string) => { setBusy(id); try { await api.cancelSpawnedAgent(id) } catch { /* */ } setBusy(null); load() }
-  const clear = async () => { setBusy('__clear'); try { await api.clearSpawnedAgents() } catch { /* */ } setBusy(null); load() }
+  // 🔑 BOTH OF THESE ARE CLICKS ON RUNNING WORK, and both used to swallow the failure with an empty
+  // `catch { /* */ }` — a comment, not a stated reason. This is the family's canonical
+  // data-driven shape: the row's state comes from the refetch, so a failed cancel leaves NOTHING to
+  // see. The spinner stopped, `load()` ran anyway, and the same agent came back still spinning —
+  // pixel-identical to a click that never registered, which invites a second click on work the
+  // gateway may already be tearing down.
+  //
+  // The task's first line is threaded in on purpose: the fleet is a LIST, so "couldn't cancel that
+  // agent" names nothing when three are running. Same call as the task-comment delete, for the same
+  // reason.
+  //
+  // `load()` is GATED on success, per the family's rule for this shape — refetching after a failed
+  // cancel re-renders the identical running row, which reads as "nothing happened, twice". The poll
+  // is still running (every 4s while the card is open), so the list cannot go stale either way.
+  const cancel = async (id: string, task: string) => {
+    setBusy(id)
+    const ok = await reportingWrite(`cancel “${task}”`, () => api.cancelSpawnedAgent(id))
+    setBusy(null)
+    if (ok) load()
+  }
+  const clear = async () => {
+    setBusy('__clear')
+    const ok = await reportingWrite('clear the finished agents', () => api.clearSpawnedAgents())
+    setBusy(null)
+    if (ok) load()
+  }
   return (
     <div className="mt-3 border-t border-outline-variant/30 pt-2.5">
       <div className="mb-1.5 flex items-center gap-1.5 text-[0.75rem]">
@@ -188,7 +213,7 @@ function RunningAgents({ open }: { open: boolean }) {
               <Loader2 size={10} className="shrink-0 animate-spin text-primary" />
               <span className="min-w-0 flex-1 truncate text-on-surface-var" title={a.task}>{firstLine(a.task)}</span>
               {a.parent && <span className="shrink-0 text-on-surface-low/70">{a.parent.replace('cron:', '⏱')}</span>}
-              <button type="button" onClick={() => cancel(a.id)} disabled={busy === a.id} aria-label="Cancel agent"
+              <button type="button" onClick={() => cancel(a.id, firstLine(a.task))} disabled={busy === a.id} aria-label="Cancel agent"
                 className="shrink-0 rounded p-0.5 text-on-surface-low hover:text-danger disabled:opacity-50"><X size={11} /></button>
             </motion.div>
           ))}

@@ -421,20 +421,6 @@ async def api_personalclaw_config(request: web.Request) -> web.Response:
         agent_settings = body.get("agent")
         if not isinstance(agent_settings, dict):
             return _deny("agent must be an object")
-        path = config_path()
-        try:
-            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        except Exception:
-            _sel().log_api_access(
-                caller=caller,
-                operation="config.update",
-                outcome="error",
-                error="config.json is corrupt",
-            )
-            return web.json_response({"error": "config.json is corrupt"}, status=500)
-        if not isinstance(data.get("agent"), dict):
-            data["agent"] = {}
-        agent = data["agent"]
         # The three `agent.*` fields this endpoint owns. Their bounds are NOT restated here:
         # all three are already declared in `_EDITABLE_CONFIG`, so this used to be a second
         # copy of the same numbers — identical today, one edit away from disagreeing, and
@@ -449,22 +435,54 @@ async def api_personalclaw_config(request: web.Request) -> web.Response:
                 f"unknown agent settings: {', '.join(unknown)} "
                 f"(writable: {', '.join(agent_fields)})"
             )
-        applied: list[str] = []
+        # Coerce BEFORE taking the lock, into a staging dict. Validation depends only on the
+        # request body and `_EDITABLE_CONFIG`, so holding the lock across it would serialise
+        # every rejected request behind whoever is writing, for no benefit — and a test asserts
+        # a refused PUT answers 400 while the lock is held.
+        staged: dict[str, object] = {}
         for key in agent_fields:
             if key not in agent_settings:
                 continue
             try:
-                agent[key] = coerce_edit_value(
+                staged[key] = coerce_edit_value(
                     f"agent.{key}", agent_settings[key], _EDITABLE_CONFIG[f"agent.{key}"]
                 )
             except ConfigValueError as exc:
                 # The message names the field: this endpoint can carry several at once, so
                 # a bare "must be between 0 and 16" would not say which one was refused.
                 return _deny(f"{key} {exc}", exc.status)
-            applied.append(key)
-        if not applied:
+        if not staged:
             return _deny("no recognized settings provided")
-        atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
+        applied = list(staged)
+
+        # 🔴 The SAME lock PATCH holds. Both endpoints do read-current-config → mutate a field →
+        # write-the-whole-file, and `atomic_write` only guarantees the file is never half-written
+        # — not that a concurrent modifier's change survives. Interleaved, the later writer's
+        # read predates the earlier writer's write, so it serialises a `data` that never saw it
+        # and one field silently reverts (#754). PUT took no lock at all.
+        #
+        # Spans the READ as well as the write, deliberately: locking only `atomic_write` would
+        # still let two handlers read the same base and both write a complete file, which IS the
+        # lost update. The critical section is exactly read → apply → write and nothing else.
+        from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
+
+        path = config_path()
+        async with _get_config_lock():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            except Exception:
+                _sel().log_api_access(
+                    caller=caller,
+                    operation="config.update",
+                    outcome="error",
+                    error="config.json is corrupt",
+                )
+                return web.json_response({"error": "config.json is corrupt"}, status=500)
+            if not isinstance(data.get("agent"), dict):
+                data["agent"] = {}
+            agent = data["agent"]
+            agent.update(staged)
+            atomic_write(path, json.dumps(data, indent=2) + "\n", fsync=True)
         _sel().log_api_access(
             caller=caller,
             operation="config.update",

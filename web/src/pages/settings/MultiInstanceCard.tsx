@@ -10,6 +10,7 @@ import { SchemaField, schemaDefaults } from './ProviderConfigForm'
 import { TextInput } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
+import { reportingWrite } from '../../app/reportingWrite'
 
 /** A multiInstance=true provider rendered as a frame for N named instances.
  *  Each instance has its own schema-driven config (test / edit / delete); an
@@ -97,13 +98,23 @@ function InstanceRow({ ext, inst, schema, onChanged }: {
   }
   const save = async () => {
     setSaving(true)
-    try { await api.updateProviderInstance(ext.name, inst.id, { config }); setEditing(false); onChanged() }
-    finally { setSaving(false) }
+    // 🪤 This had NO catch at all, so a failed save rejected unhandled — same user outcome as the
+    // empty catch below (silence), by a different mechanism. Leaving the editor OPEN on failure is
+    // deliberate: the config the user typed is still on screen to retry from.
+    try {
+      if (!(await reportingWrite('save this instance', () => api.updateProviderInstance(ext.name, inst.id, { config })))) return
+      setEditing(false)
+      onChanged()
+    } finally { setSaving(false) }
   }
   const remove = async () => {
     if (!(await confirmDelete('instance', inst.display_name || inst.id))) return
     setBusy(true)
-    try { await api.deleteProviderInstance(ext.name, inst.id); onChanged() } catch { setBusy(false) }
+    if (!(await reportingWrite(`remove ${inst.display_name || inst.id}`, () => api.deleteProviderInstance(ext.name, inst.id)))) {
+      setBusy(false)
+      return
+    }
+    onChanged()
   }
 
   const props = Object.entries(schema?.properties ?? {})

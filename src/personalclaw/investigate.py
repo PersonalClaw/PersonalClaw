@@ -557,7 +557,8 @@ def _resolve_loop_cycle(entity_id: str, state) -> InvestigateContext | None:
     lines = [
         f"Autonomous run: {loop.name or loop.id} (kind: {loop.kind}, status: {loop.status})",
         f"Task: {loop.task}",
-        f"Cycle {want} of {getattr(loop, 'total_cycles', '?')}",
+        # Derived from the projection already read above (PP-16 seam 4a retired the cached column).
+        f"Cycle {want} of {len(findings)}",
     ]
     finding = next((f for f in findings if int(f.get("cycle", -1)) == want), None)
     if finding:

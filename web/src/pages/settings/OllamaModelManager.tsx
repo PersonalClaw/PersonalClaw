@@ -5,6 +5,7 @@ import { Download, Trash2, RefreshCw, Loader2, Check, AlertCircle, Info, X } fro
 import { api, type OllamaLocalModel, type OllamaSearchResult, type OllamaModelInfo } from '../../lib/api'
 import { confirmDelete } from '../../ui/dialog'
 import { SearchField } from '../../ui/SearchField'
+import { reportingWrite } from '../../app/reportingWrite'
 
 /** First-class Ollama model manager (#48) — manage the models hosted on an Ollama
  *  provider's endpoint directly from its card: see what's installed (size +
@@ -74,7 +75,14 @@ function InstalledRow({ provider, model, onDeleted }: { provider: string; model:
   async function del() {
     if (!(await confirmDelete('model', model.name, { body: "This frees disk on the Ollama host and can't be undone." }))) return
     setBusy(true)
-    try { await api.ollamaDeleteModel(provider, model.name); onDeleted() } catch { setBusy(false) }
+    // Fifth site of one defect: the dialog says "can't be undone", and the failure path said
+    // nothing at all — `setBusy(false)` only put the row's opacity back, which is what the
+    // screen looks like when the click never landed.
+    if (!(await reportingWrite(`delete ${model.name}`, () => api.ollamaDeleteModel(provider, model.name)))) {
+      setBusy(false)
+      return
+    }
+    onDeleted()
   }
   async function inspect() {
     setShowInfo((v) => !v)

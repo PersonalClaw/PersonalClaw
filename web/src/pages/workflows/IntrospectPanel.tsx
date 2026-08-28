@@ -247,12 +247,14 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                 <dl className="flex flex-col gap-xs text-[0.75rem]">
                   <Answer
                     q="What is running now, and why"
-                    a={`${data.answers.running.status} — ${data.answers.running.workflow || 'unnamed template'}, ${data.answers.running.nodes.length} node(s) active`}
+                    a={`${data.answers.running.status} — ${data.answers.running.workflow || 'unnamed template'}, ${data.answers.running.nodes.length} node${data.answers.running.nodes.length === 1 ? '' : 's'} active`}
                   />
-                  <Answer q="What changed" a={`${data.timeline.length} journal event(s) — see Timeline`} />
+                  <Answer q="What changed" a={`${data.timeline.length} journal event${data.timeline.length === 1 ? '' : 's'} — see Timeline`} />
                   <Answer
                     q="What is blocked"
-                    a={data.answers.blocked.length ? `${data.answers.blocked.length} node(s) waiting on something external` : 'Nothing is blocked'}
+                    a={data.answers.blocked.length
+                      ? `${data.answers.blocked.length} node${data.answers.blocked.length === 1 ? '' : 's'} waiting on something external`
+                      : 'Nothing is blocked'}
                   />
                   <Answer
                     q="What needs my approval"
@@ -262,7 +264,9 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   />
                   <Answer
                     q="What failed"
-                    a={data.answers.failed.length ? `${data.answers.failed.length} node(s) failed` : 'Nothing failed'}
+                    a={data.answers.failed.length
+                      ? `${data.answers.failed.length} node${data.answers.failed.length === 1 ? '' : 's'} failed`
+                      : 'Nothing failed'}
                   />
                   <Answer q="What is costing money" a={runCostText(data.stats.cost_usd)} />
                   <Answer
@@ -275,7 +279,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   <Answer
                     q="Were the checks that passed real checks"
                     a={fakeChecks.length
-                      ? `${fakeChecks.length} gate(s) have never rejected over a real sample`
+                      ? `${fakeChecks.length} gate${fakeChecks.length === 1 ? '' : 's'} have never rejected over a real sample`
                       : 'No gate shows the fake-check pattern'}
                   />
                 </dl>
@@ -424,8 +428,12 @@ function Answer({ q, a }: { q: string; a: string }) {
  *  every combination — including no risk at all — produces a sentence. */
 export function riskyText(degraded: number, fakeChecks: number, debt: number): string {
   const parts: string[] = []
-  if (degraded) parts.push(`${degraded} node(s) ran degraded`)
-  if (fakeChecks) parts.push(`${fakeChecks} gate(s) may not be checking`)
+  // 🔑 Every count here is in hand one token to its left, and n === 1 is the ORDINARY case on this
+  // panel: one degraded node or one never-rejecting gate is exactly the state a reader opens
+  // Introspect to understand. Hedging it made the answer look generated rather than measured — on a
+  // surface whose entire job is to answer questions precisely.
+  if (degraded) parts.push(`${degraded} node${degraded === 1 ? '' : 's'} ran degraded`)
+  if (fakeChecks) parts.push(`${fakeChecks} gate${fakeChecks === 1 ? '' : 's'} may not be checking`)
   // Rendered as a percentage because that is how the threshold is expressed. Deliberately not
   // gated on the warn threshold here: the number is informative below it too, and only the
   // WARNING is threshold-bound.

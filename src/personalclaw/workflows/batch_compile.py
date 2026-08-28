@@ -114,11 +114,21 @@ class Capability(str, Enum):
     MUTATING = "mutating"
 
 
-#: : Tool families a research-class leaf may NOT use. Named as families rather than exact
-#: tool names so
-#: : a newly-added write tool is denied by default — an allowlist of writers would silently
-#: admit every
-#: tool added after it was written.
+#: Tool families a research-class leaf may NOT use, matched as substrings.
+#:
+#: ⚠️ The claim this comment used to make — "a newly-added write tool is denied by default" —
+#: is the opposite of what a marker list does. Matching verb FRAGMENTS is a denylist, so a
+#: tool whose name contains none of them is ALLOWED. Measured across the seven shipped
+#: registries: **59 of 70 tools classified as non-writes**, including `hook_register`
+#: (creates an external webhook ingress), `set_recurring_task` (creates a cron),
+#: `memory_remember`, `loop_nudge_stop` and `notify` (#1775).
+#:
+#: The markers stay, because the tool universe is OPEN — an app's MCP server contributes
+#: names nobody here has seen — and for those a verb denylist is the only thing that can
+#: fire at all. Inverting to a read-only allowlist would deny every external MCP read tool
+#: to a research leaf, which is a product decision, not a bug fix. What the fix does is make
+#: the classification complete for the tools PersonalClaw itself SHIPS: those have known
+#: names, so they are named in :data:`MUTATING_TOOLS` rather than guessed at.
 _WRITE_TOOL_MARKERS = (
     "write",
     "edit",
@@ -153,15 +163,92 @@ ORCHESTRATION_TOOLS = frozenset(
 )
 
 
+#: Tools PersonalClaw SHIPS that mutate state, reach outward, or spawn — by exact name,
+#: because for our own tools there is nothing to guess.
+#:
+#: Every entry was classified from the tool's own registry description, not from its name,
+#: and that mattered: `refiner_evidence` says "Read-only: this is the ONLY evidence…" and
+#: `suggest_template` says "it never saves anything", so both look like writers and are not.
+#: Conversely `notify`, `hook_register` and `loop_nudge_stop` carry no CRUD verb at all.
+#:
+#: The line is IMMEDIATE EFFECT, not "touches storage". A tool that files a proposal the
+#: owner must accept — `skill_promote`, `template_save_from_session`, `project_context_review`,
+#: `dashboard_tile_propose`, `propose_template_diff` — is deliberately NOT here, even though
+#: #1775 lists the first three. Propose-only is an established safe posture in this codebase
+#: rather than an oversight: the shipped `refine-template` workflow's stage is a RESEARCH leaf
+#: whose agent holds `propose_template_diff`, and `leaf_tool_posture` is called there with no
+#: `declared` list — so classifying a proposal as a write would take the refiner's only
+#: writing tool away and break a shipped workflow. The cost that remains is a research run
+#: filling a triage queue, which is a nuisance the owner sees and dismisses, not an
+#: unconsented state change.
+#:
+#: It DOES include reaching OUTWARD — `notify`/`notify_attachment` message the owner's
+#: Slack/Discord and copy a file to the outbox. Not a state change here, but an effect a
+#: read-only class must not have, and nothing triages it before it lands.
+#:
+#: :data:`ORCHESTRATION_TOOLS` is unioned in rather than restated: spawning IS mutating, and
+#: those names were reachable from a research SUBAGENT because ``subagent.py`` gates on this
+#: predicate alone (``leaf_tool_posture``'s stricter any-depth rule covers leaves only).
+_SHIPPED_MUTATING_TOOLS: frozenset[str] = frozenset(
+    {
+        # Learning + memory store
+        "memory_remember",
+        "memory_forget",
+        "skill_remember",
+        "triage_rules",  # action='add'/'revoke' writes approval rules
+        # Config + external ingress
+        "hook_register",
+        # Run / loop control
+        "loop_nudge_stop",
+        "workflow_cancel",
+        "workflow_pause",
+        "workflow_resume",
+        "workflow_rewind",
+        "workflow_skip",
+        # Scheduling — creates work that fires later, unattended
+        "set_onetime_task",
+        "set_recurring_task",
+        "automation_pause",
+        "automation_resume",
+        "automation_run",
+        # Persisted artifacts
+        "artifact_save",
+        "image_generate",
+        "video_generate",
+        # Outbound to the owner
+        "notify",
+        "notify_attachment",
+        # Fan-out. `best_of_n` samples N candidates in parallel and judges them, which is
+        # exactly the "a leaf that can spawn is a leaf that can fan out without a budget"
+        # that ORCHESTRATION_TOOLS exists for — and it was in neither list. Placed here
+        # rather than in that set on purpose: its members are denied at ANY depth including
+        # to MUTATING leaves, and widening that is a separate call from closing this hole.
+        "best_of_n",
+    }
+)
+
+MUTATING_TOOLS: frozenset[str] = _SHIPPED_MUTATING_TOOLS | ORCHESTRATION_TOOLS
+
+
 def is_write_tool(name: str) -> bool:
     """Whether a tool name looks like it mutates.
 
     Deliberately over-inclusive: a read tool wrongly classified as a writer costs a research
-    leaf one
-    declaration, while a writer wrongly classified as a reader gives a research leaf silent write
-    access. The asymmetry decides the direction of the guess.
+    leaf one declaration, while a writer wrongly classified as a reader gives a research leaf
+    silent write access. The asymmetry decides the direction of the guess.
+
+    Two tiers. :data:`MUTATING_TOOLS` is exact knowledge about the tools we ship;
+    :data:`_WRITE_TOOL_MARKERS` is the verb guess that still has to cover an open universe of
+    app-contributed MCP tools.
+
+    Matched as a SUBSTRING, not equality, because the value reaching here is not always a
+    bare tool name: ``subagent.py`` passes ``event.title`` from a permission request, which
+    may be decorated (``task_modes`` has to strip a ``"running: "`` prefix for the same
+    reason). Equality would have made an exact-name set silently useless at that call site.
     """
     lowered = (name or "").lower()
+    if any(tool in lowered for tool in MUTATING_TOOLS):
+        return True
     return any(marker in lowered for marker in _WRITE_TOOL_MARKERS)
 
 

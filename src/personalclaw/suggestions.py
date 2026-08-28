@@ -24,14 +24,51 @@ logger = logging.getLogger(__name__)
 # Regenerate suggestions every 30 minutes
 _REFRESH_INTERVAL_SECS = 30 * 60
 
-# Fallback suggestions when LLM is unavailable or context is empty
+# Fallback suggestions when the LLM is unavailable or context is empty.
+#
+# 🔴 EVERY ENTRY HERE MUST BE EXECUTABLE ON AN INSTANCE WITH NO DATA, because that is the only
+# state this list is ever shown in. ``generate_suggestions`` returns it precisely when
+# ``_build_context`` came back empty — no memory, no sessions, no automations — and
+# ``SuggestionsCache`` seeds from it before the first generation. So it is the brand-new-install
+# list, and it is the first thing a new user reads on the most-visited surface in the product.
+#
+# Two entries used to ask about state the empty state does not have by construction:
+#
+#     "Summarize my recent conversations"   there are none — that is WHY we are in the fallback
+#     "Review my latest PR"                 assumes a repository context nobody has configured
+#
+# Both dead-end into "you don't have any", which is a poor first answer and teaches nothing about
+# what the product can do. Replaced with one orientation prompt and one that names a real,
+# distinctive capability a fresh instance can actually perform.
+#
+# ``test_suggestions_fallback_needs_no_data.py`` holds the criterion, not the strings — so this
+# list can be re-worded freely and only a *dead-end* re-appearing reds the gate.
+#
+# 🔑 AND EACH ENTRY NAMES SOMETHING THIS PRODUCT DISTINCTIVELY DOES. That is a copy JUDGMENT,
+# not a defect, so it is stated here rather than asserted in a test: this list is the product's
+# first self-description, on the surface a new user opens most.
+#
+# Three entries used to be generic text generation — "Generate sunrise haiku", "Give me a
+# three-word farewell", "Help me brainstorm an idea". Any chat box can serve those, so half the
+# list taught nothing about a self-hosted agentic OS with tools, tasks, automations, knowledge
+# and local execution. Every entry now points at a shipped surface:
+#
+#     Show health-check status               the doctor / system surface
+#     Break a goal into tasks                Tasks
+#     Save a note to my knowledge base       Knowledge (ingest works on an empty base)
+#     Run a command and explain the output   Terminal + tools — the local-execution thesis
+#     What can you help me with?             orientation, the one thing a new user always asks
+#     Set up a daily briefing                Triggers / automations
+#
+# Nothing here promises a capability the product lacks — the one hard rule a suggestion list has,
+# because a chip that leads to "I can't do that" is worse than a generic one.
 _FALLBACK_SUGGESTIONS = [
     "Show health-check status",
-    "Generate sunrise haiku",
-    "Give me a three-word farewell",
-    "Help me brainstorm an idea",
-    "Summarize my recent conversations",
-    "Review my latest PR",
+    "Break a goal into tasks",
+    "Save a note to my knowledge base",
+    "Run a command and explain the output",
+    "What can you help me with?",
+    "Set up a daily briefing",
 ]
 
 
@@ -46,7 +83,24 @@ class SuggestionsCache:
 
 
 def _build_context(state: "DashboardState") -> str:
-    """Assemble context for the suggestions prompt from memory and recent activity."""
+    """Assemble the SUBSTANTIVE context for the suggestions prompt — memory, sessions, automations.
+
+    Returns "" when the instance has nothing to say about itself yet, which is what lets
+    ``generate_suggestions`` decide between the fallback list and a real LLM turn.
+
+    The current time is deliberately NOT part of this. It used to be appended here
+    unconditionally, which quietly made that decision depend on the CALENDAR: the guard reads
+    ``len(context) < 50``, and a lone time section measures 44-53 characters depending on how long
+    today's weekday and month names are. On a brand-new empty install that meant
+
+        "Friday, May 01"        -> 44 chars -> falls back correctly
+        "Wednesday, September"  -> 53 chars -> passes the guard and calls the LLM
+
+    which is 113 days of 2026 spent asking a model for suggestions from a context whose entire
+    content is a timestamp. Worse, the first ``/api/suggestions`` call AWAITS that generation for
+    up to 45s (see ``api_suggestions``), so whether a new user's chat suggestions appeared instantly
+    or after most of a minute came down to the length of a weekday name.
+    """
     parts: list[str] = []
 
     # Active workspace memory
@@ -110,11 +164,12 @@ def _build_context(state: "DashboardState") -> str:
     except Exception:
         logger.debug("Failed to read automations for suggestions", exc_info=True)
 
-    # Time context
-    now = datetime.now()
-    parts.append(f"## Current Time\n{now.strftime('%A, %B %d %Y at %H:%M')}")
-
     return "\n\n".join(parts)
+
+
+def _time_context() -> str:
+    """The time section, appended only once a real context has earned an LLM turn."""
+    return f"## Current Time\n{datetime.now().strftime('%A, %B %d %Y at %H:%M')}"
 
 
 def _parse_suggestions(text: str) -> list[str]:
@@ -153,6 +208,10 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
     if not context or len(context) < 50:
         logger.debug("Insufficient context for suggestions — using fallback")
         return list(_FALLBACK_SUGGESTIONS)
+
+    # Earned it — now give the model the clock too. Appending AFTER the guard is the whole point:
+    # see `_build_context`'s docstring for the calendar-dependent bug this ordering fixes.
+    context = f"{context}\n\n{_time_context()}"
 
     # The suggestions instruction lives in the prompt system (bundled
     # ``task-suggestions``, bindable in Settings → Prompts), rendered here with the

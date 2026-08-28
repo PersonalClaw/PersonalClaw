@@ -1914,12 +1914,16 @@ async def start_dashboard(
         Only acts on requests carrying an app identity (``request["app"]`` set
         from an app-scoped token). A path the app didn't declare is rejected
         403 before the handler runs — the server-side, bypass-proof half of the
-        permission boundary. Owner/dashboard requests (no app identity) pass."""
-        app_name = request.get("app", "")
-        if app_name and request.path.startswith(("/api/", "/apps/")):
-            from personalclaw.apps.permissions import checker_for
+        permission boundary. Owner/dashboard requests (no app identity) pass.
 
-            checker = checker_for(app_name)
+        The decision itself is ``permissions.app_request_denial``, not inline here:
+        this closure cannot be imported, so every test of the boundary had to
+        re-implement it and was free to drift from it. This half owns logging the
+        refusal and shaping the response; the module owns what is refused."""
+        from personalclaw.apps.permissions import APP_SCOPED_PREFIXES, app_request_denial
+
+        app_name = request.get("app", "")
+        if app_name and request.path.startswith(APP_SCOPED_PREFIXES):
 
             def _deny(reason: str) -> web.StreamResponse:
                 from personalclaw.sel import sel
@@ -1940,17 +1944,9 @@ async def start_dashboard(
                     content_type="text/plain",
                 )
 
-            if checker is not None and not checker.can_use_api(request.path):
-                return _deny("api path not in declared permissions")
-            # A memory API path additionally requires the ``memory`` capability
-            # (sandbox P3) — declaring the /api/memory path in permissions.api is
-            # necessary but not sufficient; the app must also hold memory access.
-            if (
-                checker is not None
-                and request.path.startswith("/api/memory")
-                and not checker.can_use_memory("shared")
-            ):
-                return _deny("memory access not declared (permissions.memory)")
+            reason = app_request_denial(app_name, request.path)
+            if reason:
+                return _deny(reason)
         return await handler(request)  # type: ignore[operator]
 
     # Generate per-session secret for local app / IPC authentication.

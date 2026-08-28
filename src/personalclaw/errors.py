@@ -165,6 +165,25 @@ ERROR_CODES: dict[str, str] = {
         "props its declared schema refuses. The whole overlay is refused rather than "
         "partially rendered, because a dropped node is an invisible failure."
     ),
+    "ERR_NET_FETCH_CONFIG": (
+        "A `net-fetch` action's config cannot be used: it named no URL, or the URL carries "
+        "credentials in its userinfo. This action never sends credentials, so a URL holding "
+        "them is refused rather than stripped and sent anyway."
+    ),
+    "ERR_NET_FETCH_EGRESS_BLOCKED": (
+        "The egress guard refused a `net-fetch` before the request was made. Automated fetches "
+        "are limited to an exclusive operator allow-list (`security.egress.allow_hosts`), which "
+        "is EMPTY by default and therefore permits no host until one is added."
+    ),
+    "ERR_NET_FETCH_INCIDENT_ACTIVE": (
+        "Incident mode is on, which suspends unattended work, so the fetch was refused before a "
+        "request was made rather than retried against a control someone deliberately pulled."
+    ),
+    "ERR_NET_FETCH_FAILED": (
+        "A permitted `net-fetch` did not return a usable body: the request failed before a "
+        "response arrived (DNS, TLS, connection, timeout), or the host answered a non-2xx "
+        "status. Distinct from an egress refusal, which never left the machine."
+    ),
 }
 
 

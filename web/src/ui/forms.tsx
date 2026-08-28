@@ -36,14 +36,22 @@ export const FieldLabelProvider = FieldLabelCtx.Provider
  *  works) and not one had `aria-describedby` — so every hint was sighted-only. That includes a
  *  CONSTRAINT ("At least 12 characters") and a consequence ("Leave it empty to keep records
  *  unattributed"): a screen-reader user heard "Username, edit text" and none of the rule they were
- *  expected to follow. 260 hinted publishers render today — 229 DIRECT call sites (Field 118,
- *  settingsUI's Row 77, NumberRow 34) plus 31 that arrive through five local wrappers which forward
- *  a hint into one of those three (ToggleRow 22, EnumRow 3, CheckList 3, TextRow 2, StrListField 1).
- *  Recounted 2026-08-27 with a depth-tracking JSX scan, excluding tests and `.doc.ts`; the earlier
+ *  expected to follow. **271** hinted publishers render today — **236** DIRECT call sites (Field 120,
+ *  settingsUI's Row 77, NumberRow 39) plus **35** that arrive through five local wrappers which forward
+ *  a hint into one of those three (ToggleRow 25, EnumRow 3, CheckList 3, TextRow 2, StrListField 2).
+ *  Recounted **2026-08-27** with the depth-tracking scan `fieldHintCounts.test.ts` runs; the earlier
  *  196/99/69/28 reading is stale, and its "69" is the number of hinted `Row` CALL SITES, not the
- *  number of switches, which is a distinction the Q13/BE-8 queue entry lost. None of the 260 has to
- *  change — the id is published here and claimed by the same controls that already claim the label.
- *  axe cannot see this: an unassociated paragraph is valid HTML. */
+ *  number of switches, which is a distinction the Q13/BE-8 queue entry lost.
+ *
+ *  🪤 THESE NUMBERS ROT IN A DAY, so treat them as a dated observation, not a fact. The previous line
+ *  here read 260/229 (Field 118, NumberRow 34) and was recounted **the day before** — one tick of
+ *  ordinary feature work moved Field +2 and NumberRow +5. `fieldHintCounts.test.ts` therefore asserts
+ *  a FLOOR, not an equality: an exact pin would red the gate on every new hinted row, and a rail that
+ *  reds on healthy growth is a rail someone weakens. The floor catches the failure that matters — the
+ *  scan breaking, or publishers disappearing — and the test names the command to refresh the prose.
+ *
+ *  None of the 271 has to change — the id is published here and claimed by the same controls that
+ *  already claim the label. axe cannot see this: an unassociated paragraph is valid HTML. */
 const FieldHintCtx = createContext<string | undefined>(undefined)
 export function useFieldHintId() { return useContext(FieldHintCtx) }
 export const FieldHintProvider = FieldHintCtx.Provider

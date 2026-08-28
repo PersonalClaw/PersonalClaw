@@ -393,25 +393,45 @@ function namePaths(paths: string[]): string {
  *  is being done, so the count and the names are IN the dialog rather than left implied by the
  *  ticks on the card behind it. The whole-root wording is unchanged: the default path is the same
  *  sentence it has always been. */
-function confirmCopy(op: 'rollback' | 'revert', root: string, entry: DurabilityHistoryEntry, pending: Pending) {
+/** The sentences a user reads before letting the app set aside work on disk.
+ *
+ *  EXPORTED for its rail. This is a pure function from counts to prose, so its contract can be
+ *  CALLED rather than pattern-matched — and the property that matters here is not "is there a
+ *  parenthetical" but "does each noun agree with the number BESIDE it", which no source scan can
+ *  establish. `confirmCopy(op, root, entry, { paths: [x], files: [x, y], … })` answers it directly. */
+export function confirmCopy(op: 'rollback' | 'revert', root: string, entry: DurabilityHistoryEntry, pending: Pending) {
   const { paths, preview, files } = pending
   const n = paths.length
   const named = namePaths(paths)
+  // 🔑 THESE ARE THE MOST CONSEQUENTIAL SENTENCES IN THE APP — they are what a user reads before
+  // letting the app set aside work on disk. Every count here is already in hand, so `file(s)` was
+  // never necessary; it just reads as unfinished, which is the wrong note for a destructive confirm.
+  // Hoisted to consts rather than inlined thirteen times, because these bodies are long paragraphs
+  // and `${files.length === 1 ? 'file' : 'files'}` three times inside one of them is unreadable.
+  // Deliberately NOT a shared `plural()` helper: the tree already has two page-local copies
+  // (`PortabilityPanel`, `MemoryGraph`) against 156 inline conditionals, so a third copy is how a
+  // shared idiom becomes three implementations. Consolidating those two is its own change.
+  //
+  // 🪤 The noun agrees with the number BESIDE it, which is not always `n`: "3 of 7 files" agrees
+  // with the denominator, while "the 3 files you picked" agrees with the selection.
+  const fileWord = files.length === 1 ? 'file' : 'files'
+  const pickedWord = n === 1 ? 'file' : 'files'
+  const changeWord = preview.commits_rolled_away === 1 ? 'change' : 'changes'
   if (op === 'rollback') {
     return {
-      title: n === 0 ? 'Roll back to this point?' : `Roll back ${n} of ${files.length} file(s) to this point?`,
+      title: n === 0 ? 'Roll back to this point?' : `Roll back ${n} of ${files.length} ${fileWord} to this point?`,
       body: n === 0
-        ? `Everything in ${root} goes back to how it was at "${entry.subject}". The ${preview.commits_rolled_away} change(s) made since are set aside — they stay listed here, so you can come forward again. Nothing outside this history is touched, and your saved credentials are untouched.`
-        : `Only the ${n} file(s) you picked go back to how they were at "${entry.subject}": ${named}. Every other file in ${root} is left exactly as it is. The ${preview.commits_rolled_away} change(s) made since are set aside for those ${n} file(s) — they stay listed here, so you can come forward again. Your saved credentials are untouched.`,
+        ? `Everything in ${root} goes back to how it was at "${entry.subject}". The ${preview.commits_rolled_away} ${changeWord} made since are set aside — they stay listed here, so you can come forward again. Nothing outside this history is touched, and your saved credentials are untouched.`
+        : `Only the ${n} ${pickedWord} you picked go back to how they were at "${entry.subject}": ${named}. Every other file in ${root} is left exactly as it is. The ${preview.commits_rolled_away} ${changeWord} made since are set aside for those ${n} ${pickedWord} — they stay listed here, so you can come forward again. Your saved credentials are untouched.`,
       confirmLabel: 'Roll back',
       danger: true,
     }
   }
   return {
-    title: n === 0 ? 'Undo just this change?' : `Undo just this change in ${n} of ${files.length} file(s)?`,
+    title: n === 0 ? 'Undo just this change?' : `Undo just this change in ${n} of ${files.length} ${fileWord}?`,
     body: n === 0
       ? `This one change is undone by applying its opposite. Anything edited afterwards is kept. If a later edit touched the same lines, nothing is applied and you will be told which file blocked it.`
-      : `This one change is undone by applying its opposite to the ${n} file(s) you picked: ${named}. Anything edited afterwards is kept, and so is every other file in ${root}. If a later edit touched the same lines, nothing is applied and you will be told which file blocked it.`,
+      : `This one change is undone by applying its opposite to the ${n} ${pickedWord} you picked: ${named}. Anything edited afterwards is kept, and so is every other file in ${root}. If a later edit touched the same lines, nothing is applied and you will be told which file blocked it.`,
     confirmLabel: 'Undo it',
     danger: false,
   }
@@ -437,16 +457,20 @@ function PreviewCard({ preview, op, busy, files, paths, selected, root, error, o
   // actually held and about to be sent. The ticks are the input; this line is the answer to them,
   // and for the moment they disagree the honest thing is to report the answer.
   const n = paths.length
+  // Same agreement rule as `confirmCopy` above — see the note there for why these are consts.
+  const previewWord = preview.files.length === 1 ? 'file' : 'files'
+  const fileWord = files.length === 1 ? 'file' : 'files'
+  const changeWord = preview.commits_rolled_away === 1 ? 'change' : 'changes'
   return (
     <div className="mt-2 rounded-md bg-surface px-3 py-2">
       <p className="text-on-surface-low text-[0.75rem]">
         {op === 'rollback'
           ? n === 0
-            ? `${preview.files.length} file(s) would change, and ${preview.commits_rolled_away} later change(s) would be set aside.`
-            : `${n} of ${files.length} file(s) would change, and ${preview.commits_rolled_away} later change(s) to them would be set aside. The rest of ${root} is left alone.`
+            ? `${preview.files.length} ${previewWord} would change, and ${preview.commits_rolled_away} later ${changeWord} would be set aside.`
+            : `${n} of ${files.length} ${fileWord} would change, and ${preview.commits_rolled_away} later ${changeWord} to them would be set aside. The rest of ${root} is left alone.`
           : n === 0
-            ? `${preview.files.length} file(s) would change. Later edits are kept.`
-            : `${n} of ${files.length} file(s) would change. Later edits are kept, and so is every file you did not pick.`}
+            ? `${preview.files.length} ${previewWord} would change. Later edits are kept.`
+            : `${n} of ${files.length} ${fileWord} would change. Later edits are kept, and so is every file you did not pick.`}
       </p>
       {preview.files.length === 0 && (
         <p className="mt-1 text-on-surface-low text-[0.75rem]">Nothing would change.</p>

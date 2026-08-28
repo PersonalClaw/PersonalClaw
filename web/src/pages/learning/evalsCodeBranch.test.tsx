@@ -1,11 +1,14 @@
 import { describe, expect, it, afterEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { api, ApiError, hasApiCode } from '../../lib/api'
 import { errEnvelope, errText } from '../../lib/errText'
 import { JudgeBenchPanel } from './JudgeBenchPanel'
 import { StudiesPanel } from './StudiesPanel'
 import { RetrievalBenchPanel } from './RetrievalBenchPanel'
 import { AblationPanel } from './AblationPanel'
+import { BenchmarkPanel } from './BenchmarkPanel'
 
 // ── The typed error code the funnel was throwing away, and the six branches that waited ──────
 //
@@ -53,6 +56,7 @@ const WIRE = {
   studies_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish study results."}}',
   retrieval_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish retrieval ablation reports."}}',
   ablation_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish ablation reports."}}',
+  benchmark_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish benchmark reports."}}',
   judge_absent: '{"error": {"code": "judge_bench_absent", "message": "No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one."}}',
   retrieval_absent: '{"error": {"code": "retrieval_absent", "message": "No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores."}}',
   ablation_absent: '{"error": {"code": "ablation_absent", "message": "No ablation has run yet. Register a component in `evals/ablation_registry.json` and run `personalclaw ablation --force`."}}',
@@ -148,12 +152,19 @@ async function wireError(body: string): Promise<ApiError> {
   return new ApiError(message, 404, code)
 }
 
-describe('all four eval panels say "the substrate is off" — and say it alike', () => {
+describe('every eval panel says "the substrate is off" — and says it alike', () => {
+  // 🪤 THIS LIST WAS FOUR, AND THE FIFTH PANEL DRIFTED FOR EXACTLY THAT REASON. `BenchmarkPanel`
+  // appeared NOWHERE in this file, so when the shared `EvalsOff` sentence was introduced — and its
+  // docstring recorded the dotted-path/hub-link version as fixed-and-wrong — this panel kept all three
+  // defects: `<code>evals.enabled</code>`, a link to the 34-card `#/settings` hub, and a link whose
+  // accessible name was just "Settings". An enumerated census cannot catch a member nobody enumerated,
+  // so `every panel handling evals_disabled renders EvalsOff` below DERIVES the population from source.
   const CASES = [
     { name: 'judge tiers', body: WIRE.judge_disabled, what: 'judge benchmark', el: (e: unknown) => <JudgeBenchPanel bench={undefined} error={e} onRetry={() => {}} /> },
     { name: 'template studies', body: WIRE.studies_disabled, what: 'study', el: (e: unknown) => <StudiesPanel studies={undefined} error={e} onRetry={() => {}} /> },
     { name: 'retrieval', body: WIRE.retrieval_disabled, what: 'retrieval benchmark', el: (e: unknown) => <RetrievalBenchPanel bench={undefined} error={e} onRetry={() => {}} /> },
     { name: 'ablation', body: WIRE.ablation_disabled, what: 'ablation', el: (e: unknown) => <AblationPanel view={undefined} error={e} onRetry={() => {}} /> },
+    { name: 'skill-impact benchmark', body: WIRE.benchmark_disabled, what: 'benchmark', el: (e: unknown) => <BenchmarkPanel view={undefined} error={e} onRetry={() => {}} /> },
   ] as const
 
   for (const c of CASES) {
@@ -172,6 +183,35 @@ describe('all four eval panels say "the substrate is off" — and say it alike',
       expect(screen.queryByText(/Couldn't load your/)).toBeNull()
     })
   }
+
+  it('and the list above is the WHOLE population — every panel handling evals_disabled renders EvalsOff', () => {
+    // The derived half. Enumerating panels is what let `BenchmarkPanel` drift, so this asks the source
+    // a mechanical question instead: any file that branches on `evals_disabled` must render `EvalsOff`,
+    // and must not hand-roll the sentence's telltales.
+    const HERE = import.meta.dirname
+    const files = readdirSync(HERE).filter((n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
+    const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const handlers: string[] = []
+    const offenders: string[] = []
+    for (const n of files) {
+      if (n === 'EvalsOff.tsx') continue
+      const src = strip(readFileSync(join(HERE, n), 'utf8'))
+      if (!/hasApiCode\(error, 'evals_disabled'\)/.test(src)) continue
+      handlers.push(n)
+      if (!/<EvalsOff\b/.test(src)) offenders.push(`${n}: branches on evals_disabled without rendering <EvalsOff>`)
+      // The three telltales of the hand-rolled version, each named in EvalsOff's docstring.
+      if (/<code[^>]*>\s*evals\.enabled/.test(src)) offenders.push(`${n}: prints the dotted config path`)
+      if (/href="#\/settings"/.test(src)) offenders.push(`${n}: links the 34-card hub, not #/settings/evals`)
+    }
+    // Vacuity floor: if the scan finds no handlers, every check above passed over nothing.
+    expect(handlers.length, 'no panel branches on evals_disabled — the scan is wrong').toBeGreaterThanOrEqual(5)
+    expect(handlers.length, 'a panel handles evals_disabled but is not in CASES above').toBe(CASES.length)
+    expect(
+      offenders,
+      'EvalsOff owns this sentence — its docstring records why the dotted path and the hub link are ' +
+        'wrong:\n  ' + offenders.join('\n  '),
+    ).toEqual([])
+  })
 
   it('sends the user to the SUBPAGE that has the control, never the bare hub', async () => {
     // 🔁 INVERTED, deliberately — see the header. The dead-end version of this copy linked

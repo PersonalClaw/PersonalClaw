@@ -10,6 +10,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Automations can now read a web page.**
+- **"Open at login" is now a working switch in Settings, and it agrees with the menu bar.**
+
 - **Notification rules can now deliver as real OS notifications.**
 
 - **A reviewer's findings now get triaged by you before anything touches your code.**
@@ -73,6 +76,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **See what a run actually built, in a browser.**
 
 ### Fixed
+
+- **Two settings saved at the same moment could lose one of them.**
+- **Renaming an automation replaced what it does.**
+
+- **A too-long file or folder name reported a server error instead of telling you the name was too long.**
 
 - **When the model was unavailable, knowledge enrichment told you it had found nothing.**
 
@@ -218,6 +226,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The approval prompt now tells you what a tool call can touch, and how far your answer reaches.**
 
 ### Security
+
+- **A "read-only" background task could write to your memory, open a webhook, and schedule itself.**
+
+- **Uninstalling or disabling an app did not stop it, and uninstalling briefly gave it more access than it had.**
 
 - **PersonalClaw's own keys were protected in the files area and nowhere else.**
 

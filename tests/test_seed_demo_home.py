@@ -339,7 +339,23 @@ def test_the_demo_loop_loads_through_the_production_store(seeded_home: Path) -> 
     # A phase with no exit criteria renders as an empty checklist in the cockpit.
     for phase in loop.plan:
         assert phase.get("exit_criteria"), f"loop phase {phase.get('phase')!r} has no exit criteria"
-    assert loop.total_cycles > 0, "a completed loop with zero cycles reads as never run"
+    # A completed loop with zero cycles reads as never run. Since PP-16 seam 4a the count is the
+    # LEDGER's `step_completed` count, not a `total_cycles` column, so this asserts the fixture
+    # ships real cycles rather than a stored number. The version this replaced asserted the column
+    # and passed against `total_cycles=6` with an EMPTY ledger — six cycles claimed, none recorded,
+    # which is what made the demo cockpit render "no per-cycle detail recorded for this loop".
+    findings = loop_store.get_findings(loop.id)
+    assert len(findings) == 6, (
+        f"expected the fixture's six ledger cycles, got {len(findings)} — a completed loop with "
+        "no cycles reads as never run"
+    )
+    assert loop_store.cycles_completed(loop.id) == len(findings)
+    for f in findings:
+        assert f.get("summary") and f.get("evidence"), f"cycle {f.get('cycle')} is a stub"
+    assert {f.get("step") for f in findings} == {"survey", "synthesize", "verify"}, (
+        "the fixture's cycles must key to its three plan phases — a cycle with no `step` mines as "
+        "a structureless node"
+    )
 
     project_ids = {p.id for p in HierarchyStore().list_projects()}
     assert loop.project_id in project_ids, (
