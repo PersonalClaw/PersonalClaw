@@ -50,7 +50,9 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from personalclaw.browse.compress import assert_no_base64, compress_page
+from personalclaw.browse.credentials import screen_action_render, screen_url
 from personalclaw.browse.extraction import ROLE_LINK, ElementRef, PageExtraction, extract_page
+from personalclaw.browse.handoff import PARK_LOGIN_REQUIRED
 from personalclaw.browse.sentinels import (
     Action,
     ClickAction,
@@ -81,6 +83,10 @@ PARK_STEP_EXHAUSTED = "step_exhausted"
 PARK_BUDGET_EXHAUSTED = "budget_exhausted"
 PARK_STUCK = "stuck"
 PARK_NAVIGATION_BLOCKED = "navigation_blocked"
+#: BA-4's credential handoff park is :data:`personalclaw.browse.handoff.PARK_LOGIN_REQUIRED`,
+#: imported above rather than restated here. ``handoff`` owns the value because it also builds the
+#: card that answers it; a second literal in this module would be the fifth park reason and the
+#: first one with two spellings.
 
 #: The SEL rows this module writes (BA-2's `browse_egress` covers the navigation denials).
 SEL_EVENT_SOURCE = "browse"
@@ -244,6 +250,12 @@ class _LoopState:
     warnings: list[str] = field(default_factory=list)
     recent: list[str] = field(default_factory=list)
     warned_stuck: str = ""
+    #: BA-4 — the ref of a credential field the agent tried to fill. Set by :func:`_actuate` and
+    #: read by the loop, which parks on it. A flag rather than a raised exception because the
+    #: refusal is not an error: the run did legitimate work up to the login wall, and its notes are
+    #: the deliverable the handoff resumes on top of. It holds the REF, never the value — there is
+    #: no field here a credential could occupy.
+    login_required_ref: str = ""
 
 
 # ── prompt composition ────────────────────────────────────────────────────────
@@ -425,14 +437,18 @@ async def run_browse_loop(
     url = start_url.strip()
     nav = await session.navigate(url)
     if not getattr(nav, "ok", False):
-        st.blocked.append(url)
+        st.blocked.append(screen_url(url))
         return _park(
             st,
             goal=goal,
-            url=url,
+            url=screen_url(url),
             reason=PARK_NAVIGATION_BLOCKED,
             detail=str(getattr(nav, "reason", "") or getattr(nav, "error", "") or "denied"),
         )
+    # Navigated with the RAW url (an operator-supplied start_url may legitimately carry a token
+    # that gets it through a paywall), recorded SCREENED. The split is the rule: screen where a URL
+    # is captured for a human or a model, never where it is handed to the browser.
+    url = screen_url(url)
     st.visited.append(url)
 
     for step in range(1, max(1, int(max_steps)) + 1):
@@ -445,7 +461,14 @@ async def run_browse_loop(
 
         try:
             html = await page.html()
-            url = await page.current_url() or url
+            # 🔴 BA-4: SCREENED at the point it is read, which is the only place the browser's own
+            # URL enters this process. One call therefore covers all six consumers at once — the
+            # outline's `# <url>` header, the fence's `source`/`source_id` (both reach the prompt),
+            # the Links DSL's base, `final_url` in the run payload, the user-facing park sentence,
+            # and the SEL row. The post-login redirect is exactly where an OAuth `code=` or an
+            # implicit-flow `#access_token=` sits, so this is not a hypothetical path: it is THE
+            # path a token would take into a prompt.
+            url = screen_url(await page.current_url() or url)
         except Exception as exc:
             return BrowseLoopResult(
                 ok=False,
@@ -505,7 +528,19 @@ async def run_browse_loop(
             )
             continue
 
-        rendered = action.render()
+        index = _element_index(extraction)
+        # 🔴 BA-4: the model's OWN output is screened before it is recorded, once, here — the only
+        # place `render()` is called on the way into the run's state. `rendered` flows into the
+        # stuck-detector, the next prompt's WARNINGS block, the step ledger, the SEL park row and
+        # the parked run's sentence; screening at those five sites is five chances to forget.
+        # A model cannot know a password it was never shown, but it can HALLUCINATE one, and a
+        # hallucinated string echoed back into the transcript is indistinguishable from a real leak
+        # to anyone auditing it later.
+        rendered = screen_action_render(
+            action.render(),
+            credential=isinstance(action, TypeAction)
+            and getattr(index.get(action.ref), "credential", False),
+        )
         stuck = _note_repeat(st, rendered)
         if stuck == "warn":
             st.warnings.append(
@@ -532,19 +567,23 @@ async def run_browse_loop(
         outcome_note = ""
         verification = ""
         if isinstance(action, NotesAction):
-            st.notes.append(action.text)
+            # Screened even though the model can only note what it was shown (which is screened
+            # already): notes are PERSISTED and shown to the user, so this is the one recorded
+            # surface where a defence-in-depth pass costs nothing and a miss is durable.
+            st.notes.append(screen_url(action.text))
             outcome_note = "recorded"
         elif isinstance(action, NavigateAction):
-            if action.url in st.visited:
-                st.warnings.append(f"you have already visited {action.url}")
+            safe_target = screen_url(action.url)
+            if safe_target in st.visited:
+                st.warnings.append(f"you have already visited {safe_target}")
             nav = await session.navigate(action.url)
             if not getattr(nav, "ok", False):
-                st.blocked.append(action.url)
+                st.blocked.append(safe_target)
                 detail = str(getattr(nav, "reason", "") or getattr(nav, "error", "") or "denied")
-                st.warnings.append(f"navigation to {action.url} was refused: {detail}")
+                st.warnings.append(f"navigation to {safe_target} was refused: {detail}")
                 outcome_note = f"blocked: {detail}"
             else:
-                url = action.url
+                url = safe_target
                 if url not in st.visited:
                     st.visited.append(url)
                 outcome_note = "navigated"
@@ -564,16 +603,34 @@ async def run_browse_loop(
                     settle=settle,
                 )
                 verification = verdict
-                st.notes.append(note)
+                st.notes.append(screen_url(note))
                 outcome_note = note
                 try:
-                    url = await page.current_url() or url
+                    # The POST-SUBMIT url is the single highest-value screen in this loop: a login
+                    # form's response IS the redirect that carries the authorization code.
+                    url = screen_url(await page.current_url() or url)
                 except Exception:  # pragma: no cover - defensive
                     pass
                 if url not in st.visited:
                     st.visited.append(url)
         else:
-            outcome_note = await _actuate(action, page=page, extraction=extraction, state=st)
+            outcome_note = await _actuate(action, page=page, index=index, state=st)
+
+        if st.login_required_ref:
+            # 🔴 BA-4 §5.2: the agent tried to authenticate, so a HUMAN must. Parked, not failed —
+            # `_park` keeps the notes, and the provider projects a park into the shipped needs-input
+            # gate. The detail names the FIELD's ref; there is no value to name, because
+            # `extraction` never read one.
+            st.steps.append(
+                BrowseStep(index=step, url=url, action=rendered, fenced=True, note=outcome_note)
+            )
+            return _park(
+                st,
+                goal=goal,
+                url=url,
+                reason=PARK_LOGIN_REQUIRED,
+                detail=f"field {st.login_required_ref} is a credential field",
+            )
 
         st.steps.append(
             BrowseStep(
@@ -592,10 +649,16 @@ async def run_browse_loop(
 
 
 async def _actuate(
-    action: Action, *, page: PageDriver, extraction: PageExtraction, state: _LoopState
+    action: Action, *, page: PageDriver, index: dict[str, ElementRef], state: _LoopState
 ) -> str:
-    """Perform a page-local action. Returns the step note; never raises."""
-    index = _element_index(extraction)
+    """Perform a page-local action. Returns the step note; never raises.
+
+    ``index`` arrives BUILT rather than being derived from a ``PageExtraction`` here (BA-4). The
+    caller needs the same ref→element map one statement earlier, to screen the rendered action
+    line, and two independent builds of the same index is how the executor and the screen would
+    eventually disagree about which refs are credential fields — the screen would pass a line the
+    executor refuses, or worse the reverse.
+    """
     try:
         if isinstance(action, ClickAction):
             target = index.get(action.ref)
@@ -612,6 +675,25 @@ async def _actuate(
             if target.role == ROLE_LINK:
                 state.warnings.append(f"{action.ref} is a link, not a field")
                 return "not a field"
+            if target.credential:
+                # 🔴 THE SECOND HALF OF THE INVARIANT — the agent cannot WRITE a credential either.
+                #
+                # This is what makes the human handoff the ONLY authentication path rather than the
+                # polite one. `page.fill` is not called, so the value never reaches the DOM, never
+                # reaches the site, and never becomes a session the agent minted. The refusal is
+                # placed HERE, at the single call site of `page.fill`, and not in the provider or
+                # the prompt: a rule stated in the prompt is a request, and a rule in the provider
+                # is bypassed by the next caller that drives the loop directly.
+                #
+                # The warning names the ref and the LABEL, never `action.value`. A refusal that
+                # echoed the value back would put the credential in the next prompt, the step
+                # ledger and the SEL row — defeating the refusal by explaining it.
+                state.login_required_ref = action.ref
+                state.warnings.append(
+                    f"{action.ref} ({target.label}) is a credential field; browse never types "
+                    "passwords or one-time codes. The run is pausing so you can sign in yourself."
+                )
+                return "refused: credential field"
             await page.fill(target, action.value)
             return "typed"
         if isinstance(action, ScrollAction):
@@ -623,7 +705,15 @@ async def _actuate(
             await page.go_back()
             return "went back"
     except Exception as exc:
-        state.warnings.append(f"{action.render()} failed: {exc}")
+        # Re-rendered here, so re-SCREENED here. This second `render()` call is the one an earlier
+        # draft missed: the loop screens the line it records, and this path composed a fresh
+        # unscreened one straight into the next prompt's WARNINGS block.
+        safe = screen_action_render(
+            action.render(),
+            credential=isinstance(action, TypeAction)
+            and getattr(index.get(action.ref), "credential", False),
+        )
+        state.warnings.append(f"{safe} failed: {exc}")
         return f"failed: {exc}"
     return "ignored"
 

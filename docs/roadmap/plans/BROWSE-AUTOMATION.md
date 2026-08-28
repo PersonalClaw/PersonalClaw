@@ -920,3 +920,139 @@ class ElementRef:
   **`validation.py:812`** — the same drift `BA-3`'s own log recorded and corrected in the plan, left
   uncorrected in the atom row. Not edited here (it is `BA-3`'s row, and `dag.json` carries the same
   string).
+
+- [2026-08-28][BA-4] **DONE — all four clauses addressed; the invariant is proven, the human-in-a-window
+  leg is NOT observable here and is named below. Atom marked `🟡` (this code is not on `main` yet;
+  `dag.json` is the driver's to write).** New: `browse/credentials.py` (the screen) and
+  `browse/handoff.py` (per-site profiles + `request_login` + the §5.3 check); changed:
+  `browse/extraction.py`, `browse/loop.py`, `action_providers/browse_provider.py`,
+  `durability/inventory.py`. 62 new tests, `make lint` clean.
+
+  **Note on this plan's shape:** it has **no `## Execution log` heading**. `BA-2`, `BA-3` and `BA-7`
+  appended dated bullets here, after the 2026-07-29 amendment's risk list, so this entry does the
+  same rather than re-homing three other atoms' entries into a new section — that is a plan-structure
+  edit, not a `BA-4` one.
+
+  **Clause 4 (credentials never transit the agent) — made STRUCTURAL, three refusals, not a filter.**
+  The starting observation is that `security.redact_credentials` cannot be the answer: it is shape-
+  and name-based (`sk-ant-…`, `ghp_…`, `key = value`), so `hunter2` and a six-digit 2FA code match
+  nothing in it, and it is **not idempotent over a composed `field: value` line**, which forbids a
+  "redact on the way out" posture because composition happens many times. So:
+
+  1. **A credential value is never READ.** `extraction._handle_input` is the single point where a DOM
+     value becomes browse state; for a credential-class input it writes `WITHHELD` unconditionally
+     and never touches the `value` attribute. There is therefore no representation of the secret
+     anywhere downstream to audit, order, or garble with a second pass. Unconditional, not
+     "withheld if non-empty": whether a password box is prefilled is itself a fact about the user's
+     credential store.
+  2. **The agent cannot WRITE one.** `loop._actuate` refuses `TYPE` into a credential field at the
+     single call site of `page.fill`, and escalates to the handoff. That is what makes the human
+     handoff the *only* authentication path rather than the polite one. The refusal names the ref and
+     the label, never the value — a refusal that echoed the value would defeat itself by explaining
+     itself, since warnings become the next prompt's WARNINGS block.
+  3. **A credential in a URL is never composed in.** `screen_url` replaces credential-param VALUES
+     and keeps the KEYS, applied where the URL is READ from the browser (`loop`, one call) so it
+     covers all six consumers at once: the outline's `# <url>` header, the fence's
+     `source`/`source_id`, the Links DSL, `final_url` in the payload, the park sentence and the SEL
+     row. Both query and fragment — the fragment matters MORE, because the OAuth implicit flow
+     returns `#access_token=…` and a fragment never leaves the browser.
+
+  Detection is type-based (`type=password`), then `autocomplete` (`one-time-code`,
+  `current-password`, `new-password`), then name/id tokens. The middle signal is load-bearing and
+  was nearly missed: a real 2FA box is `type=text autocomplete=one-time-code` because masking is not
+  wanted on it, so **a type-only rule would have missed every 2FA field the invariant names.**
+  `code` is deliberately a URL param token but NOT a field-name token — a postal code, a country
+  code and a discount code are all `code`, and screening those blinds the agent to fields it
+  legitimately fills while protecting nothing.
+
+  **Proven by a six-surface sweep, not a prompt check.** `TestTheInvariant` runs full loops with a
+  real credential planted on the real path, then asserts absence across *prompts, the step ledger,
+  notes, the run payload, the park reason/detail, and every log record* — named separately so a
+  failure says which surface leaked. **A prompt-only check would have passed against three of the
+  four leaks found while writing this**, because the step ledger and the warnings path re-compose
+  the model's own output.
+
+  **Every absence assertion has a control leg that proves it can fail.** An absence assertion is
+  trivially satisfiable when the harness never planted the string, so each `…_control` drives the
+  SAME harness with an ordinary (`ORDINARY`) field value and asserts it IS present on the same
+  surface. The password's absence is therefore the screen working, not the sweep being blind.
+
+  **Measured finding — the link screen is live, and for a different reason than assumed.**
+  `_clean_link`'s `_KEEP_PARAMS` is an ALLOWLIST (`q`/`s`/`search`/`page`), so no credential could
+  ever survive in a link's QUERY: that half was closed before BA-4, and a screen there would have
+  been an inert control. Driven before keeping the call, the FRAGMENT passes through untouched —
+  `/r#access_token=TOK123` reached the rendered target verbatim. So the render-time screen covers
+  one real gap, and BA-4 adds a *rail* on the query half instead of duplicating it: a later session
+  that widens `_clean_link` to preserve query strings now breaks a named credential test. The screen
+  is applied at the RENDER boundary and not on the `ElementRef`, because `page.py`'s locator prelude
+  matches a link by `getAttribute("href") === TARGET` first — screening the stored target would
+  demote every click to the label-only fallback. `CLICK <ref>` still works on a screened link
+  because clicking dispatches on the DOM element.
+
+  **Where per-site profiles live, and why.** `$PERSONALCLAW_HOME/browse/profiles/<site_slug>/` with a
+  `.meta.json` — **not config, and not entity state.** A Chrome `user-data-dir` is an opaque,
+  unbounded, live-session blob holding the cookies that ARE the authentication: nothing in it is a
+  decision the user expressed (so no round-trip contract applies, and `config/loader.py` is
+  untouched — it measured **5619** lines against the 6000 ceiling this session, unchanged), and it is
+  not a fact about a person or a project but about *this machine's browser*. So **no config field was
+  added**; `.meta.json` carries only `{site, created_at, last_login_at, session_valid_until,
+  auth_state}` and is asserted by test to have exactly those five keys. `site_slug` is the only place
+  a URL becomes a path and is traversal-proof by CONSTRUCTION (everything outside `[a-z0-9.-]`
+  collapses), tested over seven hostile inputs, and it strips userinfo so
+  `https://alice:pw@host/` cannot put a password in a directory name.
+
+  **Kept out of exports and snapshots via `IGNORED`, not `secret=True` — the distinction is
+  load-bearing.** A `secret=True` entry is excluded from EXPORTS but *deliberately captured by
+  snapshots* so a backup can restore the credential store. A snapshot is restored onto another
+  machine, so capturing a live authenticated browser profile plants a credential on a host the user
+  never signed in from — the same reasoning `IGNORED` already records for `session_key`/
+  `sessions.json`, and exactly §5.1's "never backed up by snapshot/portability, never exported".
+  Claiming it also keeps `audit_home()` green, which would otherwise report the profile root as
+  unmanaged drift the first time anyone browsed. Proven by DRIVING a real `create_export_zip()` over
+  a home holding a profile with a recognisable cookie and asserting no member came from it — with a
+  control asserting the same export DOES carry `config.json`, so the empty result is the exclusion
+  and not an empty export.
+
+  **Clause 1 (park) + 2/3 (persist + reuse) go THROUGH the shipped gate.** `PARK_LOGIN_REQUIRED` is a
+  park like any other, so `_to_result`'s existing projection to `outcome="needs_input"` carries it to
+  WAITING → `attention.py` → the inbox; `request_login` builds the card with
+  `needs_input.build_item` rather than a hand-rolled dict, so it is not a second dialect on the one
+  surface whose value is that every row reads alike. Two triggers, one handoff: §5.3's pre-run check
+  (proven to park **before a single model call** — the `decide` spy records zero calls) and the
+  mid-run credential refusal. §5.3 parks an EXPIRED session but deliberately does NOT park an ABSENT
+  one unless `start_url` is itself a sign-in page — "we have never logged in here" is the normal
+  state of every public page on the web, and parking on it would fire the handoff on every run.
+
+  `record_login` has a REAL production caller and is not an inert control: `_to_result` calls it when
+  a run that started without a fresh session COMPLETES, which is plan §5.2's own wording for the
+  invariant ("it only knows 'I am now authenticated' by observing that the post-login page contains
+  the expected content"). That is also what makes clause 3 cheap — run 1 records, run 2 reads `fresh`
+  and never asks again — and it is pinned by a test asserting the session flips to `fresh` after a
+  completed run, which would red if the call were removed.
+
+  🔴 **What is NOT observed here, stated plainly rather than simulated.** The `done_when` ends in "the
+  user authenticates in a headful window". **Core does not launch Chrome, and BA-4 does not change
+  that** — `browse/transport.py` records the decision (no discovery, no `--user-data-dir` process, no
+  supervision), and §4.1 leaves open whether the gateway shares the interactive MCP's browser.
+  So the handoff hands the caller the exact argv binding a headful window to the right profile
+  (`chrome_launch_args`, tested for the profile path, for the absence of `--headless`, and for §4.2's
+  `--disable-blink-features=AutomationControlled`) instead of opening it. Consequently:
+    * **Real and proven:** the never-transits invariant across six surfaces; the `TYPE` refusal
+      (`page.fill` provably never called); profile creation, persistence, TTL expiry, corrupt-meta
+      fail-closed, and reuse-without-re-auth at the provider; both park triggers; the export/snapshot
+      exclusion; traversal safety.
+    * **SIMULATED:** the human's authentication step. `record_login()` stands in for "a person typed
+      a password into the headful window", because that is the one thing a test cannot do. The
+      *effect* it produces on disk is the real one.
+    * **UNOBSERVABLE here:** a real third-party login with real 2FA, and the headful window itself
+      (nothing in core opens it). Both belong with `BA-5`'s as-a-user validation, where the same
+      real-browser gap is already recorded by `BA-2` and `BA-3`.
+
+  **Deliberately not done.** (a) No `REQUEST_LOGIN` sentinel was added to `ACTION_VOCABULARY`.
+  §5.2 lists "explicit LLM determination" as a fourth detector, but the refusal already IS that
+  escalation — a model that decides it must log in expresses it by trying to type a password, and it
+  gets the handoff. Adding a vocabulary entry means keeping `ACTION_VOCABULARY` and `parse_sentinel`
+  in lockstep for a path already covered. (b) No FE control: the needs-input inbox item is the user
+  surface and it already renders; the banner and the live mirror are `BA-5`'s declared scope.
+  (c) No new `AgentError`/`json_error` code, so no `HTTP_ERROR_CODES` row is owed — a login park is
+  `success=True` with `outcome="needs_input"`, matching every other park.
