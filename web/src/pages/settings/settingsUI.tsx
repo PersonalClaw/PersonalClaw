@@ -329,7 +329,19 @@ export function ToggleRow({ label, hint, cfg, field, patch, danger }: {
     <Row label={label} hint={hint}>
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
-        {danger && on && <AlertTriangle size={14} className="text-warn" />}
+        {/* 🔴 THE ONLY THING SAYING "THIS SWITCH IS RELAXING A SAFETY DEFAULT", and it said it in a
+            14px glyph with no name. The `Toggle` beside it announces the row's label ("YOLO mode",
+            "Propose fix branches") and its on/off state — but not that being on is a relaxation, which
+            is the whole reason the glyph exists. Both shipped consumers are consequential: YOLO mode
+            *"skips every tool-approval confirmation"*, and fix-branches opens branches on a failure.
+
+            `role="img"` + `aria-label` is the settled form for a glyph whose label is its only text
+            (`design/ariaProhibitedAttr.test.ts` declares it; six sites already do it — see
+            `tools/approvalShieldNamed.test.ts`). No `title`: lucide's `LucideProps` rejects it (TS2322),
+            which is why none of those six carries one.
+
+            The wording is this prop's OWN doc sentence, so the label and the contract cannot drift. */}
+        {danger && on && <AlertTriangle size={14} className="text-warn" role="img" aria-label="Relaxes a safety default" />}
         <Toggle on={on} onChange={(v) => patch(field, v as never, flash, label)} label={label} />
       </div>
     </Row>
