@@ -804,3 +804,66 @@ Status stays DESIGNED — implementation deferred to its natural roadmap positio
   at all. One row holding both makes a fully-built, fully-railed deliverable read `todo`
   indefinitely over a credential the repo does not have. `dag.json` was not touched — that flip is
   the owner's.
+
+- **2026-08-27 — `PCS-7`: the FRONTEND reader is now railed. Atom stays `todo` on the same
+  credential-gated V2 half; nothing about the numbers changed.** The 2026-08-24 audit above closed
+  by recording that "no frontend test asserts `activityKind === 'stats'` at all, so the production
+  reader of these numbers could be deleted with every gate green", and deferred it to
+  `EXT:COST-AND-TOKEN-OBSERVABILITY` on the dep row's "owns/renders the readout" wording. That was
+  the wrong home for it: COST-AND-TOKEN-OBSERVABILITY owns the *readout's design*, but the four lines
+  that carry PCS-7's own numbers from the wire to the DOM are this atom's deliverable, and an
+  unrailed reader is the inert-control shape whichever plan owns the pixels. Verified before writing,
+  not assumed: `git grep` over every `web/src/**/*.test.ts{,x}` found `stats` named in ten files and
+  the `'stats'` ACTIVITY KIND in none — `contextLedgerReach.test.tsx` passes a `stats=` prop into its
+  fixture and asserts only the `learned` row, so it was the closest thing to coverage and covered
+  nothing.
+  **What the reader actually is — four deletable lines, none of them type-checked into place.**
+  `ChatPage.tsx:3650` folds `ak === 'stats'` into `ledger.stats`; `:3652` counts it in `hasLedger`
+  (drop it and a turn that fed no context and learned nothing has no way to open the disclosure at
+  all); `:3687` excludes it from `isProcess` so it renders once in the ledger rather than twice;
+  `:3740` hands it to `<ContextLedger stats={…}>`, which gates the `Telemetry` row on it
+  (`ContextLedger.tsx:98-102`). All four are string comparisons and JSX attributes — `tsc` is happy
+  with every one of them removed.
+  **`web/src/pages/chat/turnTelemetryReader.test.tsx`, 16 tests, two halves.** The RENDERING half
+  mounts the real `ContextLedger` (which is a separate module precisely so it can be mounted — the
+  reason `contextLedgerReach.test.tsx` gives) and opens the disclosure the way a user does. The FOLD
+  half scans `ChatPage.tsx` as source in the JSX attribute/expression form `skillsUsedChip.test.ts`
+  already uses for the neighbouring `learned` row — a ~4k-line page owning a socket and a composer is
+  not mountable here — plus ONE behavioural leg through the real `insertActivity` proving the
+  `'stats'` discriminator the fold matches on is the string the live WS handler actually stamps. Both
+  halves carry a vacuity floor: a turn with no stats renders NO `Telemetry` row (without it every
+  "contains" assertion is satisfiable by an always-on row), and the source scan asserts it reached a
+  >100k-char page containing `function AssistantSegments(`.
+  **The honest-`None` legs are the ones that matter, and their fixtures are the PRODUCER'S own
+  sentences.** The five strings under test were taken from a real `_turn_complete_line` call and match
+  `tests/test_turn_complete_cache_telemetry.py`'s literals character for character, because a fixture
+  invented on the frontend would let this file guard a sentence the backend never emits — the
+  one-sided-inventory failure. `saved unpriced` must survive with no `$` anywhere after `saved`;
+  `cache (12,400 read / 1,200 written)` must survive with no `% hit`; and the DISCRIMINATION leg
+  renders unpriced / measured-`$0.0000` / no-percentage / measured-`0% hit` in four independent mounts
+  and asserts **four distinct texts**, because each of the other legs is individually satisfiable by a
+  reader that collapses "we don't know" into "it was zero". One scoping correction worth recording:
+  "the row shows no percentage" cannot be asserted against the whole line — it carries a
+  `context 42%` fragment — so every such assertion is scoped to the `Telemetry` row and, for the
+  money, to the substring after `saved`.
+  **Falsified five ways — each mutation on the LIVE line, `git grep`'d back to prove it applied, each
+  restored from a file COPY at the literal path (never `git checkout --`), tree confirmed clean
+  between runs. Five DISTINCT red sets, so the legs discriminate instead of all keying on one line.**
+  (i) deleting the fold at `:3650` → **1 failed / 54 passed of 55**, and both
+  `contextLedgerReach.test.tsx` and `skillsUsedChip.test.ts` stayed GREEN — which is the measured
+  proof of the gap, since before this file that deletion reddened nothing at all. (ii) deleting the
+  whole `Telemetry` row from `ContextLedger.tsx` → **8 failed / 16 passed of 24**, with the 8-test
+  `contextLedgerReach.test.tsx` fully green beside it. (iii) a "tidying" reader that rewrites
+  `saved unpriced` → `saved $0.0000` and `cache (` → `cache 0% hit (` — the realistic future
+  regression — → **3 failed / 21 passed of 24**: exactly the two honest-`None` legs plus the
+  discrimination set, while the priced and measured-zero legs stayed green. (iv) dropping
+  `ledger.stats` from `hasLedger` → **1 failed / 15 passed of 16**. (v) dropping `'stats'` from the
+  `isProcess` exclusion → **1 failed / 15 passed of 16**.
+  **Test-only, deliberately.** The reader was found CORRECT: it formats none of these numbers, which
+  is why the backend's honesty rules are the ones that hold end to end, and no production line was
+  changed. `docs/design/consistency-audit.json` was rewritten by `npm run build` and reverted — it is
+  stale on `main` and is not this diff. **Gate:** `npm run typecheck:web` clean, `npm run test:web`
+  **539 files / 5869 tests all passed** (16 of them new), `npm run build` clean. No Python changed,
+  so no `make` leg applies. `dag.json` untouched — that flip is the owner's, and the atom's remaining
+  clause is still the one no local environment can close: a real OpenAI-family run, plus a Bedrock
+  inference-profile id that resolves to a price row.
