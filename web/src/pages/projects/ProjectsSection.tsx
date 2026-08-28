@@ -5,7 +5,8 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CheckCircle2, CircleDot, Circle, AlertTriangle, RefreshCw, Download, BookMarked, Users, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, Lock, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, RefreshCw, Download, BookMarked, Users, type LucideIcon } from 'lucide-react'
+import { statusMeta, TERMINAL } from '../tasks/taskMeta'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -917,11 +918,31 @@ function TaskListPanel({ list, onOpenTask }: { list: TaskListItem; onOpenTask: (
         <li key={t.id}>
           <button type="button" onClick={() => onOpenTask(t.id)}
             className="group flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-[0.8125rem] hover:bg-surface-high">
-            {t.status === 'done' ? <CheckCircle2 size={14} className="mt-0.5 shrink-0" style={{ color: 'var(--color-ok)' }} />
-              : t.status === 'in_progress' ? <CircleDot size={14} className="mt-0.5 shrink-0 text-primary" />
-              : t.status === 'blocked' ? <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" />
-              : <Circle size={14} className="mt-0.5 shrink-0 text-on-surface-low/40" />}
-            <span className={`min-w-0 flex-1 ${t.status === 'done' ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>{t.title}</span>
+            {/* 🔑 THE STATUS COMES FROM `taskMeta.statusMeta`, WHICH OWNS IT — icon, label and tone
+                together, and 13 files already read it. This card used to hand-roll a four-branch
+                ternary, and it disagreed with the canonical map on THREE of five statuses:
+
+                  in_progress   CircleDot `text-primary`   → canonical is `--color-info`. Coral is the
+                                primary/active colour, so this also spent it categorically.
+                  blocked       AlertTriangle              → canonical icon is `CircleSlash`.
+                  cancelled     NOT HANDLED — it fell to the `else` and rendered as an open circle, so
+                                a cancelled task looked NOT STARTED. `demo-home` has one, so this was
+                                reachable, not theoretical.
+
+                And none of the four was named, so the status was carried by an unnamed 14px glyph:
+                `role="img"` + `aria-label` is the settled form (six sites; see
+                `tools/approvalShieldNamed.test.ts`). The label is `statusMeta`'s own, so "Not started"
+                and "Completed" read the same here as on `#/tasks`.
+
+                🪤 The strike-through follows `TERMINAL`, not `=== 'done'`. `TERMINAL` is {done,
+                cancelled} and the sibling list uses it for grouping and sorting; keying on `done` alone
+                left a cancelled task's TEXT looking active while its icon said otherwise. */}
+            {(() => {
+              const sm = statusMeta(t.status)
+              const StatusIcon = sm.icon
+              return <StatusIcon size={14} className="mt-0.5 shrink-0" style={{ color: sm.tone }} role="img" aria-label={sm.label} />
+            })()}
+            <span className={`min-w-0 flex-1 ${TERMINAL.has(t.status) ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>{t.title}</span>
             <ChevronRight size={14} className="mt-0.5 shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
           </button>
         </li>
