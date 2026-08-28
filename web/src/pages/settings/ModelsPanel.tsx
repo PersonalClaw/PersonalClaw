@@ -23,6 +23,7 @@ import { notify } from '../../app/appSdk'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
+import { reportingWrite } from '../../app/reportingWrite'
 
 // Canonical use-cases (matches the backend's USE_CASES vocabulary).
 // `chain`: the binding is an ordered fallback CHAIN (position 0 = default,
@@ -178,7 +179,9 @@ function ReclaimButton({ onReclaimed }: { onReclaimed: () => void }) {
     if (!ok) return
     setBusy(true)
     try {
-      await api.modelDownloadCleanup()
+      // Was a bare `try/finally`: a refused cleanup rejected unhandled and the button simply
+      // stopped spinning, which is what success looks like too.
+      if (!(await reportingWrite('reclaim that space', () => api.modelDownloadCleanup()))) return
       await refreshCandidates()
       onReclaimed()
     } finally { setBusy(false) }
@@ -514,7 +517,10 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
     }
     setSaving(true)
     try {
-      await api.setActiveModel(useCase, models)
+      // The embedding branch above warns this re-indexes ALL knowledge and memories. A silent
+      // failure there is the worst case in this file: nothing changes, nothing is said, and the
+      // re-index the user was warned about never starts — so `startReindex()` is gated too.
+      if (!(await reportingWrite('change the model', () => api.setActiveModel(useCase, models)))) return
       onChanged()
       if (useCase === 'embedding' && models.length > 0) startReindex()
     } finally { setSaving(false) }

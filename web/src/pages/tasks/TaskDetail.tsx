@@ -17,6 +17,7 @@ import { statusMeta, priorityMeta, dueMeta, relTime, isExitComplete, exitDoneCou
 import { prereqIds } from './dag'
 import { TaskForm, toDraft, draftToPayload, type TaskDraft } from './TaskForm'
 import { accentChip } from '../../design/accent'
+import { reportingWrite } from '../../app/reportingWrite'
 
 /** Body for the task SidePanel. Owns the view↔edit toggle (edit reuses the same
  *  panel, per the directive) and the comment thread. Project-provider tasks are
@@ -360,7 +361,13 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
   async function send() {
     const body = draft.trim(); if (!body) return
     setSending(true)
-    try { await api.addTaskComment(taskId, body, provider); setDraft(''); await load() } catch { /* ignore */ } finally { setSending(false) }
+    // The draft is cleared and the thread refetched ONLY on success. Clearing it on a failure
+    // would destroy the text the user typed while telling them nothing about why it vanished.
+    try {
+      if (!(await reportingWrite('post this comment', () => api.addTaskComment(taskId, body, provider)))) return
+      setDraft('')
+      await load()
+    } finally { setSending(false) }
   }
 
   // A comment has no edit path, so removal is the only way to take back a wrong one.
@@ -370,7 +377,10 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
   // deleting the right one, and on a long thread "this comment" identifies nothing.
   async function remove(commentId: string, body: string) {
     if (!(await confirmDelete('comment', rowSubject([body], 40)))) return
-    try { await api.deleteTaskComment(taskId, commentId, provider); await load() } catch { /* ignore */ }
+    // Gated: a comment that failed to delete is still in the list, so refetching re-renders the
+    // same thread and reads as "nothing happened, twice".
+    if (!(await reportingWrite('delete this comment', () => api.deleteTaskComment(taskId, commentId, provider)))) return
+    await load()
   }
 
   return (

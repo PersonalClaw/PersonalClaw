@@ -122,12 +122,12 @@ const CLASSIFIED: Record<string, string> = {
   // A census keyed on `path:line` is exact about WHICH site it excuses — its strength — but it makes an
   // unrelated insertion look like a new offender. RE-KEY IT ON THE CONTROL'S OWN TEXT (its aria-label, or
   // its `disabled=` expression). This is the third bite; the fix is overdue and belongs in its own change.
-  'pages/tasks/TaskDetail.tsx:226': 'read-only task; the panel states it once with a lock',
-  'pages/tasks/TaskDetail.tsx:247': 'read-only task; the panel states it once with a lock',
+  'pages/tasks/TaskDetail.tsx:227': 'read-only task; the panel states it once with a lock',
+  'pages/tasks/TaskDetail.tsx:248': 'read-only task; the panel states it once with a lock',
   // Display-only rows: with no navigation handler the row is not a button, and `disabled:cursor-default`
   // says exactly that rather than "blocked".
-  'pages/tasks/TaskDetail.tsx:295': 'no navigation handler → informational row (cursor-default)',
-  'pages/tasks/TaskDetail.tsx:267': 'no navigation handler → informational row (cursor-default)',
+  'pages/tasks/TaskDetail.tsx:296': 'no navigation handler → informational row (cursor-default)',
+  'pages/tasks/TaskDetail.tsx:268': 'no navigation handler → informational row (cursor-default)',
   // A sequence dependency whose cause is the field directly above it.
   'pages/tasks/TaskForm.tsx:181': 'depends on the Project field rendered immediately above',
   // The reason is the control's own NAME, which flips with the state: "Pin to dashboard" when it can
@@ -173,7 +173,7 @@ describe('the disabled-reason census', () => {
     expect(at('pages/knowledge/KnowledgeListPage.tsx', 953)).toMatch(/disabled=\{!o\.item_id\}/)
     expect(readFileSync(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'), 'utf8'),
       'and its label really does explain the state').toMatch(/\(removed — insight kept\)/)
-    expect(at('pages/tasks/TaskDetail.tsx', 295)).toMatch(/disabled=\{!onOpenTask\}/)
+    expect(at('pages/tasks/TaskDetail.tsx', 296)).toMatch(/disabled=\{!onOpenTask\}/)
     expect(readFileSync(join(SRC, 'pages/tasks/TaskDetail.tsx'), 'utf8'),
       'the cursor says "not a button", not "blocked"').toMatch(/disabled:cursor-default/)
     expect(at('ui/widget/WidgetFrame.tsx', 250)).toMatch(/disabled=\{pinned\} loading=\{pinPending\}/)

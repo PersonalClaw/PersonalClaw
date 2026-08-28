@@ -10,6 +10,7 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SkillItem, type SkillFile, type SkillIntegrity } from '../../lib/api'
 import { SOURCE_TONE } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
+import { reportingWrite } from '../../app/reportingWrite'
 
 /** Installed-skill inspector for the SidePanel: metadata + the skill's real file
  *  list, each openable to read its content (SKILL.md rendered as markdown,
@@ -28,7 +29,13 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
 
   async function del() {
     if (!(await confirmDelete('skill', skill.name, { body: 'This removes it from disk. This cannot be undone.' }))) return
-    try { await api.deleteSkill(skill.name); onDeleted() } catch { /* ignore */ }
+    // The dialog above promises "This removes it from disk. This cannot be undone." — the
+    // strongest consent this app asks for. Swallowing the failure after that left the panel
+    // open, the skill present, and nothing said: the only reasonable read is that the click
+    // missed. `onDeleted()` stays GATED, per reportingWrite's own rule — closing the inspector
+    // on a failed delete would claim the removal it did not make.
+    if (!(await reportingWrite(`delete the skill "${skill.name}"`, () => api.deleteSkill(skill.name)))) return
+    onDeleted()
   }
 
   if (editing) return <SkillEditor name={skill.name} onBack={() => setEditing(false)} onSaved={() => { setEditing(false); onSaved?.() }} />
