@@ -648,6 +648,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The check that keeps installed apps off PersonalClaw's internals had never actually run.** Apps are
+  meant to reach core only through the published SDK, and one test enforces that. It looked for the apps
+  folder in a place that does not exist — in a clone, in a git worktree, or in a development workspace
+  alike — and reported itself as skipped every time, so nothing would have objected if an app had reached
+  past the boundary. It now finds the apps wherever they are, checks the ones that ship inside
+  PersonalClaw as well, and fails if it ever has nothing to check. Pointed at a real apps checkout it
+  examines 196 files, all of which pass.
+
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it
   had.** It always reported *re-embedded 0 item(s)* — in every install, whatever your library held. Two
   independent faults: it handed the re-index a plain function where an embedding model was expected, so
