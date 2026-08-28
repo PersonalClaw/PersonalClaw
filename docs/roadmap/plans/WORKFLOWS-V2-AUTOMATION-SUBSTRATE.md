@@ -6098,3 +6098,15 @@ own commit.
   venv (`js-render = ["playwright>=1.40"]`, `pyproject.toml:169`), while the Chromium binary is already
   cached from the Node suite — so `pip install -e ".[js-render]"` is the whole gap, and `render_url` fails
   soft when Playwright is missing (`web_poll.py:43`, `render.py:16`).
+
+- **[2026-08-27] OWNER RULINGS — `WF2AUT-11` and `WF2AUT-12`.**
+  `WF2AUT-11`: **re-scoped from "delete a module" to "port the driver, THEN delete"**, with the port filed under
+  LOOPS-EVOLUTION Phase 4, which owns the loop cycle driver. `autonudge.py` is still the **LIVE** tick engine, so
+  deleting it breaks rather than retires — a retirement atom whose named thing is still load-bearing is mis-labelled
+  work, the same shape the landed-atom census flags when a RETIREMENT target still exists on the ref (evidence
+  *against* completion, not for it). The deletion stays here and becomes trivially true once the port lands.
+  `WF2AUT-12` (E4): **the webhook fire path rides the landed `src/personalclaw/inbound/` substrate.** It already ships
+  auth, capabilities, audit, `mcp_http` and tools. A second inbound surface would be two doors into the same house,
+  each with its own auth and audit — and the one that gets less attention becomes the way in. Scoped-token
+  verification is a capability on the existing door. This also retires the atom's EXT dependency: nothing in
+  EXTERNAL-ACCESS needs to land first.

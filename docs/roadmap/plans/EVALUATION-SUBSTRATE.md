@@ -1842,3 +1842,60 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   `security_events.jsonl`, which is **three foreign `personalclaw gateway` processes** alive on this
   machine, not this diff — the 43-test and 403-test targeted runs that exercise the new
   `gate._sel_log` writer both reported the rail clean, and so did the rebased full run.
+- **[2026-08-27] OWNER RULINGS — `ES-7` and `ES-8`, two of eleven one-line scope calls that together gated 20+ atoms.**
+  `ES-7`: **drop to three watched bindings.** No per-skill `subject` on `MatrixSpec` and no `eval_judge` member in
+  `providers/use_cases.USE_CASES`. `subject`'s own comment enumerates template id / retrieval-arm set / judge fixture
+  set / use-case — "skill" is not in that list, and widening a **shared** contract for one consumer is how a schema
+  stops meaning anything. `eval_judge` is not a use case the router serves; minting one to satisfy a watchdog's count
+  would be inventing a member to satisfy a test — the inert-control shape this plan itself keeps finding.
+  `ES-8`: **narrow the gate to inputs that exist.** One rung vocabulary, and it is `guardrails/autonomy.py`. This
+  program has already paid for a duplicate vocabulary once (`WF2LOO-16` reconciled a THIRD verdict dialect, with the
+  recorded hazard that downstream work first mints a FIFTH); a second rung ladder is that hazard with a different noun.
+  `ES-8` also needs decomposing — four §4 sub-scopes in one atom measures ~4 sessions. Full reasoning in each atom's
+  `blocked_reason`.
+## Execution log — ES-11 (independent re-verification: the reader clause is CLOSED) — §8 **COMPLETE**
+
+- **[2026-08-27][ES-11] NO WORK WAS NEEDED — the clause was already on `main`, and the brief that sent
+  me looking for it was one day stale.** I was briefed to implement the owner ruling's remainder ("an
+  unscored candidate writes NO results row, and that absence must RENDER as 'unscored'"). It is already
+  implemented and merged: `ce642b2e` is the search engine and `e97c5012` is *"ES-11 render an unscored
+  optimize candidate as unscored, never 0.0"*. Recorded rather than silently re-done, because the honest
+  finding here is that the atom's own header still said `**Status:** todo` with no date while its row
+  said `🟡 impl landed` with no date either — so nothing in the tracking surface distinguished "not
+  built" from "built, awaiting an owner flip", which is the same absence-versus-zero confusion one
+  level up from the defect the atom fixes.
+- **[2026-08-27][ES-11] Re-measured every claim rather than trusting the log above it.**
+  `tests/test_evals_optimize.py` collects **53 tests, all passing** (matching the 47 → 53 the previous
+  entry claims). `UNSCORED_OUTCOMES == {"scope_violation", "no_change"}` is closed and derived from
+  `outcome`, for the round-trip reason the code documents at `optimize.py:526-536`: `_cmd_adjudicate`
+  reads prior rows back through `_as_float`, which turns a rendered `None` into `0.0`, so a flag stored
+  beside the score would have resurrected the zero on iteration 2. One correction to the previous
+  entry's own numbers: it signs off with "`src/personalclaw/config/loader.py` untouched at 5900 lines" —
+  measured on `main` at `ca8e3c09` that file is **5619** lines, so the figure was ~281 lines stale when it
+  was written. It is untouched either way; the count is what was wrong, and a ceiling figure carried from
+  memory instead of measured is how a stale one gets re-published.
+- **[2026-08-27][ES-11] The consumer census the "fix one reader, leave another blank" hazard demands —
+  all three are covered, and there is NO frontend surface.** `git grep` for importers of
+  `personalclaw.evals.optimize` finds the module is reached only through
+  `python3 -m personalclaw.evals.optimize <subcommand>` from the bundled template's three `bash` nodes.
+  There is no dashboard handler, no API view and no `web/` component, so the clause's "render" is
+  satisfied at the CLI/JSON surface and is proved there: (1) `.experience/index.json` via
+  `LedgerRow.to_dict` → `score: None` + `score_state`; (2) `search.json` via `SearchOutcome.to_dict` →
+  `results_state` + `candidates`/`scored_candidates`/`unscored_candidates`; (3) `_cmd_adjudicate`'s
+  per-iteration verdict, which is what the report node reads as `{{nodes.search.output}}`, carrying the
+  same two keys. Two further surfaces were checked and correctly need nothing: `propose_winner`
+  interpolates `Score {outcome.winner_score}` but is unreachable unless a candidate was ADMITTED (and
+  `admitted` is a scored outcome by construction), and `BestEver` already separates "no history" from
+  "everything scored 0" via `rows_considered`, which is the same distinction one level out.
+- **[2026-08-27][ES-11] Precedent confirmed, not re-chosen.** The vocabulary reuses
+  `retrieval_bench`'s — `SCORE_NO_CANDIDATES == REASON_NO_CANDIDATES == "no_candidates"` — so there is
+  no second spelling of "there was nothing to measure", and it is the third application of the same
+  house rule that renders an unknown `outcome_grade` as `ungraded` rather than falling back to a grade
+  (`ES-7`; cross-referenced from `PA.md:202` and `decisions.py:22`). No third vocabulary was minted.
+- **[2026-08-27][ES-11] Deliberately NOT done.** No code was touched, so nothing was re-falsified —
+  mutating a merged, already-falsified line to re-observe someone else's red is spend without a finding.
+  `SearchOutcome.winner_score` still renders `0.0` when nothing was admitted, for the reason the previous
+  entry gives (it is named by `admitted: false` + `winner_fingerprint: ""`, and the bundled template's
+  report node declares `winner_score` a required `number`). `dag.json` untouched — the flip is the
+  owner's. This change is docs-only: the dated status line the atom lacked, plus the file-level narrative
+  that still claimed "entirely unstarted; all 11 atoms are todo" when four are `done`.

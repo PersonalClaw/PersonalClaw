@@ -644,3 +644,26 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
   existing starts an unsaved inline def, and a declarable-but-dead shape is the #47 defect this plan
   keeps closing. Falsified four ways (failed apply marked handled; the undeclared-kind 403 skipped; a
   foreign `app_callback` allowed; batch-approve enabled for a mixed selection) — each reds its test.
+
+### `INU-9` filed — the one thing every inbox source lacks: a user-authored item. 2026-08-27
+
+**OWNER RULING, and it corrects a claim I made myself.** `DC-4` shipped a tray "quick capture" item that
+deep-links `${DEEP_LINKS.inbox}?capture=1`, and nothing in `web/src` reads that flag — so the affordance
+navigates and writes nothing. I briefed that atom asserting the reader belonged to *this* plan. That was
+wrong, and the `DC-4` session caught it: this plan is **8/8 atoms done** and none of them covers a
+user-**authored** item. Every source it ships is synthesized by the system — a rule fired, a run needs
+input, an app contributed a source.
+
+So "owned elsewhere" would have orphaned the work. It is filed here as new scope (`INU-9`) rather than
+recorded as a note in `DC-4`'s reason, because a backlog keyed on what was found cannot drain.
+
+**The atom owns the capability, not the entry point.** The tray is merely its first consumer; a compose
+affordance in the dashboard is the same endpoint. `DC-4` is deliberately **not** a dependency — its deep
+link already ships on `main`, and its own remaining clause is device-gated (a signed bundle plus a
+reboot), which has nothing to do with this. Until `INU-9` lands, `?capture=1` is a known inert control
+with a named owner rather than an anonymous one.
+
+Two constraints written into the `done_when` so they are not rediscovered: the new kind must reach the
+**typed-kind registry** (this plan's own contract), and it must **not** add a phantom source to the
+notification-rules vocabulary — a target the system cannot deliver is the failure mode `MC-6`/`MC-5` have
+been untangling all week.

@@ -1411,3 +1411,9 @@ Four more were found by a read-only audit of the 29 `EXT:`-only atoms.
   security-control change (E4) whose blast radius is the leaf env filter, not the vault. The vault
   reuses `looks_secret` unchanged — a second list would drift — and its host section states that
   rows are detected by name shape, so the over-breadth is visible rather than hidden.
+- **[2026-08-27] OWNER RULING — `EI-7`: DEVIATION accepted; the in-sandbox observation moves to `EI-2`'s
+  `done_when`.** SC7 (`pclaw-tool memory_recall` succeeding while `ss`/`netstat` show zero listening sockets, no
+  credential material present, and a research-profile sandbox refused write-class tools host-side) belongs with the
+  atom that **owns** the sandbox — `EI-2`'s `docker` provider — not with the second-opinion handoff that merely runs
+  inside one. `EI-7`'s own deliverable (`ProposerBackend` plus the different-cataloged-runner one-shot, accepted only
+  when the disk re-diff confirms the edits, SEL-audited) is complete and green as PR **#2079**. Flip `EI-7` on merge.

@@ -1122,3 +1122,9 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   tables are still exactly `READ_ONLY_PROVIDERS` / `WRITE_CAPABLE_PROVIDERS`, and a core-native
   provider needs one line in one of them. Recorded because the same two claims will otherwise be
   re-derived by the next session.
+- **[2026-08-27] OWNER RULING — `WF2KNO-9`: a NEW atom under this plan owns the dispatchable HTTP-egress action
+  provider, not `EA-8`.** None of the 20 registered providers is a network fetch. `EA-8` is the **inbound** A2A
+  gateway; an outbound egress provider is a knowledge/fetch capability that must ride `net/guard.py`'s egress
+  chokepoint under a SOURCE policy, and putting both directions of the trust boundary in one atom is the wrong seam.
+  Note the house rule that a new action provider needs a **capability class** — so this is not a thin wrapper over
+  `net.fetch`, which is why it earns an atom rather than a clause.
