@@ -5,12 +5,8 @@ import { CheckCircle2, Circle, ListTodo, Plus } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, SlotAction, WidgetRow, RowAction } from './kit'
+import { signalPriority } from '../../tasks/taskMeta'
 import type { RouteProps } from '../../../app/useQueryState'
-
-const PRIORITY_TONE: Record<string, string> = {
-  critical: 'var(--color-danger)', high: 'var(--color-warn)',
-  medium: 'var(--color-info)', low: 'var(--color-on-surface-low)',
-}
 
 /** Tasks — ready-to-work tasks with inline complete. A one-tap check marks the
  *  task done (updateTask status → done) and it leaves the list; the live feed
@@ -42,7 +38,10 @@ export function TasksWidget({ navigate }: RouteProps) {
   return (
     <div className="flex flex-col gap-xs pt-xs">
       <AnimatePresence initial={false}>
-        {visible.slice(0, 6).map((t) => (
+        {visible.slice(0, 6).map((t) => {
+          // `null` for the default and for unset — see the note at the dot below.
+          const pm = signalPriority(t.priority)
+          return (
           <WidgetRow
             key={t.id}
             onClick={() => navigate('tasks')}
@@ -57,12 +56,34 @@ export function TasksWidget({ navigate }: RouteProps) {
             }
           >
             <div className="flex items-center gap-s">
-              <Circle size={13} className="shrink-0" style={{ color: PRIORITY_TONE[t.priority ?? 'low'] ?? 'var(--color-on-surface-low)' }} />
+              {/* 🔑 THE PRIORITY DOT COMES FROM `signalPriority`, THE CANONICAL HELPER — this widget used
+                  to keep a rival `PRIORITY_TONE` map of its own, and both defects that map caused are
+                  the reason `taskMeta` owns this:
+
+                   · it painted `--color-info` on every `medium` task, and `medium` is the BACKEND
+                     DEFAULT (`models.py`: `priority: TaskPriority = MEDIUM`), so it is indistinguishable
+                     from never-set. `signalPriority`'s own docstring measured 28 of 30 tasks medium on
+                     the validation home — a semantic colour on 93% of rows, saying nothing. Semantic
+                     colours never decorate.
+                   · it listed 4 of the registry's 5 rungs, so `trivial` fell through to the `??`.
+
+                  🪤 THE SLOT IS RESERVED EVEN WHEN THERE IS NO DOT. Rendering nothing for a no-signal
+                  task would left-shift that row's title by 13px + the gap, so a six-row list would sit
+                  ragged. The wrapper keeps the width; only the glyph is conditional.
+
+                  🪤 AND THE COLOUR IS NEVER THE ONLY CARRIER (WCAG 1.4.1). The four canonical sites
+                  render `pm.label` as visible tone-coloured text; a dense preview row cannot spare the
+                  width (its title already truncates to 266px of 434 at 390px), so the dot keeps the
+                  label as its accessible name instead of dropping it. */}
+              <span className="inline-flex size-[13px] shrink-0 items-center justify-center">
+                {pm && <Circle size={13} aria-label={`${pm.label} priority`} style={{ color: pm.tone }} />}
+              </span>
               {/* 266px of 434 at 390px — 1.6x. Same subject, same fix as the list row and the DAG node. */}
               <span data-type="body-m" className="truncate text-on-surface" title={t.title}>{t.title}</span>
             </div>
           </WidgetRow>
-        ))}
+          )
+        })}
       {/* 🪤 A DASHBOARD WIDGET IS A PREVIEW, AND NOTHING SAID SO. Six of twenty open tasks rendered
           with no count anywhere — its `Section` frame carries a bare label, and unlike the schedule
           widget below it there is no disclosure for the rest. So a user reads six as all of them. */}
