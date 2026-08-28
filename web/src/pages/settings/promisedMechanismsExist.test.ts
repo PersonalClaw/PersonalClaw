@@ -136,10 +136,24 @@ describe('the remaining promise-hints, verified and pinned', () => {
   it('suggestions really are built from activity', () => {
     expect(web('pages/dashboard/widgets/Suggestions.tsx')).toContain('they build from your activity')
     const sug = py('suggestions.py')
-    expect(sug, 'the prompt context is assembled from memory + recent activity').toMatch(
-      /Assemble context for the suggestions prompt from memory and recent activity/,
-    )
-    expect(sug, 'and it really reads recent history').toMatch(/read_recent_history\(days=2\)/)
+    // 🪤 THIS USED TO PIN A DOCSTRING SENTENCE — `/Assemble context for the suggestions prompt from
+    // memory and recent activity/` — and a legitimate rewrite of that docstring reded this rail in CI
+    // while the mechanism was untouched and, in fact, improved. A prose pin for a mechanism claim
+    // fails on the one thing that should never break it: better prose.
+    //
+    // So it now asserts the SOURCES `_build_context` actually reads. That is strictly stronger than the
+    // sentence was: deleting any one of these reds the rail, where the docstring could have kept
+    // claiming all four after the code stopped doing any of them.
+    expect(sug, 'the function the hint is a promise about must exist').toMatch(/def _build_context\(/)
+    for (const [source, call] of [
+      ['user preferences', /read_preferences\(\)/],
+      ['active projects', /read_projects\(\)/],
+      ['recent history', /read_recent_history\(days=2\)/],
+      ['recent sessions', /list_sessions\(\)/],
+      ['active automations', /TriggerStore\(base_dir=config_dir\(\)\)\.load\(\)/],
+    ] as const) {
+      expect(sug, `"built from your activity" claims ${source}, so the builder must read it`).toMatch(call)
+    }
   })
 
   it('the design canvas asks for exactly what the loop is told to write', () => {
