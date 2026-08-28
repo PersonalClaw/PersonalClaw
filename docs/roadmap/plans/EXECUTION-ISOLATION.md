@@ -106,7 +106,7 @@ class SandboxHandle(ABC):          # the 6-method contract
 - **New provider type `sandbox`:** added to `PROVIDER_TYPES` (apps/manifest.py:914) AND a new `SandboxTypeHandler` in `providers/registry.py` wired in `get_provider_registry()` — the two MUST land in the same commit or `test_manifest_types_match_handlers` fails (the #47 bug class). The handler `create()`s via the standard `providers/loader.py:load_factory` path and registers into `sandbox_providers/registry.py:register_sandbox_provider` (module-level flat dict, the `action_providers/registry.py` shape). Apps can therefore contribute sandbox providers (`podman`, a future `byoi`) exactly like `apps/webhook-action` contributes an action provider.
 - **Built-ins register at boot** like channel transports' webui: a `register_default_sandbox_providers()` call in `dashboard/server.py` startup registers `none` + `docker` — they are core-native, not apps. `lima` ships as a **first-party app** (`apps/lima-sandbox`, §2) because it carries a real external dependency.
 - **SDK:** `sdk/sandbox.py` re-exports `SandboxProvider`/`SandboxHandle`/`SandboxSpec` (the `sdk.net`/`sdk.security` facade precedent) so contributed providers import only the SDK.
-- **NOT an action provider** — nothing here touches `ALLOWED_HOOK_PROVIDERS` (validation.py:555) for §1 (§4 and §7 DO add action providers; see there).
+- **NOT an action provider** — nothing here touches `ALLOWED_HOOK_PROVIDERS` (src/personalclaw/validation.py) for §1 (§4 and §7 DO add action providers; see there).
 
 ### 1.3 The four consumers (uniform adoption)
 
@@ -166,7 +166,7 @@ New `AgentConfig` fields (`agents.runner_idle_release_secs`, `agents.runner_heal
 
 ### 4.1 The action provider
 
-A new core-native action provider `second-opinion` (registered in `action_providers/registry.py:_ensure_default_providers_registered` AND **added to `ALLOWED_HOOK_PROVIDERS` (validation.py:555)** — a new action provider that skips this is rejected by hook create/update even though the UI offers it). It packages a stalled node/loop/session's state into a **one-shot handoff brief** (agentsystem's `/handoff-codex` packet, generalized):
+A new core-native action provider `second-opinion` (registered in `action_providers/registry.py:_ensure_default_providers_registered` AND **added to `ALLOWED_HOOK_PROVIDERS` (src/personalclaw/validation.py)** — a new action provider that skips this is rejected by hook create/update even though the UI offers it). It packages a stalled node/loop/session's state into a **one-shot handoff brief** (agentsystem's `/handoff-codex` packet, generalized):
 
 - Brief contents: original goal; what was tried with **verbatim errors**; where stuck; files touched; a **FRESH `git status` + `git diff`** taken at brief-build time (stale diffs are worse than none); the concrete ask. Written to a unique file under the run/loop dir, fenced where it embeds transcript excerpts (`fence_untrusted`, security.py:672).
 - Target selection: a DIFFERENT runner from the catalog (§3) than the one that stalled — filtered by health evidence + required capabilities; the user's binding order breaks ties.
@@ -260,7 +260,7 @@ The store, keychain backing, spawn-time resolution, secret-filtered leaf env, an
 | SDK surface | `sdk/sandbox.py` facade (SandboxProvider/Handle/Spec) — the `sdk.net`/`sdk.security` precedent |
 | Gemini runner | first-party app `apps/gemini-cli-agent` via `acp_bundles/_register.py` (argv + dialect + env) — the existing claude-code/codex/kiro path, no new registration mechanism |
 | Runner catalog | `agent_metadata.py` extension (`<name>.runner.json` sidecar, atomic_write); health evidence written by the connection pool's warm attempts |
-| `second-opinion` action provider | `action_providers/registry.py:_ensure_default_providers_registered` + **`ALLOWED_HOOK_PROVIDERS` (validation.py:555)** — mandatory, or hook create/update rejects it |
+| `second-opinion` action provider | `action_providers/registry.py:_ensure_default_providers_registered` + **`ALLOWED_HOOK_PROVIDERS` (src/personalclaw/validation.py)** — mandatory, or hook create/update rejects it |
 | Triage dispatch | consumes the approved WORKFLOWS-V2 Canonical Finding record; panel extends the WORK-CONTAINERS cockpit diff panel; new SSE events added to `useRunStream.ts RUN_LIFECYCLE` (EventSource drops unregistered types) |
 | Config fields | ALL new fields (agents.runner_*, agents.durable_sessions, sandbox defaults, checkpoint caps) through the FOUR points: dataclass `_meta` → `AppConfig.load()` mapping → `to_dict()` → `_EDITABLE_CONFIG` + FE |
 | Secrets vault | UX over the approved WORK-R19 store + existing `save_credential`; SEL-audited resolution; presence-only API |

@@ -126,7 +126,7 @@ Plug-in fidelity (recon: providers.md "How a NEW provider plugs in" #2):
 ### 2.3 What this deliberately does NOT add
 
 - **No new provider TYPE** — `PROVIDER_TYPES` and the `_TypeHandler` set are untouched; voice profiles are an entity + resolver, not a provider family (same stance as "no space provider type", `providers/registry.py:555`).
-- **No new action providers** — nothing is added to `ALLOWED_HOOK_PROVIDERS` (`validation.py:555`). Stated explicitly: TTS-as-a-hook-action ("speak on trigger fire") is a notification-delivery question owned by AMBIENT-SURFACES/AUTOMATION-SUBSTRATE, not smuggled in here.
+- **No new action providers** — nothing is added to `ALLOWED_HOOK_PROVIDERS` (`src/personalclaw/validation.py`). Stated explicitly: TTS-as-a-hook-action ("speak on trigger fire") is a notification-delivery question owned by AMBIENT-SURFACES/AUTOMATION-SUBSTRATE, not smuggled in here.
 - **No `.ovsvoice`-style signed bundles** — export/import defers to NEW-12's general portable-bundle format (which already absorbed the OmniVoice checklist: schema_version, non-forgeable provenance, zip-slip defense). This plan only guarantees the profile store is *bundle-able* (self-contained dir per profile, no absolute paths in records).
 
 ---
