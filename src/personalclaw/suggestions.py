@@ -24,14 +24,32 @@ logger = logging.getLogger(__name__)
 # Regenerate suggestions every 30 minutes
 _REFRESH_INTERVAL_SECS = 30 * 60
 
-# Fallback suggestions when LLM is unavailable or context is empty
+# Fallback suggestions when the LLM is unavailable or context is empty.
+#
+# 🔴 EVERY ENTRY HERE MUST BE EXECUTABLE ON AN INSTANCE WITH NO DATA, because that is the only
+# state this list is ever shown in. ``generate_suggestions`` returns it precisely when
+# ``_build_context`` came back empty — no memory, no sessions, no automations — and
+# ``SuggestionsCache`` seeds from it before the first generation. So it is the brand-new-install
+# list, and it is the first thing a new user reads on the most-visited surface in the product.
+#
+# Two entries used to ask about state the empty state does not have by construction:
+#
+#     "Summarize my recent conversations"   there are none — that is WHY we are in the fallback
+#     "Review my latest PR"                 assumes a repository context nobody has configured
+#
+# Both dead-end into "you don't have any", which is a poor first answer and teaches nothing about
+# what the product can do. Replaced with one orientation prompt and one that names a real,
+# distinctive capability a fresh instance can actually perform.
+#
+# ``test_suggestions_fallback_needs_no_data.py`` holds the criterion, not the strings — so this
+# list can be re-worded freely and only a *dead-end* re-appearing reds the gate.
 _FALLBACK_SUGGESTIONS = [
     "Show health-check status",
     "Generate sunrise haiku",
     "Give me a three-word farewell",
     "Help me brainstorm an idea",
-    "Summarize my recent conversations",
-    "Review my latest PR",
+    "What can you help me with?",
+    "Set up a daily briefing",
 ]
 
 
