@@ -648,6 +648,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it
+  had.** It always reported *re-embedded 0 item(s)* — in every install, whatever your library held. Two
+  independent faults: it handed the re-index a plain function where an embedding model was expected, so
+  every item was left without a vector, and it then read a count that was never reported, so the number
+  it printed was always zero. Nothing was ever corrupted, but the items stayed keyword-only and the
+  message implied there had been nothing to do. Both are fixed, so the repair now drains the backlog and
+  the number it reports is the number of items it actually embedded.
+  **It also no longer re-embeds your whole library.** It ran over every item every time, which on a large
+  library is a lot of work to redo every six hours; it now touches only the items that are missing a
+  vector, which is what the repair has always been named for.
+  **And a repair that achieves nothing now says so.** Reporting a clean zero also took the repair's
+  six-hour cooldown, so a failure hid itself and then declined to retry. A pass that embeds nothing is
+  reported as a failure and will try again; a pass that embeds some but not all keeps its progress and
+  tells you how many are still waiting.
+
 - **Two settings saved at the same moment could lose one of them.** Both ways PersonalClaw writes its
   config file read the whole file, change one thing, and write it all back. One of the two took a lock
   while it did that and the other did not, so if they overlapped, the second one to finish wrote a copy
