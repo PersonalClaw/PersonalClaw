@@ -689,6 +689,55 @@ def test_runner_marks_partial_when_insights_model_unavailable(store, monkeypatch
     assert "insights" in (item.get("processing_error") or "").lower()
 
 
+def test_a_failing_model_really_does_downgrade_the_item_to_partial(store, monkeypatch):
+    """The test above monkeypatches `_run_insights` to return False, so it proved the
+    CONSEQUENCE while the trigger was unreachable (#759): `ProviderWorker.send_message`
+    swallowed every timeout and provider error to `""`, `""` parses to "no insights",
+    and `extract(raise_on_error=True)` therefore never raised. So `_run_insights` always
+    returned True and no item was ever downgraded in production.
+
+    This drives the real `_run_insights` with a pool that fails the way an unavailable
+    model does, which is the link that was missing.
+    """
+    ensure_nodes_registered()
+    iid = store.create_typed_item(item_type="note", title="N", content="body text")
+
+    # A REAL pool of REAL workers whose provider call fails — not a stub that raises
+    # `WorkerError` itself, which would leave the actual question (does a provider
+    # failure ever become one?) untested. That gap is where the bug lived.
+    from personalclaw import llm_helpers
+    from personalclaw.knowledge.llm_pool import LLMPool, ProviderWorker
+
+    async def _boom(prompt, use_case=""):
+        raise RuntimeError("no model bound")
+
+    monkeypatch.setattr(llm_helpers, "one_shot_completion", _boom)
+    pool = LLMPool(pool_size=1)
+    pool._started = True
+    pool._workers.append(ProviderWorker())
+    pool._available.put_nowait(0)
+
+    status = _run(ingest_item(store, iid, insights_pool=pool))
+
+    assert status == "partial"
+    item = store.get_item(iid)
+    assert item["processing_status"] == "partial"
+    assert "model unavailable" in (item.get("processing_error") or "").lower()
+
+
+def test_a_model_that_returns_nothing_still_leaves_the_item_done(store):
+    """The distinction the fix preserves. A model that ran and produced no insights is
+    not a failure, so the item must stay `done` — otherwise every empty answer starts
+    reporting as "model unavailable" and the badge means nothing."""
+    ensure_nodes_registered()
+    iid = store.create_typed_item(item_type="note", title="N", content="body text")
+
+    status = _run(ingest_item(store, iid, insights_pool=_FakePool("")))
+
+    assert status == "done"
+    assert store.get_item(iid)["processing_status"] == "done"
+
+
 def test_runner_insights_failure_not_masked_by_optional_skips(store, tmp_path, monkeypatch):
     """When a graph already goes 'partial' from benign optional-node skips (e.g. an image
     with no ocr/vision model) AND the insights stage also fails, the insights failure must

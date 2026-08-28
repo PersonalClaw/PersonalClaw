@@ -454,3 +454,93 @@ def test_editing_an_intent_may_still_change_its_goal(knowledge_store):
 
     rows = IntentStore(knowledge_store.db_path.parent / "intents.json").load()
     assert len(rows) == 1 and rows[0].goal == "track drive health, weekly"
+
+
+# ── a model failure is an error, not a 0-match (#759) ─────────────────────────
+
+
+def _run_intent(knowledge_store, intent_id, pool):
+    """Drive `POST /api/knowledge/intents/{id}/run` with a given pool."""
+    import json
+    from types import SimpleNamespace
+
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import knowledge as H
+
+    app = web.Application()
+    app["state"] = SimpleNamespace(knowledge_store=knowledge_store)
+    app["knowledge_llm_pool"] = pool
+    req = make_mocked_request(
+        "POST", f"/api/knowledge/intents/{intent_id}/run", app=app, match_info={"id": intent_id}
+    )
+    resp = _run(H.run_intent(req))
+    return resp, json.loads(resp.body)
+
+
+def _real_pool_with_a_dead_model(monkeypatch):
+    """A REAL `LLMPool` of REAL `ProviderWorker`s whose provider call fails.
+
+    Deliberately not a stub that raises `WorkerError` itself: that would assert the
+    counter can add up a raised error while leaving the actual question — does a
+    provider failure ever BECOME one — untested. The original bug lived precisely in
+    that gap, so the chain has to be driven end to end from the provider call outward.
+    """
+    import asyncio as _asyncio
+
+    from personalclaw import llm_helpers
+    from personalclaw.knowledge.llm_pool import LLMPool, ProviderWorker
+
+    async def _boom(prompt, use_case=""):
+        raise RuntimeError("no model bound")
+
+    monkeypatch.setattr(llm_helpers, "one_shot_completion", _boom)
+    pool = LLMPool(pool_size=1)
+    pool._started = True
+    pool._workers.append(ProviderWorker())
+    pool._available.put_nowait(0)
+    assert isinstance(pool._semaphore, _asyncio.Semaphore)  # guard the internals we poke
+    return pool
+
+
+def test_a_model_failure_is_counted_as_an_error_not_a_zero_match(knowledge_store, monkeypatch):
+    """The whole point of the `errors` counter, which could never leave 0.
+
+    `ProviderWorker.send_message` swallowed every timeout and provider error to `""`,
+    and `""` parses to "not relevant" — so a cold model produced `matched: 0,
+    errors: 0`, which the UI reports as "No matches in your existing items". Identical
+    to a genuine no-match, and the opposite of what happened.
+    """
+    for i in range(3):
+        knowledge_store.create_typed_item(item_type="note", title=f"N{i}", content=f"body {i}")
+    resp, body = _upsert(knowledge_store, {"goal": "track anything about drives"})
+    intent_id = body["id"]
+
+    resp, body = _run_intent(knowledge_store, intent_id, _real_pool_with_a_dead_model(monkeypatch))
+
+    assert resp.status == 200
+    assert body["evaluated"] == 3
+    assert body["errors"] == 3, "a model failure must not read as 'nothing matched'"
+    assert body["matched"] == 0
+    assert body["outcomes"] == []
+
+
+def test_a_working_pool_that_finds_nothing_still_reports_zero_errors(knowledge_store):
+    """The other side of the distinction, and the reason this cannot be fixed by simply
+    counting every 0-match as an error: a model that ran fine and found nothing is a
+    legitimate 0/0, and the UI's "No matches in your existing items" is correct for it.
+    """
+
+    class _NotRelevantPool:
+        async def send(self, prompt, timeout=None):
+            return '{"relevant": false}'
+
+    knowledge_store.create_typed_item(item_type="note", title="N", content="body")
+    _, body = _upsert(knowledge_store, {"goal": "track anything about drives"})
+
+    _, body = _run_intent(knowledge_store, body["id"], _NotRelevantPool())
+
+    assert body["evaluated"] == 1
+    assert body["errors"] == 0
+    assert body["matched"] == 0

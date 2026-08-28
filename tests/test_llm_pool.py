@@ -387,3 +387,89 @@ class TestAcpWorker:
         await worker.shutdown()
         mock_client.shutdown.assert_called_once()
         assert worker._client is None
+
+
+# ---------------------------------------------------------------------------
+# ProviderWorker surfaces a model failure instead of returning "" (#759)
+# ---------------------------------------------------------------------------
+
+
+class TestProviderWorkerSurfacesFailure:
+    """A failure and an empty answer are different facts, and `""` cannot say which.
+
+    `send_message` used to catch `asyncio.TimeoutError` AND bare `Exception` and
+    return `""` in both, so `pool.send` could not fail. Downstream, `""` parses to
+    "the model found nothing" — which is how a cold model was reported to the user as
+    "No matches in your existing items", and why two `raise_on_error=True` branches
+    plus the runner's `partial` downgrade were all structurally unreachable.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_timeout_raises_rather_than_returning_empty(self, monkeypatch):
+        from personalclaw import llm_helpers
+        from personalclaw.knowledge.llm_pool import ProviderWorker, WorkerError
+
+        async def _hang(prompt, use_case=""):
+            await asyncio.sleep(10)
+            return "never"
+
+        monkeypatch.setattr(llm_helpers, "one_shot_completion", _hang)
+
+        with pytest.raises(WorkerError, match="timed out"):
+            await ProviderWorker().send_message("p", timeout=0.01)
+
+    @pytest.mark.asyncio
+    async def test_a_provider_error_raises_rather_than_returning_empty(self, monkeypatch):
+        from personalclaw import llm_helpers
+        from personalclaw.knowledge.llm_pool import ProviderWorker, WorkerError
+
+        async def _boom(prompt, use_case=""):
+            raise RuntimeError("no model bound")
+
+        monkeypatch.setattr(llm_helpers, "one_shot_completion", _boom)
+
+        with pytest.raises(WorkerError, match="no model bound"):
+            await ProviderWorker().send_message("p")
+
+    @pytest.mark.asyncio
+    async def test_an_empty_model_answer_is_still_an_empty_string(self, monkeypatch):
+        """The other half of the distinction: a model that genuinely answers nothing
+        must NOT raise, or every best-effort caller starts reporting failures it did
+        not have."""
+        from personalclaw import llm_helpers
+        from personalclaw.knowledge.llm_pool import ProviderWorker
+
+        async def _empty(prompt, use_case=""):
+            return ""
+
+        monkeypatch.setattr(llm_helpers, "one_shot_completion", _empty)
+
+        assert await ProviderWorker().send_message("p") == ""
+
+    @pytest.mark.asyncio
+    async def test_send_batch_still_substitutes_empty_per_item(self, monkeypatch):
+        """`send_batch` is a best-effort caller and already caught per item, which is
+        why raising in the worker did not need a change here — pinned so a later
+        "simplification" of that except cannot silently start propagating."""
+        from personalclaw import llm_helpers
+        from personalclaw.knowledge.llm_pool import LLMPool, ProviderWorker
+
+        calls = {"n": 0}
+
+        async def _every_other(prompt, use_case=""):
+            calls["n"] += 1
+            if calls["n"] % 2 == 0:
+                raise RuntimeError("boom")
+            return f"ok-{calls['n']}"
+
+        monkeypatch.setattr(llm_helpers, "one_shot_completion", _every_other)
+        pool = LLMPool(pool_size=1)
+        pool._started = True
+        pool._provider_type = "test"
+        pool._workers.append(ProviderWorker())
+        pool._available.put_nowait(0)
+
+        out = await pool.send_batch(["a", "b", "c"])
+
+        # pool_size=1 serializes, so the failing item is deterministic here.
+        assert out == ["ok-1", "", "ok-3"]
