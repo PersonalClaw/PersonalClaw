@@ -1065,6 +1065,126 @@ def _ablation_bench_skill(args: argparse.Namespace, skill: str) -> None:
         print(f"  {report.reason}")
 
 
+def _eval_gate(args: argparse.Namespace) -> None:
+    """Run the Loop-2 cheap gate for one proposal (ES-6 / amendment E2).
+
+    Lives on the CLI rather than behind an endpoint because that is what every sibling eval
+    does: ``study``, ``ablation``, ``judge-bench`` and ``retrieval-eval`` all RUN from here and
+    the ``/api/evals/*`` routes only READ the artifacts. A gate run is minutes and real money —
+    an HTTP handler holding a request open for it would be a new shape nothing else in the
+    substrate has.
+
+    ``--list`` prints the subset AND the tagged scenarios excluded from it with their reasons,
+    because a subset that silently drops what the operator tagged is a subset whose cost and
+    coverage nobody can explain.
+    """
+    from personalclaw.evals import gate
+
+    subset = gate.gate_subset()
+    if getattr(args, "list_subset", False):
+        if not subset.members:
+            print(
+                'The gate subset is EMPTY: no installed scenario declares `"tiers": ["gate"]`.\n'
+                f"  library: {gate.scenario_lib.installed_dir()}"
+            )
+        for member in subset.members:
+            print(
+                f"{member.name}\tturns={member.turns}\tassertions={member.hard_assertions}\t"
+                f"{member.sha256[:12]}"
+            )
+        for name, reason in subset.excluded:
+            print(f"excluded\t{name}\t{reason}")
+        print(
+            f"\n{len(subset.members)} scenario(s), {subset.turns} turns per arm "
+            f"({subset.turns * 2} for before+after), subset {subset.sha256()[:12]}"
+        )
+        return
+
+    pid = str(getattr(args, "proposal", "") or "").strip()
+    if not pid:
+        print("Error: name a proposal id to gate (or pass --list).")
+        raise SystemExit(1)
+
+    from personalclaw.learning import proposals as queue
+
+    prop = queue.get(pid)
+    if prop is None:
+        print(f"Error: no proposal {pid!r}.")
+        raise SystemExit(1)
+
+    budget = float(getattr(args, "budget", 0.0) or 0.0)
+    trials = max(1, int(getattr(args, "trials", 1) or 1))
+    if getattr(args, "dry_run", False):
+        arms = gate.arms_for_proposal(prop.to_dict())
+        staged = sorted(arms[1].files) if arms else []
+        # The ceiling the real run would use, and what a ZERO means for it. An unbudgeted gate does
+        # not run unbounded — it does not run — so the preflight has to say so rather than print a
+        # number that reads like "free".
+        ceiling = budget or gate._default_budget_usd()
+        ceiling_line = (
+            f"${ceiling:.4g}"
+            if ceiling > 0
+            else "unset — this run would be UNGATED (set evals.default_budget_usd)"
+        )
+        print(
+            f"Gate '{pid}' ({prop.kind})\n"
+            f"  scenarios: {len(subset.members)} ({', '.join(subset.names) or '<none>'})\n"
+            f"  cells (the spend): {len(subset.members) * 2 * trials}\n"
+            f"  candidate files:   {', '.join(staged) or '<none — this proposal is ungateable>'}\n"
+            f"  budget: {ceiling_line}\n"
+            "--dry-run: nothing was called."
+        )
+        return
+
+    report = gate.gate_proposal(pid, budget_usd=budget or None, trials=trials)
+    if report is None:
+        print(f"Error: no proposal {pid!r}.")
+        raise SystemExit(1)
+    _print_gate_report(report)
+
+
+def _print_gate_report(report) -> None:
+    """Print a gate report. An unmeasured arm prints "not measured", never 0.0.
+
+    Same string the Learning panels use (`JudgeBenchPanel`, `AblationPanel`, `StudiesPanel`), so
+    the CLI and the UI say the same word about the same absence.
+    """
+
+    def fmt(value) -> str:
+        return "not measured" if value is None else f"{float(value):.4f}"
+
+    print(f"Gate '{report.run_id}': {report.state}")
+    if report.reason:
+        print(f"  {report.reason}")
+    if report.state != "gated":
+        return
+    print(
+        f"  before: {fmt(report.before.get('mean_score'))} "
+        f"(scored {report.before.get('scored')}, unmeasured {report.before.get('absent')})"
+    )
+    print(
+        f"  after:  {fmt(report.after.get('mean_score'))} "
+        f"(scored {report.after.get('scored')}, unmeasured {report.after.get('absent')})"
+    )
+    print(f"  delta:  {fmt(report.delta)}{'  ← REGRESSION' if report.regressed else ''}")
+    spend = report.spend or {}
+    if spend.get("observed"):
+        estimated = " (estimated)" if spend.get("estimated") else ""
+        print(
+            f"  spend:  ${float(spend.get('dollars_est') or 0.0):.4f}{estimated} "
+            f"over {spend.get('attempts')} model call(s)"
+        )
+    else:
+        print("  spend:  not measured (no cell reported one)")
+    bound = report.bound or {}
+    if bound.get("halted"):
+        print(f"  HALTED on budget: {bound.get('halt_reason')}")
+        print(f"  not run: {', '.join(bound.get('not_run') or [])}")
+    pin = report.pin or {}
+    subset_hash = str(pin.get("scenario_sha256") or "")[:12]
+    print(f"  pin:    model_fp={pin.get('model_fp') or 'n/a'} subset={subset_hash or 'n/a'}")
+
+
 def _print_ablation_report(report) -> None:
     print(f"Verdict: {report.verdict}")
     for arm, agg in sorted(report.arms.items()):

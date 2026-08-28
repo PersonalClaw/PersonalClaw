@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, Brain, Check, RefreshCw, X } from 'lucide-react'
+import { AlertTriangle, Brain, Check, RefreshCw, TrendingDown, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { QuietButton } from '../../ui/QuietButton'
@@ -18,7 +18,7 @@ import { StudiesPanel } from './StudiesPanel'
 import { fvs } from '../../design/fontWeight'
 import {
   DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState, evidenceLabel,
-  kindIcon, kindLabel, tierLabel, tierTone,
+  gateLabel, gateRegressed, kindIcon, kindLabel, tierLabel, tierTone,
 } from './learningMeta'
 import { HEALTH_KEY, IDENTITY_REPORT_KEY, JUDGE_BENCH_KEY, RETRIEVAL_BENCH_KEY, STUDIES_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
 import { PageTitle } from '../../ui/PageTitle'
@@ -308,6 +308,18 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
                 <AlertTriangle size={12} /> manifest
               </span>
             )}
+            {/* A MEASURED score drop is the one gate outcome that earns a chip. An ungated row does
+                not get one: "we did not measure" is not a warning, and dressing it as one would
+                train reviewers to ignore the chip that means something. */}
+            {gateRegressed(row) && (
+              <span
+                className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]"
+                style={{ background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }}
+                title={gateLabel(row)}
+              >
+                <TrendingDown size={12} /> score drop
+              </span>
+            )}
           </div>
           <div className="mt-1 text-on-surface-var text-[0.8125rem]">
             {/* Provenance is what makes a row weighable. The backend refuses to call a row without it
@@ -316,6 +328,13 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
             {row.source_cadence ? ` · ${row.source_cadence}` : ''}
             {row.reinforcements > 1 ? ` · seen ${row.reinforcements}×` : ''}
             {` · ${evidenceLabel(row)}`}
+          </div>
+          {/* The Loop-2 gate clause, on its own line rather than folded into the `·` chain: it is
+              two NUMBERS plus what produced them, and burying that in a run-on metadata sentence is
+              how a reviewer misses a regression. Always rendered — an ungated proposal says so. */}
+          <div className="mt-1 text-on-surface-low text-[0.8125rem]">
+            {gateLabel(row)}
+            {row.gate?.pin?.model_fp ? ` · pinned ${row.gate.pin.model_fp}` : ''}
           </div>
           {row.source_excerpt && (
             <p className="mt-2 rounded-md bg-surface-high px-m py-2 text-on-surface-var text-[0.75rem] break-words">

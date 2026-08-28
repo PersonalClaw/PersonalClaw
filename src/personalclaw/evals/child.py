@@ -12,6 +12,10 @@ the same path), run ONE cell's scenario, and emit its raw result as a
 sentinel-prefixed JSON line on stdout for the parent to read back. The parent
 process's ``os.environ`` is never mutated — that is the whole point of §1.3.
 
+ES-6 adds one more thing this child does before the run: it stages the Loop-2 gate's
+before/after ARM (:mod:`personalclaw.evals.gate`) into its throwaway home, so the candidate
+artifact under test exists only inside this cell.
+
 Crash / infra-error contract: any failure emits an ``{"ok": false}`` result AND
 exits non-zero, so the parent maps the cell to ``VERIFIER_ABSENT`` (never a false
 ``FAILED``). A clean scenario run emits ``{"ok": true, "passed": ..., "score": ...}``.
@@ -241,6 +245,16 @@ async def _run(descriptor: dict) -> dict:
     cell_overlay = overlay_lib.from_env()
     applied = overlay_lib.apply_in_child(cell_overlay)
 
+    # ES-6: the Loop-2 gate's before/after arm, staged AFTER the fixture seed (so it patches the
+    # seeded throwaway home rather than one the seed is about to overwrite) and BEFORE the first
+    # config read. `gate.apply_in_child` goes through the same `throwaway_home()` refusal the
+    # ablation overlay uses, so a mis-spawned cell becomes an honest VERIFIER_ABSENT instead of
+    # writing a candidate artifact into the operator's real home.
+    from personalclaw.evals import gate as gate_lib
+
+    cell_arm = gate_lib.from_env()
+    staged = gate_lib.apply_in_child(cell_arm)
+
     coords = descriptor.get("coords") or {}
     model = coords.get("model") if isinstance(coords, dict) else None
 
@@ -265,6 +279,11 @@ async def _run(descriptor: dict) -> dict:
             "arm": cell_overlay.arm,
             "applied": applied,
         }
+    if cell_arm is not None:
+        # Same discipline for the gate arm: WHICH files were staged, reported rather than
+        # assumed. A `before` arm that staged nothing and an `after` arm that silently staged
+        # nothing produce the same score, and only one of them is a measurement.
+        result["arm"] = {"label": cell_arm.label, "staged": staged}
     return result
 
 

@@ -40,7 +40,16 @@ from personalclaw.evals import store
 #: numbers are never plotted on one axis. The mechanical anchor is each scenario's ``sha256`` in
 #: the library manifest, which is why :func:`task_set_fingerprint` reads the manifest rather than
 #: trusting this integer.
-TASK_SET_VERSION = 1
+#:
+#: **v2 (ES-6):** all ten register scenarios joined the Loop-2 gate tier (``"tiers": ["gate"]``).
+#: Their turns and assertions are untouched, so the tasks themselves are unchanged — but the tag
+#: moved every one of their ``scenario_sha256`` values, which IS the mechanical anchor above, and
+#: the library backfill is version-keyed, so an existing home only picks the tag up on a bump.
+#: The integer has to follow the anchor rather than contradict it: leaving it at 1 would claim
+#: these are the same subjects v1 measured while the anchor says otherwise. Nothing real is
+#: invalidated — no baseline is keyed on this value (its only non-test reader stamps it on the
+#: report payload) and the bench's ordinary state is "has never run".
+TASK_SET_VERSION = 2
 
 #: The report schema version. Separate from the task-set version because a schema change does
 #: not invalidate a measurement, and conflating them would either freeze the schema or silently

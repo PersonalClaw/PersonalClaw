@@ -170,7 +170,10 @@ def test_latest_report_walks_past_an_unreadable_newest(home):
 def _report(run_id: str, *, sha: str = "ab" * 32, verdict: str | None = "inconclusive") -> dict:
     return {
         "run_id": run_id,
-        "task_set_version": 1,
+        # Derived, not a literal: ES-6's v1 -> v2 bump made the parametrized mutation below
+        # (`task_set_version=2`) equal to the fixture, so the "same task_set_version" condition
+        # could no longer fail and the case was measuring nothing.
+        "task_set_version": learning_bench.TASK_SET_VERSION,
         "task_set_fingerprint": {"sk_grill": sha},
         "pin": {"prompt_pack_sha256": "pp", "config_snapshot_ref": "cfg"},
         "tasks": [{"task_id": "sk_grill", "verdict": verdict, "verdict_class": verdict}],
@@ -188,7 +191,10 @@ def test_reproduction_holds_when_every_stated_condition_holds():
 @pytest.mark.parametrize(
     ("mutate", "failing"),
     [
-        (lambda r: r.update(task_set_version=2), "same task_set_version"),
+        (
+            lambda r: r.update(task_set_version=learning_bench.TASK_SET_VERSION + 1),
+            "same task_set_version",
+        ),
         (
             lambda r: r.update(task_set_fingerprint={"sk_grill": "cd" * 32}),
             "same scenario_sha256 set",
@@ -331,7 +337,7 @@ def test_preflight_command_runs_and_reports_all_ten_runnable(tmp_path):
     h.mkdir()
     proc = _run_cli("--preflight", home_path=h)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "task set v1 — 10 task(s)" in proc.stdout
+    assert "task set v2 — 10 task(s)" in proc.stdout
     assert "all 10 task(s) runnable" in proc.stdout
     assert "[NOT]" not in proc.stdout
 
@@ -377,5 +383,5 @@ def test_run_in_an_unbound_home_writes_an_UNMEASURED_report_not_a_zero(tmp_path)
     # The thresholds are RECORDED from harness/fanout_measure, not restated by the report.
     assert report["thresholds"]["source"] == "harness/fanout_measure.py"
     assert report["thresholds"]["inconclusive_band_points"] == 5.0
-    assert report["task_set_version"] == 1
+    assert report["task_set_version"] == learning_bench.TASK_SET_VERSION
     assert len(report["task_set_fingerprint"]) == 10

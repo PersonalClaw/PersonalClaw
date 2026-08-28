@@ -1855,6 +1855,24 @@ export interface LearningRow {
   manifest_valid: boolean; manifest_issues: string[]
   risk_tier: string; status: string
   renderable: boolean; bulk_acceptable: boolean
+  // The Loop-2 gate's before/after columns (EVALUATION-SUBSTRATE amendment E2 / ES-6). ALWAYS
+  // present: a proposal with no gate run arrives as `state: 'ungated'` with a reason, so the
+  // absence is a sentence the reader can act on rather than an empty cell. `before`/`after`/
+  // `delta` are `null` when unmeasured and must render as "not measured", never as 0 — the same
+  // rule every eval panel follows. `pin` identifies WHAT produced the pair and is `{}` when
+  // ungated; it is never synthesized.
+  gate: LearningGate
+}
+export interface LearningGate {
+  state: 'gated' | 'ungated'
+  reason: string
+  before: number | null; after: number | null; delta: number | null
+  regressed: boolean
+  scenarios: number
+  halted: boolean
+  dollars_est: number; spend_observed: boolean
+  pin: { model_fp?: string; scenario_sha256?: string }
+  ran_at: string
 }
 export interface LearningInbox {
   rows: LearningRow[]; total: number

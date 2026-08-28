@@ -1634,3 +1634,211 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   the npm legs were not run. `src/personalclaw/config/loader.py` is **5647 lines before and after** —
   not touched. Probe residue: **0** in either diff-touched file; `git status --porcelain` empty apart
   from `?? .venv`.
+
+## Execution log — ES-6 (Loop-2 cheap gate subset + before/after proposal columns) — amendment E2 **PARTIAL**, atom stays `todo`
+
+- **[2026-08-28][ES-6] The dozen is declared IN the scenario, NOT in `evals/scenarios/gate/`
+  (DEVIATION from the amendment's sketch, with the measurement behind it).** The installed library is
+  a FLAT directory and three readers glob it — `resolve_scenario_path`, `install_library`'s manifest
+  pass, and `personalclaw eval` — and **none of them descends**: `install_library` iterates
+  `target.iterdir()` and skips anything whose suffix is not a scenario suffix, so a `gate/` subdir is
+  invisible to it and to the manifest, and a bare `gate/x` name is unresolvable. So membership is
+  `"tiers": ["gate"]` on the scenario, read by `scenarios.tiers_of` and recorded per-scenario in
+  `evals/scenario_library.json`. That follows the rule `origin_of` states outright — derive it by
+  INSPECTING the data, never from a side list of names — and it lets a user's own scenario join the
+  tier by adding one field. Consequence recorded rather than hidden: the field moves each scenario's
+  `scenario_sha256`, so each of the twelve **also bumps `version` 1 → 2** (the backfill is
+  version-keyed; without the bump every existing home would keep the old file and read an EMPTY gate
+  subset — a silent no-op), and their prior ledger rows sit under the older hash. That is what the
+  pin is for.
+
+- **[2026-08-28][ES-6] Which twelve, and why exactly twelve.** Census of the shipped library before
+  choosing: **14 scenarios, 23 turns total.** The `≤ 2 turns` cut is exactly 12 (8 at one turn, 4 at
+  two) and the two it drops are `context_accumulation` (3 turns, 3 sessions) and
+  `memory_recall_basic` (4 turns) — the two multi-session memory scenarios, which are also 2 of the 3
+  carrying `judge` assertions. So "a curated dozen fast" is a natural cut of the existing library, not
+  a number picked to match the amendment.
+
+- **[2026-08-28][ES-6] "Fast" and "judge-light" are STRUCTURAL, and the second one is a correctness
+  bug, not a style preference.** A tagged scenario over `MAX_GATE_TURNS` (2) is excluded with its turn
+  count in the reason. A tagged scenario with **no non-judge assertion** is excluded too, and the
+  measurement is in the suite: the child runs `EvalRunner(judge_enabled=False)`, whose
+  `assertion_results` comprehension **filters judge assertions out of the scored set**
+  (`eval/runner.py:509`), so such a scenario reaches `total_assertions == 0` and
+  `child.result_from_scenario` falls back to **`1.0`** — a fabricated perfect score that would sit in
+  a gate mean as if it were evidence. `test_a_tagged_judge_only_scenario_is_excluded…` asserts the
+  exclusion AND re-measures the 1.0 fallback, so the reason cannot rot into a comment.
+
+- **[2026-08-28][ES-6] Measured wall clock (the claim "fast" has to earn).** `--list` reports
+  **12 scenarios, 16 turns per arm, 32 for before+after**. A real end-to-end `run_gate` in an isolated
+  home with no reachable provider — real `run_matrix`, real subprocess spawn, real `empty` fixture seed
+  per cell — took **33.5 s for 24 child spawns (~1.4 s/cell)**. That is the gate's FIXED floor; a real
+  run adds one model call per turn (32 turns), so the honest statement is "seconds of harness plus 32
+  model calls", which is the amendment's "minutes and cents". Every cell in that drive was
+  `VERIFIER_ABSENT` and the report published `mean_score: None`, i.e. **it did not invent a score for a
+  run that could not measure one.**
+
+- **[2026-08-28][ES-6] The bound is enforced at the meter, and "unbudgeted" is UNGATED rather than
+  unbounded.** No new config field: `EvalsConfig.default_budget_usd` already exists and is documented
+  as the cap "a matrix/study run refuses to exceed" — a gate run is a matrix run, so the round-trip
+  contract is untouched and `config/loader.py` is **5619 lines before and after**. `budget_usd <= 0`
+  means UNLIMITED to `Budget`, which is the one thing a pre-ship gate must never be, so the refusal is
+  structural: no ceiling ⇒ no run ⇒ `ungated` naming the knob. Then per cell: `meter.check_run` BEFORE
+  (an `EXCEEDED` verdict stops the sweep and the un-run cells are NAMED in `bound["not_run"]`) and
+  `meter.charge` of the child's OWN reported spend AFTER (`child.spend_from_home`, read inside the
+  throwaway home before the parent deletes it, persisted by `_write_cell_artifact` and read back by
+  `gate.cell_spend`). The charge is what makes the check bind — without it `run_totals` reads the zero
+  S153 recorded. The matrix spec's own `budget_usd` is deliberately left at 0: its preflight is
+  DAY-scoped, and comparing a per-gate ceiling against a whole day's spend would refuse the gate for
+  spend that had nothing to do with it.
+
+- **[2026-08-28][ES-6] No second runner, and no second refusal rail.** Scores come from
+  `runner.run_matrix` through `evals/child.py` — one matrix per (arm × scenario) at `trial_count=1`,
+  the shape `skills_bench.bench_skill` and `ablation.run_ablation` already use, including their
+  injectable `run_matrix=`. The arm rides the spawn env on the SAME `os.environ.copy()` the workspace
+  and home overrides ride, and the child stages it through `overlay.throwaway_home()` — which is
+  `_cell_home` promoted to a public name rather than copied, because two answers to "may I write here"
+  is one too many for a guard whose whole job is to have no exceptions. `test_apply_in_child_REFUSES_the_real_home`
+  covers both holes (unset, and pointing at `~/.personalclaw`).
+
+- **[2026-08-28][ES-6] `{before, after, pin}` — and the pin is trimmed, never synthesized.** The
+  subject is the SUBSET, so the pin is `compute_pin_for_subject("gate", <canonical hash over
+  {name: scenario_sha256}>)` — ES-4's move for a fixture SET. `RunPin.is_complete()` is a
+  PRECONDITION: a home with no bound model has no honest `model_fingerprint`, so the run does not
+  happen and the report is `ungated` with the missing part named. That applies ES-11's ruling
+  verbatim — an invented fingerprint poisons every per-fingerprint baseline reading the same
+  `results.tsv`. `before` reads the LIVE home's content at the candidate's own paths (read-only, in
+  the parent) and `after` is what an accept would write, rendered by the REAL install rail, so the two
+  arms name the same paths and differ only in the bytes at them
+  (`test_the_candidate_comes_from_the_real_install_rail` compares it byte-for-byte against what
+  `install_accepted_skill` puts on disk). The ledger row uses the `score_old`/`score_new` columns that
+  have existed since ES-1 for exactly this shape.
+
+- **[2026-08-28][ES-6] "Ungated" NEVER blocks, and that is tested from the accept path.**
+  `proposals.accept` deliberately does not read `Proposal.gate`; `attach_gate` deliberately does not
+  touch `status` or `updated_at` (a measurement is not a decision, and bumping the timestamp would
+  re-sort the queue for something the user did not do). Two tests drive `accept` to completion — one
+  with no gate run, one with a **measured regression** — because the columns inform the decision and
+  must not take it.
+
+- **[2026-08-28][ES-6] Honesty vocabulary: two existing ones reused, none minted.** The STATE word is
+  the atom's own (`ungated`); the SCORE-CELL absence follows the panels' house string **"not
+  measured"** (`JudgeBenchPanel`/`StudiesPanel`/`AblationPanel`/`RetrievalBenchPanel`/`BenchmarkPanel`
+  all spell a null mean that way), and the three-value discipline is ES-11's
+  `SCORE_SCORED`/`SCORE_UNSCORED`/`SCORE_NO_CANDIDATES` reasoning rather than a fourth dialect —
+  `delta` is `None` and not `0.0` when an arm never scored, because "the arms tied" and "one arm never
+  scored" are the same number and different facts. **No collision with the concurrent ES-11 work**:
+  its surface is `evals/optimize.py` + `tests/test_evals_optimize.py` + two on-disk JSON files, and it
+  has ZERO frontend readers; this atom's is `evals/gate.py`, `learning/{proposals,inbox}.py`,
+  `handlers`-free, `learningMeta.ts` and `LearningPage.tsx`. Disjoint, and `optimize.py` was not
+  touched.
+
+- **[2026-08-28][ES-6] Where the tests stop being real.** Everything is shipped code except the LLM:
+  the real library + manifest, the real `load_scenario`, the real `Assertion.check`, the real subset
+  selection, the real `RunPin`, the real `SpendMeter`, the real `candidate_files` rail, the real
+  proposal store and the real inbox projection. `_ScoringMatrix` substitutes for `run_matrix` at the
+  boundary `skills_bench`/`ablation` already make injectable, and models the agent as a PERFECT-RECALL
+  reader of whatever the arm staged — the strongest honest assumption, and the one that makes a
+  planted regression in the candidate TEXT observable without buying tokens. The child-side half of
+  the seam (arm → spawn env → staging → throwaway-home refusal) is tested against the REAL code.
+
+- **Falsifications (each mutated the LIVE line, `git grep`'d the mutation back, observed the red with
+  its count, then restored from a file copy at the literal path — never `git checkout`; baseline
+  `tests/test_evals_gate.py -n 0 --no-cov` = **43 collected, 43 passed**).**
+  (1) `GATE_TIER = "gate"` → `"gate_MUTANT_F1"`: **3 failed, 18 passed, 22 errors** (the `gate_home`
+  fixture's own subset assertion errors every test built on it) — the tier marker is load-bearing
+  across 25 tests. (1b, the narrow one) `MAX_GATE_TURNS = 2` → `99`: **1 failed, 42 passed** —
+  `test_a_tagged_scenario_over_the_turn_ceiling_is_excluded_with_a_reason`, `assert 'slow_probe' not in
+  ['gate_probe', 'slow_probe']`. So "fast" is enforced, not asserted.
+  (2) `ArtifactArm(label=ARM_AFTER, files=after_files)` → `files=before_files` (the candidate never
+  reaches the child): **4 failed, 39 passed**, headed by
+  `test_a_planted_regression_shows_a_score_drop_on_the_proposal_card` `assert 1.0 == 0.0`. **Vacuity
+  partner `test_a_CLEAN_candidate_shows_no_drop` stayed GREEN** — so the drop comes from the plant and
+  not from the plumbing.
+  (3) Deleting the `meter.charge(...)` call: **2 failed, 41 passed** —
+  `test_the_childs_reported_spend_is_charged_to_the_meter` (`assert 0.0 == 0.02`) and
+  `test_the_budget_STOPS_the_sweep_and_names_what_did_not_run` (`assert False is True`). The charge is
+  what makes the bound bind; **`test_an_unbudgeted_gate_is_ungated_not_unbounded` stayed GREEN**, so
+  the two halves of clause 3 fail independently.
+  (4) Blanking `summary()`'s `UNGATED_NOT_RUN` fallback: **2 failed, 41 passed** — the row projects an
+  empty reason. **The clause-2 regression test stayed GREEN**, so "ungated renders" and "a scored
+  proposal shows before/after" are independently falsifiable, as required.
+  (5) FE: deleting `{gateLabel(row)}` from `LearningPage`: **3 failed, 10 passed** of 13 — the three
+  page-render rails, while every direct-helper case stayed green (which is exactly the dead-code state
+  a helper-only suite would have shipped).
+  After each: `git diff --stat HEAD` empty, `git status --porcelain` empty.
+
+- **Live drive of the user-facing copy (isolated temp home, real CLI entrypoint).** A real
+  `skill_promotion.promote()` proposal, then `personalclaw eval-gate <pid>` through each ungated path:
+  evals off → *"the eval substrate is off, so nothing re-ran — this is a judgement call on the evidence
+  above, not on a score"*; evals on with no budget → *"no eval budget is set, so a gate run would have
+  had no ceiling at all — set evals.default_budget_usd to get before/after scores"*; budget set with no
+  model bound → *"a gate run could not be pinned to a model, and an unpinned score is not evidence
+  (missing: model_fingerprint)"*. The inbox row projected each verbatim with `before`/`after`/`delta`
+  all `None` and `pin: {}`. `--dry-run` prints the 24-cell preflight and, on a zero ceiling, says
+  *"unset — this run would be UNGATED"* rather than printing `$0` (fixed during the drive).
+
+- **[2026-08-28][ES-6] Deliberately NOT done.** (a) No HTTP endpoint. Every sibling eval RUNS from the
+  CLI (`study`, `ablation`, `judge-bench`, `retrieval-eval`) and the `/api/evals/*` routes only READ
+  artifacts; a gate run is tens of seconds of harness plus 32 model calls, and holding a request open
+  for that would be a shape nothing else in the substrate has. So `personalclaw eval-gate` runs it and
+  the card reads the persisted report — which also means **no new `json_error` code and no
+  `HTTP_ERROR_CODES` row** (the learning handlers use the flat `{"error": …}` envelope anyway).
+  (b) The gate is NOT called from `enqueue`: filing is a per-turn path and a synchronous gate there
+  would stall it. (c) `prompt` and `template_diff` renderers — see the atom's `todo` note.
+  (d) `optimize.py` untouched, on purpose, with ES-11 in flight in it; `propose_winner` still stuffs
+  its scores into free-text prose, which is the obvious follow-up once that lands.
+
+- **[2026-08-28][ES-6] DISCOVERY the full suite found, and the DEVIATION it forced.** The ten
+  `sk_*` scenarios ARE `learning_bench.BENCH_TASKS`, and their `version` field is **shared between
+  two contracts**: the library backfill's reinstall key AND `learning_bench.TASK_SET_VERSION`
+  (`test_every_register_task_ships_as_a_scenario_with_deterministic_assertions` asserts they are
+  equal). Tagging them for the gate tier forces both to move: without the bump the tag never reaches
+  an existing home, with it the task-set assertion reds. Resolved by bumping `TASK_SET_VERSION`
+  1 → 2, which is the honest direction — the field's own docstring says "the mechanical anchor is
+  each scenario's `sha256` … which is why `task_set_fingerprint` reads the manifest rather than
+  trusting this integer", and the tag moved every one of those hashes, so leaving the integer at 1
+  would have it claim v1 subjects while the anchor says otherwise. Nothing real is invalidated: the
+  only non-test reader stamps it on a report payload, no baseline is keyed on it, and the bench's
+  documented ordinary state is "has never run". Two v1 literals in its suite were rewritten to
+  derive from the constant — one of them, the parametrized `task_set_version=2` mutation, had
+  become EQUAL to its own fixture after the bump, so the "same task_set_version" reproduction
+  condition could no longer fail and that case was measuring nothing.
+
+- **[2026-08-28][ES-6] One deliberate ceiling raise, with the decision recorded.**
+  `test_audit_outcome_families.py`'s unclassified-outcome ceiling went 32 → 33 for
+  `halted_on_budget`. The rail's own message offers "classify it into a family, into
+  AUDIT_OUTCOME_SUCCESS, or raise this ceiling deliberately", and its docstring says it exists so a
+  new word is *a decision someone makes*. This is that decision: a gate that stopped on its declared
+  ceiling is the control WORKING — nothing was denied to a caller (not `denied`), the mechanism did
+  not break (not `failed`), the sweep is incomplete (not a success) — so it stays unclassified for
+  the same reason `expired` does, and putting it in a family would make the audit log assert a
+  refusal or a fault that never happened.
+
+- **Gate** (`PERSONALCLAW_HOME` unset). `make lint` clean (black **2196** files, isort **8.0.1** —
+  the 9.x default venv reports 8 phantom errors on a clean tree — flake8, mypy **1083 source files**).
+  Targeted `pytest --no-cov`: `test_evals_gate.py` **43/43**; the neighbour sweep
+  (`test_evals_matrix_runner` + `test_evals_ablation` + `test_evals_skills_bench` + `test_evals_pinning`
+  + `test_evals_store` + `test_evals_routes` + `test_config_roundtrip` + `test_evals_optimize` +
+  `test_learning_inbox` + `test_proposals_contract` + `test_skill_promotion` + `test_evals_harvest` +
+  `test_evals_studies`) **403 collected, 403 passed**, conftest real-home rail reporting
+  `/Users/golani/.personalclaw unchanged by this run`. `npm run typecheck:web` clean;
+  `web/src/pages/learning/gateColumns.test.tsx` **13/13**. `config/loader.py` **5619 lines before and
+  after** — untouched. Python here is 3.14.7 (CI is 3.12), so `test_connector_pack.py`'s two
+  version-only reds are pre-existing and not in the diff's blast radius.
+
+- **Full suite, rebased onto `origin/main` (`c3a99dcf`): 5 failed, 28380 passed, 31 skipped,
+  12 xfailed in 774 s — every failure pre-existing, none in the diff's blast radius, and the
+  real-home rail reported `/Users/golani/.personalclaw unchanged by this run`.**
+  `test_connector_pack.py` ×2 reproduce ALONE on this machine's Python 3.14.7 (the message names
+  `importlib._bootstrap._find_and_load`, i.e. the 3.14 import-machinery change; CI runs 3.12).
+  `test_subagent.py` ×3 (`TestSubagentReaper` ×2 + `TestSpawnWithApprovalCallback::…sel_rejection`)
+  are the documented xdist SEL-mock leak: **all three are GREEN when `test_subagent.py` runs
+  alone**, in the same 4½-minute run that reproduced the two connector-pack reds. A FIRST pass of
+  the same suite pre-rebase had two more, both now closed: `test_agent_reference` was stale on the
+  base commit `ca8e3c09` and fixed upstream by `05acba85` ("regenerate index.md — its route counts
+  had drifted"), so the rebase resolved it — verified by rendering the reference against the current
+  main tree, where 0 files differ; and that pass's real-home rail failure named a modified
+  `security_events.jsonl`, which is **three foreign `personalclaw gateway` processes** alive on this
+  machine, not this diff — the 43-test and 403-test targeted runs that exercise the new
+  `gate._sel_log` writer both reported the rail clean, and so did the rebased full run.
