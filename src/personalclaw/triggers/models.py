@@ -864,6 +864,86 @@ def _inline_credential_issues(workflow: Any) -> list[Issue]:
     ]
 
 
+#: Every key a `workflow.resume` target recognizes, for the near-miss suggestion.
+_RESUME_TARGET_FIELDS: tuple[str, ...] = ("run_id", "project_id", "resume_token", "answer")
+
+#: The `workflow` keys that declare an ACTION to run. A resume target replaces the action rather
+#: than configuring it, so declaring both is an authoring error rather than a precedence question.
+_ACTION_KEYS: tuple[str, ...] = ("inline", "provider", "ref")
+
+
+def _resume_target_issues(workflow: Any) -> list[Issue]:
+    """What is wrong with a `workflow.resume` target (`wakeup.resume_target_of`'s authored form).
+
+    Validated HERE, at save time, because `resume_target_of` is deliberately fail-open on a
+    malformed target — it returns `{}`, and the trigger then fires a normal new-run wake. That is
+    the right runtime direction (an authoring slip must not silently disable an automation's normal
+    fire) but it means the runtime can never tell the author they mistyped. This is what does.
+
+    The both-declared case is an ERROR, not a precedence rule. `wakeup_for` picks the resume and the
+    inline action never runs; a trigger whose configured action is silently ignored is the
+    "mechanism present but inert" shape this codebase keeps paying for, and the author is the only
+    one who can say which they meant.
+    """
+    # Lazy, and the key comes from its OWNER rather than a second copy here — the same reason
+    # `Wakeup.droppable` delegates to `dispatch.droppable`: a hand-copied constant is the first
+    # thing to drift, and a validator checking a different key than the dispatcher reads would
+    # approve exactly the targets that cannot fire.
+    from personalclaw.triggers.wakeup import RESUME_TARGET_KEY
+
+    if not isinstance(workflow, dict):
+        return []
+    if RESUME_TARGET_KEY not in workflow:
+        return []
+    raw = workflow.get(RESUME_TARGET_KEY)
+    path = f"workflow.{RESUME_TARGET_KEY}"
+    if not isinstance(raw, dict):
+        return [
+            Issue(
+                path=path,
+                message=(
+                    "a resume target must be an object with a run_id, not " f"{type(raw).__name__}"
+                ),
+                severity="error",
+            )
+        ]
+    issues: list[Issue] = []
+    if not str(raw.get("run_id", "") or "").strip():
+        issues.append(
+            Issue(
+                path=f"{path}.run_id",
+                message=(
+                    "a resume target needs the run_id of the parked run to resume; without "
+                    "one this trigger starts a new run instead"
+                ),
+                severity="error",
+            )
+        )
+    for key in raw:
+        if key not in _RESUME_TARGET_FIELDS:
+            issues.append(
+                Issue(
+                    path=f"{path}.{key}",
+                    message=f"unknown resume-target field {key!r}",
+                    closest=_closest(str(key), _RESUME_TARGET_FIELDS),
+                )
+            )
+    declared = sorted(k for k in _ACTION_KEYS if workflow.get(k))
+    if declared:
+        issues.append(
+            Issue(
+                path=path,
+                message=(
+                    "this trigger declares both a resume target and an action "
+                    f"({', '.join(declared)}); a resume target REPLACES the action, so the "
+                    "action would never run — keep whichever you meant"
+                ),
+                severity="error",
+            )
+        )
+    return issues
+
+
 def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     """Parse one authored trigger. Returns `(trigger, issues)` and NEVER raises.
 
@@ -903,6 +983,7 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     issues.extend(validate_spec(kind, spec))
     issues.extend(validate_gates(gates))
     issues.extend(_inline_credential_issues(data.get("workflow")))
+    issues.extend(_resume_target_issues(data.get("workflow")))
     issues.extend(_token_ref_issues(data.get("spec")))
 
     if not str(data.get("id", "") or "").strip():

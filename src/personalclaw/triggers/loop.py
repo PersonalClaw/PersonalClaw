@@ -254,6 +254,13 @@ async def _execute_delivery(
     wakeup = delivery.wakeup
     key = wakeup.session_key
 
+    if delivery.disposition == wk.Disposition.RESUME_TARGET.value:
+        # 🔴 BEFORE the disposition branches, and it must stay here. A resume names a parked RUN,
+        # and neither branch below can serve it: `drain` would execute it as the trigger's ordinary
+        # ACTION (measured — nothing dispatches on `Wakeup.kind`), and `run_one` would do the same
+        # thing directly. Both would report a healthy run having never touched the target.
+        return [await _apply_resume(wakeup, now=now, base_dir=base_dir)]
+
     if delivery.disposition == wk.Disposition.QUEUED.value:
         drained = await ex.drain(sessions, key, runner, now=now, base_dir=base_dir)
         return list(drained.outcomes)
@@ -282,6 +289,207 @@ async def _execute_delivery(
         released,
     )
     return []
+
+
+#: Service codes that mean "the target is not ready YET" rather than "the target is wrong".
+#:
+#: Both are states a parked run leaves on its own, so both are DEFERRED and re-evaluated on the
+#: trigger's next scheduled fire — no retry queue, because a scheduled trigger's own cadence IS the
+#: retry, and `pending_resumes` feeds `deliver_all`, which would put the resume back onto the inbox
+#: this path exists to avoid.
+#:
+#: `WF_RUN_NOT_LIVE` is transient because the watchdog adopts parked runs on its poll
+#: (`store.active_runs()` includes `needs_input`), so "no live controller" means "not adopted yet",
+#: not "gone". `WF_NO_PENDING_GATE` is transient because a run between gates has no continuation
+#: for a moment and will mint one.
+_RESUME_NOT_YET: frozenset[str] = frozenset({"WF_RUN_NOT_LIVE", "WF_NO_PENDING_GATE"})
+
+
+def _supervisor() -> Any:
+    """The workflow supervisor, or None when the gateway has not wired one yet.
+
+    A copy of `mcp_workflows._supervisor` rather than an import of it, because that module is the
+    MCP tool surface and importing it from the clock loop would drag the whole tool registry into
+    the scheduler's import graph for one getattr. The CONTRACT is what matters and it is identical:
+    resolved per call, never cached, never raising.
+
+    `None` is survivable and honest: `resume_run` answers `WF_RUN_NOT_LIVE`, which this path treats
+    as "not ready yet" and re-evaluates on the next scheduled fire — the correct behaviour in a
+    process with no workflow engine (a CLI tick, `automation doctor`) as well as during the window
+    before the gateway attaches the watchdog.
+    """
+    try:
+        from personalclaw.action_providers.services import get_action_services
+
+        services = get_action_services()
+    except Exception:  # noqa: BLE001 - a missing service registry is not an error here
+        return None
+    return getattr(services, "workflows", None) if services else None
+
+
+async def _apply_resume(wakeup: Any, *, now: float = 0.0, base_dir: Any = None) -> Any:
+    """Apply one trigger-declared resume to its target run. Returns a `RunOutcome`. Never raises.
+
+    🔴 **THE GAP THIS CLOSES.** `wakeup.resume_for`, `WakeKind.RESUME`, `Disposition.REQUEUED` and
+    `dispatch.droppable` were all written, documented and unit tested, and `resume_for` had **zero
+    production callers** — only `wakeup_for` was reachable, from `dispatch_fires`, and it always
+    built a wake. So §3's documented "resolve def / **resume target**" step had no producer and no
+    consumer: no trigger could target an existing run, and `WF2LOO-9`'s `goal-pursuit-monitor`
+    clause was blocked on exactly that.
+
+    **FAIL-CLOSED on a bad target, and loudly.** This fires unattended, so the two directions are
+    not symmetric. Fail-open would mean "the target is gone, so start a new run instead" — which
+    runs work the author never asked for, on a schedule, with nobody watching, potentially
+    mutating. Refusing costs one automation that was already broken. So a gone / finished / foreign
+    target REFUSES, and every refusal carries a mandatory reason (`models.require_reason` makes
+    that checkable for `refused`) at `logger.warning` — because "a trigger that silently does
+    nothing every hour is worse than one that says its target is gone", and a `logger.debug` on a
+    permanently broken automation is that silence.
+
+    **Idempotence is INHERITED, not re-implemented.** Two fires landing close together cannot
+    resume one run twice, and none of the three guarantees is added here:
+
+    * the same trigger cannot overlap itself — `firepath`'s `claim` gate already refused the second
+      fire with `skipped_overlap` before it ever became a wakeup;
+    * a gate answer is single-use — `human_input.consume_continuation` claims the token with
+      `os.rename` BEFORE reading it, so the loser gets `WF_RESUME_ALREADY_USED`. That primitive is
+      measured (the read-then-unlink version it replaced let multiple callers see one payload in
+      36 of 40 races); and
+    * the token-less "clear the pause" path pops a key and saves, which is idempotent by
+      construction.
+
+    So `concurrency.single_flight` is deliberately NOT used. It is the weaker guard for this job —
+    advisory, non-blocking, released the instant the block ends — and the authoritative claim
+    already lives inside `resume_run`, one layer down. Wrapping a second lock around it would be
+    the parallel guard that makes two mechanisms disagree about who won.
+
+    **Admission is inherited too, with one measured exception — see the module note below.** Every
+    fire reaching here passed `firepath.evaluate`'s full walk in `service.tick` (incident, screen,
+    spacing, rate, quiet, duty, budget, claim, slot, active, yield, capability), because `tick`
+    only builds a `DueFire` for an ALLOWED decision. A resume therefore inherits every admission
+    check a start gets; the single deliberate asymmetry is `droppable`, and that is not an
+    admission bypass — the overlap admission is the `claim` gate, which already ran.
+    """
+    from personalclaw.triggers import executor as ex
+    from personalclaw.triggers.models import Outcome
+
+    payload = wakeup.payload if isinstance(wakeup.payload, dict) else {}
+    trigger_id = str(payload.get("trigger_id") or wakeup.trigger_id or "")
+    run_id = str(payload.get("run_id") or "")
+    started = now or time.time()
+
+    def _out(outcome: str, reason: str, *, reported: str = "") -> Any:
+        return ex.RunOutcome(
+            trigger_id=trigger_id,
+            session_key=wakeup.session_key,
+            outcome=outcome,
+            reason=reason,
+            duration_secs=round(max(0.0, time.time() - started), 3),
+            reported=reported,
+            run_id=run_id,
+        )
+
+    try:
+        try:
+            from personalclaw.workflows import service as wfs
+            from personalclaw.workflows import store as wf_store
+        except Exception as exc:  # noqa: BLE001 - a broken import must not take the tick with it
+            logger.warning("resume target for %s unreachable: %r", trigger_id, exc)
+            return _out(Outcome.FAILED.value, f"the workflows service is unreachable: {exc!r}")
+
+        run = None
+        try:
+            run = wf_store.get(run_id)
+        except Exception:  # noqa: BLE001 - an unreadable store is a failure, not a refusal
+            logger.warning("resume target %s could not be read", run_id, exc_info=True)
+            return _out(Outcome.FAILED.value, f"run {run_id!r} could not be read from the store")
+
+        # ── the three fail-closed refusals, each PERMANENT: none of them settles on its own ──
+        if run is None:
+            reason = (
+                f"the resume target {run_id!r} no longer exists, so there is nothing to resume; "
+                "point this automation at a live run or remove its resume target"
+            )
+            logger.warning("trigger %s: %s", trigger_id, reason)
+            return _out(Outcome.REFUSED.value, reason)
+
+        if getattr(run, "is_terminal", False):
+            reason = (
+                f"the resume target {run_id!r} has finished ({getattr(run.status, 'value', '')!r}) "
+                "and a run is one attempt, so it cannot be resumed"
+            )
+            logger.warning("trigger %s: %s", trigger_id, reason)
+            return _out(Outcome.REFUSED.value, reason)
+
+        wanted_project = str(payload.get("project_id") or "")
+        actual_project = str(getattr(run, "project_id", "") or "")
+        if wanted_project and wanted_project != actual_project:
+            # A run id is not unique to a project's intent: ids are reused across a restore and a
+            # fork, and resuming a stranger's run unattended is the one outcome worth refusing on a
+            # merely SUSPICIOUS signal.
+            reason = (
+                f"the resume target {run_id!r} belongs to project {actual_project or '(none)'!r}, "
+                f"not the declared {wanted_project!r}"
+            )
+            logger.warning("trigger %s: %s", trigger_id, reason)
+            return _out(Outcome.REFUSED.value, reason)
+
+        answers_gate = bool(payload.get("answers_gate"))
+        try:
+            result = wfs.resume_run(
+                run_id,
+                # 🔴 THE SUPERVISOR IS MANDATORY, and omitting it would have made this whole path
+                # inert. `service._live(run_id, None)` returns None unconditionally, so a
+                # supervisor-less `resume_run` can only ever answer `WF_RUN_NOT_LIVE` — a resume
+                # that never resumes anything, which is the exact defect class this session closes.
+                #
+                # Resolved PER FIRE rather than threaded through `run_forever`, for the reason
+                # `mcp_workflows._supervisor` gives: "a cached None taken at import time would make
+                # every tool permanently inert in a process that wires services later". The
+                # gateway assigns `svc.workflows` only after the watchdog starts, which is after the
+                # clock loop is constructed — so a value captured at loop start would be that None.
+                supervisor=_supervisor(),
+                token=str(payload.get("resume_token") or ""),
+                # `answer=None` with no token is `resume_run`'s "clear the pause" path — it does NOT
+                # answer a gate. That is the safe default for an unattended fire: a monitor says
+                # "carry on", and auto-approving a gate is something an author has to write down.
+                answer=payload.get("gate_answer") if answers_gate else None,
+                responder=f"trigger:{trigger_id}" if trigger_id else "trigger",
+            )
+        except Exception as exc:  # noqa: BLE001 - the outcome IS the error
+            logger.warning("resume of %s raised for %s", run_id, trigger_id, exc_info=True)
+            return _out(Outcome.FAILED.value, f"the resume raised: {exc!r}")
+
+        result = result if isinstance(result, dict) else {}
+        code = str(result.get("code") or "")
+        if result.get("ok"):
+            return _out(
+                Outcome.RAN.value,
+                "",
+                reported=(
+                    "gate answered" if result.get("gate_answered", True) else "pause cleared"
+                ),
+            )
+        if code in _RESUME_NOT_YET:
+            reason = (
+                f"the resume target {run_id!r} is not ready yet ({code}); the next scheduled fire "
+                "re-evaluates it"
+            )
+            logger.info("trigger %s: %s", trigger_id, reason)
+            return _out(Outcome.DEFERRED.value, reason, reported=code)
+        reason = (
+            f"the resume of {run_id!r} was refused ({code or 'no code'})"
+            f"{': ' + str(result.get('message')) if result.get('message') else ''}"
+        )
+        logger.warning("trigger %s: %s", trigger_id, reason)
+        return _out(Outcome.REFUSED.value, reason, reported=code)
+    finally:
+        # 🔴 The claim, released on EVERY path. `tick` persists one per fire so `overlap` can
+        # enforce, and this function never reaches `run_one` — whose `finally` is the only other
+        # release. Without this a resume-target trigger would report `is_running` for the claim's
+        # full 3600s after its first fire, record `skipped_overlap` on every later tick, and answer
+        # `409 already running` to a manual Run for an hour. Exactly the S97 defect, on a new path.
+        ex.release_claim_for(trigger_id, base_dir=base_dir)
 
 
 async def _poll_idle(
