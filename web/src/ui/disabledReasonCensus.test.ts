@@ -114,11 +114,19 @@ const CLASSIFIED: Record<string, string> = {
   // controls changed. Noted rather than silently renumbered: a census keyed on `path:line` is exact
   // about WHICH site it excuses, which is its strength, but it makes an unrelated insertion look like
   // a new offender. Worth re-keying on the control's own text if it bites a third time.
-  'pages/tasks/TaskDetail.tsx:210': 'read-only task; the panel states it once with a lock',
-  'pages/tasks/TaskDetail.tsx:221': 'read-only task; the panel states it once with a lock',
+  // 🪤 THIRD RENUMBER, and nothing about these four controls changed any of the three times. They are
+  // keyed by LINE, so any edit above them in TaskDetail.tsx moves all four and reds this rail:
+  // 197/208/226/254 -> 210/221/239/267 (the exit-criteria Meter adoption) -> 226/247/267/295 (raising the
+  // two tick targets to 24px). Each new line was READ to confirm it is the same control
+  // (`disabled={readOnly}` x2, `disabled={!dep || !onOpenTask}`, `disabled={!onOpenTask}`).
+  // A census keyed on `path:line` is exact about WHICH site it excuses — its strength — but it makes an
+  // unrelated insertion look like a new offender. RE-KEY IT ON THE CONTROL'S OWN TEXT (its aria-label, or
+  // its `disabled=` expression). This is the third bite; the fix is overdue and belongs in its own change.
+  'pages/tasks/TaskDetail.tsx:226': 'read-only task; the panel states it once with a lock',
+  'pages/tasks/TaskDetail.tsx:247': 'read-only task; the panel states it once with a lock',
   // Display-only rows: with no navigation handler the row is not a button, and `disabled:cursor-default`
   // says exactly that rather than "blocked".
-  'pages/tasks/TaskDetail.tsx:239': 'no navigation handler → informational row (cursor-default)',
+  'pages/tasks/TaskDetail.tsx:295': 'no navigation handler → informational row (cursor-default)',
   'pages/tasks/TaskDetail.tsx:267': 'no navigation handler → informational row (cursor-default)',
   // A sequence dependency whose cause is the field directly above it.
   'pages/tasks/TaskForm.tsx:181': 'depends on the Project field rendered immediately above',
@@ -165,7 +173,7 @@ describe('the disabled-reason census', () => {
     expect(at('pages/knowledge/KnowledgeListPage.tsx', 941)).toMatch(/disabled=\{!o\.item_id\}/)
     expect(readFileSync(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'), 'utf8'),
       'and its label really does explain the state').toMatch(/\(removed — insight kept\)/)
-    expect(at('pages/tasks/TaskDetail.tsx', 267)).toMatch(/disabled=\{!onOpenTask\}/)
+    expect(at('pages/tasks/TaskDetail.tsx', 295)).toMatch(/disabled=\{!onOpenTask\}/)
     expect(readFileSync(join(SRC, 'pages/tasks/TaskDetail.tsx'), 'utf8'),
       'the cursor says "not a button", not "blocked"').toMatch(/disabled:cursor-default/)
     expect(at('ui/widget/WidgetFrame.tsx', 250)).toMatch(/disabled=\{pinned\} loading=\{pinPending\}/)
