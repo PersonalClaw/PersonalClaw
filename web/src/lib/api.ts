@@ -3262,6 +3262,46 @@ export interface CredentialMoveResult extends CredentialStoreState {
   already: string[]
   failed: string[]
 }
+/** One thing that references a secret, derived from the specs that exist (EI-10). */
+export interface SecretConsumerWire {
+  kind: 'workflow' | 'trigger'
+  id: string
+  label: string
+}
+/** One secrets-vault row.
+ *
+ *  🔴 **THERE IS NO VALUE FIELD, AND THERE MUST NEVER BE ONE.** The backend's
+ *  `SecretPresence` has no value field either — presence-only is a type on both sides, not a
+ *  redaction step, so adding `value?: string` here would be declaring a field the server
+ *  cannot send and inviting a future handler to make it sendable.
+ *
+ *  `scope` is the three-way trust story, and the panel MUST render the three differently:
+ *  `global` and `project` values live in the credential store; a `host` value lives in the
+ *  gateway's own environment, so the vault can neither rotate nor remove it. */
+export interface SecretPresenceWire {
+  name: string
+  scope: 'global' | 'project' | 'host'
+  project_id: string
+  present: true
+  inherited_from_host: boolean
+  consumers: SecretConsumerWire[]
+}
+export interface SecretsVaultState {
+  secrets: SecretPresenceWire[]
+  counts: { total: number; global: number; project: number; host: number }
+  /** The server-composed "what to do next" sentence for an empty vault; '' when non-empty.
+   *  Server-composed on purpose — the CLI and the dashboard must say the same thing. */
+  empty_hint: string
+}
+export interface SecretWriteResult {
+  secret: SecretPresenceWire | Record<string, never>
+  secrets: SecretPresenceWire[]
+}
+export interface SecretDeleteResult {
+  deleted: string
+  project_id: string
+  secrets: SecretPresenceWire[]
+}
 // User-teachable tool-output projection rule (TokenJuice OP6): output matching
 // match_regex is projected with `strategy` (a builtin content type).
 export type ProjectionStrategy = 'log' | 'diff' | 'json' | 'test' | 'csv' | 'code'
@@ -6245,6 +6285,24 @@ export const api = {
     post<CredentialMoveResult>('/api/security/credentials/rollback', { confirm: true }),
   setCredentialKeychain: (on: boolean) =>
     patch<Record<string, any>>('/api/config/personalclaw', { path: 'security.credential_keychain', value: on }),
+  // EI-10 — the secrets vault. The READ carries presence, scope and consumer links and NEVER a
+  // value: `/api/secrets` has no code path to one (the server builds its rows from key names
+  // only). So there is deliberately no `getSecret(name)` here — not "we chose not to add it",
+  // but there is no endpoint it could call.
+  secrets: (projectId = '') =>
+    get<SecretsVaultState>(`/api/secrets${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+  // The value travels ONE WAY, in this body, and is never returned. The result carries the new
+  // row's PRESENCE plus the refreshed list, so the panel updates without a second round trip and
+  // without ever holding a value it could accidentally render.
+  putSecret: (name: string, value: string, projectId = '') =>
+    post<SecretWriteResult>('/api/secrets', { name, value, project_id: projectId }),
+  // Query params, not a body: DELETE bodies are inconsistently forwarded by proxies, and the
+  // name is not secret — only values are.
+  deleteSecret: (name: string, projectId = '') =>
+    fetch(
+      `/api/secrets?name=${encodeURIComponent(name)}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ''}`,
+      { method: 'DELETE', headers: { ...SK } },
+    ).then(j<SecretDeleteResult>),
   // DC-2. The desktop shell's pushed capability manifest. In a browser tab this is
   // `{connected: false, capabilities: {}}` — an EMPTY map, not the capability names
   // with a placeholder state, so no surface can render a grant control for something

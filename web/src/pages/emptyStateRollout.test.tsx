@@ -272,6 +272,9 @@ const PEP2_CENSUS: {
   { surface: 'Tools', file: 'pages/tools/ToolsPage.tsx', verdict: 'degenerate',
     why: 'Built-in action tools always exist, so a successful index read cannot be empty — and the failed read already branches to LoadError (the swallow was removed earlier). When importable MCP servers exist, ImportSuggestions is the on-ramp.' },
   { surface: 'Knowledge › Add source', file: 'pages/knowledge/SourceCreatePage.tsx', verdict: 'degenerate', why: '"No source kinds are available" means the backend registered no providers.' },
+  // ── EI-10 ──
+  { surface: 'Settings › Secrets', file: 'pages/settings/SecretsPanel.tsx', verdict: 'on-ramp',
+    why: '"Add your first secret" focuses the add form\'s name field. This collection\'s create surface IS that form, already on the page, so the on-ramp is a focus rather than a navigation — there is nowhere to navigate to. The hint sentence is the SERVER\'s (`empty_hint`), so the CLI and the dashboard cannot drift on what an empty vault means.' },
 ]
 
 describe('PEP-2 · every list surface\'s genuinely-empty branch is classified', () => {

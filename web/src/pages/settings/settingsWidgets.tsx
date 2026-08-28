@@ -1,13 +1,13 @@
 import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
-  MonitorSmartphone, Plug2, FileType2, LayoutDashboard, Smartphone, Rss, Package, FlaskConical,
+  MonitorSmartphone, Plug2, FileType2, LayoutDashboard, Smartphone, Rss, Package, FlaskConical, KeyRound,
 } from 'lucide-react'
 import { verifiedScope } from './AuditPanel'
 import type { LucideIcon } from 'lucide-react'
 import { notify } from '../../app/appSdk'
 import {
-  api, type SecurityStats, type MemoryStats, type AgentRuntime, type DashboardConfig,
+  api, type SecurityStats, type SecretsVaultState, type MemoryStats, type AgentRuntime, type DashboardConfig,
   type SettingsProvider, type NotificationSettings, type UpdateCheck,
   type PromptBindings, type SelVerify, type SavedAgent,
   type SearchProviderInfo,
@@ -52,6 +52,12 @@ const shortModel = (ref: string) => { const i = ref.indexOf(':'); return i >= 0 
 // Per-subpage data hooks (cache keys mirror each panel so paint is shared/instant)
 // ─────────────────────────────────────────────────────────────────────────────
 const useSecurity = () => useQuery('settings:security', () => api.securityStats().catch(() => null as SecurityStats | null), { persist: true })
+// A DISTINCT cache key from the panel's `settings:secrets`, deliberately. This card swallows a
+// failed read (a bento card that cannot load simply does not render its body), and the panel's read
+// is BARE so it can tell "no secrets" from "the fetch failed". Sharing one key would let this
+// card's `null` land in the panel, which would then shimmer forever with no error to show — the
+// exact dishonesty `panelReadHonestyTail` exists to catch.
+const useSecretsVault = () => useQuery('settings:secrets-card', () => api.secrets().catch(() => null as SecretsVaultState | null), { persist: true })
 const useMemoryStats = () => useQuery('settings:memory-stats', () => api.memoryStats().catch(() => null as MemoryStats | null), { persist: true })
 // Today's spend for the Usage bento tile (COST-AND-TOKEN-OBSERVABILITY). Midnight-UTC
 // window matches the Usage panel's "Today"; a null means the ledger read failed.
@@ -797,6 +803,29 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
               { k: 'Suspicious patterns', v: s.suspicious_patterns, vText: String(s.suspicious_patterns) },
               { k: 'Redaction paths', v: s.redaction_paths, vText: String(s.redaction_paths) },
               { k: 'Tool schemas', v: s.tool_schemas, vText: String(s.tool_schemas) },
+            ]} /></div>
+          </>}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    id: 'secrets', group: 'System', label: 'Secrets', icon: KeyRound, size: 'md',
+    description: 'Stored credentials, their scope, and what uses them.',
+    useSearchText() {
+      const { data: v } = useSecretsVault()
+      return `secrets vault credentials tokens api keys presence global project inherited host ${v ? `${v.counts.total} secrets ${v.secrets.map((s) => s.name).join(' ')}` : ''}`
+    },
+    render(query, go) {
+      const { data: v, stale } = useSecretsVault()
+      return (
+        <BentoCard icon={KeyRound} title="Secrets" query={query} onClick={() => go('secrets')} loading={v === undefined} stale={stale}>
+          {v && <>
+            <BigStat value={v.counts.total} caption="secrets known" />
+            <div className="mt-2"><KVList query={query} rows={[
+              { k: 'Global', v: v.counts.global, vText: String(v.counts.global) },
+              { k: 'Per-project', v: v.counts.project, vText: String(v.counts.project) },
+              { k: 'From host env', v: v.counts.host, vText: String(v.counts.host) },
             ]} /></div>
           </>}
         </BentoCard>

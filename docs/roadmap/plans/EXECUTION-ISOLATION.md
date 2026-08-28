@@ -1345,3 +1345,69 @@ nothing describes it, it gets **filed** — not left as a dep. Either way it sto
 
 Two atoms this week were parked exactly this way (`MC-6`, which owes its own `sound` field, and this one).
 Four more were found by a read-only audit of the 29 `EXT:`-only atoms.
+- [2026-08-28][EI-10] **Three of four `done_when` clauses shipped; the fourth is owner-deferred.**
+  The vault ships as `secrets_vault.py` (read model) + `dashboard/handlers/secrets.py`
+  (`GET`/`POST`/`DELETE /api/secrets`, owner-only) + `Settings › Secrets`
+  (`web/src/pages/settings/SecretsPanel.tsx`, registered in `SUBPAGES`, `SETTINGS_PANELS` and
+  `SETTINGS_WIDGETS`). Presence-only is **structural, not a redaction step**: `SecretPresence` is a
+  frozen dataclass with no value field, and the read model's ONLY credential-store call is the new
+  `credentials.credential_names()`, whose `.env` half splits each line and keeps the left side, so
+  no value becomes a Python object on the read path. `get_credential` is not imported by either
+  vault module and a rail asserts that over their AST (a prose mention in a docstring deliberately
+  does not count).
+- [2026-08-28][EI-10] **DEVIATION — the grant-to-sandbox toggle is NOT shipped, and the atom stays
+  `todo`.** The row names a toggle *"populating SandboxSpec.env"*. Measured, not assumed:
+  `SandboxSpec` (`sandbox_providers/base.py:33`) has **no `env` field**; `sandbox_providers/` holds
+  `none`/`pclaw_tool`/`tool_gateway` and **no docker provider**; `provisioning.py:448` answers
+  `Mode.CONTAINER` with a scratch dir plus *"§4.4 is owner-deferred to WF2WOR-12"*. So the clause
+  *"a secret granted to sandboxed runs reaches a docker leaf's env while an ungranted sibling does
+  not"* has no container to be inside. Rendering the toggle anyway would persist a flag no runtime
+  reads — an inert control, which `tests/test_inert_surface_baseline.py` exists to prevent — so it
+  is deferred WITH the clause and lands beside `EI-2`'s docker provider.
+- [2026-08-28][EI-10] **Dependency `EXT:WORK-CONTAINERS:WORK-R19` was struck by owner ruling and is
+  not a blocker.** No WORK-CONTAINERS atom owns R19, and the atom's own `done_when` already says the
+  vault lists *"global + per-project secrets"* — so the per-project half is this atom's work. It is
+  layered over the SHIPPED store rather than a new one: a project secret is a **namespaced key in
+  the same credential store** (`PCPROJ_<project_id>__<NAME>`), which is why the keychain backend
+  (SH-1), the `.env` 0600 floor, the union read, and the inventory's `secret=True` projection into
+  `portability.EXPORT_EXCLUDE` all apply to it for free. There is deliberately **no per-project
+  index file and no `config.json` field** — a sidecar index would have needed every one of those
+  re-derived, and the one missed would be the one that leaked. Nothing was added to `config.json`,
+  so the config round-trip contract is not engaged by this change.
+- [2026-08-28][EI-10] **Consumer links are DERIVED, never indexed** — `consumers_for()` walks the
+  workflow def providers and the trigger store and reports which reference `{{secret:KEY}}` through
+  the two shipped readers (`workflows.secrets.secret_keys_referenced`,
+  `triggers.secrets.references`), reading a trigger's action via `schedule_view._inline_action` (the
+  same accessor `doctor._action_config_fact` uses) rather than a `getattr` guess. Links are keyed by
+  the STORE key, so a project row and a global row of the same name do not share consumers.
+- [2026-08-28][EI-10] **Export.** `plan_export` gained `secret_names=`, supplied by
+  `project_archive._vault_secret_names`. The file-exclusion loop could never see a project secret —
+  it lives in the credential store, not in a file — so without it an export reported "0 credentials
+  to re-enter" for a project with five, the one wrong answer here. Asserted over the
+  **decompressed archive members**, not the compressed bytes: DEFLATE would hide a plaintext value
+  from a substring scan of the container.
+- [2026-08-28][EI-10] **Falsification.** Baseline `tests/test_secrets_vault.py` = **45 passed**.
+  (1a) making the POST echo the value it stored → **1 failed / 44 passed**, on
+  `test_post_does_not_echo_the_value_it_just_stored`; the first attempt reddened as a *500* because
+  the handler's `del value` leaves the name unbound, so the mutation had to capture the value before
+  that barrier — the barrier is real. (1b) importing `get_credential` into `secrets_vault` →
+  **1 failed / 44 passed** on the AST rail, while the docstring's existing mention of the same name
+  did NOT trigger it. (2) planting `NAME=value` into the manifest's presence flags → **3 failed /
+  42 passed**, including *"a credential VALUE is inside the export archive"*. (3) mis-keying the
+  consumer map by workflow name → **3 failed / 42 passed**. Vacuity partners stayed GREEN in every
+  leg: `test_the_forbidden_names_are_real` (measures the credential store) and
+  `test_the_shipped_readers_are_what_find_a_reference` (measures the two reference readers), so each
+  red is attributable to the vault rather than to the machinery underneath it. Tree restored from
+  file copies at the literal paths; `git diff --stat HEAD` empty after each leg.
+- [2026-08-28][EI-10] **DISCOVERY, not fixed here — a security control is over-broad by substring
+  collision.** `SECRET_KEY_HINTS`'s `_pat`/`pat_` entries (added for `GITHUB_PAT`) match `_PATH`,
+  `_PATTERN` and `COMPAT_`, so `looks_secret` returns True for `LD_LIBRARY_PATH`,
+  `HERDR_BIN_PATH`, `MY_PATTERN` and `COMPAT_MODE` (bare `PATH` and `PYTHONPATH` are unaffected —
+  no underscore before "pat"). Consequence beyond this atom: `mcp_shared.leaf_env` filters by that
+  predicate, so **`LD_LIBRARY_PATH` is stripped from every compiled batch leaf's environment** —
+  precisely the hazard `leaf_env`'s own docstring worries about ("an allowlist would drop the
+  PATH-shaped vars a subprocess needs and the failure would look like a broken leaf"), arriving via
+  the denylist instead. Deliberately NOT changed here: narrowing a secret-detection list is a
+  security-control change (E4) whose blast radius is the leaf env filter, not the vault. The vault
+  reuses `looks_secret` unchanged — a second list would drift — and its host section states that
+  rows are detected by name shape, so the over-breadth is visible rather than hidden.

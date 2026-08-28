@@ -19,7 +19,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `EI-7` | ⬜ | Second-opinion handoff + ProposerBackend + sandbox-internal tool gateway | `EI-1`, `EI-5` | SC6: a stalled loop's "second opinion" fires a DIFFERENT cataloged runner one-shot inside the same sandbox class and is accepted only when the disk re-diff confirms the edits, SEL-audited. SC7: inside a docker/lima sandbox `pclaw-tool memory_recall` succeeds while ss/netstat shows zero listening sockets, no credential material exists in the sandbox, and a research-profile sandbox is refused write-class tools host-side |
 | `EI-8` | ✅ | Turn-bound two-phase file checkpointing + /rewind-to-turn + localhost web preview | `EI-1` | SC8: after a turn that mangled three files, /rewind-to-turn N previews exactly those files with diffs and restores them byte-identical on confirm; .env files were never captured; the checkpoint store respects its cap and prunes with the session; a run's dev server port surfaces an "Open Preview" affordance to localhost:<port> |
 | `EI-9` | ✅ | Reviewer-comment triage primitive (line-anchored findings → accepted-subset dispatch) | `EI-5`, `EXT:WORK-CONTAINERS:cockpit diff panel to extend`, `EXT:LEARNING-FLYWHEEL:calibration record for rejections` | SC9: a workflow review stage emits line-anchored findings; the triage panel validates anchors against the real diff; the user accepts 2 of 5; the accepted pair auto-dispatches to the originating worker which applies them; rejected findings land in the calibration record; nothing was auto-written without acceptance |
-| `EI-10` | ⬜ | Secrets vault UX + presence-only API + grant-to-sandbox toggles | `EI-1`, `EXT:WORK-CONTAINERS:WORK-R19 secrets store + per-project keychain backend` | SC10: the vault lists global + per-project secrets with presence-only values, inherit-from-host rows rendered distinctly, and consumer links; a secret granted to sandboxed runs reaches a docker leaf's env while an ungranted sibling does not; no value is readable back through any API; project export ZIPs contain presence flags only |
+| `EI-10` | 🟡 | Secrets vault UX + presence-only API + grant-to-sandbox toggles | `EI-1`, `EXT:WORK-CONTAINERS:WORK-R19 secrets store + per-project keychain backend` | SC10: the vault lists global + per-project secrets with presence-only values, inherit-from-host rows rendered distinctly, and consumer links; a secret granted to sandboxed runs reaches a docker leaf's env while an ungranted sibling does not; no value is readable back through any API; project export ZIPs contain presence flags only |
 | `EI-11` | ✅ | Security docs correction — credential-hiding vs confinement (D0, land first) | — | no public surface claims confinement the code does not provide; the guardrails claim names its unattended scope (reusing the Settings panel wording); the desktop claim matches CI reality; security.md has the explicit sandbox does/doesn't section |
 | `EI-12` | ✅ | App-side confinement compounders — env allowlist, network-perm decision, per-app deps (D1/D2/D3+VD) | — | a planted secret in the gateway env is absent from an app backend's env (test proves it); the Store consent UI's network claim matches enforcement reality; an app pinning a conflicting core dependency does not affect the gateway; every first-party app still boots; the VD user-validation sweep holds |
 
@@ -106,7 +106,22 @@ fourth done-when clause is unmet and the atom stays `todo`. See the plan's `## E
 
 ### `EI-10` — Secrets vault UX + presence-only API + grant-to-sandbox toggles
 
-**Status:** todo
+**Status:** 🟡 2026-08-28 — three of four `done_when` clauses shipped and proven: the vault lists
+global + per-project secrets with presence-only values, inherit-from-host rows as a first-class
+distinctly-rendered type, and derived consumer links; no value is readable back through any API
+(structurally — `SecretPresence` has no value field and the read model's only credential-store call
+is `credential_names()`); project export ZIPs carry presence flags only (asserted over the
+decompressed archive members, not the plan's intent).
+
+**Stays `todo`** for the fourth clause — *"a secret granted to sandboxed runs reaches a docker
+leaf's env while an ungranted sibling does not"* — which is **owner-deferred, not skipped**. It is
+unbuildable today and was measured so, not assumed: `sandbox_providers/` ships `none`,
+`pclaw_tool` and `tool_gateway` and **no docker provider**; `provisioning.py:448` answers
+`Mode.CONTAINER` with a scratch dir and the comment *"§4.4 is owner-deferred to WF2WOR-12"*; and
+`SandboxSpec` (`sandbox_providers/base.py:33`) has **no `env` field at all**, so the toggle this
+row names as *"populating SandboxSpec.env"* has nowhere to write. The grant toggle is therefore
+**deliberately NOT shipped**: a persisted flag no runtime reads is an inert control, which this
+repo's own inert-surface baseline exists to prevent. It lands with `EI-2`'s docker provider.
 
 §8 (NEW-27 remainder over WORK-R19): Settings→Secrets vault listing global + per-project secrets with presence-only display, inherit-from-host rows as a first-class type, consumer links; GET/POST/DELETE /api/secrets (write-only values); project hub Context tab links; per-secret grant-to-sandboxed-runs toggle populating SandboxSpec.env; §11 Session 7
 

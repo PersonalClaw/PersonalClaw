@@ -10,7 +10,8 @@ same shape as ``agents/native/decision_tool_defs.py``, extracted from ``builtin_
 for the same rail. **There is no re-export shim in ``loader``** — importers were updated.
 
 Two backends sit behind :func:`save_credential` / :func:`get_credential` /
-``AppConfig.load_credentials``. Callers never name one:
+:func:`credential_names` / :func:`delete_credential` / ``AppConfig.load_credentials``. Callers
+never name one:
 
   ``keychain``  the OS secret service via the OPTIONAL ``keyring`` extra (macOS Keychain,
                 Linux Secret Service, Windows Credential Locker). Opt-in with
@@ -250,9 +251,11 @@ def _keychain_delete(key: str) -> bool:
     is the shape of a lost secret. Removing the name is therefore treated as the operation
     and the entry deletion as best-effort, never the other way round.
 
-    Only SH-2's rollback calls this. There is deliberately no ``delete_credential`` public
-    chokepoint: nothing else in the product removes a stored credential, and adding the
-    verb speculatively would be a deletion path with no consented caller.
+    Two callers: SH-2's rollback, and :func:`delete_credential` — the public chokepoint the
+    secrets vault's ``DELETE /api/secrets`` needs (EI-10). Until that route existed there was
+    deliberately no public delete verb, because a deletion path with no consented caller is a
+    liability; the vault is that caller, and it goes through the chokepoint rather than reaching
+    in here.
     """
     kr = _usable_keyring()
     if kr is None:
@@ -405,3 +408,70 @@ def get_credential(key: str) -> str:
     if value:
         return value
     return _dotenv_credentials().get(key, "")
+
+
+def _dotenv_names() -> list[str]:
+    """Credential key NAMES in ``~/.personalclaw/.env`` — the value side is never read.
+
+    Not ``_dotenv_credentials().keys()``. That would build the whole ``{name: value}`` dict
+    and then throw the values away, which puts every stored credential in a live local of a
+    presence-only read path. Splitting the line and keeping only the left-hand side means the
+    value never becomes a Python object at all — the structural half of "presence-only", as
+    opposed to a value that is fetched and then filtered out downstream.
+    """
+    ep = _loader.env_path()
+    if not ep.exists():
+        return []
+    names: list[str] = []
+    try:
+        lines = ep.read_text().splitlines()
+    except OSError:
+        logger.debug("credential .env unreadable while listing names", exc_info=True)
+        return []
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name = line.split("=", 1)[0].strip()
+        if name:
+            names.append(name)
+    return names
+
+
+def credential_names() -> list[str]:
+    """Every credential key name the store holds, sorted, with NO value read anywhere.
+
+    The union of both backends — same union rule as :func:`get_credential`, so a key stored in
+    either place is listed whichever backend is active. The keychain half already enumerates by
+    name (``_keychain_index``), and the ``.env`` half goes through :func:`_dotenv_names`, so no
+    call in this function can return a secret VALUE. That is what lets the secrets vault build
+    its whole read model without a value-bearing call in its import graph
+    (``tests/test_secrets_vault.py`` asserts exactly that, statically).
+
+    Callers that need to know a key EXISTS must use this, not ``get_credential(k) != ""``: the
+    second reads the value in order to discard it, and a route written that way leaks the moment
+    someone returns the local it already has.
+    """
+    return sorted({*_keychain_index(), *_dotenv_names()})
+
+
+def delete_credential(key: str) -> bool:
+    """Remove one credential from BOTH backends. True when it was there and is now gone.
+
+    Both halves unconditionally, not "the active backend": reads are a union
+    (:func:`get_credential`), so deleting from only the active store would leave a partly
+    migrated install still resolving the key from the other one — a delete that reports success
+    and changes nothing the resolver sees. The process environment is cleared too, for the same
+    reason ``save_credential`` sets it: a running gateway that keeps serving the value it was
+    just told to forget has not deleted it.
+
+    Absent is the post-condition, so deleting a key that was never stored returns ``False``
+    without raising — the caller distinguishes "removed" from "there was nothing there" for its
+    own 404, but neither is an error here.
+    """
+    existed = key in credential_names() or key in os.environ
+    if _usable_keyring() is not None:
+        _keychain_delete(key)
+    _dotenv_remove_credentials([key])
+    os.environ.pop(key, None)
+    return existed

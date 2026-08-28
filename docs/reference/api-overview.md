@@ -296,6 +296,8 @@ per-route contract.
 |---|---|
 | `GET /api/security/stats` · `.../denied-commands` · `.../egress` | Security posture: stats, active deny patterns, egress policy. |
 | `GET /api/security/audit` · `GET /api/security/audit/verify` · `POST /api/sel/rotate` | Tamper-evident security event log: paginated/filtered read, HMAC-verify, key rotation. The two reads are owner-only and refuse an app-scoped token. |
+| `GET /api/security/credentials` · `POST /api/security/credentials/migrate` · `.../rollback` | Where this instance's credentials are stored, and the consented snapshot-backed move between backends. Owner-only; both writes require `confirm: true`. Payloads carry key names and counts, never a value. |
+| `GET /api/secrets` · `POST /api/secrets` · `DELETE /api/secrets` | The secrets vault: global, per-project and inherit-from-host rows with presence flags and derived consumer links. Owner-only. **Values are write-only — no route returns one**, and there is deliberately no per-secret read endpoint. |
 | `GET /api/approvals` · `POST /api/approvals/{id}/{action}` | Pending tool approvals; approve/deny. |
 
 ## Voice & speech

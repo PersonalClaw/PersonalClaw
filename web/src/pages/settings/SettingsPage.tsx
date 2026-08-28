@@ -3,7 +3,7 @@ import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
   HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone, Plug2, FileType2,
-  FlaskConical,
+  FlaskConical, KeyRound,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -14,6 +14,7 @@ import { AccountPanel } from './AccountPanel'
 import { NotificationsPanel } from './NotificationsPanel'
 import { MemoryPanel } from './MemoryPanel'
 import { SecurityPanel } from './SecurityPanel'
+import { SecretsPanel } from './SecretsPanel'
 import { ProvidersPanel } from './ProvidersPanel'
 import { ModelsPanel } from './ModelsPanel'
 import { SearchPanel } from './SearchPanel'
@@ -88,6 +89,11 @@ const SUBPAGES: SubPage[] = [
   { id: 'documents', label: 'Documents', icon: FileType2, render: () => <DocumentsPanel /> },
   { id: 'notifications', label: 'Notifications', icon: Bell, render: () => <NotificationsPanel /> },
   { id: 'security', label: 'Security', icon: Shield, render: () => <SecurityPanel /> },
+  // Beside Security, not inside it: Security is about ENFORCEMENT posture (what is denied, what is
+  // redacted), and this is the inventory of credentials the instance holds. A user asking "what
+  // tokens does this thing have" is asking a different question from "what does it block", and
+  // burying a per-secret list inside the enforcement page would make the inventory unfindable.
+  { id: 'secrets', label: 'Secrets', icon: KeyRound, render: () => <SecretsPanel /> },
   // Next to Security on purpose: "what is paired to my gateway, and can I cut it off" is a
   // security question. This is the ONE device registry — `companion` above is the LAN/PWA
   // transport settings, not a list of devices.
