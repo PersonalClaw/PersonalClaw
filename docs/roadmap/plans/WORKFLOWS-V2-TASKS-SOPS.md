@@ -45,7 +45,7 @@ Approved recommendation IDs folded into this revision (mechanism-level, not appe
 
 **Recon corrections applied in this revision** (verified against code 2026-07-12):
 1. The old SOP surfacing threshold is **0.62** (`workflows/surfacing.py::DEFAULT_MATCH_THRESHOLD`, config `workflows.match_threshold`, `WorkflowsConfig` loader.py:1052) with a **0.7** keyword-overlap fallback gate — NOT 0.55 (0.55 is the *skills* surfacing threshold in `skills/surfacing.py`). All surfacing numbers below use the real workflow values.
-2. `create-task` is NOT a new action provider — it is one of the **8 existing core-native ActionProviders** (`action_providers/registry.py::_ensure_default_providers_registered`) and is already in `ALLOWED_HOOK_PROVIDERS` (`validation.py:555`). §6 reuses it.
+2. `create-task` is NOT a new action provider — it is one of the **8 existing core-native ActionProviders** (`action_providers/registry.py::_ensure_default_providers_registered`) and is already in `ALLOWED_HOOK_PROVIDERS` (`src/personalclaw/validation.py`). §6 reuses it.
 3. Tasks persist as **per-entity JSON files** (`~/.personalclaw/tasks/t-<8hex>.json`, `NativeTaskProvider`, atomic_write) — there is no SQLite and no cross-file transaction. Materialization idempotency below is designed for rename-atomic per-file semantics, not transactions.
 4. `WorkflowScope` already has FOUR tiers (`GLOBAL | WORKSPACE | AGENT | SESSION`, workflows/models.py) with an up-only promotion ladder (`workflows/registry.py::promote_workflow`). The plan's earlier three-value `DefScope` is corrected to preserve all four (session-scoped defs get end-of-run cleanup like `delete_session_workflows` today).
 5. The FE DagView node-level **Approve/Deny (`onApprove`/`onDeny` + `awaiting` state) is a declared, UNWIRED extension point** (`web/src/pages/tasks/DagView.tsx`) — §4's ConfirmationRequest is the missing backend seam and §7 wires it.
@@ -468,7 +468,7 @@ PClaw already runs real concurrent co-tenant sessions and batch `subagent_run` c
 
 ## 6. The `create-task` Action Node (reuses the EXISTING provider)
 
-**Recon correction:** `create-task` already exists as a core-native `ActionProvider` (`action_providers/`, ABC at base.py:50, registered idempotently by `_ensure_default_providers_registered()`, already present in `ALLOWED_HOOK_PROVIDERS` — validation.py:555). The workflow engine's `action` node dispatches through the **same action-provider registry** the hooks/schedule/trigger dispatch sites use (hooks.py:494, gateway.py:701, event_triggers.py:214) — no new provider, no allowlist change. What this plan adds is the workflow-side config surface and the R12 content contract.
+**Recon correction:** `create-task` already exists as a core-native `ActionProvider` (`action_providers/`, ABC at base.py:50, registered idempotently by `_ensure_default_providers_registered()`, already present in `ALLOWED_HOOK_PROVIDERS` — src/personalclaw/validation.py). The workflow engine's `action` node dispatches through the **same action-provider registry** the hooks/schedule/trigger dispatch sites use (hooks.py, gateway.py, event_triggers.py) — no new provider, no allowlist change. What this plan adds is the workflow-side config surface and the R12 content contract.
 
 For workflows that PRODUCE tasks as output (audits filing findings, sprint planning creating stories):
 
@@ -538,7 +538,7 @@ Where each new piece plugs into the pluggable-provider architecture (nothing byp
 |---|---|
 | WorkflowDef storage/CRUD | Existing `workflows/registry.py` provider registry + `WorkflowProvider` ABC; native provider keeps the markdown+sidecar layout. Apps contribute defs via manifest `provider: {type: "workflow"}` → WorkflowTypeHandler (providers/registry.py) |
 | Git-synced def library (R4) | A first-party workflow provider app (`type: workflow`, `readonly=True`); registered by the app loader on enable, deregistered on disable |
-| `create-task` action nodes | EXISTING core-native ActionProvider; already in `ALLOWED_HOOK_PROVIDERS` (validation.py:555). Any future NEW action provider a template needs must be added to that frozenset or hook/workflow validation rejects it |
+| `create-task` action nodes | EXISTING core-native ActionProvider; already in `ALLOWED_HOOK_PROVIDERS` (src/personalclaw/validation.py). Any future NEW action provider a template needs must be added to that frozenset or hook/workflow validation rejects it |
 | `event` gates (webhooks) | Existing `apps/webhook-action` action app seam |
 | Task materialization writes | `tasks/registry.py` provider façade (`register_provider`; readonly providers skipped) — non-native task providers keep working |
 | Chat tools (`workflow_start`, `workflow_author`, `workflow_from_sop`, frontier/next) | Tool-provider category: a tool module listed in `mcp_core._TOOL_MODULES` via `tool_providers/registry.py` (the `mcp_workflows.py` pattern, including name→id fallback; ids never shown to the LLM) |

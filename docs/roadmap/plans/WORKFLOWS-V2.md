@@ -599,7 +599,7 @@ Cross-template conventions that keep a 6+ template library effective and maintai
 - **Baseline capture**: code-flavored templates run an `action(run_validation)` node before the first mutating node; its journaled output later gates diffs to classify regression vs pre-existing vs implementation-detail (pairs with the engine `baseline_check` resume invariant, §2).
 - **Shared prompt-block library** (`bundled/shared/`): preflight, graduated safety tiers, conventions — referenced from template specs instead of duplicated text; rule "repeated boilerplate moves to shared" + a deterministic template-lint so refs can't drift.
 - **Steering examples**: template metadata `steering_examples: [{event, description}]` (kickoff + mid-flight mutation examples) surfaced in the widget and fed to `workflow_plan` as few-shot.
-- **`artifact_update` action provider**: dashboard-style templates generate an HTML skeleton once and refresh it via pure transforms re-binding `{{nodes.x.output}}` slots. This is a NEW action provider → registered in the action_providers registry AND added to `ALLOWED_HOOK_PROVIDERS` (validation.py:555) — see §7.5.
+- **`artifact_update` action provider**: dashboard-style templates generate an HTML skeleton once and refresh it via pure transforms re-binding `{{nodes.x.output}}` slots. This is a NEW action provider → registered in the action_providers registry AND added to `ALLOWED_HOOK_PROVIDERS` (src/personalclaw/validation.py) — see §7.5.
 
 ---
 
@@ -659,7 +659,7 @@ Every new capability plugs in the way existing ones do — no bespoke seams:
 | New piece | Plugs in via |
 |---|---|
 | Chat tool module `mcp_workflows.py` (new) | tool-category module exposing `_list_tools`/`_call_tool`, listed in `mcp_core._AGGREGATED_CATEGORY_MODULES` (mcp_core.py:918); param schemas in `validation.py` `MCP_CORE_SCHEMAS` |
-| v2 `run-workflow` action provider (hooks/triggers start runs) | `action_providers` registry (`register_action_provider`) + name added to `ALLOWED_HOOK_PROVIDERS` (validation.py:555) — omission means hook_create rejects it even though the UI offers it |
+| v2 `run-workflow` action provider (hooks/triggers start runs) | `action_providers` registry (`register_action_provider`) + name added to `ALLOWED_HOOK_PROVIDERS` (src/personalclaw/validation.py) — omission means hook_create rejects it even though the UI offers it |
 | `artifact_update` action provider (WF2-R15) | same two-step registration as above |
 | App-contributed workflow-def packs | manifest `provider: {type: "workflow", implementation: "module:factory"}` → the repointed `workflow` `_TypeHandler` → the v2 def-provider registry; `PROVIDER_TYPES` ↔ handler parity preserved (test_manifest_types_match_handlers) |
 | `infer` node model calls | `one_shot_completion` on the reasoning axis (plain ModelProvider — never the NativeAgentRuntime that chat/code_tools resolution returns); tier→model resolution threads the `model` build kwarg (register_entry raises on dup — never re-register) |

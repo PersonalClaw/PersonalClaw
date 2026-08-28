@@ -23,7 +23,7 @@ The original design record is kept below — execution logs, measured findings a
 - **agenticseek** (Fosowl) — text-only browser perception loop: markdownify + `is_sentence()` filter + 32KB cap; links/forms as `[name](value)` DSL; plain-text sentinel actions (navigate/GO_BACK/REQUEST_EXIT/FORM_FILLED); per-page safety injection (`inject_safety_script.js` blocking fetch/media/hardware APIs); stealth stack (undetected-chromedriver + selenium_stealth); form-fill with submission-outcome verification; notes-as-only-memory with provenance format; search_history dedup; stuck-detection.
 - **open-codex-computer-use** (iFurySt) — non-intrusive desktop interaction doctrine; snapshot-freshness protocol (get_state before acting, indexes invalid across turns); budgeted observations (1200 nodes / 64 depth / 500 chars); action-batching with shared state + halt-on-error; MCP `readOnlyHint`/`destructiveHint` annotations for mechanical safety gating.
 - **Security roadmap (egress chokepoint)** — `net/guard.py:evaluate` + `net/policy.py` named profiles; `web/render.py` headless-browser pre-flight evaluate (acknowledged IP-pinning bypass gap); `fence_untrusted` for output fencing.
-- **Provider architecture (action providers)** — `ActionProvider` ABC, `ALLOWED_HOOK_PROVIDERS` (`validation.py:555`), three dispatch seams (`hooks.py:494`, `gateway.py:701`, `event_triggers.py:214`), app-contributed provider pattern (`apps/webhook-action` precedent).
+- **Provider architecture (action providers)** — `ActionProvider` ABC, `ALLOWED_HOOK_PROVIDERS` (`src/personalclaw/validation.py`), three dispatch seams (`hooks.py`, `gateway.py`, `event_triggers.py`), app-contributed provider pattern (`apps/webhook-action` precedent).
 
 ---
 
@@ -33,7 +33,7 @@ PersonalClaw has two web-facing mechanisms today: `web/fetch.py` (text extractio
 
 Verified starting points:
 - `action_providers/base.py:ActionProvider` ABC + `action_providers/registry.py:register_action_provider` — the pluggable action provider contract.
-- `ALLOWED_HOOK_PROVIDERS` (`validation.py:555`) — the frozenset gating hook/trigger creation; a new action provider MUST be added here.
+- `ALLOWED_HOOK_PROVIDERS` (`src/personalclaw/validation.py`) — the frozenset gating hook/trigger creation; a new action provider MUST be added here.
 - `net/guard.py:evaluate` + `net/policy.py:EgressPolicy` / `egress_policy_for` — the egress chokepoint every outbound connection must pass through.
 - `web/render.py` — existing headless Playwright path with pre-flight `guard.evaluate()` (acknowledged: Playwright bypasses IP pinning, pre-flight is the only defense).
 - `sdk/net.py` + `sdk/security.py` — app-facing egress + fencing re-exports.
@@ -301,8 +301,8 @@ The browse provider is a standard `ActionProvider` — workflow action nodes inv
 ## 9. Provider-Fidelity Wiring
 
 - **App manifest:** `apps/browse-action/app.json` — `type: "action"`, `entity: "browse"`, `implementation: "provider:create_provider"`, `permissions: {network: true, storage: true}`. Ships as a first-party app (installed via App Store, not native — can be disabled).
-- **ALLOWED_HOOK_PROVIDERS:** add `"browse"` to the frozenset at `validation.py:555`. Without this, hook/trigger creation referencing the browse provider is rejected.
-- **Action dispatch:** inherits denylist enforcement at the three dispatch seams (`hooks.py:494`, `gateway.py:701`, `event_triggers.py:214`) — the browse provider's execute() is called after `check_action` passes (AUTONOMY-GUARDRAILS §1.2).
+- **ALLOWED_HOOK_PROVIDERS:** add `"browse"` to the frozenset at `src/personalclaw/validation.py`. Without this, hook/trigger creation referencing the browse provider is rejected.
+- **Action dispatch:** inherits denylist enforcement at the three dispatch seams (`hooks.py`, `gateway.py`, `event_triggers.py`) — the browse provider's execute() is called after `check_action` passes (AUTONOMY-GUARDRAILS §1.2).
 - **Egress:** `BROWSE` named policy added to `net/policy.py` alongside STRICT/CONNECTOR/WEBHOOK; operator layering via `egress_policy_for`.
 - **Safety profile:** unattended browse runs resolve through the `HEADLESS` safety profile (read + navigate grants; no filesystem writes, no other action providers). A trigger creating a browse automation must grant `browse` explicitly at creation time.
 - **Output fencing:** all page text extracted by the provider is wrapped with `fence_untrusted(text, source=url)` before entering the LLM context — web content is attacker-controlled and must be fenced.
@@ -764,8 +764,17 @@ class ElementRef:
   PROVIDER NAME, and browse in particular carries no `_PATH_KEYS` value for a path glob to match — it
   is screened by the seam and unmatchable by any rule an operator can currently write. Not fixed here
   (it is an AUTONOMY-GUARDRAILS contract, and enforcing a dead control is its own outage class), but
-  worth an atom. Note also that §9's `validation.py:555` line reference is stale — the frozenset is at
-  `:812`, and `hooks.py:494` / `gateway.py:701` / `event_triggers.py:214` have all drifted too.
+  worth an atom.
+
+  **The stale line references this note reported are now FIXED repo-wide (2026-08-27).** They had
+  drifted exactly as recorded, and the fix was to stop citing line numbers for symbols that move
+  rather than to bump them: 50 citations of `validation.py:555`/`:559` (the frozenset was really at
+  `:812`) became `src/personalclaw/validation.py` — the full path, because a bare `validation.py` is
+  ambiguous with the unrelated `workflows/validation.py` and that ambiguity cost a session real time —
+  and 24 citations of `hooks.py:494` / `gateway.py:701` / `event_triggers.py:214` dropped their line
+  numbers. **The durable anchor for the three dispatch seams is the `get_action_provider(...)` call in
+  each file**, which is what they were always pointing at; none of the three cited lines was one.
+  A citation is only worth writing if it survives the next edit to the file it names.
 
   **NOT verified, honestly.** `CdpPageDriver`'s identity-based element locator is proven on the CDP
   wire (methods, params, one-pass JSON-escaped substitution) against a fake transport, and on its

@@ -85,7 +85,7 @@ Provider fidelity is non-negotiable; every new piece uses an existing seam:
 | Judge-verdict ledger events (R3) | Run Ledger events (WORKFLOWS-V2 data model). Consumed by LEARNING-FLYWHEEL — this is MEMORY-side (harness mechanics), never written to the knowledge store |
 | New SSE event types (steering, breaker-trip, verdict, divergence) | Per-run SSE registry + the FE `RUN_LIFECYCLE` union in `web/src/pages/loops/useRunStream.ts` — EventSource DROPS unregistered event types; every new event MUST be added there |
 | Any new config keys (e.g. `workflows.judge_samples_default`, `workflows.self_schedule_max_outstanding`) | The FOUR wiring points: dataclass `_meta`, `AppConfig.load` mapping, `to_dict`, PATCH `_EDITABLE_CONFIG` |
-| Any new action provider (none currently planned; R15 uses tools, not hooks) | Would additionally require `ALLOWED_HOOK_PROVIDERS` (validation.py:555) |
+| Any new action provider (none currently planned; R15 uses tools, not hooks) | Would additionally require `ALLOWED_HOOK_PROVIDERS` (src/personalclaw/validation.py) |
 
 ---
 
