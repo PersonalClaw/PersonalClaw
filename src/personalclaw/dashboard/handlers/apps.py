@@ -30,6 +30,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.security import (
     is_sensitive_path,
     redact_credentials,
@@ -854,7 +855,7 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
     # route answered 500 for what is plainly a malformed request. An empty list slipped
     # through only because it is falsy, which is the tell that the guard was accidental.
     if body is not None and not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
+        return json_error("invalid_body", message="JSON body must be an object", status=400)
     body = body or {}
     task = str(body.get("task", "")).strip()
     if not task:

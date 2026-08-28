@@ -89,7 +89,12 @@ EMITTER_SITE_BASELINE = 132
 #: every earlier measurement of it. The population the widened scanner newly sees is
 #: counted separately below rather than folded in here — folding it in would have
 #: required raising this ceiling, which is the one move a ratchet cannot survive.
-FLAT_BASELINE = 1507
+#: 🔁 RATCHETED 1507 -> 1504 on 2026-08-28. `main` had drifted to 1508 — one over — and the four
+#: offending sites were `handlers/apps.py`'s "JSON body must be an object" plus the three
+#: `_reject_name` refusals in `handlers/files.py`. All four now emit `json_error`, so the
+#: population fell to 1504 and the ceiling follows it down: shrink-only means a shrink is
+#: LOCKED IN, not banked as slack a later flat envelope could spend.
+FLAT_BASELINE = 1504
 
 #: Flat sites reached through a WRAPPER (see the module docstring). A CEILING, measured
 #: on this tree the moment the scanner could see them at all. The first measurement was

@@ -69,6 +69,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # must not confirm whether the path exists. `files.py`'s six other sites emit this same sentence
     # FLAT today; this is the code they convert to, and the census ratchet is what moves them.
     "invalid_path": "The path is not one the dashboard may touch.",
+    # A DIFFERENT check from `invalid_path`, and the distinction is load-bearing: `_reject_name`
+    # judges a single NAME (separators, `..`, over-long) before any root is consulted, so it fires
+    # on input the allowlist never sees. Its three call sites — mkdir, upload, and the create-file
+    # route — all emitted the refusal FLAT, which is what pushed the census one over its ceiling.
+    # Not folded into `invalid_id`: that one says "a record id", and telling a client its filename
+    # is a bad id is the wrong noun for a file browser.
+    "invalid_name": "A file or directory name is not a single safe path segment "
+    "(separators, '..' or over-long).",
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",

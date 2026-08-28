@@ -2206,7 +2206,7 @@ async def api_file_create(request: web.Request) -> web.Response:
     # Reject path separators / traversal / over-long names — it's a single segment.
     refusal = _reject_name(name)
     if refusal:
-        return web.json_response({"error": refusal}, status=400)
+        return json_error("invalid_name", message=refusal, status=400)
 
     parent = _validate_dashboard_path(parent_raw)
     if not parent or not os.path.isdir(parent):
@@ -2390,8 +2390,10 @@ async def api_file_upload(request: web.Request) -> web.Response:
             filename = os.path.basename(part.filename or "")
             refusal = _reject_name(filename)
             if refusal:
-                return web.json_response(
-                    {"error": f"invalid filename in upload: {refusal}"}, status=400
+                return json_error(
+                    "invalid_name",
+                    message=f"invalid filename in upload: {refusal}",
+                    status=400,
                 )
             dest = _validate_dashboard_path(os.path.join(target_dir, filename))
             if not dest:
@@ -2888,7 +2890,7 @@ async def api_create_dir(request: web.Request) -> web.Response:
     # those two, so a denial never depends on how long the name happens to be.
     name_refusal = _reject_name(os.path.basename(target))
     if name_refusal:
-        return web.json_response({"error": name_refusal}, status=400)
+        return json_error("invalid_name", message=name_refusal, status=400)
     if os.path.exists(target):
         return web.json_response({"error": "Already exists", "path": target}, status=409)
     # Create exactly ONE new leaf folder inside an EXISTING parent — not a chain.
