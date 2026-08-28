@@ -65,7 +65,12 @@ export function MarketplaceDetail({ result, installed, onInstalled }: {
           <div className="flex items-center gap-2 text-[0.8125rem]" style={withWeight({ color: `var(--color-${blocked.needsConsent ? 'warning' : 'danger'})` }, 600)}>
             {blocked.needsConsent ? <ShieldAlert size={16} /> : <ShieldX size={16} />}
             {blocked.needsConsent
-              ? `Security scan flagged ${blocked.scan?.findings?.length ?? 0} warning(s)`
+              // 🪤 `hiddenFindingsNote` in `lib/scanFindings` — the residue sentence THIS surface renders
+              // directly beneath this heading — already writes `finding${hidden === 1 ? '' : 's'}`.
+              // So one card stated the count two ways: a correct plural in the note and a hedge in the
+              // heading above it. Zero is reachable here (`?? 0`) and takes the plural, which the
+              // conditional gives for free.
+              ? `Security scan flagged ${blocked.scan?.findings?.length ?? 0} warning${(blocked.scan?.findings?.length ?? 0) === 1 ? '' : 's'}`
               : 'Blocked: the security scan found dangerous content'}
           </div>
           <p className="text-on-surface-var text-[0.8125rem]">
