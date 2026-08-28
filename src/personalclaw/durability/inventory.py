@@ -396,6 +396,24 @@ INVENTORY: tuple[StateEntry, ...] = (
         help="saved prompts",
     ),
     StateEntry(
+        id="themes",
+        # A custom theme is saved server-side by `POST /api/themes` into
+        # `config_dir()/themes/<slug>.json`, and this inventory did not know the directory
+        # existed — so `personalclaw snapshot` dropped every theme the user authored, and a
+        # restore came back without them (#647). That matters more than an ordinary coverage
+        # gap because the pre-1.0 release notes tell users to run `personalclaw snapshot`
+        # BEFORE upgrading: the one command positioned as the safety net did not cover this.
+        #
+        # `json_entity_dir` + union-by-id, matching `prompts` and `agents`: one JSON file per
+        # slug, and two homes that each authored a theme should end up with both rather than
+        # one clobbering the other.
+        kind=KIND_JSON_ENTITY_DIR,
+        path="themes",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_UNION_BY_ID,
+        help="custom colour themes saved from Settings > Design",
+    ),
+    StateEntry(
         id="prompt_snippets",
         kind=KIND_TREE,
         path="prompt_snippets",
