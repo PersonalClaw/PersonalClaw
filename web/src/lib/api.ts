@@ -5776,8 +5776,12 @@ export const api = {
   // marketplace omitted → search across ALL marketplaces; pass one to scope.
   // `counts` is the per-source matched count BEFORE the global cap, so the source filter
   // can say how many of a large catalog matched even though only the top rows come back.
+  // `installable_sources` counts catalogues you can install FROM — it excludes the two
+  // `native` mirrors of what is already on this machine (bundled + your own skills). Zero of
+  // those and zero MATCHES used to look identical, so a fresh install with no catalogue told
+  // the user "No results — try a different search term".
   searchSkillsCounted: (q: string, marketplace?: string, limit = 30) =>
-    get<{ results: SkillSearchResult[]; counts?: Record<string, number> }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => ({ results: d.results, counts: d.counts ?? {} })),
+    get<{ results: SkillSearchResult[]; counts?: Record<string, number>; installable_sources?: number }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => ({ results: d.results, counts: d.counts ?? {}, installableSources: d.installable_sources ?? 0 })),
   searchSkills: (q: string, marketplace?: string, limit = 30) =>
     get<{ results: SkillSearchResult[] }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => d.results),
   skillMarketplaceDetail: (id: string, marketplace = 'skills.sh') =>
