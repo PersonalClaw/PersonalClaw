@@ -152,7 +152,15 @@ LISTED = EgressPolicy(name="listed", allow_only=True)
 # private address where "fetch whatever the operator configured" turns into credential theft. A
 # `deny_hosts` entry is evaluated BEFORE the allow-list and before DNS resolution, so it survives
 # the pin; a legitimate MinIO host is unaffected.
-SYNC_DENY_HOSTS: tuple[str, ...] = (
+#
+#: The cloud instance-metadata endpoints, denied on every exclusive profile that can be pointed at
+#: an operator-named host. Named for WHAT they are rather than for the first surface that needed
+#: them (it was `SYNC_DENY_HOSTS`): :data:`FETCH_ACTION` is the second such surface, and a second
+#: copy of this tuple is how one of the two silently falls behind when a cloud adds an endpoint.
+#: 169.254.0.0/16 is already `link_local` to `classify_host`, so on a public-only profile this list
+#: is belt-and-braces — but on an EXCLUSIVE profile an allow-listed host waives the private-range
+#: block, and a deny is evaluated before both the allow-list and DNS. That is the case it covers.
+METADATA_SERVICE_HOSTS: tuple[str, ...] = (
     "169.254.169.254",  # AWS/Azure/GCP/OpenStack IMDS
     "metadata.google.internal",
     "metadata.goog",
@@ -162,7 +170,7 @@ SYNC = EgressPolicy(
     name="sync",
     allow_only=True,
     allow_hosts=(),
-    deny_hosts=SYNC_DENY_HOSTS,
+    deny_hosts=METADATA_SERVICE_HOSTS,
     max_bytes=200_000_000,
     timeout_s=120.0,
 )
@@ -231,6 +239,49 @@ BROWSE = EgressPolicy(
     timeout_s=60.0,
 )
 
+# AUTOMATION-SUBSTRATE / WF2KNO-9: the posture for the DISPATCHABLE `net-fetch` action provider —
+# one bounded HTTP GET a workflow action node, a schedule trigger, an event trigger or a lifecycle
+# hook can name. Distinct from every profile above because of WHO chooses the URL: `CONNECTOR` and
+# `SOURCE` are pointed at a host the user typed into a create flow, while this one is pointed at a
+# host a TEMPLATE (and therefore, transitively, a planner) supplies. That inverts the default: the
+# operator, not the caller, decides where an automation may reach.
+#
+# 🔴 `allow_only=True` with an EMPTY `allow_hosts`, so an unconfigured instance reaches NOWHERE.
+# Not `STRICT`/`CONNECTOR` layered by `egress_policy_for`, which is the mistake
+# `capture_proxy.capture_policy` and `inbound.a2a.outbound_policy` both record in full: on an
+# `allow_only=False` base, `egress_policy_for` UNIONS the operator's `allow_hosts` in as an
+# ADDITIVE waiver of the private-range block, so the policy still reaches every public host and the
+# allow-list is decorative. Only the exclusive stance makes "nothing named yet" mean "nowhere to
+# go" instead of "anywhere".
+#
+# The reachable set is deliberately the operator's EXISTING `security.egress.allow_hosts` (unioned
+# on by :func:`egress_policy_for`, per :data:`LISTED`'s contract) rather than a new field beside it.
+# Measured, and this is the whole argument: that list is already unioned onto `SOURCE`, which is
+# what an unattended `web_watch` poll fetches under — and `SOURCE` is `allow_only=False`, so a
+# scheduled GET ALREADY reaches every public host plus every host on that list. A `net-fetch` node
+# is therefore a strict SUBSET of a shipped unattended-GET surface, and a second list would be a
+# sixth allow-list for a consent decision the operator has already made once, in one place, with a
+# frontend control and a PATCH path behind it.
+#
+# Ceilings, each narrowed from `LISTED`'s inherited defaults and neither removed:
+#   * `max_bytes=2_000_000` (LISTED 5 MB) — what this provider hands onward is TEXT bound for a
+#     workflow node and, usually, a model. The transfer cap is the first of two bounds; the second
+#     is the provider's own character ceiling (`net_fetch_provider.MAX_TEXT_CHARS`). Two bounds
+#     rather than one because they stop different things: this one stops a hostile endpoint
+#     streaming a gigabyte into memory, the character one stops a legitimate 2 MB page becoming a
+#     denial-of-wallet on the next model call.
+#   * `timeout_s=20.0` (LISTED 30.0) — `CONNECTOR`'s figure. A monitor fetch runs on a schedule
+#     with nobody watching; a hung request should fail and be retried by the next fire rather than
+#     hold a node open for half a minute.
+FETCH_ACTION = EgressPolicy(
+    name="fetch_action",
+    allow_only=True,
+    allow_hosts=(),
+    deny_hosts=METADATA_SERVICE_HOSTS,
+    max_bytes=2_000_000,
+    timeout_s=20.0,
+)
+
 _PROFILES: dict[str, EgressPolicy] = {
     p.name: p
     for p in (
@@ -243,6 +294,7 @@ _PROFILES: dict[str, EgressPolicy] = {
         LISTED,
         SYNC,
         BROWSE,
+        FETCH_ACTION,
     )
 }
 
@@ -355,6 +407,34 @@ def egress_policy_for(base: EgressPolicy) -> EgressPolicy:
     )
 
 
+def fetch_action_egress_policy() -> EgressPolicy:
+    """The posture ONE ``net-fetch`` action node runs under (AUTOMATION-SUBSTRATE / WF2KNO-9).
+
+    Derived, never hand-written — :data:`FETCH_ACTION` supplies the exclusive stance, the tightened
+    caps and the metadata denies, and :func:`egress_policy_for` layers the operator's
+    ``security.egress`` config on top. That layering is what makes the reachable set the operator's
+    own ``allow_hosts`` (see :data:`LISTED`'s contract) and what preserves their ``deny_hosts``.
+
+    Three properties this composition has, in the order they are enforced by
+    :func:`personalclaw.net.guard.evaluate`, and all three are the point:
+
+    1. A ``deny_hosts`` match refuses BEFORE the allow-list and before DNS resolution, so
+       :data:`METADATA_SERVICE_HOSTS` survives even an operator who allow-lists the metadata
+       service by hand.
+    2. ``allow_only`` refuses an off-list host BEFORE resolution — a DNS query is itself an egress
+       signal, so an unlisted host is never even looked up.
+    3. ``allow_private`` can be ORed in by operator config, and it still cannot widen reach past the
+       allow-list: the exclusive check runs first and does not consult it. So "I trust my LAN"
+       remains a statement about the listed hosts, not a bypass.
+
+    A single named seam rather than an inline ``egress_policy_for(FETCH_ACTION)`` at the call site,
+    for the reason ``sync_egress_policy`` is one: the policy decision is the security-relevant part
+    of this provider, so it belongs somewhere greppable, reviewable and testable on its own — and a
+    call site that composed its own could compose a permissive one.
+    """
+    return egress_policy_for(FETCH_ACTION)
+
+
 class SyncEndpointRefused(ValueError):
     """A sync endpoint that cannot be pinned — so no policy is derived and nothing egresses.
 
@@ -376,7 +456,7 @@ def sync_egress_policy(endpoint: str) -> EgressPolicy:
     would widen the transport's reach to every host the operator listed for other surfaces —
     hosts that have no business being an S3 endpoint. A sync transport speaks to one endpoint,
     so ``allow_hosts`` ends as exactly that endpoint. ``deny_hosts`` is UNIONed rather than
-    replaced, so both :data:`SYNC_DENY_HOSTS` and the operator's own denies survive — and a
+    replaced, so both :data:`METADATA_SERVICE_HOSTS` and the operator's own denies survive — and a
     deny outranks the pin, including when the operator bans their own configured endpoint.
 
     Because the pinned host is its own allow-list entry, a private/loopback endpoint is
@@ -401,7 +481,7 @@ def sync_egress_policy(endpoint: str) -> EgressPolicy:
             f"sync endpoint scheme {parsed.scheme!r} is not one of {SYNC.allow_schemes}"
         )
     layered = egress_policy_for(SYNC)
-    denies = tuple(dict.fromkeys([*SYNC_DENY_HOSTS, *layered.deny_hosts]))
+    denies = tuple(dict.fromkeys([*METADATA_SERVICE_HOSTS, *layered.deny_hosts]))
     from personalclaw.net.guard import host_matches
 
     if host_matches(host, denies):

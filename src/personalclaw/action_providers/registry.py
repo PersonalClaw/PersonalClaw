@@ -253,6 +253,19 @@ def _ensure_default_providers_registered() -> None:
         from personalclaw.action_providers.browse_provider import BrowseActionProvider
 
         register_action_provider(BrowseActionProvider())
+    if "net-fetch" not in _providers:
+        # AUTOMATION-SUBSTRATE / WF2KNO-9: the dispatchable HTTP-egress action. Registered
+        # unconditionally, like `browse` above and for the same reason — a workflow template or
+        # trigger naming `net-fetch` must be dispatchable whenever it can run, and a registration
+        # that depended on config is one the run-start preflight cannot see. Registering it costs
+        # nothing on an unconfigured machine: the FETCH_ACTION policy's allow-list is empty, so the
+        # provider refuses every host with a typed `ERR_NET_FETCH_EGRESS_BLOCKED` naming the
+        # setting to change. Added to ALLOWED_HOOK_PROVIDERS, to `triggers/screen.py`'s
+        # write-capable set and to `guardrails.rungs` in the SAME commit — a provider in one set
+        # but not the others is the mismatch that makes a trigger save and then fail to run.
+        from personalclaw.action_providers.net_fetch_provider import NetFetchActionProvider
+
+        register_action_provider(NetFetchActionProvider())
     if "second-opinion" not in _providers:
         # EXECUTION-ISOLATION §4.1 (EI-7): hand a stalled loop/gate/session's state to a
         # DIFFERENT cataloged runner for one shot, and accept the answer only when a disk

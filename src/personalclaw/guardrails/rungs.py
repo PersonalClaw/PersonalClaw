@@ -332,6 +332,30 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         leaves_machine=True,
         providers=("browse",),
     ),
+    # WF2KNO-9: one bounded HTTP GET through the egress chokepoint. `leaves_machine=True` is
+    # honest and not decoration — a request reaches a third party, so `promotion_eligibility` must
+    # never DERIVE an autonomous grant for it — but the floor and ceiling are both `autonomous`,
+    # unlike `action.browse` directly above. The difference between the two is where consent is
+    # given, not how dangerous the surface is:
+    #   * `browse` is pointed at whatever page a model decides to open next, and a SUBMIT is an
+    #     irreversible write on someone else's site with no undo handle. Nobody pre-authorised the
+    #     destination, so the rung is where the user is asked.
+    #   * `net-fetch` can only reach a host the operator has already put on an EXCLUSIVE egress
+    #     allow-list (`FETCH_ACTION` + `security.egress.allow_hosts`), checked before DNS. That
+    #     list IS the pre-authorisation, given once in a place with a frontend control. A per-fire
+    #     `one_tap` on top of it would ask the same question twice while making every bundled
+    #     monitor template inert — the "shipped capability wearing a control's clothes" shape the
+    #     `action.browse` comment above refuses for its own case.
+    # Its own key rather than sharing one: what it does is READ from the network, which is not the
+    # effect any existing class governs, and the shared-key convention beside it is for a second
+    # NAME for one behaviour.
+    ActionTypeSpec(
+        key="action.web_fetch",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        leaves_machine=True,
+        providers=("net-fetch",),
+    ),
     # Executes author-supplied code: arbitrary shell / sandboxed Python. The denylist and
     # the capability fence are what license these; the ladder does not add a gate.
     ActionTypeSpec(

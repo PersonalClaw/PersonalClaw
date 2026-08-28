@@ -10,6 +10,27 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Automations can now read a web page.** A new **Fetch a URL** action (`net-fetch`) is selectable
+  wherever an action is — a workflow's action node, a schedule or event trigger, a lifecycle hook —
+  so a monitor or ingest automation can pull a page without a browser and without a script. Before
+  this, fetching was something only PersonalClaw's own internals could do; there was no action you
+  could put in a workflow.
+  **It reaches nothing until you say so, and that is deliberate.** Automated fetches are limited to
+  the hosts on your **Settings → Security → Allowed Egress Hosts** list, and that list is exclusive
+  for this action rather than an exception on top of the open internet: with nothing listed, every
+  fetch is refused. The refusal names the host and points at the setting, so a blocked automation is
+  a two-click fix rather than a mystery. Your deny list still overrides your allow list, and the
+  cloud metadata endpoints stay denied even if you list them by hand.
+  Everything a page returns is treated as untrusted: the text is size-capped before it reaches a
+  model (a 2 MB page cannot quietly become your biggest bill), wrapped so its contents are read as
+  data and never as instructions, and stamped with where it came from. Response headers are not
+  handed back at all, so a third party's cookie cannot end up in a prompt. A URL with a username or
+  password in it is refused rather than sent — this action never carries credentials. Redirects are
+  re-checked at every hop against the same allow-list, so an allowed host cannot bounce an
+  automation somewhere else.
+  It fetches only — it never posts, updates or deletes. Sending data outward is still the separate
+  Webhook action.
+
 - **Notification rules can now deliver as real OS notifications.** The **Desktop** delivery target in
   Settings → Notifications was accepted and stored from the day the rules matrix shipped, but nothing
   acted on it — it was dimmed and labelled as needing the desktop app, and ticking it changed nothing
