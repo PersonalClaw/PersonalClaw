@@ -1121,7 +1121,14 @@ class TestOverLongNames:
             assert resp.status == 400
             # Specific, not "invalid name": the user can only act on a message that says
             # which rule was broken.
-            assert "255 bytes" in (await resp.json())["error"]
+            #
+            # 🔁 Reads `["error"]["message"]` now, not `["error"]`. This route emits the typed
+            # envelope, so the old form asserted a substring against a DICT — where `in` tests
+            # KEYS, not the sentence. The message itself is byte-identical; only its position
+            # moved, which is the whole point of the conversion.
+            body = await resp.json()
+            assert body["error"]["code"] == "invalid_name"
+            assert "255 bytes" in body["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_file_create_refuses_an_over_long_dir_name(self, mock_sel, home_patch):
