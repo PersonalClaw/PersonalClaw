@@ -9,6 +9,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.security import is_sensitive_path, is_system_path
 from personalclaw.tasks.hierarchy import HierarchyStore
 from personalclaw.workflows import containers, leases
@@ -115,7 +116,7 @@ async def api_projects_create(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
+        return json_error("invalid_json", status=400)
     store = _store()
     refusal = _workspace_refusal(str(body.get("workspace_dir") or "").strip())
     if refusal is not None:
@@ -458,7 +459,7 @@ async def _claim_body(request: web.Request) -> tuple[str, str] | web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
+        return json_error("invalid_json", status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "body must be a JSON object"}, status=400)
     target_id = str(body.get("target_id", "") or "").strip()
@@ -517,7 +518,7 @@ async def api_projects_update(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
+        return json_error("invalid_json", status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "body must be a JSON object"}, status=400)
     rejected = _unwritable_field(body, _PROJECT_UPDATABLE)
@@ -670,7 +671,7 @@ async def api_task_lists_create(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
+        return json_error("invalid_json", status=400)
     try:
         tl = _store().create_task_list(
             name=body.get("name", ""),
@@ -697,7 +698,7 @@ async def api_task_lists_update(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
+        return json_error("invalid_json", status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "body must be a JSON object"}, status=400)
     rejected = _unwritable_field(body, _TASK_LIST_UPDATABLE)
