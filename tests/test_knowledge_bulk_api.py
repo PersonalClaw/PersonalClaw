@@ -306,3 +306,70 @@ def test_the_tag_routes_are_registered(store):
     assert "/api/knowledge/tags/{id}/merge" in paths
     # The flat autocomplete contract must survive untouched.
     assert "/api/knowledge/tags" in paths
+
+
+# ── The tag error's MESSAGE is a sentence, not the code ────────────────────────────────
+#
+# 🔴 `message` used to be the code itself (`"tag_cycle"`, `"tag_name_taken:archive"`), because
+# `TagManager` matched `msg.includes('tag_cycle')` — so the message had to BE the token for the
+# match to fire, and the panel's fallback branch then rendered `Couldn't update the tag:
+# tag_name_taken:archive` to a person. `ApiError` now carries `code` and `lib/api.hasApiCode` exists
+# for exactly that, with its own rule: match on the code, never on the message.
+#
+# The two tests above already pin `code`; NOTHING pinned `message`, which is how it stayed a token
+# for as long as it did. These pin the half a user reads.
+def test_a_cycle_explains_itself_in_words(store):
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["a", "b"])
+    from personalclaw.dashboard.handlers import knowledge as H
+
+    ids = _tag_ids(store)
+    _run(H.rename_tag(_tag_req(store, "PATCH", ids["b"], {"parent_id": ids["a"]})))
+    resp = _run(H.rename_tag(_tag_req(store, "PATCH", ids["a"], {"parent_id": ids["b"]})))
+    body = json.loads(resp.body)
+
+    assert body["error"]["code"] == "tag_cycle"
+    message = body["error"]["message"]
+    # A sentence, and specifically NOT the code: the whole defect was the two being the same string.
+    assert message != "tag_cycle"
+    assert "tag_cycle" not in message
+    assert message.endswith(".")
+    assert "ancestor" in message
+
+
+def test_a_name_collision_names_the_tag_it_collided_with(store):
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["a", "b"])
+    from personalclaw.dashboard.handlers import knowledge as H
+
+    resp = _run(H.rename_tag(_tag_req(store, "PATCH", _tag_ids(store)["a"], {"name": "b"})))
+    body = json.loads(resp.body)
+
+    assert body["error"]["code"] == "tag_name_taken"
+    message = body["error"]["message"]
+    assert "tag_name_taken" not in message
+    # The store appends the colliding name and it is the most useful half of the sentence, so the
+    # handler must actually use it rather than falling back to the generic wording.
+    assert '"b"' in message
+    assert message.endswith(".")
+
+
+def test_an_unexpected_argument_error_does_not_leak_python_words(store):
+    """The fallback branch: a code for the machine, a sentence for the person, and NO raw exception.
+
+    Previously this branch put `str(exc)` in `message`, so a `TypeError`'s own text reached the
+    notification verbatim. `parent_id` that is neither null nor an int is the reachable way in.
+    """
+    store.create_typed_item(item_type="note", title="N", content="c", tags=["a"])
+    from personalclaw.dashboard.handlers import knowledge as H
+
+    resp = _run(
+        H.rename_tag(_tag_req(store, "PATCH", _tag_ids(store)["a"], {"parent_id": "not-an-int"}))
+    )
+    body = json.loads(resp.body)
+
+    assert resp.status == 400
+    assert body["error"]["code"] == "invalid_tag_update"
+    message = body["error"]["message"]
+    assert message.endswith(".")
+    # The tells of a leaked Python message, none of which belong in front of a user.
+    for leak in ("invalid literal", "ValueError", "TypeError", "int()", "base 10"):
+        assert leak not in message
