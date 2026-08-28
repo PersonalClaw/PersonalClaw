@@ -2,6 +2,7 @@ import { ExternalLink, FlaskConical, ShieldAlert } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
 import { hasApiCode } from '../../lib/api'
+import { EvalsOff } from './EvalsOff'
 import type {
   BenchmarkArmAggregate, BenchmarkReport, BenchmarkTaskRow, BenchmarkView,
 } from '../../lib/api'
@@ -43,12 +44,26 @@ export function BenchmarkPanel({ view, error, onRetry }: {
       return (
         <section className="flex flex-col gap-s" aria-labelledby="skillbench-heading">
           <Heading />
-          <p className="text-on-surface-low text-[0.8125rem]">
-            The eval substrate is off, so no benchmark can run. Turn on{' '}
-            <code className="text-on-surface-var">evals.enabled</code> in{' '}
-            <a className="underline" href="#/settings">Settings</a> to measure whether the skills
-            you approved actually make the next run better.
-          </p>
+          {/* 🔑 `EvalsOff` OWNS THIS SENTENCE, and this panel was the one of five that never adopted it.
+              Its four siblings — Judge tiers, Template studies, Retrieval arms, Component ablation —
+              all render `<EvalsOff what="…" />`; this branch hand-rolled the copy the shared
+              component's own docstring records as the FIXED-AND-WRONG version, and kept all three of
+              its defects:
+
+                · `<code>evals.enabled</code>` — the dotted path. "The right instruction for a terminal
+                  and the wrong one for a link: `evals.enabled` appears nowhere on the destination."
+                  `EvalsOff` names the CONTROL ("Evals enabled"), which is that field's own `_meta`
+                  label — the words a user then looks for on the page.
+                · `href="#/settings"` — the 34-card hub, which the docstring calls "the dead-end version".
+                  `#/settings/evals` renders the actual switch.
+                · a link whose text is just "Settings", so its accessible name was "Settings" rather
+                  than the whole instruction. `EvalsOff` spans control AND destination so the name
+                  carries the purpose out of context.
+
+              The `learning_benchmark_absent` branch below keeps its OWN command on purpose — the
+              docstring's rule is that turning a setting on and registering a component are two
+              different places, so each panel's `*_absent` state owns its run command. */}
+          <EvalsOff what="benchmark" />
         </section>
       )
     }
