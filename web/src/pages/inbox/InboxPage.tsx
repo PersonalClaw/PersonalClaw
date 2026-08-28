@@ -24,6 +24,7 @@ import { ProposalsLens } from './ProposalsLens'
 import { TriageDigestCard } from './TriageDigestCard'
 import { ContextMenu, EntranceGroup, EntranceRegion, type ContextMenuItem } from '../../ui/motion'
 import { PageTitle } from '../../ui/PageTitle'
+import { reportingWrite } from '../../app/reportingWrite'
 
 // 'open' means unresolved — pending OR seen. It replaces the old 'pending' key, which
 // compared status === 'pending' exactly: once viewing an item marks it SEEN, that filter
@@ -108,7 +109,14 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
       danger: true,
       confirmLabel: 'Dismiss all',
     }))) return
-    setBusy(true); try { await api.dismissAllInbox(); reload() } finally { setBusy(false) }
+    // 🪤 NO CATCH AT ALL — a failure here rejected unhandled, so the strongest confirm on this page
+    // ("every pending item of every kind", "there is no undo") could do nothing and say nothing.
+    // `reload()` is gated: an unchanged list after a failed sweep reads as "nothing happened".
+    setBusy(true)
+    try {
+      if (!(await reportingWrite(`dismiss ${n === 1 ? 'this item' : `all ${n} items`}`, () => api.dismissAllInbox()))) return
+      reload()
+    } finally { setBusy(false) }
   }
   async function restart() { setBusy(true); try { await api.restartInbox(); setTimeout(reload, 800) } finally { setBusy(false) } }
   // Generate a catch-up digest for a channel → arrives as a new inbox item (also
