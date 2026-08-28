@@ -252,7 +252,6 @@ def _connect() -> sqlite3.Connection:
             started_at REAL,
             completed_at REAL,
             elapsed_seconds REAL NOT NULL DEFAULT 0,
-            total_cycles INTEGER NOT NULL DEFAULT 0,
             error_message TEXT,
             tasks_project_id TEXT NOT NULL DEFAULT '',
             task_list_ids TEXT NOT NULL DEFAULT '{}',
@@ -261,6 +260,17 @@ def _connect() -> sqlite3.Connection:
         )""")
     # Idempotent column migrations for DBs created before a field was added (the
     # CREATE above is IF NOT EXISTS, so an existing table won't gain new columns).
+    #
+    # There is no matching DROP path, and PP-16 seam 4a's retirement of `total_cycles`
+    # deliberately does not add one. A home created before that change keeps the column: the
+    # INSERT below names its columns explicitly (so the vestigial one takes its
+    # `NOT NULL DEFAULT 0`), reads go through `_row_to_loop` → `Loop.from_dict`, which drops
+    # keys that name no field, and nothing writes it any more — so a stale column is inert
+    # rather than a second source of truth. Rewriting the table to drop it would buy nothing
+    # and would make a pre-change snapshot's `loops` rows unrestorable in BOTH directions
+    # (`snapshot._merge_sqlite_attach` does `INSERT OR IGNORE … SELECT *`, which skips a table
+    # whose column set differs); leaving it converges instead. Pinned by
+    # `test_pp16_total_cycles_retired.py::test_a_legacy_row_with_the_retired_column_still_writes`.
     _ensure_columns(
         conn,
         {
@@ -314,7 +324,6 @@ _SCALAR_COLS = (
     "started_at",
     "completed_at",
     "elapsed_seconds",
-    "total_cycles",
     "error_message",
     "tasks_project_id",
     "session_key",
@@ -583,10 +592,6 @@ def set_project(loop_id: str, project_id: str) -> None:
     _simple_set(loop_id, "project_id", project_id)
 
 
-def set_total_cycles(loop_id: str, total: int) -> None:
-    _simple_set(loop_id, "total_cycles", int(total))
-
-
 def set_session_key(loop_id: str, session_key: str) -> None:
     _simple_set(loop_id, "session_key", session_key)
 
@@ -719,6 +724,11 @@ def get_redacted(loop_id: str) -> dict | None:
         return None
     view = _redact_loop(loop.to_dict())
     view["findings"] = get_findings(loop_id)
+    # `total_cycles` is DERIVED here, not stored (PP-16 seam 4a): it is the length of the
+    # projection already in hand, so the API keeps the field every loop surface reads while the
+    # SQLite column that used to cache it is gone. `len(findings)` rather than
+    # `cycles_completed()` on purpose — the same number, without a second scan of the same file.
+    view["total_cycles"] = len(view["findings"])
     view["nudges"] = get_nudges(loop_id)
     # Feedback producer meta (plan 58 T1.5, additive): findings are judged
     # per-kind (each kind carries its own brief/rubric), so the producer is
@@ -792,9 +802,12 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
     """The list view: redacted rows (newest first), optionally filtered by project /
     kind. Attaches findings to each row so the per-card finding count + latest-insight
     preview match the detail view (the FE cards read ``findings.length`` + the last
-    finding directly). Ported from both legacy engines. Unlike a per-row get_redacted
-    it does NOT touch the filesystem per loop (no files_dir / dir creation) — the list
-    path stays lean even with many loops."""
+    finding directly). Ported from both legacy engines. Unlike a per-row get_redacted it never
+    CREATES anything per loop (no ``files_dir``, hence no ``loop_dir`` mkdir) — but it does READ
+    one file per row: ``get_findings`` projects over ``<id>/events.jsonl``, so this path costs
+    O(rows) ledger reads. Measured while retiring ``total_cycles`` (PP-16 seam 4a), and the reason
+    the derived count below reuses the findings already in hand rather than asking for a second
+    scan of the same file."""
     loops = list_for_project(project_id) if project_id else list_all()
     out: list[dict] = []
     for loop in loops:
@@ -802,6 +815,9 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
             continue
         d = _redact_loop(loop.to_dict())
         d["findings"] = get_findings(loop.id)
+        # Derived, same as the detail view (PP-16 seam 4a) — and free here, because the row
+        # already carries the projection it counts.
+        d["total_cycles"] = len(d["findings"])
         d["feedback_producer"] = {"producer_kind": "loop_judge", "producer_id": loop.kind}
         # The dashboard ActiveWork widget renders the loop's question inline for
         # needs_input rows. Gate the per-row fs read on that status so the list
@@ -1009,6 +1025,23 @@ def get_findings(loop_id: str) -> list[dict]:
         if isinstance(finding, dict):
             out.append({k: v for k, v in finding.items() if k != "_source_file"})
     return out
+
+
+def cycles_completed(loop_id: str) -> int:
+    """How many cycles this loop has completed — the ledger's `step_completed` count (PP-5).
+
+    Replaces the retired `loops.total_cycles` column (PP-16 seam 4a): the column was a stored
+    copy of exactly this number, so every reader now asks the projection. Delegates to
+    :func:`personalclaw.loop.journal.cycles_completed`, which routes through the ledger's own
+    aggregate — the same indirection `record_cycle_findings`/`record_breaker_trip` use, and for
+    the same reason (one vocabulary, one place it is defined).
+
+    Callers that already hold :func:`get_findings` should use ``len(findings)`` instead of paying
+    a second scan: the two are equal by construction and a rail pins that.
+    """
+    from personalclaw.loop.journal import cycles_completed as _count
+
+    return _count(loop_id)
 
 
 def task_finding_count(loop_id: str, task_id: str) -> int:

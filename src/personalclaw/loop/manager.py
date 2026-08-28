@@ -314,7 +314,9 @@ async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop 
                     logger.debug(
                         "fan-out steer to task %s failed for %s", tid, loop_id, exc_info=True
                     )
-    store.append_nudge(loop_id, text, sent_at_cycle=loop.total_cycles)
+    # The cycle this steer was sent at, projected off the ledger (PP-16 seam 4a) rather than read
+    # from the retired `loops.total_cycles` column.
+    store.append_nudge(loop_id, text, sent_at_cycle=store.cycles_completed(loop_id))
     # A steer on a NEEDS_INPUT (awaiting answer) or BLOCKED (stall-paused, its nudge
     # loop deactivated) loop must RE-ARM the worker so the steer is actually consumed
     # (guidance.txt is read by no one while the loop is stopped).

@@ -149,7 +149,12 @@ class DesignKind(LoopKindStrategy):
         # the furthest phase already reached (a finding with no step must not undo progress).
         if idx < 0:
             per = max(1, (loop.max_cycles or 30) // max(1, len(plan)))
-            idx = min(len(plan) - 1, max(0, (loop.total_cycles - 1) // per))
+            # `len(findings)` is the cycle count — the ledger projection this hook was already
+            # handed. It replaces `loop.total_cycles` (PP-16 seam 4a), which was not only a
+            # duplicate of this number but a STALE one: the watchdog reads its Loop row at the
+            # top of the poll and wrote the column mid-poll, so the row this hook receives
+            # carried the count as of the PREVIOUS progress poll.
+            idx = min(len(plan) - 1, max(0, (len(findings) - 1) // per))
         status0 = loop.phase_status or {}
         reached = max(
             (i for i, k in enumerate(keys) if status0.get(k) in ("active", "done")), default=-1

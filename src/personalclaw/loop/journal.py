@@ -44,6 +44,7 @@ from personalclaw.ledger import (  # noqa: F401 — re-exported for this module'
     LedgerStore,
     LedgerWriter,
     read_events,
+    run_totals,
 )
 from personalclaw.loop import store as loop_store
 
@@ -144,6 +145,24 @@ def ledger(loop_id: str, *, kinds: set[str] | None = None) -> list[dict[str, Any
     workflow run is.
     """
     return read_events(loop_store, loop_id, kinds=kinds)
+
+
+def cycles_completed(loop_id: str) -> int:
+    """How many cycles a loop has COMPLETED — the ledger's own `step_completed` count.
+
+    The ONE answer (PP-16 seam 4a). `loops.total_cycles` used to cache this number in the SQLite
+    row: both of its writers wrote exactly ``len(store.get_findings(cid))`` and seven readers read
+    the column back, so a quantity the ledger already derives had a second, stored copy that could
+    — and did — disagree with the projection it copied. The column is gone; this is what a reader
+    asks instead, and there is nothing left to keep in sync.
+
+    Routed through :func:`personalclaw.ledger.reader.run_totals` rather than counting here, so "a
+    completed step" keeps ONE meaning across both ledger producers. Equal by construction to
+    ``len(store.get_findings(loop_id))`` — every loop `step_completed` carries a `finding` dict
+    (:meth:`LoopJournal.cycle` writes both together) — and
+    ``test_pp16_total_cycles_retired.py`` pins that equality so the two expressions cannot drift.
+    """
+    return int(run_totals(loop_store, loop_id)["steps_completed"])
 
 
 def strip_meta(record: dict[str, Any]) -> dict[str, Any]:

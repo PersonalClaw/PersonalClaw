@@ -339,7 +339,13 @@ Two members are missing from `Action`, and the second is the sharper gap:
 
 ### `PP-16` — A Loop becomes a WorkflowRun (retire the second work-unit noun)
 
-**Status:** todo
+**Status:** todo — PARTIAL. **2026-08-27: sub-seam 4a of seam 4 ("retire `loop/store.py`'s parallel
+row") is DONE** — the `loops.total_cycles` column, its two writers and its `Loop` dataclass field are
+deleted; the cycle count is now only the ledger's `step_completed` projection
+(`store.cycles_completed`). Seam 4's remaining 30 columns, the two status vocabularies
+(`LoopStatus` 12 / `RunStatus` 8 — measured; the 2026-08-22 log entry's "13" is wrong), the tasks
+projection, the three frontend pairs and the `loop/store.py` two-store split are untouched. Fifteen
+of seam 4's columns still await owner decisions, so the atom stays non-done.
 
 The capstone. `materialize.py` already proves the direction ("tasks as a projection of run state") and `containers.py` is the Work board projection; loops are the holdout, with their own row, status enum, store, watchdog and adoption path. Consequence today: restart-adoption is implemented twice (`loop/manager.reap_orphaned_loops` and `workflows/watchdog` adoption), park-on-human twice, budget twice, cancel twice — so every future feature touching work units costs 2x. LOOPS-EVOLUTION always intended kinds to become templates; this is the half it did not name, the NOUN change rather than the brain change.
 

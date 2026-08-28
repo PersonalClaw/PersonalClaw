@@ -322,14 +322,12 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "Same field, same units (banked running time from prior stretches, excluding pauses) — "
         "the one timing field that needs no conversion.",
     ),
-    FieldHome(
-        "total_cycles",
-        PROJECTION,
-        "",
-        "A run counts tokens and agents, never cycles. The count is the ledger's `step_completed` "
-        "events (PP-5 made the loop the second producer), which is strictly better: it survives a "
-        "restart and the flywheel already reads it.",
-    ),
+    # NO `total_cycles` row: the field no longer exists on `Loop`. Its home was declared
+    # PROJECTION here ("the count is the ledger's `step_completed` events"), and PP-16 seam 4a
+    # LANDED that projection ahead of the noun change — the column, its two writers and the
+    # dataclass field are gone, and `store.cycles_completed()` is the count. The map is exhaustive
+    # against `Loop.__dataclass_fields__` in both directions, so a retired field must lose its row
+    # in the same change; the reasoning now lives on `loop/journal.py::cycles_completed`.
     FieldHome(
         "error_message",
         RUN,
