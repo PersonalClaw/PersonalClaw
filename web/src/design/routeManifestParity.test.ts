@@ -189,3 +189,90 @@ describe('e2e route manifest vs NAV', () => {
     })
   })
 })
+
+// ── The FOURTH axis: a tier must reach every spec that claims whole-app coverage ─────────────
+//
+// The three checks above police which ROUTES the manifest lists. They cannot see which SPECS
+// consume it — and `scannedRoutes()` above is named "every route the harness actually scans",
+// which quietly assumes one harness. There are three specs, and a tier only covers a route in
+// the spec that spreads it.
+//
+// 🪤 THIS ALREADY HAPPENED, AND THIS FILE'S OWN COMMENT RECORDS HALF OF IT. `NON_NAV_ROUTES`
+// exists because `notifications`, `discover` and `mission-control` "stayed unscanned"; the note
+// above closes that with "they now live in NON_NAV_ROUTES … and are axe-scanned in both themes."
+// Precisely true, and precisely the problem: the tier was wired into `a11y.spec.ts` and NOT into
+// `walkthrough.spec.ts`, whose `SURFACES` spread three tiers of four. So those three pages were
+// axe-scanned and simultaneously exempt from all three walkthrough legs — keyboard focus
+// visibility, reduced motion, and phone overflow — which are the three properties CI's own step
+// comment says "axe cannot express any of these three". 3 routes × 3 legs × 2 themes = 18 tests
+// that never existed, and nothing could report their absence because the population was a
+// hand-written spread list.
+//
+// So the tier set is DERIVED from routes.ts here, and equality is asserted for the specs whose
+// contract is whole-app. `visual.spec.ts` is a declared, self-clearing exception: a screenshot
+// per route per theme is a real per-route cost, so its narrower scope is a decision rather than
+// drift — but it is asserted to be exactly the declared subset, so a fifth tier forces a call
+// for it too instead of being silently omitted.
+
+/** Every `export const X: RouteEntry[]` in e2e/routes.ts — the tier vocabulary, derived. */
+function routeTiers(): string[] {
+  const src = readFileSync(join(WEB, 'e2e/routes.ts'), 'utf8')
+  return [...src.matchAll(/export const ([A-Z_]+): RouteEntry\[\]/g)].map((m) => m[1])
+}
+
+/** Which of those tiers a spec spreads into its own surface population. */
+function tiersSpreadBy(spec: string): string[] {
+  const src = readFileSync(join(WEB, `e2e/${spec}`), 'utf8')
+  const tiers = new Set(routeTiers())
+  const found = new Set<string>()
+  for (const m of src.matchAll(/\.\.\.([A-Z_]+)/g)) if (tiers.has(m[1])) found.add(m[1])
+  return [...found]
+}
+
+/** Specs whose stated contract is "every reachable surface" — no per-route cost but time. */
+const WHOLE_APP_SPECS = ['a11y.spec.ts', 'walkthrough.spec.ts']
+
+/** The one declared narrower consumer, and the tiers it deliberately omits. Self-clearing: if it
+ *  starts covering one of these, this reds and tells you to delete the entry, so the exception
+ *  can never be wider than the code needs. */
+const NARROWER_BY_DESIGN = {
+  spec: 'visual.spec.ts',
+  omits: ['SETTINGS_ROUTES', 'NON_NAV_ROUTES'],
+  why:
+    'a full-page screenshot per route per theme is a real per-route cost in baseline bytes and ' +
+    'review time, unlike the axe and walkthrough legs which only cost wall-clock',
+}
+
+describe('every route tier reaches every spec that claims whole-app coverage', () => {
+  it('parses the tiers and the spreads (guards against a silently-empty sweep)', () => {
+    // Without this, a regex that stopped matching would make every check below compare [] to []
+    // and pass for a harness covering nothing.
+    expect(routeTiers().length, 'no RouteEntry[] tiers parsed from e2e/routes.ts').toBeGreaterThanOrEqual(4)
+    for (const spec of [...WHOLE_APP_SPECS, NARROWER_BY_DESIGN.spec]) {
+      expect(tiersSpreadBy(spec).length, `no route tiers parsed from e2e/${spec}`).toBeGreaterThan(0)
+    }
+  })
+
+  it.each(WHOLE_APP_SPECS)('%s spreads every tier', (spec) => {
+    const missing = routeTiers().filter((t) => !tiersSpreadBy(spec).includes(t))
+    expect(
+      missing,
+      `e2e/${spec} claims whole-app coverage but does not spread these tier(s) from ` +
+        `e2e/routes.ts, so every route in them is exempt from that spec's contract while ` +
+        `looking covered. Add the spread, or move the tier's routes somewhere that says they ` +
+        `are out of scope.`,
+    ).toEqual([])
+  })
+
+  it(`${NARROWER_BY_DESIGN.spec} omits exactly the tiers it declares`, () => {
+    const spread = tiersSpreadBy(NARROWER_BY_DESIGN.spec)
+    const actuallyOmitted = routeTiers().filter((t) => !spread.includes(t))
+    expect(
+      actuallyOmitted.sort(),
+      `e2e/${NARROWER_BY_DESIGN.spec}'s omissions no longer match what it declares. Either it ` +
+        `gained coverage (delete the entry from NARROWER_BY_DESIGN.omits) or a new tier was ` +
+        `added and nobody decided whether it needs a visual baseline.\n  reason on record: ` +
+        NARROWER_BY_DESIGN.why,
+    ).toEqual([...NARROWER_BY_DESIGN.omits].sort())
+  })
+})
