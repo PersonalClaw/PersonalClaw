@@ -460,7 +460,7 @@ export function RemediationSection() {
           <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
             {snap.recent_runs.slice(0, 5).map((r, i) => (
               <div key={i} className="text-on-surface-low text-[0.75rem]">
-                score {Math.round(r.score_before)}→{Math.round(r.score_after)} · {r.jobs.length} job(s) · {r.stopped_reason}
+                score {Math.round(r.score_before)}→{Math.round(r.score_after)} · {r.jobs.length} job{r.jobs.length === 1 ? '' : 's'} · {r.stopped_reason}
               </div>
             ))}
           </div>
