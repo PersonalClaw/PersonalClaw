@@ -662,6 +662,49 @@
 .doc figure, .reading figure { margin: 1.2em 0; }
 .doc figcaption, .reading figcaption { color: var(--color-on-surface-low); font-size: 0.85em; text-align: center; margin-top: 0.4em; }
 
+/* ── `.hit-24` — a 24px POINTER target with ZERO layout effect ─────────────────────────
+   WCAG 2.2 SC 2.5.8 wants 24×24. The app's established answer is to grow the box and pull
+   the growth back with a negative margin (`Toggle`'s `min-h-6 -my-px`, the task ticks'
+   `size-6 -mx-1`), and that works wherever there is slack to reclaim. There are places
+   where there is not:
+
+     · `ui/BoardCollapse`'s collapse button — `nestedTargetSize.test.tsx` measured that its
+       column-header row height is exactly `button + 4px`, so the button IS the tallest
+       child. `size-6 -m-0.5` shifts the whole board UP 1px (2.5–3.6% pixel diff) and
+       `-mx-0.5` shifts it DOWN 3px (5.5–7.7%). Zero shift needs a −1.5px pull, which is not
+       a spacing token — and a raw-px class breaks the token rule. That file's own note asks
+       for this by name: "a new hit-area idiom (an overlay pseudo-element) or an owner call
+       on the 1px."
+
+   A pseudo-element is part of its originating element's rendering and hit-testing, not a
+   node of its own, so an inset-negative `::before` enlarges what the pointer can hit while
+   the element's own box — and therefore the layout around it — is untouched.
+
+   ⚠️ WHAT THIS DOES NOT DO, stated here so nobody re-measures it hoping otherwise: axe (and
+   any `getBoundingClientRect` check) reads the ELEMENT's box, which does not change. So a
+   `target-size` report on a `.hit-24` control does not go away. The criterion is about the
+   target a person can hit, and that is what moves; the tool cannot see it. Prefer the
+   margin idiom wherever slack exists, precisely so the measurable number improves too.
+
+   `--hit-min` is the floor, so the inset is derived rather than hand-tuned per site: the
+   pseudo-element grows by half the shortfall on each side. Set `--hit-size` to the drawn
+   size of the control on the call site if it is not 21px. */
+.hit-24 {
+  position: relative;
+  --hit-min: 24px;
+  --hit-size: 21px;
+}
+.hit-24::before {
+  content: "";
+  position: absolute;
+  /* half the shortfall per side; clamped at 0 so an already-large control is unaffected */
+  inset: calc(-1 * max(0px, (var(--hit-min) - var(--hit-size)) / 2));
+  /* No paint, and it must NOT swallow events from the element it belongs to — it forwards
+     them, which is the whole point. `pointer-events: auto` is the default for a generated
+     box, so this is documentation rather than a change. */
+  pointer-events: auto;
+}
+
 /* A persisted reading highlight (KNOWLEDGE-LIBRARY T3.1). A `<mark>` painted around
    a re-anchored passage — see pages/knowledge/readingAnchors.ts. Unlayered for the
    same reason as the scale above: it sits inside ui/Markdown's utility-styled prose.
