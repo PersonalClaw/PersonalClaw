@@ -1149,3 +1149,61 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   **Merge-order note:** the sibling AS-6 branch carries its own independent 213 → 214 step, so whichever
   of the two lands second will measure 215 and must re-measure at that rebase; the ceiling was NOT
   pre-set to 215, because a ceiling above the measured value is what this rail exists to prevent.
+
+### OWNER RULING — `EA-7`'s contradiction is resolved by relocating the chokepoint, not by relaxing a clause. 2026-08-28
+
+`EA-7` was recorded BLOCKED (E6 + E3) because two of its `done_when` clauses appear to contradict:
+
+* **(a)** `check_sender` at a **single gateway ingestion chokepoint** — i.e. bypass-proof;
+* **(b)** the `ChannelTransportProvider` ABC **unchanged**.
+
+**Measured first, because the shape of the contradiction decides the ruling.**
+
+`channel_transports/base.py` declares `receive()` as an `AsyncIterator[ChannelMessage]`, which reads like a
+core-driven pull loop — and a core-driven loop would be a chokepoint for free. It is not one: `receive()` is
+an **optional** seam that **default-raises** (*"most transports keep their existing inbound path"*), and
+**nothing in core calls it** — `git grep '\.receive()'` over `src/` returns one unrelated websocket in
+`cli_run.py`. `channel_transports/manager.py`'s own header says it plainly: *"a channel app's inbound
+receiver lives in its own bundle."*
+
+What actually happens is `start_inbound(services)`: the gateway calls it once at boot and **the transport
+drives its own receiver**, reaching core through the handle it was given. And `GatewayServices` hands over
+**raw collaborators** — `sessions`, `ctx_builder`, `conv_log`, `channel_history`, `dashboard_state` — while
+`sdk/channel.py` additionally exports `run_chat`. So a transport can start a turn without ever consulting
+trust.
+
+That is why **`guard_inbound` has ZERO production callers.** Its only callers are
+`channel_transports/reference_echo.py` (the reference transport), `testing/channel_conformance.py`, and an
+`sdk/channel.py` re-export. The whole trust seam ships — `create_pairing_code` / `redeem_pairing_code`,
+`note_unknown_sender`, `deny_sender`, `fence_channel_content`, `apply_trust_action`, `DM_POLICIES` with
+`DEFAULT_DM_POLICY="pairing"`, three SEL events, a `personalclaw pair <provider>` CLI — and **nothing
+enforces it.** Inbound channel trust is cooperative today, which means fail-**open** in aggregate: a
+transport that simply never calls the guard is unguarded, and no rail notices.
+
+**RULED: the chokepoint belongs on the SERVICES HANDLE / SDK inbound surface, not on the transport ABC.**
+Both clauses then hold, and neither has to be relaxed:
+
+* **(b) holds** — `ChannelTransportProvider` is not touched. No channel app has to implement a new method,
+  so nothing breaks for app authors.
+* **(a) holds** — core owns the handle. Add **one guarded inbound entry** (a
+  `GatewayServices.deliver_inbound(...)`-shaped seam) that consults `guard_inbound` *before* a channel
+  message can become a turn, and make that the only exported way to start a channel-originated turn. An app
+  that respects the SDK import boundary cannot route around it, and that boundary is **lint-enforced**
+  (`tests/test_apps_import_boundary.py`).
+
+**Three honest limits of this ruling, so the executor does not discover them mid-session.**
+
+1. It is bypass-proof only for code that respects the import boundary. **In-core** transports (`webui.py`,
+   `reference_echo.py`) can still call the collaborators directly, so the atom owes a rail asserting no
+   in-core transport reaches a session or history write for an inbound message except through the guarded
+   entry. Without that rail this ruling buys legibility, not enforcement.
+2. The fix is **not** "remove the collaborators from the handle". A transport legitimately needs
+   `channel_history` to render a thread. What must be guarded is the **write path where an inbound message
+   becomes a turn** — not every read.
+3. `run_chat` is currently exported from `sdk/channel.py`. If it stays the way an app starts a
+   channel-originated turn, the guard has to live inside it; otherwise it stops being the exported route for
+   that purpose. Pick one and say which — two routes is the defect this ruling exists to close.
+
+The `blocked_reason` in `dag.json` never carried this BLOCKED at all (it lived only in this log), which is
+why `EA-7` fell into the untriaged cross-plan bucket in the first place. Mirroring it into `dag.json`
+follows in the next tracking batch.
