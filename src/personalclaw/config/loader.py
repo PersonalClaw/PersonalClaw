@@ -129,6 +129,24 @@ def _workspace_default_mode(value: object) -> str:
     return word if word in {"scratch", "worktree", "in_place", "container"} else "scratch"
 
 
+def _identity_report_cadence(value: object) -> str:
+    """Coerce ``learning.identity_report_cadence``, reading an unknown word as the default.
+
+    Delegates to :func:`personalclaw.learning_report.normalize_cadence` instead of repeating the
+    vocabulary, so the loader, the PATCH allowlist's enum spec, the reconciler's cron map and the
+    frontend control cannot drift apart — the failure mode ``guardrails.scan_mode``'s three
+    hand-copied ``warn/redact/block`` tuples are one edit away from. Imported lazily (like
+    ``_slug_username`` above) so this module keeps no import-time dependency on
+    ``learning_report``, which reads ``AppConfig`` back.
+    """
+    try:
+        from personalclaw.learning_report import normalize_cadence
+
+        return normalize_cadence(value)
+    except Exception:
+        return "monthly"
+
+
 def _safe_int(value: object, default: int) -> int:
     """Convert *value* to int, returning *default* on failure."""
     try:
@@ -1968,6 +1986,18 @@ class LearningConfig:
             "have accumulated, grade whether the change delivered what it predicted — and if "
             "it only made things worse, file a revert proposal (never auto-applied) that names "
             "what broke. Off = accepted changes are never measured against their promise.",
+        ),
+    )
+    identity_report_cadence: str = field(
+        default="monthly",
+        metadata=_meta(
+            "Identity Report",
+            "How often to write 'how I've adapted to you' — one readable document over the "
+            "preferences, lessons and skills learned so far, saved as a versioned artifact and "
+            "announced once in your inbox. Monthly, weekly, or off. Off means the scheduled "
+            "job does not run at all; you can still write one by hand from the Learning page. "
+            "This is the only switch there is — no separate on/off flag that could disagree "
+            "with the cadence.",
         ),
     )
 
@@ -5092,6 +5122,9 @@ class AppConfig:
                 propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
                 run_end_enabled=bool(learning_data.get("run_end_enabled", True)),
                 attribution_enabled=bool(learning_data.get("attribution_enabled", True)),
+                identity_report_cadence=_identity_report_cadence(
+                    learning_data.get("identity_report_cadence", "monthly")
+                ),
             ),
             knowledge=KnowledgeConfig(
                 idempotent_persist=bool(knowledge_data.get("idempotent_persist", True)),

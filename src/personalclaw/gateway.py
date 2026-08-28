@@ -1950,6 +1950,23 @@ class GatewayOrchestrator:
                 reconcile_source_digest_cron(_trigger_store)
             except Exception:
                 logger.warning("source-digest-cron reconcile failed", exc_info=True)
+            # 🔴 The periodic identity report (LEARNING-VISIBILITY T2.5 — LV-4). THIS LINE IS THE
+            # SCHEDULE HALF: `deliver_identity_report` shipped fully tested with a POST route as
+            # its ONLY caller, so the plan's "scheduled (default monthly, configurable) background
+            # job" was a function nothing drove. Same else-branch as the recap and the source
+            # digest for the same reason — it writes an artifact, raises an inbox row and spends a
+            # background model call unattended, and a harness run must do none of that. CONVERGED
+            # rather than created, like the digest and the remediation engine: the cadence is
+            # config (`learning.identity_report_cadence`), so changing it on the Learning page
+            # takes effect without the user knowing a trigger exists, and `off` disables the row.
+            try:
+                from personalclaw.action_providers.identity_report_provider import (
+                    reconcile_identity_report_trigger,
+                )
+
+                reconcile_identity_report_trigger(_trigger_store)
+            except Exception:
+                logger.warning("identity-report trigger reconcile failed", exc_info=True)
             # 🔴 The health-scored remediation engine (PLATFORM-RESILIENCE §4.3 — PR2-8). THIS LINE
             # IS THE RE-HOMING: the engine used to be driven by `HeartbeatService._maybe_remediate`,
             # which carried its own private `_remediation_next_ts` scheduler; that job is deleted

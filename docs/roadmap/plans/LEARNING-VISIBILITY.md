@@ -1017,3 +1017,167 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   `python -m personalclaw.manifest_reference` (one route added, nothing else moved).
   `docs/design/consistency-audit.json` churned on the vitest run and was restored from a copy taken
   before the run. Probe sweep 16, 0 introduced.
+
+---
+
+## Execution log — `LV-4` (T2.5 schedule half: the clock job, the cadence, `off`) — 2026-08-27
+
+- [2026-08-27][LV-4] **PREMISE CORRECTION — the `PHF-14` block is GONE, and the number it rested on
+  was stale.** The 2026-08-26 entries above recorded `config/loader.py` at **5900/6000 with headroom
+  exactly 100 against a `>=100` rail**, concluded that "one added line reds the gate", and filed the
+  decomposition as `PHF-14`. Re-measured on `origin/main` (fed887c3) at the start of this session:
+  **`loader.py` is 5581 lines — 419 of headroom.** `PHF-15` and `SH-2` extracted code out of it in
+  the interval. The field was added directly; **no decomposition was attempted and none was needed**,
+  and neither the ceiling (`SIZE_CEILING_LINES = 6000`) nor the 2800 watch band was touched.
+  After the change `loader.py` is **5614** (+33), headroom **386**;
+  `test_structural_baseline.py` **31 passed** and `gate_report.py` reports **6 of 6 PASS**.
+- [2026-08-27][LV-4] **All three unmet clauses now ship.** `src/personalclaw/action_providers/
+  identity_report_provider.py` (new) is one `created_by: system` clock trigger
+  (`system:learning-identity-report`) whose action calls the SAME `deliver_identity_report` the POST
+  route calls — one owner, not two. Registered in all five sets in this commit:
+  `action_providers/registry.py`, `validation.ALLOWED_HOOK_PROVIDERS`,
+  `triggers/screen.py::WRITE_CAPABLE_PROVIDERS`, `guardrails/rungs.py` (joined
+  `action.artifact_write` beside `render-report`, not a new key — the artifact IS the deliverable and
+  the inbox row is a pointer at it) and `gateway.py`'s boot reconcile, in the `--no-crons`
+  else-branch beside the usage recap and the source digest.
+- [2026-08-27][LV-4] **DEVIATION — ONE config field, not the two the plan named.** §T2.5 specified
+  `learning.identity_report_enabled: bool = True` **and**
+  `learning.identity_report_cadence: monthly|weekly|off`. Only the cadence shipped, with `off` as a
+  MEMBER of it. Two switches for one concern make `enabled=true, cadence=off` and
+  `enabled=false, cadence=weekly` contradictions a reconciler must invent a precedence for, and
+  whichever side loses is a control that silently does nothing — the stateless-control-masking-a-
+  stateful-one shape. `test_lv4_identity_report_schedule.py::TestOneVocabulary::
+  test_there_is_no_second_enable_flag_beside_the_cadence` is the rail that keeps the second switch
+  from arriving later.
+- [2026-08-27][LV-4] **It is CONFIG, not entity state — stated because the boundary was checked.**
+  `entity_settings/*.json` holds per-entity/per-user state (that is where the quiet-hours settings
+  this report is gated by already live). A delivery cadence is one machine-wide behaviour knob for
+  the install, sits beside its fourteen `learning.*` siblings, and has to be readable by a boot-time
+  reconciler that has no entity in hand. Nothing here is a secret, so the credential store is not
+  involved.
+- [2026-08-27][LV-4] **Round-trip, all five points.** (1) dataclass + `_meta` —
+  `config/loader.py::LearningConfig.identity_report_cadence`; (2) `load()` —
+  `AppConfig.load()` via the new `config/loader.py::_identity_report_cadence` coercer, which
+  delegates to `learning_report.normalize_cadence` rather than copying the vocabulary; (3)
+  `to_dict()` — automatic through `asdict(self.learning)`; (4) write path —
+  `dashboard/handlers/core.py::_EDITABLE_CONFIG["learning.identity_report_cadence"]` as an `enum`,
+  driven end-to-end through the real `api_personalclaw_config_patch` (onto disk, back through
+  `AppConfig.load`, with a refused out-of-enum word as the vacuity floor); (5) frontend control —
+  `web/src/pages/learning/IdentityReportPanel.tsx`'s cadence strip, clicked in
+  `web/src/pages/learning/identityReportCadence.test.tsx`. `test_config_roundtrip.py` gained the
+  `_SPECIAL` entry its enum needs — the generated `"monthly-x"` is refused by `load()` and the test
+  correctly reported it as a dropped field before that entry landed.
+- [2026-08-27][LV-4] **ONE vocabulary, four readers, compared to each other.** `learning_report.
+  IDENTITY_REPORT_CADENCES` is the single definition; the `_EDITABLE_CONFIG` enum's `values` and the
+  frontend strip's option keys are both asserted equal to it, and the cron map is asserted to cover
+  exactly the vocabulary minus `off`. `guardrails.scan_mode`'s three hand-copied
+  `warn/redact/block` tuples are the drift this avoids.
+- [2026-08-27][LV-4] **🔴 DISCOVERY — `delivery_dedup_key` was hardcoded to the calendar month, and
+  that silently discarded three quarters of a weekly cadence.** `emit_attention_item` returns the
+  existing open row and fires NO second notification for a repeated key, so with a monthly key weeks
+  2, 3 and 4 of every month would have written a new artifact version and told nobody — a scheduled
+  job whose output is discarded, which is this codebase's inert-control defect wearing a cron. Keyed
+  on the report's own period now (ISO week for a seven-day report, calendar month for anything
+  longer), DERIVED from `report.window_days` rather than taking a cadence argument, so the cron and
+  the hand-run agree without either being told which it is. `%G` not `%Y`: ISO week 1 of 2027 starts
+  in December 2026, and a calendar year paired with an ISO week number gives two different weeks one
+  bucket. Both directions railed, plus the New Year collision.
+- [2026-08-27][LV-4] **`off` refuses on the PRODUCING side, twice over.** The reconciler sets
+  `enabled=False` (and the real `service.due_ids` then never selects the row), AND `execute` returns
+  before the gather runs — proven by monkeypatching `compose_identity_report` to RAISE, so "composed
+  and dropped" fails as loudly as "delivered". Both, because a user can re-enable a disabled row by
+  hand on the Triggers page and a fire that produced a report against an explicit `off` would be the
+  config lying. `off` DISABLES the row rather than deleting it, and keeps the expression it would use
+  if switched back on, so the Triggers page reads "monthly, disabled" instead of a blank schedule.
+- [2026-08-27][LV-4] **"Fires" is proved as PRODUCED, never as enqueued.** Two legs: `service.due_ids`
+  selects the armed row one second after its fire time and does NOT one minute before (the vacuity
+  floor), and the row driven through the real `GatewayOrchestrator._fire_store_trigger` — the one
+  dispatch every store-backed fire passes through, so the denylist, the injection screen and the rung
+  routing all run — leaves the versioned artifact and one inbox row on disk. A `provider.execute`
+  call alone would have skipped exactly the five-registry wiring that fails at this moment.
+- [2026-08-27][LV-4] **The cadence reaches the DOCUMENT, not only the cron.** `cadence_window_days`
+  maps weekly → 7 and monthly → 30, and the GET route now derives its default window from the cadence
+  and ships the cadence alongside. Before this the frontend passed a hardcoded `30`, so a weekly
+  install's panel said "last 30 days" about a document its own cron writes over 7 — a config that
+  changed the product without changing anything the user could see. An explicit `?days=` still wins.
+- [2026-08-27][LV-4] **🔴 A FULL-SUITE-ONLY ratchet caught a real design mistake, and it was
+  root-caused rather than accommodated.** The first version of the GET route did
+  `payload = compose_identity_report(...).to_payload(); payload["cadence"] = ...; json_response(payload)`.
+  `test_wire_error_envelope_census.py::test_the_learning_surfaces_new_unresolved_row_cannot_become_a_flat_envelope`
+  went red with `{'Call', 'Name'} == {'Call'}`: that census pins the learning surface's unresolved
+  payload rows as `Call` — a composer's return value — precisely because a dict assembled in a
+  handler reads as `Name`, "the indirection the census exists to expose". Its assertion was right and
+  the code was wrong: mutating the body in the route made the handler a second author of a shape
+  `learning_report` owns. Fixed by adding `learning_report.identity_report_payload()`, so the route
+  is one `Call` again and the wire shape has one owner. The pinned count stayed at **6**, the flat
+  count stayed at `_LEARNING_FLAT_BASELINE`, and nothing in that census was edited. **A targeted run
+  on the two LV-4 files could never have surfaced this** — only the full suite carries that census.
+- [2026-08-27][LV-4] **The cadence rides BESIDE the report, in a `IdentityReportView` type, not on
+  `IdentityReport`.** A report is a gather over stores; a cadence is a setting about future
+  deliveries. Putting it on the dataclass would give the delivery record a field about nothing it
+  wrote, and on the TS side an optional `cadence?` would let the panel's control render off
+  `undefined` on either shape with the compiler silent about which one it held. So the GET answers
+  with `IdentityReportView extends IdentityReport`, and `IdentityReportDelivery.report` stays
+  `IdentityReport` — which is the truth: a delivery answers with what it WROTE.
+- [2026-08-27][LV-4] **An unreadable config REPORTS rather than guessing.** `configured_cadence()`
+  returns `""` on a failed read; the reconciler then leaves the row exactly as it found it and the
+  provider returns a failed run. Defaulting to `monthly` would re-enable a report the user had
+  switched off, on a transient read failure. The frontend renders NO strip for `cadence: ""` and says
+  so — a settings control must not present a fabricated value as saved state.
+- [2026-08-27][LV-4] **A PARTIAL delivery is a failure, not a quiet success.**
+  `deliver_identity_report` never raises; it returns a record with an empty slug or item id. The
+  provider reports that as a failed run so it takes the `failure_delivery` route. Quiet hours does
+  NOT land there — the gate drops the notification and the inbox row is still created.
+- [2026-08-27][LV-4] **Falsifications — mutate the live line, `git grep` it back, observe, restore
+  from a file copy at the literal path, confirm `git diff --stat HEAD` empty.** M1 (clause 1):
+  `gateway.py`'s `reconcile_identity_report_trigger(_trigger_store)` → `pass` → **1 failed / 25
+  passed** (`test_the_reconciler_is_called_at_boot`). M1 also caught a defect in the test itself: the
+  first version asserted the name as a SUBSTRING and stayed GREEN, because the `from ... import`
+  line beside the call still carried it; it walks the AST for a `Call` node now, with
+  `reconcile_digest_cron` as the walk's own vacuity floor. M2 (clause 2): `_CADENCE_CRON["weekly"]`
+  set to the monthly expression → **2 failed / 24 passed**
+  (`test_a_cadence_change_CONVERGES_without_touching_the_trigger`,
+  `test_reconcile_preserves_spec_keys_it_does_not_own`), and the whole `TestOffDisablesCleanly` class
+  stayed **4 passed**. M3 (clause 3): `if False and cadence == CADENCE_OFF` → **1 failed / 25
+  passed** (`test_off_produces_nothing_at_all`), and its vacuity partner
+  `test_the_same_fixture_DOES_produce_when_the_cadence_is_weekly` plus M2's own reds stayed **2
+  passed**. So `off`-disables and `weekly`-fires red under DIFFERENT mutations — the pair measures
+  two things, not one.
+- [2026-08-27][LV-4] **`config-baseline.json` regenerated, and that was a real red I caused.**
+  `gate_report.py`'s `config-baseline` gate went red on the new field
+  (`test_structural_baseline.py::test_three_simultaneous_structural_violations_report_as_three`
+  reported "4 of 6 FAILED" against its expected 3, which is how it surfaced). Regenerated with
+  `python scripts/generate_config_baseline.py`: exactly ONE entry added,
+  `learning.identity_report_cadence`. That artifact moves with a config field by contract — no
+  ratchet was widened, and `structural-baseline.json` was NOT touched.
+- [2026-08-27][LV-4] **Gate.** `make lint` clean (black 2187 files, isort, flake8, mypy **1078**
+  source files over `src/personalclaw` AND `harness`); `gate_report.py` **6/6 PASS**;
+  targeted pytest across every affected census **186 passed** (`test_lv4_identity_report_schedule`,
+  `test_lv4_identity_report`, `test_config_roundtrip`, `test_guardrails_rung_routing`,
+  `test_capability_table_ids`, `test_artifact_update_provider`, `test_native_hook_providers`,
+  `test_action_provider_chokepoints`, `test_http_error_codes_append_only`,
+  `test_resilience_degraded_lint` — the paths `ls`-ed in the same command, and the collected COUNT
+  read, because one bad path makes xdist collect `[0 items]` and exit clean);
+  `test_structural_baseline.py` + `test_config_baseline.py` **37 passed**;
+  `npm run typecheck:web` green, `npm run test:web` **535 files / 5815 tests passed**,
+  `npm run build` green; and the FULL suite `make test` **28229 passed / 31 skipped / 12 xfailed**
+  in 419s, exit 0. Three full runs, all three reported: run 1 read **1 failed / 28228 passed** and
+  that failure was the wire-census red above (real, mine, fixed); run 2 read **2 failed / 28227
+  passed** on `test_subagent.py::TestSubagentReaper::{test_reaper_kills_expired_subagent,
+  test_a_failed_reaper_audit_write_raises}`, which is the known cross-file xdist SEL leak and NOT
+  this change — those two were GREEN in run 1 under the identical `guardrails/rungs.py`,
+  `triggers/screen.py`, `validation.py` and `config/loader.py` edits, are GREEN alone
+  (`tests/test_subagent.py` **66 passed** in 45s), and `subagent.py` imports
+  `guardrails.{incident,budgets,policy}` but never `guardrails.rungs`; run 3 is the clean one above.
+  **No new `json_error` code**, so no `HTTP_ERROR_CODES` row was owed — and that is stated because
+  only the full suite surfaces `test_http_error_codes_append_only`, which a targeted run passes
+  clean.
+  `docs/design/consistency-audit.json` churned on the vitest run — `filesScanned` 564 → 594 with
+  `driftHits` 8 and `filesWithDrift` 7 **unchanged**, and no `identity`/`learning` line in the diff
+  — so it is pre-existing staleness from other work and was restored from a copy taken before the
+  run. `isort` NOTE: `pyproject.toml` pins only `isort>=5`; a fresh `pip install -e ".[dev]"`
+  resolved **9.0.1**, which reds **8 files nobody in this change touched** (`session.py`,
+  `learning/__init__.py`, `workflows/controller.py`, `agents/native/builtin_tools.py`,
+  `dashboard/chat_runner.py`, `dashboard/chat_handlers.py`, `dashboard/handlers/mcp.py`,
+  `tests/test_durability_conflicts.py`). Pinned to **8.0.1** to match the repo's working venv and
+  the whole leg goes clean. That unpinned floor is a latent CI hazard worth its own fix.

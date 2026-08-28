@@ -579,16 +579,22 @@ def _report_window(request: web.Request) -> "int | None":
     ``None`` rather than a message string: the caller owns the envelope, and a helper that
     returned prose would tempt a second error shape onto a surface the wire-envelope census
     is already holding at a fixed flat count.
+
+    An ABSENT ``days`` resolves from the configured cadence rather than from a constant, so the
+    preview a reader opens describes the same period the scheduled job will deliver. Hardcoding
+    30 made a weekly install's panel say "last 30 days" about a document its own cron writes
+    over 7 — a config that changed the product without changing anything the user could see.
     """
     from personalclaw.learning_report import (
-        DEFAULT_WINDOW_DAYS,
         MAX_WINDOW_DAYS,
         MIN_WINDOW_DAYS,
+        cadence_window_days,
+        configured_cadence,
     )
 
     raw = request.query.get("days", "")
     if not raw:
-        return DEFAULT_WINDOW_DAYS
+        return cadence_window_days(configured_cadence())
     try:
         return max(MIN_WINDOW_DAYS, min(int(raw), MAX_WINDOW_DAYS))
     except ValueError:
@@ -624,17 +630,24 @@ async def api_learning_identity_report(request: web.Request) -> web.Response:
     composed and delivered.
 
     Read-only end to end — composing this writes to no learning store.
+
+    The body carries the delivery ``cadence`` beside the report, so the panel renders its own
+    control without the Learning page fetching the whole config — that page's rule is that the
+    backend owns every judgement it renders. Composed by
+    :func:`personalclaw.learning_report.identity_report_payload`, NOT assembled here: this handler
+    owns nothing but the JSON, and a dict built in the route makes it a second author of a shape
+    that module owns (measured — it reddens `test_wire_error_envelope_census`'s `Call` pin).
     """
     if not _enabled():
         return json_error("learning_disabled", status=404)
 
-    from personalclaw.learning_report import compose_identity_report
+    from personalclaw.learning_report import identity_report_payload
 
     days = _report_window(request)
     if days is None:
         return json_error("bad_request", message="`days` must be an integer.", status=400)
     vs = _report_vs(request, "learning.identity_report")
-    return web.json_response(compose_identity_report(window_days=days, vs=vs).to_payload())
+    return web.json_response(identity_report_payload(window_days=days, vs=vs))
 
 
 async def api_learning_identity_report_deliver(request: web.Request) -> web.Response:
