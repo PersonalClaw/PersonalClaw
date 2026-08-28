@@ -18,7 +18,7 @@ import { confirm } from '../../ui/dialog'
 import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
 import { Button } from '../../ui/Button'
-import { FieldLabelProvider, TextArea, TextInput } from '../../ui/forms'
+import { FieldHintProvider, FieldLabelProvider, TextArea, TextInput } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { WorkspacePicker } from '../code/WorkspacePicker'
 import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
@@ -479,16 +479,28 @@ function NewProjectModal({ busy, onClose, onCreate }: {
  *  What WAS broken is the label CONTRACT, not the layout: this Field rendered a label but published no
  *  id, so no control inside it could claim one via aria-labelledby, and every child was unnamed. Same
  *  defect as ToolsPage's and settingsUI's local Fields. The fix is to publish — a second layout is
- *  allowed, a second layout that breaks the contract is not. */
+ *  allowed, a second layout that breaks the contract is not.
+ *
+ *  🔴 AND THE HINT WAS THE OTHER HALF OF THAT CONTRACT, still unpublished. The label pass fixed
+ *  `FieldLabelProvider` and stopped there, so a control here resolved a NAME and no DESCRIPTION —
+ *  while the sentence it needed was rendered two lines above it, in a `<span>` with no `id` for
+ *  `aria-describedby` to point at. The shared `Field` publishes both, and the same six form-family
+ *  primitives claim both. This is that half, mirrored exactly: the id is published only when there IS
+ *  a hint, because an `aria-describedby` resolving to nothing is worse than none — it claims a
+ *  description exists while giving the reader nothing. Zero pixels: an id and a context value have no
+ *  layout, so the hint-placement taste call this layout exists to preserve is untouched. */
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   const labelId = useId()
+  const hintId = useId()
   return (
     <FieldLabelProvider value={labelId}>
-      <div className="flex flex-col gap-1.5">
-        <span id={labelId} className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{label}</span>
-        {hint && <span className="text-on-surface-low text-[0.75rem] leading-snug">{hint}</span>}
-        {children}
-      </div>
+      <FieldHintProvider value={hint ? hintId : undefined}>
+        <div className="flex flex-col gap-1.5">
+          <span id={labelId} className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{label}</span>
+          {hint && <span id={hintId} className="text-on-surface-low text-[0.75rem] leading-snug">{hint}</span>}
+          {children}
+        </div>
+      </FieldHintProvider>
     </FieldLabelProvider>
   )
 }

@@ -259,3 +259,67 @@ describe('the hint-consumer census', () => {
     expect(src).toMatch(/softOff\s*\?\s*undefined\s*:\s*hintId/)
   })
 })
+
+// ── The PUBLISHER half of the same contract ─────────────────────────────────────────────
+//
+// Everything above asks whether a control CLAIMS the hint id. This asks whether the layout beside it
+// PUBLISHES one — the mirror defect, and the one that shipped for longer, because a missing publisher
+// is invisible from the control's side: the primitive does everything right and resolves nothing.
+//
+// A second label+control layout is allowed here (the four differ on real, owner-visible grounds — hint
+// above vs below, sentence case vs uppercase, and `ProjectsSection`'s own comment records that
+// converging it moved **27.9% of the modal's pixels**). A second layout that breaks the contract is
+// not, and that sentence is already written in that file.
+//
+// 🔑 THE RULE IS MECHANICAL AND IT IS EXACTLY THE DEFECT'S SHAPE: a module that publishes the LABEL id
+// and not the HINT id has done half the contract. `ProjectsSection`'s local `Field` was precisely that
+// — an earlier pass fixed `FieldLabelProvider` and stopped, so its `<TextArea>` resolved a name and no
+// description while the sentence sat two lines above it in a `<span>` with no `id`. Measured on the
+// New-project modal at 1440×1000: `aria-describedby` **null → the hint's text**, with the control's box
+// **1360×94 @452 in both runs** — an id and a context value have no layout.
+describe('a layout that publishes a label id publishes the hint id too', () => {
+  /** Modules that publish into the field contract, excluding the canonical `ui/forms` (which defines
+   *  both providers) and the doc file (which only names them in prose). */
+  // 🪤 Anchored on `import.meta.dirname` like the census above, NOT on `process.cwd()` — this file's
+  // own comment records that a cwd-derived root ENOENT-crashes from anywhere but `web/`, which reads
+  // as a crash rather than as a finding. `UI_DIR` is `src/ui`, so `src/` is its parent.
+  const SRC_DIR = join(UI_DIR, '..')
+  function publishers(): string[] {
+    const out: string[] = []
+    for (const abs of tsxFiles(SRC_DIR)) {
+      if (abs.endsWith('ui/forms.tsx')) continue
+      const src = readFileSync(abs, 'utf8')
+      if (/<FieldLabelProvider\b/.test(src)) out.push(abs.slice(SRC_DIR.length + 1))
+    }
+    return out
+  }
+
+  const found = publishers()
+
+  it('found the local layouts (vacuity floor)', () => {
+    // Two at the time of writing: `settingsUI`'s Row/Field family and `ProjectsSection`'s modal Field.
+    // A floor, not an equality — a third local layout is allowed, it just has to keep the contract.
+    expect(found.length, `publishers found: ${found.join(', ')}`).toBeGreaterThanOrEqual(2)
+    expect(found).toContain('pages/projects/ProjectsSection.tsx')
+    expect(found).toContain('pages/settings/settingsUI.tsx')
+  })
+
+  it('none publishes only half the contract', () => {
+    const halfDone = found.filter((rel) => !/<FieldHintProvider\b/.test(readFileSync(join(SRC_DIR, rel), 'utf8')))
+    expect(
+      halfDone,
+      `these publish a label id but no hint id, so a control inside them resolves a name and no ` +
+        `description:\n  ${halfDone.join('\n  ')}`,
+    ).toEqual([])
+  })
+
+  it("the projects modal's hint carries the id it publishes", () => {
+    // Publishing a value nothing renders an `id` for is the inert-control version of this bug: the
+    // context says "there is a description at #x" and #x does not exist.
+    const src = readFileSync(join(SRC_DIR, 'pages/projects/ProjectsSection.tsx'), 'utf8')
+    expect(src, 'the hint span must carry the published id').toMatch(/\{hint && <span id=\{hintId\}/)
+    // Published only WHEN there is a hint — an `aria-describedby` resolving to nothing is worse than
+    // none, because it claims a description exists. Same guard the shared Field states.
+    expect(src, 'the id is conditional on there being a hint').toMatch(/<FieldHintProvider value=\{hint \? hintId : undefined\}>/)
+  })
+})
