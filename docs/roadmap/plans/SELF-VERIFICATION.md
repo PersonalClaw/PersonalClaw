@@ -597,3 +597,10 @@ Sessions 1-2 ship standalone value immediately; 3-4 are the ones that must not s
   session isolation is the only configuration consistent with how the repo is worked, and it costs a
   flag. Clauses 1/2/4 remain MET and railed. Clause 3 becomes a **validation run**, not a code change,
   once the flag is in place. `SV-9` stays `todo` until that run is recorded; no owner input remains.
+
+- **[2026-08-27] OWNER RULING — `SV-11`: file the vcs-preset atom under AUTOMATION-SUBSTRATE; `SV-11` stays open
+  pointing at it.** The alternative was descoping `SV-11` to its conditional rule, which **passes vacuously** — and a
+  conditional rule with no reachable trigger IS an inert control. This session has spent most of its time closing
+  exactly that shape (`capture_store.prune` with no caller, `usage.UsageStore.record` with no writer,
+  `surfacing_events` named with no table), so shipping a fifth one deliberately is not available. Nothing owns AUTO-R12
+  today; the retirement `SV-11` describes is real work and gets an atom.

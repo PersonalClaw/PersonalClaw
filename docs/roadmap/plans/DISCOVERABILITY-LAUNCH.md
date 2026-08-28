@@ -608,3 +608,15 @@ does read this file's citations, and really would red on a broken one.
   post's distribution channel is an external link, so this ships usefully as-is. Recommended follow-up:
   after the push, dispatch that workflow and land the nav entry with the refreshed shell baselines in
   one commit.
+
+- **[2026-08-27] OWNER TASTE CALL — `DL-7`: do NOT publish peer comparisons at pre-1.0. `done_when` reworded.**
+  The clause as written names a peer product that is on this project's own **public-repo keep-out list**, so it was
+  *unexecutable* rather than merely awkward — which forced the wider question. Ruled: **drop the peer columns
+  entirely** and re-scope `DL-7` to a capability matrix about **PersonalClaw only** — what it does and does not do,
+  every row sourced to the RELEASED version.
+  Reasoning: a comparison page makes public claims about named third parties and is the highest-liability page a
+  project can ship. `DL-6` has just found **ten** claim families in our *own* launch draft that hold on `main` and are
+  false at `v0.1.3` — including `on_violation: "warn"`, declared on `EgressPolicy` with **zero consumers** at the tag.
+  A project that has just discovered it was about to overclaim about itself has no standing to grade competitors. The
+  honest and more useful half is an accurate statement of our own scope, **including the "does not do" rows**. The
+  `done_when` is reworded in `dag.json`; `DL.md`'s copy needs the same edit.

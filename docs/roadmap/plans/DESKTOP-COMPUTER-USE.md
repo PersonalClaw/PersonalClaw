@@ -820,3 +820,10 @@ restarts the gateway and runs the TextEdit walkthrough. The driver itself landed
 `kAXErrorAPIDisabled (-25211)`. TCC's database is SIP-protected, so **no code path can grant it** — and it
 is deliberately never prompted from code, because an agent-timed consent dialog is the wrong surface for
 this. Two tests already flip branch on the grant. The `dag.json` dep edit follows in the next tracking batch.
+- **[2026-08-27] `DCU-4` is NOT implementation-blocked — it is VALIDATION-gated, and the dep graph misleads.** Its
+  code is on `main`: `05b2ca79` is an ancestor of `origin/main`. The row reads `todo` only because its own as-a-user
+  validation needs the macOS Accessibility (TCC) grant, whose database is SIP-protected and cannot be granted by code.
+  **The consequence matters for anyone reading deps:** `DCU-5`, `DCU-6` and `DCU-7` all list `DCU-4` and therefore
+  *look* blocked — but they are not. `DCU-6` was built and shipped against the landed code as PR **#2137** while this
+  row still said `todo`, which is the proof. The deps are deliberately **NOT** rewritten: editing a dependency graph
+  to make a frontier look better is the wrong fix, and this note is the honest record.

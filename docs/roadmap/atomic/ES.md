@@ -4,7 +4,11 @@
 **Code:** `ES`  
 **Source status:** proposed
 
-Plan is PROPOSED with no Execution log and no PR refs — entirely unstarted; all 11 atoms are todo. §1/§5/§6 (+§3.2 watchdog) are v2-independent and startable now against the existing eval/ package; §2/§4/§7/§8 and the E3 amendment are gated on WORKFLOWS-V2 (Run Ledger), WORKFLOWS-V2-LEARNING-FLYWHEEL (proposal queue/maturity/manifests), WORKFLOWS-V2-UNIVERSAL-PLANNING (UP-R6 approval gate), AUTONOMY-GUARDRAILS (model_calls.jsonl, SpendMeter), and FEEDBACK-SIGNAL (plan 58). Cuts follow the plan's own §-sections and its ~6-session map; the E1/E2/E3 amendment items are given their own atoms with explicit edges.
+Of 11 atoms, four are `done` (ES-1, ES-2, ES-4, ES-5) and seven remain open; ES-11's implementation has
+landed in full and the atom is held only for the owner's `dag.json` flip. *(This narrative read "entirely
+unstarted; all 11 atoms are todo" until 2026-08-27 — stale against its own row marks. It is the free-text
+summary `test_roadmap_atomic_status_sync` deliberately does not rail, which is exactly why it drifted.)*
+§1/§5/§6 (+§3.2 watchdog) are v2-independent and startable now against the existing eval/ package; §2/§4/§7/§8 and the E3 amendment are gated on WORKFLOWS-V2 (Run Ledger), WORKFLOWS-V2-LEARNING-FLYWHEEL (proposal queue/maturity/manifests), WORKFLOWS-V2-UNIVERSAL-PLANNING (UP-R6 approval gate), AUTONOMY-GUARDRAILS (model_calls.jsonl, SpendMeter), and FEEDBACK-SIGNAL (plan 58). Cuts follow the plan's own §-sections and its ~6-session map; the E1/E2/E3 amendment items are given their own atoms with explicit edges.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -20,7 +24,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `ES-8` | ⬜ | Trust-graduation ladder: trust records, graduation/revocation, rungs, attention accounting | `ES-1`, `ES-5`, `ES-7`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R11 maturity + LEARN-R16 verdicts + LEARN-R10 nodding-loop + proposal queue`, `EXT:WORKFLOWS-V2-UNIVERSAL-PLANNING:UP-R6 approval gate reads the trust record`, `EXT:WORKFLOWS-V2:Run Ledger attention events (gate_rejected, user_edited_mid_flight, needs-input continuation)` | a template reaches 'unattended' ONLY via flywheel-computed L3 + a passing unexpired §2 study + a human-accepted, SEL-audited graduation proposal; a HARMFUL LEARN-R16 verdict, failed study, nodding-loop flag, or watchdog fingerprint expiry revokes the trust record mechanically and the next run falls back to per-stage; rung chips render on template rows and the approval dialog; attention_events_per_run (plus resolved_after_secs ledger addition) trends on the Learning page, graduation proposals cite the trend, and a post-grant attention rise files a demotion signal |
 | `ES-9` | ⬜ | Loop-3 live field metrics beside lab results + lab_field_divergence (amendment E3) | `ES-8`, `EXT:FEEDBACK-SIGNAL:plan-58 S1 👍/👎 + edit-before-approve records`, `EXT:AUTONOMY-GUARDRAILS:earned-autonomy ledger (autonomy_rungs.json) + SEL approval outcomes` | per-template/per-action-type 👍/👎 and edit-before-approve rates (query-computed, stored nowhere new) render beside Loop-1 lab score and Loop-2 gate status as one row per subject on the Learning tab; a subject whose lab score rose while its field trend fell is flagged lab_field_divergence and files a §4.2 trust-record demotion signal mechanically |
 | `ES-10` | ⬜ | Model bake-off from production-sampled inputs → per-use-case recommendation | `ES-1`, `ES-5`, `EXT:AUTONOMY-GUARDRAILS:model_calls.jsonl §2 attempt audit + SpendMeter` | candidate models run over real inputs sampled from model_calls.jsonl (or a temporary size-capped capture behind a redact()-gated, off-by-default, auto-expiring flag), scored by rubric-pinned comparative judging or task-native assertions; a per-use-case recommendation row lands as a proposal the user applies by rebinding active_models.json; sampled files live under the 0600 store, are excluded from portability export, and capture-flag flips are SEL-audited |
-| `ES-11` | 🟡 impl landed | Bundled optimize-harness template (budgeted search over PClaw's own artifacts) | `ES-1`, `EXT:WORKFLOWS-V2:v2 node taxonomy (loop node) + allowed_write_paths write-scope + breaker/budget machinery`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R16 change manifests + LEARN-R3 sidecar overlays + refiner tool-scoping`, `EXT:AUTONOMY-GUARDRAILS:SpendMeter` | a starter template in workflows/bundled/ completes a budgeted loop-node search over one PClaw skill/template: candidates are scope-checked by diff (frozen-region touch → scope_violation), scored against the dual gate (harvested-suite threshold AND monotonic best-ever from results.tsv), and halted by hypothesis_abandon_after/no_improvement_halt/budget_usd; the winner arrives as a proposal (template version diff or LEARN-R3 sidecar overlay) the human installs, and nothing live mutates during the search |
+| `ES-11` | 🟡 impl landed (2026-08-26) | Bundled optimize-harness template (budgeted search over PClaw's own artifacts) | `ES-1`, `EXT:WORKFLOWS-V2:v2 node taxonomy (loop node) + allowed_write_paths write-scope + breaker/budget machinery`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R16 change manifests + LEARN-R3 sidecar overlays + refiner tool-scoping`, `EXT:AUTONOMY-GUARDRAILS:SpendMeter` | a starter template in workflows/bundled/ completes a budgeted loop-node search over one PClaw skill/template: candidates are scope-checked by diff (frozen-region touch → scope_violation), scored against the dual gate (harvested-suite threshold AND monotonic best-ever from results.tsv), and halted by hypothesis_abandon_after/no_improvement_halt/budget_usd; the winner arrives as a proposal (template version diff or LEARN-R3 sidecar overlay) the human installs, and nothing live mutates during the search |
 
 ## Atom scopes
 
@@ -205,7 +209,10 @@ Amendment 2026-07-26 E3 — Loop 3 live quality rendering + divergence flag feed
 
 ### `ES-11` — Bundled optimize-harness template (budgeted search over PClaw's own artifacts)
 
-**Status:** todo
+**Status:** todo — implementation COMPLETE; every `done_when` clause holds. The engine landed in
+`ce642b2e` and the last open clause (an unscored candidate must RENDER as "unscored") in `e97c5012`;
+re-verified against `main` on 2026-08-27, including a census of all three read surfaces. Held only for
+the owner's `dag.json` flip.
 
 §8 (8.1 the loop, 8.2 stop conditions+budget, 8.3 propose-don't-write, 8.4 experience directory)
 
