@@ -707,6 +707,18 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   anything is saved, and if what you typed is not a valid list the save stops and tells you which
   field, instead of succeeding and dropping it. This applies to every action setting of that kind, on
   both the trigger and the lifecycle-hook forms.
+- **"Speak replies aloud" did nothing: replies were spoken whether it was on or off.** The toggle in
+  Settings › Speech & Transcription saved correctly and was loaded on every synthesis — and then nothing
+  looked at it, so pressing Speak on a message produced audio with text-to-speech switched off. It is
+  honoured now, and refused at the endpoint rather than only hidden in the interface, so a channel or an
+  app cannot speak past it either. The refusal names the switch instead of just reporting that speech is
+  unavailable.
+
+- **The "Streaming transcription" toggle is gone, because there is nothing behind it.** It offered to
+  "transcribe incrementally as you speak (when supported)", saved cleanly, and had no effect: there is no
+  streaming transcription anywhere in PersonalClaw for it to turn on. A switch that cannot work is worse
+  than no switch, because you flip it and conclude the feature is running. Nothing else changes —
+  transcription itself is untouched.
 
 - **Editing an artifact and navigating away lost the edit.** Typing in an artifact's editor and then
   clicking anywhere else in the app discarded the change: no prompt on the way out, nothing restored on

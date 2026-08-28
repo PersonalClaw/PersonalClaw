@@ -15,6 +15,7 @@ from aiohttp import web
 
 from personalclaw.config import AppConfig
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.tts.registry import active_voice_params
 from personalclaw.voice.duplex import clean_for_speech
@@ -89,10 +90,6 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
         else:
             logger.debug("clean_for_speech emptied the text; speaking it unchanged")
 
-    # §4.2 — record what we are about to say so a hands-free transcription can be
-    # recognized as our own speaker bleed (see api_stt_transcribe).
-    state.record_spoken(session_name, text)
-
     # MULTIMODAL-IO §3.2 — this endpoint is the dashboard's synthesis path, so its
     # surface is ``channel:webui`` unless the caller names another one; an explicit
     # ``profile_id`` ("speak as X") outranks any binding.
@@ -106,6 +103,32 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
             {"error": "No TTS voice selected — choose one in Settings → Models"},
             status=503,
         )
+    # 🔴 HONOR THE TOGGLE. `active_voice_params` has always published `enabled` and nothing
+    # read it, so Settings › Speech & Transcription › "Speak replies aloud" persisted, loaded
+    # into this dict, and changed nothing: Speak synthesized either way (#651).
+    #
+    # This is the shape where a grep finds a "reader" that is a pass-through — the registry
+    # loads the key into a dict, which looks like consumption until you follow the dict.
+    #
+    # Refused HERE and not only in the UI, because the endpoint is the boundary: a channel, an
+    # app or a saved SOP can POST it directly. 503 matches the sibling refusal directly above —
+    # both are "the feature is not available in this configuration", and the message names the
+    # switch so the answer is actionable rather than a bare unavailability.
+    if not params.get("enabled", False):
+        return json_error(
+            "tts_disabled",
+            message=(
+                "Text-to-speech is switched off. Turn on “Speak replies aloud” in "
+                "Settings → Speech & Transcription."
+            ),
+            status=503,
+        )
+
+    # §4.2 — record what we are about to say so a hands-free transcription can be recognized
+    # as our own speaker bleed (see api_stt_transcribe). AFTER the refusals, not before: this
+    # marks the text as ours, and marking something we then decline to speak would make the
+    # echo filter drop a phrase the USER said that happened to match.
+    state.record_spoken(session_name, text)
 
     chunk_paths: list[str] = []
     final_path: str | None = None

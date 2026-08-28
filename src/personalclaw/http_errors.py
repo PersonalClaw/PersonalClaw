@@ -396,6 +396,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # turned it off, which is a policy answer, and a 404 would read as "no such tool" to a
     # cron script whose next move is to reinstall something.
     "tool_disabled": "The tool is disabled on the Tools page and will not be executed.",
+    # Speech synthesis refused because the owner turned it off. Same family as `tool_disabled`:
+    # a switched-off capability, not a malformed request. 503 rather than 403 to match the
+    # sibling refusal on the same route ("no TTS voice selected"), which is also a
+    # configuration-absent answer (#651).
+    "tts_disabled": (
+        "Text-to-speech is switched off. Fix: turn on “Speak replies aloud” in "
+        "Settings → Speech & Transcription."
+    ),
     # ── capture telemetry import (inbound/capture_proxy.py — EXTERNAL-ACCESS §8) ──
     # ONE code, for the store failing under the import — NOT for a file that parsed badly.
     # A malformed export is a 200 whose `reasons` name each skipped line (§8's

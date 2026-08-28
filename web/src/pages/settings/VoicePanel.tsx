@@ -64,12 +64,16 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
         title="Speech-to-text" hint="Transcribe microphone input into the composer." useCase="stt"
         enableLabel="Enable speech-to-text" boundModel={(active['stt'] ?? [])[0] ?? ''}
         settings={sttSettings} setSettings={setSttSettings} go={go}
-        extras={(s, save) => (
-          <Row label="Streaming" hint="Transcribe incrementally as you speak (when supported).">
-            <Toggle on={Boolean(s.streaming)} onChange={(v) => save({ streaming: v })} label="Streaming transcription" />
-          </Row>
-        )}
       />
+      {/* No "Streaming transcription" toggle. It was offered here, hinted "Transcribe
+          incrementally as you speak (when supported)", and stored under `streaming` in
+          `use_case_settings/stt.json` — which takes any key with no schema, so it round-tripped
+          cleanly and looked saved. Nothing read it, and there is no streaming transport in the
+          product at all: `stt/handlers.py` registers zero routes (issue 649). A toggle that cannot
+          work is worse than an absent one, because the user changes it and concludes the
+          feature is on. `SttProvider.supports_streaming` is a separate thing and stays — it is
+          a provider CAPABILITY declaration, not a user preference, and nothing here read it
+          either. Wiring this means building the transport; that is a feature, not this fix. */}
       <UseCaseVoiceSection
         title="Text-to-speech" hint="Speak agent replies aloud." useCase="tts"
         enableLabel="Speak replies aloud" boundModel={(active['tts'] ?? [])[0] ?? ''}
