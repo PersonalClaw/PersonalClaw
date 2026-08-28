@@ -987,6 +987,17 @@ IGNORED: tuple[str, ...] = (
     "session_key",
     "sessions.json",
     "machine_id",
+    # 🔴 BA-4 — the per-site browser profiles (`browse/profiles/<site_slug>/`). IGNORED for the
+    # SAME reason as `session_key`/`sessions.json` directly above, and deliberately NOT a
+    # `secret=True` entry, because those two postures differ in exactly the way that matters here:
+    # a secret entry is EXCLUDED from exports but CAPTURED by snapshots on purpose, so a backup can
+    # restore the credential store. A Chrome `user-data-dir` holds the cookies that ARE the
+    # authentication, and a snapshot is restored onto another machine — or handed to someone
+    # debugging — so capturing one plants a live logged-in session on a host the user never signed
+    # in from. BROWSE-AUTOMATION §5.1 says it outright: "never backed up by snapshot/portability
+    # (credentials), never exported". That is this list, not the secret set. The profiles are also
+    # unbounded in size and trivially re-creatable by signing in again, so nothing is lost.
+    "browse",
     "update_check.json",  # last update check — regenerated on the next poll
     "fixture.yaml",  # test-fixture marker written by `--seed`
 )

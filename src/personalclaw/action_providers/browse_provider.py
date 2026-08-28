@@ -29,10 +29,32 @@ that only the default path calls: a gate placed one level away from where the wo
 bypassed by the next caller that supplies its own plumbing, which is exactly how a guard ends
 up shipped and inert.
 
-**Browser lifecycle is NOT here.** The provider drives a CDP page target it is given
-(``cdp_url``); launching Chrome with a persistent per-site profile is BA-4's credential-handoff
-slice. Absent a target the provider returns a typed, actionable failure rather than pretending
-to browse — an action that silently no-ops is worse than one that says it cannot run.
+**The credential handoff** (BA-4, plan §5). Three things happen here and nowhere else:
+
+* **§5.3, before a model call is spent.** :func:`~personalclaw.browse.handoff.session_state` is
+  consulted on ``start_url``. A site whose recorded session has gone stale parks IMMEDIATELY, which
+  is the whole value of a pre-run check — parking on step 14 wastes thirteen steps the user paid
+  for. A site with no profile at all does NOT park unless ``start_url`` is itself a sign-in page:
+  "we have never logged in here" is the normal state of every public page on the web, and parking on
+  it would make the handoff fire on every run.
+* **The park routes through the SHIPPED needs-input gate.** A ``login_required`` park is a park:
+  ``_to_result`` already maps every park to ``outcome="needs_input"``, which the engine's
+  action-node dispatch maps to WAITING and ``workflows/attention.py`` projects into the inbox.
+  BA-4 adds a reason and a card, not a second park/resume.
+* **"Authenticated" is OBSERVED, never asserted.** :func:`~personalclaw.browse.handoff.record_login`
+  is called when a run that started without a fresh session COMPLETES — that is plan §5.2's own
+  wording for the invariant ("it only knows 'I am now authenticated' by observing that the
+  post-login page contains the expected content"). It is also what makes the second run cheap:
+  run 1 records the session, run 2 reads ``fresh`` and never asks the human again.
+
+**Browser lifecycle is still NOT here**, and BA-4 does not change that. ``browse/transport.py``
+records the decision: core does not discover Chrome, does not own a ``--user-data-dir`` process and
+does not supervise one. So the handoff hands the caller the exact argv that binds a headful window
+to the site's persistent profile (:func:`~personalclaw.browse.handoff.chrome_launch_args`) instead
+of launching it — which keeps the profile choice unforgeable (a caller cannot accidentally open the
+login window against a different profile than the run will read) while leaving the process where it
+already lives. Absent a target the provider returns a typed, actionable failure rather than
+pretending to browse — an action that silently no-ops is worse than one that says it cannot run.
 """
 
 from __future__ import annotations
@@ -44,6 +66,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.browse.handoff import PARK_LOGIN_REQUIRED
 from personalclaw.browse.loop import (
     MAX_STEPS_DEFAULT,
     PARK_BUDGET_EXHAUSTED,
@@ -225,6 +248,30 @@ class BrowseActionProvider(ActionProvider):
                     agent_error=typed,
                 )
 
+        # ── BA-4 §5.3: the pre-run session check, before a browser or a token is spent ──
+        from personalclaw.browse.handoff import (
+            REASON_NO_SESSION,
+            REASON_SESSION_EXPIRED,
+            SESSION_ABSENT,
+            SESSION_EXPIRED,
+            SESSION_FRESH,
+            ensure_profile,
+            looks_like_login_url,
+            session_state,
+        )
+
+        state_before = session_state(start_url)
+        if state_before != SESSION_FRESH and (
+            state_before != SESSION_ABSENT or looks_like_login_url(start_url)
+        ):
+            reason = (
+                REASON_SESSION_EXPIRED if state_before == SESSION_EXPIRED else REASON_NO_SESSION
+            )
+            return self._login_park(start_url, reason=reason, ctx=ctx, started=started)
+        # Create the profile directory before the run rather than after, so a run that authenticates
+        # mid-flight has somewhere to persist the session it just earned.
+        ensure_profile(start_url)
+
         try:
             max_steps = int(action_config.get("max_steps") or MAX_STEPS_DEFAULT)
         except (TypeError, ValueError):
@@ -271,7 +318,9 @@ class BrowseActionProvider(ActionProvider):
                 except Exception:
                     logger.debug("browse: session close failed", exc_info=True)
 
-        return self._to_result(result, started=started)
+        return self._to_result(
+            result, started=started, ctx=ctx, start_url=start_url, session_before=state_before
+        )
 
     # ── plumbing ─────────────────────────────────────────────────────────────
 
@@ -302,7 +351,61 @@ class BrowseActionProvider(ActionProvider):
         )
         return session, driver, transport.close
 
-    def _to_result(self, result: BrowseLoopResult, *, started: float) -> ActionResult:
+    # ── BA-4: the credential handoff ─────────────────────────────────────────
+
+    def _login_park(
+        self, url: str, *, reason: str, ctx: ActionContext, started: float
+    ) -> ActionResult:
+        """Park on the needs-input gate because a HUMAN must authenticate (plan §5.2).
+
+        ``success=True`` with ``outcome="needs_input"``, exactly like every other park: a login wall
+        is not a failure, and reporting one would invite the retry machinery to re-run the task
+        against a wall that will still be there.
+
+        Also writes ``auth_state=expired`` into the profile's ``.meta.json``. That is the state BA-5
+        renders a persistent banner from, and writing it at the moment the wall is OBSERVED is what
+        makes that atom a rendering job rather than a re-derivation.
+        """
+        from personalclaw.browse.handoff import (
+            REASON_SESSION_EXPIRED,
+            chrome_launch_args,
+            mark_expired,
+            request_login,
+        )
+
+        # `run_id` from the structured event payload — `ActionContext` has no such attribute, and
+        # `payload` is where the dataclass docstring says structured event data lives. Empty when
+        # nothing supplied one, which the needs-input card tolerates: an unbound card is answerable
+        # from any surface, the correct posture for a run the user started themselves.
+        handoff = request_login(
+            url,
+            reason=reason,
+            run_id=str((getattr(ctx, "payload", None) or {}).get("run_id") or ""),
+            node_id=PROVIDER_NAME,
+        )
+        if reason == REASON_SESSION_EXPIRED:
+            mark_expired(url)
+        payload = handoff.to_payload()
+        # The argv the caller needs to open the headful window on the RIGHT profile. Handed over
+        # rather than executed — see the module docstring on why core does not launch Chrome.
+        payload["headful_launch_args"] = chrome_launch_args(url, headful=True)
+        return ActionResult(
+            success=True,
+            outcome=OUTCOME_NEEDS_INPUT,
+            stdout=json.dumps(payload),
+            stderr=handoff.sentence,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+    def _to_result(
+        self,
+        result: BrowseLoopResult,
+        *,
+        started: float,
+        ctx: ActionContext,
+        start_url: str = "",
+        session_before: str = "",
+    ) -> ActionResult:
         """Project the loop's account into the provider-agnostic ActionResult.
 
         A PARK is ``success=True`` with ``outcome="needs_input"``, not a failure. The run did
@@ -310,6 +413,31 @@ class BrowseActionProvider(ActionProvider):
         a red error and invite the retry machinery to start over from step 1 — paying for the
         whole task again to reach the same ceiling.
         """
+        from personalclaw.browse.handoff import (
+            REASON_CREDENTIAL_FIELD,
+            SESSION_FRESH,
+            record_login,
+        )
+
+        if result.parked and result.park_reason == PARK_LOGIN_REQUIRED:
+            # The loop hit the wall MID-RUN (the agent tried to type into a credential field). Same
+            # card, same gate, same sentence as the §5.3 pre-run park: one handoff, two triggers.
+            return self._login_park(
+                start_url or result.final_url,
+                reason=REASON_CREDENTIAL_FIELD,
+                ctx=ctx,
+                started=started,
+            )
+        if result.ok and not result.parked and start_url and session_before != SESSION_FRESH:
+            # 🔴 §5.2's own definition of "authenticated": the run completed against a site whose
+            # session was not known-good when it started, so the session on disk WORKS. Recorded
+            # here and only here — a `record_login` the provider called unconditionally would claim
+            # a session for every public page, and one nobody called at all would leave the profile
+            # permanently stale and re-prompt the user on every run.
+            try:
+                record_login(start_url)
+            except Exception:
+                logger.debug("browse: could not record the login", exc_info=True)
         duration = int((time.monotonic() - started) * 1000)
         payload = json.dumps(result.to_payload())
         if not result.ok:
@@ -342,6 +470,14 @@ class BrowseActionProvider(ActionProvider):
             head = f"Browse stopped after {result.step_count} steps without finishing"
         elif result.park_reason == PARK_BUDGET_EXHAUSTED:
             head = "Browse stopped because the model budget is spent"
+        elif result.park_reason == PARK_LOGIN_REQUIRED:
+            # Unreachable via this method today — a login park is answered by `_login_park`, whose
+            # sentence names the site and the handoff. Kept because `_park_sentence` is the
+            # exhaustive projection of the park vocabulary, and the `else` branch below would print
+            # the raw reason code ("Browse stopped early (login_required)") to a user if a later
+            # caller reached here first. A park reason with no sentence is a leaked identifier on a
+            # product surface.
+            head = "Browse stopped because the site needs you to sign in"
         else:
             head = f"Browse stopped early ({result.park_reason})"
         kept = f"{len(result.notes)} note(s) kept" if result.notes else "no notes recorded"

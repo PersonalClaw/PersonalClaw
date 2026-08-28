@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from personalclaw.browse.credentials import WITHHELD, is_credential_input, screen_url
 from personalclaw.knowledge.connectors.base import html_to_text
 
 #: §1.1 hard cap — ~800-1000 tokens of prose. The compression layer (compress.py) tightens
@@ -105,6 +106,11 @@ class ElementRef:
     target: str = ""  # link href (role == ROLE_LINK); "" otherwise
     form: str = ""  # owning form name/id ("" when not inside a <form>)
     note: str = ""  # rendered attribute hint for fields, e.g. 'type=email required'
+    #: BA-4: this field holds a credential, so ``state`` is :data:`~browse.credentials.WITHHELD`
+    #: rather than the value — and the loop REFUSES to type into it. Carried on the ref rather
+    #: than re-derived at each consumer because the consumers are a renderer, an executor and an
+    #: audit row: three places re-deciding "is this a password" is three places to disagree.
+    credential: bool = False
 
 
 @dataclass(frozen=True)
@@ -142,6 +148,7 @@ class _FieldRec:
     state: str = ""
     note: str = ""
     text: str = ""  # accumulated inner text for <button>/<textarea>
+    credential: bool = False  # BA-4 — see `_handle_input`
 
 
 @dataclass
@@ -205,6 +212,17 @@ class _StructureParser(HTMLParser):
                 fr.note = "textarea required"
             else:
                 fr.note = "textarea"
+            # A <textarea> has no `type`, so only the name/autocomplete signals apply — but a
+            # "paste your API token here" box IS a textarea on a great many admin pages, and the
+            # invariant does not care which tag the secret arrived in.
+            fr.credential = is_credential_input(
+                "textarea",
+                name=a.get("name") or a.get("id") or "",
+                autocomplete=a.get("autocomplete") or "",
+                placeholder=a.get("placeholder") or "",
+            )
+            if fr.credential:
+                fr.state = WITHHELD
             self._current_form().fields.append(fr)
             self._capture.append(fr)
         elif tag == "select":
@@ -263,8 +281,33 @@ class _StructureParser(HTMLParser):
             extras.append("required")
         if a.get("placeholder"):
             extras.append(f'placeholder="{a["placeholder"]}"')
+        # 🔴 BA-4's never-transits invariant, at the ONE point a DOM value becomes browse state.
+        #
+        # For a credential input the `value` attribute is NOT READ — not read and then redacted,
+        # not read and then dropped: never read. So no representation of it exists anywhere
+        # downstream, which is what makes the invariant structural instead of a habit. Every
+        # model-visible string in this feature derives from the records built here, so a value
+        # that never enters cannot leave through the outline, the Links/Forms DSL, a note, a park
+        # sentence, a SEL row or a log line — and there is no ordering to get right and no second
+        # redaction pass to garble a composed `field: value` line.
+        #
+        # The state is WITHHELD unconditionally, not "WITHHELD if non-empty". Whether the browser
+        # has a password prefilled is itself a fact about the user's credential store, and a state
+        # that reads `("")` on an empty box and `[withheld]` on a full one leaks exactly that.
+        credential = is_credential_input(
+            itype,
+            name=a.get("name") or a.get("id") or "",
+            autocomplete=a.get("autocomplete") or "",
+            placeholder=a.get("placeholder") or "",
+        )
         self._current_form().fields.append(
-            _FieldRec(role=ROLE_FIELD, label=label, state=a.get("value", ""), note=" ".join(extras))
+            _FieldRec(
+                role=ROLE_FIELD,
+                label=label,
+                state=WITHHELD if credential else a.get("value", ""),
+                note=" ".join(extras),
+                credential=credential,
+            )
         )
 
 
@@ -396,7 +439,10 @@ def extract_page(html: str, *, url: str = "") -> PageExtraction:
             if fr.role in (ROLE_BUTTON,) and fr.text.strip():
                 label = _WS_RE.sub(" ", fr.text).strip()
                 state = label
-            elif fr.role == ROLE_FIELD and fr.text.strip() and not state:
+            elif fr.role == ROLE_FIELD and fr.text.strip() and not state and not fr.credential:
+                # `not fr.credential`: a <textarea> cannot be `type=password`, but it CAN be named
+                # `api_token`, and folding its inner text in here would reinstate the value
+                # `_handle_input` deliberately refused to read.
                 state = _WS_RE.sub(" ", fr.text).strip()  # <textarea> default value
             fields.append(
                 ElementRef(
@@ -406,6 +452,7 @@ def extract_page(html: str, *, url: str = "") -> PageExtraction:
                     state=state,
                     form=form_rec.name,
                     note=fr.note,
+                    credential=fr.credential,
                 )
             )
         if fields:
@@ -426,12 +473,30 @@ def _field_state_repr(e: ElementRef) -> str:
 
 
 def render_links_dsl(links: tuple[ElementRef, ...] | list[ElementRef]) -> str:
-    """The §1.2 Links DSL — each link a ref-addressable line ``[ref] label → target``."""
+    """The §1.2 Links DSL — each link a ref-addressable line ``[ref] label → target``.
+
+    The target is SCREENED here (BA-4) rather than on the :class:`ElementRef`, and the split is
+    deliberate. ``page.CdpPageDriver``'s locator prelude finds a link by
+    ``el.getAttribute("href") === TARGET`` first, so screening the stored target would demote every
+    click to the label-only fallback and pick the wrong element on a page with two identically
+    labelled links. So the ref keeps the real href for the DRIVER, and the value is removed at the
+    one boundary where it would reach the model. ``CLICK <ref>`` still works on a screened link
+    because clicking dispatches on the DOM element, never on the URL — which is why a token in a
+    link is a privacy problem here and not a functional one.
+
+    **What this screen actually covers, measured rather than assumed.** ``_clean_link``'s
+    ``_KEEP_PARAMS`` is an ALLOWLIST (``q``/``s``/``search``/``page``), so no credential can survive
+    in a link's QUERY — that half was already closed before BA-4 and this screen is redundant there.
+    It is the FRAGMENT that ``_clean_link`` passes through untouched, and the fragment is precisely
+    where the OAuth *implicit* flow returns ``#access_token=…``. Driven before keeping the call:
+    ``/r#access_token=TOK123`` reached the rendered target verbatim. So this is one live screen over
+    one real gap, not a second line of defence over a closed one.
+    """
     if not links:
         return ""
     lines = ["## Links"]
     for e in links:
-        lines.append(f"[{e.ref}] {e.label} → {e.target}")
+        lines.append(f"[{e.ref}] {e.label} → {screen_url(e.target)}")
     return "\n".join(lines)
 
 
