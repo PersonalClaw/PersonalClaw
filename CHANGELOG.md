@@ -614,6 +614,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A too-long file or folder name reported a server error instead of telling you the name was too
+  long.** Typing a name past the length the filesystem allows into the explorer's New file or New folder
+  field failed with a generic server error from three of the four write actions, while the fourth
+  answered differently again for the same input. The name is something you typed, so a server error was
+  the wrong thing to say. All four now refuse it with the limit and the length you actually used, and
+  nothing is moved or created on the way to the refusal.
+  The limit is counted in bytes rather than characters, because that is what filesystems count: a name of
+  sixty-four emoji is short to read and over the limit to store, and counting characters would have
+  accepted exactly the names that then fail.
+
 - **When the model was unavailable, knowledge enrichment told you it had found nothing.** Every failure
   and timeout in the knowledge model pool was turned into an empty answer, and an empty answer is
   indistinguishable from a model that ran perfectly well and found nothing to say. So a model that was
