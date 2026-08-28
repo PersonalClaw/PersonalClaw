@@ -750,3 +750,59 @@ def test_reopening_a_migrated_db_is_idempotent(tmp_path):
 
     assert second.get_item("i1")["tags"] == before
     assert second.db.execute("SELECT COUNT(*) FROM item_tags").fetchone()[0] == counts
+
+
+# ── shelf names are unique, like tag names (#755) ─────────────────────────────
+
+
+def test_a_duplicate_shelf_name_is_refused(store):
+    """`tags.name` is `TEXT NOT NULL UNIQUE` and the tag UI says "Merge them instead of
+    renaming"; `collections.name` had neither, so two shelves called "ZFS incident evidence"
+    both returned 201 and rendered as indistinguishable chips in the rail — a `?collection=<id>`
+    deep-link being the only way to tell them apart."""
+    store.create_collection(name="ZFS incident evidence", kind="manual")
+
+    with pytest.raises(ValueError, match="collection_name_taken:"):
+        store.create_collection(name="ZFS incident evidence", kind="manual")
+
+    assert [c["name"] for c in store.list_collections()] == ["ZFS incident evidence"]
+
+
+@pytest.mark.parametrize("variant", ["  ZFS incident evidence  ", "zfs INCIDENT evidence"])
+def test_a_name_a_reader_cannot_distinguish_is_a_duplicate(variant, store):
+    """Case- and whitespace-insensitive, unlike the `tags` UNIQUE index. Two chips reading
+    "Evidence" and "evidence" are as indistinguishable as two identical ones, and a guard that
+    admits the case a human cannot see is not worth having."""
+    store.create_collection(name="ZFS incident evidence", kind="manual")
+
+    with pytest.raises(ValueError, match="collection_name_taken:"):
+        store.create_collection(name=variant, kind="manual")
+
+
+def test_renaming_onto_an_existing_shelf_name_is_refused(store):
+    """Guarding create alone would leave the rail reachable through the other door."""
+    store.create_collection(name="Keep", kind="manual")
+    other = store.create_collection(name="Other", kind="manual")
+
+    with pytest.raises(ValueError, match="collection_name_taken:Keep"):
+        store.update_collection(other, name="Keep")
+
+    assert sorted(c["name"] for c in store.list_collections()) == ["Keep", "Other"]
+
+
+def test_re_saving_a_shelf_under_its_own_name_is_not_a_clash(store):
+    """The `exclude_id` case, and the reason it is needed: the PATCH body carries `name`
+    whenever the panel saves, so an icon change resends the current name. Without this, editing
+    a shelf's icon would fail as a collision with itself."""
+    cid = store.create_collection(name="Reading", kind="manual")
+
+    assert store.update_collection(cid, name="Reading") is True
+    assert store.update_collection(cid, name="Reading", icon="📚") is True
+    assert store.get_collection(cid)["icon"] == "📚"
+
+
+def test_a_distinct_name_is_still_created(store):
+    """The vacuity floor: a guard that refused everything would pass the tests above."""
+    store.create_collection(name="First", kind="manual")
+    assert store.create_collection(name="Second", kind="manual")
+    assert len(store.list_collections()) == 2

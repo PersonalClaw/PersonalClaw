@@ -2402,6 +2402,26 @@ async def library_home(request: web.Request) -> web.Response:
     )
 
 
+def _collection_clash_response(detail: str) -> web.Response | None:
+    """A `collection_name_taken:<name>` from the store, as a 409 that names the shelf.
+
+    409 and not 400: the body is well-formed and the request would be valid at any other
+    moment. Names the existing shelf because "already taken" without saying WHICH is not
+    actionable when the rail is a row of chips — the same reasoning as `intent_id_taken`.
+    """
+    if not detail.startswith("collection_name_taken:"):
+        return None
+    taken = detail.split(":", 1)[1]
+    return json_error(
+        "collection_name_taken",
+        message=(
+            f"A shelf called \u201c{taken}\u201d already exists. "
+            "Open that one, or pick a different name."
+        ),
+        status=409,
+    )
+
+
 async def create_collection(request: web.Request) -> web.Response:
     """POST /api/knowledge/collections — create a manual or smart shelf."""
     try:
@@ -2420,7 +2440,8 @@ async def create_collection(request: web.Request) -> web.Response:
     except ValueError as exc:
         # The store's own validation is the single source of truth for what a valid
         # shelf is; the handler surfaces it rather than duplicating the rules.
-        return web.json_response({"error": str(exc)}, status=400)
+        clash = _collection_clash_response(str(exc))
+        return clash or web.json_response({"error": str(exc)}, status=400)
     coll = _store(request).get_collection(cid)
     return web.json_response({"ok": True, "collection": coll}, status=201)
 
@@ -2451,7 +2472,8 @@ async def update_collection(request: web.Request) -> web.Response:
     try:
         store.update_collection(cid, **fields)
     except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        clash = _collection_clash_response(str(exc))
+        return clash or web.json_response({"error": str(exc)}, status=400)
     return web.json_response({"ok": True, "collection": store.get_collection(cid)})
 
 

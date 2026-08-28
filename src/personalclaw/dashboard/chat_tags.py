@@ -88,6 +88,21 @@ def create_tag(
     return tag
 
 
+def known_tag_ids(state) -> set[str]:
+    """The tag vocabulary a session field may reference.
+
+    🔴 Spelled inline in three places and MISSING from a fourth: `POST /api/chat/sessions/bulk`
+    appended any truthy string to `session.tags`, so a bulk call persisted a dangling tag_id
+    while `PUT /tags` right beside it filtered the same value out (#771). The frontend renders
+    an orphan harmlessly (`tagById[tid] &&`), which is why it went unnoticed — the stored state
+    was wrong and the UI self-healed over it.
+
+    One definition so a validated path and an unvalidated one cannot disagree about what a
+    valid id is, which is the only difference that mattered here.
+    """
+    return {str(t.get("id")) for t in state._tags if t.get("id")}
+
+
 async def api_chat_tags(request: web.Request) -> web.Response:
     """GET /api/chat/tags — list all tag definitions."""
     state: DashboardState = request.app["state"]
@@ -208,7 +223,7 @@ async def api_chat_session_tags(request: web.Request) -> web.Response:
     raw_ids = body.get("tags")
     if not isinstance(raw_ids, list):
         return web.json_response({"error": "tags must be an array"}, status=400)
-    valid_ids = {t.get("id") for t in state._tags}
+    valid_ids = known_tag_ids(state)
     new_tags: list[str] = []
     for tid in raw_ids:
         if isinstance(tid, str) and tid in valid_ids and tid not in new_tags:
@@ -235,7 +250,7 @@ def _normalize_column(
     """Validate + coerce a column payload. Returns None if invalid."""
     if not isinstance(raw, dict):
         return None
-    valid_ids = {t.get("id") for t in state._tags}
+    valid_ids = known_tag_ids(state)
     cleaned: dict[str, Any] = dict(existing or {})
     if "tag_ids" in raw:
         tag_ids = raw.get("tag_ids") or []

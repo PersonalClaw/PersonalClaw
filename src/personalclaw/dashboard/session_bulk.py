@@ -21,7 +21,9 @@ import logging
 from aiohttp import web
 
 from personalclaw.config.loader import AppConfig
+from personalclaw.dashboard.chat_folders import folder_exists
 from personalclaw.dashboard.chat_persistence import resolve_session, save_session_to_history
+from personalclaw.dashboard.chat_tags import known_tag_ids
 from personalclaw.dashboard.session_lifecycle import (
     LIFECYCLE_ACTIVE,
     LIFECYCLE_ARCHIVED,
@@ -30,6 +32,7 @@ from personalclaw.dashboard.session_lifecycle import (
     stale_session_keys,
 )
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -93,6 +96,30 @@ async def api_chat_sessions_bulk(request: web.Request) -> web.Response:
         return web.json_response({"error": f"{op} requires tag_id"}, status=400)
     folder_id = str(body.get("folder_id") or "")
     never_value = bool(body.get("value", True))
+
+    # 🔴 Validate the REFERENCED ids, which this path did not while both single-session paths
+    # did (#771): `session.tags.append(tag_id)` took any truthy string and `session.folder_id =
+    # folder_id` took any value, so a bulk call persisted a dangling id. It looked harmless
+    # because the list renders an orphan tag as nothing and an unknown folder as ungrouped —
+    # the UI self-heals over state that is wrong, which is what kept it invisible.
+    #
+    # 400 rather than the single tag path's silent FILTER, because the shapes differ: `PUT
+    # /tags` replaces a whole list, so dropping an unknown member still does what was asked,
+    # while bulk names ONE tag to add across N sessions — dropping it means the call did
+    # nothing and reported `changed`. `untag` validates too: it would remove nothing, and a
+    # caller passing an id we do not know is a caller with a stale vocabulary either way.
+    if op in ("tag", "untag") and tag_id not in known_tag_ids(state):
+        return json_error(
+            "unknown_tag_id",
+            message=f"No tag with id {tag_id!r}. Reload the tag list and retry.",
+            status=400,
+        )
+    if op == "folder" and not folder_exists(state, folder_id):
+        return json_error(
+            "unknown_folder_id",
+            message=f"No folder with id {folder_id!r}. Pass an empty folder_id to ungroup.",
+            status=400,
+        )
 
     request_app = request.get("app", "")
     changed: list[str] = []

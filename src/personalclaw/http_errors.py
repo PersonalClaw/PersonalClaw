@@ -350,6 +350,18 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "Another intent already covers this goal. Fix: edit that intent, or reword this "
         "goal so the two are distinguishable."
     ),
+    # A referenced id the caller named that does not exist. Both are 400 and not 404: the
+    # addressed resources (the sessions) are real; it is a field INSIDE the body that names
+    # something unknown, so 404 would say the wrong thing about the wrong noun. Added because
+    # `POST /api/chat/sessions/bulk` used to persist a dangling id while the single-session
+    # paths beside it validated (#771).
+    "unknown_tag_id": "The request names a tag id that does not exist.",
+    "unknown_folder_id": "The request names a folder id that does not exist.",
+    # Same family as `intent_id_taken`: a name-uniqueness refusal on a surface whose sibling
+    # (tags) enforced it at the DB while this one had no guard at all (#755).
+    "collection_name_taken": (
+        "A shelf with that name already exists. Fix: open that shelf, or pick another name."
+    ),
     "content_length_required": (
         "The request declared no `Content-Length`, so its size cannot be checked before the "
         "body is read. Fix: send a length-delimited body, not a chunked one."

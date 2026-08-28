@@ -4474,6 +4474,29 @@ class KnowledgeStore:
     VALID_READ_STATES = ("unread", "reading", "read")
     VALID_COLLECTION_KINDS = ("manual", "smart")
 
+    def _collection_name_clash(self, name: str, *, exclude_id: str = "") -> bool:
+        """Whether another shelf already carries ``name`` (case-insensitively).
+
+        🔴 The `collections` table has `name TEXT NOT NULL` and no UNIQUE, while `tags` has
+        `name TEXT NOT NULL UNIQUE` — so the surface right next to this one enforced what this
+        one did not, and two shelves called "ZFS incident evidence" both returned 201 and
+        rendered as indistinguishable chips in the rail (#755).
+
+        Compared case-INSENSITIVELY, unlike the tags UNIQUE index: two chips reading "Evidence"
+        and "evidence" are as indistinguishable to a reader as two identical ones, and telling
+        them apart by their UUID deep-link is not an affordance. A guard is only worth having
+        if it covers the case a human cannot see.
+        """
+        folded = (name or "").strip().casefold()
+        if not folded:
+            return False
+        for row in self.db.execute("SELECT id, name FROM collections").fetchall():
+            if str(row["id"]) == exclude_id:
+                continue
+            if str(row["name"] or "").strip().casefold() == folded:
+                return True
+        return False
+
     def create_collection(
         self, *, name: str, kind: str = "manual", query: str = "", icon: str = ""
     ) -> str:
@@ -4487,6 +4510,10 @@ class KnowledgeStore:
         name = (name or "").strip()
         if not name:
             raise ValueError("collection name is required")
+        # Typed code, mirroring `rename_tag`'s `tag_name_taken:<name>` — the sibling guard this
+        # surface was missing. The handler turns it into a 409 naming the shelf.
+        if self._collection_name_clash(name):
+            raise ValueError(f"collection_name_taken:{name}")
         if kind not in self.VALID_COLLECTION_KINDS:
             raise ValueError(
                 f"unknown collection kind {kind!r}; expected one of "
@@ -4548,6 +4575,16 @@ class KnowledgeStore:
             existing = self.get_collection(collection_id) or {}
             if not (existing.get("query") or "").strip():
                 raise ValueError("a smart collection requires a query")
+        # A RENAME onto an existing name is the same collision as a duplicate create, and
+        # guarding only create would leave the rail reachable by the other door. `exclude_id`
+        # so re-saving a shelf under its own name (a no-op rename, or an icon change that
+        # resends `name`) is not refused as a clash with itself.
+        if "name" in sets:
+            renamed = str(sets["name"] or "").strip()
+            if not renamed:
+                raise ValueError("collection name is required")
+            if self._collection_name_clash(renamed, exclude_id=collection_id):
+                raise ValueError(f"collection_name_taken:{renamed}")
         sets["updated_at"] = datetime.now().isoformat()
         cols = ", ".join(f"{k} = ?" for k in sets)
         cur = self.db.execute(
