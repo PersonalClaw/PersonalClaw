@@ -767,3 +767,42 @@ anti-owner — as the amendment states.
   `security.py` (:444 and :351) and `history.py` contains neither. Invisible to
   `test_docs_lint_baseline`, which only checks that the cited *file* exists — and
   `history.py` does. Corrected to `security.py` rather than left contradicting the new doc.
+
+### OWNER RULING — `SH-4`'s ECOSYSTEM-TOOLING dependency is STRUCK; the atom already owns that work. 2026-08-28
+
+`SH-4` carries `EXT:ECOSYSTEM-TOOLING:registry.json listings record signer identity`. Audited: **no
+ECOSYSTEM-TOOLING atom adds a signer property.** The registry schema's authority is
+`scratch/registry/validate_registry.py`'s `build_schema()` (the committed mirror is byte-compare-railed
+against it). Measured directly: it sets `additionalProperties: false`, and the string `signer` **appears
+nowhere in the file** — so a listing cannot carry one, and no atom would add it.
+
+**But `SH-4`'s own `done_when` already assigns it:** *"registry validation script records signer per
+listing."* The dep is pointing at the atom's own second clause.
+
+**RULED: strike the dep.** `SH-3` is `done` and shipped what `SH-4` builds on — the signing-scheme decision,
+`scripts/sign_app.py`, the in-tree public key and the Store's verify path. `SH-4` adds the `signer` property
+to `build_schema()` (and the mirror follows via the byte-compare rail) as part of its own work. Nothing is
+waiting on a sibling plan.
+
+**What genuinely remains for `SH-4`, so the ruling does not overstate it.** Two things, and neither is the
+struck dep. First, the release pipeline: `release.yml` has **eight** jobs
+(`push`, `build`, `pypi`, `pypi-client`, `images`, `notes`, `website-follow`, `attest`), **every one
+`ubuntu-latest`**, with **zero** `codesign` / `notarytool` / `notarize` occurrences and **no invocation of
+`scripts/sign_app.py`** — so nothing signs bundles today. That
+is `SH-4`'s own first clause, not a CI-RELEASE deliverable (macOS runners already exist in the fleet, so the
+runner is not the gap). Second, `github.com/PersonalClaw/registry` does not exist — verified live,
+`git ls-remote` returns *"Repository not found"* — which is an **owner action**, and per `ET-4`'s note it
+must be created only after `ET-4a`'s filename rename is on `main` (it is).
+
+
+#### The general principle this applies
+
+**An `EXT:` dependency that points at nobody is not a dependency — it is unassigned work inside the atom.**
+`EXT:` deps are prose, nothing machine-checks them, and several were written as if a sibling plan would
+eventually decompose the capability they name. When no sibling atom ever does, the atom sits `todo` forever
+waiting on a plan that is not coming. The test is simple: *does any atom own the thing this dep names?* If
+not, and the atom's own `done_when` already describes it, the dep is redundant and gets struck. If not, and
+nothing describes it, it gets **filed** — not left as a dep. Either way it stops being a phantom blocker.
+
+Two atoms this week were parked exactly this way (`MC-6`, which owes its own `sound` field, and this one).
+Four more were found by a read-only audit of the 29 `EXT:`-only atoms.
