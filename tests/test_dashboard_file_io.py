@@ -10,6 +10,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.dashboard.handlers import (
     _sanitize_blocks,
+    api_create_dir,
     api_file_create,
     api_file_delete,
     api_file_list,
@@ -31,6 +32,10 @@ def _make_app() -> web.Application:
     app.router.add_post("/api/file-move", api_file_move)
     app.router.add_post("/api/file-delete", api_file_delete)
     app.router.add_post("/api/file-upload", api_file_upload)
+    # `create-dir` is a SEPARATE handler that takes a whole path rather than a parent+name,
+    # so it never met the name rules — which is exactly why it answered 500 for an over-long
+    # component (#652). It was absent from this app, so nothing here covered it.
+    app.router.add_post("/api/create-dir", api_create_dir)
     return app
 
 
@@ -1090,3 +1095,91 @@ class TestBlocklistCaseInsensitive:
         target = str(home_patch / "brand-new-doc.md")
         assert not os.path.exists(target)
         assert _validate_dashboard_path(target) is not None
+
+
+# ── an over-long name is a 400, not a 500 (#652) ──────────────────────────────
+
+
+class TestOverLongNames:
+    """The name rules checked separators and dot-segments and never the length, so a name
+    from the explorer's inline "New file" field reached the OS, raised `ENAMETOOLONG`, and
+    fell through to the generic handler as a **500** — a client input reported as a server
+    fault. Three of the four write endpoints did this; `file-write` answered 404 for the same
+    input, so the four disagreed about one class of input.
+    """
+
+    #: 300 bytes: over the 255 every mainstream filesystem enforces.
+    LONG = "y" * 300
+
+    @pytest.mark.asyncio
+    async def test_file_create_refuses_an_over_long_name(self, mock_sel, home_patch):
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.post(
+                "/api/file-create",
+                json={"path": str(home_patch), "name": self.LONG, "kind": "file"},
+            )
+            assert resp.status == 400
+            # Specific, not "invalid name": the user can only act on a message that says
+            # which rule was broken.
+            assert "255 bytes" in (await resp.json())["error"]
+
+    @pytest.mark.asyncio
+    async def test_file_create_refuses_an_over_long_dir_name(self, mock_sel, home_patch):
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.post(
+                "/api/file-create",
+                json={"path": str(home_patch), "name": self.LONG, "kind": "dir"},
+            )
+            assert resp.status == 400
+
+    @pytest.mark.asyncio
+    async def test_create_dir_refuses_an_over_long_component(self, mock_sel, home_patch):
+        """`create-dir` takes a whole PATH, so it never met the name rules at all — which is
+        why the bound also lives in the shared path validator."""
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.post("/api/create-dir", json={"path": str(home_patch / self.LONG)})
+            assert resp.status == 400
+
+    @pytest.mark.asyncio
+    async def test_file_move_refuses_an_over_long_destination(self, mock_sel, home_patch):
+        (home_patch / "src.txt").write_text("x")
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.post(
+                "/api/file-move",
+                json={"src": str(home_patch / "src.txt"), "dest": str(home_patch / self.LONG)},
+            )
+            assert resp.status == 400
+        assert (home_patch / "src.txt").exists(), "a refused move must not have moved anything"
+
+    @pytest.mark.asyncio
+    async def test_a_name_at_the_limit_is_still_accepted(self, mock_sel, home_patch):
+        """The vacuity floor. A bound is one off-by-one from refusing every legitimate name,
+        and 255 bytes is the limit itself, not one past it."""
+        name = "y" * 255
+        async with TestClient(TestServer(_make_app())) as client:
+            resp = await client.post(
+                "/api/file-create", json={"path": str(home_patch), "name": name, "kind": "file"}
+            )
+            assert resp.status in (200, 201), await resp.text()
+        assert (home_patch / name).exists()
+
+    def test_the_limit_is_bytes_not_characters(self):
+        """An emoji costs four bytes, so a 64-character name is 256 bytes — over the limit the
+        OS enforces while looking short. `len(name)` would have passed exactly the input that
+        fails, which is the whole reason this counts encoded length."""
+        from personalclaw.dashboard.handlers.files import _reject_name
+
+        assert _reject_name("🎨" * 64), "64 chars / 256 bytes must be refused"
+        assert not _reject_name("🎨" * 63), "63 chars / 252 bytes is legal"
+
+    def test_the_shared_validator_keeps_the_older_rules(self):
+        """The three original conditions moved into one function; losing one while adding the
+        length check would trade a 500 for a traversal."""
+        from personalclaw.dashboard.handlers.files import _reject_name
+
+        assert _reject_name("")
+        assert _reject_name("a/b")
+        assert _reject_name("a\\b")
+        assert _reject_name(".")
+        assert _reject_name("..")
+        assert not _reject_name("ordinary.txt")

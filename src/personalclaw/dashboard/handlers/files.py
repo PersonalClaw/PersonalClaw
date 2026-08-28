@@ -1034,6 +1034,12 @@ def _is_dashboard_root(path: str) -> bool:
     return any(path == rp for _label, rp in _dashboard_roots())
 
 
+#: The per-component byte limit essentially every filesystem enforces (ext4, APFS, NTFS).
+#: BYTES, not characters: an emoji costs four, so a 90-character name can exceed it while
+#: looking short. `len(name)` would have passed exactly the inputs the OS refuses.
+MAX_NAME_BYTES = 255
+
+
 def _validate_dashboard_path(raw: str) -> str | None:
     """Validate a file path for dashboard file I/O.
 
@@ -1103,6 +1109,12 @@ def _validate_dashboard_path(raw: str) -> str | None:
         # The minted-nonce records: reading them leaks live session nonces.
         "sessions.json",
     }
+    # An over-long final component reaches the OS as `ENAMETOOLONG` and surfaced as a 500 from
+    # `file-move` (over-long dest) and `create-dir`, which take a whole PATH rather than a name
+    # and so never met the name rules (#652). Bounded here, at the one place every path-taking
+    # endpoint already funnels through, rather than in each handler.
+    if len(os.path.basename(canonical).encode("utf-8")) > MAX_NAME_BYTES:
+        return None
     blocked_suffixes = (".key", ".pem", ".secret")
     base_cf = os.path.basename(canonical).casefold()
     if base_cf in {name.casefold() for name in blocked_basenames}:
@@ -2143,6 +2155,31 @@ async def api_file_complete(request: web.Request) -> web.Response:
     return web.json_response({"suggestions": out})
 
 
+def _reject_name(name: str) -> str:
+    """Why this single path component is unusable, or ``""`` when it is fine.
+
+    🔴 The length check is the one that was missing (#652). The separator and dot-segment
+    rules were spelled inline at two call sites and neither bounded the length, so a
+    300-character name from the explorer's inline "New file" field passed every check, reached
+    the OS, and raised `ENAMETOOLONG` — which fell through to the generic handler as a **500**.
+    A name typed into a text box is client input; answering 5xx says the server is at fault.
+
+    One function because the rules were duplicated: `api_file_create` and `api_file_upload`
+    each had their own copy of the same three conditions, which is how a fourth rule reaches
+    one site and not the other.
+    """
+    if not name:
+        return "a name is required"
+    if "/" in name or "\\" in name:
+        return "a name may not contain a path separator"
+    if name in (".", ".."):
+        return "a name may not be '.' or '..'"
+    encoded = len(name.encode("utf-8"))
+    if encoded > MAX_NAME_BYTES:
+        return f"a name may be at most {MAX_NAME_BYTES} bytes; this one is {encoded}"
+    return ""
+
+
 async def api_file_create(request: web.Request) -> web.Response:
     """POST /api/file-create — create a new file or directory in the explorer.
 
@@ -2166,9 +2203,10 @@ async def api_file_create(request: web.Request) -> web.Response:
     content = body.get("content", "")
     if kind not in ("file", "dir"):
         return web.json_response({"error": "kind must be 'file' or 'dir'"}, status=400)
-    # Reject path separators / traversal in the new name — it's a single segment.
-    if not name or "/" in name or "\\" in name or name in (".", ".."):
-        return web.json_response({"error": "invalid name"}, status=400)
+    # Reject path separators / traversal / over-long names — it's a single segment.
+    refusal = _reject_name(name)
+    if refusal:
+        return web.json_response({"error": refusal}, status=400)
 
     parent = _validate_dashboard_path(parent_raw)
     if not parent or not os.path.isdir(parent):
@@ -2350,8 +2388,11 @@ async def api_file_upload(request: web.Request) -> web.Response:
     try:
         async for part in _iter_multipart(reader):
             filename = os.path.basename(part.filename or "")
-            if not filename or "/" in filename or "\\" in filename or filename in (".", ".."):
-                return web.json_response({"error": "invalid filename in upload"}, status=400)
+            refusal = _reject_name(filename)
+            if refusal:
+                return web.json_response(
+                    {"error": f"invalid filename in upload: {refusal}"}, status=400
+                )
             dest = _validate_dashboard_path(os.path.join(target_dir, filename))
             if not dest:
                 return web.json_response({"error": f"forbidden filename: {filename}"}, status=400)
@@ -2840,6 +2881,14 @@ async def api_create_dir(request: web.Request) -> web.Response:
             error="system root",
         )
         return web.json_response({"error": "Access denied"}, status=403)
+    # An over-long leaf name reaches `mkdir` as `ENAMETOOLONG` and surfaced as a 500 (#652).
+    # Checked here rather than picked up from `_validate_dashboard_path`, because this endpoint
+    # deliberately does NOT use it: it binds an arbitrary project/workspace folder outside the
+    # dashboard allowlist, guarded by `is_sensitive_path` + `is_system_path` instead. AFTER
+    # those two, so a denial never depends on how long the name happens to be.
+    name_refusal = _reject_name(os.path.basename(target))
+    if name_refusal:
+        return web.json_response({"error": name_refusal}, status=400)
     if os.path.exists(target):
         return web.json_response({"error": "Already exists", "path": target}, status=409)
     # Create exactly ONE new leaf folder inside an EXISTING parent — not a chain.
