@@ -527,10 +527,20 @@ function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => vo
   // card use this line, so one edit covers both views.
   const who = (t.assignee ?? '').trim() || (t.author ?? '').trim()
 
-  // Two groups, exactly as before: an identity group separated by the flex gap alone, then a
-  // schedule group whose members carry a leading `·`. That `·` used to be hard-coded, which was
-  // safe only because priority ALWAYS rendered. Now that the group can be empty, the dot is
-  // conditional on something actually preceding it — otherwise a row starts "· 0/2 criteria".
+  // Two groups, both separated by the flex gap alone. The schedule group used to carry a leading
+  // `·` guarded by `(lead.length > 0 || i > 0)`, which tests PRESENCE — "is anything in front of
+  // me" — and cannot know LINE POSITION. Measured on the demo fixture, four meta lines carry a
+  // schedule item:
+  //
+  //     1440 / 834 / 390px   0 stranded   (the row fits on one line, height 20px)
+  //             360px        2 stranded   (height 41px — it has wrapped)
+  //             320px        4 of 4       ← the width WCAG SC 1.4.10 (Reflow) mandates
+  //
+  // So the dot was correct at every tier the harness sweeps and wrong at the one AA requires,
+  // which is why two earlier passes measured this row as clean at desktop and phone. A content
+  // separator cannot survive wrapping; only a gap can. This row already separates its identity
+  // group by `gap-x-m` with no glyph, so the schedule group now uses the same mechanism — the
+  // ruling #2224 established for `#/prompts`, applied to the sibling it was compared against.
   const lead: React.ReactNode[] = []
   if (pm) lead.push(<span key="pri" style={{ color: pm.tone }}>{pm.label}</span>)
   if (who) {
@@ -560,8 +570,8 @@ function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => vo
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
       {lead}
-      {tail.map((x, i) => (
-        <span key={x.key}>{(lead.length > 0 || i > 0) ? '· ' : ''}{x.node}</span>
+      {tail.map((x) => (
+        <span key={x.key}>{x.node}</span>
       ))}
       {comments}
     </div>

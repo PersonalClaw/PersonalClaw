@@ -164,11 +164,26 @@ describe('every BROWSING view is signal-only; the detail view is not', () => {
 describe('the meta line cannot strand its separator', () => {
   const src = read('TasksListPage.tsx')
 
-  it('makes the leading dot conditional on something preceding it', () => {
-    // The `·` used to be hard-coded onto `due`/`criteria`, which was safe only because priority
-    // ALWAYS rendered. With the lead group now able to be empty, a literal prefix would produce a
-    // row reading "· 0/2 criteria".
-    expect(src).toMatch(/\(lead\.length > 0 \|\| i > 0\) \? '· ' : ''/)
+  it('carries no leading dot at all — the conditional one still stranded', () => {
+    // 🔴 RETARGETED. This asserted the conditional `(lead.length > 0 || i > 0) ? '· ' : ''`, because a
+    // hard-coded `·` produced rows reading "· 0/2 criteria" once the lead group could be empty. That
+    // was a real defect and the conditional was a real fix for it — but only for the EMPTY-LEAD case.
+    // It tests PRESENCE, not LINE POSITION, so it never addressed wrapping: measured with the
+    // conditional in place, 2 of 4 rows stranded at 360px and 4 of 4 at 320px, the width SC 1.4.10
+    // requires. Dropping the glyph satisfies BOTH the old property and the wrapping one, absolutely —
+    // there is no dot left to lead a row or a line.
+    // 🪤 Comments stripped first. The removed guard is QUOTED in the comment that explains why it
+    // went, so a raw match finds the defect in its own documentation — measured three times in this
+    // programme now, and twice inside a fresh negative assertion. A scanner that cannot tell a
+    // statement from a sentence about a statement is measuring the wrong thing.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    expect(code, 'no glyph, so neither an empty lead nor a wrap can strand one')
+      .not.toMatch(/'· '/)
+    expect(code, 'and the presence guard that only half-solved it is gone')
+      .not.toMatch(/lead\.length > 0 \|\| i > 0/)
   })
 
   it('renders nothing at all when the whole line would be empty', () => {
