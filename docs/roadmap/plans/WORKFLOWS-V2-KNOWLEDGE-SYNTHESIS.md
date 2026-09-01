@@ -1128,3 +1128,46 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
   chokepoint under a SOURCE policy, and putting both directions of the trust boundary in one atom is the wrong seam.
   Note the house rule that a new action provider needs a **capability class** — so this is not a thin wrapper over
   `net.fetch`, which is why it earns an atom rather than a clause.
+
+- [2026-09-01][WF2KNO-9] **DONE — the four monitor/ingest templates ship, closing the work the
+  2026-08-28 `[unblocked]` entry above left open.** `market-monitor`, `trending-repo-digest`,
+  `dual-sink-watcher` and `paper-ingest` each dispatch `net-fetch` on a node the engine resolves,
+  which is the clause the atom's `done_when` turns on. Verified as a set, not one at a time:
+  `tests/test_workflows_bundled.py` is **344 passed** with the four added to `EXPECTED`, so they
+  clear the whole library contract — validation, provider registration, macro expansion, package
+  data and the conventions lint — rather than only parsing.
+
+  **Ordering is left to the derived dataflow.** None of the four declares `needs`, matching all 26
+  templates that preceded them: `WF_UNORDERED_DEP` derives admission from `{{nodes.*}}` bindings,
+  and `_validate_needs` treats a `needs` the structure cannot honour as an ERROR, so a
+  hand-written one would be a second, weaker statement of an ordering the bindings already carry.
+
+  **No `allowed_write_paths`, deliberately.** None of the four writes into a workspace — they land
+  through `knowledge-persist`, `artifact-update` and `notify`, which are action providers with
+  their own chokepoints. Declaring a write scope none of them uses would be decorative.
+
+  **Egress stays the consent surface and the templates say so.** Each one's `description` and its
+  `url` input state that the host must already sit in Settings → Security → Allowed Egress Hosts,
+  because that list is EXCLUSIVE for this action: with nothing listed the first run fails by
+  design, naming the host and the setting. `market-monitor`'s `metadata.egress_is_the_consent_
+  surface` records that the refusal is how a user grants reach, not a defect to route around, and
+  no template can widen it. `max_chars` is documented as only ever NARROWING the provider's own
+  20,000-character ceiling.
+
+  **Falsified in both directions, two DISTINCT red sets.** (i) Rewriting `market-monitor`'s
+  `net-fetch` node to `knowledge-retrieve` — mutation `git grep`'d back before running — reds
+  `test_the_monitor_slate_dispatches_a_real_egress_action` at **1 failed / 2 passed**, while
+  `test_the_detector_discriminates` stays GREEN. (ii) Making `_providers_named_by` return
+  `found | {"net-fetch"}` reds `test_the_detector_discriminates` at **1 failed / 2 passed** while
+  the dispatch leg stays GREEN. So the two legs key on different properties; neither is satisfied
+  by the bug the other catches. Both restored from a file copy at the literal path, with the
+  restore checked by grepping for the mutation's own marker rather than by re-running the suite.
+
+  **One process note worth recording.** The implementing session died to a stream-idle watchdog
+  mid-way through updating `EXPECTED`, having committed nothing — four template directories and a
+  modified test file sat uncommitted in a `/private/tmp` worktree, which is one cleanup away from
+  gone. The rail its own `EXPECTED` comment names,
+  `test_the_monitor_slate_dispatches_a_real_egress_action`, did not exist yet: the comment was a
+  promise the code did not keep. Recovered by committing first and finishing second.
+
+  `dag.json` is untouched — the status flip is the owner's, batched separately.
