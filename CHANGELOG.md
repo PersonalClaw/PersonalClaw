@@ -740,6 +740,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   somebody noticing. That is what the check replaces. It also records, out loud, roughly twenty further
   locations that are still missing from backups — each needs its own decision about how two copies should
   be merged, and guessing that is worse than leaving it visible.
+- **When a model's answer is cut off mid-tool-call, it is now told that, instead of being told it
+  forgot something.** A response that hit its length limit part-way through calling a tool left the
+  call's arguments incomplete, and PersonalClaw read them as *no arguments at all* — so the tool
+  complained about a missing field, and the model was blamed for a call it had made correctly. The
+  real cause was never recorded anywhere: no message, no counter, nothing in the run's history, so it
+  was invisible even on review. The two failures are now told apart and named: a cut-off answer says
+  it was cut off and to be more concise, and genuinely malformed arguments say that instead. Arguments
+  wrapped in code fences, or sent as text containing the object, are also read correctly now rather
+  than discarded — the non-conversational path already handled both.
 
 - **Renaming a file you were editing asked permission after the fact, then stranded the tab.** The
   rename went to disk first, and only then did a dialog ask whether to discard your unsaved changes —
