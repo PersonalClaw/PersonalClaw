@@ -212,10 +212,12 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
                              834px  39  (every row)
                              390px  39  (every row)
 
-                          The canonical sibling (`TasksListPage`'s `MetaLine`) guards this with
-                          `(lead.length > 0 || i > 0) ? '· ' : ''` — but that tests PRESENCE, not line
-                          position, and `sourceLabel` here always renders, so the conditional form
-                          would still strand all 39. A content separator cannot survive wrapping;
+                          The canonical sibling (`TasksListPage`'s `MetaLine`) USED TO guard this with
+                          `(lead.length > 0 || i > 0) ? '· ' : ''`, and that tests PRESENCE, not line
+                          position — `sourceLabel` here always renders, so the conditional form would
+                          still have stranded all 39. That sibling has since dropped its glyph for the
+                          same reason (4 of 4 stranded at 320px, the width SC 1.4.10 mandates), so there
+                          is no longer a conditional form to converge onto — only the gap. A content separator cannot survive wrapping;
                           only a gap can. So this row now uses the one mechanism it ALREADY uses
                           between its first two items — `gap-x-m` alone, no glyph. */}
                       {r.description && <span className="truncate">{r.description}</span>}
