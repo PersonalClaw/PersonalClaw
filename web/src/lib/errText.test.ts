@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { errText } from './errText'
+import { errEnvelope, errText } from './errText'
 
 // ── What a user is told when something fails, and what must never be said ─────────────────
 //
@@ -15,6 +15,11 @@ import { errText } from './errText'
 //   {"error": "name is required"}   "name is required"                  unchanged ✅
 //   an nginx 502 HTML page          158 chars of raw markup   ❌         "HTTP 502"
 //   an empty body                   "HTTP 502"                          unchanged ✅
+//
+// A later round (issue 637) added the row the guards above could not catch, because it is
+// neither markup nor a wall — the framework's OWN page, 55 bytes of plain text:
+//
+//   aiohttp's default 500 body      "Server got itself in trouble"  ❌   "HTTP 500"
 //
 // 🪤 THE FALSIFICATION THAT MADE THIS CYCLE HONEST. The ledger had "failure copy renders raw
 // JSON" ranked first, on the strength of a probe that rendered `{"detail":"…"}` verbatim. That
@@ -53,6 +58,55 @@ describe('errText', () => {
 
   it('still passes a SHORT plain-text body through — some endpoints answer in text', async () => {
     expect(await errText(res('upload part 3 rejected', 400, 'text/plain'))).toBe('upload part 3 rejected')
+  })
+
+  // ── a server error page is not a message (issue 637) ──────────────────────────────────
+  //
+  // 🔑 THE FIXTURE IS MEASURED, not invented — the whole point of this file's falsification
+  // note above. Driven against a real aiohttp app with a handler that raises:
+  //
+  //   status 500 · content-type `text/plain; charset=utf-8` · 55 bytes
+  //   '500 Internal Server Error\n\nServer got itself in trouble'
+  //
+  // Not JSON, no leading `<`, well under MAX_INLINE — so it satisfied every guard this file
+  // had and became the sentence under the user's form field, read aloud by `role="alert"`.
+  const AIOHTTP_500 = '500 Internal Server Error\n\nServer got itself in trouble'
+
+  it("never speaks the framework's own crash page", async () => {
+    expect(await errText(res(AIOHTTP_500, 500, 'text/plain'))).toBe('HTTP 500')
+  })
+
+  it.each([500, 502, 503, 504])('blocks a short plain-text body on %i', async (status) => {
+    // Any 5xx, not just the one that was reported. A tunnel or proxy answering a bare
+    // "Bad Gateway" in text is the same shape as aiohttp's page.
+    expect(await errText(res('Bad Gateway', status, 'text/plain'))).toBe(`HTTP ${status}`)
+  })
+
+  it('still lets a SHAPED 5xx message through — the backend wrote that one', async () => {
+    // 🪤 The floor. "Distrust 5xx bodies" one step too far silences every deliberate server-side
+    // message, and the extraction failures are exactly where a real explanation matters:
+    // "HTTP 500" instead of "could not read the document" is a worse regression than the bug.
+    expect(await errText(res('{"error": "could not read the document"}', 500))).toBe(
+      'could not read the document',
+    )
+    expect(
+      await errText(res('{"error": {"code": "extract_failed", "message": "the PDF has no text layer"}}', 500)),
+    ).toBe('the PDF has no text layer')
+  })
+
+  it('keeps the code from an unshaped 5xx, since a code is still a fact', async () => {
+    // The message is unusable and becomes the status; a code, if present, is not a sentence but
+    // it IS something a caller can branch on, so it must survive the substitution.
+    const env = await errEnvelope(res('{"error": {"code": "upstream_timeout"}}', 504))
+    expect(env.message).toBe('HTTP 504')
+    expect(env.code).toBe('upstream_timeout')
+  })
+
+  it('leaves 4xx passthrough alone at the boundary', async () => {
+    // 499 vs 500 — the discriminator is the status, so pin both sides of it. A 4xx plain-text
+    // body is a handler that knows what the client did wrong.
+    expect(await errText(res('slow down', 429, 'text/plain'))).toBe('slow down')
+    expect(await errText(res('slow down', 500, 'text/plain'))).toBe('HTTP 500')
   })
 
   it('falls back to the status for an empty body', async () => {

@@ -81,14 +81,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **Searching the skill store said "No results" when there was nothing to search.**
+- **Selecting many conversations at once could file them under a tag or folder that doesn't exist.**
+
+- **Two knowledge shelves could have the same name, with nothing to tell them apart.**
 
 - **Choosing a project while editing a task now moves the task.**
+- **A crash no longer explains itself to you as "Server got itself in trouble."**
 
 - **A list-typed action setting is no longer thrown away without a word.**
+- **"Speak replies aloud" did nothing: replies were spoken whether it was on or off.**
+
+- **The "Streaming transcription" toggle is gone, because there is nothing behind it.**
 
 - **Editing an artifact and navigating away lost the edit.**
 
 - **`personalclaw snapshot` left your custom themes behind.**
+- **When a model's answer is cut off mid-tool-call, it is now told that, instead of being told it forgot something.**
+
+- **Renaming a file you were editing asked permission after the fact, then stranded the tab.**
 
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it had.**
 

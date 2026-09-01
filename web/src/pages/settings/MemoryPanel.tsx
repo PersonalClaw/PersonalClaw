@@ -19,6 +19,7 @@ import {
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
 import { confirm, confirmDelete } from '../../ui/dialog'
 import { Button } from '../../ui/Button'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { ListSkeleton, FormSkeleton, LoadError, EmptyState } from '../../ui/ListScaffold'
 import { TextInput, Select, ChipInput, NumberField, FieldError } from '../../ui/forms'
 import { Segmented } from '../../ui/Segmented'
@@ -641,7 +642,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
         {item.kind === 'fact' && item.fact && (
           <div className="flex flex-col gap-3 text-[0.8125rem]">
             <div>
-              <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Value</div>
+              <Eyebrow className="mb-1">Value</Eyebrow>
               <pre className="whitespace-pre-wrap rounded-lg bg-surface-high px-3 py-2 text-on-surface text-[0.75rem]">{readValue(item.fact.value_json)}</pre>
             </div>
             <StudioMeta pairs={[
@@ -706,7 +707,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
               ['Last linked', item.entity.last_linked_at ? fmtDate(item.entity.last_linked_at) : '—'],
             ]} />
             <div>
-              <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">What links here</div>
+              <Eyebrow className="mb-1">What links here</Eyebrow>
               <EntityBacklinks entity={item.entity} />
             </div>
           </div>
@@ -758,12 +759,12 @@ function RecordLinks({ item }: { item: StudioItem }) {
   }
   return (
     <div className="mt-3 flex flex-col gap-1.5 border-t border-outline-variant/30 pt-3">
-      <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Entity links &amp; evidence</div>
+      <Eyebrow>Entity links &amp; evidence</Eyebrow>
       {data.links.map((l) => (
         <div key={l.id} className="rounded-lg bg-surface-high px-2.5 py-1.5 text-[0.75rem]">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-on-surface">{l.entity_name || l.to_entity || '—'}</span>
-            <span className="rounded-pill bg-surface-container px-1.5 py-0.5 uppercase tracking-wide text-on-surface-low">{l.link_type.replace(/_/g, ' ')}</span>
+            <Eyebrow as="span" className="rounded-pill bg-surface-container px-1.5 py-0.5">{l.link_type.replace(/_/g, ' ')}</Eyebrow>
             <span className="rounded-pill bg-surface-container px-1.5 py-0.5 text-on-surface-low">{l.provenance}</span>
             <span className="text-on-surface-low tabular-nums">{l.confidence.toFixed(2)}</span>
           </div>
@@ -1002,7 +1003,7 @@ function InspectTab() {
 function InspectBlock({ title, body }: { title: string; body: string }) {
   return (
     <div>
-      <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{title}</div>
+      <Eyebrow className="mb-1">{title}</Eyebrow>
       {body ? (
         <pre className="overflow-x-auto rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.75rem] whitespace-pre-wrap">{body}</pre>
       ) : (
@@ -1099,7 +1100,7 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
             <div key={i} className="flex items-start gap-2 rounded-lg bg-surface-container px-3 py-2">
               <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" />
               <div className="min-w-0">
-                <div className="text-on-surface text-[0.8125rem]"><span className="rounded bg-surface-high px-1.5 py-0.5 text-[0.75rem] uppercase tracking-wide text-on-surface-low">{f.check.replace(/_/g, ' ')}</span> <span className="font-mono">{f.key}</span></div>
+                <div className="text-on-surface text-[0.8125rem]"><Eyebrow as="span" className="rounded bg-surface-high px-1.5 py-0.5">{f.check.replace(/_/g, ' ')}</Eyebrow> <span className="font-mono">{f.key}</span></div>
                 <div className="text-on-surface-low text-[0.75rem]">{f.detail}</div>
               </div>
             </div>
@@ -1124,7 +1125,7 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
           </div>
           {Object.keys(obs.rejections).length > 0 && (
             <div className="mt-3">
-              <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Write rejections</div>
+              <Eyebrow className="mb-1">Write rejections</Eyebrow>
               <div className="flex flex-wrap gap-1.5">
                 {Object.entries(obs.rejections).map(([reason, n]) => (
                   <span key={reason} className="rounded-pill bg-surface-high px-2.5 py-1 text-[0.75rem] text-on-surface-var">{reason.replace(/_/g, ' ')}: <strong>{n}</strong></span>
@@ -1198,7 +1199,7 @@ function VolunteerPrecisionSection() {
           )}
           {arms.length > 0 && (
             <div className="mt-3">
-              <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">By match type</div>
+              <Eyebrow className="mb-1">By match type</Eyebrow>
               <div className="flex flex-wrap gap-1.5">
                 {arms.map(([arm, stat]) => (
                   <span key={arm} className="rounded-pill bg-surface-high px-2.5 py-1 text-[0.75rem] text-on-surface-var">
@@ -1343,7 +1344,7 @@ function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
               keeps each chip atomic; `break-all` is what actually wraps a dotted key, since it
               contains no spaces for `break-words` to use. */}
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span className="whitespace-nowrap rounded bg-surface-high px-1.5 py-0.5 uppercase tracking-wide text-on-surface-low">{l.link_type.replace(/_/g, ' ')}</span>
+            <Eyebrow as="span" className="whitespace-nowrap rounded bg-surface-high px-1.5 py-0.5">{l.link_type.replace(/_/g, ' ')}</Eyebrow>
             {/* `from_kind` says WHICH memory store the ref lives in — semantic (a durable fact,
                 keyed by name) or episodic (an event, keyed by uuid). The row rendered the bare
                 `from_ref` alone, so a uuid and a fact key looked like the same kind of thing and

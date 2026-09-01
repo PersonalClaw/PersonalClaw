@@ -19,7 +19,7 @@ import { SpotlightTour } from './SpotlightTour'
 // `stopPropagation()` here consumed the press before the palette ever saw it.
 //
 // 🔑 THE PREMISE IN THE ORIGINAL COMMENT WAS THE BUG: "the tour is the topmost layer". It is
-// not. This overlay is `z-[70]`; the command palette is `z-[200]`, and it is *supposed* to open
+// not. This overlay rides `--z-modal`; the command palette rides `--z-toast` (higher), and it is *supposed* to open
 // over the tour — the tour's own doctrine is that guidance never gates. Two true statements
 // ("consume Escape so one press closes one layer" and "the tour is topmost") were combined, and
 // only the first one holds.

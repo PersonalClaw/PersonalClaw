@@ -11,6 +11,7 @@ import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { TextLink } from '../../ui/TextLink'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { Button } from '../../ui/Button'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { QuietButton } from '../../ui/QuietButton'
@@ -675,7 +676,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
           <div className="rounded-lg bg-surface-container/60 px-l py-m">
             <button type="button" onClick={() => setPromptOpen(!promptOpen)} aria-expanded={promptOpen} className="flex items-center gap-s text-left w-full min-w-0">
               <ChevronRight size={14} className={`shrink-0 text-on-surface-low transition-transform ${promptOpen ? 'rotate-90' : ''}`} />
-              <span className="shrink-0 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Prompt</span>
+              <Eyebrow as="span" className="shrink-0">Prompt</Eyebrow>
               {/* first line of the prompt, shown only while collapsed */}
               {!promptOpen && (
                 <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem]">
@@ -692,7 +693,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                       how the goal is decomposed, not a separate concern. */}
                   {c.sub_goals.length > 0 && (
                     <div className="mt-l">
-                      <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">Sub-goals · {c.sub_goals.length}</div>
+                      <Eyebrow className="mb-1.5">Sub-goals · {c.sub_goals.length}</Eyebrow>
                       <ul className="flex flex-col gap-1.5">
                         {c.sub_goals.map((s, i) => (
                           <li key={i} className="flex items-start gap-s text-on-surface-var text-[0.8125rem]">
@@ -707,9 +708,9 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                       visible once the loop is running, mirroring the Plan Review. */}
                   {c.execution === 'multi_agent' && (c.roster?.length ?? 0) > 0 && (
                     <div className="mt-l">
-                      <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">
+                      <Eyebrow className="mb-1.5">
                         Roster · {c.roster!.length}{c.strategy_id ? ` · ${cap(c.strategy_id.replace(/_/g, ' '))}` : ''}
-                      </div>
+                      </Eyebrow>
                       <div className="flex flex-col gap-1.5">
                         {c.roster!.map((m, i) => (
                           <div key={i} className="flex flex-col gap-0.5 rounded-lg bg-surface-container px-m py-2">
@@ -843,7 +844,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                  )}
                  {pending.length > 0 && (
                    <div className="rounded-lg px-m py-2 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)', border: '1px dashed color-mix(in srgb, var(--color-info) 30%, transparent)' }}>
-                     <div className="flex items-center gap-1.5 text-info text-[0.75rem] uppercase tracking-wide mb-1"><MessageSquarePlus size={12} /> nudge queued — applies next cycle</div>
+                     <Eyebrow tone="info" className="flex items-center gap-1.5 mb-1"><MessageSquarePlus size={12} /> nudge queued — applies next cycle</Eyebrow>
                      {pending.map((n, i) => <p key={i} className="text-on-surface-var">{n.text}</p>)}
                    </div>
                  )}
@@ -1033,7 +1034,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, 
             )}
           </>
         ) : (
-          <span className="h-9 inline-flex items-center text-on-surface-low text-[0.75rem] uppercase tracking-wide">Outputs</span>
+          <Eyebrow as="span" className="h-9 inline-flex items-center">Outputs</Eyebrow>
         )}
       </div>
 
@@ -1090,7 +1091,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, 
 function DocSurface({ eyebrow, children }: { eyebrow?: React.ReactNode; children: string }) {
   return (
     <div className="rounded-xl bg-surface px-2xl py-xl ring-1 ring-outline-variant/30" style={{ boxShadow: 'var(--shadow-composer)' }}>
-      {eyebrow && <div className="mb-l flex items-center gap-s text-on-surface-low text-[0.75rem] uppercase tracking-wide border-b border-outline-variant/30 pb-m">{eyebrow}</div>}
+      {eyebrow && <Eyebrow className="mb-l flex items-center gap-s border-b border-outline-variant/30 pb-m">{eyebrow}</Eyebrow>}
       <Markdown>{children}</Markdown>
     </div>
   )
@@ -1142,7 +1143,7 @@ function ArtifactTab({ artifact, onOpen, loopId }: { artifact: Artifact; onOpen?
   if (ctype.id === 'markdown' || ctype.id === 'text') return <DocSurface eyebrow={eyebrow}>{content}</DocSurface>
   return (
     <div className="rounded-xl overflow-hidden bg-surface ring-1 ring-outline-variant/30" style={{ boxShadow: 'var(--shadow-composer)' }}>
-      <div className="flex items-center gap-s bg-surface px-l py-2 text-on-surface-low text-[0.75rem] uppercase tracking-wide border-b border-outline-variant/30">{eyebrow}</div>
+      <Eyebrow className="flex items-center gap-s bg-surface px-l py-2 border-b border-outline-variant/30">{eyebrow}</Eyebrow>
       <div className="h-[60vh]">
         <ContentSurface type={ctype} content={content} title={artifact.name} docId={artifact.slug} readOnly
           iterate={loopId ? { slug: artifact.slug, correction: async (directive) => { await api.uLoopNudge(loopId, directive) } } : undefined} />
@@ -1216,7 +1217,7 @@ function PhaseGroup({ phase, index, active, minCycles, cycles, renderCycle, live
           <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(550)}>{role || `Phase ${index + 1}`}</span>
           <span className="truncate text-on-surface-low text-[0.75rem]">{agent ? <><Bot size={9} className="inline -mt-0.5 mr-0.5" />{agent}</> : 'default worker'}</span>
         </span>
-        {active && <span className="shrink-0 self-start text-primary text-[0.75rem] uppercase tracking-wide">● active</span>}
+        {active && <Eyebrow as="span" tone="primary" className="shrink-0 self-start">● active</Eyebrow>}
         {/* Count: "done/min" while still inside the minimum; once the phase has
             met (or exceeded) its minimum, show just the cycle count so it never
             reads as a broken fraction like "4/1". */}
@@ -1320,7 +1321,7 @@ function CycleDetail({ f, verdict, nudges, activity }: { f: LoopFinding; verdict
               <div key={i} className="flex gap-s">
                 <CornerDownRight size={14} className="text-info shrink-0 mt-1" />
                 <div className="flex-1 rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)' }}>
-                  <div className="text-info text-[0.75rem] uppercase tracking-wide mb-1">sent cycle {n.sent_at_cycle} · applied cycle {n.applied_cycle}</div>
+                  <Eyebrow tone="info" className="mb-1">sent cycle {n.sent_at_cycle} · applied cycle {n.applied_cycle}</Eyebrow>
                   <p className="text-on-surface text-[0.8125rem] leading-relaxed whitespace-pre-wrap">{n.text}</p>
                 </div>
               </div>
@@ -1345,7 +1346,7 @@ function CycleDetail({ f, verdict, nudges, activity }: { f: LoopFinding; verdict
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><Eyebrow className="mb-1.5">{label}</Eyebrow>{children}</div>
 }
 
 function groupNudges(nudges: LoopNudge[]) {

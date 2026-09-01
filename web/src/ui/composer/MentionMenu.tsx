@@ -177,7 +177,7 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
       // unlike a `menu` it must be named — and this one was anonymous while its sibling SlashMenu was
       // not. The name follows the menu's own hint copy, which already varies with `leading`.
       aria-label={leading ? 'Prompts, files and knowledge' : 'Files and knowledge'}
-      className="fixed z-[9999] overflow-y-auto rounded-lg border border-outline-variant/50 bg-surface/95 p-1 shadow-xl ring-1 ring-black/5 backdrop-blur-md"
+      className="fixed z-[var(--z-menu)] overflow-y-auto rounded-lg border border-outline-variant/50 bg-surface/95 p-1 shadow-xl ring-1 ring-black/5 backdrop-blur-md"
       style={{ left: rect.left, width: w, ...pos }}>
       {query.length < 2 ? (
         <Hint>Type 2+ characters to search {leading ? 'prompts, files & knowledge' : 'files & knowledge'}…</Hint>

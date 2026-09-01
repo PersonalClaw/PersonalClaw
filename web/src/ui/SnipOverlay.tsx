@@ -141,7 +141,7 @@ export function SnipOverlay({ frame, width, height, onCancel, onConfirm }: {
   const enterY = reduce ? 0 : expr(10, 0.4)
 
   return createPortal(
-    <motion.div className="fixed inset-0 z-[70] flex items-center justify-center p-2xl"
+    <motion.div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center p-2xl"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects}>
       <motion.div className="absolute inset-0 bg-canvas/80 backdrop-blur-sm" onClick={onCancel}
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects} />

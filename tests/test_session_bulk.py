@@ -29,8 +29,22 @@ class _Session:
 
 
 class _State:
-    def __init__(self, sessions: dict[str, _Session]) -> None:
+    """The fake now carries `_tags` and `_folders`, because the real one does and the handler
+    validates against them (#771). A fake without them let a bulk call persist a dangling id in
+    a test that looked like it exercised the write path."""
+
+    def __init__(
+        self,
+        sessions: dict[str, _Session],
+        *,
+        tags: list[str] | None = None,
+        folders: list[str] | None = None,
+    ) -> None:
         self._sessions = sessions
+        self._tags = [{"id": t, "name": t} for t in (tags if tags is not None else ["t1", "t2"])]
+        self._folders = [
+            {"id": f, "name": f} for f in (folders if folders is not None else ["f1", "f2"])
+        ]
         self.pushes = 0
 
     def push_sessions_update(self) -> None:
@@ -286,3 +300,87 @@ def test_an_unknown_lifecycle_value_on_disk_is_ignored(real_state):
     back = _rehydrate_session_from_history(real_state, "chat-1-junk")
     assert back is not None
     assert back.lifecycle == "active", "a junk value must fall back to the default"
+
+
+# ── the referenced ids are validated, like the single-session paths (#771) ────
+
+
+@pytest.mark.asyncio
+async def test_bulk_refuses_a_tag_id_the_vocabulary_does_not_have():
+    """`session.tags.append(tag_id)` took any truthy string, so bulk persisted a dangling id
+    while `PUT /sessions/{s}/tags` right beside it filtered the same value out. It looked
+    harmless because the list renders an orphan as nothing (`tagById[tid] &&`) — the UI
+    self-heals over state that is wrong, which is what kept it invisible."""
+    st = _State({"a": _Session()})
+
+    status, body = await _bulk(st, {"op": "tag", "keys": ["a"], "tag_id": "ghosttag123"})
+
+    assert status == 400
+    assert body["error"]["code"] == "unknown_tag_id"
+    assert st._sessions["a"].tags == [], "nothing may be persisted on a refusal"
+
+
+@pytest.mark.asyncio
+async def test_bulk_refuses_an_unknown_tag_id_on_untag_too():
+    """It would remove nothing, but a caller passing an id we do not know has a stale
+    vocabulary either way, and answering `changed` for a no-op is the same lie."""
+    st = _State({"a": _Session()})
+    st._sessions["a"].tags = ["t1"]
+
+    status, body = await _bulk(st, {"op": "untag", "keys": ["a"], "tag_id": "ghost"})
+
+    assert status == 400 and body["error"]["code"] == "unknown_tag_id"
+    assert st._sessions["a"].tags == ["t1"]
+
+
+@pytest.mark.asyncio
+async def test_bulk_refuses_a_folder_id_that_does_not_exist():
+    """`PATCH /sessions/{s}/folder` answers 400 "folder not found" for the same value; bulk
+    answered 200 and stored it. The list treats an unknown folder as ungrouped, so the two
+    paths disagreed about the same field and only one of them said so."""
+    st = _State({"a": _Session()})
+
+    status, body = await _bulk(st, {"op": "folder", "keys": ["a"], "folder_id": "ghost123"})
+
+    assert status == 400
+    assert body["error"]["code"] == "unknown_folder_id"
+    assert st._sessions["a"].folder_id == ""
+
+
+@pytest.mark.asyncio
+async def test_a_real_tag_and_a_real_folder_still_apply():
+    """The vacuity floor. A fix that refused everything would pass the three tests above."""
+    st = _State({"a": _Session()})
+
+    status, _ = await _bulk(st, {"op": "tag", "keys": ["a"], "tag_id": "t1"})
+    assert status == 200 and st._sessions["a"].tags == ["t1"]
+
+    status, _ = await _bulk(st, {"op": "folder", "keys": ["a"], "folder_id": "f1"})
+    assert status == 200 and st._sessions["a"].folder_id == "f1"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_folder_id_still_ungroups():
+    """ "" is not an unknown folder, it is the ungrouped state — and it is how the UI clears a
+    folder. Validating existence naively would have broken the one value that must pass."""
+    st = _State({"a": _Session()})
+    st._sessions["a"].folder_id = "f1"
+
+    status, body = await _bulk(st, {"op": "folder", "keys": ["a"], "folder_id": ""})
+
+    assert status == 200 and body["changed"] == ["a"]
+    assert st._sessions["a"].folder_id == ""
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_precedes_the_per_key_loop():
+    """A bad id is a request-level error, not a per-key outcome: refusing after the loop would
+    have already mutated the earlier sessions. Asserted over several keys so a partial write
+    would show."""
+    st = _State({k: _Session() for k in ("a", "b", "c")})
+
+    status, _ = await _bulk(st, {"op": "tag", "keys": ["a", "b", "c"], "tag_id": "ghost"})
+
+    assert status == 400
+    assert all(st._sessions[k].tags == [] for k in ("a", "b", "c"))
+    assert st.pushes == 0, "no sessions-update may be broadcast for a refused call"

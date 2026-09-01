@@ -54,7 +54,8 @@ export const ROUTES: RouteEntry[] = [
 // two lists drift, so a new panel cannot ship unscanned.
 export const SETTINGS_PANELS = [
   'account', 'design', 'chat', 'providers', 'models', 'search', 'prompts', 'memory', 'evals',
-  'agent', 'voice', 'apps', 'inbox', 'documents', 'notifications', 'security', 'secrets', 'devices', 'guardrails',
+  'agent', 'voice', 'apps', 'inbox', 'documents', 'notifications', 'security', 'secrets', 'devices',
+  'sender-trust', 'guardrails',
   'external-access', 'audit',
   'doctor', 'diagnostics', 'tool-output', 'feedback', 'usage', 'routing', 'legibility',
   'ambient', 'companion', 'sources', 'packs', 'archive', 'portability', 'durability', 'updates',

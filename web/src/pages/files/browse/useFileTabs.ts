@@ -88,6 +88,48 @@ export function useFileTabs(scope = '') {
     setDirty((d) => (d[path] === isDirty ? d : { ...d, [path]: isDirty }))
   }, [])
 
+  /** Re-point every tab at or under `from` to the same place under `to`.
+   *
+   *  A rename is not a reason to close a tab. It used to be: the Files page renamed the file and
+   *  then called `close()`, so the discard prompt appeared AFTER the rename was already on disk
+   *  and its Cancel branch cancelled only the tab close. Cancel therefore left a tab bound to a
+   *  path that no longer existed, and the next Save 404'd with nothing on screen (issue 654).
+   *
+   *  Prefix-aware, because a DIRECTORY rename moves every file under it. `from + '/'` rather than
+   *  a bare `startsWith(from)`, or renaming `notes` would also claim `notes-archive/x.md`.
+   *
+   *  Callers must re-point only AFTER the move succeeds, and must decide what to do about a dirty
+   *  tab first — the draft lives in the viewer keyed by path, so a re-point remounts it and a
+   *  surface with no host draft store cannot carry an unsaved edit across. This function does not
+   *  pretend otherwise; it moves the tab and its dirty flag and nothing else.
+   */
+  const renamePath = useCallback((from: string, to: string) => {
+    if (!from || !to || from === to) return
+    const moved = (p: string) => (p === from ? to : p.startsWith(`${from}/`) ? to + p.slice(from.length) : p)
+    setTabs((prev) => {
+      if (!prev.some((t) => moved(t.path) !== t.path)) return prev
+      return prev.map((t) => {
+        const next = moved(t.path)
+        return next === t.path ? t : { path: next, name: baseName(next) }
+      })
+    })
+    setActivePath((cur) => moved(cur))
+    setDirty((d) => {
+      const n: Record<string, boolean> = {}
+      for (const [p, v] of Object.entries(d)) n[moved(p)] = v
+      return n
+    })
+  }, [])
+
+  /** Every open tab at or under `path` — what a rename or delete of `path` would affect. */
+  const tabsUnder = useCallback(
+    (path: string) => tabs.filter((t) => t.path === path || t.path.startsWith(`${path}/`)),
+    [tabs],
+  )
+
   const active = tabs.find((t) => t.path === activePath) ?? null
-  return { tabs, active, activePath, dirty, open, close, closeNow, setActivePath, markDirty }
+  return {
+    tabs, active, activePath, dirty, open, close, closeNow, setActivePath, markDirty,
+    renamePath, tabsUnder,
+  }
 }

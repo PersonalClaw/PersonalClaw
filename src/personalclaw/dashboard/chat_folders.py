@@ -19,6 +19,19 @@ logger = logging.getLogger(__name__)
 _folder_icon_lock = asyncio.Lock()
 
 
+def folder_exists(state, folder_id: str) -> bool:
+    """Whether ``folder_id`` names a real folder. Empty means "ungrouped", which is valid.
+
+    🔴 The single-session path (`PATCH /sessions/{s}/folder`) rejected an unknown id with 400
+    while `POST /sessions/bulk` set it unconditionally, so bulk persisted a dangling folder_id
+    (#771). The list treats an unknown folder as ungrouped, so it looked fine and the stored
+    state was wrong.
+    """
+    if not folder_id:
+        return True
+    return any(f["id"] == folder_id for f in state._folders)
+
+
 async def _generate_folder_icon(state: DashboardState, folder: dict) -> None:
     """Background task: ask LLM for a single emoji for the folder name.
 
@@ -86,7 +99,7 @@ async def api_chat_folder_create(request: web.Request) -> web.Response:
     if not name:
         return web.json_response({"error": "name required"}, status=400)
     parent_id = str(body.get("parent_id") or "")
-    if parent_id and not any(f["id"] == parent_id for f in state._folders):
+    if not folder_exists(state, parent_id):
         return web.json_response({"error": "parent folder not found"}, status=400)
     folder = {
         "id": uuid.uuid4().hex[:12],
@@ -191,7 +204,7 @@ async def api_chat_session_folder(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
     folder_id = str(body.get("folder_id") or "")
-    if folder_id and not any(f["id"] == folder_id for f in state._folders):
+    if not folder_exists(state, folder_id):
         return web.json_response({"error": "folder not found"}, status=400)
     session.folder_id = folder_id
     save_session_to_history(state, session, force=True)

@@ -300,6 +300,39 @@ export function countInlineFontWeights(): { total: number; byFile: Record<string
   return { total, byFile }
 }
 
+// ── Uppercase-tracked-eyebrow scan (design-system consistency, CD-02) ───────
+// The Weight-First rule (web/DESIGN.md §3/§6) makes emphasis a variable-weight
+// STEP, never uppercase-with-tracking — yet section eyebrows and chip labels
+// across web/src had drifted to `text-[0.75rem] uppercase tracking-wide`, the
+// exact Don't, with no guard. This counts a (non-comment) line that pairs
+// `uppercase` with a WIDENING tracking utility (tracking-wide/wider/widest or an
+// arbitrary tracking-[…]) — the tell of a tracked eyebrow. `tracking-normal` /
+// `tracking-tight` are the opt-OUT and are never counted, so a deliberate
+// sentence-case override never trips the rule. Used by eyebrowWeightRole.test.ts
+// as a ratchet so the count may only shrink: a new tracked eyebrow reddens CI; a
+// migration to the Eyebrow primitive (ui/Eyebrow.tsx) ratchets the baseline down.
+// Same idiom as countInlineFontWeights above (walk excludes design/; comment
+// lines skipped so design rationale citing the class never counts).
+export function countUppercaseTrackedEyebrows(): { total: number; byFile: Record<string, number> } {
+  const files = walk(SRC)
+  const upper = /\buppercase\b/
+  const trackWide = /\btracking-(wide|wider|widest)\b|\btracking-\[/
+  const byFile: Record<string, number> = {}
+  let total = 0
+  for (const f of files) {
+    const rel = relative(SRC, f).replace(/\\/g, '/')
+    const text = readFileSync(f, 'utf8')
+    let n = 0
+    for (const line of text.split('\n')) {
+      const t = line.trim()
+      if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) continue
+      if (upper.test(line) && trackWide.test(line)) n++
+    }
+    if (n) { byFile[rel] = n; total += n }
+  }
+  return { total, byFile }
+}
+
 // ── Inert-utility scan (issue #556) ─────────────────────────────────────────
 // A `text-*`/`bg-*`/`border-*` class naming a token that does not exist is not
 // a lint nit — it emits NO CSS at all, so the styling is silently absent and

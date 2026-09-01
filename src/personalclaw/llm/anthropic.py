@@ -507,6 +507,11 @@ class AnthropicProvider(ModelProvider):
         # Per content-block-index accumulators for tool_use blocks.
         tool_blocks: dict[int, dict[str, str]] = {}
         emitted_tool_calls: set[int] = set()
+        #: The provider's own reason the message ended, once `message_delta` reports it.
+        #: `"max_tokens"` is what makes an unfinalized tool block a TRUNCATION rather than a
+        #: mid-stream crash — the two land in the same defensive flush and are otherwise
+        #: indistinguishable to the runtime.
+        stop_reason = ""
 
         input_tokens = 0
         output_tokens = 0
@@ -575,6 +580,20 @@ class AnthropicProvider(ModelProvider):
                         )
 
                 elif event_type == "message_delta":
+                    # `stop_reason` was never read here at all — `llm/events.py` declared the field
+                    # and nothing on this path wrote it (issue 1773). `max_tokens` is the one that
+                    # matters: a completion cut mid-`tool_use` never gets its `content_block_stop`,
+                    # so the block lands in the defensive flush below, and without the reason the
+                    # runtime cannot tell a truncated call from a malformed one.
+                    #
+                    # Read from `delta` first (where the wire puts it) and fall back to the event,
+                    # because the two SDK generations differ and guessing one costs the signal.
+                    delta_obj = getattr(event, "delta", None)
+                    reason = getattr(delta_obj, "stop_reason", None) or getattr(
+                        event, "stop_reason", None
+                    )
+                    if reason:
+                        stop_reason = str(reason)
                     usage = getattr(event, "usage", None)
                     if usage is not None:
                         ot = getattr(usage, "output_tokens", None)
@@ -596,6 +615,8 @@ class AnthropicProvider(ModelProvider):
                 tool_call_id=bucket["id"],
                 title=bucket["name"],
                 tool_input=bucket["arguments"],
+                # A block that never closed, on a `max_tokens` stop, IS the truncation.
+                stop_reason=stop_reason,
             )
 
         if input_tokens > 0:
@@ -672,6 +693,11 @@ class AnthropicProvider(ModelProvider):
         # Per content-block-index accumulators for tool_use blocks.
         tool_blocks: dict[int, dict[str, str]] = {}
         emitted_tool_calls: set[int] = set()
+        #: The provider's own reason the message ended, once `message_delta` reports it.
+        #: `"max_tokens"` is what makes an unfinalized tool block a TRUNCATION rather than a
+        #: mid-stream crash — the two land in the same defensive flush and are otherwise
+        #: indistinguishable to the runtime.
+        stop_reason = ""
 
         input_tokens = 0
         output_tokens = 0
@@ -739,6 +765,20 @@ class AnthropicProvider(ModelProvider):
                         )
 
                 elif event_type == "message_delta":
+                    # `stop_reason` was never read here at all — `llm/events.py` declared the field
+                    # and nothing on this path wrote it (issue 1773). `max_tokens` is the one that
+                    # matters: a completion cut mid-`tool_use` never gets its `content_block_stop`,
+                    # so the block lands in the defensive flush below, and without the reason the
+                    # runtime cannot tell a truncated call from a malformed one.
+                    #
+                    # Read from `delta` first (where the wire puts it) and fall back to the event,
+                    # because the two SDK generations differ and guessing one costs the signal.
+                    delta_obj = getattr(event, "delta", None)
+                    reason = getattr(delta_obj, "stop_reason", None) or getattr(
+                        event, "stop_reason", None
+                    )
+                    if reason:
+                        stop_reason = str(reason)
                     usage = getattr(event, "usage", None)
                     if usage is not None:
                         ot = getattr(usage, "output_tokens", None)
@@ -755,6 +795,8 @@ class AnthropicProvider(ModelProvider):
                 tool_call_id=bucket["id"],
                 title=bucket["name"],
                 tool_input=bucket["arguments"],
+                # A block that never closed, on a `max_tokens` stop, IS the truncation.
+                stop_reason=stop_reason,
             )
 
         context_pct: float | None = None

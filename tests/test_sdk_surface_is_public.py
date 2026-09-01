@@ -121,13 +121,22 @@ def test_channel_declares_every_name_it_reexports():
     assert not (declared - actual), f"declared but not re-exported: {sorted(declared - actual)}"
 
 
-@pytest.mark.parametrize("name", ["run_chat", "save_session_to_history"])
+@pytest.mark.parametrize("name", ["save_session_to_history"])
 def test_the_promoted_names_resolve_and_the_private_ones_are_gone(name):
     """Clean break: the public name works and the old spelling is not left behind.
 
-    Three channel apps call `run_chat` and one calls `save_session_to_history`, so a
-    rename that left the underscore alias in place would have shipped both spellings
-    forever — which is how the private name got onto the surface to begin with.
+    One channel app calls `save_session_to_history`, so a rename that left the underscore
+    alias in place would have shipped both spellings forever — which is how the private
+    name got onto the surface to begin with.
+
+    `run_chat` was promoted here by the same change and is STILL on the facade. EA-7 wants
+    it gone — it is a second route past the sender-trust gate, and the chokepoint
+    (`personalclaw.channel_inbound`) is only a chokepoint if it is the only route — but four
+    shipping channel apps import it from this path, and the apps repo cannot land
+    atomically with core, so the removal is sequenced after they migrate. That gap is
+    asserted deliberately in `tests/test_channel_inbound_chokepoint.py`, not here: this test
+    is about the underscore-alias clean break, and a name whose export is on its way out
+    would make the parametrize mean two different things at once.
     """
     from personalclaw.sdk import channel
 

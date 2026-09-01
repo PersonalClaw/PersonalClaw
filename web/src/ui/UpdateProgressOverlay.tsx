@@ -196,7 +196,7 @@ function UpdateSheet({ progress, cancel }: { progress: UpdateProgress; cancel: (
         : 'Updating PersonalClaw'
 
   return (
-    <motion.div key="update-overlay" className="fixed inset-0 z-[80] flex items-center justify-center p-2xl"
+    <motion.div key="update-overlay" className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center p-2xl"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects}>
           <div className="absolute inset-0 bg-canvas/70 backdrop-blur-sm" />
           <motion.div ref={trapRef} role="alertdialog" aria-modal="true" aria-label="Update progress"

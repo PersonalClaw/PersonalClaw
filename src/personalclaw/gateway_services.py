@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from personalclaw.channel_history import ChannelHistory
+    from personalclaw.channel_transports.base import ChannelMessage
+    from personalclaw.channel_trust import TrustVerdict
     from personalclaw.config.loader import AppConfig
     from personalclaw.context import ContextBuilder
     from personalclaw.dashboard.state import DashboardState
@@ -55,4 +57,23 @@ class GatewayServices(Protocol):
     @property
     def owner_id(self) -> str:
         """The primary owner's channel-user id, or ``""`` if unset."""
+        ...
+
+    async def deliver_channel_inbound(
+        self, provider: str, msg: "ChannelMessage", *, is_dm: bool = True
+    ) -> "TrustVerdict":
+        """**The** way a transport delivers an inbound message. Trust is not optional here.
+
+        A transport hands the platform a normalized
+        :class:`~personalclaw.channel_transports.base.ChannelMessage` and the platform
+        applies :func:`~personalclaw.channel_trust.guard_inbound` *before* the content can
+        reach a session — see :mod:`personalclaw.channel_inbound` for why this lives on the
+        services handle rather than on the transport ABC.
+
+        The gate used to be reachable only by convention: every transport was expected to
+        call it at the top of its own inbound path, and a transport that omitted the call
+        reached an agent with no check. Routing through this method is what turns that
+        convention into a property; the returned verdict reports what happened so the
+        transport can render the channel-specific outbound half (``canned_reply``) itself.
+        """
         ...

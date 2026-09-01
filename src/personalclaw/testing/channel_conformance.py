@@ -185,6 +185,25 @@ async def _awaited(coro: Any) -> Any:
     return await coro
 
 
+class CapturedSession:
+    """A ``_ChatSession`` stand-in recording what text reached it. See :class:`CapturingState`."""
+
+    def __init__(self, key: str, app: str = "") -> None:
+        self.key = key
+        self._app = app
+        self.running = False
+        self.task: Any = None
+        self.appended: list[tuple[str, str]] = []
+        self.queued: list[str] = []
+
+    def append(self, role: str, content: str, cls: str = "", ts: str = "", **kw: Any) -> None:
+        self.appended.append((role, content))
+
+    def queue_append(self, content: str) -> str:
+        self.queued.append(content)
+        return "q"
+
+
 class CapturingState:
     """The fake ``state`` the trust seam notifies, recording instead of delivering.
 
@@ -194,21 +213,58 @@ class CapturingState:
     at ``notify`` therefore observes both, which is why the kit asserts on this object
     rather than monkeypatching a specific emitter — an assertion bound to one emitter
     would go quietly inert when the other becomes the live path.
+
+    **It also stands in for the session-routing half** that the guarded inbound door
+    (:mod:`personalclaw.channel_inbound`) drives past an ``allowed`` verdict, so one fake
+    observes the whole question a channel test actually asks: *did this message reach a
+    session, or was it stopped?* :attr:`sessions_created` and each
+    :class:`CapturedSession`'s ``appended`` are the load-bearing observations — an
+    unpaired sender must leave both empty. Note that the door also starts a turn via
+    ``personalclaw.dashboard.chat.run_chat``; a test that does not want a real model call
+    monkeypatches that name.
     """
 
     def __init__(self) -> None:
         self.notifications: list[dict[str, Any]] = []
+        # The session-routing surface (a DashboardState subset the door reaches for).
+        self.sessions: Any = None
+        self._background_tasks: set[Any] = set()
+        self.sessions_created: list[CapturedSession] = []
+        self.links: list[tuple[str, str, str]] = []
+        self._by_thread: dict[str, CapturedSession] = {}
+        self._counter = 0
 
     def notify(self, kind: str, title: str, body: str, *, meta: dict | None = None) -> None:
         self.notifications.append(
             {"kind": kind, "title": title, "body": body, "meta": dict(meta or {})}
         )
 
+    # ── the session-routing surface the guarded inbound door drives ──
+
+    def get_linked_session(self, thread_key: str) -> "CapturedSession | None":
+        return self._by_thread.get(thread_key)
+
+    def get_or_create_session(self, name: str | None = None, app: str = "", **kw: Any):
+        self._counter += 1
+        session = CapturedSession(name or f"chat-{self._counter}", app=app)
+        self.sessions_created.append(session)
+        return session
+
+    def link_channel(self, session_key: str, thread_key: str, channel_id: str) -> None:
+        self.links.append((session_key, thread_key, channel_id))
+        for s in self.sessions_created:
+            if s.key == session_key:
+                self._by_thread[thread_key] = s
+
     # ── convenience views the assertions read ──
 
     def with_actions(self) -> list[dict[str, Any]]:
         """Notifications carrying owner Allow/Deny meta-actions."""
         return [n for n in self.notifications if n["meta"].get("actions")]
+
+    def delivered_texts(self) -> list[str]:
+        """Every text that reached a session, across all sessions this state created."""
+        return [c for s in self.sessions_created for role, c in s.appended if role == "user"]
 
 
 def assert_channel_contract(

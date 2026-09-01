@@ -30,8 +30,8 @@
  * without a reload — and both directions are provable
  * (`TerminalStrip.test.tsx` + `TerminalStrip.reducedMotion.test.tsx`).
  *
- * `z-[55]` is chosen, not arbitrary: page content tops out at `z-50`, and the
- * overlay stack (Modal 60, update overlay 80, Toaster 200) starts at 60. So the
+ * The strip rides `--z-overlay` (the CD-05 z-layer scale in `design/tokens.css`):
+ * one rung above the content ceiling `--z-content` and below `--z-modal`, so the
  * raster sits over every page surface and under every surface a user is being
  * asked to act on — a dialog and a toast stay crisp.
  */
@@ -63,7 +63,7 @@ export function TerminalStrip() {
     <div
       aria-hidden
       data-shell-element="terminal-scanlines"
-      className="crt-raster pointer-events-none fixed inset-0 z-[55]"
+      className="crt-raster pointer-events-none fixed inset-0 z-[var(--z-overlay)]"
     >
       {!reduce && <div className="crt-beam absolute inset-x-0 top-0 h-[22vh]" />}
     </div>

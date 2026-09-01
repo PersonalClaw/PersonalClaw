@@ -34,8 +34,9 @@ from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY
 from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate
 from personalclaw.agents.native.tools import (
+    ARGUMENTS_UNREADABLE,
     format_tool_result,
-    parse_tool_arguments,
+    read_tool_arguments,
     tool_definitions_to_openai_schema,
 )
 from personalclaw.agents.provider import AgentProvider
@@ -46,6 +47,7 @@ from personalclaw.cancellation import (
     REQUEST_REPEAT,
     CancelScope,
 )
+from personalclaw.guardrails.failure import FailureMode, correction_note
 from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,
     WARN_THRESHOLD,
@@ -140,6 +142,10 @@ class _PreparedCall:
     card: AgentEvent
     reservations: tuple[dispatch_plan.Reservation, ...]
     bkey: str
+    #: Set when the model's argument string could not be read at all. The call is then ANSWERED
+    #: with this text instead of invoked — naming the real defect (a truncated response, or
+    #: malformed JSON) rather than letting the tool report a missing argument (issue 1773).
+    arg_error: str = ""
 
 
 # Graduated failure/loop thresholds + the standard notices live in the
@@ -998,7 +1004,39 @@ class NativeAgentRuntime(AgentProvider):
         because a gated call never has a concurrent sibling.
         """
         tool_name = self._resolve_name(call.title or "")
-        args = parse_tool_arguments(call.tool_input)
+        # 🔴 A HARD PARSE MISS IS REPORTED AS ITSELF. The old reader collapsed an unreadable
+        # argument string to `{}`, so the tool's own validation then told the model it had omitted a
+        # required argument — for a call the model had made correctly, and whose arguments the
+        # provider had cut at `max_tokens`. The failure was misattributed, with no retry, no counter
+        # and no event, which made it invisible in the ledger and in any transcript review
+        # (issue 1773).
+        #
+        # The provider now carries `stop_reason` on the event, so the two causes are distinguishable
+        # and the note names the one that actually happened. `FailureMode.TOKEN_OVERFLOW`'s
+        # correction note has existed with zero writers since it was introduced; this is its first.
+        raw_args = read_tool_arguments(call.tool_input)
+        arg_error = ""
+        if raw_args is ARGUMENTS_UNREADABLE:
+            args = {}
+            truncated = str(getattr(call, "stop_reason", "") or "").lower() in {
+                "length",
+                "max_tokens",
+            }
+            arg_error = (
+                correction_note(FailureMode.TOKEN_OVERFLOW)
+                if truncated
+                else "Your tool call's arguments were not valid JSON, so the call could not be "
+                "made. Re-send the call with a complete, valid JSON arguments object."
+            )
+            logger.warning(
+                "tool %s: arguments unreadable (stop_reason=%r, truncated=%s) — reporting the "
+                "real defect rather than a missing argument",
+                tool_name,
+                getattr(call, "stop_reason", ""),
+                truncated,
+            )
+        else:
+            args = raw_args
         card = AgentEvent(
             # UI card for the call. Carry the tool's declared risk so the chat runner's
             # invoked-log records the authoritative risk (this event fires for EVERY tool
@@ -1022,6 +1060,7 @@ class NativeAgentRuntime(AgentProvider):
             card=card,
             reservations=reservations,
             bkey=params_key(tool_name, args),
+            arg_error=arg_error,
         )
 
     async def _execute_tool_batch(self, tool_calls: list[AgentEvent]) -> AsyncIterator[AgentEvent]:
@@ -1098,7 +1137,7 @@ class NativeAgentRuntime(AgentProvider):
                     yield ev
                 return
             async for ev in self._run_tool(
-                wave[0], prefetched=self._poison_result(wave[0], poisoned)
+                wave[0], prefetched=self._unrunnable_result(wave[0], poisoned)
             ):
                 yield ev
             return
@@ -1110,7 +1149,7 @@ class NativeAgentRuntime(AgentProvider):
                 # card, so a call that never ran never claims on screen that it did.
                 results[i] = _DROPPED
                 continue
-            stopped = self._poison_result(prep, poisoned)
+            stopped = self._unrunnable_result(prep, poisoned)
             if stopped is not None:
                 results[i] = stopped
             elif self._breaker.count(prep.bkey) >= BLOCK_THRESHOLD:
@@ -1170,10 +1209,26 @@ class NativeAgentRuntime(AgentProvider):
         self._messages.append(self._tool_result_msg(prep.call, CANCELLED_BEFORE_RUN))
 
     @staticmethod
-    def _poison_result(
+    def _unrunnable_result(
         prep: "_PreparedCall", poisoned: list[tuple[dispatch_plan.Reservation, ...]]
     ) -> tuple[str, dict] | None:
-        """The observation for a call a failed predecessor makes unsafe to run, or None."""
+        """The observation for a call that must NOT run, or None to run it.
+
+        Two reasons, and this is the one seam both dispatch paths consult before invoking — the
+        serial branch and the concurrent one — so a check here cannot be honoured on one and
+        skipped on the other.
+
+        1. Its arguments were unreadable, so there is nothing to invoke WITH. Answering names the
+           real defect; the old path passed `{}` and let the tool report a missing argument for a
+           call the model had made correctly (issue 1773).
+        2. A failed predecessor in this turn touched the same resource, so its state is unknown.
+
+        Either way the call is still ANSWERED, because the assistant message carries every
+        `tool_call` the model emitted and an unanswered one breaks the next turn's history replay
+        (Bedrock Converse rejects an unanswered `toolUse` outright).
+        """
+        if prep.arg_error:
+            return (f"Error: {prep.tool_name} was not run. {prep.arg_error}", {})
         if not any(dispatch_plan.conflicts(prep.reservations, p) for p in poisoned):
             return None
         return (

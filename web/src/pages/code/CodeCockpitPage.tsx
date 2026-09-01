@@ -12,6 +12,7 @@ import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { IconButton } from '../../ui/IconButton'
 import { LoadError } from '../../ui/ListScaffold'
 import { FieldError } from '../../ui/forms'
@@ -1625,7 +1626,7 @@ function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, 
         // (§Goal "morph, don't mount"). Reduced-motion degrades to an instant swap.
         <Expandable open={open} header={
           <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={a11yLabel}
-            className="flex w-full items-center gap-1.5 px-2 py-1.5 text-[0.75rem] uppercase tracking-wide hover:bg-surface-high/40" style={{ color }}>
+            data-type="caption" className="flex w-full items-center gap-1.5 px-2 py-1.5 hover:bg-surface-high/40" style={{ color }}>
             <motion.span animate={{ rotate: open ? 90 : 0 }} transition={physics.snappy} className="shrink-0">
               <ChevronRight size={12} />
             </motion.span>
@@ -1637,7 +1638,7 @@ function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, 
             {objective && <p className="text-on-surface-var text-[0.75rem] leading-snug normal-case">{objective}</p>}
             {criteria.length > 0 && (
               <div className="flex flex-col gap-0.5">
-                <span className="text-on-surface-low/70 text-[0.75rem] uppercase tracking-wide">Done when</span>
+                <Eyebrow as="span">Done when</Eyebrow>
                 {criteria.map((c, i) => (
                   <div key={i} className="flex items-start gap-1.5 text-on-surface-low text-[0.75rem] leading-snug normal-case">
                     <Target size={9} className="mt-[3px] shrink-0 opacity-60" /><span>{c}</span>
@@ -1649,7 +1650,7 @@ function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, 
         </Expandable>
       ) : (
         <div role="group" aria-label={a11yLabel}
-          className="flex w-full items-center gap-1.5 px-2 py-1.5 text-[0.75rem] uppercase tracking-wide" style={{ color }}>
+          data-type="caption" className="flex w-full items-center gap-1.5 px-2 py-1.5" style={{ color }}>
           <span className="truncate">{s.title || s.stage}</span>
           <span className="opacity-60">({tasks.length})</span>
         </div>
@@ -1876,7 +1877,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
 
         {plan.length > 0 && (
           <div className="mt-3">
-            <p className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Action plan</p>
+            <Eyebrow as="p">Action plan</Eyebrow>
             <ol className="mt-1 flex flex-col gap-0.5">
               {plan.map((a, i) => (
                 <li key={i} className={`flex items-start gap-1.5 text-[0.75rem] leading-snug ${a.completed ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>
@@ -1888,7 +1889,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
         )}
         {crit.length > 0 && (
           <div className="mt-3">
-            <p className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Done when</p>
+            <Eyebrow as="p">Done when</Eyebrow>
             <ul className="mt-1 flex flex-col gap-0.5">
               {crit.map((c, i) => (
                 <li key={i} className="flex items-start gap-1.5 text-on-surface-low text-[0.75rem] leading-snug">
@@ -1901,7 +1902,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
 
         {/* agent loop events for THIS task: completed cycles + the in-flight one */}
         <div className="mt-3">
-          <p className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Agent activity{findings.length ? ` · ${findings.length} ${findings.length === 1 ? 'cycle' : 'cycles'}` : ''}</p>
+          <Eyebrow as="p">Agent activity{findings.length ? ` · ${findings.length} ${findings.length === 1 ? 'cycle' : 'cycles'}` : ''}</Eyebrow>
           {findings.length === 0 && live.length === 0 && (
             <p className="mt-1 text-on-surface-low/70 text-[0.75rem]">{running ? 'Working…' : queued ? 'Queued — will run when ready.' : 'No activity yet.'}</p>
           )}
@@ -2398,9 +2399,9 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
         <div className="flex flex-col">
           {/* count label — at-a-glance magnitude + parity with the "History" label
               below, and it distinguishes working changes from the commit list. */}
-          <div className="px-3 pt-1 pb-1 text-[0.75rem] uppercase tracking-wide text-on-surface-low">
+          <Eyebrow className="px-3 pt-1 pb-1">
             Changes ({entries.length})
-          </div>
+          </Eyebrow>
           {entries.map(([path, code]) => {
             const l = label(code)
             return (
@@ -2418,7 +2419,7 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
       {commits.length > 0 && (
         <div className="mt-1 border-t border-outline-variant/40">
           <div className="flex items-baseline justify-between gap-2 px-3 pt-2 pb-1">
-            <span className="text-[0.75rem] uppercase tracking-wide text-on-surface-low">History</span>
+            <Eyebrow as="span">History</Eyebrow>
             {/* The log is capped server-side (20); when we get a full page back there
                 are almost certainly older commits not shown — say so rather than let
                 the list read as the repo's entire history. */}

@@ -184,21 +184,52 @@ def format_tool_result(result: ToolResult) -> str:
     return "\n".join(parts)
 
 
-def parse_tool_arguments(raw: Any) -> dict[str, Any]:
-    """Coerce a model's tool-call arguments into a dict.
+#: What :func:`read_tool_arguments` returns when a non-empty argument string could not be read at
+#: all. Distinct from ``{}``, which is the honest answer for a call that genuinely took no
+#: arguments — collapsing the two is what made a truncated call indistinguishable from an empty one.
+ARGUMENTS_UNREADABLE = object()
 
-    Providers emit ``tool_input`` as a raw JSON string (OpenAI streams argument
-    fragments). Accept already-parsed dicts too. Malformed JSON → ``{}`` (the
-    tool's own validation reports the real error to the model).
+
+def read_tool_arguments(raw: Any) -> Any:
+    """A model's tool-call arguments, or :data:`ARGUMENTS_UNREADABLE`.
+
+    Providers emit ``tool_input`` as a raw JSON string (OpenAI streams argument fragments), so a
+    response cut at ``max_tokens`` mid-call yields a prefix of valid JSON. That used to become
+    ``{}``, and the tool then reported a MISSING ARGUMENT for a call the model had made correctly —
+    the failure was misattributed, with no retry, no counter and no event, so it was invisible in
+    the ledger and in any transcript review (issue 1773).
+
+    Two tolerances before giving up, both of them real provider behaviour rather than speculation:
+
+    * **markdown fences** — the non-agentic path already strips them (``llm_helpers._parse_llm``),
+      so the agent path was behind our own standard for the same input.
+    * **double-serialised arguments** — a JSON *string* whose content is itself the JSON object.
+      Parsing once yields a string, which the old code discarded as "not a dict".
     """
     if isinstance(raw, dict):
         return raw
     if not raw:
         return {}
-    if isinstance(raw, str):
+    if not isinstance(raw, str):
+        return ARGUMENTS_UNREADABLE
+    text = raw.strip()
+    if text.startswith("```"):
+        # ```json\n{...}\n``` → the body. Rsplit so a fence inside a string value is not a cut.
+        body = text.split("\n", 1)[1] if "\n" in text else ""
+        text = body.rsplit("```", 1)[0].strip() if "```" in body else body.strip()
+    if not text:
+        return ARGUMENTS_UNREADABLE
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return ARGUMENTS_UNREADABLE
+    if isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed, str):
+        # Double-serialised: the value IS the JSON document.
         try:
-            parsed = json.loads(raw)
-            return parsed if isinstance(parsed, dict) else {}
+            inner = json.loads(parsed)
         except (json.JSONDecodeError, ValueError):
-            return {}
-    return {}
+            return ARGUMENTS_UNREADABLE
+        return inner if isinstance(inner, dict) else ARGUMENTS_UNREADABLE
+    return ARGUMENTS_UNREADABLE

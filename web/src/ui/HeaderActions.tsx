@@ -701,7 +701,7 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }
               exit={{ opacity: 0, scale: 0.98, transition: spring.effects }}
               style={{ position: 'fixed', top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right), transformOrigin: 'top right' }}
               role="menu" aria-label={ariaLabel}
-              className="z-[9999]"
+              className="z-[var(--z-menu)]"
               onMouseEnter={doOpen} onMouseLeave={armClose}>
               {/* Match the canonical menu idiom (Popover/FilterMenu): a rounded-lgi
                   container with rounded-md rows. The inner row radius is smaller than

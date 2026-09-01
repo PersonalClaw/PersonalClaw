@@ -3,7 +3,7 @@ import {
   Palette, Plug, Bell, Cpu, Shield, ShieldAlert, Database, User, MessageSquare, Bot, Inbox,
   FolderSync, ScrollText, Archive, AudioLines, DownloadCloud, FileText, ChevronRight, Search, Blocks, Activity, Scissors, Compass, Stethoscope, ThumbsUp,
   HardDriveDownload, Coins, Route, LayoutDashboard, Rss, Package, Smartphone, MonitorSmartphone, Plug2, FileType2,
-  FlaskConical, KeyRound,
+  FlaskConical, KeyRound, MessageCircle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -39,6 +39,7 @@ import { EvalsPanel } from './EvalsPanel'
 import { AmbientPanel } from './AmbientPanel'
 import { CompanionPanel } from './CompanionPanel'
 import { DevicesPanel } from './DevicesPanel'
+import { SenderTrustPanel } from './SenderTrustPanel'
 import { SourcesPanel } from './SourcesPanel'
 import { PacksPanel } from './PacksPanel'
 import { ExternalAccessPanel } from './ExternalAccessPanel'
@@ -98,6 +99,11 @@ const SUBPAGES: SubPage[] = [
   // security question. This is the ONE device registry — `companion` above is the LAN/PWA
   // transport settings, not a list of devices.
   { id: 'devices', label: 'Devices', icon: MonitorSmartphone, render: () => <DevicesPanel /> },
+  // Beside Devices on purpose: both answer "who can reach me, and can I cut them off". Devices
+  // is what holds a session to this gateway; this is who may talk to the agent through a
+  // messaging channel. The allowlist was writable from two places and readable from none
+  // before EA-7 — an access-control list you cannot enumerate is one you cannot audit.
+  { id: 'sender-trust', label: 'Sender trust', icon: MessageCircle, render: () => <SenderTrustPanel /> },
   { id: 'guardrails', label: 'Guardrails', icon: ShieldAlert, render: () => <GuardrailsPanel /> },
   // Beside Guardrails on purpose: "what can reach in, and can I cut it off" is the same
   // question Guardrails asks about what can act. EXTERNAL-ACCESS §1.5.

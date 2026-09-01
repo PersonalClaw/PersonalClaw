@@ -95,7 +95,7 @@ export function SystemWidget() {
               // Portaled to <body> with FIXED coords anchored to the trigger, so
               // no overflow/stacking context can clip it. Opens DOWN + LEFT from
               // the top-right shell corner, right-aligned to the dot.
-              className="fixed z-[60] w-72 rounded-2xl border border-outline/40 bg-surface-container p-4"
+              className="fixed z-[var(--z-modal)] w-72 rounded-2xl border border-outline/40 bg-surface-container p-4"
               style={{ top: pos.top, right: pos.right, borderRadius: 'var(--radius-xl)', boxShadow: 'var(--shadow-lift)' }}>
             {sys ? (
               // Connected: the full system card — unchanged (identical expanded view).
