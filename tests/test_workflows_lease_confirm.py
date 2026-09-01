@@ -197,31 +197,61 @@ def test_an_EMPTY_verb_is_refused():
     assert service.resolve_confirmation("r-1", verb="")["ok"] is False
 
 
+def _a_run() -> str:
+    """A real run in the store, because EVERY confirm verb now requires one.
+
+    These tests used a bare `"r-1"` that was never stored, which worked only while skip/quit
+    answered without consulting the run — see the ruling in
+    `test_EVERY_verb_requires_the_run_to_EXIST` below.
+    """
+    from personalclaw.workflows import store as wstore
+    from personalclaw.workflows.models import WorkflowRun
+
+    return wstore.create(WorkflowRun(id="", workflow_name="w")).id
+
+
 @pytest.mark.parametrize("verb", ["skip", "quit"])
 def test_SKIP_and_QUIT_resolve_nothing_and_consume_no_token(verb):
     """They are decisions ABOUT the queue, not answers to the gate. Consuming the token would burn a
-    single-use claim on a non-answer and strand the gate forever."""
-    result = service.resolve_confirmation("r-missing", verb=verb)
+    single-use claim on a non-answer and strand the gate forever.
+
+    That invariant is unchanged and is what this leg is for. What changed is that the run has to
+    exist first — orthogonal to consuming nothing, and the two were previously conflated."""
+    result = service.resolve_confirmation(_a_run(), verb=verb)
     assert result["ok"] is True
     assert result["resumed"] is False
-    # It never reached the run, so a nonexistent run is not an error for these verbs.
     assert "code" not in result
 
 
 def test_SKIP_reports_still_pending():
     """Different from rejecting it: without skip a user has to answer in the order the engine
     happened to ask."""
-    assert service.resolve_confirmation("r-1", verb="skip")["still_pending"] is True
+    assert service.resolve_confirmation(_a_run(), verb="skip")["still_pending"] is True
 
 
 def test_QUIT_is_not_still_pending():
-    assert service.resolve_confirmation("r-1", verb="quit")["still_pending"] is False
+    assert service.resolve_confirmation(_a_run(), verb="quit")["still_pending"] is False
 
 
-def test_APPROVE_reaches_the_run_and_reports_the_real_error():
-    """An answering verb DOES touch the run, so a missing run must surface as such rather than a
-    silent ok — the caller needs to know their approval went nowhere."""
-    result = service.resolve_confirmation("r-missing", verb="approve")
+@pytest.mark.parametrize("verb", ["approve", "reject", "skip", "quit"])
+def test_EVERY_verb_requires_the_run_to_EXIST(verb):
+    """🔴 A DELIBERATE REVERSAL of what this file used to assert, recorded rather than slipped in.
+
+    It previously read: "It never reached the run, so a nonexistent run is not an error for these
+    verbs" — skip/quit answered 200 `{"resumed": false, "still_pending": true}` for any id at all,
+    while approve/reject 404'd through `resume_run`.
+
+    The reasoning that changed it (issue 765): `still_pending: true` is a claim about a GATE, and a
+    gate belongs to a run. There is no run-independent queue here — the function is keyed by
+    `run_id` — so for an id that names nothing, the 200 described something that cannot exist, and a
+    tool firing skip at a typo'd or already-deleted run was told it had worked. Eight sibling
+    control verbs already answered 404 on the same id.
+
+    What the old design was protecting is preserved exactly: skip/quit still consume no token and
+    still resolve nothing (the leg above). "Touches the run" was conflating "reads it to check it is
+    there" with "mutates its gate", and only the second was ever the invariant.
+    """
+    result = service.resolve_confirmation("r-missing", verb=verb)
     assert result["ok"] is False
     assert result["code"] == "WF_RUN_NOT_FOUND"
 
@@ -237,15 +267,15 @@ def test_the_gate_answer_is_the_APPROVAL_BOOLEAN_not_the_verb(monkeypatch):
         return {"ok": True, "run_id": run_id}
 
     monkeypatch.setattr(service, "resume_run", fake_resume)
-    service.resolve_confirmation("r-1", verb="reject")
+    service.resolve_confirmation(_a_run(), verb="reject")
     assert seen["answer"] is False
-    service.resolve_confirmation("r-1", verb="approve")
+    service.resolve_confirmation(_a_run(), verb="approve")
     assert seen["answer"] is True
 
 
 def test_the_result_names_the_verb_and_the_decision(monkeypatch):
     monkeypatch.setattr(service, "resume_run", lambda run_id, **kw: {"ok": True})
-    result = service.resolve_confirmation("r-1", verb="approve", note="checked the diff")
+    result = service.resolve_confirmation(_a_run(), verb="approve", note="checked the diff")
     assert result["verb"] == "approve"
     assert result["approved"] is True
 
@@ -257,7 +287,7 @@ def test_a_resume_TOKEN_is_passed_through(monkeypatch):
     monkeypatch.setattr(
         service, "resume_run", lambda run_id, **kw: (seen.update(kw), {"ok": True})[1]
     )
-    service.resolve_confirmation("r-1", verb="approve", token="tok-1")
+    service.resolve_confirmation(_a_run(), verb="approve", token="tok-1")
     assert seen["token"] == "tok-1"
 
 
@@ -271,7 +301,7 @@ def test_resolving_rides_the_ONE_resume_path(monkeypatch):
         return {"ok": True}
 
     monkeypatch.setattr(service, "resume_run", fake_resume)
-    service.resolve_confirmation("r-1", verb="approve")
+    service.resolve_confirmation(_a_run(), verb="approve")
     assert called["n"] == 1
 
 
