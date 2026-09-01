@@ -662,6 +662,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   Editing now resolves it the same way, into the project's General list, and an explicit list you
   picked yourself still wins over the project.
 
+- **A list-typed action setting is no longer thrown away without a word.** A trigger action's Labels
+  field advertises a list — its badge says `string[]` and its placeholder is `[ … ]` — and a value
+  typed into it was saved as whatever you typed, as plain text. The action that received it wanted a
+  real list, did not get one, and quietly continued without it: the task it created came out with no
+  labels at all, and nothing anywhere said so. Everything else in the same form saved correctly, which
+  made it easy to miss entirely. Now the value is converted to the shape the action declares before
+  anything is saved, and if what you typed is not a valid list the save stops and tells you which
+  field, instead of succeeding and dropping it. This applies to every action setting of that kind, on
+  both the trigger and the lifecycle-hook forms.
+
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it
   had.** It always reported *re-embedded 0 item(s)* — in every install, whatever your library held. Two
   independent faults: it handed the re-index a plain function where an embedding model was expected, so

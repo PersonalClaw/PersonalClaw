@@ -120,14 +120,21 @@ describe('#/triggers/new?preset=… — the seeded flow', () => {
     expect(body.every).toBeUndefined()
     expect(body.action).toEqual({
       provider: 'invoke-agent',
-      // The provider's optional fields keep their SCHEMA defaults; only what the preset
-      // declares is overridden.
       config: expect.objectContaining({
         task_template: expect.stringContaining('morning briefing'),
-        agent: '',
-        approval_mode: '',
       }),
     })
+    // Empty optionals are OMITTED rather than sent as `''`. They used to ride along, and this
+    // assertion pinned them; the coercion added for issue 269 drops an empty optional, which is
+    // `buildArgs`' existing rule and the reason it was reused rather than reimplemented.
+    //
+    // Behaviourally identical for this provider, checked rather than assumed:
+    // `invoke_agent_provider` reads every one of these as `(action_config.get(k) or "")`, so absent
+    // and empty are the same value to it. What changes is that a stored config no longer carries
+    // keys the user never filled in.
+    const cfg = (body.action as { config: Record<string, unknown> }).config
+    expect(cfg.agent).toBeUndefined()
+    expect(cfg.approval_mode).toBeUndefined()
   })
 
   it('keeps a notify preset\'s declared value over the schema default', async () => {
