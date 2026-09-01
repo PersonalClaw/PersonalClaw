@@ -1106,6 +1106,15 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
                 {"error": f"invalid timezone: {_redact(tz_val)!r}"}, status=400
             )
         kwargs["timezone"] = tz_val
+    # `skip_dates` used to be absent from this whole function while `_create_schedule` read it and
+    # `_carried` went out of its way to preserve it across a cadence change — so the field could be
+    # set at creation and preserved forever, but never CHANGED. Editing a holiday list returned
+    # 200 with the old list intact (issue 272). The coercion is character-for-character the create
+    # path's, because two endpoints that accept the same field must accept it identically: a
+    # non-list is ignored rather than rejected there, so it is ignored here too. (Validating the
+    # date STRINGS is issue 270 and belongs to both paths at once, not to this one.)
+    if isinstance(body.get("skip_dates"), list):
+        kwargs["skip_dates"] = [str(d) for d in body["skip_dates"]]
     if not kwargs:
         return web.json_response({"error": "no fields to update"}, status=400)
 
@@ -1136,6 +1145,14 @@ async def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.R
             cadence_changed = True
         if "strict_schedule" in kwargs:
             spec["strict"] = bool(kwargs["strict_schedule"])
+        if "skip_dates" in kwargs:
+            spec["skip_dates"] = kwargs["skip_dates"]
+            # A CADENCE change, not a cosmetic one. `arm.cadence_next_fire` steps past `skip_dates`
+            # when it computes `next_fire_at`, so a row already armed for a date the user just
+            # blacked out would fire on it anyway — the armed instant predates the new list. Adding
+            # today to the skip list has to invalidate today's armed fire, which is the entire
+            # point of asking for it.
+            cadence_changed = True
 
         patch: dict[str, Any] = {"spec": spec}
         if "name" in kwargs:

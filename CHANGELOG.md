@@ -801,6 +801,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   **And a finished run can no longer be "resumed."** Answering a gate on a workflow that had already
   completed, failed, or been cancelled reported success and quietly wrote to the finished run on the
   way through. It now refuses and says the run is already complete, matching cancel, pause and steer.
+- **A trigger's skip dates could be set once and never changed.** Adding a holiday when you created a
+  scheduled trigger worked, and the date survived every later edit — including a cadence change, which
+  goes out of its way to preserve it. But *editing* the list did nothing: the save returned success, the
+  form redrew from the response and looked right, and the old list was still on disk the next time you
+  loaded the page. The field was simply missing from the list of things the update endpoint would accept.
+  It is accepted now, clearing the list counts as a real edit rather than as "nothing sent", and adding a
+  date the trigger is already armed for moves the next run instead of letting that one last run through.
+  **The switch that could not stick is gone from where it never belonged.** "Auto-approve tools" sat in a
+  trigger's delivery settings, but it is a property of the *action* — only an agent action can run tools,
+  so only an agent action can skip approving them. Set anywhere else it was discarded before the request
+  was even sent, which is why it always read back off. Agent triggers keep the switch where it works; on
+  the create page the Action block's own **Approval** field owns it, alongside the rest of that action's
+  settings. A switch that reports a setting the run will not honor is worse than no switch at all,
+  especially this one: it was the difference between an unattended trigger running and an unattended
+  trigger waiting all night for someone to approve it.
 
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it
   had.** It always reported *re-embedded 0 item(s)* — in every install, whatever your library held. Two
