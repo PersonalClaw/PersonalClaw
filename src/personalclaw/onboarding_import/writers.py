@@ -52,6 +52,7 @@ from personalclaw.onboarding_import.model import (
     ImportReport,
     WriteOutcome,
     WriteResult,
+    withheld_notes,
 )
 from personalclaw.skills.marketplace import (
     SkillDetail,
@@ -465,12 +466,8 @@ def import_report(items: list[ImportItem], *, secrets_skipped: int = 0) -> Impor
     results = write_items(items)
     redactions = sum(item.redactions for item in items)
     report = ImportReport(results=results, secrets_skipped=secrets_skipped, redactions=redactions)
-    if secrets_skipped:
-        report.notes.append(
-            f"{secrets_skipped} credential value(s) or file(s) were skipped and not imported."
-        )
-    if redactions:
-        report.notes.append(
-            f"{redactions} credential-like string(s) were redacted from imported text."
-        )
+    # 🔑 The SECOND producer of these two sentences used to live here, word for word. `ImportReport`
+    # and `ScanResult` carry the same three fields, so both now read one composer — see
+    # `model.withheld_notes` for why the plurals and the verb both have to agree.
+    report.notes.extend(withheld_notes(secrets_skipped=secrets_skipped, redactions=redactions))
     return report
