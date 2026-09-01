@@ -162,7 +162,7 @@ def cache_hit_pct(
     cached tokens, so they must be added back to recover the turn's whole prompt.
     Evidence:
 
-    * ``llm/anthropic.py:524-526`` (and its twin at ``:689-691``) assigns
+    * ``llm/anthropic.py:529-531`` (and its twin at ``:715-717``) assigns
       ``input_tokens`` verbatim from ``usage.input_tokens``, while the cache counts
       come from the SDK's separate ``cache_creation_input_tokens`` /
       ``cache_read_input_tokens`` fields via ``_read_cache_usage``

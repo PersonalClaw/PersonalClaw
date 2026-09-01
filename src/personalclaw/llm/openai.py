@@ -308,7 +308,13 @@ class OpenAIProvider(ModelProvider):
                             bucket["extra_content"] = extra
 
                 finish_reason = getattr(choice, "finish_reason", None)
-                if finish_reason in {"tool_calls", "stop"}:
+                # `length` joins the flush set, and the reason RIDES the event. A completion cut at
+                # `max_tokens` used to fall through to the defensive flush below, which emits the
+                # partial call with no indication that it was partial — so the runtime parsed
+                # truncated JSON, got nothing, and told the model it had omitted an argument for a
+                # call it made correctly. The failure was misattributed, which is worse than a
+                # visible error: there was no retry, no counter and no event (issue 1773).
+                if finish_reason in {"tool_calls", "stop", "length"}:
                     for tc_id, bucket in tool_calls.items():
                         if tc_id in emitted_tool_calls:
                             continue
@@ -322,6 +328,7 @@ class OpenAIProvider(ModelProvider):
                             title=bucket["name"],
                             tool_input=bucket["arguments"],
                             tool_meta=meta,
+                            stop_reason=str(finish_reason or ""),
                         )
 
             usage = getattr(chunk, "usage", None)
@@ -490,7 +497,13 @@ class OpenAIProvider(ModelProvider):
                             bucket["extra_content"] = extra
 
                 finish_reason = getattr(choice, "finish_reason", None)
-                if finish_reason in {"tool_calls", "stop"}:
+                # `length` joins the flush set, and the reason RIDES the event. A completion cut at
+                # `max_tokens` used to fall through to the defensive flush below, which emits the
+                # partial call with no indication that it was partial — so the runtime parsed
+                # truncated JSON, got nothing, and told the model it had omitted an argument for a
+                # call it made correctly. The failure was misattributed, which is worse than a
+                # visible error: there was no retry, no counter and no event (issue 1773).
+                if finish_reason in {"tool_calls", "stop", "length"}:
                     for tc_id, bucket in tool_calls.items():
                         if tc_id in emitted_tool_calls:
                             continue
@@ -504,6 +517,7 @@ class OpenAIProvider(ModelProvider):
                             title=bucket["name"],
                             tool_input=bucket["arguments"],
                             tool_meta=meta,
+                            stop_reason=str(finish_reason or ""),
                         )
 
             usage = getattr(chunk, "usage", None)
