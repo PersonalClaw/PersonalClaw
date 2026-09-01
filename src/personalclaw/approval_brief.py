@@ -108,9 +108,14 @@ DESTRUCTIVE_HINTS: tuple[str, ...] = _DESTRUCTIVE_NAME_HINTS
 READ_VERB_HINTS: tuple[str, ...] = _READ_VERB_HINTS
 
 #: Hints that belong to another facet (or to none) and so must not also mean "writes".
-#: ``delete``/``remove`` are already in :data:`DESTRUCTIVE_HINTS`; ``exec``/``spawn`` moved
-#: to :data:`SHELL_HINTS`; ``run`` is dropped outright per :data:`SHELL_HINTS`' note.
-_NOT_A_WRITE_HINT = frozenset({"delete", "remove", "run", "exec", "spawn"})
+#: Every destructive verb is excluded by DERIVATION from :data:`DESTRUCTIVE_HINTS` rather
+#: than by name: this used to hand-list ``delete``/``remove`` with the reason "already in
+#: DESTRUCTIVE_HINTS", which was true of all six and spelled for two. When #2118 widened the
+#: gate's tuple, the four it added (``destroy``, ``drop_``, ``purge``, ``forget``) flowed
+#: into :data:`WRITE_HINTS` and drifted from the TypeScript mirror — a hand-listed subset of
+#: a derived set is the same defect one layer up. ``exec``/``spawn`` moved to
+#: :data:`SHELL_HINTS`; ``run`` is dropped outright per :data:`SHELL_HINTS`' note.
+_NOT_A_WRITE_HINT = frozenset(DESTRUCTIVE_HINTS) | {"run", "exec", "spawn"}
 
 #: Other writing verbs — ``_MUTATING_NAME_HINTS`` minus the hints re-homed above, plus
 #: ``remember``. ``remember`` is the one deliberate divergence from ``task_modes``:

@@ -237,18 +237,34 @@ SHELL_TOOL_NAMES: frozenset[str] = frozenset(
 #: treating it as a shell call would hand ``is_read_only_bash`` a path to parse.
 SHELL_TITLE_PREFIXES: tuple[str, ...] = ("running: ",)
 
-# Name fragments that signal a mutating/effectful tool when the kind is ambiguous.
+# Destructive verbs — a tool whose name carries one only ever DESTROYS something.
+#
+# Declared BEFORE `_MUTATING_NAME_HINTS` because that set is built to contain this one.
+# They were two independent literals until #2118, and they had drifted: `destroy`, `drop_`,
+# `purge` and `forget` were destructive-but-not-mutating, so `memory_forget` inferred
+# `destructive` for the approval card while classifying READ_ONLY for the task-mode gate —
+# and therefore ran in ask AND plan mode with nothing to deny it. A destructive verb that is
+# not also mutating is a contradiction, so the containment is now structural rather than a
+# thing two lists have to agree about.
+#
+# Used for two distinct jobs, which is why it exists separately at all: the Build
+# producer-hint must not wave these through (Build is scoped to *producing* a deliverable,
+# so `delete_artifact`/`remove_widget` stay blocked despite carrying a build-hint token),
+# and `infer_risk_from_name` grades them above ordinary mutation.
+# ``forget`` covers memory_forget (a durable delete); ``remove_all`` is caught by remove.
+_DESTRUCTIVE_NAME_HINTS = ("delete", "remove", "destroy", "drop_", "purge", "forget")
+
+# Name fragments that signal a mutating tool WITHOUT being destructive — they change or
+# create state rather than removing it.
 # ``generate`` covers media producers (image_generate, future audio/video_generate):
 # they create a persisted artifact + may spend a paid API call, so they are NOT
 # read-only and must be blocked in ask/plan (and allowed in build via the hints below).
-_MUTATING_NAME_HINTS = (
+_NON_DESTRUCTIVE_MUTATING_NAME_HINTS = (
     "write",
     "edit",
     "create",
     "save",
     "update",
-    "delete",
-    "remove",
     "move",
     "rename",
     "append",
@@ -269,16 +285,19 @@ _MUTATING_NAME_HINTS = (
     "generate",
 )
 
+# Every fragment that makes an undeclared tool mutating. The destructive verbs are UNIONED
+# in rather than re-listed, so the two sets cannot disagree again the way #2118 found them
+# disagreeing — adding a verb to `_DESTRUCTIVE_NAME_HINTS` now widens the task-mode gate in
+# the same edit, which is the property that was missing.
+_MUTATING_NAME_HINTS = _NON_DESTRUCTIVE_MUTATING_NAME_HINTS + _DESTRUCTIVE_NAME_HINTS
+
 # Name fragments that mark a Build-mode producer (allowed in build even though
 # they're "mutating": producing the deliverable IS the point of build mode).
 # ``image`` admits image_generate — producing an image artifact is a build output.
 _BUILD_NAME_HINTS = ("artifact", "widget", "skill", "prompt", "document", "infographic", "image")
 
-# Destructive verbs that the Build producer-hint must NOT wave through: Build is
-# scoped to *producing* a deliverable, so `delete_artifact`/`remove_widget` stay
-# blocked even though they carry a build-hint token. (Producing = create/save/update.)
-# ``forget`` covers memory_forget (a durable delete); ``remove_all`` is caught by remove.
-_DESTRUCTIVE_NAME_HINTS = ("delete", "remove", "destroy", "drop_", "purge", "forget")
+# (`_DESTRUCTIVE_NAME_HINTS` is declared above `_MUTATING_NAME_HINTS`, which is built to
+# contain it — see the note there. It is what the Build producer-hint must NOT wave through.)
 
 # Read verbs — a tool whose name is clearly a query/inspection. Used by
 # infer_risk_from_name to short-circuit to 'safe' BEFORE the broad mutating hints
