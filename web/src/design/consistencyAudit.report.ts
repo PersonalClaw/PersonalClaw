@@ -442,3 +442,46 @@ export async function scanInertUtilities(): Promise<InertUtilityHit[]> {
   }
   return hits
 }
+
+// ── the committed inventory's shape ────────────────────────────────────────
+//
+// Lives here, beside the scanners, because two callers need the SAME object: the
+// read-only test that asserts it is well formed, and the generator that writes it to
+// docs/design/consistency-audit.json. It used to be an object literal inside the test,
+// which is how the test came to be the only thing in the suite that wrote to the repo
+// (issue 261) — the write had nowhere else to live.
+
+/** The `docs/design/consistency-audit.json` payload: a pure function of the tree.
+ *
+ * NO timestamp, deliberately — the artifact is committed, so a `generatedAt` made every
+ * suite run rewrite it and a real data refresh became indistinguishable from noise. The
+ * consequence is in the plan logs: the diff was discarded as "pure timestamp churn" at
+ * least eight times across weeks, and the committed copy went stale as a direct result
+ * (`filesScanned` drifted 310 → 442 → 518 → 523 → 527 while nobody committed a refresh).
+ * Git already records when a file changed.
+ */
+export function buildAuditPayload() {
+  const res = scanDrift()
+  const ranked = rankFiles(res)
+  const a11y = scanA11y()
+  return {
+    totals: res.totals,
+    byCategory: res.byCategory,
+    ranked: ranked.slice(0, 40),
+    a11y: {
+      outlineNoneCount: a11y.outlineNoneCount,
+      outlineNoneFiles: a11y.outlineNoneFiles.length,
+      localFocusVisibleFiles: a11y.localFocusVisibleFiles.length,
+      reducedMotionFiles: a11y.reducedMotionFiles.length,
+      animatedFiles: a11y.animatedFiles,
+      hasGlobalReducedMotion: a11y.hasGlobalReducedMotion,
+      hasGlobalFocusRing: a11y.hasGlobalFocusRing,
+    },
+    byFile: res.byFile,
+    primitivesByFile: res.primitivesByFile,
+    drift: res.drift,
+  }
+}
+
+/** Where the inventory is written, relative to the `web/` package dir vitest runs in. */
+export const AUDIT_JSON_PATH = ['..', 'docs', 'design', 'consistency-audit.json'] as const

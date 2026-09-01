@@ -7,6 +7,7 @@
     "build": "npm run build --workspace=web",
     "typecheck:web": "npm run typecheck --workspace=web",
     "test:web": "npm run test --workspace=web",
+    "audit:consistency": "npm run audit:consistency --workspace=web",
     "test:desktop": "npm run test --workspace=desktop",
     "test:mobile": "npm run test --workspace=mobile",
     "smoke:render": "node scripts/render_smoke.mjs",

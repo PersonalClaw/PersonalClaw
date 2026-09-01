@@ -1,7 +1,7 @@
 # Design-System Consistency Audit — S1 Drift Map
 
 **Plan:** [DESIGN-SYSTEM-CONSISTENCY](../roadmap/plans/DESIGN-SYSTEM-CONSISTENCY.md) · **Session:** S1 (audit — measure only, no fixes)
-**Generated from:** `web/src/design/consistencyAudit.report.ts` (run via `cd web && npm test` → writes `docs/design/consistency-audit.json`)
+**Generated from:** `web/src/design/consistencyAudit.report.ts` — run `npm run audit:consistency` from the repo root to rewrite `docs/design/consistency-audit.json`. A plain `npm test` measures but writes nothing (issue 261), so regenerating is now a deliberate step.
 **Status:** LIVING — regenerate the JSON, then refresh the tables below, each cycle the scanner changes.
 
 > This document is the *map*, not the fix. It quantifies where the shipped design system (`web/DESIGN.md` + `web/PRODUCT.md` are authority) drifts across `web/src`, ranked worst-first, so S2/S3 attack the highest-value targets first. **No code was changed to produce it.**
