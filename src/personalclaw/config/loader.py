@@ -3854,6 +3854,14 @@ class AppConfig:
                 context_budget_tokens=int(learning_data.get("context_budget_tokens", 4000) or 4000),
                 curator_enabled=bool(learning_data.get("curator_enabled", True)),
                 propose_quota_per_run=int(learning_data.get("propose_quota_per_run", 5) or 5),
+                replay_enabled=bool(learning_data.get("replay_enabled", False)),
+                # `max(0.0, …)` rather than a bare float: a NEGATIVE ceiling would pass the
+                # `<= 0.0` check in `replay.replay_budget` and read as "off", which is the safe
+                # direction, but it would also reach `Budget(max_dollars=-1)` if anything else
+                # ever read the field — and `Budget.is_unlimited` treats that as unlimited.
+                replay_max_dollars=max(
+                    0.0, _safe_float(learning_data.get("replay_max_dollars"), 0.0)
+                ),
                 run_end_enabled=bool(learning_data.get("run_end_enabled", True)),
                 attribution_enabled=bool(learning_data.get("attribution_enabled", True)),
                 identity_report_cadence=_identity_report_cadence(

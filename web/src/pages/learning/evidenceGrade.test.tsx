@@ -32,6 +32,11 @@ const row = (over: Partial<LearningRow> = {}): LearningRow => ({
     regressed: false, scenarios: 0, halted: false, dollars_est: 0, spend_observed: false,
     pin: {}, ran_at: '',
   },
+  replay: {
+    state: 'unreplayed', reason: 'no replay run yet', verdict: 'unmeasured',
+    candidate_mean: null, baseline_mean: null, cases: 0, scored: 0, rejected: 0, tool_free: 0,
+    deferred: false, provenance: [], ran_at: '',
+  },
   ...over,
 })
 

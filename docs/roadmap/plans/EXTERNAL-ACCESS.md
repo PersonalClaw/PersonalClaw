@@ -1279,3 +1279,173 @@ follows in the next tracking batch.
   to run by symlinking the apps checkout to that path (then removed — sibling worktrees under
   `/private/tmp` resolve the SAME path, so leaving it would silently change their gate too).
   Probe sweep 0 introduced in either repo; `git status` clean apart from `?? .venv`.
+
+---
+
+## Execution log — `EA-6` (§9 local A/B replay harness — evidence generator on captured sessions)
+
+- [2026-09-01][EA-6] **DONE.** `learning/replay.py` (new) is the whole atom: case mining over EA-5's
+  capture dir, a two-arm replay per case, an `LLMJudge` score per arm, and a
+  `{cases, candidate_mean, baseline_mean, verdict}` report. Wired at `history.py:1391`
+  (`await replay_mod.run_pass()`), immediately **after** `_run_learning_curator()` — deliberately
+  after, because the curator FILES proposals and running first would replay a queue missing this
+  tick's own additions, so they would wait a whole cadence for evidence. `capture_store.prune`'s
+  existing hook two blocks above already anticipated this in a comment ("BEFORE the curator below so
+  a later replay-mining pass sees an already-aged capture dir"), so mining reads an aged dir for
+  free. `awaited` rather than fired as a task: the consolidation is already the bounded background
+  pass, and a detached task would outlive the `_running` guard that stops two passes overlapping.
+- [2026-09-01][EA-6] **DEVIATION — a `replay` field beside `gate`, not inside the "evidence
+  manifest".** The atom says the verdict is "attached to the proposal's evidence manifest". Measured
+  first: the proposal has THREE evidence surfaces, and none of them is the right home for a second
+  corpus. `ChangeManifest` (`proposals.py:147`) is the **prediction** — "why this change, and what it
+  is predicted to fix" — and its `issues()` validator enumerates five required keys, so adding a
+  measurement there would either fail validation or force the validator to learn about replays.
+  `refiner.EvidenceManifest` (`refiner.py:826`) is a **pure single-metric dataclass** that is never
+  persisted on a `Proposal` at all — it has no attach path. The one field with the exact contract
+  this needs is `Proposal.gate` (ES-6): empty renders as an honest absence, never a zero, and
+  `accept` deliberately does not read it. So EA-6 reuses that CONTRACT and adds `Proposal.replay`
+  beside it rather than writing into `gate`. Reason it is not one field: the gate scores the candidate
+  against the **shipped scenario library**, the replay against turns from the user's **own captured
+  sessions**. A card that merged them could not tell a reviewer which corpus a number came from — and
+  the case that justifies two clauses is precisely the disagreement (library says improved, your own
+  turns say worse), which a merge would hide.
+  `replayColumns.test.tsx::shows the gate and the replay as SEPARATE clauses when they disagree` pins it.
+- [2026-09-01][EA-6] **NOT A GATE — asserted on both sides, because one side cannot see the other.**
+  Backend: `attach_replay` writes only `replay` and touches neither `status` nor `updated_at`, and
+  nothing in `accept` reads the field. Falsified by adding a `verdict == "regressed"` refusal to
+  `accept` — **1 red**, `test_a_regressed_verdict_still_accepts`, while its partner
+  `test_accept_is_still_gated_on_the_human` (an agent + an IMPROVED verdict) stayed green, so the
+  claim is "the REPLAY does not block AND the human gate still does", not "nothing blocks".
+  Frontend: a card that greyed out Accept would enforce a veto the backend refuses to, and **no Python
+  test could see it** — so `disabled={busy || replayRegressed(row)}` was injected into `LearningPage`:
+  **1 red**. A third rail covers the quieter version: `bulk_acceptable` deliberately does not consult
+  `replay`, because a veto smuggled in through a UI eligibility flag is exactly as semantic a change
+  as one in `accept` and much harder to notice.
+- [2026-09-01][EA-6] **`_mean([])` returns `None`, never `0.0`** — and the two are asserted to
+  DISAGREE rather than each being checked alone. `0.0` is a legitimate mean (a candidate the judge
+  scored zero on every case is the STRONGEST evidence it made things worse) so it cannot be
+  suppressed, and an empty scored set cannot borrow its spelling. Falsified by returning `0.0` for
+  empty: **5 reds**, including `test_the_two_disagree` failing as `assert 0.0 != 0.0` — the only leg
+  that catches it; each of its siblings alone would still pass with the other's value substituted.
+  The rule is enforced again at the last hop (`summary` passes `None` through rather than coercing:
+  **2 reds** when coerced) and a third time in the FE (`replayScore(null) === 'not measured'`:
+  **2 reds** when coerced). Three hops because any one of them coercing undoes the other two.
+- [2026-09-01][EA-6] **parse-failure → 0 REJECT, and the discriminator is the REASON, not the score.**
+  `LLMJudge` signals an unparseable response as `JudgeVerdict(score=0, reason="parse_error: …")`.
+  Counting that as `0.0` would blame an arm for a broken *judge*; skipping it silently would let the
+  mean claim more cases than it had. So the case is excluded from both means and counted in
+  `rejected`, which the card renders. Falsified in BOTH directions, and the two red sets are exact
+  complements: `_is_parse_failure -> False` reds 2 (the positive legs) while the genuine-zero partners
+  stay green; `_is_parse_failure -> any zero` reds the other 2 (the partners) while the positives stay
+  green. `test_the_real_judge_signals_a_parse_failure_the_way_we_read_it` pins the upstream contract in
+  the shipped class, so if `LLMJudge` ever drops the prefix this goes red instead of going inert.
+- [2026-09-01][EA-6] **NEVER `eval/runner.py`** — the atom's named env-mutation hazard, and this pass
+  runs inside the consolidation tick in the same process as every live session, so an env override
+  there is visible to every concurrent reader of `config_dir()`. Composed directly instead, the way
+  `sampling._judge_candidates` and `loop/judge.assess_cycle` already do. Two rails: a `sys.meta_path`
+  finder that raises the moment `personalclaw.evals.runner` is imported during a real replay (it
+  **evicts the module from `sys.modules` first**, else the hook is never consulted whenever an earlier
+  test in the session imported the runner and the rail would report a pass it could not reach), and an
+  **AST** import scan. The scan is AST rather than textual on purpose: the module's own docstring names
+  `evals.runner` to explain why it is avoided, so a substring scan would either red on the prose or be
+  weakened until it stopped catching a real import. Falsified by adding the import: **11 reds**, the
+  guard firing with its named message and the AST scan catching it too. Both partners
+  (`test_the_guard_would_have_caught_an_import`, and the scan run over `evals/gate.py`, which DOES
+  import the runner) stayed green.
+- [2026-09-01][EA-6] **The bound is bound where the guard READS it, not merely constructed.**
+  `replay_proposal` binds `set_current_run_key("learning_replay")` + `set_current_run_budget(...)` —
+  the two ContextVars `ModelCallGuard` consults (`model_call.py:309` `check_run` before each call,
+  `:359` `charge(run_key=…)` after). No second tally: the guard already wraps every provider at the
+  `provider_bridge` seam, so a call on this path cannot escape the meter. Bound around the WHOLE
+  proposal rather than per call, because a per-call binding would reset the run total before every
+  check and never refuse anything — the inert shape `budgets`' own docstring records for `check_run`.
+  Falsified by binding `Budget()` instead of the ceiling: **1 red**.
+- [2026-09-01][EA-6] **Unbudgeted means it does not run, following `evals/gate.py` verbatim.**
+  `Budget(max_dollars=0)` is UNLIMITED, which is the one thing a pass on the maintenance cadence must
+  never be — so `learning.replay_max_dollars <= 0` yields `unreplayed` + `UNREPLAYED_NO_BUDGET` and
+  spends nothing. `replay_budget()`/`replay_enabled()` fail **CLOSED** on an unreadable config, unlike
+  `budget_from_config`'s fail-open: the directions are not symmetric, since a day budget failing open
+  leaves the breaker as the hard control while this failing open would put unbounded LLM spend on a
+  background tick nobody watches.
+- [2026-09-01][EA-6] **Exhaustion DEFERS with a label, and a partial measurement survives it.**
+  `BudgetExceededError` is caught per case but deliberately NOT swallowed inside `_run_case` (every
+  remaining case would fail identically, so swallowing would burn the loop producing identical
+  rejections instead of one honest deferral). Cases that already scored stay on the report — partial
+  evidence is real evidence — with `deferred=True` and a reason naming the budget, so the card says
+  why it is thin rather than implying that was the plan. Falsified by dropping the flag: **2 reds**,
+  partner `test_a_sufficient_budget_does_not_defer` green.
+- [2026-09-01][EA-6] **Mining: ≤3/session, tool-free-PREFERRING, provenance-pointed.** The record file
+  carries only digests and the sidecar carries the text, so a case needs both, joined on
+  `record_hash`; the pointer is `capture:<session>#<record_hash>`. The cap is per SESSION, else one
+  chatty session supplies every case and the evidence describes that session rather than the user's
+  work — falsified by making it global: **1 red** on the partner
+  (`test_a_second_session_contributes_its_own_three`) while the cap test itself stayed green, which is
+  exactly why the partner exists (a cap test cannot distinguish global from per-session). Tool-free is
+  a SORT not a filter, so a home whose every turn used a tool still yields cases rather than reading
+  `unreplayed`; falsified by dropping the preference: **1 red**, partner green.
+- [2026-09-01][EA-6] 🔴 **The fence is NOT stripped, and an over-long prompt is DROPPED rather than
+  clipped.** `capture_store` fences the sidecar at ingestion precisely so "the flywheel reads this
+  file" without an injection in it becoming actionable. My first version unfenced the prompt before
+  replaying it — which relocates that decision into this module and silently drops the defence for the
+  one reader that sends the content to a model. Corrected: the prompt is replayed **fenced, verbatim**,
+  and `_payload_chars` exists only to make the `MIN_PROMPT_CHARS` bound meaningful (the wrapper is
+  60-200 chars, so measuring the fenced string would let a bare "thanks" clear a threshold meant to
+  exclude it). Relatedly, `MAX_PROMPT_CHARS` **skips** rather than clips: clipping a fenced string
+  severs the closing `</untrusted_content>` tag, which is a fence BREAK — the tail of a captured page
+  would land outside the fence and read as instructions. The candidate body is fenced too, because it
+  is unreviewed machine-authored text.
+- [2026-09-01][EA-6] **`template_diff` is deliberately NOT replayable.** `REPLAYABLE_KINDS` is
+  `{skill, template}` — the two kinds whose `body` IS the candidate text, so prepending it is a
+  faithful A/B. A `template_diff`'s candidate is a typed ops list only the template applier can turn
+  into text, and replaying the ops list verbatim would measure a JSON blob rather than the change.
+- [2026-09-01][EA-6] **A disabled pass attaches an honest reason rather than nothing.** A proposal
+  with no `replay` key and one carrying "no replay budget is set" look identical on a card otherwise,
+  and only one of them names something the user can fix.
+- [2026-09-01][EA-6] **TOOLCHAIN TRAP, recorded because it produced a confidently wrong result.**
+  `scripts/generate_config_baseline.py` run from this worktree imported `personalclaw` from the **main
+  checkout** (the shared `.venv` holds an editable install pointing there), so it re-rendered the OLD
+  baseline and reported "no diff" while `pytest` — which resolves the worktree's `src` — kept failing
+  the same gate as stale. Measured: `.venv/bin/python -c "import personalclaw"` printed the main
+  checkout's path and `fields(LearningConfig)` showed **zero** `replay` fields. Fixed by
+  `PYTHONPATH="$PWD/src"`, then verified the write landed in THIS tree and the main checkout stayed
+  clean. Same shape as the documented `manifest_reference` hazard; it applies to every generator
+  script, not just that one.
+- [2026-09-01][EA-6] **The FE clause follows `learningMeta.gateLabel` exactly** — `replayScore` /
+  `replayLabel` / `replayRegressed`, three states, one house vocabulary for "the number does not
+  exist". `replayRegressed` reads the backend's `verdict` rather than re-deriving the band from the two
+  means, because the improved/neutral/regressed threshold is `refiner.MIN_TARGET_IMPROVEMENT` and a
+  second copy in the FE would eventually disagree with the one that produced the verdict — with the FE
+  shipping the louder answer. It also requires `state === 'replayed'`, so a contradictory record
+  (nothing ran, yet the verdict says regressed) does not shout: falsified by dropping the state check,
+  **1 red**. And the page-level rail is separate from every helper test, because deleting
+  `replayLabel(row)` from `LearningPage` reds **4** while all 12 helper tests stay green — the dead-code
+  trap `gateColumns.test.tsx` already records for its own clause.
+- [2026-09-01][EA-6] **Config round-trip complete**: `replay_enabled` + `replay_max_dollars` with
+  `_meta`, explicit `load()` mapping (`max(0.0, …)` — a negative ceiling reaches `Budget.is_unlimited`
+  as UNLIMITED), `to_dict()` via `asdict`, and both in the `_EDITABLE_CONFIG` PATCH allowlist. The
+  ceiling's range deliberately admits `0`: that is not a disabled value, it is the OFF position the
+  harness reads, so an owner can stop replay spend without also hunting for the boolean.
+  `config-baseline.json` regenerated in the same change.
+- [2026-09-01][EA-6] **OPEN, recorded rather than rushed.** (1) No dedicated frontend CONTROL for the
+  two knobs — they are PATCH-able and appear on the config surface, which is how every other
+  `learning.*` knob ships today (none of `min_evidence`, `curator_enabled`,
+  `propose_quota_per_run` has a bespoke control either); a Learning-page control for the pair is a
+  clean follow-up rather than a divergence introduced here. (2) The judge resolves through the
+  `reasoning` axis with the `eval_judge` SESSION KEY and PROMPT binding, mirroring
+  `sampling._judge_candidates`; a dedicated `eval_judge` model axis does not exist, and inventing one
+  would be a new mechanism this atom did not authorize. (3) `criteria_for` derives the rubric from the
+  proposal's `predicted_fixes`/`targeted_fix` and falls back to a generic rubric on a thin manifest —
+  the lenient-but-recording stance, since a proposal with an incomplete manifest still deserves
+  evidence.
+- [2026-09-01][EA-6] 🔴 **OPEN / MEASURED — "it feeds LEARN-R2" is availability, not wiring.** The
+  atom's parenthetical names LEARN-R2 as the reason the verdict is evidence rather than a gate, and
+  the report is genuinely readable on the pending proposal (API + card). But measured:
+  `attribution.record_accepted_change` (`attribution.py:227-257`) snapshots only
+  `target`/`source`/`kind`/`predicted_fixes`/`before`/`baseline_run_ids`, and `proposals.accept`
+  UNLINKS the proposal file immediately after — so the replay pair does not survive acceptance and
+  the post-acceptance grader cannot read it. Deliberately NOT fixed here: carrying it forward means a
+  new field on the persisted `AcceptedChange` plus a new input to `grade_accepted_changes`, which
+  changes what LEARN-R2 measures, and this atom authorizes neither. WHAT WOULD CLEAR IT: one field on
+  `AcceptedChange`, one line in `record_accepted_change`, and a decision about whether a pre-accept
+  replay delta belongs in the same comparison as post-accept run failure rates — that decision is the
+  actual work, not the plumbing.

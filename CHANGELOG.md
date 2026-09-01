@@ -10,6 +10,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Proposals can now show whether they would have helped on YOUR work.** When PersonalClaw suggests
+  a new skill or template, the card in **Learning → Proposals** can now carry a second measurement
+  beside the existing gate: it replays a few real turns from your own captured coding sessions twice
+  — once without the candidate, once with it — and shows both scores. So instead of only "here is
+  where this idea came from", the card can say "on three of your own turns this scored 4.2 before and
+  1.5 after". Each replayed case links back to the exact captured turn it came from, so a claim about
+  your work is checkable against the turn that produced it.
+  **It is evidence, never a veto.** A "made things worse" verdict is a sentence on the card and
+  nothing more — Accept stays enabled, because you may know something three replayed turns do not.
+  Nothing is ever installed without you.
+  **It is off until you fund it, and it never guesses a number.** Two new settings turn it on:
+  *Replay Evidence On Proposals* and a *Replay Budget (USD)* ceiling. A budget of 0 means it does not
+  run at all, deliberately — an unbounded background pass that spends money is the one thing this must
+  never be. If the budget runs out mid-pass, the remaining proposals say "deferred on the replay
+  budget" and get replayed later, rather than quietly showing nothing. And if nothing could be
+  measured — no captured turns to replay, or the scoring model returned something unreadable — the
+  card says "not measured" or "not replayed" and why. It never draws an unmeasured score as 0.0.
+
 - **Automations can now read a web page.** A new **Fetch a URL** action (`net-fetch`) is selectable
   wherever an action is — a workflow's action node, a schedule or event trigger, a lifecycle hook —
   so a monitor or ingest automation can pull a page without a browser and without a script. Before

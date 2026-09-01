@@ -18,7 +18,8 @@ import { StudiesPanel } from './StudiesPanel'
 import { fvs } from '../../design/fontWeight'
 import {
   DAY_HINT, DAY_TONE, bulkBlockedReason, dayLabel, dayState, evidenceLabel,
-  gateLabel, gateRegressed, kindIcon, kindLabel, tierLabel, tierTone,
+  gateLabel, gateRegressed, kindIcon, kindLabel, replayLabel, replayRegressed,
+  tierLabel, tierTone,
 } from './learningMeta'
 import { HEALTH_KEY, IDENTITY_REPORT_KEY, JUDGE_BENCH_KEY, RETRIEVAL_BENCH_KEY, STUDIES_KEY, WEEK_KEY, proposalsKey, refreshAfterDecision, refreshEverything } from './proposalCache'
 import { PageTitle } from '../../ui/PageTitle'
@@ -322,6 +323,20 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
                 <TrendingDown size={12} /> score drop
               </span>
             )}
+            {/* The replay harness's own chip, separate from the gate's. A row can regress on the
+                shipped scenario library and improve on the user's captured turns (or the reverse),
+                and one merged chip would make those two facts indistinguishable — which is exactly
+                the disagreement a reviewer most needs to see. Same rule as the gate chip: only a
+                MEASURED drop earns one, because "we did not replay" is not a warning. */}
+            {replayRegressed(row) && (
+              <span
+                className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]"
+                style={{ background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }}
+                title={replayLabel(row)}
+              >
+                <TrendingDown size={12} /> replay drop
+              </span>
+            )}
           </div>
           <div className="mt-1 text-on-surface-var text-[0.8125rem]">
             {/* Provenance is what makes a row weighable. The backend refuses to call a row without it
@@ -337,6 +352,12 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
           <div className="mt-1 text-on-surface-low text-[0.8125rem]">
             {gateLabel(row)}
             {row.gate?.pin?.model_fp ? ` · pinned ${row.gate.pin.model_fp}` : ''}
+          </div>
+          {/* The replay clause, on its own line beside the gate's for the same reason: two numbers
+              and what produced them. Always rendered — a proposal nothing replayed says so, and it
+              stays fully acceptable. This is evidence the reviewer weighs, never a veto. */}
+          <div className="mt-1 text-on-surface-low text-[0.8125rem]">
+            {replayLabel(row)}
           </div>
           {row.source_excerpt && (
             <p className="mt-2 rounded-md bg-surface-high px-m py-2 text-on-surface-var text-[0.75rem] break-words">

@@ -1393,6 +1393,25 @@ class HistoryConsolidator:
                         logger.info("Learning curator: %s", curated)
                 except Exception:
                     logger.debug("Learning curator failed for %s", key, exc_info=True)
+                # Local A/B replay evidence (EXTERNAL-ACCESS §9 / EA-6): mine a few real turns
+                # from the captured sessions and replay each one twice — baseline vs candidate
+                # — for the pending skill/template proposals, attaching the pair to the card
+                # the user decides from. AFTER the curator on purpose: the curator FILES
+                # proposals, so running first would replay a queue missing this tick's own
+                # additions and they would wait a whole cadence for evidence. `await`ed
+                # directly rather than fired as a task because this consolidation is already
+                # the bounded background pass, and a detached task would outlive the
+                # `_running` guard that stops two passes overlapping. Off unless the operator
+                # set BOTH `learning.replay_enabled` and a positive
+                # `learning.replay_max_dollars` — LLM spend on a maintenance tick is opt-in.
+                try:
+                    from personalclaw.learning import replay as replay_mod
+
+                    replay_note = replay_mod.summarize_pass(await replay_mod.run_pass())
+                    if replay_note:
+                        logger.info("Learning replay: %s", replay_note)
+                except Exception:
+                    logger.debug("Learning replay pass failed for %s", key, exc_info=True)
 
         except Exception:
             logger.exception("Consolidation failed for %s", key)

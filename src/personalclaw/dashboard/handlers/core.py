@@ -965,6 +965,13 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     "learning.min_session_score": {"type": "float", "min": 0.0, "max": 1.0},
     "learning.propose_quota_per_run": {"type": "int", "min": 1, "max": 25},
     "learning.curator_enabled": {"type": "bool"},
+    # EA-6: the replay harness's switch and its ceiling. Both live-editable, and the ceiling
+    # deliberately allows 0 — that is not a disabled range value, it is the OFF position the
+    # harness reads as "do not run", so a user who wants to stop replay spend mid-pass can set
+    # it to 0 without also having to find the boolean. The 25.0 cap is a guard against a typo
+    # turning a $2 ceiling into a $200 one on a background tick nobody is watching.
+    "learning.replay_enabled": {"type": "bool"},
+    "learning.replay_max_dollars": {"type": "float", "min": 0.0, "max": 25.0},
     "learning.context_budget_tokens": {"type": "int", "min": 500, "max": 100000},
     # WF2LEA-4: learn from terminal workflow-run failures. Live-editable because a user
     # who finds run-end lesson proposals noisy should be able to silence them without a

@@ -228,6 +228,15 @@ class Proposal:
     #: refuse the accept. `accept` deliberately does not read this field: a gate that could
     #: block would stop a user shipping a change because the *gate* broke.
     gate: dict[str, Any] = field(default_factory=dict)
+    #: The local A/B replay harness's ``{cases, candidate_mean, baseline_mean, verdict}`` for
+    #: this change (EA-6 — :mod:`personalclaw.learning.replay`). A SECOND evidence field beside
+    #: ``gate`` rather than a reuse of it: the gate measures the candidate against the shipped
+    #: scenario library, this measures it against turns from the user's OWN captured sessions,
+    #: and writing both into one field would leave the card unable to say which corpus a number
+    #: came from. Same contract in every other respect — EMPTY renders as "not replayed", never
+    #: as a zero score, and ``accept`` deliberately does not read it. A ``regressed`` verdict is
+    #: a sentence on the card and nothing more; see :func:`replay.attach`.
+    replay: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -250,6 +259,7 @@ class Proposal:
             "manifest_issues": self.manifest_issues,
             "specializes": self.specializes,
             "gate": dict(self.gate),
+            "replay": dict(self.replay),
             "body_preview": self.body[:280],
         }
 
@@ -977,6 +987,27 @@ def attach_gate(pid: str, report: dict) -> bool:
     if prop is None:
         return False
     prop.gate = dict(report or {})
+    return _save(prop)
+
+
+def attach_replay(pid: str, report: dict) -> bool:
+    """Persist a replay report onto a PENDING proposal (EA-6). Returns True if it landed.
+
+    The sibling of :func:`attach_gate`, with the same three deliberate properties and the same
+    reasons: the proposal file is the read surface so the card can render the A/B without
+    re-spending on a replay; a re-run OVERWRITES because the newer measurement over a newer
+    capture corpus is the CURRENT evidence and keeping a stale pair beside it makes the card
+    ambiguous; and neither ``status`` nor ``updated_at`` moves, because a measurement is not a
+    decision.
+
+    It is emphatically NOT a gate. Nothing in :func:`accept` reads ``replay``, so a
+    ``regressed`` verdict cannot refuse an accept — the human reads the sentence and decides.
+    ``test_a_regressed_verdict_still_accepts`` is the regression that keeps it that way.
+    """
+    prop = _load(pid)
+    if prop is None:
+        return False
+    prop.replay = dict(report or {})
     return _save(prop)
 
 
