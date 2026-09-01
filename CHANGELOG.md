@@ -820,6 +820,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   settings. A switch that reports a setting the run will not honor is worse than no switch at all,
   especially this one: it was the difference between an unattended trigger running and an unattended
   trigger waiting all night for someone to approve it.
+- **Starring an inbox item now shows you something.** Favoriting worked and was saved, and then no
+  surface anywhere told you which items you had starred: no star on the row, no way to filter to your
+  favorites, no count. The only thing that read the flag was the label of the button you had just
+  pressed, in the panel you were already looking at — so on an instance with four starred items among
+  forty, nothing distinguished them. The flag was not doing nothing, which made it harder to notice:
+  it fed the ranking, so it worked for the ranking and not for the person who set it. Starred items now
+  carry a star in the list, and a **Favorites** filter appears with a count once you have starred
+  something. The Knowledge library already did all of this for the same field; inbox now matches it,
+  including the word a screen reader reads out.
 
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it
   had.** It always reported *re-embedded 0 item(s)* — in every install, whatever your library held. Two
