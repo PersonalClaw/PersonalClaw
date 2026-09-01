@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2, ExternalLink, LayoutGrid, StickyNote } from 'lucide-react'
+import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2, ExternalLink, LayoutGrid, StickyNote, Star } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -73,7 +73,10 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     if (!items) return null
     const n = q.trim().toLowerCase()
     return items
-      .filter((it) => filter === 'all' ? true : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? (it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed') : filter === 'filtered' ? it.status === 'filtered' : it.classification === filter && isOpen(it.status))
+      // `favorites` is a CURATION view, not a status one: it cuts across open/handled
+      // deliberately, because a starred item the user then handled is still the thing they
+      // starred. Same predicate Knowledge uses for the same field (issue 620).
+      .filter((it) => filter === 'all' ? true : filter === 'favorites' ? !!it.favorited : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? (it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed') : filter === 'filtered' ? it.status === 'filtered' : it.classification === filter && isOpen(it.status))
       .filter((it) => !kind || (it.item_kind || 'message') === kind)
       .filter((it) => !n || `${it.sender_name} ${it.channel_name} ${it.message} ${kindMeta(it.item_kind).label}`.toLowerCase().includes(n))
   }, [items, filter, kind, q])
@@ -167,6 +170,9 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     if (key === 'open') return scoped.filter((it) => isOpen(it.status)).length
     if (key === 'handled') return scoped.filter((it) => it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed').length
     if (key === 'filtered') return scoped.filter((it) => it.status === 'filtered').length
+    // Counted across every status, matching the predicate above — a count that only saw open
+    // items would disagree with the list it labels the moment a starred item is handled.
+    if (key === 'favorites') return scoped.filter((it) => !!it.favorited).length
     return scoped.filter((it) => it.classification === key && isOpen(it.status)).length
   }
   // Kind chips are driven by what's PRESENT (kinds with zero items are dead controls), and
@@ -186,6 +192,12 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     // chip that reads 0 for most users would be a dead control (INU-6).
     options: [
       ...FILTERS.map((f) => ({ key: f.key, label: f.label, count: filterCount(f.key) })),
+      // Favorites, offered only once something is starred — the same dead-control rule the
+      // Filtered chip follows (INU-6). Before this the star was WRITE-ONLY: you could favorite
+      // an item and then had no way to find it again, in a list of forty (issue 620). Knowledge
+      // already implements the filter, the count and the row star for this exact field; this is
+      // that pattern, not a new one.
+      ...((filterCount('favorites') ?? 0) > 0 ? [{ key: 'favorites', label: 'Favorites', count: filterCount('favorites') }] : []),
       ...((filterCount('filtered') ?? 0) > 0 ? [{ key: 'filtered', label: 'Filtered', count: filterCount('filtered') }] : []),
     ],
   }]
@@ -452,6 +464,12 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                       {channelBacked && channelLabel(it) && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{channelLabel(it)}</span>}
                       {!channelBacked && target && <span className="shrink-0 inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><ExternalLink size={11} /> deep link</span>}
                       {it.draft && <span className="shrink-0 inline-flex items-center gap-1 text-ok text-[0.75rem]"><Reply size={11} /> draft</span>}
+                      {/* The star the api.ts comment already promised ("a strong engagement
+                          signal + a star in the UI"). It carries an accessible name because it is
+                          the only thing conveying the state — an icon with no name is invisible to
+                          a screen reader, which would leave the read half missing for exactly the
+                          users who need it most. */}
+                      {it.favorited && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} aria-label="Favorited" />}
                     </div>
                     <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{it.message}</p>
                   </div>
