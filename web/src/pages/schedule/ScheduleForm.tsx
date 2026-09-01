@@ -74,7 +74,6 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
     timezone: d.timezone || '',
     silent: d.silent,
     strict_schedule: d.strict_schedule,
-    approval_mode: d.approval_mode || '',
     channel: d.channel.trim(),
     skip_dates: d.skip_dates,
   }
@@ -82,7 +81,13 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
   else if (d.kind === 'every') body.every = intervalToSecs(d.intervalValue, d.intervalUnit)
   else if (d.kind === 'at') body.at = d.at  // backend-soon
   if (d.mode !== 'other') body.message = d.message.trim()
-  if (d.mode === 'agent') { body.agent = d.agent; body.model = d.model }
+  // 🔴 `approval_mode` rides with the AGENT fields, not with the delivery block it is drawn next
+  // to. It is `invoke-agent` action config (`schedule.py`'s `approval_mode` property returns ''
+  // for every other provider, and the field is declared in `invoke-agent-action/app.json`), and
+  // `_scheduleBodyToWire` folds it into the action it builds ONLY on the invoke-agent branch. Sent
+  // unconditionally it was silently discarded for every other mode — the destructure dropped it
+  // and the top level never carried it (issue 268).
+  if (d.mode === 'agent') { body.agent = d.agent; body.model = d.model; body.approval_mode = d.approval_mode || '' }
   else if (d.mode === 'script') body.script = d.script.trim()       // backend-soon
   else if (d.mode === 'command') body.command = d.command.trim()    // backend-soon
   return body
@@ -178,12 +183,12 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly }: { draft:
       )}
 
       {/* ── delivery / context ── */}
-      <Advanced draft={draft} set={set} />
+      <Advanced draft={draft} set={set} triggerOnly={triggerOnly} />
     </div>
   )
 }
 
-function Advanced({ draft, set }: { draft: ScheduleDraft; set: <K extends keyof ScheduleDraft>(k: K, v: ScheduleDraft[K]) => void }) {
+function Advanced({ draft, set, triggerOnly }: { draft: ScheduleDraft; set: <K extends keyof ScheduleDraft>(k: K, v: ScheduleDraft[K]) => void; triggerOnly?: boolean }) {
   const [open, setOpen] = useState(false)
   const tzOptions = useMemo<ComboOption[]>(() => {
     let zones: string[] = []
@@ -213,7 +218,15 @@ function Advanced({ draft, set }: { draft: ScheduleDraft; set: <K extends keyof 
           <div className="flex flex-col gap-s">
             <CheckRow label="Silent" hint="Suppress auto-delivery; the agent decides when to send." checked={draft.silent} onChange={(v) => set('silent', v)} />
             <CheckRow label="Strict schedule" hint="Fire exactly on schedule with no jitter." checked={draft.strict_schedule} onChange={(v) => set('strict_schedule', v)} />
-            <CheckRow label="Auto-approve tools" hint="Run tools without approval prompts (approval_mode=auto)." checked={draft.approval_mode === 'auto'} onChange={(v) => set('approval_mode', v ? 'auto' : '')} />
+            {/* Shown only where it can actually persist. `approval_mode` is `invoke-agent` action
+                config, so on the create page the Action block's own "Approval" field owns it
+                (`triggerOnly` exists to omit exactly the action fields), and for a non-agent
+                action there is nothing on the wire to carry it — the server would read '' back
+                whatever the switch said. A switch that cannot hold its value is worse than an
+                absent one: it reports a setting the run will not honor (issue 268). */}
+            {!triggerOnly && draft.mode === 'agent' && (
+              <CheckRow label="Auto-approve tools" hint="Run tools without approval prompts (approval_mode=auto)." checked={draft.approval_mode === 'auto'} onChange={(v) => set('approval_mode', v ? 'auto' : '')} />
+            )}
           </div>
         </div>
       )}
