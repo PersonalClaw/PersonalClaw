@@ -22,6 +22,7 @@ The load-bearing tests, one per property the atom names:
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from pathlib import Path
 
@@ -396,3 +397,88 @@ def test_conflict_detail_never_carries_a_value(claude_root: Path, home: Path) ->
 
 def test_a_writer_exists_for_every_category() -> None:
     assert set(_WRITERS) == set(ImportCategory)
+
+
+# ── The withheld-credential notes have ONE composer, and it agrees with its own counts ────────────
+#
+# These two sentences were written TWICE, word for word: `ScanResult.note_withheld` and, inline,
+# `writers.import_report`. Both classes carry the same `secrets_skipped` / `redactions` / `notes`
+# fields, so `model.withheld_notes` is now the only place either sentence exists.
+#
+# 🔑 WHY A `(s)` HEDGE WAS WORSE HERE THAN USUAL. The first sentence joins TWO nouns with
+# "or", so a parenthetical hid two disagreements rather than one: the nouns AND the verb.
+# `1 credential value(s) or file(s) were skipped` is wrong three times over, at the count a
+# first import most often produces — most machines carry a single API key for the tool being
+# imported from.
+#
+# 🪤 The counts are asserted on OPPOSING numbers, not just both sides of the boundary. With
+# `secrets_skipped` and `redactions` on the same side, a sentence reading the other one's count
+# would still look correct — the mistake this programme has made once and railed against twice.
+
+
+def test_the_withheld_notes_have_exactly_one_composer():
+    """Both producers must route through `withheld_notes`, not re-compose the sentences."""
+    from personalclaw.onboarding_import import model, writers
+
+    src_model = inspect.getsource(model.ScanResult.note_withheld)
+    src_writer = inspect.getsource(writers.import_report)
+    for name, src in (
+        ("ScanResult.note_withheld", src_model),
+        ("writers.import_report", src_writer),
+    ):
+        assert "withheld_notes(" in src, f"{name} must delegate to the shared composer"
+        assert (
+            "credential value" not in src
+        ), f"{name} re-composes the sentence instead of delegating"
+        assert (
+            "credential-like string" not in src
+        ), f"{name} re-composes the sentence instead of delegating"
+
+
+def test_the_withheld_notes_agree_with_their_own_counts_on_both_sides_of_one():
+    from personalclaw.onboarding_import.model import withheld_notes
+
+    one = withheld_notes(secrets_skipped=1, redactions=1)
+    assert one == [
+        "1 credential value or file was skipped and not imported.",
+        "1 credential-like string was redacted from imported text.",
+    ]
+    many = withheld_notes(secrets_skipped=3, redactions=3)
+    assert many == [
+        "3 credential values or files were skipped and not imported.",
+        "3 credential-like strings were redacted from imported text.",
+    ]
+    # No sentence anywhere may carry the hedge again.
+    for note in one + many:
+        assert "(s)" not in note
+
+
+def test_each_withheld_sentence_owns_its_OWN_count_not_its_siblings():
+    """Opposing counts: a sentence reading the other's number would pass a same-side fixture."""
+    from personalclaw.onboarding_import.model import withheld_notes
+
+    skipped_one = withheld_notes(secrets_skipped=1, redactions=4)
+    assert "1 credential value or file was skipped" in skipped_one[0]
+    assert "4 credential-like strings were redacted" in skipped_one[1]
+
+    redacted_one = withheld_notes(secrets_skipped=4, redactions=1)
+    assert "4 credential values or files were skipped" in redacted_one[0]
+    assert "1 credential-like string was redacted" in redacted_one[1]
+
+
+def test_nothing_withheld_says_nothing():
+    """The guard is the count itself — a zero must not produce an empty-sounding note."""
+    from personalclaw.onboarding_import.model import withheld_notes
+
+    assert withheld_notes(secrets_skipped=0, redactions=0) == []
+    assert len(withheld_notes(secrets_skipped=2, redactions=0)) == 1
+    assert len(withheld_notes(secrets_skipped=0, redactions=2)) == 1
+
+
+def test_the_note_says_how_much_never_what():
+    """The security property `note_withheld`'s docstring promises, asserted rather than trusted."""
+    from personalclaw.onboarding_import.model import withheld_notes
+
+    for note in withheld_notes(secrets_skipped=2, redactions=2):
+        # A count and a noun, and no room for a value: no path separators, no '=' , no quotes.
+        assert "/" not in note and "=" not in note and '"' not in note and "'" not in note
