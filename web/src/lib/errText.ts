@@ -18,8 +18,9 @@
  *  error page. That page is not a message for a user, and it certainly is not one to speak.
  *
  *  So: the backend's own text when there is one, otherwise a short plain-text body verbatim
- *  (some endpoints answer in text and it is useful), and otherwise the status — never markup,
- *  never a wall.
+ *  (some endpoints answer in text and it is useful) — but never on a 5xx, where a plain-text body
+ *  is the framework's crash page rather than anyone's message — and otherwise the status. Never
+ *  markup, never a wall, never a stack the server printed to itself.
  *
  *  🔑 THE ENVELOPE CARRIES TWO THINGS AND THIS USED TO KEEP ONE. `{"error": {"code", "message"}}`
  *  is parsed here already; only the sentence survived, and the `code` — the half that exists
@@ -47,6 +48,22 @@ export interface ErrEnvelope {
  *  and everyone who only wants the sentence takes `errText` below. */
 export async function errEnvelope(r: Response): Promise<ErrEnvelope> {
   const text = (await r.text().catch(() => '')).trim()
+  // 🔴 A 5xx body is a report of a crash, not a sentence written for a user. The markup and
+  // length guards below caught the proxy pages but not the framework's OWN, because aiohttp's
+  // default is short plain text. Measured against a real unhandled handler exception:
+  // `text/plain; charset=utf-8`, 55 bytes, `'500 Internal Server Error\n\nServer got itself in
+  // trouble'` — not JSON, no leading `<`, well under `MAX_INLINE`. So it satisfied every guard
+  // here and a user saving a form read "Server got itself in trouble" in the red line under
+  // their field, announced aloud by `role="alert"` (issue 637).
+  //
+  // `HTTP 500` is the better answer despite being terser: it is at least true, and the status is
+  // the only actionable part of an unshaped crash. A 5xx message worth reading is one the backend
+  // SHAPED, and those come through the JSON branch below untouched.
+  //
+  // Scoped to 5xx deliberately. The plain-text passthrough exists for client errors that answer
+  // in text (the chunked uploader's "upload part 3 rejected"), which are a handler deliberately
+  // saying what the caller did wrong.
+  const isServerErr = r.status >= 500
   let wasJson = false
   let code = ''
   let message = ''
@@ -80,9 +97,10 @@ export async function errEnvelope(r: Response): Promise<ErrEnvelope> {
   } catch { /* not JSON — the plain-text rules below decide */ }
   // A body that PARSED as JSON but carried no usable message must not be printed: serialized
   // JSON is never a sentence, and `{"error": {"code": 7}}` read aloud is worse than the status.
-  // Only genuinely non-JSON text may pass through, and only if it is short and not markup.
+  // Only genuinely non-JSON text may pass through, and only when it is short, not markup, and
+  // not a server error page (see the note at the top of this function).
   if (!message) {
-    message = wasJson || !text || text.startsWith('<') || text.length > MAX_INLINE
+    message = wasJson || !text || text.startsWith('<') || text.length > MAX_INLINE || isServerErr
       ? `HTTP ${r.status}`
       : text
   }
