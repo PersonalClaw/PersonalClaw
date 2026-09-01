@@ -12,7 +12,7 @@ import { Combobox } from '../../ui/Combobox'
 import { PageTitle } from '../../ui/PageTitle'
 import { ScheduleForm, emptyDraft as emptySchedule, type ScheduleDraft } from '../schedule/ScheduleForm'
 import { intervalToSecs } from '../schedule/scheduleMeta'
-import { ActionConfig, seedActionConfig } from './ActionConfig'
+import { ActionConfig, coerceActionConfig, seedActionConfig } from './ActionConfig'
 import { findTriggerPreset, prefillDraft } from './triggerPresets'
 import { schemaProps } from '../tools/schema'
 import {
@@ -149,6 +149,12 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
 
   async function create() {
     if (!canSave) { setErr('Fill in the trigger name, action, and any required action fields'); return }
+    // `object`/`array` fields are edited as JSON text, so the form holds strings for them. Coerce
+    // to the shapes the provider's schema declares BEFORE saving, and refuse visibly when the JSON
+    // does not parse — `create-task`'s Labels used to persist as `"market, prep"` and the provider
+    // dropped the non-list, so the task came out with `labels: []` and nothing said so (issue 269).
+    const coerced = coerceActionConfig(providers, provider, config)
+    if (coerced.error) { setErr(coerced.error); return }
     setSaving(true); setErr('')
     try {
       if (kind === 'schedule') {
@@ -161,15 +167,15 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
         else if (sched.kind === 'every') body.every = intervalToSecs(sched.intervalValue, sched.intervalUnit)
         else if (sched.kind === 'at') body.at = sched.at
         // The unified facade derives exec fields from the canonical action.
-        body.action = { provider, config }
+        body.action = { provider, config: coerced.config }
         await api.createSchedule(body)
       } else if (kind === 'lifecycle') {
-        await api.createHook({ name: name.trim(), event, matcher: matcher.trim(), provider, provider_config: config })
+        await api.createHook({ name: name.trim(), event, matcher: matcher.trim(), provider, provider_config: coerced.config })
       } else {
         // Data event — carry only the pattern's ONE wired matcher field; the backend derives the
         // source from the pattern. An empty matcher is fine except where matcherRequired gated it.
         const body: Parameters<typeof api.createEvent>[0] = {
-          name: name.trim(), pattern, action: { provider, config },
+          name: name.trim(), pattern, action: { provider, config: coerced.config },
         }
         if (pm.matcher) body[pm.matcher] = eventMatcher.trim()
         await api.createEvent(body)
