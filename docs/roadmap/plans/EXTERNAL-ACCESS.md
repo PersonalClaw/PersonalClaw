@@ -533,6 +533,153 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   `guard_inbound -> TrustVerdict`. The `sender_trust.json` DEVIATION is already recorded at :359 for
   `EA-1`; the `check_sender`/`TrustDecision` naming drift was not.
 
+- [2026-09-01][EA-7] **DONE (core half). The chokepoint exists and the system is fail-CLOSED in
+  aggregate.** Built on the ruling recorded above — *the chokepoint belongs on the services handle,
+  not on the transport ABC* — which is what makes both `done_when` clauses hold at once. Measured
+  against `origin/main` = `a979790ac`.
+
+  **What was interposed.** `src/personalclaw/channel_inbound.py` (new) owns `deliver_inbound(services,
+  provider, msg, *, is_dm)`: it applies `guard_inbound` and only then routes to a session. It is
+  reached as `GatewayServices.deliver_channel_inbound` (`gateway_services.py:62`, the Protocol) and
+  implemented on the orchestrator at `gateway.py:396` — the handle a transport already holds from
+  `start_inbound(self)` (`gateway.py:3918`). `ChannelTransportProvider` is untouched, and
+  `tests/test_channel_inbound_chokepoint.py::test_the_door_is_on_the_gateway_services_contract`
+  asserts that (no ingestion method was added to the ABC). Core now owns the
+  `_route_to_session` sequence (`channel_inbound.py:191`) that all three app transports each carried
+  a copy of — core owning it is what makes the trust check unavoidable rather than conventional.
+
+  **`run_chat` is the second route, and closing it is SEQUENCED, not done here.** The ruling's limit
+  (3) asked the executor to *"pick one and say which — two routes is the defect this ruling exists to
+  close."* Picked: `run_chat` comes off `sdk/channel.py`. It cannot carry the guard itself — it has no
+  sender to check and legitimately serves the owner's own dashboard turns, cron, heartbeat and the
+  CLI, where there is no channel identity and nothing to deny. With it off the facade, the
+  lint-enforced `personalclaw.sdk.*`-only boundary (`tests/test_apps_import_boundary.py`) leaves a
+  boundary-respecting app no way to start a channel-originated turn except through the guarded door.
+
+  **OWNER CORRECTION (2026-09-01), before this landed.** The export was removed in the first draft of
+  this change and I put it back. Four SHIPPING channel apps import `run_chat` from that exact path —
+  `discord-channel/discord_runtime/transport.py:286`, `email-channel/email_runtime/transport.py:521`,
+  `telegram-channel/telegram_runtime/transport.py:296` and `slack-channel/slack_runtime/handler.py:1680`
+  — plus four of their test modules, which monkeypatch `personalclaw.sdk.channel.run_chat` **by that
+  dotted path**. The apps repo is a separate release artifact and cannot land atomically with core, so
+  dropping the export first breaks all four the moment core merges: the same
+  validates-then-fails-at-fire-time shape `EA-8`'s split-across-repos hazard describes, which this very
+  session hit on `EA-8`. Order: (1) core ships `deliver_channel_inbound` — this change; (2) the four
+  apps migrate onto it and stop importing `run_chat`; (3) core drops the export, and the boundary makes
+  the chokepoint structural rather than conventional. Step 3 is the cleanup half of a clean break, not
+  a dual path kept for its own sake. `tests/test_channel_inbound_chokepoint.py::test_run_chat_is_still_a_declared_second_route`
+  asserts the gap DELIBERATELY and fails the day someone removes the export, which is precisely when
+  they should be re-checking the apps. `tests/test_sdk_surface_is_public.py`'s promoted-name
+  parametrize stays scoped to `save_session_to_history`, with the reason stated there.
+
+  **The rail limit (1) asked for.** `test_no_in_core_transport_starts_a_turn_except_through_the_door`
+  asserts zero in-core transports reach `run_chat` / `get_or_create_session` / `link_channel` /
+  `guard_inbound`. **It is AST-based, not a grep, and that was a measured correction:** the first
+  version substring-scanned and failed on `reference_echo.py`'s *docstring*, which names the gate it
+  routes to. It carries two floors — the expected four transport modules were found, and the
+  extraction demonstrably sees a call that IS there (`deliver_channel_inbound` in the reference
+  transport) — so a clean result cannot be clean-because-blind. `reference_echo.handle_inbound` was
+  migrated to the door (one call), which is what keeps that rail non-vacuous instead of needing an
+  exemption. `webui.py` is untouched and clean: its `state._sessions` use is OUTBOUND (`send()`
+  appends an assistant message), which is deliberately not in the rail's symbol set.
+
+  **The double-notification hazard, resolved with TWO independent mechanisms.** Three app transports
+  already call `guard_inbound` themselves, so one message can reach the trust vocabulary twice, and
+  the unknown-sender flow has side effects (an actionable owner notification + a `sender_denied` SEL
+  row). (1) `channel_inbound`'s admission cache (bounded 512, keyed provider + message identity)
+  returns the first verdict and never re-enters the gate. (2) **Read, not assumed:**
+  `note_unknown_sender` (`channel_trust.py:410`) *does* already cover it — its `UNKNOWN_SENDER_RENOTIFY_SECS`
+  dedup (`:433`) returns `False` **before** `_emit_sel` and before `state.notify`, on persisted per-sender
+  state. Mechanism 2 alone was judged insufficient because it makes "one notification per message" a
+  mere corollary of a 24h per-SENDER window — shorten the window and the defect returns. Both are
+  asserted, including with the window monkeypatched to zero, and the independence is **measured**:
+  disabling the cache reds only the window-at-zero leg while the mid-migration leg stays green.
+
+  **DEVIATIONs.** (a) Shipped names kept over the `done_when`'s wording, which predates the code:
+  `channel_trust.py` (not `channel_transports/trust.py`), `guard_inbound -> TrustVerdict` (not
+  `check_sender -> TrustDecision`), `entity_settings/channel_trust.json` (not `sender_trust.json`),
+  8-**digit** numeric / TTL 600s / one active code per provider (not 8-char/1h/max-3), CLI
+  `personalclaw pair <provider>` (not `personalclaw channel pair`). The `check_sender`/`TrustDecision`
+  drift the BLOCKED entry above flagged as unrecorded is hereby recorded. (b) A message that IS a
+  valid pairing code reports `allowed=False, reason="paired"`: the sender is trusted from then on, but
+  a code is not a question for the agent to answer. `reference_echo`'s old shape returned
+  `allowed=True, paired=True`; its walkthrough test was updated, and `TrustDecision.allowed` now
+  documents that it means *this message became a turn*. (c) Granting is deliberately NOT on the new
+  API — the atom asked for read/revoke, and a grant should stay a deliberate act (a CLI code, or an
+  Allow on a notification that names who is asking).
+
+  **RETRACTED (owner, 2026-09-01) — the apps repo is NOT broken, and this claim is what nearly shipped
+  a four-app breakage.** The draft recorded a DISCOVERY that all three app transports import
+  `from personalclaw.sdk.channel import _run_chat`, that the underscore name no longer exists, and that
+  "removing `run_chat` from the facade breaks nothing that currently works". Every part of that is
+  false. Measured on apps `origin/main` (`7a94830`):
+
+  ```
+  discord-channel/discord_runtime/transport.py:286   from personalclaw.sdk.channel import run_chat
+  email-channel/email_runtime/transport.py:521       from personalclaw.sdk.channel import run_chat
+  telegram-channel/telegram_runtime/transport.py:296 from personalclaw.sdk.channel import run_chat
+  slack-channel/slack_runtime/handler.py:1680        from personalclaw.sdk.channel import run_chat
+  ```
+
+  All four import the **public** name and call it (`:300`, `:538`, `:310`, `:1681`), and four test
+  modules monkeypatch `personalclaw.sdk.channel.run_chat` by that dotted path. `email-channel` was
+  missed entirely by the draft's census. The two `_run_chat` matches in `sdk/channel.py` are HISTORICAL
+  COMMENTS at `:84` and `:216` describing the #1804 rename — a grep for the underscore name finds the
+  prose that records its removal, which is how "the apps import the dead name" was concluded from
+  evidence that says the opposite.
+
+  **The lesson, since it recurred twice this session:** a grep whose hits are all inside comments is not
+  a census. Check the import LINE, and check every app, not the three you expected. The corrected
+  sequencing is in the `run_chat` paragraph above.
+
+  **DISCOVERY — a rail blind spot worth knowing.** `settingsListHonesty` / `panelReadHonestyTail` scan
+  for `.catch(() => [])`; they stay GREEN when a panel swallows a failed read into an object literal
+  (`.catch(() => ({providers: [], …}))`). Measured by mutation. The panel-local read-honesty test is
+  what carries that property here.
+
+  **API + frontend.** `GET /api/channels/trust` and
+  `DELETE /api/channels/trust/{provider}/senders/{sender_id}`
+  (`dashboard/handlers/channel_trust.py`), registered at `dashboard/server.py:1217-1226` **before**
+  `/api/channels/{name}` — aiohttp resolves in registration order, so a later literal sibling is
+  swallowed by the dynamic route; railed statically because the registration is inline in
+  `start_dashboard`. New wire code `channel_trust_sender_unknown` added to `HTTP_ERROR_CODES` in the
+  same change (revoking a sender who is not on the list is a 404, not a silent success, so a stale UI
+  list learns it is stale). The read projection withholds the pairing `code_hash` and the `rate`
+  contact log, both asserted. Frontend: `web/src/pages/settings/SenderTrustPanel.tsx`, registered in
+  all three required places (`SettingsPage.tsx` SUBPAGES, `settingsWidgets.tsx` SETTINGS_WIDGETS,
+  `e2e/routes.ts` SETTINGS_PANELS — the last two are ratcheted, the third on exact order).
+
+  **Gates.** `make lint` clean (black/isort/flake8/mypy, 1098 source files). Python: 48 + 12 + 173
+  targeted pass. Web: **6084 passed / 564 files, whole suite**, plus `npm run typecheck` clean. Three
+  web ratchets fired on the first pass and were fixed at root, not weakened — the panel adopted
+  `ListRow` rather than adding a 4th copy of the pinned hand-rolled row string, its section glyph took
+  `iconTone="muted"` (coral means live), and both its empty states were classified in the PEP-2
+  census. `test_agent_reference` went stale from the two new routes and was regenerated (797→799
+  agent-callable of 806); a fresh render on pristine `origin/main` is byte-identical, which is how the
+  staleness was attributed to this diff rather than to drift.
+
+  **Falsification (each mutation grep-proved applied, then restored from a file copy).**
+  `if not verdict.allowed` → `if False` (fail-open): **7 red / 6 green**, load-bearing negative red,
+  positive leg green. Admission cache disabled: **exactly 1 red** (the window-at-zero leg only).
+  `run_chat` + `get_or_create_session` injected into `webui.py`: **1 red**, naming the offender.
+  Trust route registered after `{name}`: **1 red**, with line numbers. `code_hash` added to the
+  projection: **1 red**. Panel read swallowed into an empty payload: **1 red**. Tree verified clean
+  (zero `MUTANT` markers, empty `git status`) afterwards.
+
+  **THE SPLIT'S REMAINING HALF — the apps repo (`PersonalClawApps`), not startable from here.**
+  `slack-channel`, `telegram-channel` and `discord-channel` each still (a) import `run_chat` from the SDK facade,
+  (b) call `guard_inbound` with their own hands, and (c) carry their own `_route_to_session` copy. The
+  migration is mechanical and identical in all three: delete the app's `guard_inbound` call and its
+  `_route_to_session`, and replace both with one
+  `await services.deliver_channel_inbound(PROVIDER, cm, is_dm=is_dm)`, keeping only the outbound
+  rendering of `verdict.canned_reply` (which stays app-side because formatting is channel-specific).
+  Until then those three keep their own single guard call, so there is no double-notification in
+  practice and no dual path in core — core has exactly one door. `CapturingState` in
+  `testing/channel_conformance.py` was extended with the session-routing surface (+ `CapturedSession`,
+  `delivered_texts()`) precisely so the apps' own suites can assert "did this reach a session?"
+  without building a fake. Also still open from the original `done_when`: Slack's `allowlist.py` data
+  migration and refitting its Allow/Deny buttons onto this store — same repo, same session.
+
 ---
 
 ## Execution log — `EA-5` (§7 capture proxy + §8 telemetry import) — **COMPLETE in code; atom flips with PR #2121**

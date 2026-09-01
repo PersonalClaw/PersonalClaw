@@ -91,6 +91,8 @@ from personalclaw.triggers.models import Outcome
 
 if TYPE_CHECKING:
     from personalclaw.channel_delivery import ChannelDelivery
+    from personalclaw.channel_transports.base import ChannelMessage
+    from personalclaw.channel_trust import TrustVerdict
     from personalclaw.dashboard.state import _ChatSession
     from personalclaw.inbox_service import InboxService
     from personalclaw.llm_helpers import ToolApprovalPolicy
@@ -390,6 +392,22 @@ class GatewayOrchestrator:
         """Register the active channel's outbound delivery handle (called by the
         channel transport at ``start_inbound``). ``None`` clears it."""
         self._channel_delivery = delivery
+
+    async def deliver_channel_inbound(
+        self, provider: str, msg: "ChannelMessage", *, is_dm: bool = True
+    ) -> "TrustVerdict":
+        """The guarded inbound door (EA-7) — trust is applied before a session is reached.
+
+        Delegates to :func:`personalclaw.channel_inbound.deliver_inbound`, which owns the
+        chokepoint (and its per-message idempotency, so an un-migrated transport that still
+        calls ``guard_inbound`` itself cannot cause a double owner notification). The
+        orchestrator adds nothing to the decision — it only supplies itself as the services
+        handle, which is what makes the door reachable from a transport's ``start_inbound``
+        argument without changing :class:`ChannelTransportProvider`.
+        """
+        from personalclaw.channel_inbound import deliver_inbound
+
+        return await deliver_inbound(self, provider, msg, is_dm=is_dm)
 
     # ------------------------------------------------------------------
     # Tool approval callback (shared by cron, heartbeat, subagent, task)

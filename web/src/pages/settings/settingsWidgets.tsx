@@ -2,6 +2,7 @@ import {
   User, Palette, MessageSquare, Plug, Cpu, FileText, Database, Bot, AudioLines,
   Inbox, Bell, Shield, ShieldAlert, ScrollText, Archive, FolderSync, DownloadCloud, CheckCircle2, Search, Blocks, Activity, Compass, Stethoscope, Scissors, ThumbsUp, HardDriveDownload, Coins, Route, Trophy,
   MonitorSmartphone, Plug2, FileType2, LayoutDashboard, Smartphone, Rss, Package, FlaskConical, KeyRound,
+  MessageCircle,
 } from 'lucide-react'
 import { verifiedScope } from './AuditPanel'
 import type { LucideIcon } from 'lucide-react'
@@ -11,7 +12,7 @@ import {
   type SettingsProvider, type NotificationSettings, type UpdateCheck,
   type PromptBindings, type SelVerify, type SavedAgent,
   type SearchProviderInfo,
-  type ToolsSavings, type DeviceRec, type InstalledPackRec,
+  type ToolsSavings, type DeviceRec, type InstalledPackRec, type ChannelTrust,
 } from '../../lib/api'
 // One spelling for a poll cadence: `#/knowledge/sources` renders every source row's cadence
 // through THIS function (`SourcesPage.tsx:177`, `· every {fmtInterval(poll_interval_secs)}`), and
@@ -166,6 +167,11 @@ const useExternalAccess = () =>
 // depend on which surface mounted first.
 const useDevices = () => useQuery('settings:devices-card',
   () => api.devices().catch(() => null as DeviceRec[] | null), { persist: true })
+// Same split as `devices` above: a SEPARATE key from the panel's `settings:sender-trust`,
+// because this one swallows a read failure into `null` so the card can say "couldn't check"
+// while the panel needs the raw error for `LoadError`.
+const useSenderTrust = () => useQuery('settings:sender-trust-card',
+  () => api.channelTrust().catch(() => null as ChannelTrust | null), { persist: true })
 // Same story: `#/settings/tool-output` reads the error now, and this tile shares its key.
 const useProjectionRules = () => useQuery('settings:projection-rules', () => api.projectionRules(), { persist: true })
 const useToolsSavings = () => useQuery('settings:tools-savings', () => api.toolsSavings().catch(() => null as ToolsSavings | null), { persist: true })
@@ -907,6 +913,37 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
               : <><BigStat value={d.length} caption={d.length === 1 ? 'paired device' : 'paired devices'} />
                   <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">
                     <Highlight text={d.map((x) => x.name || 'Unnamed device').join(' · ')} query={query} />
+                  </div></>}
+        </BentoCard>
+      )
+    },
+  },
+  {
+    // Beside Devices, and drawing the same line its comment draws: Devices is what holds a
+    // SESSION on this gateway; this is who may talk to the agent through a messaging channel.
+    // Without a card here the panel is reachable only by typing the URL — this home grid IS
+    // the navigation and renders SETTINGS_WIDGETS with no fallback.
+    id: 'sender-trust', group: 'System', label: 'Sender trust', icon: MessageCircle, size: 'sm',
+    description: 'Who may talk to your agent on a messaging channel — and the switch that cuts one off.',
+    useSearchText() {
+      const { data: t } = useSenderTrust()
+      const senders = t ? t.providers.flatMap((p) => p.allowed_senders.map((s) => s.name || s.sender_id)) : []
+      return `sender trust channel allowlist allowed senders pairing code revoke telegram discord slack email stranger dm policy ${t ? `${senders.length} trusted ${senders.join(' ')} ${t.providers.map((p) => p.provider).join(' ')}` : ''}`
+    },
+    render(query, go) {
+      const { data: t, error: tErr, stale: tStale } = useSenderTrust()
+      const count = t ? t.providers.reduce((n, p) => n + p.allowed_senders.length, 0) : 0
+      const names = t ? t.providers.flatMap((p) => p.allowed_senders.map((s) => s.name || s.sender_id)) : []
+      return (
+        <BentoCard icon={MessageCircle} title="Sender trust" query={query} onClick={() => go('sender-trust')} loading={t === undefined && !tErr} stale={tStale}>
+          {!t
+            ? <StatusPill label="Couldn't check" tone="warn" />
+            : count === 0
+              ? <><StatusPill label="No trusted senders" tone="muted" />
+                  <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Strangers must pair before they can talk</div></>
+              : <><BigStat value={count} caption={count === 1 ? 'trusted sender' : 'trusted senders'} />
+                  <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">
+                    <Highlight text={names.join(' · ')} query={query} />
                   </div></>}
         </BentoCard>
       )

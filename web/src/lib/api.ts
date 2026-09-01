@@ -553,6 +553,40 @@ export interface ChannelRuntime {
   capabilities?: Record<string, unknown>
   health: ChannelHealth
 }
+/** One approved sender on a channel (EA-7). `provider` is an opaque runtime key the transport
+ *  picked ("telegram", "slack", "email") — NOT the app name, which carries a `-channel` suffix.
+ *
+ *  `added_at` is an ISO-8601 STRING, not epoch seconds like `DeviceRec.minted_at` — the trust
+ *  store writes `datetime.isoformat()`. An empty string means the store had no timestamp and
+ *  must render as a distinct word, never as the epoch or as today.
+ *
+ *  `via` is provenance: `owner` (the owner clicked Allow on the unknown-sender notification) or
+ *  `pairing` (the sender redeemed an 8-digit code). It is rendered, not assumed — an
+ *  unrecognized value renders as itself. */
+export interface ChannelTrustSender {
+  sender_id: string
+  name: string
+  added_at: string
+  via: string
+}
+export interface ChannelTrustChannel { channel_id: string; name: string; added_at: string }
+/** A provider's whole trust posture. NEVER carries the pairing code or its hash — only whether
+ *  one is outstanding (`pairing_active`) and when it dies. */
+export interface ChannelTrustProvider {
+  provider: string
+  policies: { dm: string; group: string }
+  allowed_senders: ChannelTrustSender[]
+  tracked_channels: ChannelTrustChannel[]
+  pairing_active: boolean
+  pairing_expires_at: string
+}
+export interface ChannelTrust {
+  providers: ChannelTrustProvider[]
+  dm_policies: string[]
+  group_policies: string[]
+  default_dm_policy: string
+  default_group_policy: string
+}
 // A background subagent (from /api/spawn) — spawned by a cron/loop/Slack/agent.
 export interface SpawnedAgent { id: string; task: string; done: boolean; parent?: string; agent?: string; started?: number; result?: string; error?: string }
 // A knowledge item scored for chat-context injection (from search-for-context),
@@ -4973,6 +5007,14 @@ export const api = {
   connectChannel: (name: string) => post<{ ok: boolean; health?: ChannelHealth }>(`/api/channels/${encodeURIComponent(name)}/connect`),
   disconnectChannel: (name: string) => post<{ ok: boolean }>(`/api/channels/${encodeURIComponent(name)}/disconnect`),
   testChannel: (name: string) => post<{ ok: boolean; health?: ChannelHealth; detail?: string }>(`/api/channels/${encodeURIComponent(name)}/test`),
+
+  // ── Channel sender trust (EA-7) — who is allowed to talk to the agent, per channel ──
+  // The allowlist was writable from two places (a pairing code, the unknown-sender
+  // notification's Allow) and readable from none. This is the read half; granting stays with
+  // those two deliberate acts, so this surface revokes only.
+  channelTrust: () => get<ChannelTrust>('/api/channels/trust'),
+  revokeChannelSender: (provider: string, senderId: string) =>
+    del(`/api/channels/trust/${encodeURIComponent(provider)}/senders/${encodeURIComponent(senderId)}`),
 
   // ── Tasks bulk ops (validate-all-then-apply create/update/delete) ──
   tasksBulk: (op: 'create' | 'update' | 'delete', items: Array<Record<string, unknown>>) =>

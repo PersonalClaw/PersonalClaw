@@ -99,6 +99,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "device_pair_origin_rejected": "The request origin is not allowed to pair a device.",
     "device_pair_locked_out": "Too many failed pairing attempts; try again later.",
     "device_unknown": "No such paired device.",
+    # ── channel sender trust (handlers/channel_trust.py) ──
+    "channel_trust_sender_unknown": "That sender is not on this channel's allowlist.",
     # ── push subscriptions (handlers/push.py) ──
     "push_subscription_invalid": "The push subscription is missing an https endpoint or its keys.",
     "push_not_subscribed": "That device has no push subscription.",
