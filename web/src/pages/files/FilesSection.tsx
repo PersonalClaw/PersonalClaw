@@ -186,11 +186,48 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
     const parent = entry.path.slice(0, entry.path.length - entry.name.length).replace(/\/$/, '')
     const dest = parent ? `${parent}/${nextName}` : nextName
     setFileErr(null)
+
+    // 🔴 ASK BEFORE THE IRREVERSIBLE STEP. This used to call `api.fileMove` and then
+    // `fileTabs.close()`, and `close()` is what raised the "Discard unsaved changes?" prompt — so
+    // the prompt appeared AFTER the rename was on disk, asking permission for a consequence of it.
+    // Its Cancel branch cancelled only the tab close, leaving a tab bound to a path that no longer
+    // existed; the next Save 404'd with an unhandled ApiError and nothing on screen (issue 654).
+    //
+    // Dirty tabs are named in the prompt, and a directory rename can carry several, so it counts
+    // them rather than assuming one file.
+    const affected = fileTabs.tabsUnder(entry.path)
+    const dirtyTabs = affected.filter((t) => fileTabs.dirty[t.path])
+    if (dirtyTabs.length) {
+      const what = dirtyTabs.length === 1
+        ? `"${dirtyTabs[0].name}" has unsaved changes.`
+        : `${dirtyTabs.length} open files under "${entry.name}" have unsaved changes.`
+      const ok = await confirm({
+        title: `Rename and discard unsaved changes?`,
+        body: `${what} Renaming will lose ${dirtyTabs.length === 1 ? 'those edits' : 'them'}.`,
+        danger: true,
+        confirmLabel: 'Rename and discard',
+      })
+      // Cancel now means what it says: nothing was renamed, and the edits are still there.
+      if (!ok) return
+      // Consent given, so those drafts are gone — say so BEFORE re-pointing. `renamePath` carries
+      // dirty flags across (correct for a host that owns a draft store and really does keep the
+      // edit), and this page owns none: the viewer remounts on the new path and re-reads disk. A
+      // flag left set would show a dirty dot on a clean editor and arm the beforeunload guard over
+      // nothing.
+      for (const t of dirtyTabs) fileTabs.markDirty(t.path, false)
+    }
+
     try {
       await api.fileMove(entry.path, dest)
-      if (fileTabs.tabs.some((t) => t.path === entry.path)) fileTabs.close(entry.path)
+      // The tab FOLLOWS the file. Closing it was the old behaviour and it was never the right one
+      // — a rename is not a reason to stop looking at a file. Any dirty tab was just discarded by
+      // explicit consent above, so re-pointing is safe: the viewer remounts on the new path and
+      // reads it from disk.
+      fileTabs.renamePath(entry.path, dest)
       refresh()
-    } catch (e) { setFileErr(`Rename failed: ${(e as Error).message}`) }
+    } catch (e) {
+      setFileErr(`Rename failed: ${(e as Error).message}`)
+    }
   }, [fileTabs, refresh])
 
   const onDelete = useCallback(async (entry: FsEntry) => {

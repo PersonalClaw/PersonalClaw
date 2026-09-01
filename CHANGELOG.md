@@ -656,6 +656,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   PersonalClaw as well, and fails if it ever has nothing to check. Pointed at a real apps checkout it
   examines 196 files, all of which pass.
 
+- **Renaming a file you were editing asked permission after the fact, then stranded the tab.** The
+  rename went to disk first, and only then did a dialog ask whether to discard your unsaved changes —
+  so Cancel cancelled the wrong thing. It left the editor open on a name that no longer existed, and
+  the next Save failed against a file that was gone, silently: no message, nothing on screen, the
+  edits still in front of you with nowhere to go. Now the question comes first and Cancel means what
+  it says — nothing is renamed and your edits are where you left them. It names the files at risk,
+  including when you rename a whole folder with several open. And a file with no unsaved changes is
+  no longer closed at all: the tab follows it to its new name, because wanting to rename something is
+  not a reason to stop looking at it.
+
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it
   had.** It always reported *re-embedded 0 item(s)* — in every install, whatever your library held. Two
   independent faults: it handed the re-index a plain function where an embedding model was expected, so
