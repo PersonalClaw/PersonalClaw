@@ -1793,6 +1793,14 @@ export interface Trigger {
  *  actions. (TriggerCreatePage already sends `action` directly; this serves the
  *  shared ScheduleForm edit path via ScheduleDetail.) */
 function _scheduleBodyToWire(body: Record<string, unknown>): Record<string, unknown> {
+  // Everything destructured here is ACTION config, and the only way it reaches the server is
+  // inside the `action` this function builds. `rest` — the schedule mechanism — is the top level.
+  // A caller that puts one of these keys on a body that already carries its own `action` is
+  // discarding it, silently, in the browser: that is how the trigger-create page's
+  // "Auto-approve tools" switch became decorative (issue 268). `approval_mode` in particular is
+  // `invoke-agent`-only (`schedule.py`'s property returns '' for every other provider), so it can
+  // only ride the invoke-agent branch below. `tests/test_trigger_wire_field_census.py` holds the
+  // two field sets against each other so a future field cannot go missing the same way.
   const { message, agent, model, approval_mode, script, command, zt_timeout, action, ...rest } = body
   if (action) return { ...rest, action }  // already action-shaped (create page)
   let act: TriggerAction

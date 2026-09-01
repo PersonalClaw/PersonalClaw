@@ -155,7 +155,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
         const body: Record<string, unknown> = {
           name: name.trim(),
           timezone: sched.timezone || '', silent: sched.silent, strict_schedule: sched.strict_schedule,
-          approval_mode: sched.approval_mode || '', channel: sched.channel.trim(), skip_dates: sched.skip_dates,
+          channel: sched.channel.trim(), skip_dates: sched.skip_dates,
         }
         if (sched.kind === 'cron') body.cron = sched.cron.trim()
         else if (sched.kind === 'every') body.every = intervalToSecs(sched.intervalValue, sched.intervalUnit)
