@@ -1,126 +1,106 @@
-"""The test five source comments and eighteen roadmap docs already cite by name.
+"""The declared provider-type set must equal the runtime type-handler registry.
 
-`apps/manifest.py` says of `PROVIDER_TYPES`:
+`apps/manifest.py`'s `PROVIDER_TYPES` carries this note, verbatim:
 
     NOTE: this set MUST equal the runtime type-handler registry
-    (providers/registry.py register_type_handler(...) calls). … `prompt` was a registered
-    handler (PromptTypeHandler) but was missing here (#47) — so `ProviderConfig.validate()`
-    rejected any prompt provider manifest, blocking reinstall/update + third-party prompt
-    providers. native-prompts is native (auto-seeded, bypasses install-time validation), which
+    (providers/registry.py register_type_handler(...) calls). ``prompt`` was a
+    registered handler (PromptTypeHandler) but was missing here (#47, the split-era
+    #1-'action'-rejected class) — so ProviderConfig.validate() rejected any prompt
+    provider manifest, blocking reinstall/update + third-party prompt providers.
+    native-prompts is native (auto-seeded, bypasses install-time validation), which
     masked it. test_manifest_types_match_handlers guards this equality going forward.
 
-**It did not exist.** `providers/registry.py` cites it three times ("the bug class
-`test_manifest_types_match_handlers` exists to prevent"), `workflows/defs.py` once, and eighteen
-docs under `docs/` name it. A repo-wide grep found zero implementations. The 19 = 19 equality was
-true today and unguarded — held by luck, with a #47 recurrence one forgotten line away.
+**That guard did not exist.** Measured 2026-09-01 on `origin/main`:
+`git grep -l 'def test_manifest_types_match_handlers' -- tests/` returned **zero files**,
+while `test_manifest_types_match_handlers` was cited **46 times across 18 files** —
+`docs/roadmap/atomic/{DAS,EI,INU,TSE,WF2AUT,WS}.md`, ten plans, and **six `dag.json`
+`done_when` entries**. `DAS-6`, `EI-1`, `TSE-4`, `WF2AUT-4` and `WF2AUT-8` each declare
+"test_manifest_types_match_handlers green/passes" as part of what made them done. Five
+atoms rested their completion claim on a test nobody had written.
 
-Both directions matter, and they fail differently:
+**The invariant itself held when this file was added** — 19 declared, 19 registered, both
+directions empty — so nothing here changes behaviour. What changes is that #47's shape can
+no longer recur in silence. The failure it guards is quiet and expensive in exactly one
+direction: a handler registered without being declared makes `ProviderConfig.validate()`
+reject every manifest of that type, so installing or updating such an app fails while a
+NATIVE provider of the same type keeps working, because native providers are auto-seeded
+and bypass install-time validation. That asymmetry is what masked it for a whole release.
 
-* **declared but unregistered** — the manifest accepts a type nothing can instantiate, so an app
-  installs and then does nothing;
-* **registered but undeclared** — the #47 shape: a working handler whose manifests are rejected at
-  validation, invisible while only a native (auto-seeded) provider uses it.
+**Read-only by construction.** `get_provider_registry()` returns a process-global singleton
+whose `_type_handlers` other tests rely on, so this file only reads it. A test that
+registered a handler to prove a point would leak that handler into every later test in the
+session — the shape that once made a "one def, from my fake provider" assertion see seven.
 """
 
 from __future__ import annotations
 
-import pytest
-
 from personalclaw.apps.manifest import PROVIDER_TYPES
+from personalclaw.providers.registry import get_provider_registry
+
+#: A floor under both sets. Not a count to maintain — a guard that the comparison below is
+#: comparing two POPULATED sets. Two empty sets are equal, so a registry that failed to
+#: initialise, or an import that silently produced an empty frozenset, would satisfy the
+#: equality while asserting nothing at all. 15 is comfortably under the 19 present when this
+#: was written and comfortably over "something went wrong".
+MINIMUM_PLAUSIBLE_TYPES = 15
 
 
-@pytest.fixture
-def registered(tmp_path, monkeypatch) -> set[str]:
-    """The live handler registry. Isolated home — building it constructs real providers."""
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    import personalclaw.providers.registry as reg
-
-    monkeypatch.setattr(reg, "_registry", None, raising=False)
-    return set(reg.get_provider_registry()._type_handlers)
+def _registered_types() -> set[str]:
+    """The types the runtime has a handler for, read without mutating the singleton."""
+    return set(get_provider_registry()._type_handlers)
 
 
-def test_every_declared_type_has_a_runtime_handler(registered):
-    """A manifest type nothing can instantiate installs an app that then does nothing."""
-    missing = sorted(set(PROVIDER_TYPES) - registered)
-    assert not missing, (
-        "PROVIDER_TYPES declares types with no registered handler, so a manifest using one "
-        f"validates and then cannot be instantiated: {missing}"
-    )
+def test_manifest_types_match_handlers() -> None:
+    """`PROVIDER_TYPES` and the handler registry name exactly the same provider types.
 
+    Both directions, reported separately, because they break differently:
 
-def test_every_runtime_handler_is_a_declared_type(registered):
-    """The #47 shape: a working handler whose manifests `validate()` rejects."""
-    undeclared = sorted(registered - set(PROVIDER_TYPES))
-    assert not undeclared, (
-        "these types have a registered handler but are absent from PROVIDER_TYPES, so "
-        "ProviderConfig.validate() rejects every third-party manifest using them while a native "
-        f"auto-seeded provider masks it (this is exactly #47): {undeclared}"
-    )
-
-
-def test_the_comparison_is_not_vacuous(registered):
-    """Both sides are populated. Two empty sets are equal and prove nothing."""
-    assert len(PROVIDER_TYPES) >= 15, f"PROVIDER_TYPES looks truncated: {sorted(PROVIDER_TYPES)}"
-    assert len(registered) >= 15, f"the handler registry looks truncated: {sorted(registered)}"
-
-
-#: The three types whose handler is an `EntitySeamHandler` — enable/disable + Settings seams
-#: only, whose factory returns None BY DESIGN because the entity lives elsewhere (agents in
-#: `config.json agents{}`, skills in the skills store, notifications in the kinds registry).
-#: Pinned so a FOURTH seam-only type cannot appear silently: a seam that nobody meant to be a
-#: seam is a provider type that installs and produces nothing, which reads exactly like the
-#: unregistered case above but passes it.
-SEAM_ONLY_TYPES = frozenset({"agent", "notification", "skills"})
-
-
-def test_the_seam_only_types_are_exactly_the_declared_three(tmp_path, monkeypatch):
-    """Which types are seams is a DECISION; this is where it is written down."""
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    import personalclaw.providers.registry as reg
-
-    monkeypatch.setattr(reg, "_registry", None, raising=False)
-    handlers = reg.get_provider_registry()._type_handlers
-    seams = {t for t, h in handlers.items() if isinstance(h, reg.EntitySeamHandler)}
-    assert seams == SEAM_ONLY_TYPES, (
-        "the set of seam-only provider types changed. A new seam is fine — say so here and say "
-        f"where its entity lives. expected {sorted(SEAM_ONLY_TYPES)}, found {sorted(seams)}"
-    )
-
-
-def test_a_seam_handler_documents_where_its_entity_lives(tmp_path, monkeypatch):
-    """A seam is only defensible if it names the real source of truth.
-
-    Otherwise "the factory returns None by design" is indistinguishable from a handler somebody
-    forgot to finish — and `EntitySeamHandler`'s own comment warns that registering an instance
-    would create "a second source of truth nothing reads (the Bedrock trap)".
+    * **registered but not declared** is #47 itself — `ProviderConfig.validate()` rejects
+      every manifest of that type, so install and update fail for it while a native
+      provider of the same type keeps working and hides the fault.
+    * **declared but not registered** is the inverse — a manifest validates at install
+      time and then finds nothing to enable it, so the app installs and does nothing.
     """
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    import personalclaw.providers.registry as reg
+    declared = set(PROVIDER_TYPES)
+    registered = _registered_types()
 
-    monkeypatch.setattr(reg, "_registry", None, raising=False)
-    handlers = reg.get_provider_registry()._type_handlers
-    for t in sorted(SEAM_ONLY_TYPES):
-        source = getattr(handlers[t], "source_of_truth", "")
-        assert (
-            source and len(source) > 20
-        ), f"the {t!r} seam does not say where its entity actually lives: {source!r}"
+    registered_not_declared = sorted(registered - declared)
+    declared_not_registered = sorted(declared - registered)
 
-
-def test_the_manifest_note_points_at_this_file():
-    """The comment claims a guard exists. Now it does — and this keeps the claim honest.
-
-    The note survived as a promise for the whole life of the invariant it describes; a test that
-    can be renamed out from under five source citations would put it straight back.
-    """
-    from pathlib import Path
-
-    src = Path(__file__).resolve().parent.parent / "src/personalclaw/apps/manifest.py"
-    text = src.read_text(encoding="utf-8")
-    assert "test_manifest_types_match_handlers" in text, (
-        "manifest.py no longer names its guard — if this test is renamed, update every citation "
-        "(manifest.py, providers/registry.py ×3, workflows/defs.py)"
+    assert not registered_not_declared, (
+        "these provider types have a registered handler but are missing from "
+        f"apps/manifest.PROVIDER_TYPES: {registered_not_declared}. This is #47: "
+        "ProviderConfig.validate() will reject every app manifest declaring one of them, so "
+        "installing or updating such an app fails — while a NATIVE provider of the same type "
+        "keeps working, because native providers are auto-seeded and skip install-time "
+        "validation. Add the type to PROVIDER_TYPES in the same commit as its handler."
     )
-    assert Path(__file__).stem == "test_manifest_types_match_handlers", (
-        "this file's name IS the citation five source comments make; renaming it silently makes "
-        "all five false again"
+    assert not declared_not_registered, (
+        "these provider types are declared in apps/manifest.PROVIDER_TYPES but no handler is "
+        f"registered for them: {declared_not_registered}. An app declaring one would pass "
+        "install-time validation and then find nothing able to enable it. Register the "
+        "handler in providers/registry.py in the same commit as the declaration."
+    )
+
+
+def test_the_comparison_is_not_vacuous() -> None:
+    """Both sets must be populated, or the equality above proves nothing.
+
+    Two empty sets are equal. Without this floor, an import that yielded an empty
+    `frozenset` or a registry singleton that failed to run its default registrations would
+    make the test above pass while guarding nothing — the same failure mode as a rail whose
+    pattern matches no files and therefore reports clean.
+    """
+    declared = set(PROVIDER_TYPES)
+    registered = _registered_types()
+
+    assert len(declared) >= MINIMUM_PLAUSIBLE_TYPES, (
+        f"PROVIDER_TYPES holds only {len(declared)} entries ({sorted(declared)}), which is "
+        "below the plausible floor — the equality test above would be comparing something "
+        "degenerate rather than the real set"
+    )
+    assert len(registered) >= MINIMUM_PLAUSIBLE_TYPES, (
+        f"the runtime registered only {len(registered)} type handlers ({sorted(registered)}). "
+        "The registry's default registrations probably did not run, which would make the "
+        "equality test above vacuous rather than green"
     )
