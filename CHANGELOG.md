@@ -655,6 +655,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   past the boundary. It now finds the apps wherever they are, checks the ones that ship inside
   PersonalClaw as well, and fails if it ever has nothing to check. Pointed at a real apps checkout it
   examines 196 files, all of which pass.
+- **Choosing a project while editing a task now moves the task.** Picking a project when you created
+  a task worked. Picking one while editing an existing task appeared to work, saved without
+  complaint, and changed nothing — the dropdown was back to its old value the next time the task
+  loaded. The two screens send exactly the same thing; only the create path knew what to do with it.
+  Editing now resolves it the same way, into the project's General list, and an explicit list you
+  picked yourself still wins over the project.
 
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it
   had.** It always reported *re-embedded 0 item(s)* — in every install, whatever your library held. Two
