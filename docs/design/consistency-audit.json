@@ -1,7 +1,7 @@
 {
   "totals": {
     "driftHits": 8,
-    "filesScanned": 598,
+    "filesScanned": 601,
     "filesWithDrift": 7
   },
   "byCategory": {
@@ -214,8 +214,8 @@
     }
   ],
   "a11y": {
-    "outlineNoneCount": 146,
-    "outlineNoneFiles": 71,
+    "outlineNoneCount": 147,
+    "outlineNoneFiles": 72,
     "localFocusVisibleFiles": 37,
     "reducedMotionFiles": 13,
     "animatedFiles": 176,
