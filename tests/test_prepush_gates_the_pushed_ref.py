@@ -1,4 +1,13 @@
-"""The pre-push gate must refuse a tree that is not the ref being pushed.
+"""``scripts/run_prepush.sh``: it must gate the tree it is pushing, and scope by what
+that branch actually adds.
+
+Two concerns, one file, because they are the same two lines of the script reading the
+same stdin: the guard decides *whether* this worktree may be gated at all, and the range
+right after it decides *which* halves run. Both are cheap to get subtly wrong and
+expensive to notice — one goes green while proving nothing, the other burns ten minutes
+proving something nobody asked about.
+
+── 1. The tree/ref guard ──────────────────────────────────────────────────────
 
 **Measured gap (2026-08-27).** ``scripts/run_prepush.sh`` read the ref ranges
 githooks(5) puts on stdin and used ``local_sha`` for exactly one purpose: computing
@@ -41,6 +50,30 @@ neutered to ``if false``, and asserts that copy exits 0. So the negative leg's r
 attributable to the guard rather than to any other non-zero exit the script can
 produce, and the substitution is asserted to have applied — a rename of that line
 reds this test instead of silently making it vacuous.
+
+── 2. Scope, after a rebase (issue 2269) ──────────────────────────────────────
+
+**Measured gap (2026-09-01).** The range was ``remote_sha..local_sha``, which answers
+"what changed between these two commits" — the same question as "what does this branch
+add" only while the branch is a fast-forward of its remote. A rebase strands the old
+remote tip, and the range then spans every ``main`` commit in between. Measured on a
+real three-file backend-only branch: **94 frontend files in that range, versus 0 the
+branch touches.** The gate ran ``npm ci`` → typecheck → vitest → build →
+``playwright install`` → render-smoke for ten minutes and then failed on a web-suite
+timeout in a file the diff could not reach.
+
+Rebasing before a push is routine, and branches here are rebased for you, so this was
+the common case. The fix scopes by ``merge-base(local_sha, origin/main)`` and keeps the
+old range only as the answer for a clone that has no ``origin/main``.
+
+**Where the falsification lives.** The behavioural leg is
+:func:`test_a_rebased_backend_only_branch_skips_the_frontend_chain`; its floor is
+:func:`test_a_branch_that_really_changes_the_frontend_still_gates`, because "scope it
+more narrowly" is one step from "scope it to nothing" and a gate that never fires is
+indistinguishable from a fast one. :func:`test_the_merge_base_is_preferred_over_the_remote_tip`
+pins the ORDER rather than the presence of either range — swapping the two rungs leaves
+both lines in the file and every sandbox leg green, since the sandboxes that exercise
+the fallback have no ``origin/main`` for the first rung to win with.
 """
 
 from __future__ import annotations
@@ -221,8 +254,10 @@ def test_pushing_a_ref_this_worktree_does_not_have_checked_out_is_refused(sandbo
 def test_a_new_remote_branch_is_guarded_too(sandbox: Sandbox):
     """The most common first push — ``remote_sha`` all-zeroes — is not a hole.
 
-    The guard runs before the ``remote_sha == ZERO`` merge-base branch, so a brand-new
-    branch pushed from the wrong worktree is refused on the same terms.
+    The guard runs before the range is computed at all, so a brand-new branch pushed from
+    the wrong worktree is refused on the same terms. (``remote_sha`` used to select a
+    separate merge-base branch here; issue 2269 made the merge-base the only path, which
+    leaves this leg testing the same thing through one fewer case.)
     """
     result = _run(
         f"refs/heads/brand-new {sandbox.parent} refs/heads/brand-new {ZERO}\n",
@@ -267,3 +302,186 @@ def test_the_refusal_is_attributable_to_the_guard(sandbox: Sandbox):
         "the guard-free copy exited 0 without reaching the end of the ref loop, so this "
         f"leg is not comparing the same path: stdout={result.stdout!r}"
     )
+
+
+# ── scope: what the branch adds, not what happened between two shas (issue 2269) ──
+
+#: The two ranges, in the order the script must prefer them. `remote_sha..local_sha` is
+#: not banned — it is the right answer for a clone with no `origin/main` — it just must
+#: never be reached FIRST, because on a rebased branch it spans every `main` commit in
+#: between. So the pin is on the order, not on the presence of either line.
+MERGE_BASE_SCOPE = 'git merge-base "$local_sha" origin/main'
+REMOTE_TIP_SCOPE = 'range="$remote_sha..$local_sha"'
+
+#: What the script prints when it decided the expensive half IS owed. Asserted rather
+#: than an exit code, because the announcement happens before `npm ci` — in a sandbox
+#: with no `package.json` the chain fails for its own reasons, and that failure would
+#: read as "gated" whether the scope decision was right or not.
+#:
+#: The trailing clause is load-bearing: `REACHED_THE_END` is "**no** frontend changes
+#: outgoing", so the bare phrase is a substring of the SKIP message and `GATING not in
+#: stdout` would fail on the very path it is meant to confirm. Caught by this test file
+#: on its first run.
+GATING = "frontend changes outgoing — running the render-smoke gate"
+
+
+class Rebased:
+    """A sandbox where a branch was rebased and its remote tip left behind.
+
+    Three shas matter: `old_tip` (what the remote still points at), `new_main` (what the
+    branch is now based on, and what `main` gained a `web/` file in), and `head` (the
+    rebased tip, checked out). `old_tip..head` therefore spans `main`'s frontend commit;
+    `merge-base(head, origin/main)..head` does not.
+    """
+
+    def __init__(self, root: Path, head: str, old_tip: str, new_main: str) -> None:
+        self.root = root
+        self.head = head
+        self.old_tip = old_tip
+        self.new_main = new_main
+
+
+def _sandbox_repo(tmp_path: Path, name: str) -> Path:
+    """A repo carrying a byte-identical copy of the shipped script, on a first commit.
+
+    The script lives in the FIRST commit for the reason the other fixture states: it is
+    itself one of `FRONTEND_PATHS`, so any range that named it would drag `npm ci` into
+    a test. Nothing here touches `PYTHON_PATHS` either, so the lint half stays unowed.
+    """
+    root = tmp_path / name
+    (root / "scripts").mkdir(parents=True)
+    shutil.copy2(SCRIPT, root / "scripts" / "run_prepush.sh")
+    assert (root / "scripts" / "run_prepush.sh").read_bytes() == SCRIPT.read_bytes()
+    _git("init", "-q", "-b", "main", cwd=root)
+    (root / "notes.txt").write_text("one\n", encoding="utf-8")
+    _git("add", "-A", cwd=root)
+    _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", "first", cwd=root)
+    return root
+
+
+@pytest.fixture
+def rebased(tmp_path: Path) -> Rebased:
+    root = _sandbox_repo(tmp_path, "rebased")
+
+    # The branch, off the first commit, touching a path that owns neither half.
+    _git(*_IDENT, "checkout", "-q", "-b", "feature", cwd=root)
+    (root / "notes.txt").write_text("branch work\n", encoding="utf-8")
+    _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-am", "backend-only work", cwd=root)
+    old_tip = _git("rev-parse", "HEAD", cwd=root)
+
+    # `main` moves on, and gains a frontend file — somebody else's work.
+    _git(*_IDENT, "checkout", "-q", "main", cwd=root)
+    (root / "web").mkdir()
+    (root / "web" / "Thing.tsx").write_text("export const Thing = () => null\n", encoding="utf-8")
+    _git("add", "-A", cwd=root)
+    _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", "somebody else's frontend work", cwd=root)
+    new_main = _git("rev-parse", "HEAD", cwd=root)
+    _git("update-ref", "refs/remotes/origin/main", new_main, cwd=root)
+
+    # Rebase the branch onto it. This is the step that strands `old_tip`.
+    _git(*_IDENT, "checkout", "-q", "feature", cwd=root)
+    _git(*_IDENT, "rebase", "-q", "main", cwd=root)
+    head = _git("rev-parse", "HEAD", cwd=root)
+    assert head != old_tip, "the rebase did not rewrite the branch"
+    assert (
+        _git("merge-base", head, "refs/remotes/origin/main", cwd=root) == new_main
+    ), "the branch is not based on the new main; the fixture is not modelling a rebase"
+    return Rebased(root, head, old_tip, new_main)
+
+
+def test_the_merge_base_is_preferred_over_the_remote_tip():
+    """A floor for the legs below: the fix must still be in the file, in the right order.
+
+    Reordering these two rungs is the whole regression — both lines would still be present
+    and every other test in this file would still pass, because the sandboxes that exercise
+    the fallback have no `origin/main` for the first rung to win with.
+    """
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert MERGE_BASE_SCOPE in source, (
+        "the merge-base scoping is gone from scripts/run_prepush.sh; the legs below would "
+        "be measuring some other path (issue 2269)"
+    )
+    assert REMOTE_TIP_SCOPE in source, "the fork fallback is gone; see its own leg below"
+    assert source.index(MERGE_BASE_SCOPE) < source.index(REMOTE_TIP_SCOPE), (
+        "scripts/run_prepush.sh reaches `remote_sha..local_sha` before the merge-base. On "
+        "a rebased branch that range spans every main commit in between, so a backend-only "
+        "push runs the whole ten-minute frontend chain and can fail on web tests the diff "
+        "could not affect (issue 2269). The merge-base must be tried first."
+    )
+
+
+def test_a_rebased_backend_only_branch_skips_the_frontend_chain(rebased: Rebased):
+    """🔴 issue 2269, the whole point. The stranded remote tip must not decide the scope.
+
+    Measured before the fix on a real three-file backend branch: `old_tip..head` named 94
+    frontend files, all of them `main`'s, and the gate spent ten minutes on a chain the
+    diff could not affect — then failed on a web-suite timeout.
+    """
+    result = _run(
+        f"refs/heads/feature {rebased.head} refs/heads/feature {rebased.old_tip}\n",
+        cwd=rebased.root,
+    )
+    assert result.returncode == 0, (
+        "the gate did not take its cheap exit on a branch that changes no frontend file: "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert REACHED_THE_END in result.stdout, f"stdout={result.stdout!r}"
+    assert GATING not in result.stdout
+
+
+def test_a_branch_that_really_changes_the_frontend_still_gates(rebased: Rebased):
+    """🪤 The vacuity floor, and it is the one that matters here.
+
+    "Scope it more narrowly" is one step from "scope it to nothing", and a gate that
+    never fires costs nothing and protects nothing. So: commit a `web/` change ON the
+    branch and assert the expensive half is owed. The assertion is on the announcement
+    rather than the exit code, because `npm ci` in a repo with no `package.json` fails
+    for its own reasons and that failure would look like a gate either way.
+    """
+    (rebased.root / "web" / "Extra.tsx").write_text("export const Extra = () => null\n", "utf-8")
+    _git("add", "-A", cwd=rebased.root)
+    _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", "my own frontend change", cwd=rebased.root)
+    head = _git("rev-parse", "HEAD", cwd=rebased.root)
+
+    result = _run(
+        f"refs/heads/feature {head} refs/heads/feature {rebased.old_tip}\n", cwd=rebased.root
+    )
+    assert GATING in result.stdout, (
+        "the gate skipped the frontend chain for a branch that changes a `web/` file — "
+        f"the scoping is now too narrow: stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert REACHED_THE_END not in result.stdout
+
+
+def test_no_shared_history_with_main_gates_unconditionally(tmp_path: Path):
+    """The fallback. With no `origin/main` there is nothing to measure against, so the
+    honest answer is to run both halves rather than to skip blind — the same call the
+    new-branch path made before this change, now the only call."""
+    root = _sandbox_repo(tmp_path, "orphan")
+    head = _git("rev-parse", "HEAD", cwd=root)
+    assert not (root / ".git" / "refs" / "remotes" / "origin").exists()
+
+    result = _run(f"refs/heads/feature {head} refs/heads/feature {ZERO}\n", cwd=root)
+    assert REACHED_THE_END not in result.stdout, (
+        "the gate skipped both halves with no origin/main to scope against: "
+        f"stdout={result.stdout!r}"
+    )
+
+
+def test_without_origin_main_the_old_range_is_still_used(sandbox: Sandbox):
+    """The middle rung of the preference order, and why it is kept.
+
+    A fork that tracks `upstream` has no `origin/main`, and for it `remote_sha..local_sha`
+    is still the best answer available: exact while the branch is a fast-forward, too wide
+    after a rewrite. Gating unconditionally instead would make every push on such a clone
+    pay the full chain forever — a real cost, to buy nothing, since the wide range already
+    errs toward gating. This sandbox has no `origin/main`, so an empty `remote..local`
+    range must still reach the cheap exit.
+    """
+    assert not (sandbox.root / ".git" / "refs" / "remotes" / "origin").exists()
+    result = _run(
+        f"refs/heads/some-branch {sandbox.head} refs/heads/some-branch {sandbox.head}\n",
+        cwd=sandbox.root,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert REACHED_THE_END in result.stdout

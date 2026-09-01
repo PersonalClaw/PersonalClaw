@@ -73,18 +73,32 @@ while [ ! -t 0 ] && read -r local_ref local_sha _remote_ref remote_sha; do
     echo "          batching several refs into one push." >&2
     exit 1
   fi
-  if [ "$remote_sha" = "$ZERO" ]; then
-    # New remote branch: compare against the shared history with origin/main
-    # when we have it; otherwise gate unconditionally rather than skip blind.
-    if base=$(git merge-base "$local_sha" origin/main 2>/dev/null); then
-      range="$base..$local_sha"
-    else
-      needs_gate=1
-      needs_lint=1
-      continue
-    fi
-  else
+  # Scope by what this BRANCH adds on top of `main`, never by `remote_sha..local_sha`.
+  # The two are the same question only while the branch is a fast-forward of its remote.
+  # After a rebase (or any force-push) the old remote tip is no longer an ancestor, and
+  # `remote_sha..local_sha` diffs the two trees — dragging in every `main` commit that
+  # landed in between, including other people's frontend work. Measured on a three-file
+  # backend-only branch: 94 frontend files in that range versus 0 the branch touches, so
+  # the expensive half ran for ten minutes and then failed on web tests the diff could
+  # not have affected (issue 2269). Rebasing before a push is routine, so this was the
+  # common case rather than an edge one.
+  #
+  # A stale local `origin/main` makes the merge-base too OLD, which widens the range and
+  # gates more. That is the safe direction; the reverse would skip a real change. Below is
+  # the preference order — best available answer first, each falling back only when the one
+  # above it cannot be computed at all.
+  if base=$(git merge-base "$local_sha" origin/main 2>/dev/null); then
+    range="$base..$local_sha"
+  elif [ "$remote_sha" != "$ZERO" ]; then
+    # No origin/main to measure against (a fork that tracks `upstream`, say). The old
+    # range is the best answer left: exact while the branch is a fast-forward of its
+    # remote, and too WIDE after a rewrite — which over-gates, never under-gates.
     range="$remote_sha..$local_sha"
+  else
+    # A new branch AND no shared history: nothing to compare. Gate rather than skip blind.
+    needs_gate=1
+    needs_lint=1
+    continue
   fi
   # shellcheck disable=SC2086 — FRONTEND_PATHS is a deliberate word list
   if [ -n "$(git diff --name-only "$range" -- $FRONTEND_PATHS 2>/dev/null || echo changed)" ]; then
