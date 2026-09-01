@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.sw.json",
     "test": "vitest run",
+    "audit:consistency": "PC_WRITE_AUDIT=1 vitest run src/design/consistencyAudit.generate.test.ts",
     "test:watch": "vitest",
     "e2e": "playwright test",
     "e2e:visual": "playwright test e2e/visual.spec.ts",

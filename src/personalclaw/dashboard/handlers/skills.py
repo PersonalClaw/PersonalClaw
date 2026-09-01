@@ -283,6 +283,10 @@ async def api_skills_search(request: web.Request) -> web.Response:
                 {
                     "results": [r.to_dict() for r in results],
                     "counts": {marketplace_name: len(results)},
+                    # A named marketplace resolved, so this branch is never the
+                    # "nothing to install from" case. Reported so both branches of this
+                    # endpoint answer the same shape.
+                    "installable_sources": 1,
                 }
             )
         except Exception as exc:
@@ -290,7 +294,28 @@ async def api_skills_search(request: web.Request) -> web.Response:
             return web.json_response({"error": str(exc)[:500]}, status=500)
 
     results, counts = search_marketplaces_counted(query, limit=limit)
-    return web.json_response({"results": [r.to_dict() for r in results], "counts": counts})
+    # 🔴 `installable_sources` is what tells zero MATCHES apart from nothing to install FROM.
+    #
+    # Two sources register at import (`skills/native.py`): `native` mirrors the bundled
+    # catalogue and `installed` mirrors the user's own skills. Both report
+    # `marketplace_type == "native"`, and neither is somewhere to install from — the fan-out
+    # skips `installed` outright and then filters every `native` hit out as already present.
+    # So on a fresh install the store can offer nothing FOR ANY QUERY, and
+    # `{"results": [], "counts": {}}` was byte-identical to a query that genuinely matched
+    # nothing (issue 1780). The user searched, got silence, and the panel blamed the query.
+    #
+    # Counting non-native sources rather than all of them is the whole point: `len(info())` is
+    # 2 on a fresh install and would have made this field say "configured" about two mirrors of
+    # what the user already has. The type is what the interface already declares, so this reads
+    # a property rather than hardcoding the two names.
+    catalogues = [m for m in registry.info() if m.get("type") != "native"]
+    return web.json_response(
+        {
+            "results": [r.to_dict() for r in results],
+            "counts": counts,
+            "installable_sources": len(catalogues),
+        }
+    )
 
 
 def search_marketplaces_counted(query: str, limit: int = 20) -> "tuple[list, dict[str, int]]":

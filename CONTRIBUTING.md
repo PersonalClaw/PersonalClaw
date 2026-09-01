@@ -248,6 +248,15 @@ outgoing commits touch `web/`, `package.json`, or `package-lock.json`, and CI's
 `web` job repeats it on every PR. To smoke a live dev gateway instead of the
 static server: `PC_SMOKE_URL=http://127.0.0.1:10000 npm run smoke:render`.
 
+"Outgoing commits" means **what your branch adds on top of `main`**, measured
+from the merge-base with `origin/main` — not the range between your branch and
+whatever the remote still points at. Those differ the moment you rebase: the old
+remote tip stops being an ancestor, and the naive range then spans every `main`
+commit in between, so a backend-only branch would pay the whole frontend chain
+for somebody else's `web/` work. Fetch `main` occasionally and the scoping stays
+tight; on a clone with no `origin/main` (a fork tracking `upstream`) the hook
+falls back to the wider range, which over-gates rather than under-gates.
+
 The same pre-push hook also checks **Python lint** (black, isort, flake8 over
 `src/personalclaw`, `tests`, `harness`, the same scope as CI) whenever outgoing
 commits touch those paths. pre-commit only formats what a commit *stages*, so

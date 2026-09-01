@@ -283,6 +283,29 @@ class LearningConfig:
             "finishes reading is a queue that stops being read at all.",
         ),
     )
+    replay_enabled: bool = field(
+        default=False,
+        metadata=_meta(
+            "Replay Evidence On Proposals",
+            "Before you decide on a proposed skill or template, replay a few real turns from "
+            "your captured coding sessions twice — once without the candidate, once with it — "
+            "and show both scores on the proposal card. It is evidence, never a veto: a 'made "
+            "things worse' verdict still lets you accept. Off by default because it spends "
+            "money on the maintenance pass, and it does nothing until you also set a replay "
+            "budget below.",
+        ),
+    )
+    replay_max_dollars: float = field(
+        default=0.0,
+        metadata=_meta(
+            "Replay Budget (USD)",
+            "The spend ceiling for one replay pass. 0 means replay does not run at all — "
+            "deliberately, because 0 reads as 'unlimited' to the spend meter and an unbounded "
+            "LLM pass on a background tick is the one thing this must never be. Reaching the "
+            "ceiling defers the remaining proposals to a later pass with a labelled card, "
+            "never a silent skip.",
+        ),
+    )
     run_end_enabled: bool = field(
         default=True,
         metadata=_meta(

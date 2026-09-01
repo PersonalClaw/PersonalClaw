@@ -3,7 +3,7 @@ import { api, type ActionProvider, type PromptItem, type PromptVariable } from '
 import { Combobox } from '../../ui/Combobox'
 import { Field, TextArea } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
-import { schemaProps, SchemaField, type WidgetMap } from '../tools/schema'
+import { buildArgs, schemaProps, SchemaField, type WidgetMap } from '../tools/schema'
 import { actionIcon } from './triggerMeta'
 
 /** Pick an Action provider + render its schema-driven config form. The available
@@ -179,6 +179,35 @@ export function seedActionConfig(provider: ActionProvider | undefined): Record<s
     else out[k] = ''
   }
   return out
+}
+
+/** Coerce an action config to the SHAPES its provider's schema declares, before it is saved.
+ *
+ * `SchemaField` renders an `object`/`array` field as a JSON textarea, so what the form holds for
+ * one is a *string*. Nothing turned it back into a value on the way out: every consumer of
+ * `ActionConfig` sent `config` verbatim, so `create-task`'s `labels` — badge `string[]`, placeholder
+ * `[ … ]` — persisted as the string `"market, prep"`. The provider then gates on
+ * `isinstance(labels, list)` and drops a non-list, so the created task came out with `labels: []`.
+ * No error at any point in the chain (issue 269).
+ *
+ * The parse itself already existed and was already right: `buildArgs` returns
+ * `{ error: "labels: invalid JSON" }` rather than storing the raw string. It was simply never on
+ * this path — it belongs to the tool inspector, and the trigger and lifecycle forms are the two
+ * surfaces that render the same schema and never called it. So this is a wiring fix, not a new
+ * parser; a second implementation would be the more likely thing to disagree.
+ *
+ * Returns the error for the caller to SHOW. Saving a config the provider will silently discard is
+ * the failure being fixed, so refusing has to be visible or nothing has changed.
+ */
+export function coerceActionConfig(
+  providers: ActionProvider[],
+  provider: string,
+  config: Record<string, unknown>,
+): { config: Record<string, unknown>; error?: string } {
+  const selected = providers.find((p) => p.name === provider)
+  if (!selected) return { config }
+  const { args, error } = buildArgs(selected.settingsSchema, config)
+  return error ? { config, error } : { config: args }
 }
 
 export { actionIcon }

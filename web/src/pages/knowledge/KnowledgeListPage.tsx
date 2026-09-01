@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { reportingWrite } from '../../app/reportingWrite'
+import { reportActionFailure, reportingWrite } from '../../app/reportingWrite'
 import { BookOpen, FileClock, Home, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink, Gavel } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
@@ -248,12 +248,25 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
       placeholder: 'e.g. rust ownership',
       confirmLabel: 'Create shelf',
     })
-    try {
-      const res = await api.createKnowledgeCollection(q ? { name, kind: 'smart', query: q } : { name })
-      invalidateKeys('knowledge:collections')
-      refreshCollections()
-      setCollectionTok(res.collection.id)
-    } catch { /* the rail just doesn't gain a shelf */ }
+    // 🔑 THE USER WAS ASKED TWICE AND CONFIRMED. `promptInput` for the name, `promptInput` again for
+    // the search that fills it, then "Create shelf" — and the old `catch { /* the rail just doesn't
+    // gain a shelf */ }` stated an OUTCOME, not a reason it is acceptable. A failure produced no
+    // shelf and no sentence, which is indistinguishable from the dialog never having been submitted.
+    //
+    // `reportActionFailure` rather than `reportingWrite` because this call's RESULT is needed
+    // (`collection.id` selects the new shelf) — the module's docstring names that split exactly. And
+    // the three follow-ups are gated on it, so a failed create does not invalidate a cache or move
+    // the selection to a shelf that does not exist.
+    // 🪤 `await api.createKnowledgeCollection(` stays on ONE line deliberately. Every write rail in this
+    // tree greps `await api.<method>(` — including the tree-wide swallowed-write sweep — so breaking the
+    // chain across lines would make this call invisible to all of them. My first draft did exactly that
+    // and silently removed the site from the census instead of fixing it.
+    const res = await api.createKnowledgeCollection(q ? { name, kind: 'smart', query: q } : { name })
+      .catch(reportActionFailure(`create the shelf “${name}”`))
+    if (!res) return
+    invalidateKeys('knowledge:collections')
+    refreshCollections()
+    setCollectionTok(res.collection.id)
   }
 
   // 🪤 EVERY WRITE ON THIS PAGE IS DATA-DRIVEN: nothing flips locally, the row re-renders from a

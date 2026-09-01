@@ -113,6 +113,37 @@ def provider():
     defs_mod.unregister_provider("test-mem")
 
 
+class _ReadOnlyProvider(_MemProvider):
+    """A read-only provider, the seam `bundled` and any shipped pack occupy.
+
+    Subclasses the writable one so the ONLY difference under test is `readonly` — if the guard
+    keyed off anything else (a provider name, a path) that would show up as this fixture passing
+    for the wrong reason.
+    """
+
+    @property
+    def name(self) -> str:
+        return "test-pack"
+
+    @property
+    def readonly(self) -> bool:
+        return True
+
+    async def save_def(self, **fields):  # pragma: no cover - a read-only provider is never written
+        raise AssertionError("a read-only provider must never be written through")
+
+    def seed(self, name: str) -> None:
+        self._defs[name] = {"name": name, "version": 1, "source": "bundled"}
+
+
+@pytest.fixture
+def readonly_provider():
+    p = _ReadOnlyProvider()
+    defs_mod.register_provider(p)
+    yield p
+    defs_mod.unregister_provider("test-pack")
+
+
 class _FakeSupervisor:
     """Records launches and hands back the real controller, so tool→engine wiring is
     exercised without a gateway."""
@@ -307,6 +338,63 @@ class TestDefs:
     async def test_a_bad_name_is_refused_before_anything_else(self, provider) -> None:
         body = await service.author_def(name="Not A Name", root=SPEC_ROOT)
         assert not body["ok"] and body["code"] == "WF_DEF_NAME_INVALID"
+
+    async def test_a_read_only_providers_name_is_RESERVED(
+        self, provider, readonly_provider
+    ) -> None:
+        """🔴 issue 764. The save used to succeed and then be ignored.
+
+        `get_def` and every run-start return the first provider in sort order, so a user def
+        shadowing a bundled name produced split-brain: the list showed both, the save reported
+        success, and the run used the bundled spec. The UI reported the half that was not used.
+        """
+        readonly_provider.seed("audit-sweep")
+        body = await service.author_def(name="audit-sweep", root=SPEC_ROOT, description="mine")
+        assert not body["ok"] and body["code"] == "WF_DEF_NAME_RESERVED"
+        # Nothing written — the whole defect was that the write happened.
+        assert await provider.get_def("audit-sweep") is None
+        # The refusal names the provider AND what to do instead. A 409 that says only "conflict"
+        # leaves the user re-clicking Save.
+        assert body["provider"] == "test-pack"
+        assert "different name" in body["message"]
+
+    async def test_the_reservation_is_reported_by_a_DRY_RUN_too(
+        self, provider, readonly_provider
+    ) -> None:
+        """`save=False` exists to learn what is wrong before committing, and the name is the
+        cheapest thing to fix. Discovering it only on the real save wastes the dry run."""
+        readonly_provider.seed("audit-sweep")
+        body = await service.author_def(name="audit-sweep", root=SPEC_ROOT, save=False)
+        assert not body["ok"] and body["code"] == "WF_DEF_NAME_RESERVED"
+
+    async def test_a_WRITABLE_providers_name_is_not_reserved(self, provider) -> None:
+        """🪤 The vacuity floor. "Refuse a name another provider has" one step too far refuses
+        every UPDATE, since a user re-saving their own def collides with themselves. Only a
+        READ-ONLY provider reserves a name."""
+        first = await service.author_def(name="wf-mine", root=SPEC_ROOT, description="v1")
+        assert first["ok"] and first["saved"]
+        again = await service.author_def(name="wf-mine", root=SPEC_ROOT, description="v2")
+        assert again["ok"] and again["saved"], "re-saving one's own def must still work"
+        assert (await provider.get_def("wf-mine"))["description"] == "v2"
+
+    async def test_an_unrelated_name_is_unaffected_by_a_read_only_pack(
+        self, provider, readonly_provider
+    ) -> None:
+        """The guard is per-NAME, not "a read-only provider exists, so refuse everything"."""
+        readonly_provider.seed("audit-sweep")
+        body = await service.author_def(name="wf-fresh", root=SPEC_ROOT)
+        assert body["ok"] and body["saved"]
+
+    async def test_the_reservation_is_keyed_on_readonly_not_on_a_provider_NAME(
+        self, provider, readonly_provider
+    ) -> None:
+        """A guard written against the string "bundled" would miss every shipped pack, which is
+        read-only for the same reason. This fixture's provider is called `test-pack`, so a
+        name-based rule cannot pass this leg."""
+        readonly_provider.seed("packaged-thing")
+        body = await service.author_def(name="packaged-thing", root=SPEC_ROOT)
+        assert not body["ok"] and body["code"] == "WF_DEF_NAME_RESERVED"
+        assert body["provider"] == "test-pack"
 
     async def test_a_literal_credential_is_refused_not_warned(self, provider) -> None:
         """Once saved the value is on disk and every later defence is damage control."""

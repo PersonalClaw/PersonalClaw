@@ -7,7 +7,7 @@ import { api, type HookItem, type ActionProvider } from '../../lib/api'
 import { Field, TextInput, FieldError } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
-import { ActionConfig, seedActionConfig } from './ActionConfig'
+import { ActionConfig, coerceActionConfig, seedActionConfig } from './ActionConfig'
 import { useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher, relPast, eventIsDormant, eventDormancyReason } from './triggerMeta'
 import { accentChip } from '../../design/accent'
 
@@ -55,8 +55,13 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
 
   async function save() {
     if (!name.trim()) { setErr('Name is required'); return }
+    // Same coercion the create page runs: `object`/`array` fields are edited as JSON text, so
+    // saving `config` verbatim would persist a string where the provider expects a list and it
+    // would be dropped without a word (issue 269).
+    const coerced = coerceActionConfig(providers, provider, config)
+    if (coerced.error) { setErr(coerced.error); return }
     setSaving(true); setErr('')
-    try { await api.updateHook(hook.id, { name: name.trim(), event, matcher: matcher.trim(), provider, provider_config: config }); onSaved(); setEditing(false) }
+    try { await api.updateHook(hook.id, { name: name.trim(), event, matcher: matcher.trim(), provider, provider_config: coerced.config }); onSaved(); setEditing(false) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') } finally { setSaving(false) }
   }
   async function del() {

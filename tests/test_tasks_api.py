@@ -693,3 +693,104 @@ async def test_invalid_status_is_400_not_silent_noop(tmp_path):
         # And the task is untouched.
         got = await (await client.get(f"/api/tasks/{t['id']}")).json()
         assert got["status"] == "open"
+
+
+# ── project_id resolves on BOTH write paths (issue 2142) ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_picking_a_project_while_EDITING_moves_the_task(tmp_path):
+    """🔴 issue 2142. `PUT /api/tasks/{id}` dropped `project_id` on the floor.
+
+    A task's `project` label derives solely from its task list, so a `project_id` with no
+    `task_list_id` has to be resolved into one. `_attach_project_general_list` does that and was
+    called by the create handler only — so `project_id` reached `update_task`, which has no such
+    field, and the edit answered **200 having changed nothing**. The dropdown reverted on the next
+    load, with no indication at any point.
+
+    `TaskForm.draftToPayload` is shared by the create page and the detail page, so the identical
+    payload worked on one surface and was a no-op on the other.
+    """
+    async with _client(tmp_path) as client:
+        pid = (await (await client.post("/api/projects", json={"name": "Website"})).json())["id"]
+        task_id = (await (await client.post("/api/tasks", json={"title": "t"})).json())["id"]
+
+        r = await client.put(f"/api/tasks/{task_id}", json={"title": "t", "project_id": pid})
+        assert r.status == 200
+
+        # The task now belongs to a list under that project — which is what "in the project" MEANS
+        # here. Asserting on the returned `task_list_id` rather than a label, because the label is
+        # derived and could agree while the row did not move.
+        lists = (await (await client.get(f"/api/task-lists?project_id={pid}")).json())["task_lists"]
+        assert [tl["name"] for tl in lists] == ["General"]
+        assert (await r.json())["task_list_id"] == lists[0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_the_two_write_paths_resolve_a_project_IDENTICALLY(tmp_path):
+    """The rail. One shared form payload, two endpoints — they must agree.
+
+    This is the third instance of that shape I have hit (the trigger form's dropped fields, the
+    knowledge second write path, this), so the assertion is not "update works" but "update does
+    what create does", derived by running the same body through both.
+    """
+    async with _client(tmp_path) as client:
+        pid = (await (await client.post("/api/projects", json={"name": "Website"})).json())["id"]
+        body = {"title": "shared payload", "task_list_id": "", "project_id": pid}
+
+        created = await (await client.post("/api/tasks", json=dict(body))).json()
+        other_id = (await (await client.post("/api/tasks", json={"title": "x"})).json())["id"]
+        updated = await (await client.put(f"/api/tasks/{other_id}", json=dict(body))).json()
+
+        assert created["task_list_id"], "create stopped resolving the project"
+        assert updated["task_list_id"] == created["task_list_id"]
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_task_list_WINS_over_project_id(tmp_path):
+    """🪤 The floor. "Resolve the project" one step too far would overwrite a list the user picked
+    deliberately, which is a worse bug than the one being fixed — it would move tasks."""
+    async with _client(tmp_path) as client:
+        pid = (await (await client.post("/api/projects", json={"name": "Website"})).json())["id"]
+        chosen = await (
+            await client.post("/api/task-lists", json={"name": "Backlog", "project_id": pid})
+        ).json()
+        task_id = (await (await client.post("/api/tasks", json={"title": "t"})).json())["id"]
+
+        r = await client.put(
+            f"/api/tasks/{task_id}",
+            json={"title": "t", "task_list_id": chosen["id"], "project_id": pid},
+        )
+        assert (await r.json())["task_list_id"] == chosen["id"]
+        # And no "General" list was conjured on the side.
+        lists = (await (await client.get(f"/api/task-lists?project_id={pid}")).json())["task_lists"]
+        assert [tl["name"] for tl in lists] == ["Backlog"]
+
+
+@pytest.mark.asyncio
+async def test_an_EMPTY_task_list_id_still_resolves_the_project(tmp_path):
+    """The form always sends the key, so `task_list_id: ""` is the live case, not an edge one.
+
+    It worked before only because `""` is falsy — luck rather than intent. The guard now states the
+    rule ("an explicitly empty list means no list chosen"), and this pins it so a later
+    `if "task_list_id" in body` refactor cannot invert it silently.
+    """
+    async with _client(tmp_path) as client:
+        pid = (await (await client.post("/api/projects", json={"name": "Website"})).json())["id"]
+        task_id = (await (await client.post("/api/tasks", json={"title": "t"})).json())["id"]
+        r = await client.put(
+            f"/api/tasks/{task_id}", json={"title": "t", "task_list_id": "  ", "project_id": pid}
+        )
+        assert (await r.json())["task_list_id"], "a blank list defeated the project resolution"
+
+
+@pytest.mark.asyncio
+async def test_a_task_without_a_project_id_is_left_alone(tmp_path):
+    """The other floor: the resolution must be a no-op for every edit that does not mention a
+    project, which is nearly all of them."""
+    async with _client(tmp_path) as client:
+        task_id = (await (await client.post("/api/tasks", json={"title": "t"})).json())["id"]
+        r = await client.put(f"/api/tasks/{task_id}", json={"title": "renamed"})
+        body = await r.json()
+        assert body["title"] == "renamed"
+        assert not body["task_list_id"]

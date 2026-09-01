@@ -56,7 +56,7 @@ function scan(overrides: Partial<OnboardingImportScan['sources'][number]> = {}):
           { fingerprint: 'f4', source: 'claude_code', category: 'skills', key: 'tidy-notes', title: 'tidy-notes', redactions: 0, existing: false },
         ],
         secrets_skipped: 2, redactions: 1,
-        notes: ['2 credential value(s) or file(s) were skipped and not imported.'],
+        notes: ['2 credential values or files were skipped and not imported.'],
         ...overrides,
       },
       {
@@ -263,12 +263,31 @@ describe('the report says what happened, out loud', () => {
   })
 
   it('repeats the withheld-credential count from the report', async () => {
+    // 🔁 The fixture and this assertion both carried `2 credential value(s) or file(s)` — the sentence
+    // `onboarding_import` composes in PYTHON and this panel renders verbatim. The producer now writes a
+    // real plural, so the fixture moves with it. Same reason the sibling assertion above was corrected:
+    // a fixture fixed at 2 cannot tell a hedge from a correct plural, because they differ only at n===1.
     runOnboardingImport.mockResolvedValue(report([IMPORTED_ROW], {
-      secrets_skipped: 2, notes: ['2 credential value(s) or file(s) were skipped and not imported.'],
+      secrets_skipped: 2, notes: ['2 credential values or files were skipped and not imported.'],
     }))
     await mounted()
     fireEvent.click(screen.getByRole('button', { name: /Import selected/ }))
-    expect(await screen.findByText(/2 credential value\(s\) or file\(s\) were skipped/)).toBeTruthy()
+    expect(await screen.findByText(/2 credential values or files were skipped/)).toBeTruthy()
+    expect(screen.queryByText(/value\(s\)|file\(s\)/)).toBeNull()
+  })
+
+  it('and the backend note reads SINGULAR at exactly one withheld credential', async () => {
+    // The boundary the fixture above never crosses, and the one the old hedge got wrong. This mirrors
+    // the pre-import sentence's own singular test — a user meets both in one flow, so both must agree.
+    // 🪤 The VERB moves too: "1 credential value or file WAS skipped", not "were". Two nouns joined by
+    // "or" still take a number, and a parenthetical hid that second disagreement completely.
+    runOnboardingImport.mockResolvedValue(report([IMPORTED_ROW], {
+      secrets_skipped: 1, notes: ['1 credential value or file was skipped and not imported.'],
+    }))
+    await mounted()
+    fireEvent.click(screen.getByRole('button', { name: /Import selected/ }))
+    expect(await screen.findByText(/1 credential value or file was skipped/)).toBeTruthy()
+    expect(screen.queryByText(/values or files|were skipped/)).toBeNull()
   })
 })
 

@@ -140,6 +140,27 @@ def test_an_empty_arm_yields_NO_VERDICT_not_insufficient_trials():
     assert tv.delta_points is None
     assert "skills_off" in tv.reason
     assert "not a tie and not a zero delta" in tv.reason
+    # 🔑 ONE arm is the ORDINARY case here, not an edge: a paired run where a single arm produced
+    # nothing. This sentence is not a log line — the runner writes it into the persisted report,
+    # `GET /api/evals/learning-benchmark` serves it as `BenchmarkTaskRow.reason`, and
+    # `learning/BenchmarkPanel.tsx` renders it VERBATIM. It read `arm(s) skills_off …` until
+    # 2026-09-02, i.e. it was wrong on its commonest input.
+    assert tv.reason.startswith("arm skills_off produced no scored cell"), tv.reason
+    assert "(s)" not in tv.reason, tv.reason
+
+
+def test_both_arms_empty_names_them_BOTH_and_pluralises():
+    """The other side of the boundary, which a one-arm fixture cannot certify.
+
+    The plural and the singular are separate paths through the same expression, so asserting only
+    one leaves the other free to drift — this suite's own `(s)` was introduced and survived
+    precisely because nothing crossed the boundary.
+    """
+    tv = learning_verdict.verdict_task(
+        task_id="sk_grill", skill="grill", on_trials=[], off_trials=[]
+    )
+    assert tv.reason.startswith("arms skills_on, skills_off produced no scored cell"), tv.reason
+    assert "(s)" not in tv.reason, tv.reason
 
 
 def test_to_dict_never_substitutes_a_number_for_an_absent_verdict():

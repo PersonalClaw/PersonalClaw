@@ -90,30 +90,35 @@ class TestDecoyCannotLowerRisk:
         assert resolve_effective_risk("", "vendor_wipe_database", "", {"command": "ls"}) != "safe"
 
     def test_the_decoy_cannot_produce_a_read_only_verdict(self):
-        """`memory_forget` carries no mutating NAME hint, so the kind/name fallthrough
-        answers READ_ONLY on its own — which would hand back exactly what the removed
-        step 1 used to give. The bypass has two doors; this is the second."""
-        assert classify_invocation("memory_forget", "", {"rule": "x"}) == READ_ONLY
-        assert classify_invocation("memory_forget", "", {"rule": "x", "command": "ls"}) == MUTATING
+        """A tool that legitimately answers READ_ONLY must still be forced MUTATING by a
+        decoy `command`, or the bypass reopens through the kind/name fallthrough.
+
+        This used to be demonstrated with `memory_forget`, which reached READ_ONLY because
+        `forget` was missing from `_MUTATING_NAME_HINTS` — that was #2118, and it is fixed,
+        so `memory_forget` now answers MUTATING on its name alone and can no longer show
+        this property. `memory_recall` is a genuine read, which is the honest fixture for it:
+        the point is that a non-shell tool carrying a shell string is not a call we
+        understand, whatever its name says.
+        """
+        assert classify_invocation("memory_recall", "", {"rule": "x"}) == READ_ONLY
+        assert classify_invocation("memory_recall", "", {"rule": "x", "command": "ls"}) == MUTATING
 
 
 #: The subset of :data:`DESTRUCTIVE_TOOLS` that ``task_mode_denies`` actually denies, so a
 #: "the decoy no longer unlocks it" assertion has something to measure.
 #:
-#: ``memory_forget`` is deliberately absent, and its absence is a SEPARATE finding, not a
-#: gap in this fix: ``infer_risk_from_name("memory_forget")`` answers ``destructive``
-#: while ``classify_invocation`` answers ``READ_ONLY`` (``forget`` is not in
-#: ``_MUTATING_NAME_HINTS``), and ``task_mode_denies`` consults only the second — so it
-#: runs in ask/plan mode with no decoy needed. Same for ``knowledge_forget``. That is two
-#: name heuristics in one module disagreeing, a different root cause from this one, and
-#: pulling it in here would mean one branch changing the risk class of every tool whose
-#: name inference and classification differ. Filed as #2118.
+#: ``memory_forget`` was deliberately ABSENT here while #2118 was open: it graded
+#: ``destructive`` by name inference but classified READ_ONLY, and ``task_mode_denies``
+#: consults only the classifier, so it ran in ask/plan with no decoy needed. #2118 is closed
+#: — ``_MUTATING_NAME_HINTS`` is now a union over ``_DESTRUCTIVE_NAME_HINTS`` — so it belongs
+#: in this list, and its presence is what keeps the decoy legs below honest about it.
 TASK_MODE_DENIED_TOOLS = [
     ("workflow_delete_def", {"name": "x"}),
     ("artifact_delete", {"slug": "x"}),
     ("automation_delete_all", {}),
     ("task_delete", {"task_id": "t-1"}),
     ("session_delete", {"id": "s-1"}),
+    ("memory_forget", {"rule": "x"}),
 ]
 
 
@@ -135,18 +140,50 @@ class TestDecoyCannotUnlockTaskModes:
         """Vacuity floor: a fix that denied everything would pass every test above."""
         assert task_mode_denies("agent", "workflow_delete_def", "", {"command": "ls"}) == ""
 
-    def test_the_separate_forget_finding_is_recorded_not_silently_fixed(self):
-        """Pins #2118, the finding this fix deliberately does NOT close, so it stays visible.
+    def test_a_destructive_verb_is_denied_in_ask_and_plan(self):
+        """#2118 CLOSED. This is the inverse of the test that used to pin the gap here.
 
-        ``memory_forget``/``knowledge_forget`` run in ask/plan mode with no decoy at all,
-        because the module's two name heuristics disagree about them. If a later change
-        closes that, this test reds and the note above gets deleted with it — which is the
-        point. A known gap that nothing asserts is a gap that gets forgotten.
+        The two name heuristics disagreed: ``destroy``, ``drop_``, ``purge`` and ``forget``
+        were destructive-but-not-mutating, so ``memory_forget`` graded ``destructive`` for
+        the approval card while classifying READ_ONLY for the task-mode gate — and ran in
+        ask AND plan mode with nothing to deny it, no decoy argument required. The gate
+        asked only the classifier, and the classifier had never heard of the verb.
+
+        Both heuristics must now agree for every destructive verb, in every mode whose
+        contract is that mutations do not run.
         """
-        for tool in ("memory_forget", "knowledge_forget"):
-            assert infer_risk_from_name(tool) == "destructive"
-            assert classify_invocation(tool, "", {}) == READ_ONLY
-            assert task_mode_denies("plan", tool, "", {}) == ""
+        for tool in ("memory_forget", "knowledge_forget", "cache_purge", "session_destroy"):
+            assert infer_risk_from_name(tool) == "destructive", tool
+            assert classify_invocation(tool, "", {}) == MUTATING, (
+                f"{tool} classifies read-only, so the task-mode gate will let it run — "
+                "the #2118 shape"
+            )
+            for mode in ("ask", "plan"):
+                assert task_mode_denies(mode, tool, "", {}), f"{tool} should be denied in {mode}"
+
+    def test_the_destructive_set_is_contained_in_the_mutating_set(self):
+        """The structural half — what stops #2118 recurring rather than being fixed once.
+
+        A destructive verb that is not also mutating is a contradiction, and two independent
+        literals had silently drifted into exactly that. `_MUTATING_NAME_HINTS` is now built
+        as a union over `_DESTRUCTIVE_NAME_HINTS`, so adding a verb to one widens the
+        task-mode gate in the same edit. This asserts the containment rather than the
+        current membership, so it keeps holding as either set grows — the leg above would
+        pass while a NEWLY added destructive verb leaked, because it names four tools.
+        """
+        from personalclaw.task_modes import _DESTRUCTIVE_NAME_HINTS, _MUTATING_NAME_HINTS
+
+        assert _DESTRUCTIVE_NAME_HINTS, "the destructive set is empty — nothing is asserted"
+        missing = [h for h in _DESTRUCTIVE_NAME_HINTS if h not in _MUTATING_NAME_HINTS]
+        assert not missing, (
+            f"destructive verbs absent from the mutating set: {missing}. Each one is a tool "
+            "the approval card grades 'destructive' while the task-mode gate reads it as a "
+            "read and lets it run in ask/plan (#2118)."
+        )
+        assert len(_MUTATING_NAME_HINTS) == len(set(_MUTATING_NAME_HINTS)), (
+            "the union duplicated a fragment; harmless for matching but it means the two "
+            "sets are being maintained by hand again"
+        )
 
 
 class TestRealShellCallsAreUnchanged:

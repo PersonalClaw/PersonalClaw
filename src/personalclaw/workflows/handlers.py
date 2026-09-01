@@ -49,6 +49,10 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     "WF_NODE_NOT_FOUND": (404, "not_found"),
     "WF_DEF_NAME_REQUIRED": (400, "invalid_request"),
     "WF_DEF_NAME_INVALID": (400, "invalid_request"),
+    # 409, not 400: the request is well-formed and the name is valid — it is the existing state
+    # (a read-only provider already serving that name) that conflicts. Same status as
+    # `WF_DEF_NO_WRITABLE_PROVIDER`, which is the same class of refusal.
+    "WF_DEF_NAME_RESERVED": (409, "name_reserved"),
     "WF_DEF_ROOT_REQUIRED": (400, "invalid_request"),
     "WF_DEF_INVALID": (422, "validation_failed"),
     # 422 like a validation failure, because that is what it is: the spec is well-formed JSON

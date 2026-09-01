@@ -10,6 +10,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Proposals can now show whether they would have helped on YOUR work.**
+
 - **Automations can now read a web page.**
 - **"Open at login" is now a working switch in Settings, and it agrees with the menu bar.**
 
@@ -78,6 +80,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Searching the skill store said "No results" when there was nothing to search.**
+
+- **Choosing a project while editing a task now moves the task.**
+
+- **A list-typed action setting is no longer thrown away without a word.**
+
+- **Editing an artifact and navigating away lost the edit.**
+
+- **`personalclaw snapshot` left your custom themes behind.**
+
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it had.**
 
 - **Two settings saved at the same moment could lose one of them.**
@@ -87,6 +99,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **When the model was unavailable, knowledge enrichment told you it had found nothing.**
 - **Anything named like a path was treated as a credential — which broke a bundled template and stripped native libraries out of a workflow's leaves.**
+- **Saying "approve it" stopped working for good once a run had answered its first gate.**
 
 - **Creating a knowledge intent could silently delete one you already had.**
 

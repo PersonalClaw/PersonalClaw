@@ -13,12 +13,6 @@
         "enum:StructuredOutput.JSON_MODE"
       ]
     },
-    "src/personalclaw/llm/prompt_cache.py": {
-      "inert": 1,
-      "surfaces": [
-        "enum:PromptCache.AUTOMATIC"
-      ]
-    },
     "src/personalclaw/memory_record.py": {
       "inert": 1,
       "surfaces": [
@@ -431,10 +425,10 @@
     "by_kind": {
       "config": 0,
       "editable_config": 0,
-      "enum": 9,
+      "enum": 8,
       "sdk_export": 231,
       "trigger_kind": 0
     },
-    "inert": 240
+    "inert": 239
   }
 }

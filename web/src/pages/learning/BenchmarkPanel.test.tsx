@@ -188,7 +188,14 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
               token_ratio: null,
               arms: {},
               absent_cells: 10,
-              reason: 'arm(s) skills_off produced no scored cell',
+              // 🔁 Was `arm(s) skills_off produced no scored cell` — a sentence NO producer emits.
+              // `harness/learning_verdict.py` composes this string and the count is the number of
+              // arms with no scored cell, which is ONE in the ordinary case (a paired run where a
+              // single arm produced nothing). A fixture inventing copy is the mirror image of the
+              // usual defect, and it is worse here than elsewhere because the panel renders
+              // `row.reason` VERBATIM, so this fixture is the only local record of what a reader
+              // actually sees. Two-arm case asserted below.
+              reason: 'arm skills_off produced no scored cell',
             })],
             measured_tasks: 0,
           }),
@@ -198,12 +205,45 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
       />,
     )
     expect(screen.getByText('Nothing was measured')).toBeTruthy()
+    // …and the reason reaches the reader unchanged, which is what makes the fixture above a
+    // CONTRACT rather than decoration. Before this, no assertion read it at all.
+    expect(screen.getByText('arm skills_off produced no scored cell')).toBeTruthy()
     expect(screen.getAllByText('not measured').length).toBeGreaterThan(0)
     // The vacuity assertion for the claim above: prove the forbidden strings are ABSENT, not
     // merely that a good string is present. A panel that drew both would pass a presence-only
     // check while publishing the fabricated zero.
     expect(screen.queryByText('+0.00')).toBeNull()
     expect(screen.queryByText('0.000')).toBeNull()
+  })
+
+  it('names BOTH arms, pluralised, when neither produced a scored cell', () => {
+    // 🔑 THE BOUNDARY A ONE-ARM FIXTURE CANNOT CROSS. `arm(s)` was replaced by a conditional on
+    // the arm count, so the singular and the plural are two different code paths in the producer
+    // and a fixture fixed at one arm certifies only half of it. Both strings are what
+    // `harness/learning_verdict.py` actually emits — verified by calling it at both boundaries.
+    render(
+      <BenchmarkPanel
+        view={view({
+          report: report({
+            tasks: [task({
+              verdict: null,
+              verdict_class: null,
+              delta_points: null,
+              token_ratio: null,
+              arms: {},
+              absent_cells: 10,
+              reason: 'arms skills_on, skills_off produced no scored cell',
+            })],
+            measured_tasks: 0,
+          }),
+        })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText('arms skills_on, skills_off produced no scored cell')).toBeTruthy()
+    // The hedge must not come back in either direction.
+    expect(screen.queryByText(/arm\(s\)/)).toBeNull()
     expect(screen.queryByText('0.00 ±0.00')).toBeNull()
   })
 

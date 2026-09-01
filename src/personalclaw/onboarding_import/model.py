@@ -103,6 +103,45 @@ class ImportItem:
         }
 
 
+def withheld_notes(*, secrets_skipped: int, redactions: int) -> list[str]:
+    """The ONE place the two withheld-credential sentences are composed.
+
+    They were written twice — here (via :meth:`ScanResult.note_withheld`) and again inline in
+    ``writers.import_report`` — and the two copies said the same thing in the same words, which is
+    exactly how a copy stops being the same thing. Both classes carry the identical
+    ``secrets_skipped`` / ``redactions`` / ``notes`` fields, so a free function serves both without
+    either one growing a base class.
+
+    🔑 The counts are stated with real plurals rather than a ``(s)`` hedge, and the VERB agrees too.
+    Two nouns joined by "or" still take a number: at one it is "1 credential value or file **was**
+    skipped", at three "3 credential values or files **were** skipped". A parenthetical would have
+    hidden that second disagreement entirely.
+
+    🪤 The sentence is deliberately identical in shape to the pre-import one the frontend
+    composes (`app/onboarding/ImportStep.tsx`: "N credential values or files will not be
+    imported") because a user meets both in one flow — the warning before, this note after. If
+    one is reworded, reword both, and note that the frontend's is a SEPARATE producer (a React
+    expression, not this function): the two cannot be shared across the language boundary, only
+    kept in step.
+
+    Says how much was withheld. Never what — no value, path or key appears here.
+    """
+    notes: list[str] = []
+    if secrets_skipped:
+        plural = secrets_skipped != 1
+        notes.append(
+            f"{secrets_skipped} credential value{'s' if plural else ''} or "
+            f"file{'s' if plural else ''} {'were' if plural else 'was'} skipped and not imported."
+        )
+    if redactions:
+        plural = redactions != 1
+        notes.append(
+            f"{redactions} credential-like string{'s' if plural else ''} "
+            f"{'were' if plural else 'was'} redacted from imported text."
+        )
+    return notes
+
+
 @dataclass
 class ScanResult:
     """What one source's scanner found. Serializable, secret-free, comparable.
@@ -142,15 +181,9 @@ class ScanResult:
         Every scanner ends with this so the user always learns a credential existed
         without the credential appearing in a note, a log, or a UI string.
         """
-        if self.secrets_skipped:
-            self.notes.append(
-                f"{self.secrets_skipped} credential value(s) or file(s) were skipped "
-                "and not imported."
-            )
-        if self.redactions:
-            self.notes.append(
-                f"{self.redactions} credential-like string(s) were redacted from imported text."
-            )
+        self.notes.extend(
+            withheld_notes(secrets_skipped=self.secrets_skipped, redactions=self.redactions)
+        )
 
     def to_dict(self) -> dict:
         return {

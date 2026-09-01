@@ -263,8 +263,15 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
             )
           ) : (
             <div className="flex flex-col gap-xs">
+              {/* Rows are keyed by source AND name. A name is unique per PROVIDER, not across
+                  them, and an install that already carries a user def shadowing a bundled one
+                  (possible before issue 764 closed that off at the save path) lists both — which
+                  under a name-only key is a duplicate-key collision, so React reconciles two
+                  distinct rows as one and the delete button can act on the wrong record. New
+                  shadows are refused now; the ones already on disk still have to render, and be
+                  deletable, or they would be stranded. */}
               {filteredDefs.map((d, i) => (
-                <ListRow key={d.name} index={i} onClick={() => navigate(`workflows/defs/${d.name}`)} label={d.name}>
+                <ListRow key={`${d.source}:${d.name}`} index={i} onClick={() => navigate(`workflows/defs/${d.name}`)} label={d.name}>
                   <div className="flex min-w-0 flex-1 items-center gap-m">
                     <Workflow size={15} className="shrink-0 text-on-surface-low" />
                     <div className="min-w-0 flex-1">

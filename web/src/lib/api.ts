@@ -1877,6 +1877,29 @@ export interface LearningRow {
   // rule every eval panel follows. `pin` identifies WHAT produced the pair and is `{}` when
   // ungated; it is never synthesized.
   gate: LearningGate
+  // The local A/B replay harness's verdict. ALWAYS present, for the
+  // same reason `gate` is. Where the gate measures the candidate against the SHIPPED scenario
+  // library, this measures it against real turns mined from the user's OWN captured sessions —
+  // two corpora, two clauses, deliberately not merged into one number a reader cannot attribute.
+  // `candidate_mean`/`baseline_mean` are `null` when nothing scored and must render as
+  // "not measured", never as 0: a candidate that genuinely scored zero and a candidate nobody
+  // scored lead a reviewer to opposite decisions. It is EVIDENCE and never a veto — a `regressed`
+  // verdict leaves the row exactly as acceptable as it was.
+  replay: LearningReplay
+}
+export interface LearningReplay {
+  state: 'replayed' | 'unreplayed'
+  reason: string
+  verdict: 'improved' | 'neutral' | 'regressed' | 'unmeasured'
+  candidate_mean: number | null; baseline_mean: number | null
+  cases: number; scored: number; rejected: number; tool_free: number
+  // True only when the learning replay budget was exhausted mid-pass. A deferral is a promise to
+  // come back and reads differently from "there was nothing to measure".
+  deferred: boolean
+  // `capture:<session>#<record_hash>` per case — the pointer back to the turn each score came
+  // from, so a claim about the user's own work is checkable against it.
+  provenance: string[]
+  ran_at: string
 }
 export interface LearningGate {
   state: 'gated' | 'ungated'
@@ -5776,8 +5799,12 @@ export const api = {
   // marketplace omitted → search across ALL marketplaces; pass one to scope.
   // `counts` is the per-source matched count BEFORE the global cap, so the source filter
   // can say how many of a large catalog matched even though only the top rows come back.
+  // `installable_sources` counts catalogues you can install FROM — it excludes the two
+  // `native` mirrors of what is already on this machine (bundled + your own skills). Zero of
+  // those and zero MATCHES used to look identical, so a fresh install with no catalogue told
+  // the user "No results — try a different search term".
   searchSkillsCounted: (q: string, marketplace?: string, limit = 30) =>
-    get<{ results: SkillSearchResult[]; counts?: Record<string, number> }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => ({ results: d.results, counts: d.counts ?? {} })),
+    get<{ results: SkillSearchResult[]; counts?: Record<string, number>; installable_sources?: number }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => ({ results: d.results, counts: d.counts ?? {}, installableSources: d.installable_sources ?? 0 })),
   searchSkills: (q: string, marketplace?: string, limit = 30) =>
     get<{ results: SkillSearchResult[] }>(`/api/skills/search?q=${encodeURIComponent(q)}&limit=${limit}${marketplace ? `&marketplace=${encodeURIComponent(marketplace)}` : ''}`).then((d) => d.results),
   skillMarketplaceDetail: (id: string, marketplace = 'skills.sh') =>

@@ -112,12 +112,42 @@ describe('the knowledge summary cannot strand its separator', () => {
   })
 })
 
-describe('the canonical form on #/tasks stays canonical', () => {
-  // 98 of the 106 measured separators are safe because they follow text that always renders. This one
-  // is safe because it is COMPUTED, and it is the form to copy when a meta line grows optional parts.
+describe('the canonical form on #/tasks is now NO GLYPH — the computed one was measured unsafe', () => {
+  // 🔴 THIS BLOCK USED TO ASSERT THE OPPOSITE, and its reason was empirically wrong. It read: "98 of
+  // the 106 measured separators are safe because they follow text that always renders. This one is
+  // safe because it is COMPUTED, and it is the form to copy when a meta line grows optional parts."
+  //
+  // The computed form is NOT safe. `(lead.length > 0 || i > 0)` tests PRESENCE, not LINE POSITION, so
+  // it says nothing about wrapping. Measured in a browser with that exact conditional in place, on the
+  // demo fixture, four meta lines carrying a schedule item:
+  //
+  //     1440 / 834 / 390px   0 stranded   (h=20 — one line)
+  //             360px        2 stranded   (h=41 — wrapped)
+  //             320px        4 of 4       ← the width WCAG SC 1.4.10 (Reflow) mandates
+  //
+  // So "computed" bought correctness at every tier this repo sweeps and none below it. The form to
+  // copy is the one `#/prompts` adopted under #2224's ruling: no glyph, separate by `gap-x-*`, which
+  // is the mechanism this very row already used for its identity group.
+  //
+  // 🪤 The assertion is now the PROPERTY rather than a literal. The old exact pin
+  // (`/\(lead\.length > 0 \|\| i > 0\) \? '· ' : ''/`) is this tree's most-repeated rail defect — a
+  // mechanism standing in for the thing it was supposed to guarantee — and it would have gone on
+  // mandating the unsafe form indefinitely.
   const src = read('pages/tasks/TasksListPage.tsx')
 
-  it('MetaLine still computes the separator rather than hard-coding it', () => {
-    expect(src).toMatch(/\(lead\.length > 0 \|\| i > 0\) \? '· ' : ''/)
+  it('MetaLine carries no separator glyph at all — computed or literal', () => {
+    const at = src.indexOf('function MetaLine(')
+    expect(at, 'MetaLine must still exist').toBeGreaterThan(-1)
+    const body = src
+      .slice(at, src.indexOf('\nfunction ', at + 1))
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    expect(
+      ['·', '•', '–'].filter((g) => body.includes(g)),
+      'a separator glyph is back. Computing it does not stop it stranding — 4 of 4 rows stranded at ' +
+        '320px with the conditional in place. Separate by `gap-x-*`.',
+    ).toEqual([])
+    expect(body, 'and the gap that replaced it must stay').toMatch(/gap-x-m\b/)
   })
 })

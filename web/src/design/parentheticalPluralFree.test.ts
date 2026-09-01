@@ -48,16 +48,22 @@ function sources(dir: string, out: string[] = []): string[] {
   return out
 }
 
-/** 🔁 INTERIM, AND IT SHRINKS TO NOTHING. Each of these is converted in a PR that is open right now
- *  (`learning/*` · `DurabilityPanel` · `IntrospectPanel` · `DegradedChip` + `ImportStep` +
- *  `genui/registry`). They are excluded rather than asserted-still-broken on purpose: a self-clearing
- *  guard would red `main` the moment one of those merges, because a PR cannot delete an entry from a
- *  file that does not exist on its own base. Excluding instead means every merge order is green, the
- *  list simply goes vacuous, and the follow-up deletes it.
+/** 🏁 THE EIGHT THAT WERE ONCE EXEMPT — now a POSITIVE regression set.
  *
- *  🪤 So this list is the one part of this rail that CAN rot. The floor below bounds its size, and the
- *  vacuity check proves the scan still reaches the excluded files at all. */
-const CONVERTED_IN_OPEN_PRS = [
+ *  These were excluded while their conversions sat in open PRs (`learning/*` · `DurabilityPanel` ·
+ *  `IntrospectPanel` · `DegradedChip` + `ImportStep` + `genui/registry`). Excluding rather than
+ *  asserting-still-broken was deliberate: a self-clearing guard would have reded `main` the moment any
+ *  one of them merged, because a PR cannot delete an entry from a file that does not exist on its own
+ *  base. So every merge order stayed green and the list simply went vacuous.
+ *
+ *  🔑 All eight have merged (#2236, #2238, #2243, #2245), so the exemption is retired — and rather than
+ *  deleting the names, they are INVERTED. The scan no longer skips them; it must reach each one and find
+ *  it clean. An exemption list that becomes a regression list is strictly stronger than one that
+ *  disappears, because these eight are the family's hardest members and the most likely to regress.
+ *
+ *  Verified before the change: emptying the exclusion list left this rail GREEN (4/4), which is the
+ *  proof the family is closed rather than merely exempted. */
+const ONCE_EXEMPT_NOW_CLEAN = [
   'pages/learning/HealthPanel.tsx',
   'pages/learning/LearningPage.tsx',
   'pages/learning/learningMeta.ts',
@@ -80,7 +86,6 @@ function offenders(): string[] {
   const out: string[] = []
   for (const abs of sources(SRC)) {
     const rel = abs.slice(SRC.length + 1).replace(/\\/g, '/')
-    if (CONVERTED_IN_OPEN_PRS.includes(rel)) continue
     stripComments(readFileSync(abs, 'utf8')).split('\n').forEach((line, i) => {
       if (HEDGE.test(line) && !/http\(s\)/.test(line)) {
         out.push(`${rel}:${i + 1}  ${line.trim().slice(0, 90)}`)
@@ -109,12 +114,13 @@ describe('no composed sentence hedges its own count', () => {
   it('the scan reads the tree (a scan over nothing reports everything clean)', () => {
     const all = sources(SRC)
     expect(all.length, 'no sources found under src/').toBeGreaterThan(400)
-    // And it reaches the excluded files too — otherwise the exclusion list is hiding a broken walk
-    // rather than eight known-converted files.
-    for (const rel of CONVERTED_IN_OPEN_PRS) {
+    // And it reaches each of the eight that were once exempt. This was the vacuity half of the old
+    // exclusion list; now it is a regression guard, so a rename that silently drops one of the family's
+    // hardest members out of the walk fails here instead of passing quietly.
+    for (const rel of ONCE_EXEMPT_NOW_CLEAN) {
       expect(
-        all.some((a) => a.endsWith(rel.replace(/\//g, '/'))),
-        `${rel} is on the exclusion list but the walk never sees it — stale entry or broken walk`,
+        all.some((a) => a.endsWith(rel)),
+        `${rel} was once exempt and the walk no longer sees it — stale entry or broken walk`,
       ).toBe(true)
     }
   })
@@ -130,13 +136,20 @@ describe('no composed sentence hedges its own count', () => {
     ).toEqual([])
   })
 
-  it('the interim exclusion list only shrinks', () => {
-    // A ceiling on the one rottable part of this rail. It is 8 today and every entry has an open PR;
-    // the follow-up that lands after those merge deletes the list entirely. Adding to it instead of
-    // converting a site would be exactly the drift this rail exists to stop.
-    expect(
-      CONVERTED_IN_OPEN_PRS.length,
-      'this list is interim and shrink-only — convert the site, do not exempt it',
-    ).toBeLessThanOrEqual(8)
+  it('🏁 the rail exempts NOTHING — the end state the interim list was aiming at', () => {
+    // The old ceiling bounded an interim exclusion list at 8 and said "the follow-up that lands after
+    // those merge deletes the list entirely". This is that follow-up, so the assertion inverts: there is
+    // no exemption mechanism left to grow. If a future pass reintroduces one, this fails and the reason
+    // has to be argued rather than added.
+    const src = readFileSync(join(SRC, 'design/parentheticalPluralFree.test.ts'), 'utf8')
+    const code = stripComments(src)
+    expect(code, 'no file may be skipped by name — convert the site, do not exempt it')
+      .not.toMatch(/\.includes\(rel\)\s*\)\s*continue/)
+    // And the eight formerly-exempt files are asserted CLEAN by the sweep above rather than skipped,
+    // which is what makes the inversion real rather than cosmetic.
+    expect(ONCE_EXEMPT_NOW_CLEAN.length, 'the family\'s hardest members stay named').toBe(8)
+    for (const rel of ONCE_EXEMPT_NOW_CLEAN) {
+      expect(offenders().some((o) => o.startsWith(rel)), `${rel} regressed a hedged plural`).toBe(false)
+    }
   })
 })

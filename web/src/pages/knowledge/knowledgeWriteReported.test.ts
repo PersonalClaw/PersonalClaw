@@ -44,9 +44,38 @@ const WRITES = [
 
 describe('a failed knowledge write says so, and does not refetch', () => {
   it('uses the SHARED reporter and keeps no local copy', () => {
-    expect(CODE).toMatch(/import \{ reportingWrite \} from '\.\.\/\.\.\/app\/reportingWrite'/)
-    const localDefs = [...CODE.matchAll(/(function|const)\s+reportingWrite\b\s*[=(]/g)]
+    // 🪤 THIS WAS AN EXACT IMPORT PIN AND IT BROKE ON A LEGITIMATE CHANGE. It read
+    // `/import \{ reportingWrite \} from …/`, so the moment this page also needed the module's OTHER
+    // export — `reportActionFailure`, for a create whose RESULT the caller needs — the import became
+    // `{ reportActionFailure, reportingWrite }` and this test failed while the property it names was
+    // MORE satisfied than before. That is the "exact pin standing in for a property" defect this tree
+    // has now hit four times. Assert the property: the reporter is imported FROM the shared module,
+    // whatever else travels with it.
+    expect(CODE, 'the reporter must come from the shared module').toMatch(
+      /import \{[^}]*\breportingWrite\b[^}]*\} from '\.\.\/\.\.\/app\/reportingWrite'/)
+    // And the real risk the test exists for, now covering BOTH exports: a page-local definition would
+    // shadow the shared one silently and the two sentences would drift.
+    const localDefs = [...CODE.matchAll(/(function|const)\s+(reportingWrite|reportActionFailure)\b\s*[=(]/g)]
     expect(localDefs.length, 'a page-local copy would shadow the shared one silently').toBe(0)
+  })
+
+  it('the create-shelf write reports too — it takes the module\'s OTHER form', () => {
+    // `createKnowledgeCollection` is deliberately not in `WRITES`: that list is the `reportingWrite`
+    // (boolean) shape, and this call needs its RESULT (`collection.id` selects the new shelf), which is
+    // the split `app/reportingWrite` documents. So it is asserted here rather than bent into the loop.
+    //
+    // Why it matters: the user is prompted TWICE and clicks "Create shelf", and this used to be
+    // `catch { /* the rail just doesn't gain a shelf */ }` — a stated OUTCOME, not a reason. It sat
+    // eleven lines above this file's own first `reportingWrite` call.
+    const at = CODE.indexOf('api.createKnowledgeCollection(')
+    expect(at, 'the create-shelf call must still exist').toBeGreaterThan(-1)
+    const region = CODE.slice(at, at + 320)
+    expect(region, 'a failed create must be reported').toMatch(/reportActionFailure\(/)
+    expect(region, 'and its follow-ups gated, so no cache invalidation or selection on a failure')
+      .toMatch(/if \(!res\) return/)
+    const gate = region.indexOf('if (!res) return')
+    expect(region.indexOf('invalidateKeys'), 'invalidate must come AFTER the gate').toBeGreaterThan(gate)
+    expect(region.indexOf('setCollectionTok'), 'and so must the selection').toBeGreaterThan(gate)
   })
 
   it('every one of the five writes routes through it', () => {
@@ -110,7 +139,16 @@ describe('a failed knowledge write says so, and does not refetch', () => {
     // that cannot happen silently: no state setter may sit between the handler's start and its write.
     for (const call of WRITES) {
       const at = CODE.indexOf(`api.${call}(`)
-      const before = CODE.slice(Math.max(0, at - 220), at)
+      expect(at, `${call} must still exist`).toBeGreaterThan(-1)
+      // 🪤 THIS WAS A 220-CHARACTER WINDOW AND IT CROSSED A FUNCTION BOUNDARY. `CODE` strips comments
+      // to blank lines, so adding a comment block to the PRECEDING handler shortened the character
+      // distance until that handler's own trailing `setCollectionTok(...)` fell inside this window —
+      // reporting an "optimistic flip" in a handler that has none. A proximity window is the exact
+      // instrument shape this suite has been bitten by three times before. Bound it to the enclosing
+      // handler instead; all eight writes here are `async function` declarations.
+      const fnStart = CODE.lastIndexOf('async function ', at)
+      expect(fnStart, `${call} must sit inside a handler`).toBeGreaterThan(-1)
+      const before = CODE.slice(fnStart, at)
       expect(before, `${call} gained an optimistic flip`).not.toMatch(/set[A-Z]\w*\(/)
     }
   })

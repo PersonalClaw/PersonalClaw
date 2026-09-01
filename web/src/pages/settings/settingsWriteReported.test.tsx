@@ -79,8 +79,15 @@ describe('a refused speech setting rolls back and says so', () => {
 
 describe('the shared settings mutation reports as well as reconciles', () => {
   const SRC = join(process.cwd(), 'src')
-  const codeOf = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  /** 🪤 Comments stripped before ANY match, and this is `codeOf`'s own long-standing behaviour lifted
+   *  into a name so the tree walk below can share it. The two converted sites now carry comments
+   *  quoting the bare `catch { }` they replaced, so a matcher that reads prose finds the defect in its
+   *  own documentation — measured twice in this programme, both times in a negative assertion. ONE
+   *  definition, called by both: a private copy beside the real thing is the "synthetic guard holding
+   *  a COPY of the mechanism" defect this suite has already been bitten by. */
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const codeOf = (rel: string) => strip(readFileSync(join(SRC, rel), 'utf8'))
 
   it('mutate() notifies on rejection AND still invalidates on both paths', () => {
     const code = codeOf('pages/settings/settingsWidgets.tsx')
@@ -127,30 +134,106 @@ describe('the shared settings mutation reports as well as reconciles', () => {
       .toMatch(/setRuntimeOverride\(await api\.agentRuntimes\(true\)\)/)
   })
 
-  it('no settings panel still swallows a write into silence', () => {
-    // Tree-wide over the settings area: a mutation awaited with an empty catch and no report.
-    const dir = join(SRC, 'pages/settings')
-    const files = readdirSync(dir).filter((n) => /\.tsx$/.test(n) && !/\.(test|doc)\./.test(n))
-    const offenders: string[] = []
-    for (const n of files) {
-      const code = codeOf(join('pages/settings', n))
-      // 🪤 THIS MATCHER USED `[^;]` AND THEREFORE ONLY SAW A SINGLE-STATEMENT TRY BODY. Two real
-      // offenders sat in this very directory and the sweep reported the area clean for both:
+  it('NO source file anywhere in the tree still swallows a write into silence', () => {
+    // 🔑 THE SCAN ROOT WAS THE BUG, NOT THE MATCHER. #2237 widened this pattern from `[^;]` to
+    // `[\s\S]` and kept the scope at `pages/settings`, which is where it was born. Run tree-wide over
+    // `src`, the same matcher found **four more** offenders in three other areas — and one of them,
+    // `knowledge/KnowledgeListPage`, sits ELEVEN LINES ABOVE that file's own first `reportingWrite`
+    // call. The file already knew the idiom, four times over; nothing was looking at it.
+    //
+    // That is this programme's most-repeated shape (a census whose root is narrower than its claim:
+    // #2209's excluded-ancestor walk, #2219's `pages/tasks`-rooted "every browsing view"), so the
+    // scope moves to `src` and the exemptions below carry the reason instead.
+    //
+    // 🪤 The file name still says `settings`. The matcher and the hard-won comment above it live here,
+    // and copying them to a tree-wide file would create the "synthetic guard holding a COPY of the
+    // mechanism" defect this suite has already been bitten by — so the sweep widens in place.
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const abs = join(dir, e.name)
+        // `withFileTypes` rather than a `statSync` per entry: the per-entry form took 20.5s here and
+        // intermittently blew the 20s test timeout, and a rail that reds under load is worse than none.
+        if (e.isDirectory()) walk(abs, out)
+        else if (/\.tsx?$/.test(e.name) && !/\.(test|doc|spec)\./.test(e.name)) out.push(abs)
+      }
+      return out
+    }
+    const WRITE = /await api\.(save|patch|set|start|delete|create|update)\w*\([\s\S]{0,200}?catch \{\s*\}/g
+
+    /** Silent ON PURPOSE, with the reason each one states — keyed by file + the write it guards, never
+     *  by line number (see `ui/disabledReasonCensus`, re-keyed after four renumbers).
+     *
+     *  Both were read in full before being excused, because "it has a comment" is not a reason: */
+    const ALLOWED: Record<string, { n?: number; why: string }> = {
+      // NOT user-initiated. A mount-time effect deep-merges the step's extracted overrides into the
+      // loop so the preview resolves them, guarded by a `merged.current` latch. Nobody asked for it and
+      // the very next line loads the tokens anyway, so "preview still loads from whatever's there" is
+      // an accurate reason rather than a description of the outcome.
+      // 🪤 Its SIBLING in the same file — `setOverride`, wired to `TokensView.onOverride` — is a user
+      // edit and is NOT excused; it now reports. One file, two catches, opposite verdicts.
+      'pages/loops/DesignStepPreview.tsx  api.updateULoop': {
+        why: 'mount-time auto-merge, not a user action; the preview loads regardless',
+      },
+      // 🔑 EXCUSED ON A MEASUREMENT, AND MY FIRST JUSTIFICATION FOR IT WAS WRONG. I originally wrote
+      // that "the status machine surfaces it: `ws.onclose` / an `error` frame paint a Session error
+      // overlay" — reasoned from the source, never driven. Driving it says something better:
       //
-      //   MemoryPanel      `await api.saveMemoryDoc(...); setContent(draft); setSaved(true); ...`
-      //   DiagnosticsPanel `await api.setLogLevel(l); setLevel(r.level)`
+      //   create a session -> type `exit`      -> overlay reads "Process exited" + "Restart"
+      //   refuse POST /api/terminal/sessions   -> click Restart
+      //   t+3s / t+9s / t+17s                  -> no overlay at all
+      //   type `echo AFTER_RESTART`            -> it ECHOES AND EXECUTES
       //
-      // The first `;` after the write ended the character class, so the `catch {}` was never reached.
-      // A swallowed write is MORE likely to have a multi-statement body, not less — the statements
-      // after the await are exactly the success signals (`setSaved(true)`, a row removal, a value
-      // update) whose absence is what makes the failure invisible. Widened to `[\s\S]`, measured
-      // against this directory before and after: 0 → 2 offenders on the unfixed tree, and **no false
-      // positives across all 52 files**, because the quantifier is lazy and bounded at 200 chars.
-      for (const m of code.matchAll(/await api\.(save|patch|set|start|delete|create|update)\w*\([\s\S]{0,200}?catch \{\s*\}/g)) {
-        offenders.push(`${n}: ${m[0].slice(0, 60)}`)
+      // So no error is painted because none is needed: `restart()` keeps the existing session id and
+      // bumps `restartKey`, the connect effect re-runs, and the WEBSOCKET RE-BINDS a working session.
+      // The user is not stranded and nothing was silently lost — the click did what it promised by a
+      // path that does not involve the create call at all.
+      //
+      // 🪤 Both readings excuse the catch, which is exactly why the wrong one was dangerous: a rail
+      // that records a false mechanism sends the next reader to `ws.onclose` looking for a guarantee
+      // that lives in the reconnect. The verdict survived; the reason had to be replaced.
+      'pages/terminal/TerminalView.tsx  api.createTerminal': {
+        why: 'measured: the reconnect re-binds a working session, so the click still succeeds',
+      },
+    }
+
+    const found: string[] = []
+    const files = walk(SRC)
+    for (const abs of files) {
+      const rel = abs.replace(SRC + '/', '')
+      const code = strip(readFileSync(abs, 'utf8'))
+      for (const m of code.matchAll(WRITE)) {
+        const method = /await (api\.\w+)\(/.exec(m[0])?.[1] ?? 'api.?'
+        found.push(`${rel}  ${method}`)
       }
     }
-    expect(offenders, `these fail silently:\n${offenders.join('\n')}`).toEqual([])
-    expect(files.length, 'vacuity floor: the settings area must have been scanned').toBeGreaterThan(20)
+
+    const surprises = [...new Set(found)].filter((k) => !(k in ALLOWED))
+    expect(surprises, `a write whose failure reaches nobody:\n${surprises.join('\n')}`).toEqual([])
+
+    // 🪤 EXACT, not "at most". A `<=` passes once an excused site gains a report and its entry becomes
+    // dead weight — an allowance nobody prunes is how the next reader inherits a stale excuse.
+    const actual: Record<string, number> = {}
+    for (const k of found) actual[k] = (actual[k] ?? 0) + 1
+    const expected = Object.fromEntries(Object.entries(ALLOWED).map(([k, v]) => [k, v.n ?? 1]))
+    expect(actual, 'the allowance must match the remainder exactly, count included').toEqual(expected)
+
+    expect(files.length, 'vacuity floor: the whole tree must have been scanned').toBeGreaterThan(400)
+    expect(
+      files.some((f) => f.includes('pages/settings/')) && files.some((f) => f.includes('pages/knowledge/')),
+      'the walk must reach outside pages/settings — that scope was the original defect',
+    ).toBe(true)
+  })
+
+  it('the two writes this sweep found outside settings now report', () => {
+    // Named explicitly so a later refactor cannot quietly revert them to a bare catch and re-add an
+    // allowance entry instead.
+    const shelf = codeOf('pages/knowledge/KnowledgeListPage.tsx')
+    expect(shelf, 'the create-shelf call reports').toMatch(
+      /createKnowledgeCollection\([\s\S]{0,140}?reportActionFailure\(/)
+    expect(shelf, 'and its follow-ups are gated on the result').toMatch(/if \(!res\) return/)
+
+    const preview = codeOf('pages/loops/DesignStepPreview.tsx')
+    expect(preview, 'the user token edit reports').toMatch(/reportingWrite\(`save the \$\{path\} override`/)
+    expect(preview, 'and its refetch is gated').toMatch(/if \(ok\) await loadTokens\(\)/)
   })
 })
