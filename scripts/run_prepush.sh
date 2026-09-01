@@ -73,18 +73,28 @@ while [ ! -t 0 ] && read -r local_ref local_sha _remote_ref remote_sha; do
     echo "          batching several refs into one push." >&2
     exit 1
   fi
-  if [ "$remote_sha" = "$ZERO" ]; then
-    # New remote branch: compare against the shared history with origin/main
-    # when we have it; otherwise gate unconditionally rather than skip blind.
-    if base=$(git merge-base "$local_sha" origin/main 2>/dev/null); then
-      range="$base..$local_sha"
-    else
-      needs_gate=1
-      needs_lint=1
-      continue
-    fi
-  else
+  # Scope by what this branch ADDS, not by how far its base has moved. Rebasing
+  # rewrites a branch onto a newer `main`, so `$remote_sha..$local_sha` spans every
+  # commit main gained while the branch waited. Measured on a one-commit backend PR that
+  # had sat four days: that range held 37 commits touching 96 frontend files, while the
+  # branch's own diff was 1 commit touching none — so a backend-only push paid the
+  # ~20-minute render-smoke chain for somebody else's web change, which had already been
+  # gated when it landed. The merge-base range is the branch's own contribution, and is
+  # what CI scopes a PR by.
+  #
+  # It cannot under-run: the only commits it drops are ancestors of origin/main, i.e.
+  # already on main and already gated. It over-runs for a stacked branch (the range then
+  # includes the parent PR's commits too), which is the safe direction. When origin/main
+  # is missing — a fresh clone that has not fetched — fall back to the remote range, and
+  # when there is no remote range either, gate unconditionally rather than skip blind.
+  if base=$(git merge-base "$local_sha" origin/main 2>/dev/null); then
+    range="$base..$local_sha"
+  elif [ "$remote_sha" != "$ZERO" ]; then
     range="$remote_sha..$local_sha"
+  else
+    needs_gate=1
+    needs_lint=1
+    continue
   fi
   # shellcheck disable=SC2086 — FRONTEND_PATHS is a deliberate word list
   if [ -n "$(git diff --name-only "$range" -- $FRONTEND_PATHS 2>/dev/null || echo changed)" ]; then
