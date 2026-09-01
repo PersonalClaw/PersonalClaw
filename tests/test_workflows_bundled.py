@@ -83,6 +83,16 @@ EXPECTED = {
     "rich-ingest",
     "thesis-tracker",
     "publish-article",
+    # The monitor/ingest slate (§6.1 + §7.1 items 2, 3, 4 and 9 — WF2KNO-9). These four were
+    # the "missing PROVIDER" the comment above names: they need a DISPATCHABLE HTTP-egress
+    # action, and `net.fetch` was a library function until `net-fetch` was registered. Each of
+    # them dispatches that provider, which is what `test_the_monitor_slate_dispatches_a_real_
+    # egress_action` below holds them to — a template that parses but reaches nothing is the
+    # exact shape this atom was blocked on.
+    "market-monitor",
+    "trending-repo-digest",
+    "dual-sink-watcher",
+    "paper-ingest",
     # The Learning-Flywheel template refiner (WF2LEA-6): a trigger-fired run-workflow whose
     # stage runs the propose-only `template-refiner` agent over a template's own run ledger.
     "refine-template",
@@ -698,3 +708,97 @@ def test_the_whole_library_passes_the_conventions_lint() -> None:
         for finding in lint_template(_raw(name), bundled=True).findings:
             problems.append(f"{name}: [{finding.severity}] {finding.code} {finding.message}")
     assert not problems, "\n".join(problems)
+
+
+#: The four templates `WF2KNO-9` shipped. Named explicitly rather than derived from a tag: the
+#: property under test is that THESE dispatch the egress action, and a tag-derived set would
+#: silently shrink to the empty set if the tag were ever renamed — and then pass.
+MONITOR_SLATE = ("market-monitor", "trending-repo-digest", "dual-sink-watcher", "paper-ingest")
+
+#: The dispatchable HTTP-egress action provider. This atom was blocked precisely until it existed
+#: as a PROVIDER rather than as `net.fetch`, a library function no workflow node could name.
+EGRESS_PROVIDER = "net-fetch"
+
+
+def _providers_named_by(name: str) -> set[str]:
+    """Every action provider the RESOLVED template dispatches.
+
+    Resolved through `_pipeline`, not raw: a provider named inside a `{{block:…}}` is one the
+    engine WILL dispatch and one a raw scan cannot see, so scanning the raw file would let a
+    template pass this contract while reaching nothing — the same "parses but is inert" shape
+    the slate itself was blocked on.
+    """
+    found: set[str] = set()
+
+    def visit(obj: object) -> None:
+        if isinstance(obj, dict):
+            provider = obj.get("provider")
+            if isinstance(provider, str) and provider:
+                found.add(provider)
+            for value in obj.values():
+                visit(value)
+        elif isinstance(obj, list):
+            for value in obj:
+                visit(value)
+
+    visit(_pipeline(_raw(name)))
+    return found
+
+
+class TestTheMonitorSlate:
+    """`WF2KNO-9`: four monitor/ingest templates and the egress provider they were waiting on."""
+
+    def test_the_monitor_slate_dispatches_a_real_egress_action(self) -> None:
+        """Each of the four names the egress provider on a node the engine will dispatch.
+
+        A template that fetches nothing is not a monitor. This is the clause the atom's own
+        `done_when` turns on ("dispatch a real HTTP-egress action node at run time"), and the
+        reason the slate could not ship before `net-fetch` was registered.
+        """
+        for name in MONITOR_SLATE:
+            named = _providers_named_by(name)
+            assert EGRESS_PROVIDER in named, (
+                f"{name} does not dispatch {EGRESS_PROVIDER!r} — it names {sorted(named)}. "
+                "A monitor/ingest template that reaches no page is inert."
+            )
+
+    def test_the_detector_discriminates(self) -> None:
+        """Vacuity floor: the scan must NOT report the egress provider for every template.
+
+        Without this, a `_providers_named_by` that over-matched (or returned a constant) would
+        satisfy the leg above for all four while proving nothing. At least one template outside
+        the slate must come back without it.
+        """
+        outside = {
+            name
+            for name in template_names()
+            if name not in MONITOR_SLATE and EGRESS_PROVIDER not in _providers_named_by(name)
+        }
+        assert outside, (
+            f"every bundled template appears to dispatch {EGRESS_PROVIDER!r}, so the detector "
+            "in the leg above is matching indiscriminately and asserts nothing"
+        )
+
+    def test_the_egress_provider_is_registered_and_hook_allowed(self) -> None:
+        """Both write sites, because either one missing breaks the slate in a different way.
+
+        Absent from the REGISTRY, a node naming it fails after a stage may already have spent
+        tokens. Absent from `ALLOWED_HOOK_PROVIDERS`, a trigger or hook validates and SAVES and
+        then fails at fire time — the shape this atom's own blocked_reason called out.
+        """
+        from personalclaw.action_providers.registry import (
+            _ensure_default_providers_registered,
+            list_action_providers,
+        )
+        from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
+
+        _ensure_default_providers_registered()
+        registered = list_action_providers()
+        assert EGRESS_PROVIDER in registered, (
+            f"{EGRESS_PROVIDER!r} is not in the action-provider registry, so every node in the "
+            f"slate fails at dispatch. Registered: {sorted(registered)}"
+        )
+        assert EGRESS_PROVIDER in ALLOWED_HOOK_PROVIDERS, (
+            f"{EGRESS_PROVIDER!r} is missing from ALLOWED_HOOK_PROVIDERS, so a trigger or hook "
+            "using one of these templates saves and then fails when it fires"
+        )
