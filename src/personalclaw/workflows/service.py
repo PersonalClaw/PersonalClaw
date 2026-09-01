@@ -260,6 +260,38 @@ def _default_eligibility(name: str) -> dict[str, Any]:
     return {"may_become_default": allowed, "reason": reason, "verdicts": len(records)}
 
 
+async def _reserved_name_provider(name: str) -> str:
+    """The read-only provider already serving ``name``, or ``""``.
+
+    Provider-agnostic on purpose: it asks every registered provider whether it is `readonly` and
+    whether it holds the name, rather than naming `bundled`. A pack provider (`"research-pack"`)
+    is read-only for the same reason and reserves its names on the same terms, so a rule written
+    against one provider id would have to be rewritten for the second.
+
+    Fails OPEN — a provider that raises is treated as not holding the name, with a warning. The
+    protocol says `get_def` must not raise on a miss, so this is a contract violation rather than
+    an expected path; the choice is between one possible shadow and a broken third-party pack
+    blocking ALL authoring, and the latter is worse. This is a name-collision guard, not a
+    security boundary, which is why fail-open is the right direction here and is not in
+    `apps/permissions.py`.
+    """
+    for provider_name in defs_mod.list_providers():
+        provider = defs_mod.get_provider(provider_name)
+        if provider is None or not provider.readonly:
+            continue
+        try:
+            if await provider.get_def(name) is not None:
+                return provider.name
+        except Exception:  # noqa: BLE001 - see the fail-open note above
+            logger.warning(
+                "provider %s raised while checking whether %s is reserved; treating as free",
+                provider_name,
+                name,
+                exc_info=True,
+            )
+    return ""
+
+
 async def author_def(
     *,
     name: str,
@@ -293,6 +325,29 @@ async def author_def(
             "WF_DEF_NAME_INVALID",
             f"{name!r} is not a valid name — use lowercase letters, digits and hyphens "
             "(it becomes a directory)",
+        )
+    # A read-only provider's names are RESERVED. Saving over one used to succeed and then be
+    # ignored: the def list showed the name twice (bundled + user) while `get_def` and every
+    # run-start returned the FIRST provider in sort order — `bundled` — so a user who "edited" a
+    # bundled template saw their save succeed, saw their copy in the list, and ran the original
+    # (issue 764). Split-brain, with the UI reporting the half that was not used.
+    #
+    # Refused rather than resolved in the user's favour, because `bundled_defs` already decided
+    # this: templates are served FROM THE PACKAGE so that `pip install --upgrade` ships new ones
+    # with no reconciliation. A user def shadowing a bundled name reintroduces exactly the "did
+    # the user edit it?" question that design avoided, and an upgrade's improved template would
+    # sit masked behind a stale copy with nothing to say so.
+    #
+    # Checked BEFORE validation so a dry run reports it too — the point of `save=False` is to
+    # learn what is wrong before committing, and the name is the cheapest thing to fix.
+    reserved_by = await _reserved_name_provider(name)
+    if reserved_by:
+        return _service_failure(
+            "WF_DEF_NAME_RESERVED",
+            f"{name!r} is the name of a read-only {reserved_by} template. Save your version "
+            "under a different name — a copy under your own name is never touched by an "
+            "upgrade, while a shadow of a bundled name would be ignored at run time.",
+            provider=reserved_by,
         )
     spec = {
         "name": name,
