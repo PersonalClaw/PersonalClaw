@@ -751,7 +751,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                                   before, which made two deliberately distinct concepts
                                   (pin = float to the top of the list; favorite = a
                                   personal mark) indistinguishable on the row. */}
-                              {it.favorited && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} aria-label="Favorite" />}
+                              {it.favorited && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} aria-label="Favorited" />}
                               {/* Unread is the DEFAULT state, so it gets no marker —
                                   badging every fresh item would make the list noise.
                                   Only the two states a reader deliberately set show. */}

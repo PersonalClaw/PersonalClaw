@@ -17,6 +17,7 @@ from pathlib import Path
 from personalclaw.skills.marketplace import (
     SkillDetail,
     SkillEntry,
+    SkillNotFoundError,
     SkillsMarketplace,
     _parse_description,
     get_default_skills_registry,
@@ -90,9 +91,31 @@ class NativeSkillsMarketplace(SkillsMarketplace):
         return results
 
     def fetch(self, skill_id: str) -> SkillDetail:
+        # A skill id is the NAME of a direct child directory of the root —
+        # never a path. Unvalidated, `self._root / skill_id` walks wherever the
+        # caller says: `..` escapes the root and an ABSOLUTE id replaces it
+        # entirely (pathlib semantics), after which rglob() below dumps every
+        # readable file under an attacker-chosen directory. Reject anything
+        # that is not a plain name, then hold the resolved dir to the
+        # direct-child invariant as the backstop (symlinked roots resolve first).
+        if (
+            not skill_id
+            or skill_id in (".", "..")
+            or "/" in skill_id
+            or "\\" in skill_id
+            or Path(skill_id).is_absolute()
+        ):
+            raise SkillNotFoundError(skill_id)
         skill_dir = self._root / skill_id
+        try:
+            resolved_root = self._root.resolve(strict=True)
+            resolved_dir = skill_dir.resolve(strict=True)
+        except OSError:
+            raise SkillNotFoundError(skill_id) from None
+        if resolved_dir.parent != resolved_root:
+            raise SkillNotFoundError(skill_id)
         if not skill_dir.is_dir() or not (skill_dir / _SKILL_FILENAME).is_file():
-            raise RuntimeError(f"Native skill not found: {skill_id!r}")
+            raise SkillNotFoundError(skill_id)
 
         files: list[dict[str, object]] = []
         for f in sorted(skill_dir.rglob("*")):

@@ -153,12 +153,21 @@ def _browser(chrome: str):
     """
     port = _free_port()
     profile = tempfile.mkdtemp(prefix="ba2-live-profile-")
+    # Chrome's own stderr, kept so a launch that never reaches CDP reports its real cause
+    # rather than only the generic poll timeout. On GitHub's ubuntu-latest a headless launch
+    # without --no-sandbox aborts at startup, and DEVNULL used to swallow that fatal line.
+    stderr_log = tempfile.NamedTemporaryFile(prefix="ba2-live-stderr-", suffix=".log")
     proc = subprocess.Popen(
         [
             chrome,
             f"--remote-debugging-port={port}",
             f"--user-data-dir={profile}",
             "--headless",
+            # Required on GitHub Actions Linux runners: the sandbox cannot initialise there and
+            # /dev/shm is too small for Chrome's default; without these the process aborts before
+            # opening the CDP port. Harmless on macOS, where the suite also runs locally.
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-gpu",
@@ -171,7 +180,7 @@ def _browser(chrome: str):
             "about:blank",
         ],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr_log,
     )
     try:
         page_ws = None
@@ -187,12 +196,21 @@ def _browser(chrome: str):
                 pass
             if page_ws is None:
                 time.sleep(0.2)
-        assert page_ws, "chrome never exposed a page target over CDP"
+        if page_ws is None:
+            stderr_log.seek(0)
+            detail = stderr_log.read().decode("utf-8", "replace").strip()
+            raise AssertionError(
+                "chrome never exposed a page target over CDP; its stderr was:\n"
+                + (detail or "(chrome wrote nothing to stderr)")
+            )
         yield page_ws
     finally:
         proc.terminate()
         with contextlib.suppress(Exception):
             proc.wait(timeout=10)
+        # Closing the NamedTemporaryFile unlinks it (POSIX); Chrome's inherited fd keeps the
+        # inode alive until it exits, which the terminate/wait above has already ensured.
+        stderr_log.close()
         # The profile dir is ~10 MB of cache per launch and this fixture may run once per
         # xdist worker, so leaving them behind fills the temp dir over a few full-suite runs.
         shutil.rmtree(profile, ignore_errors=True)

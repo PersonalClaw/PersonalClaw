@@ -216,6 +216,25 @@ class HierarchyStore:
         self._write_project(project)
         return project
 
+    def _validate_workspace_dir(self, workspace_dir: str) -> str:
+        """Return the sanitized ``workspace_dir``, or raise ``ValueError`` if it is an unsafe
+        write root. A bound workspace becomes a WRITE target for generated agent-instruction
+        files (the legibility context adapters) and the cwd of an unsandboxed worker, so a
+        relative path, the home directory itself, a credential dir or an OS/system root is
+        refused at bind time — defense in depth with the regenerate-time guard (#358). Empty
+        clears the binding. Imported lazily to keep the tasks package import-light and free of
+        any loop-package import cycle.
+        """
+        cleaned = str(workspace_dir or "").strip()
+        if not cleaned:
+            return ""
+        from personalclaw.loop.validation import workspace_write_target_errors
+
+        errs = workspace_write_target_errors(cleaned)
+        if errs:
+            raise ValueError(errs[0])
+        return cleaned
+
     def create_project(
         self,
         name: str,
@@ -235,7 +254,7 @@ class HierarchyStore:
             id=f"p-{uuid.uuid4().hex[:8]}",
             name=name,
             is_builtin=name in DEFAULT_PROJECTS,
-            workspace_dir=str(workspace_dir or "").strip(),
+            workspace_dir=self._validate_workspace_dir(workspace_dir),
             name_locked=bool(name_locked),
             agent_instructions_template=agent_instructions_template,
             brief=str(brief or "").strip(),
@@ -267,7 +286,7 @@ class HierarchyStore:
         if "brief" in fields:
             project.brief = str(fields["brief"] or "").strip()
         if "workspace_dir" in fields:
-            project.workspace_dir = str(fields["workspace_dir"] or "").strip()
+            project.workspace_dir = self._validate_workspace_dir(fields["workspace_dir"])
         if "status" in fields:
             status = str(fields["status"] or "").strip()
             if status not in ("active", "archived"):

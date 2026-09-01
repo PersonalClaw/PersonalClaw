@@ -994,8 +994,14 @@ class TestDashboardRootsProjectWorkspace:
             _validate_dashboard_path,
         )
         from personalclaw.projects import _store
+        from personalclaw.tasks.models import Project
 
-        _store().create_project(name="ZZ-Sys-Probe", workspace_dir="/etc")
+        # Binding a system root is refused at the front door (#358's bind-time guard)…
+        with pytest.raises(ValueError):
+            _store().create_project(name="ZZ-Sys-Probe", workspace_dir="/etc")
+        # …and a legacy record that predates the guard (seeded past validation, as an old
+        # store could hold) must STILL not become a browsable root.
+        _store()._write_project(Project(id="p-a1b2c3d4", name="ZZ-Sys-Probe", workspace_dir="/etc"))
         labels = [label for label, _ in _dashboard_roots()]
         assert not any(
             label.startswith("Project: ZZ-Sys-Probe") for label in labels

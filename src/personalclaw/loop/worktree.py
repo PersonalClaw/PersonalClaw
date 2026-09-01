@@ -409,14 +409,26 @@ def scope_for_task(workspace: str, *texts: str) -> list[str]:
 
 def set_sparse_scope(wt_path: str, paths: list[str]) -> bool:
     """Restrict ``wt_path``'s working tree to ``paths`` (cone mode). False on any
-    failure — the caller keeps the fully-hydrated worktree it already has."""
+    failure — the caller keeps the fully-hydrated worktree it already has.
+
+    The first ``sparse-checkout set`` in a repo also writes
+    ``extensions.worktreeConfig`` into the SHARED ``.git/config``; when several
+    worktrees of one repo arm sparse concurrently (the :func:`add_worktrees`
+    pool) the losers hit ``could not lock config file … File exists`` and would
+    silently fall back to full hydration. Bounded retry on that one transient
+    error class; anything else fails immediately as before.
+    """
     if not paths:
         return False
-    rc, out = _git(wt_path, "sparse-checkout", "set", *paths)
-    if rc != 0:
-        logger.debug("sparse-checkout set failed in %s: %s", wt_path, out.strip()[:200])
-        return False
-    return True
+    for attempt in range(3):
+        rc, out = _git(wt_path, "sparse-checkout", "set", *paths)
+        if rc == 0:
+            return True
+        if "could not lock config file" not in out:
+            break
+        time.sleep(0.05 * (attempt + 1))
+    logger.debug("sparse-checkout set failed in %s: %s", wt_path, out.strip()[:200])
+    return False
 
 
 def sparse_scope(wt_path: str) -> list[str]:
@@ -504,6 +516,14 @@ def add_worktrees(
     if len(specs) == 1:
         tid, scope = specs[0]
         return {tid: add_worktree(workspace, tid, project_id, scope=scope)}
+    if any(scope for _, scope in specs):
+        # Pre-arm the ONE shared-config write sparse setup needs
+        # (``extensions.worktreeConfig``) while still serial. Without this the
+        # pool's concurrent ``sparse-checkout set`` calls race on
+        # ``.git/config``'s lockfile and the losers silently lose their cone
+        # (full hydration). Best-effort: on failure the per-call retry in
+        # :func:`set_sparse_scope` still covers the race.
+        _git(workspace, "config", "extensions.worktreeConfig", "true")
     from concurrent.futures import ThreadPoolExecutor
 
     results: dict[str, str | None] = {}

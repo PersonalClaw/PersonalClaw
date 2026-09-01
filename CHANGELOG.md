@@ -8,12 +8,24 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+- **The native agent loop now retries ONE pre-stream inference transient per turn (provider 5xx class, timeout) with the taxonomy's correction note and guard-shaped audit rows — a single provider blip no longer kills the chat turn ([#2287](https://github.com/PersonalClaw/PersonalClaw/issues/2287), [#252](https://github.com/PersonalClaw/PersonalClaw/issues/252)).**
+- **Regenerate on a failed chat turn now works as a clean Retry of that turn's own user message instead of returning HTTP 400 (first-turn failure) or silently truncating the failed turn's message and replaying the previous question (later failures).**
+
+- **Chat:**
+- **Dashboard:**
+- **Security (skills marketplace):**
+- **Prompts:**
+- **Loops:**
+- **Security (egress guard):**
+
 ### Added
 
 - **Proposals can now show whether they would have helped on YOUR work.**
 
 - **Automations can now read a web page.**
 - **"Open at login" is now a working switch in Settings, and it agrees with the menu bar.**
+- **You can put your own note in your inbox.**
 
 - **Notification rules can now deliver as real OS notifications.**
 
@@ -84,6 +96,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Selecting many conversations at once could file them under a tag or folder that doesn't exist.**
 
 - **Two knowledge shelves could have the same name, with nothing to tell them apart.**
+- **The dashboard file explorer's "Uploads" and "PersonalClaw" roots now follow the active home instead of a hardcoded `~/.personalclaw`.**
+
+- **The audit log's "Rotate" control described a key rotation it never performed.**
+
+- **Regenerating a project's agent-instruction files could destroy your own notes, or write them to the wrong place entirely.**
 
 - **Choosing a project while editing a task now moves the task.**
 - **A crash no longer explains itself to you as "Server got itself in trouble."**
@@ -99,6 +116,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **When a model's answer is cut off mid-tool-call, it is now told that, instead of being told it forgot something.**
 
 - **Renaming a file you were editing asked permission after the fact, then stranded the tab.**
+- **Workflow controls no longer answer confidently about a run that is not there.**
+- **A trigger's skip dates could be set once and never changed.**
+- **Starring an inbox item now shows you something.**
 
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it had.**
 

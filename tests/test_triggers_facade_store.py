@@ -1105,6 +1105,78 @@ def test_a_cadence_change_KEEPS_timezone_and_skip_dates(home, state):
     assert spec["skip_dates"] == ["2027-12-25"]
 
 
+def test_skip_dates_can_be_CHANGED_not_only_preserved(home, state):
+    """issue 272. The test above proves `skip_dates` survives a cadence change; this one proves it
+    can be edited at all. `_update_schedule`'s kwargs allowlist omitted the field entirely, so a
+    PUT carrying a new holiday list returned 200 with the OLD list still on disk — the most
+    expensive kind of silence, because the form re-rendered from the response and looked correct
+    until the next reload."""
+    _create_schedule(state, skip_dates=["2027-12-25"])
+    resp = _run(
+        T.api_trigger_detail(
+            _req(
+                "PUT",
+                "/api/triggers/x",
+                state,
+                body={"skip_dates": ["2027-12-25", "2028-01-01"]},
+                match_info={"id": "schedule:clock:nightly"},
+            )
+        )
+    )
+    assert resp.status == 200
+    assert _store(home).get("clock:nightly").trigger.spec["skip_dates"] == [
+        "2027-12-25",
+        "2028-01-01",
+    ]
+
+
+def test_clearing_skip_dates_actually_clears_them(home, state):
+    """An empty list is a real edit, not "no value sent". `isinstance(…, list)` is the admission
+    test for exactly this reason — a truthiness check would make removing your last holiday the one
+    edit the endpoint refuses to perform, and it would refuse it silently."""
+    _create_schedule(state, skip_dates=["2027-12-25"])
+    _run(
+        T.api_trigger_detail(
+            _req(
+                "PUT",
+                "/api/triggers/x",
+                state,
+                body={"skip_dates": [], "name": "Nightly"},
+                match_info={"id": "schedule:clock:nightly"},
+            )
+        )
+    )
+    assert _store(home).get("clock:nightly").trigger.spec["skip_dates"] == []
+
+
+def test_a_new_skip_date_RE_ARMS_the_trigger(home, state):
+    """Blacking out a date the row is already armed for has to move the armed instant.
+    `arm.cadence_next_fire` steps past `skip_dates` when it computes `next_fire_at`, but the stored
+    instant was computed before the user's edit — so without re-arming, the fire the user just
+    cancelled still happens, on time, once."""
+    _create_schedule(state, timezone="UTC")
+    armed_before = _store(home).get("clock:nightly").trigger.next_fire_at
+    assert armed_before
+    skip_day = armed_before[:10]  # the ISO date the row is currently armed for
+    _run(
+        T.api_trigger_detail(
+            _req(
+                "PUT",
+                "/api/triggers/x",
+                state,
+                body={"skip_dates": [skip_day]},
+                match_info={"id": "schedule:clock:nightly"},
+            )
+        )
+    )
+    after = _store(home).get("clock:nightly").trigger
+    assert after.spec["skip_dates"] == [skip_day]
+    assert (
+        after.next_fire_at != armed_before
+    ), "the trigger is still armed for the date the user just skipped"
+    assert not after.next_fire_at.startswith(skip_day)
+
+
 def test_update_renames_through_the_allowlist(home, state):
     _create_schedule(state)
     _run(

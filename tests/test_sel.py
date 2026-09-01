@@ -705,3 +705,55 @@ class TestReadLastHashExtras:
         (tmp_path / "security_events.jsonl").write_text("not json\n")
         log = SecurityEventLog(base_dir=tmp_path)
         assert log._last_hash == ""
+
+
+class TestRotate:
+    """rotate() ARCHIVES the log and starts a fresh chain — it does NOT rotate the HMAC key.
+
+    This pins the operational truth behind the dashboard relabel (issue 534): the "Rotate"
+    control archives the live log to a timestamped ``.bak.jsonl`` and resets the chain, while
+    the create-only signing key is left byte-for-byte untouched.
+    """
+
+    def test_archive_preserves_key_and_starts_clean_chain(self, log, sel_dir):
+        # Seed a real chain before rotating.
+        for i in range(3):
+            log.log(_make_event(event_id=f"pre{i}"))
+        key_path = sel_dir / "sel_hmac.key"
+        key_before = key_path.read_bytes()
+
+        result = log.rotate(archive=True)
+
+        # The HMAC signing key is create-only — rotate() MUST NOT rewrite it.
+        assert key_path.read_bytes() == key_before
+
+        # The old chain is archived beside the live log as a timestamped .bak.jsonl, not destroyed.
+        assert result["rotated"] is True
+        assert result["entries_before"] == 3
+        assert result["entries_after"] == 0
+        archive = Path(result["archive_path"])
+        assert archive.exists()
+        assert archive.name.startswith("security_events.")
+        assert archive.name.endswith(".bak.jsonl")
+        assert len([ln for ln in archive.read_text().splitlines() if ln.strip()]) == 3
+
+        # The live log restarts empty and verifies clean; a new event chains from a fresh root.
+        assert not (sel_dir / "security_events.jsonl").exists()
+        assert log.verify_integrity() == (0, 0)
+        log.log(_make_event(event_id="post"))
+        total, valid = log.verify_integrity()
+        assert (total, valid) == (1, 1)
+        assert log.recent()[0]["prev_hash"] == ""
+
+    def test_no_archive_still_leaves_key_untouched(self, log, sel_dir):
+        log.log(_make_event(event_id="pre"))
+        key_before = (sel_dir / "sel_hmac.key").read_bytes()
+
+        result = log.rotate(archive=False)
+
+        assert result["rotated"] is True
+        assert result["archive_path"] == ""
+        assert not (sel_dir / "security_events.jsonl").exists()
+        # Even a non-archiving reset leaves the signing key byte-for-byte unchanged.
+        assert (sel_dir / "sel_hmac.key").read_bytes() == key_before
+        assert log.verify_integrity() == (0, 0)

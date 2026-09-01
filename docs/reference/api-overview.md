@@ -196,6 +196,7 @@ per-route contract.
 | `GET /api/inbox` · `.../pending` · `.../status` · `.../digest` · `.../providers` | Inbox listing, pending count, service status, AI digest, sources. |
 | `PUT /api/inbox/{id}` · `POST .../{id}/draft` · `.../{id}/open` · `.../{id}/favorite` | Update an item; AI-draft a reply; mark opened; favorite. |
 | `POST /api/inbox/send` · `POST /api/inbox/dismiss-all` · `POST /api/inbox/restart` | Send a reply; bulk dismiss; restart the poll service. |
+| `POST /api/inbox/notes` | Capture a note the USER wrote as a `user_note` item (tray quick capture, dashboard compose). |
 | `GET/PUT /api/inbox/settings` | Inbox entity settings (alerts, retention, ranking). |
 | `GET /api/channels` · `GET /api/channels/{name}` · `POST .../connect` · `.../disconnect` · `.../test` | Channel providers: list, detail, connect/disconnect, test. |
 | `GET /api/channels/reply-targets` | Channels/threads a reply can be routed to. |

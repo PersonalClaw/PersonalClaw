@@ -21,6 +21,8 @@ from pathlib import Path
 
 from aiohttp import web
 
+from personalclaw.atomic_write import atomic_write
+from personalclaw.http_errors import json_error
 from personalclaw.legibility import context_router as cr
 from personalclaw.tasks.hierarchy import HierarchyStore
 
@@ -131,6 +133,7 @@ async def api_project_context_regenerate(request: web.Request) -> web.Response:
     off, and (400) when the project binds no workspace_dir. Every write is SEL-audited.
     """
     from personalclaw.config.loader import AppConfig
+    from personalclaw.loop.validation import workspace_write_target_errors
 
     pid = request.match_info["project_id"]
     state = request.app.get("state")
@@ -154,6 +157,15 @@ async def api_project_context_regenerate(request: web.Request) -> web.Response:
             {"error": "project has no bound workspace directory to write into"},
             status=400,
         )
+    # Path-safety guard (#358): the bound workspace is a WRITE target for the adapter files,
+    # so refuse a relative path, the home directory itself, a credential dir or an OS/system
+    # root BEFORE touching disk — realpath'd, so a `..`/symlink form cannot slip past. Belt to
+    # the bind-time guard's braces: a workspace_dir persisted before that guard existed, or set
+    # through a path that bypassed it, is still caught here rather than planting agent files at
+    # / or in $HOME.
+    unsafe = workspace_write_target_errors(workspace)
+    if unsafe:
+        return json_error("workspace_dir_unsafe", message=unsafe[0], status=400)
     ws = Path(workspace).expanduser()
     if not ws.is_dir():
         return web.json_response(
@@ -178,7 +190,7 @@ async def api_project_context_regenerate(request: web.Request) -> web.Response:
             existing = target.read_text(encoding="utf-8") if target.exists() else ""
             merged = cr.apply_block(existing, block)
             if merged != existing:
-                target.write_text(merged, encoding="utf-8")
+                atomic_write(target, merged)
             written.append(str(target))
             _sel().log_api_access(
                 caller=request.headers.get("X-Session-Key", "dashboard"),

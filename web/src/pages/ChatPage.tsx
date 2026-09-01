@@ -53,6 +53,7 @@ import { ChatPlanGate } from '../ui/chat/ChatPlanGate'
 import { Markdown } from '../ui/Markdown'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
+import { NoModelSetupState, isNoModelSetupError, MODELS_PATH } from './chat/NoModelSetupState'
 import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
 import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
@@ -66,7 +67,8 @@ import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, expandPasteMarkers, pruneBlocks } from './chat/pasteBlocks'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, skillsUsedLabel, skillsUsedTitle, stampActivityOrigin } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, skillsUsedLabel, skillsUsedTitle, stampActivityOrigin } from './chat/chatTypes'
+import { ThinkingBlock } from './chat/ThinkingBlock'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
 import { buildOptimizerContext } from './chat/optimizerContext'
 import { useIdentity, firstNameOf } from '../app/identity'
@@ -85,6 +87,7 @@ import { CheckWorkChip } from './chat/CheckWorkChip'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
+import { sessionTitle } from '../lib/sessionTitle'
 import { useComposerData } from '../lib/useComposerData'
 import type { ComposerControls, ComposerValue } from '../ui/composer/types'
 import { Popover, MenuRow } from '../ui/Popover'
@@ -285,7 +288,7 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
               whileHover={{ x: expr(3, 0.3) }} transition={spring.spatialFast}
               className="group flex items-center gap-s rounded-md px-2 py-2 text-left transition-colors hover:bg-surface-high">
               <MessageSquare size={14} className="shrink-0 text-on-surface-low group-hover:text-primary transition-colors" />
-              <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem] group-hover:text-on-surface">{s.title || 'Untitled chat'}</span>
+              <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem] group-hover:text-on-surface">{sessionTitle(s)}</span>
               <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{relTimeShort(sessionActivitySeconds(s))}</span>
             </motion.button>
           ))}
@@ -748,6 +751,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // saying so. The fallback belongs at the USE SITE (below), where it is a default rather than a
   // stored answer.
   const { data: streamRevealCfg } = useQuery('chat:stream-reveal', () => api.dashboardConfig().then((c) => c.stream_reveal), { persist: true })
+  // Live thinking rendering is gated by the Settings → Chat toggle. Read through
+  // the same persisted-query pattern as stream_reveal (no fabricated default — absent
+  // config reads falsy = hidden), mirrored into a ref so the WS callback never acts on
+  // a stale closure. Gating happens at INGESTION: while off, chat_thinking frames are
+  // dropped, so the transcript state itself stays free of thinking segments.
+  const { data: showThinkingCfg } = useQuery('chat:show-thinking-inline', () => api.dashboardConfig().then((c) => c.show_thinking_inline), { persist: true })
+  const showThinkingRef = useRef(false)
+  useEffect(() => { showThinkingRef.current = !!showThinkingCfg }, [showThinkingCfg])
   const coalescer = useStreamCoalescer((revealed) => {
     patchLastAssistant((segs) => {
       const r = applyCoalescedFlush(segs, revealed, coalescing.current)
@@ -941,6 +952,23 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         break
       }
       case 'chat_status': setStatusText(String(d.status ?? '')); break
+      // Live reasoning stream. Only consumed while the Settings → Chat
+      // "Show thinking inline" toggle is on — off drops the frame here, so no
+      // thinking segment ever enters transcript state (and none is persisted:
+      // the backend keeps thinking out of the response text and history).
+      // Boundary discipline mirrors the tool/approval cards: land any buffered
+      // prose first (flushNow), append-or-extend the thinking block, then mark
+      // breakText so the next chat_chunk opens a FRESH coalesced run instead of
+      // extending a segment that now sits above the thinking block.
+      case 'chat_thinking': {
+        if (!showThinkingRef.current) break
+        const chunk = String(d.content ?? '')
+        if (!chunk) break
+        coalescer.flushNow()
+        patchLastAssistant((segs) => appendThinking(segs, chunk))
+        breakText.current = true
+        break
+      }
       // A non-streamed message appended server-side (the only one that reaches
       // the UI this way today is a turn-level `error` — e.g. a provider/model
       // rejection). Without this the turn ends blank ("no response").
@@ -2734,7 +2762,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               <IconButton icon={ArrowLeft} label="Back to chat history" size={40} onClick={() => navigate('chat/history')} />
               <button type="button" onClick={beginRename} title="Rename chat"
                 className="group inline-flex items-center gap-1.5 min-w-0 max-w-[420px] text-on-surface hover:text-on-surface-var transition-colors">
-                <span data-type="title-l" className="truncate">{title || 'Chat'}</span>
+                <span data-type="title-l" className="truncate">{sessionTitle({ key: sessionRef.current ?? '', title })}</span>
                 <Pencil size={13} className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
               </button>
               {/* Regenerate title — a small magic-stars affordance hugging the title's
@@ -2924,7 +2952,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} />
+                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips under the last assistant turn only,
@@ -3617,13 +3645,15 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, chatSessionKey, citations, skillsUsed }: {
+function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, onSetupModel, chatSessionKey, citations, skillsUsed }: {
   segments: Segment[]; isLast: boolean
   messageTs?: string
   streaming?: boolean
   onApprove: (id: string, action: ApproveAction) => void
   onSwitchToAgent: (continuation: string) => void
   onOpenFile: (path: string) => void
+  /** WT-04: the no-model empty-state's CTA — routes to Settings → Models through the hash router. */
+  onSetupModel: () => void
   chatSessionKey?: string
   citations?: MemoryCitation[]
   skillsUsed?: SkillUsed[]
@@ -3670,7 +3700,16 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       return <ToolCard key={seg.id || i} seg={t} />
     }
     if (seg.kind === 'activity') return <ActivityLine key={i} seg={seg as ActivitySegment} />
-    if (seg.kind === 'error') return <InlineError key={i} icon multiline className="my-1">{(seg as { text: string }).text}</InlineError>
+    if (seg.kind === 'thinking') return <ThinkingBlock key={i} text={(seg as ThinkingSegment).text} defaultOpen={streaming} />
+    if (seg.kind === 'error') {
+      const text = (seg as { text: string }).text
+      // WT-04: a fresh instance with no model resolves the turn to a WHAT/WHY/FIX
+      // envelope that reads as a stack dump. Reframe THAT case as a calm setup
+      // nudge; every other turn error keeps the plain danger strip.
+      return isNoModelSetupError(text)
+        ? <NoModelSetupState key={i} detail={text} onSetup={onSetupModel} />
+        : <InlineError key={i} icon multiline className="my-1">{text}</InlineError>
+    }
     if (seg.kind === 'approval') {
       const ap = seg as ApprovalSegment
       return <ApprovalCard key={ap.id || i} seg={ap} onAct={onApprove} />
@@ -3804,6 +3843,7 @@ function ActivityLine({ seg }: { seg: ActivitySegment }) {
     </div>
   )
 }
+
 
 /** "used N skills" — the per-turn skill-allocation chip.
  *
@@ -4073,7 +4113,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   async function del(s: ChatSessionSummary) {
     if (!(await confirm({
       title: 'Delete chat?',
-      body: `"${s.title || s.key}" and its history will be permanently removed.`,
+      body: `"${sessionTitle(s)}" and its history will be permanently removed.`,
       danger: true, confirmLabel: 'Delete',
     }))) return
     // Surface a real failure instead of swallowing it — the dialog promised the
@@ -4227,13 +4267,13 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
       {/* Selection tick. The primitive owns stopPropagation, so ticking a row never
           also opens the peek panel — two intents on one click target. */}
       <Checkbox checked={selected.has(s.key)} onChange={() => toggleSelected(s.key)}
-        ariaLabel={`Select ${s.title || s.key}`}
+        ariaLabel={`Select ${sessionTitle(s)}`}
         className={`transition-opacity ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`} />
       <span className="grid size-9 shrink-0 place-items-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
         <MessageSquare size={17} className="text-primary" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{s.title || s.key}</div>
+        <div className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{sessionTitle(s)}</div>
         {/* Why this chat matched: the passage from the transcript, with the matched
             terms marked. Only for content hits — a title match is already visible
             above, so repeating it would be noise. */}
@@ -4505,7 +4545,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
           manage rail (one right dock at a time). */}
       <AnimatePresence>
         {peekKey && (
-          <SidePanel key={peekKey} title={peekSession?.title || peekKey} icon={<MessageSquare size={18} className="text-primary" />}
+          <SidePanel key={peekKey} title={peekSession ? sessionTitle(peekSession) : peekKey} icon={<MessageSquare size={18} className="text-primary" />}
             storeKey="chat-peek-w" fillHeight urlKey={{ key: 'peek', setQuery }}
             onExpand={() => navigate(`chat/${peekKey}`)}
             onClose={() => setPeekKey('')}>

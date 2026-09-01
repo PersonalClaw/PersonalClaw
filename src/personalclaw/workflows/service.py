@@ -979,6 +979,33 @@ def _live(run_id: str, supervisor: Any) -> Any | None:
     return getter(run_id) if callable(getter) else None
 
 
+def _run_not_found(run_id: str) -> dict[str, Any]:
+    """The one 404 for a run-control verb.
+
+    Existence is the FIRST question every verb has to ask, and the ones that forgot it did not fail
+    quietly — they answered confidently about a run that was not there:
+
+    * `confirm {verb: skip|quit}` returned **200** `{"resumed": false, "still_pending": true}` for a
+      nonexistent id, because the non-resuming verbs early-returned before any `store.get`. Only
+      approve/reject reached `resume_run`, which is where the 404 lived. A tool firing skip at a
+      typo'd or already-deleted run was told it had worked.
+    * `rewind` / `run_from` / `edit` returned **409 run_not_live** with "resume the run before
+      rewind" — remediation for a run that cannot be resumed because there is nothing to resume.
+      They asked `_live()` first, and a nonexistent run has no controller either.
+    * `preview_edit` returned `WF_RUN_NO_SPEC`, which `_STATUS_MAP` translates to a **500
+      spec_unreadable** — a typo'd id reporting a server fault. Found by
+      `tests/test_workflows_run_control_guard.py`, not reported.
+
+    All issue 765. The same missing precheck is behind issue 679, where `resume` answered 200 on a
+    terminal run *and wrote to the finished run's `extra` on the way through*.
+
+    This line appeared FOURTEEN times, verbatim, which is why three paths could omit it without
+    looking odd — there was no single thing to be missing. A builder rather than a
+    resolve-and-return helper so `store.get`'s exact type survives at each call site.
+    """
+    return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+
+
 def edit_run(
     run_id: str,
     ops: list[dict[str, Any]],
@@ -993,6 +1020,10 @@ def edit_run(
     Requires a LIVE controller: mutation is only safe at the controller's drain point, and
     editing a run nobody is driving would write state with no one to apply it (WF2-R10).
     """
+    # Existence before liveness — see `_reentry`. This answered 409 "only a running workflow can
+    # be edited" for an id that named no workflow at all (issue 765).
+    if store.get(run_id) is None:
+        return _run_not_found(run_id)
     controller = _live(run_id, supervisor)
     if controller is None:
         return _service_failure(
@@ -1012,6 +1043,11 @@ def preview_edit(run_id: str, ops: list[dict[str, Any]]) -> dict[str, Any]:
     Available on a run with no live controller too, so a user can see what an edit would
     cost before deciding to resume the run and apply it.
     """
+    # Existence first, so a nonexistent id is a 404 and not "has no readable spec" — which maps to
+    # a 500 `spec_unreadable`, the worst answer of the four this guard corrects. Found by the rail
+    # in `test_workflows_run_control_guard.py` rather than reported, which is what the rail is for.
+    if store.get(run_id) is None:
+        return _run_not_found(run_id)
     spec = store.read_spec(run_id)
     if spec is None:
         return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
@@ -1780,6 +1816,12 @@ def resolve_confirmation(
     resolution, error = resolve_verb(verb, note=note)
     if resolution is None:
         return _service_failure("WF_CONFIRM_VERB_INVALID", error)
+    # Existence BEFORE the verb split. `skip`/`quit` resolve nothing, but they are still statements
+    # about a run's gate, and a gate belongs to a run — there is nothing to skip on a run that does
+    # not exist. This used to sit after the split, so approve/reject 404'd (via `resume_run`) while
+    # skip/quit answered 200 `{"resumed": false, "still_pending": true}` for a typo'd id (765).
+    if store.get(run_id) is None:
+        return _run_not_found(run_id)
     if not resolution.resumes:
         # Skip/quit are decisions ABOUT the queue, not answers to the gate. Returning ok=True with
         # `resumed=False` says exactly that; consuming the token here would burn a single-use claim
@@ -1829,7 +1871,14 @@ def resume_run(
 
     run = store.get(run_id)
     if run is None:
-        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+        return _run_not_found(run_id)
+    # A finished run cannot be resumed, and saying otherwise was not merely cosmetic: the
+    # clear-pause path below pops `pause_requested` and SAVES, so a resume against a complete,
+    # failed or cancelled run wrote to the finished run's `extra` and answered
+    # `{"resumed": true}` (issue 679). Its three siblings — cancel, pause, steer — already refuse
+    # with this exact code; `resume` was the one that did not ask.
+    if run.status in TERMINAL_RUN_STATUSES:
+        return _service_failure("WF_RUN_ALREADY_TERMINAL", f"run is already {run.status.value}")
 
     if answer is None and not token:
         run.extra.pop("pause_requested", None)
@@ -1878,6 +1927,12 @@ def _reentry(
     redo_effects: bool = False,
     force: bool = False,
 ) -> dict[str, Any]:
+    # Existence before liveness. A nonexistent run has no controller either, so asking `_live`
+    # first answered 409 "resume the run before rewind" — remediation for a run that cannot be
+    # resumed because there is nothing to resume (issue 765). 404 first, then the liveness 409,
+    # which is the order the eight sibling verbs already use.
+    if store.get(run_id) is None:
+        return _run_not_found(run_id)
     controller = _live(run_id, supervisor)
     if controller is None:
         return _service_failure(

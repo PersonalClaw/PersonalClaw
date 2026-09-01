@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.inbox import (
     NON_CHANNEL_KINDS,
     InboxState,
@@ -716,6 +717,90 @@ def _sel_proposal_emission(app_name: str, kind: str, outcome: str, error: str = 
         )
     except Exception:
         logger.debug("proposal emission SEL failed for %s", app_name, exc_info=True)
+
+
+#: The longest note the capture endpoint accepts, in characters.
+#:
+#: Bounded because `inbox.json` is read whole on every load and this is the first inbox
+#: writer a browser session can drive with arbitrary text — an unbounded paste would be
+#: an unbounded row in a file the gateway parses at startup. 4000 is generous for the
+#: thing being captured (a paragraph of thought, a pasted link with context) while
+#: staying two orders of magnitude below anything that would make the store slow to
+#: read. The refusal is a 400 with an actionable sentence, never a silent truncation:
+#: quietly dropping the tail of someone's note is the one outcome worse than refusing it.
+_NOTE_MAX_CHARS = 4000
+
+
+async def api_inbox_note_create(request: web.Request) -> web.Response:
+    """POST /api/inbox/notes — the USER writes their own inbox item (INU-9).
+
+    The first inbox source that is a person. Every other row in the store is synthesized:
+    a rule fired, a run needs input, a poll found a message, an app contributed a
+    proposal. This is the endpoint behind the desktop tray's quick capture, and behind the
+    dashboard's compose control — one capability, two entry points, because the tray was
+    only ever its first consumer.
+
+    Routed through :func:`~personalclaw.inbox.emit_attention_item` like every other
+    non-channel emitter (`api_inbox_proposal_create` above, `notification_rules.run_digest`,
+    `workflows/attention`). That is what makes the row and its delivery one event rather
+    than two things that drift, and it is what gives the note the store's dedup, id shape
+    and durable ``flush()`` for free. A second write path into the inbox is the dual
+    mechanism this codebase refuses.
+
+    **The note's own text is the item's message, verbatim.** The first line becomes the
+    ``title`` and the rest the ``body`` — `emit_attention_item` rejoins them with a blank
+    line, so nothing the user typed is lost and a leading line renders as the subject it
+    reads like. Passing the whole blob as the title instead would have made the
+    notification's subject the entire note.
+    """
+    from personalclaw.inbox import emit_attention_item
+
+    state: "DashboardState" = request.app["state"]
+    try:
+        body = await request.json()
+    except Exception:
+        return json_error("invalid_json", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_body", status=400)
+
+    raw = body.get("text")
+    if not isinstance(raw, str) or not raw.strip():
+        return json_error("note_text_empty", status=400)
+    text = raw.strip()
+    if len(text) > _NOTE_MAX_CHARS:
+        return json_error(
+            "note_too_long",
+            message=(
+                f"That note is {len(text)} characters; the limit is {_NOTE_MAX_CHARS}. "
+                "Shorten it, or save the long version as a file and note the link."
+            ),
+            status=400,
+        )
+
+    first_line, _, rest = text.partition("\n")
+    _, inbox = _get_inbox(state)
+    # Literal `source`/`kind`, not module constants: `test_notification_kinds`'s AST sweep
+    # only checks pairs it can read statically, so naming them here is what puts this
+    # emitter under the registration gate rather than quietly outside it.
+    item_id = emit_attention_item(
+        state,
+        source="user",
+        kind="note",
+        item_kind=ItemKind.USER_NOTE.value,
+        title=first_line.strip(),
+        body=rest.strip("\n"),
+        store=inbox,
+    )
+    item = inbox.items.get(item_id) if item_id else None
+    if item is None:
+        # `emit_attention_item` swallows a failed write (it must not also lose the
+        # notification) and returns "". A capture that did not persist has to say so:
+        # answering 201 would tell the user their note was saved when it was not.
+        return json_error("note_not_saved", status=500)
+
+    payload = _redact_item(item.to_dict())
+    state.broadcast_ws("inbox_new_item", payload)
+    return web.json_response({"ok": True, "id": item_id, "item": payload}, status=201)
 
 
 async def api_inbox_proposal_create(request: web.Request) -> web.Response:

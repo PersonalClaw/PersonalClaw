@@ -126,6 +126,10 @@ def _build_loop_from_body(body: dict) -> Loop:
         autopilot=bool(body.get("autopilot", True)),
         auto_teardown_on_complete=bool(body.get("auto_teardown_on_complete", False)),
         max_cycles=int(body.get("max_cycles", 30)),
+        # `AG-14` ceilings: optional, 0 = uncapped. Clamped non-negative so a negative
+        # payload value cannot mean "already exceeded" and stop the loop on its first poll.
+        max_cost_usd=max(0.0, float(body.get("max_cost_usd", 0) or 0)),
+        deadline_secs=max(0.0, float(body.get("deadline_secs", 0) or 0)),
         idle_secs=int(body.get("idle_secs", AppConfig.load().loops.default_idle_secs)),
         success_criteria=(str(body["success_criteria"]) if body.get("success_criteria") else None),
         kind_config=kc,

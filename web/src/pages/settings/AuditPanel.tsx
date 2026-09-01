@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Search, RefreshCw, ShieldCheck, ShieldAlert, KeyRound, Loader2, Download, SlidersHorizontal } from 'lucide-react'
+import { Search, RefreshCw, ShieldCheck, ShieldAlert, Archive, Loader2, Download, SlidersHorizontal } from 'lucide-react'
 import { api, type AuditFilters, type AuditPage, type SelEvent, type SelVerify } from '../../lib/api'
 import { invalidateKeys } from '../../lib/data'
 import { confirm } from '../../ui/dialog'
@@ -155,19 +155,23 @@ export function AuditPanel() {
   // `personalclaw restore --replace`.
   // 🔑 A CONFIRMED ACTION THAT FAILED SILENTLY, and the confirmed-delete ratchet could not see it: that
   // sweep matches `api.(delete|purge|revoke)*`, and this one is called `selRotate`. The user confirmed
-  // rotating the audit-log signing key, the request failed, and the panel invalidated its verify cache and
+  // archiving the audit log, the request failed, and the panel invalidated its verify cache and
   // reloaded as though it had worked — so the only signal was that nothing changed.
   //
   // `notify` rather than this file's `setError`: that state only renders through `LoadError` while
   // `!events`, so setting it after a successful load shows nothing at all.
   const rotate = async () => {
-    if (!(await confirm({ title: 'Rotate the audit-log signing key?', body: 'Past entries stay verifiable under the old key.', confirmLabel: 'Rotate key' }))) return
-    try { await api.selRotate() }
+    if (!(await confirm({ title: 'Archive the audit log and start a new chain?', body: 'The existing entries move to a timestamped archive file next to the log — they leave the dashboard verify and browse surface. The signing key is unchanged.', confirmLabel: 'Archive & reset' }))) return
+    try {
+      const res = await api.selRotate()
+      const archived = res.archive_path ? res.archive_path.split(/[/\\]/).pop() : ''
+      notify(archived ? `Audit log archived to ${archived} — a fresh chain has started.` : 'Audit log reset — a fresh chain has started.', 'success')
+    }
     catch (e) {
       let msg = e instanceof Error ? e.message : 'the request failed'
       try { const p = JSON.parse(msg); msg = p.error || msg } catch { /* raw text */ }
-      notify(`Couldn't rotate the signing key: ${msg}`, 'error')
-      return   // nothing rotated, so there is nothing to invalidate or reload
+      notify(`Couldn't archive the audit log: ${msg}`, 'error')
+      return   // nothing archived, so there is nothing to invalidate or reload
     }
     invalidateKeys('settings:audit-verify')
     reload()
@@ -215,7 +219,7 @@ export function AuditPanel() {
         <Button variant="secondary" size="sm" onClick={() => downloadJsonl(events)} disabled={!events.length}
           disabledReason="Nothing to export — no events match the current filters"
           title={`Export the ${events.length} listed events as JSONL (credential-safe)`}><Download size={14} /> Export</Button>
-        <Button variant="ghost" size="sm" onClick={rotate}><KeyRound size={14} /> Rotate</Button>
+        <Button variant="ghost" size="sm" onClick={rotate}><Archive size={14} /> Rotate</Button>
       </div>
 
       {showMore && (

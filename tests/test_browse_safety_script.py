@@ -519,22 +519,39 @@ async def _run_probe(chrome: str, site: _LocalSite, script: str | None) -> dict:
 
     port = _free_port()
     profile = tempfile.mkdtemp(prefix="ba2-safety-profile-")
+    # Chrome's own stderr, kept so a launch that never reaches CDP reports its real cause
+    # rather than only the generic poll timeout. On GitHub's ubuntu-latest a headless launch
+    # without --no-sandbox aborts at startup, and DEVNULL used to swallow that fatal line.
+    stderr_log = tempfile.NamedTemporaryFile(prefix="ba2-safety-stderr-", suffix=".log")
     proc = subprocess.Popen(
         [
             chrome,
             f"--remote-debugging-port={port}",
             f"--user-data-dir={profile}",
             "--headless",
+            # Required on GitHub Actions Linux runners: the sandbox cannot initialise there and
+            # /dev/shm is too small for Chrome's default; without these the process aborts before
+            # opening the CDP port. Harmless on macOS, where the suite also runs locally.
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-gpu",
             "--autoplay-policy=no-user-gesture-required",
+            # Web Bluetooth's base::Feature is default-DISABLED on desktop Linux (enabled on
+            # macOS/Windows), so on ubuntu-latest `navigator.bluetooth` is natively absent and
+            # the baseline vacuity guard in test_navigator_device_apis_are_unreachable_and_
+            # hard_defined fails: the guarded `undefined` would prove nothing. Forcing the
+            # feature on makes the baseline origin behave like the macOS runs the suite was
+            # measured on — the attribute natively exists, so guarded-undefined is a real
+            # measurement of OUR descriptor, not of a browser build gap. No-op on macOS.
+            "--enable-features=WebBluetooth",
             # A guard regression must not be able to reach any REAL site from this suite.
             # The local server is deliberately the only reachable origin.
             "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
         ],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr_log,
     )
     try:
         ws_url = None
@@ -548,7 +565,13 @@ async def _run_probe(chrome: str, site: _LocalSite, script: str | None) -> dict:
                 break
             except Exception:
                 time.sleep(0.2)
-        assert ws_url, "chrome never exposed a CDP endpoint"
+        if ws_url is None:
+            stderr_log.seek(0)
+            detail = stderr_log.read().decode("utf-8", "replace").strip()
+            raise AssertionError(
+                "chrome never exposed a CDP endpoint; its stderr was:\n"
+                + (detail or "(chrome wrote nothing to stderr)")
+            )
 
         async with websockets.connect(ws_url, max_size=None) as ws:
             cdp = _Cdp(ws)
@@ -596,6 +619,9 @@ async def _run_probe(chrome: str, site: _LocalSite, script: str | None) -> dict:
             proc.wait(timeout=5)
         except Exception:
             proc.kill()
+        # Closing the NamedTemporaryFile unlinks it (POSIX); Chrome's inherited fd keeps the
+        # inode alive until it exits, which the terminate/wait above has already ensured.
+        stderr_log.close()
         shutil.rmtree(profile, ignore_errors=True)
 
 

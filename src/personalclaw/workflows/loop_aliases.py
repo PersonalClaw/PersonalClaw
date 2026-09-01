@@ -64,6 +64,9 @@ VARIANT_HINTS: dict[tuple[str, str], str] = {
     ("goal", "verifiable"): "goal-pursuit-verifiable",
     ("goal", "open_ended"): "goal-pursuit-open-ended",
     ("goal", "open-ended"): "goal-pursuit-open-ended",
+    # WF2LOO-9 (R15): the monitor variant — a goal external events move, checked on a
+    # self-scheduled cadence rather than pursued in back-to-back cycles.
+    ("goal", "monitor"): "goal-pursuit-monitor",
 }
 
 

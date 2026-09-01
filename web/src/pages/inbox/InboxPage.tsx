@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2, ExternalLink, LayoutGrid } from 'lucide-react'
+import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2, ExternalLink, LayoutGrid, StickyNote, Star } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -20,6 +20,7 @@ import { Segmented } from '../../ui/Segmented'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
+import { ComposeNoteModal } from './ComposeNoteModal'
 import { ProposalsLens } from './ProposalsLens'
 import { TriageDigestCard } from './TriageDigestCard'
 import { ContextMenu, EntranceGroup, EntranceRegion, type ContextMenuItem } from '../../ui/motion'
@@ -56,6 +57,12 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
   const openId = openIdRaw || null
   const [settingsOpen, setSettingsOpen] = useQueryFlag(query, setQuery, 'settings')
+  // `?capture=1` is the desktop tray's quick-capture deep link (`desktop/main.js`
+  // builds `${DEEP_LINKS.inbox}?capture=1`). Reading it here is what turns that tray row
+  // from a navigation into a capture: before this the flag was parsed by the router and
+  // dropped, so the menu item opened the inbox and wrote nothing. It is the same flag the
+  // header's Capture control sets, so the tray and the dashboard share one surface.
+  const [captureOpen, setCaptureOpen] = useQueryFlag(query, setQuery, 'capture')
   const [busy, setBusy] = useState(false)
 
   const load = () => { refreshItems(); refreshStatus() }
@@ -66,7 +73,10 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     if (!items) return null
     const n = q.trim().toLowerCase()
     return items
-      .filter((it) => filter === 'all' ? true : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? (it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed') : filter === 'filtered' ? it.status === 'filtered' : it.classification === filter && isOpen(it.status))
+      // `favorites` is a CURATION view, not a status one: it cuts across open/handled
+      // deliberately, because a starred item the user then handled is still the thing they
+      // starred. Same predicate Knowledge uses for the same field (issue 620).
+      .filter((it) => filter === 'all' ? true : filter === 'favorites' ? !!it.favorited : filter === 'open' ? isOpen(it.status) : filter === 'handled' ? (it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed') : filter === 'filtered' ? it.status === 'filtered' : it.classification === filter && isOpen(it.status))
       .filter((it) => !kind || (it.item_kind || 'message') === kind)
       .filter((it) => !n || `${it.sender_name} ${it.channel_name} ${it.message} ${kindMeta(it.item_kind).label}`.toLowerCase().includes(n))
   }, [items, filter, kind, q])
@@ -160,6 +170,9 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     if (key === 'open') return scoped.filter((it) => isOpen(it.status)).length
     if (key === 'handled') return scoped.filter((it) => it.status === 'handled' || it.status === 'sent' || it.status === 'dismissed').length
     if (key === 'filtered') return scoped.filter((it) => it.status === 'filtered').length
+    // Counted across every status, matching the predicate above — a count that only saw open
+    // items would disagree with the list it labels the moment a starred item is handled.
+    if (key === 'favorites') return scoped.filter((it) => !!it.favorited).length
     return scoped.filter((it) => it.classification === key && isOpen(it.status)).length
   }
   // Kind chips are driven by what's PRESENT (kinds with zero items are dead controls), and
@@ -179,6 +192,12 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     // chip that reads 0 for most users would be a dead control.
     options: [
       ...FILTERS.map((f) => ({ key: f.key, label: f.label, count: filterCount(f.key) })),
+      // Favorites, offered only once something is starred — the same dead-control rule the
+      // Filtered chip follows. Before this the star was WRITE-ONLY: you could favorite
+      // an item and then had no way to find it again, in a list of forty (issue 620). Knowledge
+      // already implements the filter, the count and the row star for this exact field; this is
+      // that pattern, not a new one.
+      ...((filterCount('favorites') ?? 0) > 0 ? [{ key: 'favorites', label: 'Favorites', count: filterCount('favorites') }] : []),
       ...((filterCount('filtered') ?? 0) > 0 ? [{ key: 'filtered', label: 'Filtered', count: filterCount('filtered') }] : []),
     ],
   }]
@@ -224,6 +243,12 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                   <HeaderControl icon={CheckCheck} label="Dismiss all" danger priority="low" onClick={dismissAll} disabled={busy} />
                 )}
                 <HeaderControl icon={RotateCcw} label="Restart sources" priority="low" onClick={restart} disabled={busy} />
+                {/* `priority="primary"` so writing a note survives into the
+                    icon-only and overflow tiers — it is the one action on this page that
+                    CREATES something, and the cluster sheds `low` first. Placed after the
+                    destructive control and before the panel opener, per HeaderActions'
+                    ordering tenet. */}
+                <HeaderControl icon={StickyNote} label="Capture a note" priority="primary" onClick={() => setCaptureOpen(true)} />
                 <HeaderControl icon={SettingsIcon} label="Inbox settings" active={settingsOpen} priority="low" onClick={() => setSettingsOpen(!settingsOpen)} />
               </HeaderActions>
             </div>
@@ -245,7 +270,26 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
       panel={
         <>
           {open && (
-            <SidePanel key={open.id} fillHeight storeKey="inbox-panel-w" urlKey={{ key: 'open', setQuery }} icon={(() => { const cm = classMeta(open.classification); return <cm.icon size={18} style={{ color: cm.tone }} /> })()} title={open.sender_name || open.sender_id || 'Item'} onClose={() => setOpenId("")}>
+            /* 🔴 THE PANEL HEADER CONTRADICTED ITS OWN BODY. The row 120 lines below already
+                decides this — a non-channel kind's `sender_name` is the emitting SUBSYSTEM, so
+                those rows "lead with the KIND and its own icon instead" — and `InboxDetail:101`
+                already hides the sender line for exactly those rows. Only this header still
+                printed it, so a note the USER wrote opened a panel titled **"user"** under a
+                REPLY arrow (`classMeta` is the triage verdict, and a non-channel row was never
+                triaged — the same reason the row hides its confidence chip). Measured in the
+                browser on its own surface; the sibling kinds read "system" and "loop".
+                This applies the file's existing rule to the one place that had drifted from it,
+                rather than minting a note-only exception. */
+            <SidePanel key={open.id} fillHeight storeKey="inbox-panel-w" urlKey={{ key: 'open', setQuery }}
+              icon={(() => {
+                const channelBacked = !NON_CHANNEL_ITEM_KINDS.includes(open.item_kind || 'message')
+                const m = channelBacked ? classMeta(open.classification) : kindMeta(open.item_kind)
+                return <m.icon size={18} style={{ color: m.tone }} />
+              })()}
+              title={!NON_CHANNEL_ITEM_KINDS.includes(open.item_kind || 'message')
+                ? (open.sender_name || open.sender_id || 'Item')
+                : kindMeta(open.item_kind).label}
+              onClose={() => setOpenId("")}>
               <InboxDetail item={open} onChanged={load} navigate={navigate} />
             </SidePanel>
           )}
@@ -420,6 +464,12 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                       {channelBacked && channelLabel(it) && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{channelLabel(it)}</span>}
                       {!channelBacked && target && <span className="shrink-0 inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><ExternalLink size={11} /> deep link</span>}
                       {it.draft && <span className="shrink-0 inline-flex items-center gap-1 text-ok text-[0.75rem]"><Reply size={11} /> draft</span>}
+                      {/* The star the api.ts comment already promised ("a strong engagement
+                          signal + a star in the UI"). It carries an accessible name because it is
+                          the only thing conveying the state — an icon with no name is invisible to
+                          a screen reader, which would leave the read half missing for exactly the
+                          users who need it most. */}
+                      {it.favorited && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} aria-label="Favorited" />}
                     </div>
                     <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{it.message}</p>
                   </div>
@@ -439,6 +489,19 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
         </div>
         </EntranceRegion>
       </EntranceGroup>
+      {/* A MODAL, not a SidePanel: composing is a focused, short-lived task with one
+          field, and the panel slot is already the place a row's detail lives. Rendered from
+          the same `?capture=1` flag the tray deep-links, so the tray's menu item and the
+          header's Capture control open the identical surface.
+          `onCreated` closes the flag AND refreshes, because the row the WS push announces is
+          the one this call just created — refreshing is what puts it on screen immediately
+          rather than on the next socket tick. */}
+      {captureOpen && (
+        <ComposeNoteModal
+          onClose={() => setCaptureOpen(false)}
+          onCreated={() => { setCaptureOpen(false); load() }}
+        />
+      )}
     </WorkbenchLayout>
   )
 }

@@ -335,6 +335,30 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "Same field, same meaning — and it is load-bearing for display: a `complete` loop carrying "
         "one is the synthetic `ended_early` status every loop surface shows.",
     ),
+    FieldHome(
+        "max_cost_usd",
+        RUN,
+        "WorkflowRun.budget.max_cost",
+        "Same 0-=-uncapped money ceiling (`AG-14`). SEMANTICS DIFFER at the breach: the loop "
+        "completes non-genuine with stop_reason=cost_budget, while a run's budget breach PAUSES "
+        "resumably — the migration must pick one posture, and that choice is the row's decision.",
+    ),
+    FieldHome(
+        "deadline_secs",
+        NONE,
+        "",
+        "NO HOME. `AG-14`'s active-runtime ceiling (banked elapsed + current stretch). RunBudget "
+        "caps tokens/cost/retries and RunDefaults bounds only per-node timeouts — no run-wide "
+        "wall/active-time budget exists, so a silent migration drops the time ceiling entirely.",
+    ),
+    FieldHome(
+        "stop_reason",
+        NONE,
+        "",
+        "NO HOME. `AG-14`'s closed WHY-it-ended classification, stamped in lockstep with "
+        "completed_at. A run carries prose error_message and per-node FailureClass but no "
+        "run-level closed stop reason — dropping it re-opens the free-text-only gap AG-14 closed.",
+    ),
     # ── integration links ──
     FieldHome(
         "tasks_project_id",

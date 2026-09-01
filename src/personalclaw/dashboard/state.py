@@ -2054,29 +2054,38 @@ class DashboardState:
                 dead.append(ws)
                 continue
             try:
-                if not self._schedule_ws_send(ws.send_str(msg)):
+                if not self._schedule_ws_send(ws.send_str(msg), ws):
                     dead.append(ws)
             except Exception:
                 dead.append(ws)
         for ws in dead:
             self._remove_ws(ws)
 
-    def _schedule_ws_send(self, coro) -> bool:  # type: ignore[no-untyped-def]
+    def _schedule_ws_send(  # type: ignore[no-untyped-def]
+        self, coro, ws: "web.WebSocketResponse | None" = None
+    ) -> bool:
         """Schedule a WS send coroutine on the right loop from any thread.
 
         Returns False (so the caller can drop the client) only on an actual
         scheduling error. On the gateway loop → ensure_future; off-loop → submit to
         the captured loop with run_coroutine_threadsafe; no loop anywhere (sync
-        startup/tests) → close the coroutine cleanly so it isn't reported unawaited."""
+        startup/tests) → close the coroutine cleanly so it isn't reported unawaited.
+
+        The send is wrapped in :meth:`_send_guarded` on BOTH scheduling branches:
+        a fire-and-forget task's exception is never retrieved, so a client that
+        disconnects mid-broadcast (navigating away from a streaming response — a
+        completely routine event) used to surface as asyncio's unretrieved-task
+        ERROR traceback. The guard turns it into a DEBUG line and reaps the client
+        immediately instead of on the NEXT broadcast's ``ws.closed`` check."""
         try:
             running = asyncio.get_running_loop()
         except RuntimeError:
             running = None
         try:
             if running is not None:
-                asyncio.ensure_future(coro)
+                asyncio.ensure_future(self._send_guarded(coro, ws))
             elif self._ws_loop is not None and not self._ws_loop.is_closed():
-                asyncio.run_coroutine_threadsafe(coro, self._ws_loop)
+                asyncio.run_coroutine_threadsafe(self._send_guarded(coro, ws), self._ws_loop)
             else:
                 coro.close()  # no loop available — can't deliver; avoid unawaited warning
             return True
@@ -2086,6 +2095,21 @@ class DashboardState:
             except Exception:
                 pass
             return False
+
+    async def _send_guarded(  # type: ignore[no-untyped-def]
+        self, coro, ws: "web.WebSocketResponse | None"
+    ) -> None:
+        """Await one WS send, absorbing delivery failures.
+
+        Nothing above this can act on a failed send — the correct response to ANY
+        send error is to log quietly and drop the client, so a disconnect during an
+        active broadcast never escalates past DEBUG."""
+        try:
+            await coro
+        except Exception as exc:
+            logger.debug("WS send failed (client gone?): %s", exc)
+            if ws is not None:
+                self._remove_ws(ws)
 
     def broadcast_ws(
         self, msg_type: str, data: object, *, extra: dict[str, Any] | None = None
@@ -2124,7 +2148,7 @@ class DashboardState:
             if app and not self._app_may_see_event(app, msg_type):
                 continue
             try:
-                if not self._schedule_ws_send(ws.send_str(msg)):
+                if not self._schedule_ws_send(ws.send_str(msg), ws):
                     dead.append(ws)
             except Exception:
                 dead.append(ws)
@@ -2200,7 +2224,7 @@ class DashboardState:
                 dead.append(ws)
                 continue
             try:
-                if not self._schedule_ws_send(ws.send_str(msg)):
+                if not self._schedule_ws_send(ws.send_str(msg), ws):
                     dead.append(ws)
             except Exception:
                 dead.append(ws)

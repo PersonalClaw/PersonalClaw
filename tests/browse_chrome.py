@@ -35,7 +35,13 @@ that one exists, so the floor is not computed from the value it is meant to pin.
 **Absence is still allowed to skip**, because a machine with no browser genuinely cannot run the
 proof and failing there would take the whole suite down over an environment. What must not be
 allowed is for that skip to be *unnoticed* — so :data:`REQUIRE_ENV` turns it into a failure, which
-is how a gate (or a future CI job that does install a browser) demands the proof actually ran.
+is how a gate demands the proof actually ran.
+
+``ci.yml``'s ``browse-live`` job is that gate: it installs a Chromium and sets
+:data:`REQUIRE_ENV`, so on the merge gate a missing/renamed/unlaunchable browser is a RED rather
+than a green full of skips. The strictness lives there and nowhere else — a contributor with no
+browser still gets a skip. ``tests/test_browse_live_legs_run_in_ci.py`` is the rail over that
+wiring, because :data:`REQUIRE_ENV` protects nothing if the workflow stops setting it.
 """
 
 from __future__ import annotations
@@ -165,8 +171,13 @@ def find_chrome(roots: tuple[pathlib.Path, ...] | None = None) -> str | None:
     return None
 
 
-def _missing(proof: str, detail: str) -> None:
-    """Skip — or fail, if the caller declared the proof mandatory."""
+def missing(proof: str, detail: str) -> None:
+    """Skip — or fail, if the caller declared the proof mandatory.
+
+    Public because it is the ONLY way a behavioural proof is allowed to not run. Anything in
+    this family that reaches for a bare ``pytest.skip`` re-opens the hole: :data:`REQUIRE_ENV`
+    would not see it, so the gate that demands the proof ran would pass on its silence.
+    """
     if _falsey(os.environ.get(REQUIRE_ENV)):
         pytest.skip(f"{proof} NOT RUN: {detail}")
     pytest.fail(f"{REQUIRE_ENV} is set, so {proof} not running is a FAILURE, not a skip: {detail}")
@@ -183,13 +194,13 @@ def chrome_or_skip(proof: str, roots: tuple[pathlib.Path, ...] | None = None) ->
     if chrome is not None:
         return chrome
     searched = ", ".join(str(root) for root in (roots or browsers_roots())) or "(no root)"
-    _missing(
+    missing(
         proof,
         f"no Chromium found under {searched}. Install it with `npx playwright install chromium`, "
         f"or point {CHROME_ENV} at a binary. This is an environment gate, not a pass — the "
         "clause it proves is behavioural and no content assertion substitutes for it.",
     )
-    raise AssertionError("unreachable: _missing always raises")  # pragma: no cover
+    raise AssertionError("unreachable: missing() always raises")  # pragma: no cover
 
 
 def websockets_or_skip(proof: str) -> None:
@@ -201,7 +212,7 @@ def websockets_or_skip(proof: str) -> None:
     try:
         import websockets  # noqa: F401
     except ImportError:
-        _missing(
+        missing(
             proof,
             "`websockets` is not importable, and `playwright` is not a dependency here, so "
             "there is no way to speak CDP.",

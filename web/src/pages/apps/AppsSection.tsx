@@ -49,7 +49,7 @@ import { ScanReport, ConsentModal, PermissionList, CronConsentList } from './ins
 // as "empty" just because everything is installed. Both shapes normalize to this
 // one row (catalog fields + an `installed`/`enabled`/`hasUI` overlay). Installed
 // items render an Installed/Open affordance; available ones render Install. */
-interface StoreItem extends AppCatalogEntry {
+export interface StoreItem extends AppCatalogEntry {
   installed: boolean
   enabled: boolean
   hasUI: boolean
@@ -88,6 +88,20 @@ function installedToStoreItem(a: AppSummary): StoreItem {
 
 const GIT_URL_RE = /^(https?:\/\/|git@|git:\/\/|ssh:\/\/)/
 
+/** A human heading for a local filesystem source. The Store groups apps by where
+ *  they came from, but a raw absolute path is a dev/console artifact with no place
+ *  in product chrome (tenet 1: companion, not console) — running the app from a git
+ *  worktree surfaced "/Users/…/worktrees/ux-inspect/src/…" as a Store section title
+ *  (WT-10). Show the folder name the user recognises instead
+ *  ("/Users/me/projects/cool-app" → "cool-app"); the full path stays the grouping
+ *  key, so filtering/URL state is unchanged. Falls back to the trimmed path only
+ *  when there is no segment to show (e.g. a bare "/"). Handles both separators. */
+export function localSourceLabel(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, '')
+  const base = trimmed.split(/[/\\]/).pop() ?? ''
+  return base || path
+}
+
 /** The source a StoreItem belongs to, for the divider grouping. Returns a stable
  *  `key` (grouping/sort) + a human `label` (divider heading).
  *   • Built-in (bundled/registry origin, a bundled catalog entry, or a platform
@@ -96,10 +110,11 @@ const GIT_URL_RE = /^(https?:\/\/|git@|git:\/\/|ssh:\/\/)/
  *   • A local path → folded UP to the registered local source it lives under
  *     (an installed app records its own subdir, but the source the user ADDED is
  *     the parent dir), so every app from one source shares one divider. If it
- *     matches no registered source, it folds to its parent directory.
+ *     matches no registered source, it folds to its parent directory. The heading
+ *     is the folder name (`localSourceLabel`), never the raw path.
  *   • A git clone whose URL was lost (legacy temp-clone path) → "Installed from git".
  *  `localSources` is the list of registered local source roots (catalog). */
-function sourceGroup(it: StoreItem, localSources: string[]): { key: string; label: string } {
+export function sourceGroup(it: StoreItem, localSources: string[]): { key: string; label: string } {
   const src = (it.source || '').trim()
   const isBuiltin = it.native || it.origin === 'builtin' || it.origin === 'registry'
     || (it.sourceKind === 'bundled' && !it.installed)
@@ -118,7 +133,7 @@ function sourceGroup(it: StoreItem, localSources: string[]): { key: string; labe
   // A filesystem path. Fold up to the registered source that contains it…
   const root = localSources.find((s) => src === s || src.startsWith(s.replace(/\/$/, '') + '/'))
   const key = root ?? (src.replace(/\/[^/]+\/?$/, '') || src)  // …else the parent dir
-  return { key: `local:${key}`, label: key }
+  return { key: `local:${key}`, label: localSourceLabel(key) }
 }
 
 /** Group items by source, ordered: Built-in first, then the rest alphabetically

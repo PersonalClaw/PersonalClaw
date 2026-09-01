@@ -288,6 +288,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/inbox/digest` — on-demand channel digest.
 - `POST /api/inbox/dismiss-all` — dismiss every OPEN item (pending or seen).
 - `GET /api/inbox/kinds` — item kinds present, with open counts, for the filter chips.
+- `POST /api/inbox/notes` — the USER writes their own inbox item (INU-9).
 - `GET /api/inbox/pending` — list pending items only (recency, optionally weighted).
 - `POST /api/inbox/proposals` — an APP raises a proposal (INU-7 T7.2).
 - `GET /api/inbox/providers` — list registered inbox message source providers.

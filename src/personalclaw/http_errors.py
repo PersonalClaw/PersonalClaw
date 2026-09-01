@@ -439,6 +439,30 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "secret_absent": "No secret is stored under that name in the scope you asked for.",
     "secret_host_readonly": "That row is inherited from the host environment, so the vault "
     "cannot change or remove it — unset it where the gateway's environment is defined.",
+    # ── user-authored inbox note (handlers_inbox.api_inbox_note_create) ──
+    # Three codes rather than the generic `invalid_request`/`bad_request` pair, because the
+    # compose surface branches on all three and each has a DIFFERENT next move: an empty
+    # note means "type something" (the form re-focuses its textarea and shows nothing
+    # alarming), a too-long note means "shorten it" (and the site's message carries the
+    # actual count and limit, which a fixed sentence could not), and a failed save means
+    # "your text is still in the box, press save again" — the one case where the note has
+    # NOT been kept and the user must not be told it was.
+    "note_text_empty": "A note needs some text. Type what you want to remember, then save.",
+    "note_too_long": "That note is longer than the capture limit. Shorten it and save again.",
+    "note_not_saved": (
+        "The note could not be written to the inbox, so it was not kept. Your text is "
+        "still in the compose box — try saving again."
+    ),
+    # ── legibility context-adapter regeneration (dashboard/handlers/context.py — #358) ──
+    # The project's bound workspace_dir is a WRITE target for CLAUDE.md / AGENTS.md /
+    # .cursorrules. A relative path, the home dir itself, a credential dir or an OS/system
+    # root is refused before any file is written, so a bad bind cannot plant agent files at
+    # the filesystem root or in $HOME.
+    "workspace_dir_unsafe": (
+        "The project's bound workspace directory is not a safe place to write generated agent "
+        "files (a relative path, the home directory itself, a credential directory, or an "
+        "OS/system root)."
+    ),
 }
 
 

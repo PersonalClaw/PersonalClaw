@@ -146,6 +146,24 @@ class InstallResult:
     tier: "Any"  # supply_chain.TrustTier
 
 
+class SkillNotFoundError(KeyError):
+    """A marketplace was asked for a skill id it does not have.
+
+    Typed so HTTP handlers can map "no such skill" to 404 instead of the
+    500 a bare ``RuntimeError`` produced. Also raised for a syntactically
+    invalid id (path separators, ``..``, absolute paths) — to a caller those
+    are indistinguishable from "not found", and saying more would leak
+    which paths exist outside the marketplace root.
+    """
+
+    def __init__(self, skill_id: str) -> None:
+        super().__init__(skill_id)
+        self.skill_id = skill_id
+
+    def __str__(self) -> str:
+        return f"Skill not found: {self.skill_id!r}"
+
+
 class SkillInstallRefused(Exception):
     """A guarded install was blocked by the supply-chain gate.
 

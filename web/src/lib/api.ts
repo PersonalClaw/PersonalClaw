@@ -1636,7 +1636,8 @@ export interface LaunchSpec {
   kind?: LoopKind; agent?: string; model?: string; provider?: string; provider_agent?: string
   reasoning_effort?: string; execution?: 'solo' | 'multi_agent'; roster?: RosterMember[]
   strategy_id?: string; intake_rigor?: string; attended?: boolean; autopilot?: boolean
-  max_cycles?: number; skill_ids?: string[]; workflow_ids?: string[]; project_id?: string
+  max_cycles?: number; max_cost_usd?: number; deadline_secs?: number
+  skill_ids?: string[]; workflow_ids?: string[]; project_id?: string
   success_criteria?: string; kind_config?: Record<string, unknown>
 }
 export interface PromptItem {
@@ -1827,6 +1828,14 @@ export interface Trigger {
  *  actions. (TriggerCreatePage already sends `action` directly; this serves the
  *  shared ScheduleForm edit path via ScheduleDetail.) */
 function _scheduleBodyToWire(body: Record<string, unknown>): Record<string, unknown> {
+  // Everything destructured here is ACTION config, and the only way it reaches the server is
+  // inside the `action` this function builds. `rest` — the schedule mechanism — is the top level.
+  // A caller that puts one of these keys on a body that already carries its own `action` is
+  // discarding it, silently, in the browser: that is how the trigger-create page's
+  // "Auto-approve tools" switch became decorative (issue 268). `approval_mode` in particular is
+  // `invoke-agent`-only (`schedule.py`'s property returns '' for every other provider), so it can
+  // only ride the invoke-agent branch below. `tests/test_trigger_wire_field_census.py` holds the
+  // two field sets against each other so a future field cannot go missing the same way.
   const { message, agent, model, approval_mode, script, command, zt_timeout, action, ...rest } = body
   if (action) return { ...rest, action }  // already action-shaped (create page)
   let act: TriggerAction
@@ -2762,9 +2771,11 @@ export type InboxConfidence = 'high' | 'needs_review' | 'escalate'
 export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled' | 'filtered'
 // What kind of attention an item wants. 'message' is the default so every item written
 // before the inbox became a general attention store stays valid.
+// 'user_note' is the one kind a PERSON writes; every other member is synthesized by
+// the system, so the value itself carries the provenance a consumer needs.
 export type InboxItemKind =
   | 'message' | 'mention' | 'email' | 'agent_request'
-  | 'proposal' | 'needs_input' | 'digest' | 'system'
+  | 'proposal' | 'needs_input' | 'digest' | 'system' | 'user_note'
 export interface InboxThreadMsg { sender_name?: string; text?: string; ts?: string }
 export interface InboxItem {
   id: string; channel: string; channel_name: string; thread_ts?: string | null
@@ -3895,7 +3906,8 @@ export interface GoalLoop {
   execution: 'solo' | 'multi_agent'; roster?: RosterMember[]; strategy_id?: string
   agent: string; model: string; provider?: string; provider_agent?: string; reasoning_effort?: string
   attended: boolean; granularity: Granularity
-  max_cycles: number; idle_secs: number
+  max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
+  stop_reason?: string
   success_criteria: string | null; verify_command?: string
   rubric?: string[]; best_score?: number; last_score?: number | null; ratchet_mode?: string
   marginal_scores?: number[]
@@ -4010,7 +4022,8 @@ export interface CodeProject {
   // The project's own file dir (server-local), where doc deliverables land when no
   // workspace is bound; the cockpit roots its file surfaces here as a fallback.
   files_dir?: string
-  max_cycles: number; idle_secs: number
+  max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
+  stop_reason?: string
   success_criteria: string | null; verify_command?: string; test_command?: string
   status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
@@ -4083,7 +4096,8 @@ export interface Loop {
   // deliverables (REPORT.md/MONITOR_LOG.md) land when no workspace is bound. The
   // cockpit roots its file tree + terminal here for no-workspace loops.
   files_dir?: string
-  max_cycles: number; idle_secs: number
+  max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
+  stop_reason?: string
   success_criteria: string | null
   status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
@@ -6238,6 +6252,11 @@ export const api = {
   // dragged backwards. Idempotent.
   markInboxSeen: (body: { ids?: string[]; kind?: string } = {}) =>
     post<{ ok: boolean; seen: number }>('/api/inbox/seen', body),
+  // The user writes their OWN inbox item. The tray's quick capture and the inbox
+  // compose control are two entry points onto this one endpoint; 201 carries the created
+  // row so a caller can render it without a refetch.
+  createInboxNote: (text: string) =>
+    post<{ ok: boolean; id: string; item: InboxItem }>('/api/inbox/notes', { text }),
   inboxStatus: () => get<InboxStatus>('/api/inbox/status'),
   inboxProviders: () => get<{ providers: InboxProvider[] }>('/api/inbox/providers').then((d) => d.providers),
   updateInboxItem: (id: string, body: Record<string, unknown>) => put<InboxItem>(`/api/inbox/${encodeURIComponent(id)}`, body),
@@ -6280,7 +6299,10 @@ export const api = {
     return get<AuditPage>(`/api/security/audit?${q}`)
   },
   auditVerify: (full = false) => get<SelVerify>(`/api/security/audit/verify${full ? '?full=1' : ''}`),
-  selRotate: () => post<{ ok?: boolean }>('/api/sel/rotate'),
+  // Mirrors `SecurityEventLog.rotate()` (src/personalclaw/sel.py): the log is archived and a fresh
+  // chain started. `archive_path` is the timestamped `.bak.jsonl` the old entries moved to (empty when
+  // there was nothing to archive). The old `{ ok?: boolean }` shape silently dropped all of this.
+  selRotate: () => post<{ rotated: boolean; entries_before: number; entries_after: number; archive_path: string }>('/api/sel/rotate'),
   // session archive (read-only browse)
   sessionArchives: () => get<{ archives: SessionArchive[] }>('/api/session/archive').then((d) => d.archives),
   // The read endpoint serves raw NDJSON text (application/x-ndjson), NOT a JSON

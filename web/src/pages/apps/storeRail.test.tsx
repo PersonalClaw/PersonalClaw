@@ -327,7 +327,7 @@ describe('the rail is operable from the accessibility tree', () => {
       walked.push((document.activeElement?.textContent ?? '').trim())
     }
     expect(walked, 'every entry is reached, in DOM order, with no gap').toEqual(
-      ['All apps3', 'Productivity2', 'Utility1', 'All sources3', 'Built-in2', '/srv/apps1', 'Add source'])
+      ['All apps3', 'Productivity2', 'Utility1', 'All sources3', 'Built-in2', 'apps1', 'Add source'])
   })
 
   it('the pressed state is not carried by a class alone', async () => {

@@ -216,14 +216,14 @@ describe('a confirmed delete reports its failure', () => {
     expect(offenders, 'the user was stopped and asked to confirm — silence is indefensible').toEqual([])
   })
 
-  it('the confirmed key rotation the verb filter could not see now reports', () => {
-    // Also must not run the post-success steps: nothing rotated, so there is nothing to invalidate.
+  it('the confirmed audit-log rotation the verb filter could not see now reports', () => {
+    // Also must not run the post-success steps: nothing archived, so there is nothing to invalidate.
     const src = readFileSync(join(PAGES, 'settings', 'AuditPanel.tsx'), 'utf8')
     expect(src, 'the rotation must still be confirmed first').toMatch(/await confirm\(\{/)
-    expect(src, 'and the rejection captured, not discarded').toMatch(/try \{ await api\.selRotate\(\) \}/)
-    expect(src, 'reported with the server’s own message').toMatch(/notify\(`Couldn't rotate the signing key: \$\{msg\}`, 'error'\)/)
+    expect(src, 'and the rejection captured, not discarded').toMatch(/try \{\s+const res = await api\.selRotate\(\)/)
+    expect(src, 'reported with the server’s own message').toMatch(/notify\(`Couldn't archive the audit log: \$\{msg\}`, 'error'\)/)
     const at = src.indexOf('api.selRotate(')
-    expect(src.slice(at, at + 420), 'a failed rotation must not invalidate or reload').toMatch(/return {3}\/\/ nothing rotated/)
+    expect(src.slice(at, at + 640), 'a failed rotation must not invalidate or reload').toMatch(/return {3}\/\/ nothing archived/)
     // And it is genuinely inside the sweep now, not merely fixed by hand.
     expect(confirmGatedCalls().some((g) => g.rel === join('settings', 'AuditPanel.tsx') && g.call === 'selRotate'))
       .toBe(true)

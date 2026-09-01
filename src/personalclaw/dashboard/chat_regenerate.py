@@ -49,15 +49,25 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
             return web.json_response({"error": "session is running"}, status=409)
 
         msgs = session.messages
-        ai_idx = -1
+        # The LAST answer-shaped turn anchors the operation — an "assistant"
+        # message (classic regenerate) or an "error" message (a failed turn,
+        # #254): there the user never got an answer, so Regenerate acts as a
+        # clean RETRY of the failed turn's own user message. Scanning for
+        # "assistant" alone did two wrong things on a failed turn: with no
+        # prior assistant it 400'd ("no assistant message to regenerate" — the
+        # orphaned-bubble bug), and WITH one it anchored on the previous
+        # exchange and silently truncated away the failed turn's user message,
+        # replaying an already-answered question.
+        anchor_idx = -1
         for i in range(len(msgs) - 1, -1, -1):
-            if msgs[i].get("role") == "assistant":
-                ai_idx = i
+            if msgs[i].get("role") in ("assistant", "error"):
+                anchor_idx = i
                 break
-        if ai_idx < 0:
+        if anchor_idx < 0:
             return web.json_response({"error": "no assistant message to regenerate"}, status=400)
+        retrying_failed_turn = msgs[anchor_idx].get("role") == "error"
         u_idx = -1
-        for i in range(ai_idx - 1, -1, -1):
+        for i in range(anchor_idx - 1, -1, -1):
             if msgs[i].get("role") == "user":
                 u_idx = i
                 break
@@ -68,14 +78,18 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
         if not user_msg:
             return web.json_response({"error": "empty user message"}, status=400)
 
-        ai_msg = msgs[ai_idx]
-        _rv = ai_msg.get("variants")
-        variants: list[dict] = list(_rv) if isinstance(_rv, list) else []  # type: ignore[arg-type]
-        current_entry = {"content": ai_msg.get("content", ""), "ts": ai_msg.get("ts", "")}
-        if not any(v.get("content") == current_entry["content"] for v in variants):
-            variants.append(current_entry)
-        if len(variants) > _MAX_VARIANTS:
-            variants = variants[-_MAX_VARIANTS:]
+        variants: list[dict] = []
+        if not retrying_failed_turn:
+            # Only a REAL answer is variant-worthy — an error bubble is not an
+            # alternative response, so a retry stashes nothing.
+            ai_msg = msgs[anchor_idx]
+            _rv = ai_msg.get("variants")
+            variants = list(_rv) if isinstance(_rv, list) else []  # type: ignore[arg-type]
+            current_entry = {"content": ai_msg.get("content", ""), "ts": ai_msg.get("ts", "")}
+            if not any(v.get("content") == current_entry["content"] for v in variants):
+                variants.append(current_entry)
+            if len(variants) > _MAX_VARIANTS:
+                variants = variants[-_MAX_VARIANTS:]
 
         del session.messages[u_idx + 1 :]
         session._dirty = True
@@ -86,17 +100,23 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
 
         sel().log_api_access(
             caller="dashboard",
-            operation="chat.regenerate",
+            operation="chat.retry_failed_turn" if retrying_failed_turn else "chat.regenerate",
             outcome="allowed",
             source="dashboard",
             resources=session.key,
         )
 
-        hint = (
-            "The user regenerated the previous response. Produce a fresh answer — "
-            "vary phrasing, structure, or angle. Do not say you already answered or "
-            "reference the prior reply."
-        )
+        if retrying_failed_turn:
+            # The prior turn FAILED — there is no earlier answer to vary, and a
+            # "you already answered" framing would gaslight the model. Plain
+            # re-run of the user's message.
+            hint = ""
+        else:
+            hint = (
+                "The user regenerated the previous response. Produce a fresh answer — "
+                "vary phrasing, structure, or angle. Do not say you already answered or "
+                "reference the prior reply."
+            )
         task = asyncio.create_task(run_chat(state, session, user_msg, regenerate_hint=hint))
         session.task = task
         state._background_tasks.add(task)
