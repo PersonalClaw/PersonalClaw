@@ -775,6 +775,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   including when you rename a whole folder with several open. And a file with no unsaved changes is
   no longer closed at all: the tab follows it to its new name, because wanting to rename something is
   not a reason to stop looking at it.
+- **Workflow controls no longer answer confidently about a run that is not there.** Asking to skip or
+  dismiss an approval on a run id that did not exist — a typo, or a run already deleted — came back
+  reporting success, and even said the approval was still waiting. Rewinding, re-running from a step,
+  or editing such a run reported that it was not running and told you to resume it first, which you
+  could not do because there was nothing to resume; previewing an edit reported a server fault. All
+  four now say plainly that there is no such run, which is what the other eight controls already did.
+  **And a finished run can no longer be "resumed."** Answering a gate on a workflow that had already
+  completed, failed, or been cancelled reported success and quietly wrote to the finished run on the
+  way through. It now refuses and says the run is already complete, matching cancel, pause and steer.
 
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it
   had.** It always reported *re-embedded 0 item(s)* — in every install, whatever your library held. Two
