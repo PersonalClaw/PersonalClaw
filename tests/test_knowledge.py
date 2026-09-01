@@ -1899,10 +1899,33 @@ class TestDoctorVectorIndexLine:
         _collapsing_corpus(s, items=3, per_item=4)
         s.close()
         res = self._run(tmp_path)
-        assert res.ok and "12 chunk vector(s) indexed" in res.detail
+        # 🔁 Was pinned as `12 chunk vector(s) indexed`. This line is rendered VERBATIM by
+        # `settings/DoctorPanel.tsx` (`{probe.detail}`) and printed by `personalclaw doctor`, so
+        # the hedge was shipped product copy; 12 is plural, so the sentence reads "12 chunk
+        # vectors indexed". The singular boundary this fixture cannot reach is asserted below.
+        assert res.ok and "12 chunk vectors indexed" in res.detail
         assert res.evidence["extension_available"] is True
         assert res.evidence["dimensions"] == {"4": {"indexed": 12, "live": 12}}
         assert "degraded" not in res.evidence
+
+    def test_a_single_indexed_vector_reads_as_one_vector(self, tmp_path, clean_vec_probe):
+        """🔑 THE BOUNDARY A FIXTURE FIXED AT 12 CANNOT SEE.
+
+        A count-bearing sentence has exactly one interesting input — 1 — and a rail whose
+        corpus is always plural certifies `1 chunk vectors` as readily as `1 chunk vector(s)`.
+        Both are wrong and neither is visible from the assertion above, which is why this
+        programme's standing rule is that the fixture must CROSS the boundary rather than sit
+        on one side of it.
+        """
+        db_dir = tmp_path / "workspace" / "knowledge"
+        db_dir.mkdir(parents=True)
+        s = KnowledgeStore(str(db_dir / "knowledge.db"))
+        _collapsing_corpus(s, items=1, per_item=1)
+        s.close()
+        res = self._run(tmp_path)
+        assert res.ok, res.detail
+        assert "1 chunk vector indexed" in res.detail, res.detail
+        assert "vectors" not in res.detail, f"singular count took a plural noun: {res.detail!r}"
 
     def test_reports_the_degraded_line_when_the_extension_cannot_load(
         self, tmp_path, monkeypatch, clean_vec_probe
