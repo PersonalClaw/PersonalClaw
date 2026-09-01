@@ -312,7 +312,11 @@ class TestTheEditFormStillSaves:
     update. So refusing unknown keys — tempting, since a typo'd field was a silent no-op — would
     have made Save on the task detail screen answer 400.
 
-    That `project_id` is honored on create and ignored on update is its own gap, filed as #2142.
+    That `project_id` was honored on create and ignored on update was its own gap, issue 2142 — now
+    closed: `api_tasks_update` calls `_attach_project_general_list` too, so the key is popped before
+    it reaches `update_task`. This leg still passes an unresolvable `project_id` on purpose, because
+    it is testing that an unknown key is IGNORED rather than refused, and that has to keep holding
+    for whatever the next non-Task field turns out to be.
     """
 
     @pytest.mark.asyncio

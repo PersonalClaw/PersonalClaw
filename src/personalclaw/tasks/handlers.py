@@ -211,7 +211,13 @@ def _attach_project_general_list(body: dict) -> None:
     would silently discard the user's project choice. Attach to the project's
     find-or-create "General" list instead."""
     project_id = body.pop("project_id", "")
-    if not project_id or body.get("task_list_id"):
+    if not project_id:
+        return
+    # An explicitly-sent EMPTY `task_list_id` means "no list chosen", so the project still has to
+    # be resolved. The form always sends the key, so this branch is the live one — it worked before
+    # only because `""` is falsy, which is luck rather than intent. Stated as a rule so a later
+    # `if "task_list_id" in body` refactor cannot invert it silently.
+    if str(body.get("task_list_id") or "").strip():
         return
     from personalclaw.tasks.hierarchy import HierarchyStore
 
@@ -255,6 +261,13 @@ async def api_tasks_update(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
     provider_name = body.pop("provider", None)
+    # The SAME resolution the create path does. `project_id` is not a `Task` field, so without this
+    # it reached `update_task`, was ignored, and the edit answered 200 having changed nothing — the
+    # project dropdown reverted on the next load (issue 2142). `TaskForm.draftToPayload` is shared
+    # by the create page and the detail page, so the identical payload worked on one and was a no-op
+    # on the other. Idempotent and already a no-op when a list was chosen, so the create path's
+    # behaviour is the whole specification.
+    _attach_project_general_list(body)
     try:
         task = await registry.update_task(task_id, provider_name=provider_name, **body)
     except reconcile.DependencyCycleError as e:
