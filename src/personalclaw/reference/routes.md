@@ -109,6 +109,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/channel/upload-file` — upload a file to the active channel (internal, called by notify_attachment).
 - `GET /api/channels` — all comms transports with info + health.
 - `GET /api/channels/reply-targets` — list channels the bot can reply in.
+- `GET /api/channels/trust` — the whole sender-trust posture, per provider.
+- `DELETE /api/channels/trust/{provider}/senders/{sender_id}` — revoke one sender.
 - `GET /api/channels/{name}` — one transport's info + health.
 - `POST /api/channels/{name}/connect` — bring the transport online.
 - `POST /api/channels/{name}/disconnect` — take the transport offline.

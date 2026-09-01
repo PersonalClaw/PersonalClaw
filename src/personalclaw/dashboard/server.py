@@ -1202,6 +1202,10 @@ async def start_dashboard(
     app.router.add_delete("/api/terminal/sessions/{session_id}", handlers.api_terminal_delete)
 
     # Channels (comms transports) — management surface over registered transports
+    from personalclaw.dashboard.handlers.channel_trust import (
+        api_channel_trust,
+        api_channel_trust_revoke,
+    )
     from personalclaw.dashboard.handlers.channels import (
         api_channel_connect,
         api_channel_disconnect,
@@ -1211,6 +1215,14 @@ async def start_dashboard(
     )
 
     app.router.add_get("/api/channels", api_channels_list)
+    # BEFORE the `{name}` route below, deliberately: aiohttp resolves in registration
+    # order, so a later `/api/channels/trust` would be swallowed by `/api/channels/{name}`
+    # and answer "unknown transport" instead of the trust posture. Railed by
+    # `tests/test_channel_trust_api.py::test_trust_route_is_not_shadowed_by_the_name_route`.
+    app.router.add_get("/api/channels/trust", api_channel_trust)
+    app.router.add_delete(
+        "/api/channels/trust/{provider}/senders/{sender_id}", api_channel_trust_revoke
+    )
     app.router.add_get("/api/channels/{name}", api_channel_get)
     app.router.add_post("/api/channels/{name}/connect", api_channel_connect)
     app.router.add_post("/api/channels/{name}/disconnect", api_channel_disconnect)

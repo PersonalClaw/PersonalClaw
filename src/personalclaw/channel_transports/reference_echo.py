@@ -109,47 +109,38 @@ class ReferenceEchoTransport(ChannelTransportProvider):
         self._services = None
 
     async def handle_inbound(self, msg: ChannelMessage, *, is_dm: bool = True) -> "TrustDecision":
-        """Run one inbound :class:`ChannelMessage` through the core trust seam (CE-1 V1).
+        """Hand one inbound :class:`ChannelMessage` to the platform's guarded door (EA-7).
 
-        This is the reference wiring every channel app copies: BEFORE a message enters a
-        session, call ``channel_trust.guard_inbound``. An unknown DM sender gets the canned
-        pairing reply echoed back (and the owner is notified once); a paired sender's text —
-        or a raw pairing code they send — flows on. A tracked-group message is fenced. The
-        return value reports what happened so a demo/test can inspect the full round-trip
-        without a live external system."""
-        from personalclaw import channel_trust
+        This is the reference wiring every channel app copies, and it is deliberately ONE
+        call: ``services.deliver_channel_inbound(...)``. The transport does not decide
+        whether to consult sender trust and *cannot forget to* — the door applies
+        ``channel_trust.guard_inbound`` before the content can reach a session, redeems a
+        pairing code when the message is one, fences non-owner group content, and routes the
+        turn. This file used to hand-roll that sequence itself, which is precisely the
+        "trust by convention" shape :mod:`personalclaw.channel_inbound` exists to end: a
+        copy of it in every transport is a copy that can drift or be omitted.
 
-        state = getattr(self._services, "dashboard_state", None)
-        # A DM whose text IS an active pairing code redeems it and starts the conversation.
-        if is_dm and not channel_trust.is_allowed_sender(self.name, msg.sender):
-            candidate = (msg.text or "").strip()
-            if candidate.isdigit() and channel_trust.redeem_pairing_code(
-                self.name, msg.sender, candidate
-            ):
-                await self.send(
-                    OutboundMessage(channel_id=msg.channel_id, text="Paired — you can talk now.")
-                )
-                return TrustDecision(allowed=True, paired=True)
+        What stays transport-side is the OUTBOUND half, because rendering is channel-
+        specific: a non-empty ``canned_reply`` on the verdict is text this transport
+        delivers back to the sender in its own format.
 
-        verdict = channel_trust.guard_inbound(
-            state,
-            self.name,
-            msg.sender,
-            channel_id=msg.channel_id,
-            is_dm=is_dm,
-            text=msg.text,
+        The return value reports what happened so a demo/test can inspect the full
+        round-trip without a live external system."""
+        if self._services is None:
+            # Fail-CLOSED: no services handle means no guarded door, so nothing is
+            # delivered. Never fall back to routing the message unchecked.
+            return TrustDecision(allowed=False, reason="no_services")
+
+        verdict = await self._services.deliver_channel_inbound(self.name, msg, is_dm=is_dm)
+        if verdict.canned_reply:
+            await self.send(OutboundMessage(channel_id=msg.channel_id, text=verdict.canned_reply))
+        return TrustDecision(
+            allowed=verdict.allowed,
+            reason=verdict.reason,
+            paired=bool(verdict.meta.get("paired")),
+            notified=verdict.fired_notification,
+            delivered_text=(verdict.fenced_text or msg.text) if verdict.allowed else "",
         )
-        if not verdict.allowed:
-            if verdict.canned_reply:
-                await self.send(
-                    OutboundMessage(channel_id=msg.channel_id, text=verdict.canned_reply)
-                )
-            return TrustDecision(
-                allowed=False, reason=verdict.reason, notified=verdict.fired_notification
-            )
-        # Allowed: a tracked-group message is delivered as FENCED data, a DM as-is.
-        text = verdict.fenced_text or msg.text
-        return TrustDecision(allowed=True, delivered_text=text)
 
     # Test/demo helper — inject an inbound message as if it arrived externally.
     async def _simulate_inbound(self, text: str, channel_id: str = "ref") -> None:
@@ -162,8 +153,14 @@ class ReferenceEchoTransport(ChannelTransportProvider):
 class TrustDecision:
     """What :meth:`ReferenceEchoTransport.handle_inbound` did with one message.
 
-    A plain record so a demo/test can assert the full trust round-trip (allowed? paired via
-    a code? owner notified? what text would enter the session) with no external system."""
+    A plain record so a demo/test can assert the full trust round-trip (did it become a
+    turn? paired via a code? owner notified? what text entered the session) with no
+    external system.
+
+    ``allowed`` means **this message became an agent turn** — which is why a message that
+    was itself a valid pairing code reports ``allowed=False, paired=True``: the sender is
+    trusted from now on, but a pairing code is not a question for the agent to answer.
+    """
 
     allowed: bool
     reason: str = ""

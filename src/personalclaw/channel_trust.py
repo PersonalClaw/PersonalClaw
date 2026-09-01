@@ -248,6 +248,62 @@ def trust_policies(provider: str) -> dict[str, str]:
     return dict(_provider_record(_read_store(), provider)["policies"])
 
 
+# ── read projection (the owner-facing surface) ───────────────────────────────
+
+
+def list_providers() -> list[str]:
+    """Every provider the trust store holds any state for, sorted.
+
+    A provider appears here as soon as it has ANY trust state — a paired sender, a tracked
+    channel, a policy, or merely a first contact from an unknown sender (which writes the
+    renotify stamp). There is deliberately no separate registry to enumerate against: the
+    store is the only thing that knows which opaque ``provider`` keys transports chose, and
+    inventing a second list would let the two disagree.
+    """
+    return sorted(_read_store().keys())
+
+
+def provider_trust(provider: str) -> dict[str, Any]:
+    """One provider's trust posture, shaped for a read surface.
+
+    **Never carries a secret.** The pairing record holds only a SHA-256 hash of the active
+    code, and not even that is projected — the caller learns whether a code is outstanding
+    and when it expires, which is all a UI needs to say "a code is live". The per-sender
+    renotify stamps (``rate``) are also withheld: they are a log of who tried to reach the
+    owner, which is a different surface from "who is allowed" and would leak contact
+    attempts into a page about the allowlist.
+    """
+    rec = _provider_record(_read_store(), provider)
+    pairing = rec.get("pairing") or {}
+    senders = rec.get("allowed_senders") or {}
+    channels = rec.get("tracked_channels") or {}
+    return {
+        "provider": provider,
+        "policies": dict(rec["policies"]),
+        "allowed_senders": [
+            {
+                "sender_id": sid,
+                "name": str((meta or {}).get("name", "") or ""),
+                "added_at": str((meta or {}).get("added_at", "") or ""),
+                "via": str((meta or {}).get("via", "") or ""),
+            }
+            for sid, meta in sorted(senders.items())
+            if isinstance(senders, dict)
+        ],
+        "tracked_channels": [
+            {
+                "channel_id": cid,
+                "name": str((meta or {}).get("name", "") or ""),
+                "added_at": str((meta or {}).get("added_at", "") or ""),
+            }
+            for cid, meta in sorted(channels.items())
+            if isinstance(channels, dict)
+        ],
+        "pairing_active": bool(pairing.get("code_hash")),
+        "pairing_expires_at": str(pairing.get("expires_at", "") or ""),
+    }
+
+
 # ── pairing codes (hash-stored, single-use, TTL'd) ───────────────────────────
 
 
