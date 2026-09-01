@@ -661,6 +661,15 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   loaded. The two screens send exactly the same thing; only the create path knew what to do with it.
   Editing now resolves it the same way, into the project's General list, and an explicit list you
   picked yourself still wins over the project.
+- **A crash no longer explains itself to you as "Server got itself in trouble."** When something broke
+  on the server in a way it had not anticipated, the web framework's own diagnostic page was pasted
+  into the red line under whatever field you were filling in — and, since that line is announced to
+  screen readers, read out loud. It was not a sentence written for anyone; it just happened to be
+  short enough and plain enough to slip past the checks that already caught proxy error pages and
+  walls of markup. You now see the status instead, which is less colourful and considerably more
+  true: it tells you the request reached the server and the server failed, which is the actionable
+  part. Messages the backend deliberately writes are untouched, including on a server error — "could
+  not read the document" still says that, rather than hiding behind a number.
 
 - **The Doctor's "backfill missing knowledge embeddings" repair could not repair anything, and said it
   had.** It always reported *re-embedded 0 item(s)* — in every install, whatever your library held. Two
