@@ -757,8 +757,29 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
 
         {/* ── 2-region grid (Work + Tasks fill remaining height; files moved to the bar
             above so the live work widgets get the screen) ── */}
-        <div className="min-h-0 flex-1 grid gap-px overflow-hidden bg-outline-variant/20"
-          style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(280px, 1fr)' }}>
+        {/* 🔑 ONE COLUMN BELOW `md`, BECAUSE THE 280px FLOOR STARVED THE PRIMARY PANE. The columns were
+            an unconditional inline `minmax(0, 2fr) minmax(280px, 1fr)` with no breakpoint anywhere in
+            this file. The right column's 280px floor is reached at a 834px viewport and from there the
+            LEFT column absorbs every remaining pixel of shrink — measured on the seeded fixture:
+
+              viewport   container   Work (2fr)   Tasks (1fr)
+                1440       1244         829          414
+                 834        638         357          280   ← floor reached
+                 390        390         109          280
+                 320        320          39          280   ← 320 − 280 − 1px gap
+
+            So at 320px the PRIMARY pane is 39px and the secondary is 7× wider — the proportions the
+            `2fr / 1fr` ratio exists to express, inverted. axe caught the consequence rather than the
+            cause: at 39px the Work pane's content overflows horizontally (`scrollWidth 56 / clientWidth
+            39`) and, having no focusable children and no `tabindex`, it becomes a keyboard-inaccessible
+            scroll region (`scrollable-region-focusable`, serious).
+
+            WCAG SC 1.4.10 (Reflow) requires this content at 320px, so the fix is to stop asking two
+            columns to share a width that cannot hold them. `md` (768px) is the threshold because at that
+            viewport the container is ~572px, which still leaves the primary pane ~291px — above the 280px
+            the secondary demands. Below it, Work stacks above Tasks: the `2fr` column is the primary one,
+            so it keeps reading order. */}
+        <div className="min-h-0 flex-1 grid grid-cols-1 gap-px overflow-hidden bg-outline-variant/20 md:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
           {/* WORK — the state-grouped board (WORK-CONTAINERS §1/§5.2/§6.1): runs + legacy
               loops + tasks in one board, needs-input pinned first (server order). Each
               source is per-section isolated — a failing source degrades ONE section
