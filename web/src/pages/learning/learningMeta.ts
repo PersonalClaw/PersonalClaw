@@ -133,6 +133,80 @@ export function gateRegressed(row: LearningRow): boolean {
   return row.gate?.state === 'gated' && row.gate.delta !== null && row.gate.delta < 0
 }
 
+// ── The local A/B replay harness: candidate vs baseline, or an honest "not replayed" ──
+// EXTERNAL-ACCESS §9 (EA-6). The harness mines a few real turns from the user's own captured
+// coding sessions and replays each twice — once without the candidate skill/template, once with
+// it — so the card answers the question the gate cannot: would this have helped on MY work?
+//
+// It sits BESIDE `gateLabel` rather than inside it because the two measure different corpora. The
+// gate scores the shipped scenario library; this scores the user's captured turns. One clause each,
+// because a reader who cannot tell which corpus a number came from cannot weigh it.
+//
+// The same three facts have to survive to the screen, and they are the same three the gate's
+// columns already distinguish:
+//
+//  * a proposal nothing replayed reads `not replayed` + the backend's reason. Never blank, never a
+//    0, and never a reason to withhold Accept — this is EVIDENCE, not a gate. A `regressed` verdict
+//    still accepts; the human reads the sentence and decides.
+//  * a replay whose cases all got rejected reads `not measured`, the same house string
+//    `gateScore` / JudgeBenchPanel / AblationPanel already use for an absent number.
+//  * a measured DROP is called out, because that is the whole point of running it.
+
+/** Format one replay mean. `null` is "not measured" — the house string for an absent number.
+ *
+ *  Deliberately identical in behaviour to `gateScore`: one vocabulary for "the number does not
+ *  exist", not a second one per surface. Kept as its own export rather than an alias so the two
+ *  can be tested independently against their own callers. */
+export function replayScore(value: number | null): string {
+  return value === null ? 'not measured' : value.toFixed(3)
+}
+
+const VERDICT_CLAUSE: Record<string, string> = {
+  improved: 'improved on your captured turns',
+  neutral: 'no measurable difference on your captured turns',
+  regressed: 'made things worse on your captured turns',
+}
+
+/** The replay clause on a proposal row: baseline → candidate, or why there is no pair.
+ *
+ *  A missing `replay` object (an older cached row) is treated as not-replayed rather than crashing
+ *  or rendering nothing — an absent measurement and an absent FIELD mean the same thing to a
+ *  reviewer, and neither is evidence that the candidate helped.
+ *
+ *  An unrecognized `verdict` falls back to the unmeasured wording rather than printing the raw
+ *  token: a card that renders a word this build does not know is a card the reader fills in with a
+ *  guess. */
+export function replayLabel(row: LearningRow): string {
+  const rep = row.replay
+  if (!rep || rep.state !== 'replayed') {
+    const reason = rep?.reason ? ` — ${rep.reason}` : ''
+    return `not replayed${reason}`
+  }
+  const pair = `${replayScore(rep.baseline_mean)} → ${replayScore(rep.candidate_mean)}`
+  const clause = VERDICT_CLAUSE[rep.verdict]
+  // `scored`, not `cases`: the count a reviewer weighs is how many cases produced a NUMBER. A
+  // rejected case cost money and produced nothing, so folding it into the headline count would
+  // overstate the evidence — it gets its own clause below instead.
+  const scope = ` over ${rep.scored} replayed case${rep.scored === 1 ? '' : 's'}`
+  const rejected = rep.rejected
+    ? ` · ${rep.rejected} case${rep.rejected === 1 ? '' : 's'} rejected`
+    : ''
+  const deferred = rep.deferred ? ' · deferred on the replay budget' : ''
+  if (!clause) return `replay ${pair}${scope}${rejected}${deferred}`
+  return `replay ${pair} — ${clause}${scope}${rejected}${deferred}`
+}
+
+/** Whether the replay should shout. A measured drop only.
+ *
+ *  Reads the backend's `verdict` rather than re-deriving it from the two means: the improved /
+ *  neutral / regressed band is `refiner.MIN_TARGET_IMPROVEMENT`, and a second threshold here would
+ *  eventually disagree with the one that produced the verdict — with the FE shipping the louder
+ *  answer. An UNMEASURED pair is not a regression, the same way `gateRegressed` refuses to flag
+ *  one: that would be the mirror image of drawing an unmeasured mean as 0. */
+export function replayRegressed(row: LearningRow): boolean {
+  return row.replay?.state === 'replayed' && row.replay.verdict === 'regressed'
+}
+
 // ── The staging week panel ──
 /** How a day should render. `silent` is the alarming one: no passes at all means capture did not run,
  *  and an aggregate view cannot see it — which is the whole reason this panel exists. */

@@ -49,6 +49,11 @@ const row = (over: Partial<LearningRow> = {}): LearningRow => ({
   manifest_valid: true, manifest_issues: [], risk_tier: 'review',
   status: 'pending', renderable: true, bulk_acceptable: true,
   gate: GATE_UNGATED,
+  replay: {
+    state: 'unreplayed', reason: 'no replay run yet', verdict: 'unmeasured',
+    candidate_mean: null, baseline_mean: null, cases: 0, scored: 0, rejected: 0, tool_free: 0,
+    deferred: false, provenance: [], ran_at: '',
+  },
   ...over,
 })
 

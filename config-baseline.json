@@ -983,6 +983,18 @@
     "type": "int"
   },
   {
+    "default": false,
+    "path": "learning.replay_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": 0.0,
+    "path": "learning.replay_max_dollars",
+    "sensitive": false,
+    "type": "float"
+  },
+  {
     "default": true,
     "path": "learning.run_end_enabled",
     "sensitive": false,

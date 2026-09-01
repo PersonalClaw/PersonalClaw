@@ -207,6 +207,15 @@ class Row:
     #: a reader will fill in with an assumption. It is evidence, never a gate on the row's
     #: acceptability — `bulk_acceptable` deliberately does not consult it.
     gate: dict[str, Any] = field(default_factory=dict)
+    #: The local A/B replay harness's compact verdict (EA-6 — `learning.replay.summary`). ALWAYS
+    #: populated, for the same reason `gate` is: a proposal nothing replayed projects to
+    #: `state: "unreplayed"` with a reason, so the row says "no replay ran and here is why"
+    #: rather than leaving a cell a reader fills in with an assumption. Where `gate` measures
+    #: the candidate against the shipped scenario library, this measures it against turns from
+    #: the user's OWN captured sessions — two corpora, two clauses, never merged into one number.
+    #: Evidence only: `bulk_acceptable` does not consult it either, and a `regressed` verdict
+    #: leaves the row exactly as acceptable as it was.
+    replay: dict[str, Any] = field(default_factory=dict)
 
     @property
     def renderable(self) -> bool:
@@ -255,6 +264,7 @@ class Row:
             "risk_tier": self.risk_tier,
             "status": self.status,
             "gate": dict(self.gate),
+            "replay": dict(self.replay),
             "renderable": self.renderable,
             "bulk_acceptable": self.bulk_acceptable,
         }
@@ -272,6 +282,7 @@ def row_from_proposal(prop: Any, *, risk_tier: str = "") -> Row:
     """
     tier = risk_tier or "review"
     from personalclaw.evals import gate as gate_lib
+    from personalclaw.learning import replay as replay_lib
 
     return Row(
         id=str(getattr(prop, "id", "") or ""),
@@ -293,6 +304,10 @@ def row_from_proposal(prop: Any, *, risk_tier: str = "") -> Row:
         # Projected through `gate.summary`, which turns an ABSENT report into an honest
         # `ungated` + reason rather than an empty dict the frontend has to guess about.
         gate=gate_lib.summary(getattr(prop, "gate", None)),
+        # Projected through `replay.summary` for the same reason as the gate beside it: an
+        # ABSENT report becomes an honest `unreplayed` + reason, and a null mean stays null
+        # rather than being coerced to 0.0 at the last hop before the screen.
+        replay=replay_lib.summary(getattr(prop, "replay", None)),
     )
 
 

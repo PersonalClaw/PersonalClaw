@@ -1877,6 +1877,29 @@ export interface LearningRow {
   // rule every eval panel follows. `pin` identifies WHAT produced the pair and is `{}` when
   // ungated; it is never synthesized.
   gate: LearningGate
+  // The local A/B replay harness's verdict (EXTERNAL-ACCESS §9 / EA-6). ALWAYS present, for the
+  // same reason `gate` is. Where the gate measures the candidate against the SHIPPED scenario
+  // library, this measures it against real turns mined from the user's OWN captured sessions —
+  // two corpora, two clauses, deliberately not merged into one number a reader cannot attribute.
+  // `candidate_mean`/`baseline_mean` are `null` when nothing scored and must render as
+  // "not measured", never as 0: a candidate that genuinely scored zero and a candidate nobody
+  // scored lead a reviewer to opposite decisions. It is EVIDENCE and never a veto — a `regressed`
+  // verdict leaves the row exactly as acceptable as it was.
+  replay: LearningReplay
+}
+export interface LearningReplay {
+  state: 'replayed' | 'unreplayed'
+  reason: string
+  verdict: 'improved' | 'neutral' | 'regressed' | 'unmeasured'
+  candidate_mean: number | null; baseline_mean: number | null
+  cases: number; scored: number; rejected: number; tool_free: number
+  // True only when the learning replay budget was exhausted mid-pass. A deferral is a promise to
+  // come back and reads differently from "there was nothing to measure".
+  deferred: boolean
+  // `capture:<session>#<record_hash>` per case — the pointer back to the turn each score came
+  // from, so a claim about the user's own work is checkable against it.
+  provenance: string[]
+  ran_at: string
 }
 export interface LearningGate {
   state: 'gated' | 'ungated'
