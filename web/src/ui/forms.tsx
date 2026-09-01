@@ -475,7 +475,25 @@ export function Checkbox({ checked, onChange, ariaLabel, className }: {
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => { e.stopPropagation(); onChange(e.target.checked) }}
       className={cx(
-        'size-4 shrink-0 cursor-pointer accent-primary',
+        // 🔑 `hit-24` and NOT a bigger box. WCAG 2.2 SC 2.5.8 wants a 24px target and this
+        // draws 16 — measured on the seeded fixture at `#/knowledge`, all five instances
+        // 16×16 reachable, 8px short in both axes. Growing it to `size-6` would change the
+        // drawn tick across all fifteen call sites (a visual-language decision), and the
+        // app's usual negative-margin trick needs slack the tightest of those rows does not
+        // have. The pseudo-element idiom expands only what the POINTER can reach: measured
+        // 16×16 → 24×24 with zero layout shift on all five, position and box byte-identical.
+        //
+        // ⚠️ axe will keep reporting `target-size` on this control, and that is not a
+        // regression — every `getBoundingClientRect` check reads the element's own box,
+        // which this deliberately leaves alone. The tempting "fix" for that report is to
+        // inflate the input, which moves layout in fifteen places.
+        //
+        // The 8px it gains comes from the surrounding row, not from a neighbouring control
+        // (checked on all four sides: what sits just outside the band is the row itself).
+        // That is a second improvement rather than a cost — a near-miss on the tick used to
+        // hit the row and NAVIGATE, and now it toggles, because the input already stops
+        // propagation.
+        'hit-24 size-4 shrink-0 cursor-pointer accent-primary',
         'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary',
         className,
       )}
