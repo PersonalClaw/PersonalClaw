@@ -16,6 +16,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.skills.marketplace import DEFAULT_SKILLS_INSTALL_PATH
 
 logger = logging.getLogger(__name__)
@@ -377,7 +378,10 @@ async def api_skills_marketplace_detail(request: web.Request) -> web.Response:
         return web.json_response({"error": "id parameter required"}, status=400)
     marketplace_name = request.rel_url.query.get("marketplace", "skills.sh").strip()
 
-    from personalclaw.skills.marketplace import get_default_skills_registry
+    from personalclaw.skills.marketplace import (
+        SkillNotFoundError,
+        get_default_skills_registry,
+    )
 
     try:
         mp = get_default_skills_registry().get(marketplace_name)
@@ -388,6 +392,8 @@ async def api_skills_marketplace_detail(request: web.Request) -> web.Response:
 
     try:
         detail = mp.fetch(skill_id)
+    except SkillNotFoundError as exc:
+        return json_error("not_found", message=str(exc), status=404)
     except Exception as exc:
         logger.warning("skills detail fetch failed for %s/%s: %s", marketplace_name, skill_id, exc)
         return web.json_response({"error": str(exc)[:500]}, status=500)
@@ -526,6 +532,7 @@ async def api_skills_install(request: web.Request) -> web.Response:
 
     from personalclaw.skills.marketplace import (
         SkillInstallRefused,
+        SkillNotFoundError,
         get_default_skills_registry,
     )
 
@@ -543,6 +550,9 @@ async def api_skills_install(request: web.Request) -> web.Response:
             {"ok": True, "path": str(result.path), "scan": result.report.to_dict()},
             status=201,
         )
+    except SkillNotFoundError as exc:
+        _sel_log("skills.install", "denied", f"notfound:{marketplace_name}/{skill_id}", request)
+        return json_error("not_found", message=str(exc), status=404)
     except SkillInstallRefused as exc:
         # 409 = a WARNING the user can re-attempt with force=true; 403 = a DANGEROUS
         # verdict that no force overrides. The findings power the "N warnings" UX.

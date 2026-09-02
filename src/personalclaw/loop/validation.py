@@ -122,6 +122,38 @@ def workspace_write_target_errors(workspace_dir: str) -> list[str]:
     return errors
 
 
+def numeric_and_boolean_field_errors(config: dict, *, present_only: bool = False) -> list[str]:
+    """The numeric/boolean spec screens shared by the create gate and the PUT
+    spec edit. ``present_only`` (the edit) checks only fields the patch carries;
+    the create gate re-runs its own richer max_cycles block in :func:`validate`
+    and uses this for the boolean floor."""
+    cfg = AppConfig.load().loops
+    errors: list[str] = []
+    if "max_cycles" in config or not present_only:
+        raw = config.get("max_cycles", 0)
+        if raw not in (None, ""):
+            n = _as_int(raw)
+            if n is None:
+                errors.append("max_cycles must be a whole number.")
+            elif n < 0:
+                errors.append("Max cycles cannot be negative (0 means uncapped).")
+            elif n > cfg.max_cycles_hard_cap:
+                errors.append(
+                    f"Max cycles cannot exceed the hard cap of {cfg.max_cycles_hard_cap}."
+                )
+    if "idle_secs" in config and config.get("idle_secs") not in (None, ""):
+        idle = _as_int(config.get("idle_secs"))
+        if idle is None or idle < 0:
+            errors.append("idle_secs must be a non-negative whole number.")
+    for f in ("attended", "autopilot", "auto_teardown_on_complete"):
+        if f in config and not isinstance(config.get(f), bool):
+            errors.append(
+                f"'{f}' must be a boolean (true/false) — a quoted string like "
+                f'"false" would silently read as true.'
+            )
+    return errors
+
+
 def spec_edit_errors(
     body: dict, *, kind: str, existing_kind_config: dict | None = None
 ) -> list[str]:
@@ -135,6 +167,13 @@ def spec_edit_errors(
 
     kinds.ensure_loaded()
     errors: list[str] = []
+    # Mirror the create gate's numeric + boolean screens for whatever the patch
+    # carries. Without this, PUT bypassed every guard POST enforces: a negative
+    # max_cycles reads as "uncapped" downstream, and update_spec's int(bool(...))
+    # coercion turns autopilot:"false" (a truthy string) into autopilot ON — the
+    # consequential direction, same reasoning as api_loop_autopilot's explicit-
+    # boolean requirement.
+    errors.extend(numeric_and_boolean_field_errors(body, present_only=True))
     if "workspace_dir" in body:
         # Path-safety is hard; existence is deferred (the dir may be created before launch).
         errors.extend(
@@ -214,6 +253,15 @@ def validate(config: dict, *, agent_exists: bool = True) -> ValidationResult:
         and _as_int(config.get("idle_secs")) is None
     ):
         errors.append("Idle timeout must be a whole number of seconds.")
+
+    # Boolean floor: attended/autopilot/auto_teardown_on_complete must be real
+    # booleans. The loop builder coerces with bool(), so a quoted "false" would
+    # silently enable the field — reject it here instead.
+    errors.extend(
+        e
+        for e in numeric_and_boolean_field_errors(config, present_only=True)
+        if "must be a boolean" in e
+    )
 
     # Path-safety is a hard error; existence is deferred to a warning — the loop is
     # created as a draft and the launch action re-validates the dir (launch_blocker).
