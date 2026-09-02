@@ -50,6 +50,36 @@ logger = logging.getLogger(__name__)
 #: restart (the same reason `mcp.json`'s resolvers became functions).
 DEFAULT_MAX_AGENT_TRIGGERS = 20
 
+#: WF2LOO-9's mandatory-TTL bound: every AGENT-created trigger expires. A self-scheduling agent
+#: that forgets a clock must not leave it running forever — the cap bounds how MANY exist at
+#: once, and the TTL bounds how LONG a forgotten one keeps counting against that cap. One-shot
+#: triggers default to a week (a follow-up that has not fired in 7 days is stale by any reading);
+#: recurring ones to 30 days, matching the deliberate-renewal posture `scheduling.is_due` already
+#: enforces for expiry. An explicit `ttl_secs` is honoured within [60s, 90d] — clamped, not
+#: refused, because the clamp direction is always the safe one (a too-long TTL becomes the max).
+AGENT_ONETIME_TTL_SECS = 7 * 86400
+AGENT_RECURRING_TTL_SECS = 30 * 86400
+MIN_AGENT_TTL_SECS = 60
+MAX_AGENT_TTL_SECS = 90 * 86400
+
+
+def _agent_expiry_iso(resolved_spec: dict, ttl_secs: float, *, now: float = 0.0) -> str:
+    """The mandatory `expires_at` for an agent-created trigger, as the entity's ISO form.
+
+    `resolved_spec` decides the default: a spec carrying `at` is a one-shot and gets the short
+    TTL; anything else (cron, watch kinds) gets the recurring one. Explicit `ttl_secs` wins,
+    clamped to the sane window rather than refused — the caller asked for a bound and gets one.
+    """
+    import time as _time
+    from datetime import datetime, timezone
+
+    base = float(now) if now else _time.time()
+    if ttl_secs and ttl_secs > 0:
+        ttl = min(max(float(ttl_secs), float(MIN_AGENT_TTL_SECS)), float(MAX_AGENT_TTL_SECS))
+    else:
+        ttl = float(AGENT_ONETIME_TTL_SECS if resolved_spec.get("at") else AGENT_RECURRING_TTL_SECS)
+    return datetime.fromtimestamp(base + ttl, tz=timezone.utc).isoformat()
+
 
 def max_agent_triggers() -> int:
     """`workflows.self_schedule_max_outstanding`, or the historical 20 if config is unreadable.
@@ -217,6 +247,8 @@ def create(
     created_by: str = "agent",
     enabled: bool = True,
     cadence_to_cron: Any = None,
+    resume: dict[str, Any] | None = None,
+    ttl_secs: float = 0,
 ) -> ToolResult:
     """`automation_create` — §4's NL-friendly constructor. Criterion 2's one message.
 
@@ -267,6 +299,25 @@ def create(
                 {"active": active, "cap": cap},
             )
 
+    if resume is not None:
+        # WF2LOO-9's write side of AUTO-R11's resume targets: this trigger WAKES a parked run
+        # instead of starting a new one. The resume dict becomes `workflow.resume` — the key
+        # `wakeup.resume_target_of` reads — and it deliberately REPLACES the inline-action shape:
+        # `models._resume_target_issues` treats both-declared as an authoring error, so a given
+        # `message` rides as the gate ANSWER (what the woken run reads) rather than as a
+        # run-prompt action that would never fire.
+        if workflow:
+            return ToolResult(
+                False,
+                "Error: give either a resume target or a workflow, not both — a trigger with a "
+                "resume target wakes the named run instead of running an action.",
+            )
+        target = {k: v for k, v in dict(resume).items() if v not in (None, "")}
+        if not str(target.get("run_id", "") or "").strip():
+            return ToolResult(False, "Error: a resume target needs a run_id.", {"resume": target})
+        if message and "answer" not in target:
+            target["answer"] = message
+        workflow = {"resume": target}
     if message and not workflow:
         workflow = {"provider": "run-prompt", "config": {"message": message}}
     if not workflow:
@@ -308,6 +359,12 @@ def create(
     # creation rather than waiting for the next boot sweep is the difference between "runs tonight"
     # and "runs after the user restarts the gateway". An unarmable spec (invalid cron, elapsed
     # one-shot) returns "" and is left alone — `arm` refuses rather than guessing a cadence.
+    # WF2LOO-9: a self-scheduled (agent-created) trigger ALWAYS expires. Set before arming so
+    # the row never exists without its bound; user-created rows keep their opt-in expiry
+    # semantics untouched.
+    if created_by == "agent" and not trigger.expires_at:
+        trigger.expires_at = _agent_expiry_iso(resolved_spec, ttl_secs)
+
     from personalclaw.triggers.arm import arm as _arm
 
     # A trigger created switched off is NOT armed. Arming it would give it a `next_fire_at`, which

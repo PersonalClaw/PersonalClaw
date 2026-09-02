@@ -204,6 +204,19 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "The instruction to give yourself when it fires.",
                     },
+                    "resume_run_id": {
+                        "type": "string",
+                        "description": "Wake a PARKED workflow run instead of starting a new "
+                        "task: the run id to resume, or 'self' from inside a workflow stage "
+                        "to target your own run. The message becomes the answer the parked "
+                        "gate receives. This is how a monitor run parks between checks.",
+                    },
+                    "ttl_secs": {
+                        "type": "number",
+                        "description": "How long the task may stay armed before it expires "
+                        "(default: 7 days). Every self-scheduled task expires — a forgotten "
+                        "clock must not run forever.",
+                    },
                 },
                 "required": ["name", "when", "message"],
             },
@@ -229,6 +242,18 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "The instruction to give yourself each time it fires.",
                     },
+                    "resume_run_id": {
+                        "type": "string",
+                        "description": "Wake a PARKED workflow run on each fire instead of "
+                        "starting new tasks: the run id to resume, or 'self' from inside a "
+                        "workflow stage to target your own run.",
+                    },
+                    "ttl_secs": {
+                        "type": "number",
+                        "description": "How long the task stays armed before it expires "
+                        "(default: 30 days). Every self-scheduled task expires; renew "
+                        "deliberately rather than holding a slot forever.",
+                    },
                 },
                 "required": ["name", "cadence", "message"],
             },
@@ -253,6 +278,31 @@ def _http_runner(payload: dict[str, Any]) -> Any:
         return f"could not dispatch: {exc}"
 
 
+def _resolve_resume_target(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """The `workflow.resume` target a set_*_task call asked for, or (None, "") when it did not.
+
+    `resume_run_id: "self"` resolves from the leaf lineage env (`__wf_run_id`) — the same
+    process-local seam `mcp_shared.leaf_tool_denial` reads, because a workflow stage's
+    in-process tools run inside the leaf's own subprocess. Resolved HERE, at creation, rather
+    than stored symbolically: a persisted "self" would be re-resolved at fire time by whatever
+    process the scheduler runs in, which is never the run it meant.
+    """
+    raw = str(args.get("resume_run_id") or "").strip()
+    if not raw:
+        return None, ""
+    if raw.lower() == "self":
+        import os
+
+        run_id = str(os.environ.get("__wf_run_id", "") or "").strip()
+        if not run_id:
+            return None, (
+                "Error: resume_run_id='self' only works from inside a workflow run — this "
+                "session has no run lineage. Pass the explicit run id instead."
+            )
+        return {"run_id": run_id}, ""
+    return {"run_id": raw}, ""
+
+
 def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     from personalclaw.triggers import tools as T
 
@@ -268,22 +318,32 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             created_by="agent",
         )
     elif name == "set_onetime_task":
+        resume, resume_err = _resolve_resume_target(args)
+        if resume_err:
+            return resume_err
         result = T.create(
             store,
             name=str(args.get("name") or ""),
             when=str(args.get("when") or ""),
             message=str(args.get("message") or ""),
             created_by="agent",
+            resume=resume,
+            ttl_secs=float(args.get("ttl_secs") or 0),
         )
     elif name == "set_recurring_task":
         # `cadence` is the caller-facing word (a recurrence, not an instant); `when` is what the
         # NL router takes. Same routing either way — a cadence phrase becomes a cron spec.
+        resume, resume_err = _resolve_resume_target(args)
+        if resume_err:
+            return resume_err
         result = T.create(
             store,
             name=str(args.get("name") or ""),
             when=str(args.get("cadence") or ""),
             message=str(args.get("message") or ""),
             created_by="agent",
+            resume=resume,
+            ttl_secs=float(args.get("ttl_secs") or 0),
         )
     elif name == "automation_list":
         result = T.list_automations(

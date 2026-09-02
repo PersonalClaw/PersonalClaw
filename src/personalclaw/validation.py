@@ -1122,6 +1122,11 @@ MCP_AUTOMATION_SCHEMAS: dict[str, ToolSchema] = {
             FieldSpec("name", str, required=True, max_len=MAX_SHORT_STRING),
             FieldSpec("when", str, required=True, max_len=MAX_MEDIUM_STRING),
             FieldSpec("message", str, required=True, max_len=MAX_MEDIUM_STRING),
+            # WF2LOO-9's park-and-wake pair: a run id (or 'self') this task resumes, and the
+            # mandatory-TTL override. Bounds mirror tools.py's clamp window so validation and
+            # the constructor agree about what a sane TTL is.
+            FieldSpec("resume_run_id", str, max_len=MAX_SHORT_STRING),
+            FieldSpec("ttl_secs", (int, float), min_val=0, max_val=90 * 86400),
         ],
     ),
     "set_recurring_task": ToolSchema(
@@ -1130,6 +1135,8 @@ MCP_AUTOMATION_SCHEMAS: dict[str, ToolSchema] = {
             FieldSpec("name", str, required=True, max_len=MAX_SHORT_STRING),
             FieldSpec("cadence", str, required=True, max_len=MAX_MEDIUM_STRING),
             FieldSpec("message", str, required=True, max_len=MAX_MEDIUM_STRING),
+            FieldSpec("resume_run_id", str, max_len=MAX_SHORT_STRING),
+            FieldSpec("ttl_secs", (int, float), min_val=0, max_val=90 * 86400),
         ],
     ),
     "automation_create": ToolSchema(

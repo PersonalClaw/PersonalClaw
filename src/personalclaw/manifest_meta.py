@@ -1023,7 +1023,16 @@ TOOL_META: dict[str, dict[str, Any]] = {
                     "when": "in 20 minutes",
                     "message": "Check whether the release build finished and report the result",
                 },
-            }
+            },
+            {
+                "summary": "Wake a parked monitor run for its next check (WF2LOO-9)",
+                "args": {
+                    "name": "pr-4521-watch: next check",
+                    "when": "in 30 minutes",
+                    "message": "CI should have finished by now — start from the checks tab",
+                    "resume_run_id": "self",
+                },
+            },
         ],
     },
     "set_recurring_task": {

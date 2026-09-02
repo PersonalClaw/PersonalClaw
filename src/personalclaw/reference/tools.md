@@ -557,6 +557,8 @@ Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you 
 **Parameters:**
 - `message` (string, required) — The instruction to give yourself when it fires.
 - `name` (string, required) — A short name for the task.
+- `resume_run_id` (string, optional) — Wake a PARKED workflow run instead of starting a new task: the run id to resume, or 'self' from inside a workflow stage to target your own run. The message becomes the answer the parked gate receives. This is how a monitor run parks between checks.
+- `ttl_secs` (number, optional) — How long the task may stay armed before it expires (default: 7 days). Every self-scheduled task expires — a forgotten clock must not run forever.
 - `when` (string, required) — When to wake, in plain language: 'in 20 minutes', 'tomorrow at 9am', '2026-09-01 14:00'.
 
 **Example — Wake yourself once to check on something:**
@@ -566,6 +568,17 @@ Schedule YOURSELF to do something ONCE at a later time, then stop. Use when you 
   "message": "Check whether the release build finished and report the result",
   "name": "Check the build",
   "when": "in 20 minutes"
+}
+```
+
+**Example — Wake a parked monitor run for its next check (WF2LOO-9):**
+
+```json
+{
+  "message": "CI should have finished by now \u2014 start from the checks tab",
+  "name": "pr-4521-watch: next check",
+  "resume_run_id": "self",
+  "when": "in 30 minutes"
 }
 ```
 
@@ -581,6 +594,8 @@ Schedule YOURSELF to do something REPEATEDLY on a cadence — 'every weekday at 
 - `cadence` (string, required) — How often, in plain language: 'every weekday at 9', 'hourly', 'every Monday at 08:00'.
 - `message` (string, required) — The instruction to give yourself each time it fires.
 - `name` (string, required) — A short name for the task.
+- `resume_run_id` (string, optional) — Wake a PARKED workflow run on each fire instead of starting new tasks: the run id to resume, or 'self' from inside a workflow stage to target your own run.
+- `ttl_secs` (number, optional) — How long the task stays armed before it expires (default: 30 days). Every self-scheduled task expires; renew deliberately rather than holding a slot forever.
 
 **Example — Keep monitoring something on a cadence:**
 
