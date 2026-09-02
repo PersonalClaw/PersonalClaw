@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -36,24 +37,52 @@ if _PRICING_FILE.exists():
 
 _PER = 1_000_000.0
 
+# SM-10: provider/catalog ids and price-table keys disagree on separator style
+# (catalog/Bedrock ids use hyphenated version parts — ``claude-opus-4-8``,
+# ``global.anthropic.claude-opus-4-8`` — while this table keys on the dotted
+# family form ``claude-opus-4.8``). Canonicalize at THIS single seam only:
+# strip a provider/region prefix (``us.anthropic.`` / ``global.anthropic.`` /
+# ``anthropic.``) and re-dot a hyphenated version tail so both forms resolve
+# to one row. The raw id always wins first — a table key that IS hyphenated
+# (e.g. ``claude-sonnet-4-20250514``) keeps resolving exactly as before.
+_PROVIDER_PREFIXES = ("us.anthropic.", "global.anthropic.", "eu.anthropic.", "anthropic.")
+_VERSION_TAIL = re.compile(r"-(\d+)-(\d+)$")
+
+
+def _canonical(model: str) -> str:
+    """Best-effort canonical (dotted-family) form of a catalog/provider id."""
+    m = model
+    for prefix in _PROVIDER_PREFIXES:
+        if m.startswith(prefix):
+            m = m[len(prefix) :]
+            break
+    m = m.removesuffix("-v1:0")
+    return _VERSION_TAIL.sub(r"-\1.\2", m)
+
 
 def _rates(model: str) -> dict[str, float] | None:
     """Resolve a model name to its price row.
 
     Exact match first; then a longest-prefix match so a live id that carries a
     date/region/version suffix (e.g. ``claude-sonnet-4.5-20250101``) still maps
-    to its family row. Returns None when nothing matches (→ cost 0.0).
+    to its family row. When the raw id resolves nothing, retry with the
+    canonicalized form (provider prefix stripped, hyphenated version re-dotted)
+    so a catalog id like ``global.anthropic.claude-opus-4-8`` finds the
+    ``claude-opus-4.8`` row. Returns None when nothing matches (→ cost 0.0).
     """
     if not model:
         return None
-    row = _PRICES.get(model)
-    if row is not None:
-        return row
-    best: tuple[int, dict[str, float]] | None = None
-    for key, rates in _PRICES.items():
-        if model.startswith(key) and (best is None or len(key) > best[0]):
-            best = (len(key), rates)
-    return best[1] if best else None
+    for candidate in dict.fromkeys((model, _canonical(model))):
+        row = _PRICES.get(candidate)
+        if row is not None:
+            return row
+        best: tuple[int, dict[str, float]] | None = None
+        for key, rates in _PRICES.items():
+            if candidate.startswith(key) and (best is None or len(key) > best[0]):
+                best = (len(key), rates)
+        if best is not None:
+            return best[1]
+    return None
 
 
 def estimate_cost(
