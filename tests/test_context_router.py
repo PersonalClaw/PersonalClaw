@@ -12,6 +12,7 @@ write only touches bytes inside the fence.
 
 from __future__ import annotations
 
+import pathlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -196,10 +197,107 @@ def test_apply_block_replaces_only_inside_fence():
 
 
 def test_apply_block_malformed_fence_raises():
+    # A lone marker is only "lone" when it is a whole trimmed line (the corrected semantics):
+    # a real START on its own line with no matching END.
     with pytest.raises(ValueError, match="exactly one"):
-        cr.apply_block(f"only a {cr.PCLAW_START} here\n", cr.render_block(_routed()))
+        cr.apply_block(f"{cr.PCLAW_START}\na lone start, no end\n", cr.render_block(_routed()))
     with pytest.raises(ValueError, match="END precedes START"):
         cr.apply_block(f"{cr.PCLAW_END}\nx\n{cr.PCLAW_START}\n", cr.render_block(_routed()))
+
+
+def _count_marker_lines(text: str, marker: str) -> int:
+    """Whole-line marker occurrences — the thing apply_block actually keys on."""
+    return sum(1 for line in text.splitlines() if line.strip() == marker)
+
+
+def test_apply_block_ignores_markers_inside_a_code_fence():
+    # A user's file that SHOWS the managed markers as a fenced example (docs about the block).
+    existing = (
+        "# Notes\n\n"
+        "```\n"
+        f"{cr.PCLAW_START}\nexample of the managed block\n{cr.PCLAW_END}\n"
+        "```\n"
+    )
+    # vacuity: the fenced example really does carry whole-line markers.
+    assert _count_marker_lines(existing, cr.PCLAW_START) == 1
+    once = cr.apply_block(existing, cr.render_block(_routed()))
+    twice = cr.apply_block(once, cr.render_block(_routed()))
+    # The fenced markers are content, not the managed block: regeneration is stable and the
+    # example survives verbatim — the old substring scan would have spliced into it and lost it.
+    assert once == twice
+    assert "example of the managed block" in twice
+    assert "```" in twice
+    # Two literal STARTs now: the fenced example (as text) + the one real appended block.
+    assert twice.count(cr.PCLAW_START) == 2
+
+
+def test_apply_block_refuses_more_than_one_real_block():
+    two = f"{cr.PCLAW_START}\na\n{cr.PCLAW_END}\n\n{cr.PCLAW_START}\nb\n{cr.PCLAW_END}\n"
+    with pytest.raises(ValueError, match="more than one"):
+        cr.apply_block(two, cr.render_block(_routed()))
+
+
+def test_apply_block_refuses_an_extra_unbalanced_marker():
+    # One START, two ENDs — a nested/extra END that could truncate at the wrong line.
+    nested = f"{cr.PCLAW_START}\nbody\n{cr.PCLAW_END}\ntail\n{cr.PCLAW_END}\n"
+    with pytest.raises(ValueError, match="more than one"):
+        cr.apply_block(nested, cr.render_block(_routed()))
+
+
+def test_apply_block_treats_a_mid_line_marker_as_content():
+    # A marker mentioned INLINE (not a whole line) is prose, not a fence → first write.
+    existing = f"see the {cr.PCLAW_START} marker inline\n"
+    out = cr.apply_block(existing, cr.render_block(_routed()))
+    assert out.startswith(f"see the {cr.PCLAW_START} marker inline")
+    assert "Website" in out  # the real managed block was appended after the content
+    assert out.rstrip().endswith(cr.PCLAW_END)
+    # exactly one REAL managed block (the appended one); the inline mention is not a fence line.
+    assert _count_marker_lines(out, cr.PCLAW_START) == 1
+    assert _count_marker_lines(out, cr.PCLAW_END) == 1
+
+
+def test_apply_block_idempotent_with_marker_bearing_values():
+    # Values on multiple tiers each carry a bare marker LINE — the #358 corruption trigger.
+    routed = _routed(
+        project_name="Proj <!-- PCLAW:END -->",
+        brief=f"one\n{cr.PCLAW_END}\ntwo",
+        knowledge=[{"id": "k1", "title": f"Guide\n{cr.PCLAW_START}\nx", "summary": "s"}],
+    )
+    # vacuity: the raw brief genuinely contains a bare END-marker line before escaping.
+    assert _count_marker_lines(routed.rules, cr.PCLAW_END) >= 1
+    block = cr.render_block(routed)
+    # Invariant (defect B): EXACTLY one real START and one real END despite marker-laden input.
+    assert _count_marker_lines(block, cr.PCLAW_START) == 1
+    assert _count_marker_lines(block, cr.PCLAW_END) == 1
+    once = cr.apply_block("user preamble\n", block)
+    twice = cr.apply_block(once, block)
+    assert once == twice
+    assert _count_marker_lines(once, cr.PCLAW_START) == 1
+    assert _count_marker_lines(once, cr.PCLAW_END) == 1
+
+
+def test_render_escapes_markers_in_every_interpolated_value():
+    # A bare marker line planted on each interpolation point the router fills verbatim.
+    routed = _routed(
+        project_name="Proj\n<!-- PCLAW:END -->",
+        brief=f"intro\n{cr.PCLAW_END}\noutro",
+        instructions=f"do\n{cr.PCLAW_START}\nthis",
+        memories=[{"text": f"note\n{cr.PCLAW_END}\nmore", "source": "chat"}],
+        skills=[{"key": "pclaw", "description": f"d\n{cr.PCLAW_START}"}],
+        knowledge=[{"id": "i1", "title": f"T\n{cr.PCLAW_END}\nx", "summary": "s"}],
+    )
+    # vacuity: the assembled rules really do carry a bare marker line before render escapes it.
+    assert _count_marker_lines(routed.rules, cr.PCLAW_END) >= 1
+    body = routed.render()
+    # The rendered BODY carries NO real marker line — render_block adds the only real fence.
+    assert _count_marker_lines(body, cr.PCLAW_START) == 0
+    assert _count_marker_lines(body, cr.PCLAW_END) == 0
+    # The escaped, human-legible form is present instead (content is preserved, not dropped).
+    assert cr._ESCAPED_END in body
+    # So the full fenced block has exactly one real START and one real END.
+    block = cr.render_block(routed)
+    assert _count_marker_lines(block, cr.PCLAW_START) == 1
+    assert _count_marker_lines(block, cr.PCLAW_END) == 1
 
 
 # ── endpoints: GET /api/context + regenerate consent gate ────────────────────
@@ -343,3 +441,56 @@ async def test_regenerate_writes_fenced_block_and_audits(_home, _sel_stub, monke
     assert (ws / "AGENTS.md").exists() and (ws / ".cursorrules").exists()
     # each successful write is SEL-audited
     assert _sel_stub.log_api_access.called
+
+
+@pytest.mark.asyncio
+async def test_regenerate_400_when_workspace_is_unsafe(_home, _sel_stub, monkeypatch):
+    # Simulate a project whose stored workspace_dir is an OS/system root — written directly so
+    # this exercises the REGENERATE-time guard independently of the bind-time guard (which would
+    # itself refuse "/"). "/" is used deliberately: even a guard regression cannot pollute $HOME.
+    from personalclaw.tasks.hierarchy import HierarchyStore
+
+    store = HierarchyStore()
+    p = store.create_project("Website")
+    proj = store.get_project(p.id)
+    proj.workspace_dir = "/"  # filesystem root — never a safe write target
+    store._write_project(proj)
+    monkeypatch.setattr(
+        "personalclaw.config.loader.AppConfig.load", classmethod(lambda cls: _Cfg(True))
+    )
+    async with TestClient(TestServer(_make_app())) as client:
+        resp = await client.post(f"/api/projects/{p.id}/context-adapters/regenerate")
+        assert resp.status == 400
+        body = await resp.json()
+        # a registered wire code the client can branch on — not a bare prose string.
+        assert body["error"]["code"] == "workspace_dir_unsafe"
+    # nothing was written to the filesystem root.
+    assert not (pathlib.Path("/") / "CLAUDE.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_writes_through_atomic_write(_home, _sel_stub, monkeypatch, tmp_path):
+    # The adapter write must go through atomic_write (temp-file + rename), not Path.write_text —
+    # so a crash mid-write cannot leave a torn CLAUDE.md (#358).
+    import personalclaw.dashboard.handlers.context as ctx_mod
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    project = _new_project(_home, workspace_dir=str(ws))
+    monkeypatch.setattr(
+        "personalclaw.config.loader.AppConfig.load", classmethod(lambda cls: _Cfg(True))
+    )
+    calls: list[str] = []
+    real_atomic = ctx_mod.atomic_write
+
+    def _spy(path, content, **kw):
+        calls.append(str(path))
+        return real_atomic(path, content, **kw)
+
+    monkeypatch.setattr(ctx_mod, "atomic_write", _spy)
+    async with TestClient(TestServer(_make_app())) as client:
+        resp = await client.post(f"/api/projects/{project.id}/context-adapters/regenerate")
+        assert resp.status == 200
+    # every adapter file was written, and every write went through atomic_write.
+    assert len(calls) == len(ctx_mod.ADAPTER_FILES)
+    assert all((ws / name).exists() for name in ctx_mod.ADAPTER_FILES)
