@@ -711,6 +711,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   only by capitals or surrounding spaces count as duplicates, since a reader cannot tell those apart
   either. Re-saving a shelf under its own name, which is what happens when you change its icon, is not
   treated as a clash with itself.
+- **The dashboard file explorer's "Uploads" and "PersonalClaw" roots now follow the active home
+  instead of a hardcoded `~/.personalclaw`.** On a gateway running with a custom `PERSONALCLAW_HOME`,
+  those two roots resolved to the developer's real `~/.personalclaw` no matter which home the gateway
+  was actually using — and because the explorer's roots also define what it is allowed to WRITE, it
+  could browse *and* edit the real home rather than the active one. Both roots now resolve through the
+  active home (`config_dir()`), so an instance on a custom home stays inside its own tree. (#294)
 
 - **The check that keeps installed apps off PersonalClaw's internals had never actually run.** Apps are
   meant to reach core only through the published SDK, and one test enforces that. It looked for the apps
