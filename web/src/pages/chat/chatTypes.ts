@@ -78,7 +78,26 @@ export interface ActivitySegment {
  *  `error`) and is rehydrated from history on reload. */
 export interface ErrorSegment { kind: 'error'; text: string }
 
-export type Segment = TextSegment | ToolSegment | ApprovalSegment | ActivitySegment | ErrorSegment
+/** Live model reasoning streamed over the `chat_thinking` WS frame (CC-9). Rendered
+ *  as a collapsible muted block ONLY while `show_thinking_inline` is on; the frames
+ *  are dropped at ingestion when it is off. Never persisted — history rehydration
+ *  (`hydrateTurns`) knows nothing of this kind, so a reload shows the transcript
+ *  exactly as before: thinking is a live-stream affordance, not part of the record. */
+export interface ThinkingSegment { kind: 'thinking'; text: string }
+
+export type Segment = TextSegment | ToolSegment | ApprovalSegment | ActivitySegment | ErrorSegment | ThinkingSegment
+
+/** Fold one `chat_thinking` chunk into an assistant turn's segments: extend the
+ *  trailing thinking block if the reasoning stream is uninterrupted, else open a
+ *  new one. Interleaving rule: any non-thinking segment (streamed text, a tool
+ *  card…) closes the current block, so a later thinking chunk starts a fresh block
+ *  rather than retroactively growing one that visually sits ABOVE newer content. */
+export const appendThinking = (segs: Segment[], chunk: string): Segment[] => {
+  if (!chunk) return segs
+  const last = segs[segs.length - 1]
+  if (last?.kind === 'thinking') return [...segs.slice(0, -1), { kind: 'thinking', text: last.text + chunk }]
+  return [...segs, { kind: 'thinking', text: chunk }]
+}
 
 /** One episodic memory surfaced into an assistant turn's prompt, resolvable from a
  *  `[Memory N]` citation the reply emits (MEMORY-GRAPH-AND-VAULT §5.4). `id` is the
