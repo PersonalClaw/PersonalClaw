@@ -4623,7 +4623,7 @@
       "plan": "PROMPT-CACHE-SUBSTRATE",
       "code": "PCS",
       "status": "in_progress",
-      "summary": "PROMPT-CACHE-SUBSTRATE decomposed into 8 atoms (all todo — nothing shipped). One provider-agnostic cache-marker seam: S1 ordering repairs (PCS-1/PCS-2), S2 marker+adoption (PCS-3/PCS-4/PCS-5), S3 producer+proof (PCS-6/PCS-7), plus cross-repo apps posture (PCS-8). No hard cross-plan blockers; one soft coordination edge to COST-AND-TOKEN-OBSERVABILITY for the rendered readout.",
+      "summary": "PROMPT-CACHE-SUBSTRATE: S1 ordering (PCS-1/PCS-2), S2 marker+adoption (PCS-3/PCS-4/PCS-5), S3 producer+proof (PCS-6 producer, PCS-7 telemetry numbers — DONE), cross-repo apps posture (PCS-8). PCS-7's V2 live-provider verification was split out to PCS-9 (env-gated) per OWNER RULING 2026-08-28. One soft coordination edge to COST-AND-TOKEN-OBSERVABILITY for the rendered readout.",
       "atoms": [
         {
           "id": "PCS-1",
@@ -4688,15 +4688,27 @@
         },
         {
           "id": "PCS-7",
-          "title": "Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface, V2)",
-          "status": "todo",
+          "title": "Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface)",
+          "status": "done",
           "scope": "Session 3 / T3.2 + V2; §C5 integration points (reuse stats.py, no second store); soul guardrail 4",
-          "done_when": "Per-turn aggregate exposes cache_read_tokens/cache_creation_tokens/cache_hit_pct + saved-USD (via existing estimate_cost rates) on the turn-complete telemetry, reusing stats.py:42-84 counters with no second store; never estimates when the provider reported nothing (honest-zero test for unpriced models, negative saved-USD not hidden); V2: real multi-turn Anthropic + OpenAI runs report rising hit-rate / non-zero saved-USD (turn1 creation, turns2+ read), OpenAI reports vendor reads with no marker sent, an undeclared/Ollama model runs byte-identical with zeros, toggling config off stops the marker while ordering holds.",
+          "done_when": "Per-turn aggregate exposes cache_read_tokens/cache_creation_tokens/cache_hit_pct + saved-USD (via existing estimate_cost rates) on the turn-complete telemetry, reusing stats.py:42-84 counters with no second store; never estimates when the provider reported nothing (honest-zero test for unpriced models, negative saved-USD not hidden).",
           "deps": [
             "PCS-6",
             "PCS-4"
           ],
-          "blocked_reason": "PARTIAL — the NUMBERS half is fully SHIPPED on main and railed: _turn_complete_line carries cache_read_tokens / cache_creation_tokens / cache_hit_pct / cache_saved_usd from a live call site; stats.cache_hit_pct returns an honest None on a zero denominator; pricing.cache_savings_usd computes both sides THROUGH estimate_cost so the rate lookup cannot drift, returns None (never 0.0) for an unpriced model, and leaves a negative saving unclamped. 'No second store' holds structurally and is AST-enforced. UNMET is the V2 live-run half, and it is environment-gated not code-gated: (a) no Bedrock inference-profile id resolves to a price row, so a real run renders 'saved unpriced' -- fixing that is _rates id normalisation, a repo-wide pricing change; (b) no OPENAI_API_KEY here, and it is coupled to PCS-3's still-unmet clause that the OpenAI adapter declare AUTOMATIC (today llm/openai.py declares no posture and inherits PromptCache.NONE). SEPARATELY: the FRONTEND reader is unrailed -- ChatPage folds activityKind==='stats' and gates its rendering, but no FE test covers that kind, so the production reader of these numbers could be deleted with every gate green. Left alone deliberately: the atom's own dep row assigns the readout to EXT:COST-AND-TOKEN-OBSERVABILITY. OWNER CALL: three independent audit passes now recommend SPLITTING this atom -- the numbers half has no remaining work or risk, and the live-provider half cannot be closed from this environment at all."
+          "evidence": "done 2026-09-02 — NUMBERS HALF (split per OWNER RULING 2026-08-28, 'the new atom id is the driver's to mint'). Shipped+railed on main: chat_runner._turn_complete_line carries cache_read_tokens/cache_creation_tokens/cache_hit_pct/cache_saved_usd from a live call site (dashboard/chat_runner.py:4210-4233); stats.cache_hit_pct returns an honest None on a zero denominator; pricing.cache_savings_usd computes both sides THROUGH estimate_cost (no rate drift), returns None (never 0.0) for an unpriced model, leaves a negative saving unclamped; 'no second store' AST-enforced; FE reader railed by #2197. V2 live-provider verification split out to PCS-9."
+        },
+        {
+          "id": "PCS-9",
+          "title": "V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs)",
+          "status": "todo",
+          "scope": "Session 3 / V2; split from PCS-7 per OWNER RULING 2026-08-28",
+          "done_when": "Real multi-turn Anthropic + OpenAI runs report rising hit-rate / non-zero saved-USD (turn1 creation, turns2+ read), OpenAI reports vendor reads with no marker sent, an undeclared/Ollama model runs byte-identical with zeros, toggling config off stops the marker while ordering holds.",
+          "deps": [
+            "PCS-7",
+            "PCS-3"
+          ],
+          "blocked_reason": "ENVIRONMENT-GATED (owner ruling 2026-08-28 split this from PCS-7's shipped numbers half). Cannot be closed from this environment: (a) no Bedrock inference-profile id resolves to a price row, so a real run renders 'saved unpriced' — needs _rates id normalisation (a repo-wide pricing change); (b) no OPENAI_API_KEY here (PCS-3 now supplies the OpenAI AUTOMATIC posture the run depends on). Both gates are credentials/environment, not code."
         },
         {
           "id": "PCS-8",
@@ -7812,8 +7824,8 @@
         "plan": "PA"
       },
       {
-        "id": "PCS-7",
-        "title": "Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface, V2)",
+        "id": "PCS-9",
+        "title": "V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs)",
         "plan": "PCS"
       },
       {
@@ -8259,6 +8271,7 @@
       "PCS-6",
       "PCS-7",
       "PCS-8",
+      "PCS-9",
       "PEP-1",
       "PEP-2",
       "PEP-3",
@@ -9663,8 +9676,8 @@
       {
         "code": "PCS",
         "plan": "PROMPT-CACHE-SUBSTRATE",
-        "total_atoms": 8,
-        "done": 7,
+        "total_atoms": 9,
+        "done": 8,
         "in_progress": 0,
         "todo": 1,
         "blocked": 0
@@ -9913,6 +9926,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 832
+    "edge_count": 834
   }
 }

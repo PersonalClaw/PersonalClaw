@@ -981,3 +981,19 @@ Status stays DESIGNED — implementation deferred to its natural roadmap positio
   different gates (code vs credentials), which is exactly what an atom boundary should separate. So the
   numbers half stays `PCS-7`, and the live-provider verification becomes its own atom — which this change
   unblocks by supplying the OpenAI posture it depends on. The new atom id is the driver's to mint.
+
+- **2026-09-02 — `PCS-7` SPLIT EXECUTED (the owner ruling's mint).** Acting on the 2026-08-28 ruling
+  ("the numbers half stays `PCS-7`, and the live-provider verification becomes its own atom — the new
+  atom id is the driver's to mint"): `PCS-7` is flipped **done** with its `done_when` narrowed to the
+  numbers half only — the clause that is shipped and railed on `main` (`_turn_complete_line` carries
+  cache_read_tokens / cache_creation_tokens / cache_hit_pct / cache_saved_usd from a live call site;
+  `stats.cache_hit_pct` honest-`None` on a zero denominator; `pricing.cache_savings_usd` computes both
+  sides through `estimate_cost`, returns `None` never `0.0` for an unpriced model, leaves a negative
+  saving unclamped; "no second store" AST-enforced; FE reader railed by #2197). The V2 live-run clause
+  is lifted verbatim into a newly minted **`PCS-9`** ("V2 live-provider verification of cache telemetry
+  — real Anthropic + OpenAI runs"), which stays `todo` with a `blocked_reason` recording that it is
+  **environment-gated, not code-gated**: no Bedrock inference-profile id resolves to a price row here,
+  and there is no `OPENAI_API_KEY` (PCS-3, now done, supplies the OpenAI AUTOMATIC posture the run
+  depends on). `PCS-9.deps = [PCS-7, PCS-3]`. The dag regenerates to **661 atoms, 0 dangling**; the
+  numbers half is no longer held hostage to a credential gate it cannot clear, and the live proof is
+  tracked as the discrete piece it is.
