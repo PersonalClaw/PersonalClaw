@@ -1427,6 +1427,20 @@ follows in the next tracking batch.
   `/private/tmp` resolve the SAME path, so leaving it would silently change their gate too).
   Probe sweep 0 introduced in either repo; `git status` clean apart from `?? .venv`.
 
+- [2026-09-02][EA-8] **DONE — both merges are on `main`; the atom flips in this commit.** The
+  2026-08-27 entry above parked the flip on "TWO merges, Apps first". Verified on `origin/main` today:
+  the apps bundle `a2a-action/` (app.json, provider.py, test_provider.py) merged as PersonalClawApps#56
+  (`95326bfe2`, 2026-09-02T08:25Z), and core's half — `a2a-call` in `ALLOWED_HOOK_PROVIDERS`
+  (`validation.py:943`), in `triggers/screen.WRITE_CAPABLE_PROVIDERS`, plus the `sdk/net.py`
+  `a2a_outbound_policy` export — merged as PR #2170 (`a30502fa0`, 2026-09-01T22:44Z).
+  **The stated merge ORDER was inverted in practice**: core landed ~10h before the bundle, so the
+  "validates-then-fails-at-fire-time" window the order rule existed to avoid was briefly live. It is
+  closed now and no hook named `a2a-call` was created during it (checked: the window predates the
+  bundle's availability to any installer). `done_when` walk: inbound clauses shipped in #2086 (logged
+  2026-08-26); the outbound bundle follows the webhook-action precedent with `provider.type: action`,
+  `entity: a2a`; ALLOWED_HOOK_PROVIDERS accepts the name (the two-directional test flipped in #2170);
+  egress rides `egress_policy_for` deny-by-default. `pr` cites #2170 — the commit that made the atom's
+  last unmet clause true in core; the bundle's own record is PersonalClawApps#56.
 ---
 
 ## Execution log — `EA-6` (§9 local A/B replay harness — evidence generator on captured sessions)
