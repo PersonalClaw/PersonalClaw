@@ -296,6 +296,8 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
 
 ## Execution log
 
+**2026-09-02 — INU-9 validated done (impl pre-landed).** `POST /api/inbox/notes` creates a user-authored typed-kind item (route registered before dynamic paths); tray quick-capture reaches the endpoint (`desktop/trayPresence.js` → `web/src/lib/api.ts`). `tests/test_inbox_user_note.py` green.
+
 - 2026-07-30 — **DONE (Session 1: T1.1–T1.4).** Typed kind registry
   (`notification_kinds.py`, 20 pairs), all 26 emitters migrated to named constants, rules
   store + evaluation (`notification_rules.py`) wired into `notify()` as THE delivery path,
