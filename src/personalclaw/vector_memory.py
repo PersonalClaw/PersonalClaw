@@ -178,6 +178,11 @@ _DREAM_MIN_FREQUENCY = 3  # min cluster members (was the sole gate, min_count)
 _DREAM_MIN_UNIQUE_QUERIES = 2  # min distinct conversations (cross-context evidence)
 _DREAM_RECENCY_HALFLIFE_DAYS = 30.0
 
+# Longest user-message token worth substring-matching in the episodic LIKE
+# fallback. Anything longer (base64 paste, JWT, minified JS) has no recall value
+# and — at ≥ SQLite's 50k LIKE-pattern cap — kills the query outright (#369).
+_LIKE_WORD_MAX_CHARS = 256
+
 
 def _conceptual_richness(text: str) -> float:
     """Cheap no-LLM richness proxy in [0,1]: distinct-word ratio × length factor.
@@ -3351,8 +3356,18 @@ class VectorMemoryStore(MemoryProvider):
     def _fts5_episodic_search(
         self, query: str, limit: int, tag_filter: list[str] | None = None
     ) -> list[dict]:
-        """Simple LIKE-based text + tags search fallback for episodic memories."""
-        words = [w for w in query.strip().split()[:5] if len(w) > 2]
+        """Simple LIKE-based text + tags search fallback for episodic memories.
+
+        Words come straight from the user's message, so cap them: a single token
+        ≥ SQLite's 50k LIKE-pattern limit (a base64 paste, a JWT, minified JS)
+        turned into ``%<token>%`` raises ``OperationalError: LIKE or GLOB pattern
+        too complex`` and killed the whole chat turn. A token that long also has
+        zero recall value — substring-matching a 50k blob finds nothing a human
+        meant — so oversized words are dropped, not truncated. The query itself
+        is additionally guarded: memory recall is best-effort context assembly
+        and must degrade to "no matches", never to a dead turn.
+        """
+        words = [w for w in query.strip().split()[:5] if 2 < len(w) <= _LIKE_WORD_MAX_CHARS]
         if not words:
             return []
         conditions = " OR ".join(["text LIKE ?" for _ in words] + ["tags LIKE ?" for _ in words])
@@ -3361,13 +3376,17 @@ class VectorMemoryStore(MemoryProvider):
             tag_conds = " OR ".join(["tags LIKE ?" for _ in tag_filter])
             conditions = f"({conditions}) AND ({tag_conds})"
             params.extend(f'%"{t.lower()}"%' for t in tag_filter)
-        rows = self.db.execute(
-            f"SELECT id, conversation_id, text, tags, importance, created_at, last_accessed_at, "
-            f"contributor "
-            f"FROM episodic_memories WHERE is_deleted = 0 AND ({conditions}) "
-            f"ORDER BY created_at DESC LIMIT ?",
-            (*params, limit),
-        ).fetchall()
+        try:
+            rows = self.db.execute(
+                f"SELECT id, conversation_id, text, tags, importance, created_at, "
+                f"last_accessed_at, contributor "
+                f"FROM episodic_memories WHERE is_deleted = 0 AND ({conditions}) "
+                f"ORDER BY created_at DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            logger.warning("Episodic keyword fallback degraded to no-matches: %s", exc)
+            return []
         return [dict(r) for r in rows]
 
     # ── Episodic Promotion ──
