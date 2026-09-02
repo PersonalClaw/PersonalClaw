@@ -1187,3 +1187,12 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   clause."* So `LV-4` flips when `PHF-14` lands. An independent audit double-booked it into a later wave and would
   have spent a session on it twice. Everything else in `LV-4` — compose/render/narrate/deliver, both routes, the FE
   panel, counts, zero-writes, the no-model floor, the inbox item and quiet hours — is already shipped and railed.
+
+## Execution log — `LV-4` (verification flip: dedup-key fix + full clause coverage) — 2026-09-02
+
+- **[2026-09-02][LV-4] DONE — validated against main; the RED dedup-key hardcode was already fixed.**
+  `delivery_dedup_key` derives its bucket from `report.window_days` (ISO `%G-W%V` weekly /
+  `%Y-%m` monthly) and every done_when clause has a dedicated test, including the ISO-week
+  New-Year non-collision case. Re-ran both suites against main: 52/52 green. No code change
+  was needed — this entry records the verification that flipped the atom.
+

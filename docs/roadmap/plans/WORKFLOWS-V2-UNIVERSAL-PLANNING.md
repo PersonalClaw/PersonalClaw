@@ -628,6 +628,14 @@ Where each new piece plugs into the pluggable-provider architecture (nothing her
 
 ## Execution log
 
+- **[2026-09-02][WF2UNI-12] DONE (12a scope per owner ruling 2026-08-27) — plan_format retired; 12b residue filed as `WF2UNI-14`.**
+  The ruling split the atom: the already-met half (plan_memory renamed to keep only the live
+  subagent context-budget logic; the format half extracted to plan_format.py and then
+  deleted with its test — `git grep -c plan_format -- src/ tests/` is 0 on main) flips done,
+  with the unsatisfiable eval-fixture sub-clause dropped per the same ruling. The
+  deletion-after-loop-drain residue (planning/, loop plan briefs/classify) is now
+  `WF2UNI-14`, blocked on the Phase-4 loop drain.
+
 - **2026-08-02 — CODE DONE (push blocked) — Matching + classification (session 40 of the WF2 queue).**
   Branch `feature-wf2-planning-match`. `workflows/intent.py` (no-LLM 4-dimension classifier + rigor
   routing), `workflows/matcher.py` (T1-T5), typed match metadata on `DefMetadata`, all 18 bundled
