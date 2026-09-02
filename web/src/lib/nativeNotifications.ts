@@ -57,6 +57,11 @@ export const NOTIFICATION_SOURCE_ROUTES: Record<string, string> = {
   planning: 'tasks',
   skills: 'skills',
   system: 'notifications',
+  // INU-9 — a note you captured lives in the inbox, so a tap goes there and not to the feed.
+  // Defaults to `badge`, which raises nothing native at all; this row is what makes the route
+  // right for the user who switches the rule to Notify with Desktop ticked, rather than
+  // leaving them a banner that lands on the notification list their note is not in.
+  user: 'inbox',
 }
 
 /** The fallback surface. A native tap must always land somewhere real. */

@@ -427,6 +427,20 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "secret_absent": "No secret is stored under that name in the scope you asked for.",
     "secret_host_readonly": "That row is inherited from the host environment, so the vault "
     "cannot change or remove it — unset it where the gateway's environment is defined.",
+    # ── user-authored inbox note (handlers_inbox.api_inbox_note_create — INU-9) ──
+    # Three codes rather than the generic `invalid_request`/`bad_request` pair, because the
+    # compose surface branches on all three and each has a DIFFERENT next move: an empty
+    # note means "type something" (the form re-focuses its textarea and shows nothing
+    # alarming), a too-long note means "shorten it" (and the site's message carries the
+    # actual count and limit, which a fixed sentence could not), and a failed save means
+    # "your text is still in the box, press save again" — the one case where the note has
+    # NOT been kept and the user must not be told it was.
+    "note_text_empty": "A note needs some text. Type what you want to remember, then save.",
+    "note_too_long": "That note is longer than the capture limit. Shorten it and save again.",
+    "note_not_saved": (
+        "The note could not be written to the inbox, so it was not kept. Your text is "
+        "still in the compose box — try saving again."
+    ),
 }
 
 

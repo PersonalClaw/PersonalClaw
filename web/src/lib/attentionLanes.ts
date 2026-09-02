@@ -8,12 +8,12 @@
  *  ── THE THREE MEASURED FACTS THIS RULE RESTS ON ────────────────────────────────────────────────
  *
  *  1. **`inbox.py` already partitions the kinds; this file does not invent a third partition.**
- *     `ItemKind` (inbox.py:69) is exactly eight members. Two frozensets sit right below it:
- *     `NON_CHANNEL_KINDS` = {agent_request, proposal, needs_input, digest, system} — core's own
- *     attention vocabulary, raised only through `emit_attention_item` with the `refs` that make a row
- *     actionable — and `SOURCE_DECLARABLE_KINDS` = {message, mention, email}, the channel-shaped
- *     kinds a message source may claim. `BASE_LANE` below is keyed off that same split: the three
- *     channel-shaped kinds map to `null`, the five attention kinds map to a lane.
+ *     `ItemKind` is exactly nine members. Two frozensets sit right below it:
+ *     `NON_CHANNEL_KINDS` = {agent_request, proposal, needs_input, digest, system, user_note} —
+ *     core's own attention vocabulary, raised only through `emit_attention_item` with the `refs`
+ *     that make a row actionable — and `SOURCE_DECLARABLE_KINDS` = {message, mention, email}, the
+ *     channel-shaped kinds a message source may claim. `BASE_LANE` below is keyed off that same
+ *     split: the three channel-shaped kinds map to `null`, the six attention kinds map to a lane.
  *
  *  2. **A pending approval already appears TWICE on the wire, so a naive concat double-counts it.**
  *     `chat_runner._mirror_approval_to_inbox()` raises an `agent_request` item carrying
@@ -108,6 +108,11 @@ const BASE_LANE: Record<InboxItemKind, Lane | null> = {
   // …and these two are telling you something. Nothing is blocked on you, so: Idle.
   digest: 'idle',
   system: 'idle',
+  // INU-9 — a note the user wrote. `your-turn`, NOT `idle`: capturing a note is how someone
+  // says "come back to this", so it is open work they addressed to themselves. Filing it as
+  // idle would state the one thing the capture disproves. It also inherits the your-turn sort
+  // (oldest first), which is right — the note that has waited longest is the most overdue.
+  user_note: 'your-turn',
 }
 
 /** Which statuses still want something. Exhaustive over `InboxItemStatus` for the same reason
@@ -126,7 +131,7 @@ const STATUS_OPEN: Record<InboxItemStatus, boolean> = {
   filtered: false,
 }
 
-/** The eight kinds this build knows. Exported so a caller can distinguish "off-surface by decision"
+/** The nine kinds this build knows. Exported so a caller can distinguish "off-surface by decision"
  *  from "off-surface because we have never heard of this kind" — the second is worth counting. */
 export const KNOWN_KINDS = Object.keys(BASE_LANE) as InboxItemKind[]
 

@@ -45,6 +45,7 @@ function mkSession(over: Partial<ActivityInput> = {}): ActivityInput {
 
 const ALL_KINDS: InboxItemKind[] = [
   'message', 'mention', 'email', 'agent_request', 'proposal', 'needs_input', 'digest', 'system',
+  'user_note',
 ]
 const ALL_STATUSES: InboxItemStatus[] = ['pending', 'seen', 'sent', 'dismissed', 'handled', 'filtered']
 
@@ -54,11 +55,13 @@ function allCards(lanes: Record<Lane, LaneCard[]>): LaneCard[] {
 }
 
 describe('the closed kind vocabulary', () => {
-  it('covers exactly the eight ItemKind members inbox.py declares', () => {
-    // A ninth kind added to the union must break the exhaustive Record in the module, not arrive
-    // here as an untriaged default. This is the runtime half of that guarantee.
+  it('covers exactly the nine ItemKind members inbox.py declares', () => {
+    // A tenth kind added to the union must break the exhaustive Record in the module, not arrive
+    // here as an untriaged default. This is the runtime half of that guarantee — and it worked:
+    // INU-9's `user_note` failed the module's `Record<InboxItemKind, …>` to compile until a lane
+    // was chosen for it, which is why widening this list is a deliberate act and not drift.
     expect([...KNOWN_KINDS].sort()).toEqual([...ALL_KINDS].sort())
-    expect(KNOWN_KINDS).toHaveLength(8)
+    expect(KNOWN_KINDS).toHaveLength(9)
   })
 })
 

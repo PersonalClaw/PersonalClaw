@@ -325,6 +325,28 @@ _KINDS: tuple[NotificationKind, ...] = (
     # timeout (`DashboardState._approval_futures`), not a durable inbox row. Claiming
     # otherwise would put an item in the attention list that vanishes on restart.
     NotificationKind("approval", "requested", "Approval needed", "immediate", SEV_WARNING),
+    # user — a note the user captured themselves (INU-9). The FIRST kind whose emitter is a
+    # person rather than a subsystem, and the whole registration exists so it is not a
+    # phantom: `emit_attention_item` calls `state.notify` unconditionally, so this pair WOULD
+    # be delivered whether or not it were registered — unregistered it would simply fall open
+    # to system/generic, carry GENERIC's severity and mode, and show no row in Settings →
+    # Notifications. That is the 🪤 above, one level down.
+    #
+    # `badge` by DEFAULT — the second kind here to decline `immediate`, and for the opposite
+    # reason to `usage_recap`'s. A toast exists to tell you something you did not know; you
+    # cannot be informed of your own keystrokes. Capturing three notes from the tray would
+    # raise three toasts about text the user had just typed, which teaches them to mute the
+    # channel that also carries a loop's question. `badge` is exactly the mode for this: the
+    # row persists and the unread badge counts it (`unread_count` counts open INBOX items,
+    # so the note is still visibly waiting), and nothing interrupts. Delivery is real, not
+    # declined — a user who wants the toast flips this one row to `immediate`.
+    #
+    # `verifiable=False` deliberately: the second-opinion pass (INU-6) files a REFUTED claim
+    # as FILTERED and withholds it. A note is not a claim about the world, it is what the
+    # user said; a skeptic model that "refuted" it would hide the user's own words from them.
+    NotificationKind(
+        "user", "note", "Note you captured", "badge", SEV_INFO, attention=True, verifiable=False
+    ),
     # The synthetic fallback, registered so the rules UI can show a row for it.
     NotificationKind(GENERIC_SOURCE, GENERIC_KIND, "Uncategorized", "immediate", SEV_INFO),
 )
@@ -399,6 +421,11 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # push target's rule row would resolve to system/generic and a user's "push me approvals"
     # would silently push everything else instead.
     "approval": ("approval", "requested"),
+    # INU-9. `user_note`, not the bare `note`, and the string is deliberately identical to
+    # `ItemKind.USER_NOTE.value`: one vocabulary spans the row and its delivery, the way
+    # `agent_request` already does. The bare `note` would also have been unique, but it drops
+    # the provenance that is the entire point of the kind.
+    "user_note": ("user", "note"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:

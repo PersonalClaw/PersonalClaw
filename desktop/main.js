@@ -732,11 +732,15 @@ const trayPresence = makeTrayPresence({
   actions: {
     open: () => showMainWindow(),
     deepLink: (hash) => deepLink(hash),
-    // Quick capture routes to the Inbox with a capture intent. The note-writing half
-    // is NOT ours to invent: no endpoint creates an inbox item from text (every
-    // /api/inbox POST acts on an existing item), and the attention-path contracts
-    // belong to INBOX/Notifications-Unification. Minting POST /api/inbox/capture here
-    // would be a consumer defining its owner's contract.
+    // Quick capture routes to the Inbox with a capture intent. The URL is UNCHANGED from
+    // DC-4 — it was the reader that was missing, not the contract. INU-9 supplied both
+    // halves in the owning plan: `POST /api/inbox/notes` writes a `user_note` item, and
+    // `InboxPage` now reads `?capture=1` (`useQueryFlag(query, setQuery, 'capture')`) to
+    // open the compose surface. Keeping the existing flag rather than inventing a second
+    // one is what leaves no window where the tray and the SPA disagree.
+    //
+    // 🔑 This shell still mints no endpoint of its own. The tray is one ENTRANCE to a
+    // capability core owns; the inbox header's Capture control sets the identical flag.
     quickCapture: () => deepLink(`${DEEP_LINKS.inbox}?capture=1`),
     toggleLoginItem: (next) => {
       const result = loginItem.set(next);

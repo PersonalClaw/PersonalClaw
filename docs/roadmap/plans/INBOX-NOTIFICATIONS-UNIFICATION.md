@@ -645,25 +645,56 @@ Extends **Session 4** (which already owns the proposal fold-in): T4.1 becomes th
   keeps closing. Falsified four ways (failed apply marked handled; the undeclared-kind 403 skipped; a
   foreign `app_callback` allowed; batch-approve enabled for a mixed selection) — each reds its test.
 
-### `INU-9` filed — the one thing every inbox source lacks: a user-authored item. 2026-08-27
-
-**OWNER RULING, and it corrects a claim I made myself.** `DC-4` shipped a tray "quick capture" item that
-deep-links `${DEEP_LINKS.inbox}?capture=1`, and nothing in `web/src` reads that flag — so the affordance
-navigates and writes nothing. I briefed that atom asserting the reader belonged to *this* plan. That was
-wrong, and the `DC-4` session caught it: this plan is **8/8 atoms done** and none of them covers a
-user-**authored** item. Every source it ships is synthesized by the system — a rule fired, a run needs
-input, an app contributed a source.
-
-So "owned elsewhere" would have orphaned the work. It is filed here as new scope (`INU-9`) rather than
-recorded as a note in `DC-4`'s reason, because a backlog keyed on what was found cannot drain.
-
-**The atom owns the capability, not the entry point.** The tray is merely its first consumer; a compose
-affordance in the dashboard is the same endpoint. `DC-4` is deliberately **not** a dependency — its deep
-link already ships on `main`, and its own remaining clause is device-gated (a signed bundle plus a
-reboot), which has nothing to do with this. Until `INU-9` lands, `?capture=1` is a known inert control
-with a named owner rather than an anonymous one.
-
-Two constraints written into the `done_when` so they are not rediscovered: the new kind must reach the
-**typed-kind registry** (this plan's own contract), and it must **not** add a phantom source to the
-notification-rules vocabulary — a target the system cannot deliver is the failure mode `MC-6`/`MC-5` have
-been untangling all week.
+- [2026-08-27][INU-9] **A user-authored note reaches the inbox** — the plan's ninth atom, filed today
+  as new scope rather than folded into a closed one. `DC-4` shipped a tray "Quick Capture Note…" row
+  that deep-links `${DEEP_LINKS.inbox}?capture=1`; **measured before touching anything, `capture=1`
+  occurred in exactly ONE place in the product** (`desktop/main.js`) and zero places in `web/src` —
+  `useHashRoute` parses every param generically and `InboxPage` read only `filter`/`kind`/`q`/`open`/
+  `settings`, so the flag was parsed and dropped. The DC-4 brief assumed the missing reader belonged
+  to an existing atom of this plan; that was wrong, and the way it was wrong matters: this plan is
+  8/8 done and **none of its atoms covers a user-AUTHORED item**. Every source it unified is
+  synthesized — a rule fired, a run needs input, a poll found a message, an app contributed a
+  proposal. Recording the gap in DC-4's reason would have been a backlog keyed on what was found.
+  **`POST /api/inbox/notes` → `emit_attention_item`, no second write path.** Read two existing
+  emitters before choosing (`api_inbox_proposal_create`, which is the closest precedent — an HTTP
+  POST that emits with an explicit `store=`; and `notification_rules.run_digest`) and followed the
+  first. A test neutralises `emit_attention_item` and asserts NOTHING is written, so "one write path"
+  is measured rather than asserted in a comment.
+  **The registration was forced, and the forcing function is the right one.**
+  `test_EVERY_EMITTER_IN_THE_TREE_IS_REGISTERED` AST-sweeps every literal `(source, kind)` at an
+  `emit_attention_item` call site, so going through the shared seam *obliges* a registry row — which
+  collapsed the design question. `user/note` is registered with `default_mode="badge"`: it is the
+  second non-immediate default after `usage_recap`, and the `EXACTLY_these` vacuity guard was widened
+  deliberately with its justification, which is what that guard exists to make deliberate. **This is
+  the opposite of a phantom target** — delivery is real and observed (`state.notify` receives the
+  `user_note` wire string on a real capture, and the pair renders as a row in `rules_document()`);
+  `badge` only declines the interruption, because a toast tells you something you did not know and you
+  cannot be informed of your own keystrokes. `verifiable=False`, so INU-6's skeptic can never file a
+  user's own words as FILTERED — the rules PUT refuses `verify:true` for the kind, making the hazard
+  unreachable rather than merely unconfigured.
+  **`?capture=1` READ, not replaced** — `useQueryFlag(query, setQuery, 'capture')`, the hook `?settings`
+  already uses, whose `query[key] === '1'` matches the tray's URL exactly. `desktop/main.js` keeps that
+  URL byte-for-byte; only its comment changed (it claimed no endpoint could exist, which stopped being
+  true in this commit). A cross-repo-half rail in `desktop/test/trayPresence.test.js` now asserts both
+  ends of the flag in one place, and closes two gaps that let the inert control ship: the tray row had
+  **no behavioural test** (only a label match, plus a blanket noop-actions sweep that cannot tell a
+  wired row from a dead one) and the deep link's URL was untested in either half.
+  **Typed kind is `user_note`, not `note`** — the value carries the provenance, so a consumer answers
+  "did a person write this?" from `item_kind` alone. Two ratchets forced the full wiring and both
+  earned their keep: `test_every_declarable_kind_has_a_frontend_chip` and
+  `test_every_emittable_kind_has_a_frontend_row` red until `inboxMeta.ts`/`notificationMeta.ts` learn
+  the kind, and `attentionLanes.ts`'s exhaustive `Record<InboxItemKind, Lane|null>` failed to compile
+  until a lane was chosen (`your-turn`: capturing a note is how someone says "come back to this", so
+  `idle` would state the one thing the capture disproves).
+  **No config field.** A note is per-item state; the round-trip contract does not bind, and nothing was
+  added to `config.json` or `loader.py` (re-measured at 5619 lines against the 6000 ceiling, headroom
+  381 — untouched). Three new `HTTP_ERROR_CODES` rows (`note_text_empty`, `note_too_long`,
+  `note_not_saved`), each a different next move; `note_too_long` refuses rather than truncating and its
+  site message carries the real count, because quietly dropping the tail of someone's note is worse
+  than declining it, and `note_not_saved` is the one path where the text was NOT kept — so it says so.
+  Falsified three ways with counts, each mutation `git grep`-ed back and restored from a file copy:
+  the `capture` reader (5 passed → **4 failed/1 passed**, the plain-navigation sibling green); `flush()`
+  removed from `emit_attention_item` (22 → **1 failed/21 passed**, only the read-back-off-disk leg red,
+  the create leg green); the `user/note` registration renamed (75 → **9 failed/66 passed**, and the
+  capability's own create + restart legs stayed GREEN because the registry is fail-open — which is what
+  proves those nine measure registration and not the feature).
