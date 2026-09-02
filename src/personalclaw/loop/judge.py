@@ -36,6 +36,7 @@ import re
 from personalclaw.workflows.judge_contract import (
     JudgeVerdict,
     clamp_marginal,
+    evidence_hash_of,
     verdict_for_cycle,
 )
 
@@ -288,7 +289,13 @@ async def assess_cycle(
             await judge.shutdown()
         except Exception:
             pass
-    return _parse_verdict(raw, evidence_refs_from_observation(observed))
+    from personalclaw.loop.loop import finding_content
+
+    return _parse_verdict(
+        raw,
+        evidence_refs_from_observation(observed),
+        evidence_text=f"{finding_content(finding)}{observed}",
+    )
 
 
 async def assess_cycle_skeptic(
@@ -347,7 +354,13 @@ async def assess_cycle_skeptic(
             await judge.shutdown()
         except Exception:
             pass
-    return _parse_verdict(raw, evidence_refs_from_observation(observed))
+    from personalclaw.loop.loop import finding_content
+
+    return _parse_verdict(
+        raw,
+        evidence_refs_from_observation(observed),
+        evidence_text=f"{finding_content(finding)}{observed}",
+    )
 
 
 def _build_skeptic_prompt(
@@ -409,7 +422,9 @@ async def _stream(judge, prompt: str) -> str:
     return "".join(chunks)
 
 
-def _parse_verdict(raw: str, evidence_refs: list[str] | None = None) -> JudgeVerdict | None:
+def _parse_verdict(
+    raw: str, evidence_refs: list[str] | None = None, evidence_text: str = ""
+) -> JudgeVerdict | None:
     """Parse the loop judge's JSON answer into the CONTRACT's verdict record.
 
     The prompt asks for ``done``/``regressed`` booleans, so the closed enum is derived here by
@@ -440,4 +455,8 @@ def _parse_verdict(raw: str, evidence_refs: list[str] | None = None) -> JudgeVer
         regressed=regressed,
         reasoning=str(data.get("reasoning", "")).strip()[:1000],
         evidence_refs=list(evidence_refs or []),
+        # `ES-12`: which evidence this verdict judged. The refs are supervisor-derived from the
+        # SAME observed block (answerable by construction), so no grounding check is needed
+        # here — the hash alone makes the record auditable.
+        evidence_hash=evidence_hash_of(evidence_text),
     )

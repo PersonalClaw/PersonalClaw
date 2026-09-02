@@ -1710,7 +1710,11 @@ async def dispatch_gate(
                 # this session exists to fix.
                 unparseable = True
                 break
-            judged.append(validate_verdict(answer, hints, fallback_result=fallback_result))
+            judged.append(
+                validate_verdict(
+                    answer, hints, fallback_result=fallback_result, evidence_text=rubric_prose
+                )
+            )
         else:
             unparseable = False
         text = texts[-1] if texts else ""
