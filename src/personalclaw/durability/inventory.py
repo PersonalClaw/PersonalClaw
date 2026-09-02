@@ -531,13 +531,19 @@ INVENTORY: tuple[StateEntry, ...] = (
     # one machine, and the cost — a REGISTERED-but-unrun study restored from a snapshot has
     # lost its checks — is caught loudly rather than silently, because `studies.run_study`
     # REFUSES a study whose registration declares checks it cannot load.
+    #
+    # §7/ES-10 adds `benchmarks/bakeoff` for the same reason and by the same mechanism: it
+    # holds redacted excerpts of the user's OWN traffic, captured only while an off-by-
+    # default flag is on. Those excerpts are scored once and expire, so the export/snapshot
+    # cost of dropping them is nil (re-enable capture to refill), while carrying a redacted
+    # slice of real inputs off the machine is a leak the flag's own privacy posture forbids.
     StateEntry(
         id="evals",
         kind=KIND_TREE,
         path="evals",
         domain=DOMAIN_PLATFORM,
         merge=MERGE_UNION_BY_ID,
-        derived_within=("studies/*/locked",),
+        derived_within=("studies/*/locked", "benchmarks/bakeoff"),
         help=(
             "offline eval substrate: scenario library, matrices, pinned results ledger, "
             "pre-registered studies (their hidden locked/ checks never leave this machine)"
