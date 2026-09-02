@@ -19,6 +19,8 @@ import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring, expr } from '../../design/motion'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type TaskItem, type ProjectItem, type TaskListItem, type Loop } from '../../lib/api'
+import { notify } from '../../app/appSdk'
+import { reportActionFailure } from '../../app/reportingWrite'
 import { statusMeta, signalPriority, dueMeta, parseDueDate, TERMINAL, ListChecksLike, exitDoneCount } from './taskMeta'
 import { TaskDetail } from './TaskDetail'
 import { TaskGraph } from './TaskGraph'
@@ -169,7 +171,19 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     if (!selected.size || bulkBusy) return
     setBulkBusy(true)
     const items = [...selected].map((id) => (op === 'delete' ? { id } : { id, ...patch }))
-    try { await api.tasksBulk(op, items) } catch { /* surfaced via reload showing unchanged */ }
+    try {
+      // The endpoint returns 200 with per-item outcomes — a refused item (unmet exit
+      // criteria) lands in `failed`/`errors[]`, not in a transport error. Awaiting
+      // without reading the body reported success for refusals, and the reload then
+      // showed the "completed" task still open with no explanation.
+      const r = await api.tasksBulk(op, items)
+      if (r.failed > 0) {
+        const first = Array.isArray(r.errors) && r.errors.length ? `: ${String(r.errors[0])}` : ''
+        notify(`${r.failed} of ${r.total} ${op === 'delete' ? 'deletions' : 'updates'} refused${first}`, 'error')
+      }
+    } catch (e) {
+      reportActionFailure(`${op} ${items.length} task${items.length === 1 ? '' : 's'}`)(e)
+    }
     setBulkBusy(false); clearSelection(); load()
   }
   // Hydrate the local mirror whenever fresh cached data lands (initial fetch +
