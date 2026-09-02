@@ -244,7 +244,11 @@ def index_turn(session_key: str, role: str, text: str, *, memory_mode: str = "")
 
 
 def forget_session(session_key: str) -> None:
-    """Remove a session from the index (deleted, or newly restricted)."""
+    """Remove a session from the index (deleted, or newly restricted).
+
+    Both tables are dropped in one transaction so a failure cannot leave a
+    searchable FTS row whose bookkeeping row is gone (or vice versa).
+    """
     key = (session_key or "").strip()
     if not key:
         return
@@ -252,10 +256,55 @@ def forget_session(session_key: str) -> None:
     if conn is None:
         return
     try:
+        conn.execute("BEGIN")
         conn.execute("DELETE FROM sessions_fts WHERE session_key = ?", (key,))
         conn.execute("DELETE FROM indexed WHERE session_key = ?", (key,))
+        conn.execute("COMMIT")
     except Exception:  # noqa: BLE001
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
         logger.debug("session_search: forget failed for %s", key, exc_info=True)
+
+
+def purge_orphans(log=None) -> int:
+    """Backfill (SM-11): drop index rows whose transcript no longer exists.
+
+    Enumerates distinct session keys from BOTH tables — the union matters:
+    a row present only in ``sessions_fts`` (drift from a partial write under
+    the old non-transactional forget) is invisible to any prune that reads
+    ``indexed`` alone, yet it is exactly the row that keeps deleted text
+    searchable. Returns how many orphaned sessions were purged, and logs the
+    count so the sweep's effect is stated, not silent.
+    """
+    log = log or _conversation_log()
+    conn = _connect()
+    if conn is None:
+        return 0
+    try:
+        keys = {
+            row["session_key"]
+            for row in conn.execute("SELECT DISTINCT session_key FROM sessions_fts").fetchall()
+        } | {
+            row["session_key"]
+            for row in conn.execute("SELECT DISTINCT session_key FROM indexed").fetchall()
+        }
+    except Exception:  # noqa: BLE001
+        logger.debug("session_search: purge_orphans enumeration failed", exc_info=True)
+        return 0
+    purged = 0
+    for key in keys:
+        try:
+            exists = bool(log.has_log(key))
+        except Exception:  # noqa: BLE001
+            continue  # unknown ⇒ keep: never purge a row we cannot verify
+        if not exists:
+            forget_session(key)
+            purged += 1
+    if purged:
+        logger.info("session_search: purged %d orphaned index row(s)", purged)
+    return purged
 
 
 def _conversation_log():
@@ -367,9 +416,12 @@ def reindex_all(log=None, *, limit: int | None = None, force: bool = False) -> i
 
     # Prune entries whose session no longer exists — but only on a complete pass,
     # since a limited one hasn't seen every session and would delete live rows.
+    # purge_orphans reads the union of both tables, so an FTS-only drift row
+    # (invisible to `known`, which reads only `indexed`) is swept too.
     if limit is None:
         for key in set(known) - live:
             forget_session(key)
+        purge_orphans(log)
     return indexed
 
 
