@@ -827,3 +827,11 @@ this. Two tests already flip branch on the grant. The `dag.json` dep edit follow
   *look* blocked — but they are not. `DCU-6` was built and shipped against the landed code as PR **#2137** while this
   row still said `todo`, which is the proof. The deps are deliberately **NOT** rewritten: editing a dependency graph
   to make a frontier look better is the wrong fix, and this note is the honest record.
+
+## Execution log — `DCU-6` (Windows/Linux honest typed refusals) — **DONE**
+
+- [2026-09-02][DCU-6] DONE, flipped by the rev-18 reconciliation. Verified on `main`
+  @`01e25c848`: `computer_use/unsupported_platform.py` provides the single
+  `refusal(platform, accessibility_api, op)` used by both `linux_driver.py` and
+  `windows_driver.py` — a typed refusal naming the platform, no silent no-op; 70 tests green
+  across the computer-use suites referencing the refusal path.
