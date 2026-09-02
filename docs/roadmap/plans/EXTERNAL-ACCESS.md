@@ -558,8 +558,8 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
 
   **OWNER CORRECTION (2026-09-01), before this landed.** The export was removed in the first draft of
   this change and I put it back. Four SHIPPING channel apps import `run_chat` from that exact path —
-  `discord-channel/discord_runtime/transport.py:286`, `email-channel/email_runtime/transport.py:521`,
-  `telegram-channel/telegram_runtime/transport.py:296` and `slack-channel/slack_runtime/handler.py:1680`
+  `discord-channel/discord_runtime/transport.py:L286`, `email-channel/email_runtime/transport.py:L521`,
+  `telegram-channel/telegram_runtime/transport.py:L296` and `slack-channel/slack_runtime/handler.py:L1680`
   — plus four of their test modules, which monkeypatch `personalclaw.sdk.channel.run_chat` **by that
   dotted path**. The apps repo is a separate release artifact and cannot land atomically with core, so
   dropping the export first breaks all four the moment core merges: the same
@@ -615,10 +615,10 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
   false. Measured on apps `origin/main` (`7a94830`):
 
   ```
-  discord-channel/discord_runtime/transport.py:286   from personalclaw.sdk.channel import run_chat
-  email-channel/email_runtime/transport.py:521       from personalclaw.sdk.channel import run_chat
-  telegram-channel/telegram_runtime/transport.py:296 from personalclaw.sdk.channel import run_chat
-  slack-channel/slack_runtime/handler.py:1680        from personalclaw.sdk.channel import run_chat
+  discord-channel/discord_runtime/transport.py:L286   from personalclaw.sdk.channel import run_chat
+  email-channel/email_runtime/transport.py:L521       from personalclaw.sdk.channel import run_chat
+  telegram-channel/telegram_runtime/transport.py:L296 from personalclaw.sdk.channel import run_chat
+  slack-channel/slack_runtime/handler.py:L1680        from personalclaw.sdk.channel import run_chat
   ```
 
   All four import the **public** name and call it (`:300`, `:538`, `:310`, `:1681`), and four test

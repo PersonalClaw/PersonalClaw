@@ -344,7 +344,11 @@ def test_v1_echo_walkthrough_unknown_then_pair_then_converse(monkeypatch):
             dashboard_state = state
 
             async def deliver_channel_inbound(self, provider, msg, *, is_dm=True):
-                return await ci.deliver_inbound(self, provider, msg, is_dm=is_dm)
+                from personalclaw.dashboard.chat import run_chat
+
+                return await ci.deliver_inbound(
+                    self, provider, msg, is_dm=is_dm, turn_runner=run_chat
+                )
 
         await t.connect()
         await t.start_inbound(_Services())

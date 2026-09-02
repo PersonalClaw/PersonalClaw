@@ -64,15 +64,17 @@ class _Services:
     """A GatewayServices stand-in exposing the real door, exactly as the orchestrator does.
 
     ``deliver_channel_inbound`` delegates to :func:`channel_inbound.deliver_inbound` with
-    ``self`` as the handle — byte-for-byte the orchestrator's own implementation — so these
-    tests exercise the shipped path rather than a re-implementation of it.
+    ``self`` as the handle and ``run_chat`` injected — the orchestrator's own delegation shape
+    — so these tests exercise the shipped path rather than a re-implementation of it.
     """
 
     def __init__(self, state):
         self.dashboard_state = state
 
     async def deliver_channel_inbound(self, provider, msg, *, is_dm=True):
-        return await ci.deliver_inbound(self, provider, msg, is_dm=is_dm)
+        from personalclaw.dashboard.chat import run_chat
+
+        return await ci.deliver_inbound(self, provider, msg, is_dm=is_dm, turn_runner=run_chat)
 
 
 def _msg(text="hello?", sender="stranger", channel="dm1", mid="m1", **kw):
