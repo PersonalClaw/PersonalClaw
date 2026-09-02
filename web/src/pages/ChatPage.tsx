@@ -53,7 +53,7 @@ import { ChatPlanGate } from '../ui/chat/ChatPlanGate'
 import { Markdown } from '../ui/Markdown'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
-import { NoModelSetupState, isNoModelSetupError } from './chat/NoModelSetupState'
+import { NoModelSetupState, isNoModelSetupError, MODELS_PATH } from './chat/NoModelSetupState'
 import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
 import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
@@ -2926,7 +2926,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
                           )}>
-                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} />
+                            <AssistantSegments segments={turn.segments} isLast={isLast} messageTs={turn.ts} streaming={isLast && streaming} onApprove={approve} onSwitchToAgent={switchToAgentAndRun} onOpenFile={setOpenFile} onSetupModel={() => navigate(MODELS_PATH)} chatSessionKey={sessionRef.current ?? undefined} citations={turn.citations} skillsUsed={turn.skillsUsed} />
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips (CHAT-CRAFT S3) under the last assistant turn only,
@@ -3619,13 +3619,15 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
  *  file paths surface as clickable chips below the prose. */
-function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, chatSessionKey, citations, skillsUsed }: {
+function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, onSwitchToAgent, onOpenFile, onSetupModel, chatSessionKey, citations, skillsUsed }: {
   segments: Segment[]; isLast: boolean
   messageTs?: string
   streaming?: boolean
   onApprove: (id: string, action: ApproveAction) => void
   onSwitchToAgent: (continuation: string) => void
   onOpenFile: (path: string) => void
+  /** WT-04: the no-model empty-state's CTA — routes to Settings → Models through the hash router. */
+  onSetupModel: () => void
   chatSessionKey?: string
   citations?: MemoryCitation[]
   skillsUsed?: SkillUsed[]
@@ -3678,7 +3680,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       // envelope that reads as a stack dump. Reframe THAT case as a calm setup
       // nudge; every other turn error keeps the plain danger strip.
       return isNoModelSetupError(text)
-        ? <NoModelSetupState key={i} detail={text} />
+        ? <NoModelSetupState key={i} detail={text} onSetup={onSetupModel} />
         : <InlineError key={i} icon multiline className="my-1">{text}</InlineError>
     }
     if (seg.kind === 'approval') {

@@ -3,9 +3,11 @@ import { Button } from '../../ui/Button'
 import { fvs } from '../../design/fontWeight'
 
 /** Where "Set up a model" goes — the same destination DegradedChip's "Bind a
- *  model" nudge uses, so the two agree. Hash route; assigning it drives the app's
- *  `useHashRoute` router. */
-export const MODELS_ROUTE = '#/settings/models'
+ *  model" nudge uses, so the two agree. `MODELS_PATH` is the router-path form the
+ *  page hands to `navigate()`; `MODELS_ROUTE` is the same destination as a hash
+ *  href (what DegradedChip's link carries). */
+export const MODELS_PATH = 'settings/models'
+export const MODELS_ROUTE = `#/${MODELS_PATH}`
 
 /** True when a turn-level error is the "no model configured yet" case — a fresh
  *  instance where no provider declares the capability the chat use case needs.
@@ -33,7 +35,7 @@ export function isNoModelSetupError(text: string | null | undefined): boolean {
  *  which read as a stack dump on a newcomer's very first screen — with one plain
  *  sentence, the way forward as a CTA, and the full envelope tucked behind a
  *  collapsed disclosure (charter: calm setup-framing, error-shape rule). */
-export function NoModelSetupState({ detail }: { detail: string }) {
+export function NoModelSetupState({ detail, onSetup }: { detail: string; onSetup: () => void }) {
   return (
     <div
       role="status"
@@ -53,7 +55,7 @@ export function NoModelSetupState({ detail }: { detail: string }) {
             Connect a model to start chatting. You can set one up in Settings → Models.
           </p>
           <div className="mt-2.5">
-            <Button size="sm" onClick={() => { window.location.hash = MODELS_ROUTE }}>
+            <Button size="sm" onClick={onSetup}>
               Set up a model
             </Button>
           </div>
