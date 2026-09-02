@@ -175,31 +175,65 @@ export function DashboardPage(route: RouteProps) {
                 <ScheduleWidget {...route} />
               </Section>
             </EntranceRegion>
+
+            {/* System rail (narrow only) — the mobile home for the rail that docks
+                at the bottom edge from `lg` up. Below `lg` the dock is suppressed
+                (its `shrink-0` height would steal the viewport and clip the first
+                card, audit WT-06), so the rail flows here as the last band, scrolling
+                with the content it used to overlap. Hidden from `lg` up, where the
+                docked island below takes over. */}
+            <EntranceRegion className="min-w-0 lg:hidden">
+              <SystemRailIsland {...route} />
+            </EntranceRegion>
           </EntranceGroup>
         </div>
         {/* System rail — docked to the dashboard's bottom edge, OUTSIDE the scroll
-            area above. A flex sibling with `shrink-0` pins it to the bottom while
-            the scroll area owns `flex-1`, so the live system indicators stay
-            visible however far the content above scrolls. The outer band is
-            transparent and just provides the gutter; the rail itself is a floating,
-            rounded, frosted ISLAND — the same shell-chrome language as the composer
-            and ShellCorners (token border + rest-shadow + backdrop blur) — instead
-            of a flat full-bleed strip, so it reads as a sleek docked control rather
-            than a boxy footer. */}
-        <div className="shrink-0 px-l pb-m pt-xs">
-          {/* `@container` makes the island the query context for the rail: its
-              width tracks --content-width (NOT the viewport), so the rail members
-              adapt to the space actually available (SystemHealth's `@…` variants),
-              staying on one line as long as they fit. */}
-          <div
-            className="@container mx-auto flex w-full items-center rounded-lg border border-outline-variant/50 bg-surface-low/70 px-l py-s shadow-rest backdrop-blur-md"
-            style={{ maxWidth: 'var(--content-width)' }}
-          >
-            <SystemHealth {...route} />
-          </div>
+            area above, ONLY from `lg` up. A flex sibling with `shrink-0` pins it to
+            the bottom while the scroll area owns `flex-1`, so the live system
+            indicators stay visible however far the content above scrolls. The outer
+            band is transparent and just provides the gutter; the rail itself is a
+            floating, rounded, frosted ISLAND — the same shell-chrome language as the
+            composer and ShellCorners (token border + rest-shadow + backdrop blur) —
+            instead of a flat full-bleed strip, so it reads as a sleek docked control
+            rather than a boxy footer.
+
+            🪤 BELOW `lg` THE DOCK IS SUPPRESSED (`hidden lg:block`) and the rail
+            renders as the final in-scroll band instead (the `lg:hidden`
+            EntranceRegion at the end of the group above). At ~390px SystemHealth's
+            labelled metrics wrap to ~6 rows, and a `shrink-0` sibling refuses to
+            yield that height — so the pinned rail took ~40% of the phone viewport and
+            clipped the first actionable card ("Needs you" → Reply) at its top edge
+            (audit WT-06). Undocking at narrow widths hands the whole viewport back to
+            the scroll area, so every card and its actions are reachable; the rail
+            still ships, now at the natural end of the mobile scroll. This mirrors the
+            HeroPulse header⇄body swap in this same file: a control that is chrome on
+            a wide screen becomes a content band on a narrow one. */}
+        <div className="hidden shrink-0 px-l pb-m pt-xs lg:block">
+          <SystemRailIsland {...route} />
         </div>
       </div>
     </DashboardLiveProvider>
+  )
+}
+
+/** The system-stat rail as a self-contained frosted island — the shell-chrome
+ *  language (token border + rest-shadow + backdrop blur) shared with the composer
+ *  and ShellCorners. Rendered in TWO places by DashboardPage (mirroring the
+ *  HeroPulse header⇄body swap): docked at the bottom edge from `lg` up, and as the
+ *  final in-scroll band below `lg` — so a control that is chrome on a wide screen
+ *  becomes a content band on a narrow one, instead of a pinned `shrink-0` footer
+ *  stealing the phone viewport (audit WT-06). `@container` makes the island the
+ *  query context for the rail, so its width tracks --content-width (NOT the
+ *  viewport) and SystemHealth's `@…` variants adapt to the space actually
+ *  available. Reads live from the shared DashboardLive feed. */
+function SystemRailIsland(route: RouteProps) {
+  return (
+    <div
+      className="@container mx-auto flex w-full items-center rounded-lg border border-outline-variant/50 bg-surface-low/70 px-l py-s shadow-rest backdrop-blur-md"
+      style={{ maxWidth: 'var(--content-width)' }}
+    >
+      <SystemHealth {...route} />
+    </div>
   )
 }
 
