@@ -12,6 +12,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Chat:** a message containing a single token past SQLite's LIKE-pattern cap (a base64 paste, a JWT, minified JS) no longer kills the turn with a raw “LIKE or GLOB pattern too complex” error — the episodic-recall keyword fallback drops oversized tokens (they carry no recall value) and degrades to no-matches on any SQLite operational refusal instead of propagating (#369).
 - **Dashboard:** a client disconnecting while a broadcast is in flight (navigating away from a streaming response) no longer logs an unretrieved-task ERROR traceback — WebSocket sends are awaited under a guard that logs at DEBUG and reaps the dead client immediately rather than on the next broadcast (#312).
+- **Security (skills marketplace):** the native skills provider's `fetch()` joined an
+  unvalidated skill id onto its root, so a path-shaped id (`../…`, or an absolute path —
+  which *replaces* the root under `pathlib`) enumerated and returned files from arbitrary
+  directories. Ids are now names only (no separators, no `..`, not absolute) and the
+  resolved directory must be a direct child of the marketplace root; violations and
+  missing skills raise a typed `SkillNotFoundError`, which the dashboard maps to 404 —
+  marketplace detail and install no longer return 500 for a nonexistent skill (#787).
+- **Prompts:** previewing a template whose `variables[]` carries an unknown `type` now
+  returns 400 with the message (create already did); saving a prompt binding with a
+  non-string `use_case` returns 400 instead of crashing on the frozenset membership
+  test (#441).
+- **Loops:** `PUT /api/loops/{id}` now runs the same numeric/boolean floor as create — a
+  negative or over-cap `max_cycles`, a non-integer `idle_secs`, and a quoted-string
+  boolean (`autopilot: "false"`, which the store's `bool()` coercion silently turned ON)
+  are rejected with 400; the create gate gained the same explicit-boolean floor (#399).
 - **Security (egress guard):** an operator allow-listed hostname that resolves (or DNS-rebinds) to a cloud metadata / link-local address (the AWS/Azure/GCP instance-credential endpoint, `fe80::/10`, Alibaba's metadata IP) is now refused post-resolution, for every policy. `deny_hosts` matches the URL's hostname before DNS, so it could not see the rebind; the homelab private-LAN opt-in is unchanged.
 
 ### Added

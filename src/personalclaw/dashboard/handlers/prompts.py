@@ -8,6 +8,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.http_errors import json_error
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 from ._shared import _get_skills, _list_marketplace_skills
@@ -454,11 +455,18 @@ async def api_prompt_preview(request: web.Request) -> web.Response:
         render,
     )
 
-    variables = [
-        PromptVariable.from_dict(v)
-        for v in (body.get("variables") or [])
-        if isinstance(v, dict) and v.get("name")
-    ]
+    # Mirror the create path's contract: a malformed variables[] entry is a 400,
+    # not a 500. from_dict raises ValueError on an unknown `type` (and TypeError
+    # on non-iterable `options`); create routes those through its ValueError→400
+    # handler, so the preview of the SAME payload must not crash instead.
+    try:
+        variables = [
+            PromptVariable.from_dict(v)
+            for v in (body.get("variables") or [])
+            if isinstance(v, dict) and v.get("name")
+        ]
+    except (ValueError, TypeError) as exc:
+        return json_error("invalid_request", message=str(exc), status=400)
     provider = _get_default_prompt_provider()
     resolver = _snippet_resolver(provider) if provider is not None else None
 
@@ -848,7 +856,10 @@ async def api_prompt_bindings_save(request: web.Request) -> web.Response:
 
     use_case = body.get("use_case", "")
     ref = body.get("ref", "")
-    if use_case not in valid_prompt_use_cases():
+    # Type-check BEFORE the membership test: `in` against the use-case frozenset
+    # raises TypeError on an unhashable body value (list/dict) — a 500 where the
+    # adjacent `ref` guard correctly returns 400.
+    if not isinstance(use_case, str) or use_case not in valid_prompt_use_cases():
         return web.json_response({"error": f"unknown use_case: {use_case!r}"}, status=400)
     if ref and not isinstance(ref, str):
         return web.json_response({"error": "ref must be a string"}, status=400)
