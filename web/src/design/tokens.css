@@ -214,6 +214,24 @@
   --ring-stop-2: #fdf8ff;
   --ring-stop-3: var(--grad-2);
   --ring-stop-4: var(--grad-4);
+
+  /* ── z-layer scale (CD-05) — the ONE ladder every fixed/portaled overlay
+     rides, low → high. Overlays reference a rung with z-[var(--z-modal)] etc.,
+     so the stacking order lives HERE instead of as magic numbers scattered
+     across a dozen files (the drift CD-05 found: 50 / 55 / 60 / 70 / 80 / 100 /
+     200 / 9999). Written as offsets from the content ceiling so the whole ladder
+     reads at a glance and re-tunes from one number.
+
+     Scope: these are ONLY for surfaces that escape their box — position:fixed or
+     portaled to <body> — and so must be ordered against every OTHER such surface.
+     In-context z-index (a sticky panel header, a `-z-10` row hit-target, a resize
+     handle) stays on the plain Tailwind scale: it is local to its own stacking
+     context and has no business on this global ladder. */
+  --z-content: 50;                            /* content ceiling — full-screen content panels (side / detail / file) top out here */
+  --z-overlay: calc(var(--z-content) + 5);    /* 55  — full-bleed decoration OVER content, UNDER dialogs (the CRT terminal strip) */
+  --z-modal:   calc(var(--z-content) + 10);   /* 60  — dialogs, sheets, blocking takeovers (Modal · DialogShell · SnipOverlay · tour · onboarding · update); a dialog opened from a dialog stacks by mount order within this rung */
+  --z-menu:    calc(var(--z-content) + 50);   /* 100 — control-anchored menus / popovers: ABOVE dialogs, BELOW toast + palette. THE CD-05 FIX: the composer menus were z-[9999] and painted over a firing toast and the Cmd-K palette */
+  --z-toast:   calc(var(--z-content) + 150);  /* 200 — toasts + the command palette: the topmost system surfaces, above everything else */
 }
 
 /* ── light mode overrides (coral brand, light) ── */

@@ -216,7 +216,7 @@ export function Onboarding() {
   }
 
   return (
-    <div className="fixed inset-0 z-[100] overflow-hidden" style={{ background: 'var(--color-canvas)' }}>
+    <div className="fixed inset-0 z-[var(--z-modal)] overflow-hidden" style={{ background: 'var(--color-canvas)' }}>
       <DotGlow intensity={1.15} composerRef={activeRef} />
 
       <div className="relative flex h-full items-center justify-center overflow-y-auto px-l py-3xl">

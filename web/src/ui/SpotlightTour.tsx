@@ -43,8 +43,8 @@ interface Box { top: number; left: number; width: number; height: number }
  *  focus is trapped in the card and re-taken on every step (a navigating tour lands on
  *  surfaces that autofocus their own fields — Settings' search does — and without this
  *  the trap would be left holding nothing). Escape exits from any step — but only while the
- *  tour holds focus, so a layer opened ABOVE it (Cmd+K's palette is `z-[200]` against this
- *  `z-[70]`) closes on the first press instead of the tour underneath. A click anywhere
+ *  tour holds focus, so a layer opened ABOVE it (the Cmd+K palette rides `--z-toast`, above
+ *  this overlay's `--z-modal`) closes on the first press instead of the tour underneath. A click anywhere
  *  outside the card exits too: the whole overlay sits on ONE transparent shield, so
  *  that click ends the tour instead of silently actioning a control the dim layer was
  *  covering. Nothing in the tour navigates or writes on its own — the host owns both.
@@ -76,8 +76,8 @@ export function SpotlightTour({ steps, index, label, onIndex, onExit }: {
   // single-layer convention (ui/Popover documents it).
   //
   // 🔴 BUT ONLY WHEN THE TOUR HOLDS FOCUS, and that guard is the whole point. The original
-  // reasoning here was "the tour is the topmost layer", which is false: this overlay is
-  // `z-[70]` and `app/CommandPalette` is `z-[200]`, so Cmd+K opens a palette ABOVE the tour
+  // reasoning here was "the tour is the topmost layer", which is false: this overlay rides
+  // `--z-modal` and `app/CommandPalette` rides `--z-toast` (higher), so Cmd+K opens a palette ABOVE the tour
   // and takes focus — by design, because guidance never gates. The tour binds on `document`
   // and the palette on `window`, and `document` fires FIRST in the bubble path, so consuming
   // unconditionally swallowed the key before the focused layer ever saw it. Measured: with the
@@ -167,7 +167,7 @@ export function SpotlightTour({ steps, index, label, onIndex, onExit }: {
   const bodyId = `tour-body-${step.id}`
 
   return createPortal(
-    <div className="fixed inset-0 z-[70]">
+    <div className="fixed inset-0 z-[var(--z-modal)]">
       {/* ONE shield under everything: a click outside the card ends the tour rather
           than reaching a control the dim layer is covering. Escape is its keyboard twin. */}
       <div data-tour-shield className="absolute inset-0" onClick={onExit} aria-hidden />

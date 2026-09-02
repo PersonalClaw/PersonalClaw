@@ -71,7 +71,7 @@ export function Toaster() {
     // auto-dismiss removal re-announces the region as it empties. The region element itself
     // is always mounted (never conditional) — a live region created at the same moment its
     // content appears is not reliably observed.
-    <div className="pointer-events-none fixed bottom-4 right-4 z-[200] flex max-w-sm flex-col items-stretch gap-2">
+    <div className="pointer-events-none fixed bottom-4 right-4 z-[var(--z-toast)] flex max-w-sm flex-col items-stretch gap-2">
       <div role="status" aria-live="polite" aria-relevant="additions" aria-atomic="false" className="sr-only">
         {visible.filter((t) => t.level !== 'error').map((t) => <div key={t.id}>{t.message}</div>)}
       </div>
