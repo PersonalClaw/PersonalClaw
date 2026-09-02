@@ -453,6 +453,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The note could not be written to the inbox, so it was not kept. Your text is "
         "still in the compose box — try saving again."
     ),
+    # ── legibility context-adapter regeneration (dashboard/handlers/context.py — #358) ──
+    # The project's bound workspace_dir is a WRITE target for CLAUDE.md / AGENTS.md /
+    # .cursorrules. A relative path, the home dir itself, a credential dir or an OS/system
+    # root is refused before any file is written, so a bad bind cannot plant agent files at
+    # the filesystem root or in $HOME.
+    "workspace_dir_unsafe": (
+        "The project's bound workspace directory is not a safe place to write generated agent "
+        "files (a relative path, the home directory itself, a credential directory, or an "
+        "OS/system root)."
+    ),
 }
 
 

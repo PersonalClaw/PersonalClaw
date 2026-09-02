@@ -91,6 +91,37 @@ def workspace_dir_errors(workspace_dir: str, *, require_exists: bool = True) -> 
     return []
 
 
+def workspace_write_target_errors(workspace_dir: str) -> list[str]:
+    """Path-safety for a bound workspace PClaw will WRITE generated files into.
+
+    One case stricter than :func:`workspace_dir_errors`: it also refuses the user's HOME
+    directory itself. The base helper already rejects a relative path, a credential dir
+    (``~/.ssh``, ``~/.aws`` …) and an OS/system root (``/``, ``/etc`` …) — but the bare home
+    dir is none of those, yet dropping ``CLAUDE.md`` / ``AGENTS.md`` / ``.cursorrules``
+    straight into ``$HOME`` is exactly the accident #358 guards against. Composes the base
+    helper with ``require_exists=False`` (a project may bind a dir created before the first
+    write), then adds the home check on the realpath'd value so a ``..``/symlink form cannot
+    slip past. Returns ``[]`` for an empty binding — clearing a workspace is legal. Shared by
+    the bind-time guard (``HierarchyStore``) and the regenerate-time guard so the two surfaces
+    can never drift on what counts as an unsafe write root.
+    """
+    workspace_dir = (workspace_dir or "").strip()
+    if not workspace_dir:
+        return []
+    errors = workspace_dir_errors(workspace_dir, require_exists=False)
+    user_path = os.path.expanduser(workspace_dir)
+    try:
+        resolved = os.path.realpath(user_path)
+        home = os.path.realpath(os.path.expanduser("~"))
+    except (OSError, ValueError):
+        resolved, home = user_path, os.path.expanduser("~")
+    if resolved == home:
+        msg = "Workspace directory cannot be your home directory itself."
+        if msg not in errors:
+            errors.append(msg)
+    return errors
+
+
 def spec_edit_errors(
     body: dict, *, kind: str, existing_kind_config: dict | None = None
 ) -> list[str]:
