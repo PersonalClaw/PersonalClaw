@@ -110,6 +110,8 @@ GET /api/chat/sessions/{session}/export?format=md|json   # credential-redacted (
 
 ## Execution log
 
+**2026-09-02 — SM-10 done (PR #2306).** Pricing key-canonicalization rail: usage-ledger pricing keys canonicalized at the catalog boundary so cost lookups resolve for every served model id form; `loop_spend()['dollars_est']` made trustworthy (AG-14's cost ceiling consumes it). Rail test enumerates the live catalog against the price table.
+
 **2026-09-02 — SM-12 done (PR #2309).** Tool-name wire fidelity: `build_sanitized_index` pure function shared by runtime + census rail; loud collision warnings; wire map at `docs/architecture/tool-name-wire.md`; census rail asserts the shipped tool surface is collision-free and round-trips. 7 new tests + 60 native-runtime neighbors green.
 
 **2026-09-02 — SM-11 done (PR #2308).** FTS deletion fidelity: `ConversationLog.delete_session` (single choke point) drops FTS rows under both key forms; `forget_session` transactional; `purge_orphans` backfill reads the UNION of both index tables and runs on `reindex_all`'s complete pass. 7 new tests + 208 neighbors green.
