@@ -67,7 +67,8 @@ import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, expandPasteMarkers, pruneBlocks } from './chat/pasteBlocks'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, skillsUsedLabel, skillsUsedTitle, stampActivityOrigin } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, turnText, deriveActivity, skillsUsedLabel, skillsUsedTitle, stampActivityOrigin } from './chat/chatTypes'
+import { ThinkingBlock } from './chat/ThinkingBlock'
 import { branchIndexOf, branchParentKey } from './chat/branchLineage'
 import { buildOptimizerContext } from './chat/optimizerContext'
 import { useIdentity, firstNameOf } from '../app/identity'
@@ -750,6 +751,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // saying so. The fallback belongs at the USE SITE (below), where it is a default rather than a
   // stored answer.
   const { data: streamRevealCfg } = useQuery('chat:stream-reveal', () => api.dashboardConfig().then((c) => c.stream_reveal), { persist: true })
+  // CC-9: live thinking rendering is gated by the Settings → Chat toggle. Read through
+  // the same persisted-query pattern as stream_reveal (no fabricated default — absent
+  // config reads falsy = hidden), mirrored into a ref so the WS callback never acts on
+  // a stale closure. Gating happens at INGESTION: while off, chat_thinking frames are
+  // dropped, so the transcript state itself stays free of thinking segments.
+  const { data: showThinkingCfg } = useQuery('chat:show-thinking-inline', () => api.dashboardConfig().then((c) => c.show_thinking_inline), { persist: true })
+  const showThinkingRef = useRef(false)
+  useEffect(() => { showThinkingRef.current = !!showThinkingCfg }, [showThinkingCfg])
   const coalescer = useStreamCoalescer((revealed) => {
     patchLastAssistant((segs) => {
       const r = applyCoalescedFlush(segs, revealed, coalescing.current)
@@ -943,6 +952,23 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         break
       }
       case 'chat_status': setStatusText(String(d.status ?? '')); break
+      // CC-9: live reasoning stream. Only consumed while the Settings → Chat
+      // "Show thinking inline" toggle is on — off drops the frame here, so no
+      // thinking segment ever enters transcript state (and none is persisted:
+      // the backend keeps thinking out of the response text and history).
+      // Boundary discipline mirrors the tool/approval cards: land any buffered
+      // prose first (flushNow), append-or-extend the thinking block, then mark
+      // breakText so the next chat_chunk opens a FRESH coalesced run instead of
+      // extending a segment that now sits above the thinking block.
+      case 'chat_thinking': {
+        if (!showThinkingRef.current) break
+        const chunk = String(d.content ?? '')
+        if (!chunk) break
+        coalescer.flushNow()
+        patchLastAssistant((segs) => appendThinking(segs, chunk))
+        breakText.current = true
+        break
+      }
       // A non-streamed message appended server-side (the only one that reaches
       // the UI this way today is a turn-level `error` — e.g. a provider/model
       // rejection). Without this the turn ends blank ("no response").
@@ -3674,6 +3700,7 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       return <ToolCard key={seg.id || i} seg={t} />
     }
     if (seg.kind === 'activity') return <ActivityLine key={i} seg={seg as ActivitySegment} />
+    if (seg.kind === 'thinking') return <ThinkingBlock key={i} text={(seg as ThinkingSegment).text} defaultOpen={streaming} />
     if (seg.kind === 'error') {
       const text = (seg as { text: string }).text
       // WT-04: a fresh instance with no model resolves the turn to a WHAT/WHY/FIX
@@ -3816,6 +3843,7 @@ function ActivityLine({ seg }: { seg: ActivitySegment }) {
     </div>
   )
 }
+
 
 /** "used N skills" — the per-turn skill-allocation chip (LEARNING-VISIBILITY T2.1).
  *
