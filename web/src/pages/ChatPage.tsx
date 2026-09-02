@@ -85,6 +85,7 @@ import { CheckWorkChip } from './chat/CheckWorkChip'
 import { applyCoalescedFlush, insertActivity } from './chat/coalesceReducers'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
+import { sessionTitle } from '../lib/sessionTitle'
 import { useComposerData } from '../lib/useComposerData'
 import type { ComposerControls, ComposerValue } from '../ui/composer/types'
 import { Popover, MenuRow } from '../ui/Popover'
@@ -285,7 +286,7 @@ function ChatHistorySidePanelBody({ navigate, onOpen }: { navigate: (p: string) 
               whileHover={{ x: expr(3, 0.3) }} transition={spring.spatialFast}
               className="group flex items-center gap-s rounded-md px-2 py-2 text-left transition-colors hover:bg-surface-high">
               <MessageSquare size={14} className="shrink-0 text-on-surface-low group-hover:text-primary transition-colors" />
-              <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem] group-hover:text-on-surface">{s.title || 'Untitled chat'}</span>
+              <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem] group-hover:text-on-surface">{sessionTitle(s)}</span>
               <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{relTimeShort(sessionActivitySeconds(s))}</span>
             </motion.button>
           ))}
@@ -2734,7 +2735,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               <IconButton icon={ArrowLeft} label="Back to chat history" size={40} onClick={() => navigate('chat/history')} />
               <button type="button" onClick={beginRename} title="Rename chat"
                 className="group inline-flex items-center gap-1.5 min-w-0 max-w-[420px] text-on-surface hover:text-on-surface-var transition-colors">
-                <span data-type="title-l" className="truncate">{title || 'Chat'}</span>
+                <span data-type="title-l" className="truncate">{sessionTitle({ key: sessionRef.current ?? '', title })}</span>
                 <Pencil size={13} className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
               </button>
               {/* Regenerate title — a small magic-stars affordance hugging the title's
@@ -4073,7 +4074,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   async function del(s: ChatSessionSummary) {
     if (!(await confirm({
       title: 'Delete chat?',
-      body: `"${s.title || s.key}" and its history will be permanently removed.`,
+      body: `"${sessionTitle(s)}" and its history will be permanently removed.`,
       danger: true, confirmLabel: 'Delete',
     }))) return
     // Surface a real failure instead of swallowing it — the dialog promised the
@@ -4227,13 +4228,13 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
       {/* Selection tick. The primitive owns stopPropagation, so ticking a row never
           also opens the peek panel — two intents on one click target. */}
       <Checkbox checked={selected.has(s.key)} onChange={() => toggleSelected(s.key)}
-        ariaLabel={`Select ${s.title || s.key}`}
+        ariaLabel={`Select ${sessionTitle(s)}`}
         className={`transition-opacity ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`} />
       <span className="grid size-9 shrink-0 place-items-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}>
         <MessageSquare size={17} className="text-primary" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{s.title || s.key}</div>
+        <div className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{sessionTitle(s)}</div>
         {/* Why this chat matched: the passage from the transcript, with the matched
             terms marked. Only for content hits — a title match is already visible
             above, so repeating it would be noise. */}
@@ -4505,7 +4506,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
           manage rail (one right dock at a time). */}
       <AnimatePresence>
         {peekKey && (
-          <SidePanel key={peekKey} title={peekSession?.title || peekKey} icon={<MessageSquare size={18} className="text-primary" />}
+          <SidePanel key={peekKey} title={peekSession ? sessionTitle(peekSession) : peekKey} icon={<MessageSquare size={18} className="text-primary" />}
             storeKey="chat-peek-w" fillHeight urlKey={{ key: 'peek', setQuery }}
             onExpand={() => navigate(`chat/${peekKey}`)}
             onClose={() => setPeekKey('')}>

@@ -24,6 +24,7 @@ import { useIdentity, firstNameOf } from '../../app/identity'
 import { api, type ChatSessionSummary } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { sessionRecencyMs } from '../../lib/epoch'
+import { sessionTitle } from '../../lib/sessionTitle'
 import { spring, expr } from '../../design/motion'
 import { EntranceGroup, EntranceRegion } from '../../ui/motion'
 import { ComposerStage } from '../../ui/ComposerStage'
@@ -314,7 +315,7 @@ function Launcher({ navigate }: RouteProps) {
               className="inline-flex min-h-6 -my-0.5 items-center gap-xs text-on-surface-var transition-colors hover:text-on-surface"
               data-type="body-m"
             >
-              <MessageSquare size={12} className="shrink-0 text-on-surface-low" /> <span className="max-w-[16rem] truncate">{s.title}</span>
+              <MessageSquare size={12} className="shrink-0 text-on-surface-low" /> <span className="max-w-[16rem] truncate">{sessionTitle(s)}</span>
             </button>
           ))}
         </div>
