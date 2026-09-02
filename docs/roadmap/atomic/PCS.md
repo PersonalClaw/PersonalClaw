@@ -4,7 +4,7 @@
 **Code:** `PCS`  
 **Source status:** proposed
 
-PROMPT-CACHE-SUBSTRATE decomposed into 8 atoms. **Landed:** PCS-1/PCS-2 (S1 ordering repairs), PCS-3 (the neutral marker seam + middleware), PCS-6 (the cache-usage producer), PCS-4 (the Anthropic EXPLICIT translation + its rails sweep), PCS-5 (prompt_cache_enabled config + FE control). PCS-8 (branded-app postures + the live Bedrock cache-read validation). **Remaining:** PCS-7 (the telemetry proof surface — its numbers and its soul-guardrail-4 measurement both landed 2026-08-22, and its frontend reader was railed 2026-08-27; what is left is the V2 live-run half, which is credential-gated rather than unbuilt) (cross-repo branded-app postures). One provider-agnostic cache-marker seam: S1 ordering repairs (PCS-1/PCS-2), S2 marker+adoption (PCS-3/PCS-4/PCS-5), S3 producer+proof (PCS-6/PCS-7), plus cross-repo apps posture (PCS-8). No hard cross-plan blockers; one soft coordination edge to COST-AND-TOKEN-OBSERVABILITY for the rendered readout.
+PROMPT-CACHE-SUBSTRATE decomposed into 9 atoms. **Landed:** PCS-1/PCS-2 (S1 ordering repairs), PCS-3 (the neutral marker seam + middleware), PCS-6 (the cache-usage producer), PCS-4 (the Anthropic EXPLICIT translation + its rails sweep), PCS-5 (prompt_cache_enabled config + FE control), PCS-7 (the telemetry proof surface — the numbers half: hit-rate + saved-USD on turn-complete telemetry, honest-`None` on unpriced, no second store; FE reader railed by #2197). PCS-8 (branded-app postures + the live Bedrock cache-read validation). **Remaining:** PCS-9 (the V2 live-provider verification — real Anthropic + OpenAI runs — split out of PCS-7 per OWNER RULING 2026-08-28; env-gated on a Bedrock price-row id and a live `OPENAI_API_KEY`). One provider-agnostic cache-marker seam: S1 ordering repairs (PCS-1/PCS-2), S2 marker+adoption (PCS-3/PCS-4/PCS-5), S3 producer+proof (PCS-6/PCS-7, live proof PCS-9), plus cross-repo apps posture (PCS-8). No hard cross-plan blockers; one soft coordination edge to COST-AND-TOKEN-OBSERVABILITY for the rendered readout.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -16,8 +16,9 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PCS-4` | ✅ | Anthropic EXPLICIT translation (cache_control on block-shaped system=) + rails test | `PCS-1`, `PCS-3` | Hinted span translated to cache_control {type: ephemeral} on its last block, including the block-shaped system= (list of text blocks) required by §C4; adapter declares EXPLICIT; an unhinted list produces today's byte-identical request kwargs; rails sweep asserts cache_control/ephemeral appear ONLY in llm/anthropic.py and fails on a temporarily injected violation. |
 | `PCS-5` | ✅ | prompt_cache_enabled config through all five wiring points + FE control | `PCS-3` | prompt_cache_enabled (default True) wired through dataclass+_meta, load() mapping, to_dict(), the _EDITABLE_CONFIG PATCH allowlist (dashboard/handlers/core.py), and a Models-settings-panel frontend control; test_config_roundtrip.py green; PATCH round-trips; middleware treats disabled as NONE; explicit test asserts the §C2/§C3 ordering repairs are NOT gated by the toggle (no dual path). |
 | `PCS-6` | ✅ (#884) | The missing producer: read Anthropic cache-usage fields into LLMEvent (F3) | — | usage.cache_creation_input_tokens / usage.cache_read_input_tokens read via defensive getattr in BOTH accumulation sites (anthropic.py:302-309 and :457-464) and passed into the terminal LLMEvent (:386, :533); a mocked response carrying cache usage yields a non-zero cache_read_tokens on the event; a response lacking the fields yields 0 and does not raise. |
-| `PCS-7` | 🟡 numbers + reader railed | Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface, V2) | `PCS-6`, `PCS-4`, `EXT:COST-AND-TOKEN-OBSERVABILITY:owns/renders the saved-USD & hit-rate readout these numbers feed` | Per-turn aggregate exposes cache_read_tokens/cache_creation_tokens/cache_hit_pct + saved-USD (via existing estimate_cost rates) on the turn-complete telemetry, reusing stats.py:42-84 counters with no second store; never estimates when the provider reported nothing (honest-zero test for unpriced models, negative saved-USD not hidden); V2: real multi-turn Anthropic + OpenAI runs report rising hit-rate / non-zero saved-USD (turn1 creation, turns2+ read), OpenAI reports vendor reads with no marker sent, an undeclared/Ollama model runs byte-identical with zeros, toggling config off stops the marker while ordering holds. |
+| `PCS-7` | ✅ | Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface) | `PCS-6`, `PCS-4`, `EXT:COST-AND-TOKEN-OBSERVABILITY:owns/renders the saved-USD & hit-rate readout these numbers feed` | Per-turn aggregate exposes cache_read_tokens/cache_creation_tokens/cache_hit_pct + saved-USD (via existing estimate_cost rates) on the turn-complete telemetry, reusing stats.py:42-84 counters with no second store; never estimates when the provider reported nothing (honest-zero test for unpriced models, negative saved-USD not hidden). |
 | `PCS-8` | ✅ (apps#42) | Branded-app cache posture declaration (PersonalClawApps, incl. Bedrock cachePoint) | `PCS-3`, `PCS-4` | Branded model apps declare prompt_cache via BrandedProviderSpec: bedrock-models EXPLICIT with in-app Converse cachePoint translation (core never learns cachePoint), openai-compatible/openrouter-models AUTOMATIC where upstream caches, ollama-models/vllm-models EXPLICIT only if server-side prefix caching is actually enabled else NONE; validated by driving a real Bedrock-Anthropic multi-turn run that reports cache reads. |
+| `PCS-9` | ⬜ | V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs) | `PCS-7`, `PCS-3` | Real multi-turn Anthropic + OpenAI runs report rising hit-rate / non-zero saved-USD (turn1 creation, turns2+ read), OpenAI reports vendor reads with no marker sent, an undeclared/Ollama model runs byte-identical with zeros, toggling config off stops the marker while ordering holds. **Env-gated** (split from PCS-7 per OWNER RULING 2026-08-28): no Bedrock inference-profile id resolves to a price row here, and no `OPENAI_API_KEY`. |
 
 ## Atom scopes
 
@@ -75,14 +76,30 @@ Session 3 / T3.1; Context F3
 
 **Done when:** usage.cache_creation_input_tokens / usage.cache_read_input_tokens read via defensive getattr in BOTH accumulation sites (anthropic.py:302-309 and :457-464) and passed into the terminal LLMEvent (:386, :533); a mocked response carrying cache usage yields a non-zero cache_read_tokens on the event; a response lacking the fields yields 0 and does not raise.
 
-### `PCS-7` — Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface, V2)
+### `PCS-7` — Aggregate cache hit-rate + saved-USD into turn telemetry (the proof surface)
 
-**Status:** todo — numbers half shipped and railed; frontend reader railed (2026-08-27); V2 live-run
-half is credential-gated, not unbuilt
+**Status:** done (2026-09-02) — the NUMBERS half, split from the V2 live-run half per OWNER RULING
+2026-08-28. Shipped and railed on `main`: `chat_runner._turn_complete_line` carries the four cache
+fields from a live call site; `stats.cache_hit_pct` returns an honest `None` on a zero denominator;
+`pricing.cache_savings_usd` computes both sides through `estimate_cost` (no rate drift) and returns
+`None`, never `0.0`, for an unpriced model; "no second store" is AST-enforced; the frontend reader
+was railed by #2197. The V2 live-provider verification became its own atom, PCS-9.
 
-Session 3 / T3.2 + V2; §C5 integration points (reuse stats.py, no second store); soul guardrail 4
+Session 3 / T3.2; §C5 integration points (reuse stats.py, no second store); soul guardrail 4
 
-**Done when:** Per-turn aggregate exposes cache_read_tokens/cache_creation_tokens/cache_hit_pct + saved-USD (via existing estimate_cost rates) on the turn-complete telemetry, reusing stats.py:42-84 counters with no second store; never estimates when the provider reported nothing (honest-zero test for unpriced models, negative saved-USD not hidden); V2: real multi-turn Anthropic + OpenAI runs report rising hit-rate / non-zero saved-USD (turn1 creation, turns2+ read), OpenAI reports vendor reads with no marker sent, an undeclared/Ollama model runs byte-identical with zeros, toggling config off stops the marker while ordering holds.
+**Done when:** Per-turn aggregate exposes cache_read_tokens/cache_creation_tokens/cache_hit_pct + saved-USD (via existing estimate_cost rates) on the turn-complete telemetry, reusing stats.py:42-84 counters with no second store; never estimates when the provider reported nothing (honest-zero test for unpriced models, negative saved-USD not hidden).
+
+### `PCS-9` — V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs)
+
+**Status:** todo — **env-gated**, split from PCS-7 per OWNER RULING 2026-08-28. Cannot be closed from
+this environment: no Bedrock inference-profile id resolves to a price row (a real run renders "saved
+unpriced" until `_rates` id normalisation lands, a repo-wide pricing change), and there is no
+`OPENAI_API_KEY` here (PCS-3 now supplies the OpenAI AUTOMATIC posture the run depends on). Both gates
+are credentials/environment, not code.
+
+Session 3 / V2; split from PCS-7 per OWNER RULING 2026-08-28
+
+**Done when:** Real multi-turn Anthropic + OpenAI runs report rising hit-rate / non-zero saved-USD (turn1 creation, turns2+ read), OpenAI reports vendor reads with no marker sent, an undeclared/Ollama model runs byte-identical with zeros, toggling config off stops the marker while ordering holds.
 
 ### `PCS-8` — Branded-app cache posture declaration (PersonalClawApps, incl. Bedrock cachePoint)
 
