@@ -53,6 +53,7 @@ import { ChatPlanGate } from '../ui/chat/ChatPlanGate'
 import { Markdown } from '../ui/Markdown'
 import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/useWidgetActionBridge'
 import { InlineError } from '../ui/InlineError'
+import { NoModelSetupState, isNoModelSetupError } from './chat/NoModelSetupState'
 import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
 import { SdlcProgressCard, sdlcRefFromTool } from './chat/SdlcProgressCard'
@@ -3671,7 +3672,15 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
       return <ToolCard key={seg.id || i} seg={t} />
     }
     if (seg.kind === 'activity') return <ActivityLine key={i} seg={seg as ActivitySegment} />
-    if (seg.kind === 'error') return <InlineError key={i} icon multiline className="my-1">{(seg as { text: string }).text}</InlineError>
+    if (seg.kind === 'error') {
+      const text = (seg as { text: string }).text
+      // WT-04: a fresh instance with no model resolves the turn to a WHAT/WHY/FIX
+      // envelope that reads as a stack dump. Reframe THAT case as a calm setup
+      // nudge; every other turn error keeps the plain danger strip.
+      return isNoModelSetupError(text)
+        ? <NoModelSetupState key={i} detail={text} />
+        : <InlineError key={i} icon multiline className="my-1">{text}</InlineError>
+    }
     if (seg.kind === 'approval') {
       const ap = seg as ApprovalSegment
       return <ApprovalCard key={ap.id || i} seg={ap} onAct={onApprove} />
