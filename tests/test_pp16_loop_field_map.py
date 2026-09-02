@@ -65,6 +65,10 @@ _EXPECTED_HOMELESS = {
     "strategy_config",
     "auto_teardown_on_complete",
     "tasks_project_id",
+    # `AG-14` ceilings/classification: v2 has no run-wide time budget and no closed run-level
+    # stop reason (see the two NONE rows' consequence notes). Argued in the AG-14 change itself.
+    "deadline_secs",
+    "stop_reason",
 }
 
 
@@ -154,7 +158,7 @@ def test_every_declared_destination_resolves():
         elif row.dest_kind in {PROJECTION, NONE}:
             assert not row.dest, f"{row.field}: {row.dest_kind} rows carry no destination path"
     # Vacuity floor: if a refactor turned every row into a PROJECTION this test would pass while
-    # resolving nothing. Eighteen paths resolve today (10 run + 5 policy + 2 def + 1 intent).
+    # resolving nothing. Nineteen paths resolve today (11 run + 5 policy + 2 def + 1 intent).
     assert resolved >= 15, f"only {resolved} destination paths resolved — has the map gone inert?"
 
 

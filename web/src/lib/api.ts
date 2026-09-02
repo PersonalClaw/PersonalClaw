@@ -1636,7 +1636,8 @@ export interface LaunchSpec {
   kind?: LoopKind; agent?: string; model?: string; provider?: string; provider_agent?: string
   reasoning_effort?: string; execution?: 'solo' | 'multi_agent'; roster?: RosterMember[]
   strategy_id?: string; intake_rigor?: string; attended?: boolean; autopilot?: boolean
-  max_cycles?: number; skill_ids?: string[]; workflow_ids?: string[]; project_id?: string
+  max_cycles?: number; max_cost_usd?: number; deadline_secs?: number
+  skill_ids?: string[]; workflow_ids?: string[]; project_id?: string
   success_criteria?: string; kind_config?: Record<string, unknown>
 }
 export interface PromptItem {
@@ -3905,7 +3906,8 @@ export interface GoalLoop {
   execution: 'solo' | 'multi_agent'; roster?: RosterMember[]; strategy_id?: string
   agent: string; model: string; provider?: string; provider_agent?: string; reasoning_effort?: string
   attended: boolean; granularity: Granularity
-  max_cycles: number; idle_secs: number
+  max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
+  stop_reason?: string
   success_criteria: string | null; verify_command?: string
   rubric?: string[]; best_score?: number; last_score?: number | null; ratchet_mode?: string
   marginal_scores?: number[]
@@ -4020,7 +4022,8 @@ export interface CodeProject {
   // The project's own file dir (server-local), where doc deliverables land when no
   // workspace is bound; the cockpit roots its file surfaces here as a fallback.
   files_dir?: string
-  max_cycles: number; idle_secs: number
+  max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
+  stop_reason?: string
   success_criteria: string | null; verify_command?: string; test_command?: string
   status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
@@ -4093,7 +4096,8 @@ export interface Loop {
   // deliverables (REPORT.md/MONITOR_LOG.md) land when no workspace is bound. The
   // cockpit roots its file tree + terminal here for no-workspace loops.
   files_dir?: string
-  max_cycles: number; idle_secs: number
+  max_cycles: number; max_cost_usd?: number; deadline_secs?: number; idle_secs: number
+  stop_reason?: string
   success_criteria: string | null
   status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number

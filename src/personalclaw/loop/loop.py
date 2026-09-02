@@ -109,6 +109,26 @@ RESUMABLE_ENDED_STATUSES: frozenset[LoopStatus] = frozenset({LoopStatus.FAILED})
 #: Terminal = ended and not resumable. Nothing may transition OUT of these (``store``'s guard).
 TERMINAL_STATUSES: frozenset[LoopStatus] = ENDED_STATUSES - RESUMABLE_ENDED_STATUSES
 
+
+class LoopStopReason(str, Enum):
+    """WHY a loop ended — the closed vocabulary persisted on the run record (`AG-14`).
+
+    :class:`LoopStatus` says WHERE a loop landed (``complete``/``failed``/``stopped``);
+    this says WHY, so downstream consumers (cockpit, flywheel, reports) can act on the
+    cause without parsing the free-text ``error_message``/journal reasons — those stay
+    the human-facing explanation, this is the machine-facing classification. Stamped by
+    ``store.update_status`` alongside ``completed_at`` when a loop arrives at an ENDED
+    status, and cleared when a resumed FAILED loop leaves one, so the two never disagree.
+    """
+
+    DONE = "done"  # done-ness signal met / all stages gated — the genuine finish
+    USER = "user"  # the user pressed Stop
+    CYCLE_BUDGET = "cycle_budget"  # max_cycles reached
+    COST_BUDGET = "cost_budget"  # max_cost_usd reached (usage-ledger spend floor)
+    DEADLINE = "deadline"  # active-runtime deadline (deadline_secs) reached
+    WORKER_FAILED = "worker_failed"  # worker unresponsive / unrecoverable
+
+
 #: States that count as "an active loop" — used for list filters + active-count badges. Derived
 #: as ``ACTIVE | ATTENTION``, which is *why* ``FAILED`` is absent: a failed loop is resumable but
 #: has no armed worker, so it must not inflate the badge. That used to be a hand-written comment
@@ -215,7 +235,16 @@ class Loop:
     attended: bool = False
     autopilot: bool = True  # system drives phases vs user queues (code-ish)
     max_cycles: int = 30  # 0 = uncapped
+    #: `AG-14` ceilings — 0 = uncapped, like ``max_cycles``. ``deadline_secs`` bounds ACTIVE
+    #: runtime (banked ``elapsed_seconds`` + the current running stretch — the same clock the
+    #: cockpit displays, so a paused loop is not charged); ``max_cost_usd`` bounds the
+    #: usage-ledger spend floor for the loop's worker sessions.
+    max_cost_usd: float = 0.0
+    deadline_secs: float = 0.0
     idle_secs: int = 120
+    #: WHY the loop ended — a :class:`LoopStopReason` value, or ``""`` while it has not.
+    #: Stamped/cleared by ``store.update_status`` in lockstep with ``completed_at``.
+    stop_reason: str = ""
     success_criteria: str | None = None  # overall definition of done
 
     # ── kind-specific config (owned + interpreted by the kind strategy) ──
