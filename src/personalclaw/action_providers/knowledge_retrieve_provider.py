@@ -339,6 +339,44 @@ def _apply_filters(hits: list[dict], filters: dict[str, Any], *, strategy: str) 
     return [h for h in hits if float(h.get("score", 0.0)) >= RELEVANCE_CLIFF]
 
 
+def _passage_window(content: str, line_range: Any, cap: int) -> tuple[str, bool]:
+    """The capped content window for one hit, CENTERED ON THE MATCHED PASSAGE.
+
+    KL-18 (research draft T02): the payload used to be ``content[:cap]`` — the
+    document HEAD — while the retriever had already computed exactly where the
+    match lives (``line_range``, 1-based inclusive, from ``_attach_locator``).
+    For any match deeper than the cap the model received text that never
+    matched: a neighbor, presented as evidence.
+
+    Returns ``(text, windowed)``. The join is the 1-based-inclusive slice
+    ``lines[start-1:end]`` — the off-by-one T02 warns about is using
+    ``lines[start:end]``, which drops the first matched line and appends the
+    line after the passage. When the passage is shorter than the cap the
+    window extends FORWARD from the passage start (following context), never
+    backward past it, so the matched text is always at the front where a
+    truncation cannot cut it. No ``line_range`` ⇒ the head cap, unchanged.
+    """
+    if not cap:
+        return "", False
+    lr = line_range if isinstance(line_range, (list, tuple)) else None
+    if not lr or len(lr) != 2:
+        return content[:cap], False
+    try:
+        start, end = int(lr[0]), int(lr[1])
+    except (TypeError, ValueError):
+        return content[:cap], False
+    lines = content.split("\n")
+    if not (1 <= start <= end <= len(lines)):
+        return content[:cap], False
+    # 1-based inclusive -> the correct join. One line of leading context when
+    # available; the rest of the budget extends forward from there.
+    window_start = max(0, start - 2)
+    text = "\n".join(lines[window_start:])[:cap]
+    if window_start > 0:
+        text = "…" + text
+    return text, True
+
+
 def _shape_hit(store, hit: dict, *, query: str, detail: str, rank: int = 0) -> dict[str, Any]:
     """One result, with the evidence and safety fields a branching workflow needs."""
     cap = DETAIL_CAPS[detail]
@@ -346,6 +384,8 @@ def _shape_hit(store, hit: dict, *, query: str, detail: str, rank: int = 0) -> d
     title = str(hit.get("title", "") or "")
     match_type = str(hit.get("match_type", "") or "vector")
     score = float(hit.get("score", 0.0) or 0.0)
+    line_range = hit.get("line_range")
+    window, windowed = _passage_window(content, line_range, cap)
 
     exact = normalize_title(title) == normalize_title(query)
     evidence = "exact_title" if exact else _evidence_for(match_type)
@@ -362,7 +402,14 @@ def _shape_hit(store, hit: dict, *, query: str, detail: str, rank: int = 0) -> d
         "item_id": str(hit.get("id", "") or ""),
         "title": title,
         "summary": str(hit.get("summary", "") or ""),
-        "content": content[:cap] if cap else "",
+        # KL-18: the matched passage's window, not the document head (see
+        # _passage_window). Falls back to the head cap when no locator exists.
+        "content": window,
+        # Citation fields, pass-through from the retriever's locator so a
+        # consumer can quote "lines 12-14 of <section>" without re-deriving.
+        "section": hit.get("section"),
+        "line_range": list(line_range) if isinstance(line_range, (list, tuple)) else None,
+        "content_windowed": windowed,
         "kind": str(hit.get("kind", "") or ""),
         "logical_key": logical_key(str(hit.get("kind", "fact") or "fact"), title),
         "relevance_score": round(score, 4),
