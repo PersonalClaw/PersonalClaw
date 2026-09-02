@@ -42,6 +42,7 @@ while not terminal:
 | `models.py` | the spec algebra — node kinds, states, run/def records |
 | `tick.py` | `frontier()` — a PURE function from (spec, states) to what may run |
 | `admission.py` | the ordered `AdmissionPolicy` list `frontier()` composes tightest-wins, plus the ready projection (`rank_key` comparator + `ready`/`next_ready`) the task pool used to keep privately |
+| `container_env.py` | container workspace backends — the workspace-manifest model, docker/nerdctl/Apple-container CLI drivers, `detect_backend()` |
 | `controller.py` | the conductor: one per run, the only writer of run state |
 | `engine.py` | one dispatcher per node kind; the only place real work happens |
 | `bindings.py` | the `{{…}}` expression language and its closed pipe set |
