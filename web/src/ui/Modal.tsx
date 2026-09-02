@@ -37,7 +37,7 @@ export function Modal({ title, icon, onClose, children, layoutId }: {
   const enterScale = reduce ? 1 : 1 - expr(0.04, 0.5)
   const enterY = reduce ? 0 : expr(10, 0.4)
   return createPortal(
-    <motion.div className="fixed inset-0 z-[60] flex items-center justify-center p-2xl"
+    <motion.div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center p-2xl"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects}>
       <motion.div className="absolute inset-0 bg-canvas/70 backdrop-blur-sm" onClick={onClose}
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects} />

@@ -98,7 +98,7 @@ export function SlashMenu({ query, anchorRef, open, onSelect, onClose, idPrefix,
 
   return createPortal(
     <div ref={menuRef} role="listbox" aria-label="Slash commands" id={`${idPrefix}-list`}
-      className="fixed z-[9999] overflow-y-auto rounded-lg border border-outline-variant/50 bg-surface/95 p-1 shadow-xl ring-1 ring-black/5 backdrop-blur-md"
+      className="fixed z-[var(--z-menu)] overflow-y-auto rounded-lg border border-outline-variant/50 bg-surface/95 p-1 shadow-xl ring-1 ring-black/5 backdrop-blur-md"
       style={{ left: rect.left, width: w, ...pos }}>
       {results.map((c, i) => (
         <button key={c.name} type="button" role="option" aria-selected={i === sel} title={c.description}
