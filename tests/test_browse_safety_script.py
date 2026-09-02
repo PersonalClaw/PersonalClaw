@@ -538,6 +538,14 @@ async def _run_probe(chrome: str, site: _LocalSite, script: str | None) -> dict:
             "--no-default-browser-check",
             "--disable-gpu",
             "--autoplay-policy=no-user-gesture-required",
+            # Web Bluetooth's base::Feature is default-DISABLED on desktop Linux (enabled on
+            # macOS/Windows), so on ubuntu-latest `navigator.bluetooth` is natively absent and
+            # the baseline vacuity guard in test_navigator_device_apis_are_unreachable_and_
+            # hard_defined fails: the guarded `undefined` would prove nothing. Forcing the
+            # feature on makes the baseline origin behave like the macOS runs the suite was
+            # measured on — the attribute natively exists, so guarded-undefined is a real
+            # measurement of OUR descriptor, not of a browser build gap. No-op on macOS.
+            "--enable-features=WebBluetooth",
             # A guard regression must not be able to reach any REAL site from this suite.
             # The local server is deliberately the only reachable origin.
             "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
