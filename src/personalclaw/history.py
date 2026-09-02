@@ -613,14 +613,39 @@ class ConversationLog:
             self._tab_id_index.clear()
 
     def delete_session(self, key: str) -> bool:
-        """Delete a session file. Returns True if deleted."""
+        """Delete a session file. Returns True if deleted.
+
+        Also drops the session's full-text-search rows (SM-11): the transcript
+        and the FTS index are separate stores, so without this a deleted chat's
+        messages stayed searchable — a privacy hole. Best-effort: search-index
+        failure must never block the deletion itself (the periodic
+        ``session_search.purge_orphans`` sweep is the compensator).
+        """
         path = self._path(key)
         if path.exists():
             path.unlink()
             self._invalidate_cache(key)
             self.invalidate_tab_id_cache()
+            self._forget_search_rows(key)
             return True
         return False
+
+    @staticmethod
+    def _forget_search_rows(key: str) -> None:
+        """Drop *key*'s FTS rows under every key form that maps to its file.
+
+        ``_safe_key`` collapses ``dashboard:chat-X`` and ``dashboard_chat-X``
+        onto one filename, and callers pass either form, while the index stores
+        the ``list_sessions`` form — so forget the exact key plus both
+        single-swap variants (idempotent, cheap).
+        """
+        try:
+            from personalclaw import session_search
+
+            for form in {key, key.replace(":", "_", 1), key.replace("_", ":", 1)}:
+                session_search.forget_session(form)
+        except Exception:  # noqa: BLE001 — search cleanup must never block deletion
+            logger.debug("delete_session: FTS forget failed for %s", key, exc_info=True)
 
     def set_title(self, key: str, title: str) -> None:
         """Persist a title into the session's metadata line."""
