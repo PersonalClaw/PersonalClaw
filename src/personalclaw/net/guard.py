@@ -17,9 +17,28 @@ import socket
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-from personalclaw.net.policy import EgressPolicy
+from personalclaw.net.policy import METADATA_SERVICE_HOSTS, EgressPolicy
 
 logger = logging.getLogger(__name__)
+
+
+def _ip_literals(hosts: tuple[str, ...]) -> frozenset[str]:
+    """The subset of ``hosts`` that are IP literals, for post-resolution matching."""
+    out = set()
+    for h in hosts:
+        try:
+            out.add(str(ipaddress.ip_address(h)))
+        except ValueError:
+            continue
+    return frozenset(out)
+
+
+#: Metadata-service endpoints as IPs, matched against RESOLVED addresses. `deny_hosts`
+#: matches the URL's hostname before DNS, so it cannot see an allow-listed NAME that
+#: resolves (or rebinds) to a credential endpoint — this set is the post-resolution
+#: half of the same block. Derived from :data:`METADATA_SERVICE_HOSTS` so a cloud
+#: added there is covered here without a second hand-maintained copy.
+_METADATA_SERVICE_IPS = _ip_literals(METADATA_SERVICE_HOSTS)
 
 
 @dataclass
@@ -209,6 +228,35 @@ def evaluate(url: str, policy: EgressPolicy, *, resolver=_resolve) -> GuardDecis
         )
 
     verdicts = [classify_host(ip) for ip in ips]
+
+    # The credential-endpoint block survives the operator allow-list at the IP layer.
+    # `deny_hosts` refuses the metadata HOSTNAMES before resolution, but an allow-listed
+    # name that resolves (or DNS-rebinds) to the endpoint arrives here as just another
+    # non-public address — and the homelab waiver below would admit it. A link-local
+    # resolution (169.254.0.0/16 IMDS, fe80::/10) or a literal metadata-service IP is
+    # therefore refused unconditionally, for every policy: no legitimate allow-listed
+    # service lives on a link-local address, so this cannot break the LAN opt-in.
+    metadata_hits = [
+        v for v in verdicts if v.category == "link_local" or v.ip in _METADATA_SERVICE_IPS
+    ]
+    if metadata_hits:
+        return GuardDecision(
+            allow=False,
+            url=url,
+            host=host,
+            reason=(
+                f"host {host!r} resolves to a cloud metadata / link-local address "
+                f"({metadata_hits[0].ip}); the instance-credential endpoint is never "
+                "reachable, even for an allow-listed host"
+            ),
+            risk_level="destructive",
+            recovery_hints=[
+                "The cloud metadata endpoint is never fetchable; use the runtime's "
+                "own credential tooling instead.",
+                "If this hostname should be legitimate, its DNS is resolving to a "
+                "metadata/link-local address - investigate the record before retrying.",
+            ],
+        )
 
     # Loopback-inverted policy (gateway↔mcp): require loopback, deny public.
     if policy.loopback_only:

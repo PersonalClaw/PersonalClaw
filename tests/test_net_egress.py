@@ -144,6 +144,35 @@ def test_allow_host_permits_private_lan():
     assert d.pinned_ips == ["192.168.1.50"]
 
 
+def test_allow_host_rebinding_to_imds_is_refused():
+    # The limit of the homelab waiver: an allow-listed NAME that resolves (or
+    # DNS-rebinds) to the link-local credential endpoint is refused. `deny_hosts`
+    # cannot catch this — it matches the URL's hostname before resolution.
+    pol = WEBHOOK.with_overrides(allow_hosts=("metadata.example",))
+    d = evaluate(
+        "http://metadata.example/latest",
+        pol,
+        resolver=_resolver({"metadata.example": ["169.254.169.254"]}),
+    )
+    assert d.allow is False
+    assert "metadata" in d.reason
+
+
+def test_allow_host_rebinding_to_alibaba_metadata_is_refused():
+    # 100.100.100.200 (CGNAT 100.64/10) is NOT link-local, and its is_private/is_global
+    # classification varies across Python versions — so the link-local rule alone can
+    # never be relied on to catch it for an allow-listed host. The literal
+    # metadata-IP set is what pins this refusal.
+    pol = WEBHOOK.with_overrides(allow_hosts=("metadata.example",))
+    d = evaluate(
+        "http://metadata.example/meta",
+        pol,
+        resolver=_resolver({"metadata.example": ["100.100.100.200"]}),
+    )
+    assert d.allow is False
+    assert "metadata" in d.reason
+
+
 def test_allow_host_subdomain_match():
     pol = STRICT.with_overrides(allow_hosts=("example.com",))
     # bare-domain pattern covers subdomains

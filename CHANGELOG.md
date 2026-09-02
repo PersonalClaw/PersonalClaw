@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Security (egress guard):** an operator allow-listed hostname that resolves (or DNS-rebinds) to a cloud metadata / link-local address (the AWS/Azure/GCP instance-credential endpoint, `fe80::/10`, Alibaba's metadata IP) is now refused post-resolution, for every policy. `deny_hosts` matches the URL's hostname before DNS, so it could not see the rebind; the homelab private-LAN opt-in is unchanged.
+
 ### Added
 
 - **Proposals can now show whether they would have helped on YOUR work.** When PersonalClaw suggests
