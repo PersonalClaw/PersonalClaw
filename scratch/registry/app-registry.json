@@ -1,4 +1,49 @@
 {
   "$schema": "./app-registry.schema.json",
-  "apps": []
+  "apps": [
+    {
+      "name": "channel-null",
+      "repo": "https://github.com/PersonalClaw/channel-null",
+      "types": [
+        "channel"
+      ],
+      "permissions_declared": [],
+      "license": "MIT",
+      "maintainer": "keyurgolani",
+      "added": "2026-09-02"
+    },
+    {
+      "name": "inbox-github-notifications",
+      "repo": "https://github.com/PersonalClaw/inbox-github-notifications",
+      "types": [
+        "inbox"
+      ],
+      "permissions_declared": [],
+      "license": "MIT",
+      "maintainer": "keyurgolani",
+      "added": "2026-09-02"
+    },
+    {
+      "name": "watched-source-github",
+      "repo": "https://github.com/PersonalClaw/watched-source-github",
+      "types": [
+        "trigger_source"
+      ],
+      "permissions_declared": [],
+      "license": "MIT",
+      "maintainer": "keyurgolani",
+      "added": "2026-09-02"
+    },
+    {
+      "name": "action-home-assistant",
+      "repo": "https://github.com/PersonalClaw/action-home-assistant",
+      "types": [
+        "action"
+      ],
+      "permissions_declared": [],
+      "license": "MIT",
+      "maintainer": "keyurgolani",
+      "added": "2026-09-02"
+    }
+  ]
 }
