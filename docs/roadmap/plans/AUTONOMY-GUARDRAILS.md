@@ -295,6 +295,17 @@ Each session ships independently; Session 1 alone is a Wave-0 win (typed outputs
 
 ## Execution log
 
+### 2026-09-02 — AG-14 (run-terminated reasons + cost/deadline ceilings) — DONE (PR #2321)
+
+`LoopStopReason` closed enum {done, user, cycle_budget, cost_budget, deadline,
+worker_failed} stamped on every ended loop; opt-in `max_cost_usd` (usage-ledger spend
+floor via SM-10, >0-gated — an unreadable ledger never stops a loop) and `deadline_secs`
+(active runtime = banked + current stretch; pauses not charged) enforced in the watchdog
+poll beside `max_cycles`; store migration + FAILED-resume un-end clears both; the PP-16
+`loop_run_map` gained the three FieldHome rows (`max_cost_usd` → RUN `budget.max_cost`
+with the breach-semantics difference recorded; `deadline_secs`/`stop_reason` pinned NO
+HOME). `tests/test_loop_stop_reason.py` (14) + 171 loop-adjacent green.
+
 ### 2026-07-25 — Session 1 (§2 chokepoint core) — DONE
 
 The Wave-0 win: the model-call seam, with breaker + hard timeout + attempt audit +

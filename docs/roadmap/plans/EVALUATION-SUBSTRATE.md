@@ -1899,3 +1899,21 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   report node declares `winner_score` a required `number`). `dag.json` untouched — the flip is the
   owner's. This change is docs-only: the dated status line the atom lacked, plus the file-level narrative
   that still claimed "entirely unstarted; all 11 atoms are todo" when four are `done`.
+
+## Execution log — ES-12 (judge-verdict answerability: T04)
+
+- **[2026-09-02][ES-12] DONE (PR #2322).** A judge could PASS while citing evidence it
+  was never shown. `ungrounded_refs` grounds every verdict citation against the exact
+  evidence slice the judge saw (verbatim spans after whitespace/case normalization, OR
+  citations of the declared `proof_command`/`hidden_validation_commands`; fragments
+  under 12 normalized chars never flagged). `JudgeVerdict` gains `evidence_hash`
+  (sha256[:16], stamped by the CALLER, never the model) + `unanswerable_refs`;
+  `validate_verdict(…, evidence_text=…)` is opt-in — it FLAGS partial fabrication and
+  PROTOCOL-REJECTS only a PASS resting entirely on ungrounded refs with no sanctioned
+  proof (mirrors the presence precondition; non-PASS verdicts are flagged, never
+  rejected). The engine's judge-gate loop passes `rubric_prose` (the exact slice shown,
+  including appended measured evidence); loop-side refs are supervisor-derived and
+  answerable by construction, so both `assess_cycle` sites stamp the hash only. The
+  quote-to-cite rule sits in `judge_instruction` AFTER the JSON schema block. T04's
+  failing shape reproduces then passes. `tests/test_judge_verdict_answerability.py`
+  (13) + 523 judge-adjacent green.

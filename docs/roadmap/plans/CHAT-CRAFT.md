@@ -185,6 +185,13 @@ One task row, landing in **S4** (the polish session); **no count change**.
 
 ## Execution log
 
+- **2026-09-02 — CC-9 DONE (PR #2319).** Live thinking in the transcript: `ThinkingSegment`
+  in the segment union + pure `appendThinking` fold (interleaved prose/tool closes the
+  block); WS `chat_thinking` gated at INGESTION by the persisted `show_thinking_inline`
+  setting; collapsible `ThinkingBlock` (uncontrolled `<details>`, open while streaming);
+  no persistence change. `thinkingSegments.test.tsx` (8) + full vitest 6212 green;
+  screenshot-verified.
+
 - **2026-07-27 — S1-3 DONE (Wave 2).** Shipped Sessions 1-3 as one branch
   (`feature-chat-craft`), one conceptual commit. **S1 (T1.1-T1.3):** true rewind via
   fork-and-swap — `edit-resend` gains `rewind:true` (snapshots the discarded tail onto

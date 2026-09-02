@@ -1954,3 +1954,11 @@ Sequence these **independently of S1-S3** — they touch the store's indexing la
   (was 5128 before; +31 new: 12 libraryHome, 7 readingResume, 8 readingPosition, 4 reachability),
   `npm run build` rc=0. Probe sweep: the expected 16 pre-existing hits, **0** introduced, clean
   `git status`.
+
+## Execution log — KL-18 (retrieval payload returns the matched passage)
+
+- **[2026-09-02][KL-18] DONE (PR #2316).** The retrieval payload returned the DOC HEAD
+  instead of the passage that matched, so citations pointed at text the query never hit.
+  Fixed at the provider seam: `_shape_hit` now derives the returned span via
+  `_passage_window` (1-based-inclusive line join around the match), so the payload,
+  the citation, and the match agree. Tests pin head-vs-passage divergence.
