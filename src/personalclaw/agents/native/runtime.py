@@ -47,7 +47,13 @@ from personalclaw.cancellation import (
     REQUEST_REPEAT,
     CancelScope,
 )
-from personalclaw.guardrails.failure import FailureMode, correction_note
+from personalclaw.guardrails.audit import AttemptRecord, now_ms, record_attempt
+from personalclaw.guardrails.failure import (
+    FailureMode,
+    GuardError,
+    correction_note,
+    is_retryable,
+)
 from personalclaw.guardrails.loop_breaker import (
     BLOCK_THRESHOLD,
     WARN_THRESHOLD,
@@ -92,6 +98,28 @@ logger = logging.getLogger(__name__)
 # The runtime keeps a sanitized(real)->real fallback so it can heal ANY provider.
 _TOOL_NAME_SANITIZE_RE = re.compile(r"[^a-zA-Z0-9_-]")
 _TOOL_NAME_SANITIZE_MAX = 64
+
+
+# Brief pause before the one loop-level inference retry (#2287/#252) — long enough
+# to step over a same-instant transient, short enough that an interactive turn
+# doesn't visibly stall. Deliberately a constant: config/loader.py is at its line
+# budget, and a knob nobody tunes is a cost with no consumer.
+_INFERENCE_RETRY_BACKOFF_SECS = 0.5
+
+
+def _inference_failure_mode(exc: BaseException) -> FailureMode:
+    """Classify a raised inference exception into the guard's taxonomy.
+
+    Typed guard errors carry their mode; a bare timeout maps to ``TIMEOUT``; every
+    vendor SDK exception collapses to ``PROVIDER_ERROR`` — same collapse rule as
+    :mod:`personalclaw.guardrails.failure` documents for the guard itself, so the
+    loop's audit rows and the guard's stay foldable in one taxonomy.
+    """
+    if isinstance(exc, GuardError):
+        return exc.mode
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return FailureMode.TIMEOUT
+    return FailureMode.PROVIDER_ERROR
 
 
 def _sanitized_tool_key(name: str) -> str:
@@ -692,6 +720,40 @@ class NativeAgentRuntime(AgentProvider):
             return STOP_REASON_STOPPED_BY_USER
         return STOP_REASON_CANCELLED
 
+    def _audit_inference_attempt(
+        self,
+        mode: FailureMode,
+        *,
+        attempt: int,
+        started_ms: float,
+        passed: bool,
+    ) -> None:
+        """Record one loop-level inference attempt in the guard's audit shape.
+
+        Only exceptional attempts are recorded — every failed attempt, plus the
+        outcome of a retry — so the audit trail gains the retry story (#252's
+        "no audit" gap) without re-baselining the stats fold with a row for every
+        healthy native inference. Best-effort by contract: an audit failure must
+        never take down the turn it describes.
+        """
+        try:
+            record_attempt(
+                AttemptRecord(
+                    audit_id=f"native-{id(self):x}-{time.time_ns():x}",
+                    ts=now_ms(),
+                    use_case="native_loop",
+                    provider=type(self._model).__name__,
+                    model=self._definition.model or "",
+                    attempt=attempt,
+                    failure_mode=mode.value,
+                    latency_ms=max(0.0, now_ms() - started_ms),
+                    passed=passed,
+                    strategy="retry" if attempt > 1 else "direct",
+                )
+            )
+        except Exception:
+            logger.debug("native: inference attempt audit failed", exc_info=True)
+
     def last_stop_report(self) -> dict:
         """What the last stop actually reached — the shape PR2-13 consumes.
 
@@ -767,6 +829,10 @@ class NativeAgentRuntime(AgentProvider):
         # EVENT_COMPLETE so the chat runner renders the "Turn complete" line.
         agg_events = 0
         agg_tool_calls = 0
+        # ONE loop-level correction-retry per agent turn (#2287/#252). Lives at
+        # turn scope, not per-inference: two separate transients in one turn mean
+        # the provider is genuinely unhealthy, and the second failure surfaces.
+        inference_retried = False
 
         # end_turn() in a finally, not at each return: a stop arriving in the window
         # between a turn ending and the next beginning must answer "no_turn", and an
@@ -821,24 +887,92 @@ class NativeAgentRuntime(AgentProvider):
                 msgs = mark_cacheable_prefix(
                     self._messages, mode, generation=self._cache_generation
                 )
-                async for ev in self._model.complete(
-                    msgs,
-                    tools=tools_kwarg,
-                    model=self._definition.model or None,
-                    reasoning_effort=self._reasoning_effort,
-                ):
-                    if self._cancelled:
-                        break
-                    agg_events += 1
-                    if ev.kind == EVENT_TEXT_CHUNK:
-                        assistant_text += ev.text
-                        yield ev
-                    elif ev.kind == EVENT_THINKING_CHUNK:
-                        yield ev
-                    elif ev.kind == EVENT_TOOL_CALL:
-                        tool_calls.append(ev)
-                    elif ev.kind == EVENT_COMPLETE:
-                        usage = ev
+                # #2287/#252: the native loop's ONE correction-retry. A transient
+                # inference failure (provider 5xx, dropped connection, timeout)
+                # that arrives BEFORE anything user-visible streamed is retried
+                # once per agent turn; everything else propagates unchanged:
+                #   - a mid-stream failure after visible text/thinking (a retry
+                #     would re-stream and duplicate what the user already read),
+                #   - a failure after a tool call arrived (the model did work),
+                #   - a second failure in the same turn,
+                #   - every NON_RETRYABLE mode (open breaker, budget ceiling,
+                #     injection/secret-leak — retrying defeats each guard).
+                # max_tokens truncation is a SUCCESSFUL stream carrying a
+                # stop_reason, so it never enters this path — the deliberate cost
+                # decision on #2287 (only #2286's attribution note applies there).
+                # Deliberately NOT wired to the failure breaker, the structural-
+                # loop detector, or procedural-memory outcomes: an infrastructure
+                # blip is not evidence about the model's behaviour, mirroring the
+                # guard's own isolation contract.
+                while True:
+                    visible_streamed = False
+                    attempt_started = now_ms()
+                    try:
+                        async for ev in self._model.complete(
+                            msgs,
+                            tools=tools_kwarg,
+                            model=self._definition.model or None,
+                            reasoning_effort=self._reasoning_effort,
+                        ):
+                            if self._cancelled:
+                                break
+                            agg_events += 1
+                            if ev.kind == EVENT_TEXT_CHUNK:
+                                assistant_text += ev.text
+                                visible_streamed = True
+                                yield ev
+                            elif ev.kind == EVENT_THINKING_CHUNK:
+                                visible_streamed = True
+                                yield ev
+                            elif ev.kind == EVENT_TOOL_CALL:
+                                tool_calls.append(ev)
+                            elif ev.kind == EVENT_COMPLETE:
+                                usage = ev
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        fmode = _inference_failure_mode(exc)
+                        can_retry = (
+                            not inference_retried
+                            and not visible_streamed
+                            and not tool_calls
+                            and not self._cancelled
+                            and is_retryable(fmode)
+                        )
+                        self._audit_inference_attempt(
+                            fmode,
+                            attempt=2 if inference_retried else 1,
+                            started_ms=attempt_started,
+                            passed=False,
+                        )
+                        if not can_retry:
+                            raise
+                        inference_retried = True
+                        logger.warning(
+                            "native: inference attempt failed (%s) — retrying once: %s",
+                            fmode.value,
+                            exc,
+                        )
+                        note = correction_note(fmode)
+                        if note:
+                            # Same volatile-tail contract as the turn note above:
+                            # never ahead of the stable cacheable prefix.
+                            msgs = [
+                                *msgs,
+                                {"role": "user", "content": note, "_volatile": True},
+                            ]
+                        await asyncio.sleep(_INFERENCE_RETRY_BACKOFF_SECS)
+                        assistant_text = ""
+                        usage = None
+                        continue
+                    if inference_retried:
+                        self._audit_inference_attempt(
+                            FailureMode.NONE,
+                            attempt=2,
+                            started_ms=attempt_started,
+                            passed=True,
+                        )
+                    break
 
                 if usage is not None:
                     agg_in += usage.input_tokens or 0

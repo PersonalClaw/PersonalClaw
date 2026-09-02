@@ -9,6 +9,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Fixed
+- The native agent loop now retries ONE pre-stream inference transient per turn (provider 5xx class, timeout) with the taxonomy's correction note and guard-shaped audit rows — a single provider blip no longer kills the chat turn ([#2287](https://github.com/PersonalClaw/PersonalClaw/issues/2287), [#252](https://github.com/PersonalClaw/PersonalClaw/issues/252)). Mid-stream failures after visible output, second failures, and non-retryable modes (open breaker, budget) propagate unchanged; max_tokens truncation never enters the retry path.
 
 - **Chat:** a message containing a single token past SQLite's LIKE-pattern cap (a base64 paste, a JWT, minified JS) no longer kills the turn with a raw “LIKE or GLOB pattern too complex” error — the episodic-recall keyword fallback drops oversized tokens (they carry no recall value) and degrades to no-matches on any SQLite operational refusal instead of propagating (#369).
 - **Dashboard:** a client disconnecting while a broadcast is in flight (navigating away from a streaming response) no longer logs an unretrieved-task ERROR traceback — WebSocket sends are awaited under a guard that logs at DEBUG and reaps the dead client immediately rather than on the next broadcast (#312).
