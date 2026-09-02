@@ -4365,14 +4365,14 @@
         {
           "id": "EA-8",
           "title": "A2A gateway (inbound agent card + tasks\u2192WorkflowRun) + a2a-call outbound provider",
-          "status": "todo",
+          "status": "done",
           "scope": "\u00a75 (Dialect 4 A2A): inbound GET /a2a/agent-card + POST /a2a/tasks, a2a_published template flag, apps/a2a-action outbound provider + ALLOWED_HOOK_PROVIDERS. \u00a711 provider-fidelity wiring. Session 6 (A2A half).",
           "done_when": "GET /a2a/agent-card serves a card whose skills are workflow templates with a2a_published:true (default false, per-template toggle in template detail UI); POST /a2a/tasks maps an A2A task onto a WorkflowRun (v2 run-start seam), streams A2A task lifecycle, returns fenced artifacts under headless profile + client budget; card mounts EMPTY until WF2 slices land; apps/a2a-action first-party app (provider type action, entity a2a, ActionProvider factory, webhook-action precedent) whose name is added to ALLOWED_HOOK_PROVIDERS (src/personalclaw/validation.py) or hook create/update rejects it; execute sends one A2A task via net.fetch under CONNECTOR policy + egress_policy_for deny-by-default host allowlist; selectable by all trigger kinds + workflow action nodes once registered (Success Criterion 10).",
           "deps": [
             "EA-1",
             "EXT:WORKFLOWS-V2:Slices 0-3 run engine + journal (inbound task mapping; outbound a2a-call is independent)"
           ],
-          "blocked_reason": "PARTIAL \u2014 the inbound half shipped in PR #2086 (agent card + tasks onto a WorkflowRun, SSE lifecycle, fenced artifacts, per-template publish toggle). The outbound half is cross-repo: `apps/a2a-action` is a PersonalClawApps bundle (the webhook-action precedent the plan names lives there), so `a2a-call` is deliberately ABSENT from ALLOWED_HOOK_PROVIDERS \u2014 adding the name in core alone validates and saves, then fails at fire time. Success Criterion 10's a2a-call clause is unmet for the same reason. Clears when the apps bundle lands and `a2a-call` moves to the accept side in the same commit."
+          "pr": 2170
         },
         {
           "id": "EA-9",
@@ -7699,11 +7699,6 @@
         "plan": "EA"
       },
       {
-        "id": "EA-8",
-        "title": "A2A gateway (inbound agent card + tasks\u2192WorkflowRun) + a2a-call outbound provider",
-        "plan": "EA"
-      },
-      {
         "id": "EI-2",
         "title": "`docker` provider + engine/workspace-block adoption + cgroup v2 tier",
         "plan": "EI"
@@ -9920,9 +9915,9 @@
         "code": "EA",
         "plan": "EXTERNAL-ACCESS",
         "total_atoms": 9,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
