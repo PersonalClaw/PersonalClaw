@@ -267,3 +267,39 @@ class TestModelSerialization:
     def test_tasklist_roundtrip(self):
         tl = TaskList(id="tl1", name="L", project_id="p1")
         assert TaskList.from_dict(tl.to_dict()).project_id == "p1"
+
+
+class TestWorkspaceBindGuard:
+    """A bound workspace becomes a WRITE target for generated agent files and the cwd of an
+    unsandboxed worker, so create/update refuse an unsafe path at bind time (#358)."""
+
+    _UNSAFE = [
+        "/",  # OS/system root
+        "~",  # the home directory itself
+        "relative/dir",  # a relative path
+        "~/.ssh",  # a credential directory
+    ]
+
+    @pytest.mark.parametrize("bad", _UNSAFE)
+    def test_create_refuses_unsafe_workspace(self, store, bad):
+        with pytest.raises(ValueError):
+            store.create_project("Bound", workspace_dir=bad)
+        # the refusal wrote nothing — no project was created.
+        assert store.get_project_by_name("Bound") is None
+
+    @pytest.mark.parametrize("bad", _UNSAFE)
+    def test_update_refuses_unsafe_workspace(self, store, bad):
+        p = store.create_project("Bound")  # safe: no workspace_dir bound
+        with pytest.raises(ValueError):
+            store.update_project(p.id, workspace_dir=bad)
+        # the previous (empty) binding survived the refusal.
+        assert store.get_project(p.id).workspace_dir == ""
+
+    def test_safe_absolute_workspace_still_binds(self, store, tmp_path):
+        # vacuity: the guard is not rejecting everything — a normal absolute dir still binds,
+        # and clearing the binding (empty) stays legal.
+        d = tmp_path / "repo"
+        d.mkdir()
+        p = store.create_project("Bound", workspace_dir=str(d))
+        assert p.workspace_dir == str(d)
+        assert store.update_project(p.id, workspace_dir="").workspace_dir == ""

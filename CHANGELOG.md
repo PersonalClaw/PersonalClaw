@@ -712,6 +712,23 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   either. Re-saving a shelf under its own name, which is what happens when you change its icon, is not
   treated as a clash with itself.
 
+- **Regenerating a project's agent-instruction files could destroy your own notes, or write them
+  to the wrong place entirely.** PersonalClaw can keep a managed block inside a project's
+  `CLAUDE.md` / `AGENTS.md` / `.cursorrules`, fenced by markers so everything you write around it is
+  left alone. Three faults broke that promise. The splice found its markers by plain text search, so
+  a marker shown as an example inside a code block — or a second managed block — was mistaken for the
+  real fence, and the content between the wrong pair was overwritten on the next regeneration. The
+  block's own contents were written out verbatim, so a project name, brief, memory or document title
+  that happened to contain a marker line silently closed the block early and set up the same
+  corruption. And the destination directory was never checked, so a project bound to `/` or to your
+  home directory would have had agent files planted at the filesystem root or straight into `$HOME`.
+  All three are fixed: a marker now counts only as a whole line outside any code fence, a marker
+  inside a value is escaped so it can never close the block, and an unsafe destination (a relative
+  path, the home directory itself, a credential directory, or an OS/system root) is refused — both
+  when the workspace is bound and again before any file is written. When the markers are genuinely
+  malformed the regeneration refuses rather than guess, and every write is now atomic, so a crash
+  mid-write can no longer leave a half-written file. (#358)
+
 - **The check that keeps installed apps off PersonalClaw's internals had never actually run.** Apps are
   meant to reach core only through the published SDK, and one test enforces that. It looked for the apps
   folder in a place that does not exist — in a clone, in a git worktree, or in a development workspace
