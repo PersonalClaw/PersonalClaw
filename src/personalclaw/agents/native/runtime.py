@@ -24,7 +24,7 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -100,6 +100,41 @@ def _sanitized_tool_key(name: str) -> str:
     runtime can recognize a rewritten name and map it back to the real tool."""
     safe = _TOOL_NAME_SANITIZE_RE.sub("_", name or "")[:_TOOL_NAME_SANITIZE_MAX]
     return safe or "tool"
+
+
+def build_sanitized_index(names: Iterable[str]) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """The sanitized(real)->real healing map for a tool census, plus its losses.
+
+    For each real name a provider WOULD have to rewrite, remember the rewritten
+    form -> real name, but ONLY when that sanitized form is unique across the
+    census (an ambiguous collision is dropped so we never dispatch the wrong
+    tool) and only when it differs from the real name (an already-legal name
+    needs no fallback). A key that would shadow a REAL exact name is likewise
+    never remapped.
+
+    Returns ``(healing_map, collisions)`` where ``collisions`` maps each dropped
+    sanitized key to the real names that fought over it — the ONE lossy spot in
+    the whole name wire (see docs/architecture/tool-name-wire.md), surfaced so a
+    caller can report it instead of losing tools silently. SM-12's census rail
+    (tests/test_tool_name_wire_fidelity.py) keeps the live census collision-free,
+    which is what makes every transform on the wire reversible in practice.
+    """
+    census = set(names)
+    healing: dict[str, str] = {}
+    collisions: dict[str, list[str]] = {}
+    for real in census:
+        key = _sanitized_tool_key(real)
+        if key == real or key in census:
+            # Legal already, or would shadow a real exact name — never remap.
+            continue
+        if key in collisions:
+            collisions[key].append(real)
+            continue
+        if key in healing and healing[key] != real:
+            collisions[key] = [healing.pop(key), real]
+            continue
+        healing[key] = real
+    return healing, {k: sorted(v) for k, v in collisions.items()}
 
 
 # Hook fire callback: (event_title, tool_input) -> awaitable[list[str]] of
@@ -386,26 +421,22 @@ class NativeAgentRuntime(AgentProvider):
         # SCHEMA ASSEMBLY (group filter → serialization) — factored out so a group
         # change can re-run it without re-discovering providers.
         self._assemble_schema()
-        # Sanitized-name fallback (provider-agnostic reverse-map insurance). For
-        # each real name that a provider WOULD have to rewrite, remember the
-        # rewritten form -> real name, but ONLY when that sanitized form is unique
-        # across the toolset (ambiguous collisions are dropped so we never dispatch
-        # the wrong tool) and only when it actually differs from the real name (an
-        # already-legal name needs no fallback). Built once here so dispatch stays
-        # a dict lookup. See _resolve_name for how it's consulted.
-        sanitized: dict[str, str] = {}
-        ambiguous: set[str] = set()
-        for real in index:
-            key = _sanitized_tool_key(real)
-            if key == real or key in index:
-                # Legal already, or would shadow a real exact name — never remap.
-                continue
-            if key in sanitized and sanitized[key] != real:
-                ambiguous.add(key)
-                continue
-            sanitized[key] = real
-        for key in ambiguous:
-            sanitized.pop(key, None)
+        # Sanitized-name fallback (provider-agnostic reverse-map insurance) — see
+        # build_sanitized_index for the policy and the wire map
+        # (docs/architecture/tool-name-wire.md) for the end-to-end picture. Built
+        # once here so dispatch stays a dict lookup; consulted by _resolve_name.
+        sanitized, collisions = build_sanitized_index(index)
+        for key, reals in collisions.items():
+            # The one lossy spot on the name wire, and it must never be silent:
+            # these tools stay callable by their EXACT names, but a provider
+            # rewrite of any of them cannot be healed. The census rail test
+            # keeps shipped tool names out of this branch.
+            logger.warning(
+                "native: tool names %s collide under the model-safe form %r — "
+                "a provider-rewritten call to it cannot be healed; rename one",
+                reals,
+                key,
+            )
         self._tool_sanitized_index = sanitized
         # Risk-level map: dry-run observe-mode intercepts non-SAFE tools (T9), and
         # the permission-request event carries a tool's declared risk to the gate.
