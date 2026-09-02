@@ -712,6 +712,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
   either. Re-saving a shelf under its own name, which is what happens when you change its icon, is not
   treated as a clash with itself.
 
+- **The audit log's "Rotate" control described a key rotation it never performed.** The confirm dialog
+  asked to "Rotate the audit-log signing key?" and promised that "past entries stay verifiable under the
+  old key" — but the action only archives the current log to a timestamped file beside it and starts a
+  fresh hash-chain: the signing key is created once and never rewritten, and the archived entries leave
+  the dashboard's verify and browse views entirely, so nothing stayed "verifiable" there. The control now
+  says what it does — it offers to "Archive the audit log and start a new chain", notes that the existing
+  entries move to a timestamped archive and that the signing key is unchanged, and on success it names the
+  archive file the log was moved to. The behaviour did not change, only the words did — and they are now
+  true. (#534)
+
 - **The check that keeps installed apps off PersonalClaw's internals had never actually run.** Apps are
   meant to reach core only through the published SDK, and one test enforces that. It looked for the apps
   folder in a place that does not exist — in a clone, in a git worktree, or in a development workspace
