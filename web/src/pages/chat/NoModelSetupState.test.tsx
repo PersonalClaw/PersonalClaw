@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { NoModelSetupState, isNoModelSetupError, MODELS_ROUTE } from './NoModelSetupState'
 
@@ -45,7 +45,7 @@ describe('isNoModelSetupError', () => {
 
 describe('NoModelSetupState', () => {
   it('leads with a plain sentence and the way forward, not the raw envelope', () => {
-    render(<NoModelSetupState detail={NO_MODEL_ENVELOPE} />)
+    render(<NoModelSetupState detail={NO_MODEL_ENVELOPE} onSetup={() => {}} />)
     expect(screen.getByText('No model connected yet')).toBeTruthy()
     expect(screen.getByText(/connect a model to start chatting/i)).toBeTruthy()
     // No bare "Error"/"Something went wrong" and no code/stack in the primary line.
@@ -53,7 +53,7 @@ describe('NoModelSetupState', () => {
   })
 
   it('keeps the full WHAT/WHY/FIX detail behind a collapsed disclosure', () => {
-    const { container } = render(<NoModelSetupState detail={NO_MODEL_ENVELOPE} />)
+    const { container } = render(<NoModelSetupState detail={NO_MODEL_ENVELOPE} onSetup={() => {}} />)
     const details = container.querySelector('details')
     expect(details).not.toBeNull()
     // Collapsed by default (no `open` attribute) …
@@ -64,15 +64,16 @@ describe('NoModelSetupState', () => {
     expect(pre?.textContent).toContain('config.json')
   })
 
-  it('offers a CTA that navigates to Settings → Models', () => {
-    const original = window.location.hash
-    try {
-      window.location.hash = '#/chat'
-      render(<NoModelSetupState detail={NO_MODEL_ENVELOPE} />)
-      fireEvent.click(screen.getByRole('button', { name: /set up a model/i }))
-      expect(window.location.hash).toBe(MODELS_ROUTE)
-    } finally {
-      window.location.hash = original
-    }
+  it('offers a CTA that hands navigation to the router (no raw hash write)', () => {
+    const onSetup = vi.fn()
+    render(<NoModelSetupState detail={NO_MODEL_ENVELOPE} onSetup={onSetup} />)
+    fireEvent.click(screen.getByRole('button', { name: /set up a model/i }))
+    expect(onSetup).toHaveBeenCalledTimes(1)
+  })
+
+  it('agrees with DegradedChip on the destination', () => {
+    // DegradedChip's "Bind a model" nudge links to #/settings/models; the CTA's
+    // navigate() path must resolve to the same place.
+    expect(MODELS_ROUTE).toBe('#/settings/models')
   })
 })
