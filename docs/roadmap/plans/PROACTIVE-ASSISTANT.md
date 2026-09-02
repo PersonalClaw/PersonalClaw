@@ -801,3 +801,10 @@ Where each new piece plugs into the pluggable-provider architecture — nothing 
   with Playwright after the promotion: `H1 "Knowledge"` → `H2 "Calibration"` → `H2 "Open (2)"` →
   `H2 "Resolved (12)"`. No skipped rung, which is the claim the ratchet actually cares about — the
   file-level census can only see that the token is gone.
+
+## Execution log — `PA-6` (Decision Journal view + calibration strip FE) — **DONE**
+
+- [2026-09-02][PA-6] DONE, flipped by the rev-18 reconciliation (the earlier PARTIAL note is
+  superseded by the shipped frontend). Verified on `main` @`01e25c848`:
+  `web/src/pages/knowledge/DecisionJournal.tsx` ships the journal view with the per-domain
+  calibration strip (16 calibration references); `decisionJournal.test.tsx` 21 passed.

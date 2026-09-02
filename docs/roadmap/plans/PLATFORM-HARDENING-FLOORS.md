@@ -2132,3 +2132,12 @@ presence assertion so the next move fails with a sentence instead of `ValueError
   does not parse. The body line says explicitly that the `⬜` is a sync artefact and that both marks
   flip together at merge, so nobody reads the row as a verdict on the work. Not a silent skip and not
   a weakened gate: the honest state is "implemented, not yet marked", and that is what is written.
+
+## Execution log — `PHF-14` (Decompose config/loader.py below the ceiling) — **DONE**
+
+- [2026-09-02][PHF-14] DONE, flipped by the rev-18 reconciliation with fresh evidence (the
+  2026-08-27 NOT-DONE note had gone stale). Measured on `main` @`01e25c848`: `config/loader.py`
+  is 4358 lines (ceiling 5400, headroom 1042); extracted siblings `coercion.py`,
+  `external_access.py`, `learning.py`, `safety.py`, `validation.py` live under
+  `src/personalclaw/config/`; zero re-export shims in `config/__init__.py`;
+  `tests/test_structural_baseline.py` 32 passed.
