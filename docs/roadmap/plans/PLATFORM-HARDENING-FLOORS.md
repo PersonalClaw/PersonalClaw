@@ -2141,3 +2141,7 @@ presence assertion so the next move fails with a sentence instead of `ValueError
   `external_access.py`, `learning.py`, `safety.py`, `validation.py` live under
   `src/personalclaw/config/`; zero re-export shims in `config/__init__.py`;
   `tests/test_structural_baseline.py` 32 passed.
+
+## Execution log — PHF-2 (cgroup v2 second enforcement tier) — validated done; plan COMPLETE (15/15)
+
+**2026-09-02 — validated on main (impl pre-landed).** Linux-only opt-in transient systemd tier (`dashboard/handlers/core.py`); `tests/test_doctor_cgroup_probe.py` asserts the probe NEVER raises and the darwin 'pids/RSS not enforced' warning by meaning. This was the plan's last open atom — PLATFORM-HARDENING-FLOORS is complete.

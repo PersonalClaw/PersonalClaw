@@ -179,6 +179,8 @@ Plan 42 rules-engine `push` target calls `send_push` with `{kind, item_id}` only
 
 ## Execution log
 
+**2026-09-02 — MC-5 validated done (impl pre-landed).** Web-push + ntfy adapter live as plan-42's `push` target (`push.py`, `handlers/push.py`; `notification_rules.py` marks push LIVE as of MC-5). `tests/test_mc5_push_to_approval.py` 34/34.
+
 ### 2026-08-13 — `MC-3` (S2 T2.1r + T2.2 approvals half) — **DONE**
 
 `#/companion` ships approvals-first. A full-screen, no-NavRail hash route

@@ -127,6 +127,8 @@ Shell sets `PERSONALCLAW_INSTALL_KIND=desktop` in the spawn env (consumed by DIS
 
 ## Execution log
 
+**2026-09-02 — DC-5 validated done (impl pre-landed).** `native` is a LIVE plan-42 rules target (`notification_rules.py` cites DC-5; `native_delivery` when the shell is connected, dashboard-toast fallback otherwise). `desktop/test/nativeNotifications.test.js` 17/17.
+
 Format: one line per task/event — `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKED` — under the roadmap session discipline in [AGENTS.md](../../../AGENTS.md).
 
 ### Session 2 — Capability bridge (2026-08-13)

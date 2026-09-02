@@ -933,6 +933,8 @@ class ElementRef:
   same rather than re-homing three other atoms' entries into a new section — that is a plan-structure
   edit, not a `BA-4` one.
 
+- **2026-09-02 — `BA-4` landed on `main` and flipped `done` in `dag.json`.** The code described above is merged (validated: `tests/test_browse_credential_handoff.py` 62/62 on `main`, matching the 62 tests recorded here); the 🟡 table mark and the dag status are updated in the same change that writes this bullet.
+
   **Clause 4 (credentials never transit the agent) — made STRUCTURAL, three refusals, not a filter.**
   The starting observation is that `security.redact_credentials` cannot be the answer: it is shape-
   and name-based (`sk-ant-…`, `ghp_…`, `key = value`), so `hunter2` and a six-digit 2FA code match

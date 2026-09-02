@@ -1417,3 +1417,11 @@ Four more were found by a read-only audit of the 29 `EXT:`-only atoms.
   atom that **owns** the sandbox — `EI-2`'s `docker` provider — not with the second-opinion handoff that merely runs
   inside one. `EI-7`'s own deliverable (`ProposerBackend` plus the different-cataloged-runner one-shot, accepted only
   when the disk re-diff confirms the edits, SEL-audited) is complete and green as PR **#2079**. Flip `EI-7` on merge.
+
+## Execution log — EI-7 (second-opinion handoff + ProposerBackend + tool gateway) — validated done
+
+**2026-09-02 — validated on main (impl pre-landed).** `proposer/__init__.py` (cites EI-7): SC6 second-opinion via a DIFFERENT cataloged runner, disk re-diff acceptance, SEL-audited. `sandbox_providers/pclaw_tool.py` + `tool_gateway.py`: SC7 socketless in-sandbox tool gateway. Suites green (proposer_second_opinion, sandbox_tool_gateway, second_opinion_provider_wiring).
+
+## Execution log — EI-10 (secrets vault UX + presence-only API) — validated done
+
+**2026-09-02 — validated on main (impl pre-landed).** `secrets_vault.py`: presence-only is STRUCTURAL (`SecretPresence` is a distinct type from value-carriers); grant-to-sandbox toggles + consumer links. `tests/test_secrets_vault.py` green.
