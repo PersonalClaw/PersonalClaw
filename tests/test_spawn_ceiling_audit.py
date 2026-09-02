@@ -46,6 +46,13 @@ _SPAWN_CALLEES = {
 # actual spawn happens inside sandbox.create_subprocess_limited (the two helper sites), and
 # these call sites reach it via that helper or via spawn_shim_argv (argv-prepend).
 _CEILING_WRAPPED: dict[str, str] = {
+    # WF2WOR-12's container backend CLI verbs (docker / nerdctl / Apple container). The argv
+    # carries manifest-derived values — image names, build contexts, mount sources an agent can
+    # author into a workflow's workspace manifest — so it is agent-influenced and takes the tool
+    # ceiling. The CLI client mostly streams to the daemon; the engine's own wait_for bounds it.
+    "workflows/container_env.py::_run_cli::create_subprocess_limited": (
+        "container backend CLI verbs — manifest-derived (agent-authorable) argv → tool ceiling"
+    ),
     # sandbox.py is the helper itself — the one create_subprocess_exec that every routed
     # async seam funnels through (argv already shim-prepended).
     "sandbox.py::create_subprocess_limited::asyncio.create_subprocess_exec": (

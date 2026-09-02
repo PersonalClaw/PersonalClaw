@@ -329,14 +329,16 @@ class TestDegradation:
         assert result.isolated is False, "an isolated mode that could not isolate reports honestly"
 
     async def test_container_mode_degrades_rather_than_refusing(self, home, repo) -> None:
-        """§4.4 is owner-deferred to WF2WOR-12. A template declaring `container` today should still
-        RUN (isolated, just not containerized) instead of being unstartable until that atom."""
+        """WF2WOR-12 shipped container mode with the no-environment posture unchanged: a bare
+        `container` declaration (no manifest) still RUNS — isolated scratch, reason recorded,
+        no container id claimed."""
         run = _run()
         result = await provisioning.provision(
             WorkspaceSpec(mode=Mode.CONTAINER), run_id=run.id, workspace_dir=str(repo)
         )
         assert result.ok is True and result.path
-        assert "container mode is not implemented" in result.degraded_reason
+        assert "no environment manifest" in result.degraded_reason
+        assert result.container_id == "" and result.container_backend == ""
 
     async def test_in_place_reports_the_REAL_tree_and_is_not_isolated(self, home, repo) -> None:
         """Inventing a path would hide from every surface that the run worked in the user's tree —

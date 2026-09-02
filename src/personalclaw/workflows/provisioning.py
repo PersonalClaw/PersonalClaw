@@ -291,6 +291,11 @@ class Provisioned:
     issues: list[SpecIssue] = field(default_factory=list)
     degraded_reason: str = ""
     ok: bool = True
+    #: Live container name + the backend binary that owns it (WF2WOR-12). Empty when the
+    #: run is not containerized — including the degraded asked-for-container-got-scratch
+    #: case, which is how a reader tells the two apart.
+    container_id: str = ""
+    container_backend: str = ""
 
     @property
     def fatal(self) -> bool:
@@ -315,6 +320,8 @@ class Provisioned:
             "issues": [i.to_dict() for i in self.issues],
             "degraded_reason": self.degraded_reason,
             "ok": self.ok,
+            "container_id": self.container_id,
+            "container_backend": self.container_backend,
         }
 
 
@@ -377,6 +384,7 @@ async def provision(
     run_dir: Path | None = None,
     issues: list[SpecIssue] | None = None,
     runner: Any = None,
+    from_snapshot: str = "",
 ) -> Provisioned:
     """Stand the workspace up: create → preserve → setup, in that order.
 
@@ -405,6 +413,9 @@ async def provision(
         run_dir=run_dir,
     )
     out.path, out.branch, out.degraded_reason = root, branch, degraded
+    if spec.mode is Mode.CONTAINER and root:
+        await _provision_container(spec, out, run_id=run_id, from_snapshot=from_snapshot)
+        degraded = out.degraded_reason
     if degraded:
         # An isolated mode that could not isolate is reported as NOT isolated. The board's
         # suspend/resume decision reads this: claiming isolation we do not have would make the
@@ -423,6 +434,76 @@ async def provision(
     if spec.setup:
         await _run_setup(spec, root, out, runner=runner)
     return out
+
+
+async def _provision_container(
+    spec: WorkspaceSpec, out: Provisioned, *, run_id: str, from_snapshot: str = ""
+) -> None:
+    """Wrap the scratch dir in the declared container, or record why not (WF2WOR-12 §4.4).
+
+    Every non-success is a DEGRADATION, never a refusal: the pre-container behaviour — an
+    isolated scratch dir with the reason on the run record — is what a template that declared
+    `mode: container` gets on a machine with no backend, exactly as it did before this atom
+    landed. The run stays startable; the cockpit says why it is not containerized.
+    """
+    from personalclaw.workflows.container_env import detect_backend, parse_manifest
+
+    manifest, manifest_issues = parse_manifest(spec.container or None)
+    fatal = [i for i in manifest_issues if i.fatal]
+    if fatal or not manifest.declared:
+        # parse_workspace already surfaced these at save time; runs stamped before that, or
+        # specs written directly to disk, land here — same message, later surface.
+        out.degraded_reason = (
+            "; ".join(i.message for i in fatal)
+            or "container mode declared with no environment manifest; using an isolated "
+            "scratch dir"
+        )
+        return
+    backend = detect_backend()
+    if backend is None:
+        out.degraded_reason = (
+            "no container backend available (docker, nerdctl, or Apple's container CLI); "
+            "using an isolated scratch dir"
+        )
+        return
+    result = await backend.provision(
+        manifest,
+        workspace_dir=out.path,
+        run_id=run_id,
+        from_snapshot=from_snapshot,
+        context_dir=out.path,
+    )
+    if not result.ok:
+        out.degraded_reason = f"container provisioning failed ({backend.name}): {result.reason}"
+        return
+    out.container_id = result.value
+    out.container_backend = backend.name
+
+
+async def snapshot_workspace(run: Any, *, tag_suffix: str) -> str:
+    """Commit the run's live container to an image ref — the checkpoint's workspace anchor.
+
+    Returns "" when the run has no container or its backend cannot snapshot (Apple's CLI),
+    which the checkpoint stores as "no anchor": fork then provisions fresh, the pre-container
+    behaviour. Never raises — an anchor is an enhancement to a checkpoint, not a condition
+    for taking one.
+    """
+    state = workspace_state(run)
+    container_id = str(state.get("container_id", "") or "")
+    binary = str(state.get("container_backend", "") or "")
+    if not container_id or not binary:
+        return ""
+    from personalclaw.workflows.container_env import CliContainerBackend
+
+    backend = CliContainerBackend(binary)
+    if not backend.can_snapshot or not backend.available():
+        return ""
+    run_id = str(getattr(run, "id", "") or "")
+    result = await backend.snapshot(container_id, tag=f"pclaw/run-{run_id}:{tag_suffix}")
+    if not result.ok:
+        logger.warning("run %s: workspace snapshot failed: %s", run_id, result.reason)
+        return ""
+    return result.value
 
 
 def _create_workspace(
@@ -446,11 +527,11 @@ def _create_workspace(
         return workspace_dir, "", ""
 
     if spec.mode is Mode.CONTAINER:
-        # §4.4 is owner-deferred to WF2WOR-12. Degrading to scratch rather than refusing: a
-        # template that declares container today should still RUN (isolated, just not
-        # containerized) instead of being unstartable until that atom lands.
-        path = _scratch_dir(run_id, spec.name, run_dir)
-        return path, "", "container mode is not implemented yet; using an isolated scratch dir"
+        # The scratch dir is the container's HOST-SIDE workspace — the directory mounted at
+        # container_env.WORKSPACE_MOUNT. Whether a container actually wraps it is decided in
+        # `_provision_container` (backend detection is async and belongs to `provision()`);
+        # no degradation is recorded here so a successful container run reads clean.
+        return _scratch_dir(run_id, spec.name, run_dir), "", ""
 
     if spec.mode is Mode.WORKTREE:
         return _create_worktree(run_id, project_id=project_id, workspace_dir=workspace_dir)
@@ -612,6 +693,22 @@ async def teardown(
     spec_teardown = str(state.get("teardown", "") or "")
     isolated = bool(state.get("isolated", False))
     alive = bool(path) and Path(path).is_dir()
+
+    container_id = str(state.get("container_id", "") or "")
+    container_binary = str(state.get("container_backend", "") or "")
+    if container_id and container_binary:
+        # BEFORE any directory work: the container mounts the workspace dir, and removing the
+        # dir under a live container is the deletion-first inversion this function's docstring
+        # forbids for teardown commands. `--force` stops and removes in one verb; failure is
+        # recorded, not raised — a gone backend must not leave an undeletable run row.
+        from personalclaw.workflows.container_env import CliContainerBackend
+
+        removal = await CliContainerBackend(container_binary).remove(container_id)
+        (out.ran if removal.ok else out.failed).append(
+            f"remove container {container_id}"
+            if removal.ok
+            else f"remove container {container_id}: {removal.reason}"[:500]
+        )
 
     plan = worktrees.plan_teardown(
         teardown=spec_teardown, ephemeral=isolated and not state.get("name"), keep_open=keep_open

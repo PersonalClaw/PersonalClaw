@@ -720,6 +720,13 @@ class RunController:
                 workspace_dir=self._project_workspace(),
                 issues=issues,
                 runner=self.services.teardown_runner,
+                # The fork anchor (WF2WOR-12): a child forked from a checkpoint provisions its
+                # container FROM the parent's committed workspace state. Empty for ordinary
+                # runs, forks from head, and forks whose backend could not snapshot.
+                from_snapshot=str(
+                    (getattr(self.run, "forked_from", None) or {}).get("workspace_snapshot", "")
+                    or ""
+                ),
             )
         except Exception:
             logger.warning("run %s: workspace provisioning failed", self.run.id, exc_info=True)

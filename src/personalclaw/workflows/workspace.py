@@ -122,6 +122,10 @@ class WorkspaceSpec:
     #: fast-forward-only — a rebase or reset would silently discard work a previous run left
     #: there.
     name: str = ""
+    #: The raw `container:` manifest block (WF2WOR-12 §4.4) — validated by
+    #: `container_env.parse_manifest` when the mode is `container`, carried verbatim so
+    #: provisioning parses the same declaration the author wrote.
+    container: dict[str, Any] = field(default_factory=dict)
 
     @property
     def isolated(self) -> bool:
@@ -138,6 +142,7 @@ class WorkspaceSpec:
             # record, a journal or a UI must not be the thing that leaks a token.
             "env": {key: (value is not None) for key, value in self.env.items()},
             "name": self.name,
+            "container": dict(self.container),
             "isolated": self.isolated,
         }
 
@@ -203,6 +208,38 @@ def parse_workspace(raw: Any) -> tuple[WorkspaceSpec, list[SpecIssue]]:
     env, env_issues = parse_env(raw.get("env"))
     issues.extend(env_issues)
 
+    container_raw = raw.get("container")
+    container_block = dict(container_raw) if isinstance(container_raw, dict) else {}
+    if mode is Mode.CONTAINER:
+        # Validate the manifest AT PARSE TIME with the same fatal/advisory vocabulary as the
+        # rest of this function — a malformed manifest discovered inside a provisioning
+        # subprocess is an error the author never sees at save time. Lazy import: container_env
+        # imports SpecIssue from here, and a module-level import back would be a cycle.
+        from personalclaw.workflows.container_env import parse_manifest
+
+        if container_raw is None:
+            # Advisory, not fatal: the shipped posture is that a bare `mode: container` still
+            # RUNS (isolated scratch, reason recorded) — but the author should hear at save
+            # time that no environment is declared, not discover it on the run record.
+            issues.append(
+                SpecIssue(
+                    "container_no_manifest",
+                    "mode is `container` but no `container:` manifest is declared — the run "
+                    "will use an isolated scratch dir until an image or build is given",
+                )
+            )
+        else:
+            _, manifest_issues = parse_manifest(container_raw)
+            issues.extend(manifest_issues)
+    elif container_block:
+        issues.append(
+            SpecIssue(
+                "container_block_ignored",
+                f"a container manifest is declared but the mode is {mode.value!r} — it only "
+                "takes effect with `mode: container`",
+            )
+        )
+
     spec = WorkspaceSpec(
         mode=mode,
         preserve_patterns=patterns,
@@ -210,6 +247,7 @@ def parse_workspace(raw: Any) -> tuple[WorkspaceSpec, list[SpecIssue]]:
         teardown=str(raw.get("teardown", "") or "").strip(),
         env=env,
         name=str(raw.get("name", "") or "").strip(),
+        container=container_block,
     )
     if spec.mode is Mode.IN_PLACE and spec.teardown:
         issues.append(

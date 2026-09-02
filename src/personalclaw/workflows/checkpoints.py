@@ -66,6 +66,10 @@ class Checkpoint:
     created_at: str = ""
     note: str = ""
     instances: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Container-image ref committed at checkpoint time (WF2WOR-12 §4.4) — what anchors
+    #: fork-from-checkpoint to WORKSPACE state, not just journal state. Empty when the run
+    #: has no live container or its backend cannot snapshot; tolerated absent on old rows.
+    workspace_snapshot: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -75,6 +79,7 @@ class Checkpoint:
             "created_at": self.created_at,
             "note": self.note,
             "instances": self.instances,
+            "workspace_snapshot": self.workspace_snapshot,
         }
 
     @classmethod
@@ -87,6 +92,7 @@ class Checkpoint:
             created_at=str(d.get("created_at", "") or ""),
             note=str(d.get("note", "") or ""),
             instances=dict(d.get("instances") or {}),
+            workspace_snapshot=str(d.get("workspace_snapshot", "") or ""),
         )
 
     def instance_map(self) -> dict[str, NodeInstance]:
@@ -117,6 +123,7 @@ def save_checkpoint(
     *,
     note: str = "",
     now: str = "",
+    workspace_snapshot: str = "",
 ) -> Checkpoint:
     cp = Checkpoint(
         id=next_checkpoint_id(run.id),
@@ -125,6 +132,7 @@ def save_checkpoint(
         created_at=now,
         note=note,
         instances={p: i.to_dict() for p, i in instances.items()},
+        workspace_snapshot=workspace_snapshot,
     )
     path = _checkpoint_dir(run.id) / f"{cp.id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -204,12 +212,17 @@ def fork_run(
     """
     source_instances = dict(instances)
     spec_version = parent.spec_version
+    workspace_snapshot = ""
     if checkpoint_id:
         cp = load_checkpoint(parent.id, checkpoint_id)
         if cp is None:
             raise ValueError(f"unknown checkpoint {checkpoint_id!r} on run {parent.id}")
         source_instances = cp.instance_map()
         spec_version = cp.spec_version
+        # The workspace anchor (WF2WOR-12): the child's provisioning starts its container
+        # FROM the state committed at this checkpoint, so a code-kind fork resumes the
+        # filesystem the checkpoint saw — the thing journal replay alone cannot restore.
+        workspace_snapshot = cp.workspace_snapshot
 
     fork_axis = f"{parent.id}:{checkpoint_id or 'head'}"
     child = store.create(
@@ -226,7 +239,12 @@ def fork_run(
             # query rather than a recursive walk (WF2-R13).
             root_run_id=parent.root_run_id or parent.id,
             branch_key=fork_axis,
-            forked_from={"run_id": parent.id, "checkpoint_id": checkpoint_id, "note": note},
+            forked_from={
+                "run_id": parent.id,
+                "checkpoint_id": checkpoint_id,
+                "note": note,
+                "workspace_snapshot": workspace_snapshot,
+            },
             project_id=parent.project_id,
             mode=parent.mode,
             budget=parent.budget,
