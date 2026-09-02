@@ -111,18 +111,48 @@ GOLDEN_CASES = [
 # ── Real-home rail ────────────────────────────────────────────────────────────
 
 
-def _home_snapshot() -> dict[str, float]:
-    """A cheap, precise fingerprint of the two real-home dirs this module could reach."""
-    snap: dict[str, float] = {}
-    for rel in (".claude", ".claude/agents", ".personalclaw"):
-        d = _REAL_HOME / rel
+#: The exact basenames THIS module's golden cases render — its real-home blast radius.
+#: A leak reaching ``Path.home()`` would create one of these; a concurrent xdist worker
+#: writing an UNRELATED file in the same shared dir (or merely bumping a pre-existing
+#: file's mtime) would not. Scoping the rail to these is what stops it blaming an innocent
+#: test in this module for a neighbour's real-home leak (#1563) — the old rail watched
+#: every child of the shared dirs by mtime, so any concurrent write tripped it and the
+#: message degraded to the uninformative "mtimes changed".
+_LEAK_BASENAMES: frozenset[str] = frozenset(
+    [f"{a.name}.md" for a in GOLDEN_AGENTS]  # claude-code-agents → ~/.claude/agents/{slug}.md
+    + [GOLDEN_SKILL.slug]  # skill-md → skills/{slug}/SKILL.md (the slug dir)
+    + ["personalclaw-roster.mdc"]  # cursor-rules → the fixed roster file
+)
+
+
+def _home_snapshot(root: Path = _REAL_HOME) -> dict[str, int]:
+    """Fingerprint ONLY the entries this module's own golden cases could create under
+    ``root`` — keyed by existence + size, never bare mtime.
+
+    ``root`` is a parameter (defaulting to the real home) so the scoping can be tested
+    directly against a tmp tree. Two deliberate narrowings vs the original whole-home
+    mtime scan, both to answer #1563:
+
+    * only children whose NAME is one this module's writer would produce are recorded, so
+      a neighbouring worker's unrelated file is invisible; and
+    * the value is ``st_size``, so a foreign process bumping a pre-existing file's mtime
+      without changing its contents cannot register as a change.
+
+    A genuine leak from this module still trips it: the golden-named file appears (a new
+    key) or its size changes.
+    """
+    snap: dict[str, int] = {}
+    for rel in (".claude", ".claude/agents", ".cursor/rules", ".personalclaw"):
+        d = root / rel
         if not d.is_dir():
             continue
         for child in sorted(d.iterdir()):
+            if child.name not in _LEAK_BASENAMES:
+                continue
             try:
-                snap[str(child)] = child.stat().st_mtime
+                snap[str(child)] = child.stat().st_size
             except OSError:  # pragma: no cover — a racing external process
-                snap[str(child)] = -1.0
+                snap[str(child)] = -1
     return snap
 
 
@@ -132,15 +162,60 @@ def _real_home_rail():
 
     The write path resolves its destination through ``default_dest_dir`` only; every test
     passes an explicit ``tmp_path``. If a future edit ever makes a renderer or the writer
-    reach ``Path.home()`` directly, this rail names the file that appeared or changed.
+    reach ``Path.home()`` directly, this rail names the golden-slug file that appeared or
+    changed. It is scoped to THIS module's own output names (see ``_home_snapshot``) so it
+    catches a leak here without being trippable by a concurrent xdist worker's write.
     """
     before = _home_snapshot()
     yield
     after = _home_snapshot()
-    assert after == before, (
-        "a test in this module touched the REAL home: "
-        f"{sorted(set(after) ^ set(before)) or 'mtimes changed'}"
-    )
+    changed = sorted(k for k in set(after) | set(before) if before.get(k) != after.get(k))
+    assert not changed, f"a test in this module touched the REAL home: {changed}"
+
+
+# ── The rail's own scoping (regression guard for #1563) ───────────────────────
+
+
+class TestRealHomeRailScoping:
+    """The real-home rail must catch a leak from THIS module without being trippable by
+    a concurrent xdist worker's unrelated write — the #1563 false positive."""
+
+    def _agents_dir(self, root):
+        d = root / ".claude" / "agents"
+        d.mkdir(parents=True)
+        return d
+
+    def test_a_neighbours_unrelated_file_is_invisible(self, tmp_path):
+        # A worker in another module writes an unrelated file into the shared dir.
+        (self._agents_dir(tmp_path) / "some-other-agents-file.md").write_text("x")
+        assert _home_snapshot(root=tmp_path) == {}, "only this module's golden names are watched"
+
+    def test_a_bare_mtime_bump_on_a_watched_file_is_invisible(self, tmp_path):
+        # Even a golden-named file that merely has its mtime moved (same contents) must
+        # not read as a change — that was the reported 'mtimes changed' false positive.
+        f = self._agents_dir(tmp_path) / f"{GOLDEN_AGENTS[0].name}.md"
+        f.write_text("payload")
+        before = _home_snapshot(root=tmp_path)
+        os.utime(f, (f.stat().st_atime + 10_000, f.stat().st_mtime + 10_000))
+        assert _home_snapshot(root=tmp_path) == before, "size-keyed, so an mtime move is a no-op"
+
+    def test_this_modules_leak_is_caught(self, tmp_path):
+        # A golden-named file APPEARING is a real leak from this module → visible.
+        agents = self._agents_dir(tmp_path)
+        before = _home_snapshot(root=tmp_path)
+        (agents / f"{GOLDEN_AGENTS[0].name}.md").write_text("leaked")
+        after = _home_snapshot(root=tmp_path)
+        changed = sorted(k for k in set(after) | set(before) if before.get(k) != after.get(k))
+        assert len(changed) == 1 and changed[0].endswith(f"{GOLDEN_AGENTS[0].name}.md")
+
+    def test_a_size_change_on_a_watched_file_is_caught(self, tmp_path):
+        # A leak that OVERWRITES an existing golden-named file changes its size → visible.
+        f = self._agents_dir(tmp_path) / GOLDEN_SKILL.slug
+        f.write_text("a")
+        before = _home_snapshot(root=tmp_path)
+        f.write_text("a much longer body")
+        after = _home_snapshot(root=tmp_path)
+        assert before != after, "size-keyed change is detected"
 
 
 # ── The contract + registry ───────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { Check, X, ShieldCheck, Inbox, Sparkles, CheckCheck, Send } from 'lucide-react'
 import { api } from '../../../lib/api'
+import { reportingWrite } from '../../../app/reportingWrite'
 import { rowSubject } from '../../../lib/rowSubject'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
@@ -27,10 +28,14 @@ export function ActionCenter({ navigate }: RouteProps) {
   // Optimistically hidden rows (acted on) until the feed catches up.
   const [done, setDone] = useState<Set<string>>(new Set())
 
-  const withBusy = async (key: string, fn: () => Promise<unknown>) => {
+  const withBusy = async (key: string, what: string, fn: () => Promise<unknown>) => {
     setBusy((s) => new Set(s).add(key))
-    try { await fn(); setDone((s) => new Set(s).add(key)) } catch { /* leave in place on failure */ }
-    finally { setBusy((s) => { const n = new Set(s); n.delete(key); return n }) }
+    // A failed action leaves the row in place AND says why (the server's own sentence).
+    // The empty catch here made a 409 Accept look like a dead button: the row stayed,
+    // nothing moved, no message — while the Skills page surfaced the same failure fine.
+    const ok = await reportingWrite(what, fn)
+    if (ok) setDone((s) => new Set(s).add(key))
+    setBusy((s) => { const n = new Set(s); n.delete(key); return n })
     refreshAll()
   }
 
@@ -62,14 +67,14 @@ export function ActionCenter({ navigate }: RouteProps) {
   }
 
   const primary = (e: Entry) => {
-    if (e.kind === 'approval') withBusy(e.key, () => api.resolveApproval(e.id, 'approve'))
-    else if (e.kind === 'proposal') withBusy(e.key, () => api.acceptSkillProposal(e.id).then(bustProposals))
+    if (e.kind === 'approval') withBusy(e.key, `approve “${rowSubject([e.title, e.sub])}”`, () => api.resolveApproval(e.id, 'approve'))
+    else if (e.kind === 'proposal') withBusy(e.key, `accept “${rowSubject([e.title, e.sub])}”`, () => api.acceptSkillProposal(e.id).then(bustProposals))
     else navigate('inbox')  // reply in the detail where the draft editor lives
   }
   const secondary = (e: Entry) => {
-    if (e.kind === 'approval') withBusy(e.key, () => api.resolveApproval(e.id, 'reject'))
-    else if (e.kind === 'proposal') withBusy(e.key, () => api.rejectSkillProposal(e.id).then(bustProposals))
-    else withBusy(e.key, () => api.updateInboxItem(e.id, { status: 'dismissed' }))
+    if (e.kind === 'approval') withBusy(e.key, `reject “${rowSubject([e.title, e.sub])}”`, () => api.resolveApproval(e.id, 'reject'))
+    else if (e.kind === 'proposal') withBusy(e.key, `reject “${rowSubject([e.title, e.sub])}”`, () => api.rejectSkillProposal(e.id).then(bustProposals))
+    else withBusy(e.key, `dismiss “${rowSubject([e.title, e.sub])}”`, () => api.updateInboxItem(e.id, { status: 'dismissed' }))
   }
 
   return (

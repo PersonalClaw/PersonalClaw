@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowUpRight, Workflow } from 'lucide-react'
-import { api } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
 import { messageEnter } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Meter } from '../../ui/Meter'
+import { Button } from '../../ui/Button'
 import { foldEvent, foldSnapshot, type WorkflowViewModel } from '../workflows/workflowFold'
 import { useWorkflowStream } from '../workflows/useWorkflowStream'
 import { fmtElapsed, isTerminal, nodeLook, runLook } from '../workflows/workflowMeta'
@@ -44,6 +45,8 @@ export function workflowRefFromTool(
 export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
   const [vm, setVm] = useState<WorkflowViewModel | null>(null)
   const [gone, setGone] = useState(false)
+  // A fetch miss that is NOT a 404: the run still exists, we just could not read it.
+  const [loadFailed, setLoadFailed] = useState(false)
   // Guard against a late fetch landing after a newer snapshot: the poll and the stream can
   // both deliver, and applying the older one would flicker the card backwards.
   const latest = useRef(0)
@@ -52,11 +55,15 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
     const stamp = ++latest.current
     try {
       const snap = await api.workflowRun(refObj.runId)
-      if (stamp === latest.current) setVm(foldSnapshot(snap))
-    } catch {
-      // A run deleted (or never readable) collapses the card rather than showing a
-      // permanently "loading" widget that looks broken.
-      if (stamp === latest.current) setGone(true)
+      if (stamp === latest.current) { setVm(foldSnapshot(snap)); setLoadFailed(false) }
+    } catch (e) {
+      if (stamp !== latest.current) return
+      // Only a 404 collapses the card — the run is genuinely gone (deleted, never
+      // readable). Any OTHER failure (5xx, network blip) used to erase the card too,
+      // which read as the workflow vanishing; keep what we have and mark the miss so
+      // a later poll/stream event can recover it.
+      if (e instanceof ApiError && e.status === 404) setGone(true)
+      else setLoadFailed(true)
     }
   }, [refObj.runId])
 
@@ -80,6 +87,18 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
   }, [live, load])
 
   if (gone) return null
+
+  // Never loaded AND the read failed: say so instead of an eternal skeleton (the
+  // pre-fix behaviour was worse — the card erased itself entirely on any failure).
+  if (!vm && loadFailed) {
+    return (
+      <motion.div {...messageEnter} className="my-s flex items-center gap-s rounded-xl border border-outline-variant p-m">
+        <Workflow size={15} className="shrink-0 text-on-surface-low" />
+        <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem]">Couldn't load this workflow run</span>
+        <Button variant="ghost-accent" size="xs" onClick={() => load()}>Try again</Button>
+      </motion.div>
+    )
+  }
 
   const look = vm ? runLook(vm.status) : null
   const StatusIcon = look?.icon

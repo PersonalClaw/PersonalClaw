@@ -185,7 +185,13 @@ describe('the merge only happens on confirmation, and in the right direction', (
     const dialog = await openConfirmation()
     fireEvent.click(Array.from(dialog.querySelectorAll('button'))
       .find((b) => /cancel/i.test(b.textContent ?? '')) as HTMLButtonElement)
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    // Dismissal is the STORE closing (Cancel calls `closeDialog` synchronously), not the node
+    // leaving the DOM: `AnimatePresence` holds the exiting alertdialog through a transition jsdom
+    // never advances, so a `waitFor` on its removal measured animation timing and flaked under CI
+    // load (#1547). Read the store — the actual promise of "cancel" — as `afterEach` above does.
+    let open: { id: number }[] = []
+    subscribeDialogs((list) => { open = list })()
+    expect(open).toHaveLength(0)
     expect(merge).not.toHaveBeenCalled()
     expect(onMerged).not.toHaveBeenCalled()
   })

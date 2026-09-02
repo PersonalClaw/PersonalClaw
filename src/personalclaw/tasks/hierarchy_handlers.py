@@ -647,6 +647,29 @@ async def api_projects_delete(request: web.Request) -> web.Response:
         # their project_id) — chats are the user's conversations, detached not destroyed.
         await _teardown_bound_loops(pid)
         _unbind_bound_chats(state, pid)
+    # Cascade the project's TASKS before the project + its lists are dropped. `delete_project`
+    # removes the task LISTS (and tombstones them) but the task rows live in the native task
+    # provider, keyed by task_list_id — so without this they'd survive pointing at dead list ids
+    # with a blanked project label, unreachable from every scoped view (#457). Resolve by project
+    # NAME (the provider's stable key) BEFORE delete_project, because the derive-label lookup the
+    # provider uses to answer `project=` reads the very lists we're about to unlink. Tasks are
+    # project content, not live work needing a teardown handshake (that's loops); a per-task failure
+    # is logged but never blocks the delete, matching the loop-teardown sweep above.
+    _proj = _store().get_project(pid)
+    if _proj is not None:
+        try:
+            from personalclaw.tasks import registry as task_registry
+
+            doomed, _ = await task_registry.list_all_tasks(project=_proj.name, limit=10_000)
+            for t in doomed:
+                try:
+                    await task_registry.delete_task(t.id)
+                except Exception:
+                    logger.debug(
+                        "delete-project: task %s cascade delete failed", t.id, exc_info=True
+                    )
+        except Exception:
+            logger.debug("delete-project: task cascade sweep failed for %s", pid, exc_info=True)
     try:
         deleted = _store().delete_project(pid)
     except ValueError as e:

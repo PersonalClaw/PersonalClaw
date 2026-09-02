@@ -1951,6 +1951,29 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
         )
 
     report = diagnose(rows, known_workflows=known_workflows)
+    # Semantic spec findings (#560/#612): the structural doctor above cannot see an
+    # invalid-but-present cron or an inert skip date — `semantic_spec_issues` lives beside
+    # the fire path and mirrors its exact matching rules, so "the doctor says healthy"
+    # and "it never fires / never skips" can no longer both be true.
+    from personalclaw.triggers.arm import semantic_spec_issues
+    from personalclaw.triggers.calendar import Finding
+
+    for row in store_rows:
+        for issue in semantic_spec_issues(row.trigger.kind, row.trigger.spec):
+            is_error = issue.severity == "error"
+            report.findings.append(
+                Finding(
+                    trigger_id=f"{_SCHEDULE}:{row.trigger.id}",
+                    code="unfireable_spec" if is_error else "inert_spec_entry",
+                    detail=f"{issue.path}: {issue.message}",
+                    fix=(
+                        "correct the expression or date — as authored, this part of the "
+                        "trigger cannot do what it says"
+                        if is_error
+                        else "confirm this is intended, or adjust the schedule/skip date"
+                    ),
+                )
+            )
     return web.json_response(report.to_dict())
 
 

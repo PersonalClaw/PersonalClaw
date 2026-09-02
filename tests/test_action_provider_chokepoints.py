@@ -304,6 +304,12 @@ def test_the_site_list_is_not_STALE():
         # earn the exemption are asserted in `test_the_would_execute_preview_site_only_reads_the_
         # declaration` above, so this entry cannot become a silent bypass.
         "personalclaw.dashboard.handlers.doctor",
+        # The create-time existence check (#779) — `triggers.tools.create` resolves a provider to
+        # ask ONE question, "is this name registered?", and refuses the row before it exists when
+        # the answer is no. The result is never bound and nothing executes; the properties that
+        # earn the exemption are asserted in
+        # `test_the_create_time_provider_check_only_asks_existence` below.
+        "personalclaw.triggers.tools",
         "personalclaw.action_providers.registry",  # defines it
         "personalclaw.action_providers",  # re-exports it
     }
@@ -311,6 +317,32 @@ def test_the_site_list_is_not_STALE():
     assert not unaccounted, (
         "these modules reach an action provider but are not in EXECUTION_SITES: "
         f"{sorted(unaccounted)}. Add them (with a policy check) or document the exemption."
+    )
+
+
+def test_the_create_time_provider_check_only_asks_existence():
+    """The properties that earn `triggers.tools`'s exemption (#779).
+
+    `create` refuses an unregistered action provider BEFORE the row exists — the
+    green-row-silent-failure-loop this repo's BA-7 rule exists to prevent. That takes one
+    registry question, "is this name registered?", and nothing more: the resolved provider
+    is never bound to a name, never handed to a runner, and never executed. "It's different"
+    is not an exemption, so the difference is asserted here — if `create` ever starts USING
+    the provider it resolves, this test fails and the module must argue its way into
+    `EXECUTION_SITES` with a real policy gate instead.
+    """
+    import re
+
+    src = _source("personalclaw.triggers.tools")
+    calls = re.findall(r"get_action_provider\([^)]*\)[^\n]*", src)
+    assert calls, "the exemption is stale if create no longer resolves a provider"
+    assert all("is None" in c for c in calls), (
+        "every resolve in triggers.tools must be the bare `is None` existence check; "
+        f"found: {calls}"
+    )
+    assert "_ensure_default_providers_registered()" in src, (
+        "the existence check must register the built-ins first, or startup order would "
+        "make it refuse real providers"
     )
 
 

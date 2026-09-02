@@ -136,6 +136,22 @@ def judge_benchmarks_dir() -> Path:
     return d
 
 
+def bakeoff_dir() -> Path:
+    """``evals/benchmarks/bakeoff/`` — the model bake-off's captured real inputs (§7, ES-10).
+
+    Created at mode 0700 because it holds redacted excerpts of the user's OWN traffic:
+    unlike the shipped fixture sets under ``benchmarks/``, these are sampled production
+    inputs, so the directory is owner-only from birth rather than inheriting the parent's
+    mode. The contents are also flagged ``derived_within`` on the ``evals`` inventory entry,
+    so they never leave the machine in a portability export OR a snapshot.
+    """
+    d = benchmarks_dir() / "bakeoff"
+    d.mkdir(parents=True, exist_ok=True)
+    # mkdir honours the umask, so an existing dir may be group/other-readable; force 0700.
+    d.chmod(0o700)
+    return d
+
+
 def studies_dir() -> Path:
     """``evals/studies/`` — one directory per pre-registered study (§2, ES-5)."""
     d = evals_root() / "studies"
