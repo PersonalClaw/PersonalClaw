@@ -3758,6 +3758,19 @@ async def run_chat(
                 # move into the Blocked lane without a browser refresh.
                 state.push_sessions_update()
                 mirrored_item = ""
+                # Bind `outcome` BEFORE the try so the finally (and the post-block reads
+                # below) can never hit UnboundLocalError. It is set on the success and
+                # grace-timeout paths and by the outer TimeoutError handler — but NOT when
+                # the inner wait is cancelled (pytest-timeout, gateway shutdown, client
+                # disconnect, navigation away). On that path the finally used to raise
+                # UnboundLocalError, which REPLACED the cancellation in the traceback (so
+                # a CI hang read as an unrelated error, #1536) and — worse in production —
+                # skipped `_resolve_mirrored_approval`, leaving the mirrored inbox item
+                # asking for a decision the turn is already tearing down. Default
+                # "rejected": a never-answered approval must not execute the tool, and the
+                # mirror is resolved rather than stranded. The cancellation still
+                # propagates (the finally doesn't swallow it).
+                outcome = "rejected"
                 try:
                     # An approval prompt is session-MODAL for latency: if the user is
                     # looking at the chat, the card is the right surface and the inbox
