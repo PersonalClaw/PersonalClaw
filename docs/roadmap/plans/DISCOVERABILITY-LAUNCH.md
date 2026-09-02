@@ -116,6 +116,17 @@ No domain/site/docs-site/demo; README screenshot is a placeholder (`docs/assets/
 
 ## Execution log
 
+### 2026-09-02 — `DL-7` (S4 T4.1) `/compare` capability matrix — **DONE**
+
+The released-version capability matrix ships at `/compare`: 20 rows across 5 groups, each row
+sourced to the PINNED released core (v0.1.3, verified at the tag, not `main`) and byte-equal to its
+declared claim — 9 holding, 4 narrower-than-stated, 7 not-in-this-release, so the **does-not-do rows
+are present** and the page publishes its own failures (the anti-vacuity requirement). Registered in
+the site contract + sitemap; held to the metadata, runtime, axe WCAG A/AA (all three device profiles
+green) and Lighthouse (100) contracts. Validated first-hand through the personalclaw.dev full local
+CI: `validate-compare-render` (20 rows sourced into v0.1.3), `validate-build` (1 compare page in
+dist), 121 playwright specs, Lighthouse 99-100 across nine routes.
+
 ### 2026-08-16 — `DL-4` (T3.1) demo-home seed fixture — **PARTIAL / BLOCKED**
 
 **Landed.** `src/personalclaw/tests_fixtures/demo-home/` now ships a home that reads as used:

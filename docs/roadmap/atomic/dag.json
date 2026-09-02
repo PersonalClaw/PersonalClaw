@@ -6175,14 +6175,15 @@
         {
           "id": "DL-7",
           "title": "S4 T4.1: released-version capability matrix at /compare",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 — Comparison + listing program (T4.1)",
           "done_when": "A /compare page publishes a capability matrix about PersonalClaw ONLY — what it does and does not do, with every row sourced to the PINNED/RELEASED core version (verified at the tag, not against main) and the 'does not do' rows included; the page is registered in the site contract and the sitemap, held to the metadata, runtime, axe WCAG A/AA and Lighthouse contracts, and carries an anti-vacuity check that FAILS when the matrix data is non-empty but the page renders no rows; peer/competitor columns are deliberately OUT of scope at pre-1.0 (owner taste call 2026-08-27 — see blocked_reason).",
           "deps": [
             "DL-1",
             "EXT:LEARNING-VISIBILITY:benchmark results for matrix rows"
           ],
-          "blocked_reason": "OWNER TASTE CALL 2026-08-27 -- DO NOT PUBLISH PEER COMPARISONS AT PRE-1.0. The done_when as written names a peer product that is on this project's own public-repo keep-out list, so the clause is UNEXECUTABLE rather than merely awkward -- which forced the wider question. RULED: drop the peer columns entirely and re-scope DL-7 to a capability matrix about PersonalClaw ONLY -- what it does and does not do, every row sourced to the RELEASED version. Reasoning: a comparison page makes public claims about named third parties and is the highest-liability page a project can ship. DL-6 just found TEN claim families in our own launch draft that hold on main and are FALSE at v0.1.3 (including on_violation 'warn', declared with ZERO consumers at the tag). A project that has just discovered it was about to overclaim about itself has no standing to grade competitors. The honest and more useful half is an accurate statement of our own scope, INCLUDING the 'does not do' rows. The done_when is to be reworded here and in DL.md."
+          "blocked_reason": "OWNER TASTE CALL 2026-08-27 -- DO NOT PUBLISH PEER COMPARISONS AT PRE-1.0. The done_when as written names a peer product that is on this project's own public-repo keep-out list, so the clause is UNEXECUTABLE rather than merely awkward -- which forced the wider question. RULED: drop the peer columns entirely and re-scope DL-7 to a capability matrix about PersonalClaw ONLY -- what it does and does not do, every row sourced to the RELEASED version. Reasoning: a comparison page makes public claims about named third parties and is the highest-liability page a project can ship. DL-6 just found TEN claim families in our own launch draft that hold on main and are FALSE at v0.1.3 (including on_violation 'warn', declared with ZERO consumers at the tag). A project that has just discovered it was about to overclaim about itself has no standing to grade competitors. The honest and more useful half is an accurate statement of our own scope, INCLUDING the 'does not do' rows. The done_when is to be reworded here and in DL.md.",
+          "evidence": "done 2026-09-02 (site commit ab7abe1, shipped): /compare capability matrix about PersonalClaw only — 20 rows across 5 groups, every row sourced to the PINNED released core (v0.1.3, verified at the tag) and byte-equal to its declared claim (9 holding, 4 narrower-than-stated, 7 not-in-this-release = the 'does not do' rows present); page registered in the site contract + sitemap; held to metadata/runtime/axe WCAG A-AA (all 3 profiles green) + Lighthouse (100) contracts; anti-vacuity check present (the page publishes its own failures). Validated first-hand via the personalclaw.dev full local CI (validate-compare-render + validate-build + 121 playwright + lighthouse)."
         },
         {
           "id": "DL-8",
@@ -6454,13 +6455,14 @@
         {
           "id": "ET-6",
           "title": "Build the four scaffold-generated exemplar apps and list them in the registry",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 (T3.1, V3); Design — Exemplars (watched-source-github, action-home-assistant, inbox-github-notifications, channel-null)",
           "done_when": "all four exemplars scaffold-generated then minimally implemented (each ≤300 LOC, README-led), each installs from its git URL through the Store and is registry-listed; V3: fork-simulate one exemplar (clone, rename, install) proves the third-party path end to end post-registry. NOTE: watched-source-github's provider shape must track the WATCHED-SOURCES contract; action-home-assistant may be community-validated if no HA instance (Owner task 4)",
           "deps": [
             "ET-1",
             "ET-3"
-          ]
+          ],
+          "evidence": "done 2026-09-02 (PRs #2327 registry + the four exemplar repos): four scaffold-generated exemplar apps built, minimally implemented (each <=300 LOC, README-led), and published as public org repos github.com/PersonalClaw/{channel-null (channel, teaching null-transport), inbox-github-notifications (inbox, stdlib GitHub-notifications poller), watched-source-github (trigger_source, new_release/new_issue watcher), action-home-assistant (action, HA webhook)}; all four listed in the registry (PR #2327, validate_registry.py front-door checks green against the live repos: repo liveness + manifest parse/row-agreement + license + scanner dry-run clean); Store git-URL install validated headless (app_source.resolve -> app_manager.install in an isolated PERSONALCLAW_HOME, all four install+register); V3 fork-simulate PASS (channel-null clone -> rename to my-null-channel -> install through the same scanner gate)."
         },
         {
           "id": "ET-7",
@@ -7720,11 +7722,6 @@
         "plan": "DL"
       },
       {
-        "id": "DL-7",
-        "title": "S4 T4.1: released-version capability matrix at /compare",
-        "plan": "DL"
-      },
-      {
         "id": "DL-8",
         "title": "S4 T4.2+T4.3: listing submissions + P0 launch checklist",
         "plan": "DL"
@@ -7767,11 +7764,6 @@
       {
         "id": "ET-4",
         "title": "Default-source seeding: ship the registry URL as a removable default git source",
-        "plan": "ET"
-      },
-      {
-        "id": "ET-6",
-        "title": "Build the four scaffold-generated exemplar apps and list them in the registry",
         "plan": "ET"
       },
       {
@@ -9807,9 +9799,9 @@
         "code": "DL",
         "plan": "DISCOVERABILITY-LAUNCH",
         "total_atoms": 9,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
@@ -9834,9 +9826,9 @@
         "code": "ET",
         "plan": "ECOSYSTEM-TOOLING",
         "total_atoms": 8,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
