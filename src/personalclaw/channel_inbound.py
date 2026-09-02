@@ -67,6 +67,8 @@ from personalclaw.channel_trust import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from personalclaw.channel_transports.base import ChannelMessage
     from personalclaw.gateway_services import GatewayServices
 
@@ -165,7 +167,12 @@ def _decide(state: Any, provider: str, msg: "ChannelMessage", *, is_dm: bool) ->
 
 
 async def deliver_inbound(
-    services: "GatewayServices", provider: str, msg: "ChannelMessage", *, is_dm: bool = True
+    services: "GatewayServices",
+    provider: str,
+    msg: "ChannelMessage",
+    *,
+    is_dm: bool = True,
+    turn_runner: "Callable[[Any, Any, str], Awaitable[None]]",
 ) -> TrustVerdict:
     """Apply trust to one inbound message and, only if allowed, drive an agent turn.
 
@@ -178,18 +185,29 @@ async def deliver_inbound(
     On ``allowed``, the text that enters the session is ``fenced_text`` when the gate
     produced one (non-owner group content, wrapped so a model reads it as DATA) and the
     raw text otherwise — the fence is applied by the gate, so a transport cannot forget it.
+
+    ``turn_runner`` is INJECTED, never imported: driving a turn means calling
+    ``dashboard.chat_runner.run_chat``, and importing that here would make ``channel_inbound``
+    (domain) depend on the HTTP surface — the ``core-must-not-import-the-http-surface``
+    inversion the structural gate exists to catch. The composition root (the gateway, which
+    legitimately faces downward) hands the callable in, exactly as
+    ``inbound.openai_dialect.register_routes`` takes its own ``turn_runner``.
     """
     state = getattr(services, "dashboard_state", None)
     verdict = admit(state, provider, msg, is_dm=is_dm)
     if not verdict.allowed:
         logger.debug("channel inbound denied: provider=%s reason=%s", provider, verdict.reason)
         return verdict
-    await _route_to_session(services, provider, msg, verdict.fenced_text or msg.text)
+    await _route_to_session(services, provider, msg, verdict.fenced_text or msg.text, turn_runner)
     return verdict
 
 
 async def _route_to_session(
-    services: "GatewayServices", provider: str, msg: "ChannelMessage", text: str
+    services: "GatewayServices",
+    provider: str,
+    msg: "ChannelMessage",
+    text: str,
+    turn_runner: "Callable[[Any, Any, str], Awaitable[None]]",
 ) -> None:
     """Link a dashboard session to this channel thread and drive one turn.
 
@@ -202,7 +220,6 @@ async def _route_to_session(
         logger.warning("channel inbound: no dashboard state — cannot route %s message", provider)
         return
 
-    from personalclaw.dashboard.chat import run_chat
     from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
     thread_key = msg.thread_id or msg.channel_id
@@ -219,7 +236,7 @@ async def _route_to_session(
         session.queue_append(text)
         return
 
-    task = asyncio.ensure_future(run_chat(state, session, text))
+    task = asyncio.ensure_future(turn_runner(state, session, text))
     session.task = task
     tasks = getattr(state, "_background_tasks", None)
     if tasks is not None:

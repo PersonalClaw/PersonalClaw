@@ -407,7 +407,7 @@ class GatewayOrchestrator:
         """
         from personalclaw.channel_inbound import deliver_inbound
 
-        return await deliver_inbound(self, provider, msg, is_dm=is_dm)
+        return await deliver_inbound(self, provider, msg, is_dm=is_dm, turn_runner=run_chat)
 
     # ------------------------------------------------------------------
     # Tool approval callback (shared by cron, heartbeat, subagent, task)
