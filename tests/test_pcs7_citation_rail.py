@@ -58,9 +58,9 @@ _CITATIONS = (
     ("llm/anthropic.py", 529, 531, "input_tokens = it", "llm/anthropic.py:529-531"),
     ("llm/anthropic.py", 715, 717, "input_tokens = it", ":715-717"),
     ("llm/anthropic.py", 84, 98, "cache_read_input_tokens", "llm/anthropic.py:84-98"),
-    ("pricing.py", 76, 83, "cache_read_rate", "pricing.py:76-83"),
+    ("pricing.py", 106, 113, "cache_read_rate", "pricing.py:106-113"),
     ("usage_ledger.py", 197, 200, "cache_creation_tokens", "usage_ledger.py:197-200"),
-    ("pricing.py", 137, 139, "cache_creation_tokens", "pricing.py:137-139"),
+    ("pricing.py", 166, 168, "cache_creation_tokens", "pricing.py:166-168"),
     (
         "dashboard/chat_runner.py",
         635,
