@@ -6295,7 +6295,10 @@ export const api = {
     return get<AuditPage>(`/api/security/audit?${q}`)
   },
   auditVerify: (full = false) => get<SelVerify>(`/api/security/audit/verify${full ? '?full=1' : ''}`),
-  selRotate: () => post<{ ok?: boolean }>('/api/sel/rotate'),
+  // Mirrors `SecurityEventLog.rotate()` (src/personalclaw/sel.py): the log is archived and a fresh
+  // chain started. `archive_path` is the timestamped `.bak.jsonl` the old entries moved to (empty when
+  // there was nothing to archive). The old `{ ok?: boolean }` shape silently dropped all of this.
+  selRotate: () => post<{ rotated: boolean; entries_before: number; entries_after: number; archive_path: string }>('/api/sel/rotate'),
   // session archive (read-only browse)
   sessionArchives: () => get<{ archives: SessionArchive[] }>('/api/session/archive').then((d) => d.archives),
   // The read endpoint serves raw NDJSON text (application/x-ndjson), NOT a JSON
