@@ -961,9 +961,14 @@ def _dashboard_roots() -> list[tuple[str, str]]:
         pass
     _add("Home", config_dir)
     _add("Outbox", outbox_dir)
-    _add("Uploads", lambda: os.path.expanduser("~/.personalclaw/uploads"))
+    # Uploads + PersonalClaw home roots must follow the ACTIVE home (config_dir()),
+    # NOT a hardcoded ~/.personalclaw: a gateway on a custom PERSONALCLAW_HOME (every
+    # dev instance) would otherwise browse AND edit the developer's REAL home via the
+    # write allowlist (#294). config_dir() re-reads PERSONALCLAW_HOME live, and both
+    # stay lambda/callable-deferred so the home is resolved per request, not at import.
+    _add("Uploads", lambda: os.path.join(config_dir(), "uploads"))
     # PersonalClaw home root — quick access to the whole config/data tree.
-    _add("PersonalClaw", lambda: os.path.expanduser("~/.personalclaw"))
+    _add("PersonalClaw", config_dir)
 
     # Loop workspaces — a Loop (typically a code kind, but any kind may) can bind an
     # arbitrary (brownfield) directory anywhere on disk; its cockpit (file tree +
