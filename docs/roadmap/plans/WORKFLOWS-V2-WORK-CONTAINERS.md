@@ -419,6 +419,15 @@ Sessions C1-C2 are **prerequisites for any width increase** and are independentl
 
 ## Execution log
 
+- **[2026-09-02][WF2WOR-12] DONE — container workspace mode ships (PR #2304).**
+  `workflows/container_env.py` carries the typed workspace manifest (image XOR build, user,
+  mounts, capabilities; privileged and reserved-`/workspace` mounts refused at parse time),
+  docker/nerdctl + Apple-container CLI backends behind `detect_backend()`, and engine-owned
+  runtime semantics. Snapshots anchor fork-from-checkpoint end to end
+  (`Checkpoint.workspace_snapshot` → `fork_run` → `provision(from_snapshot=)`). No hard
+  Docker dependency: provisioning degrades to an isolated scratch dir with a recorded
+  reason. Opt-in; defaults unchanged. 35 new tests + 558-test blast radius green.
+
 ### 2026-08-02 — session 46 (project umbrella + truthful lifecycle + Work board) DONE
 
 `workflows/containers.py` (new): the Work board projection with state grouping and claim leases, the

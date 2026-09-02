@@ -580,6 +580,12 @@ Templates are the plan's proof-of-life — field-tested shapes with real daily c
 
 ## Execution log
 
+- **[2026-09-02][WF2KNO-9] DONE — the blocker was stale; the egress provider already ships.**
+  `action_providers/net_fetch_provider.py` (PROVIDER_NAME `net-fetch`, docstring citing this
+  atom) rides `net/guard.py`'s egress chokepoint, and the four monitor/ingest templates
+  dispatch it — `test_the_monitor_slate_dispatches_a_real_egress_action` green in the
+  355-test bundled catalog run. Flip records the verification, not new code.
+
 - **2026-08-01 — CODE DONE (push blocked) — Store semantics groundwork (session 34 of the WF2 queue).**
   Branch `feature-wf2-knowledge-store`. `knowledge/semantics.py`: the 10-kind taxonomy, logical
   identity (`{kind}:{normalized_title}`, unicode/case/punctuation-folded), content + chunk hashing,

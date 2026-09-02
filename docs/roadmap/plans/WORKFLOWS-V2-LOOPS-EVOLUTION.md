@@ -851,6 +851,15 @@ These loop-engine behaviors are baked into `gateway._fire`, the watchdog, and th
 
 ## Execution log
 
+- **[2026-09-02][WF2LOO-9] DONE — goal-pursuit-monitor ships (PR #2302).**
+  The bundled template (intake → until-loop [event park gate, 48h timeout → check stage] →
+  report) is real: scheduling stages carry `capability: mutating` and call
+  `set_onetime_task(resume_run_id="self")`; `T.create(resume=)` writes the `workflow.resume`
+  payload `wakeup.resume_target_of` reads (the write side AUTO-R11's read side was waiting
+  for); every agent-created trigger now takes a mandatory TTL (7d one-shot / 30d recurring,
+  clamped to [60s, 90d]). Restart survival proven by a store-reload test. 15 new tests +
+  the 355-test bundled catalog green.
+
 - **[2026-08-28][WF2LOO-9] BLOCKER CLOSED — a trigger fire can now RESUME a parked run.**
   `WF2LOO-9`'s fourth clause (the `goal-pursuit-monitor` template) was unmet because there was no
   parked-run resume target. There is one now. *(Atom id follows — this landed as unowned scope; the
