@@ -330,6 +330,56 @@ def create(
     if refusal is not None:
         return refusal
 
+    # Same BA-7 rule for the SPEC and the PROVIDER (#483/#687/#612/#270/#779). Measured before
+    # fixing: `POST /api/triggers` persisted `{"kind":"cron","expr":"not a cron"}` as an enabled
+    # row with `next_fire_at=""` that could never fire, and an unregistered action provider
+    # dispatched into the gateway's "unknown action provider" warning forever — both while the
+    # doctor said healthy. Structure (`validate_spec`) and semantics (`semantic_spec_issues`,
+    # living beside the fire path in `arm`) refuse on ERROR before the row exists; warnings ride
+    # the created-response so a sub-floor cadence or inert skip date is named while the author is
+    # still looking.
+    from personalclaw.triggers.arm import semantic_spec_issues
+    from personalclaw.triggers.models import validate_spec
+
+    spec_issues = [
+        i
+        for i in (
+            *validate_spec(resolved_kind, resolved_spec),
+            *semantic_spec_issues(resolved_kind, resolved_spec),
+        )
+        if i.severity == "error"
+    ]
+    if spec_issues:
+        detail = "; ".join(f"{i.path}: {i.message}" for i in spec_issues)
+        return ToolResult(False, f"Error: {detail}", {"spec": resolved_spec})
+    spec_warnings = [
+        i for i in semantic_spec_issues(resolved_kind, resolved_spec) if i.severity != "error"
+    ]
+
+    provider_name = str(
+        (workflow.get("inline") or {}).get("provider")
+        if isinstance(workflow.get("inline"), dict)
+        else workflow.get("provider") or ""
+    ).strip()
+    if provider_name and "resume" not in workflow:
+        from personalclaw.action_providers.registry import (
+            _ensure_default_providers_registered,
+            get_action_provider,
+            list_action_providers,
+        )
+
+        _ensure_default_providers_registered()
+        if get_action_provider(provider_name) is None:
+            # An unregistered provider is created-enabled-armed today and then rejected on
+            # EVERY dispatch by the gateway (#779) — the exact green-row-silent-loop BA-7
+            # exists to prevent. Refused with the live registry so the fix is one edit away.
+            return ToolResult(
+                False,
+                f"Error: unknown action provider {provider_name!r}. "
+                f"Registered providers: {sorted(list_action_providers())}.",
+                {"provider": provider_name},
+            )
+
     trigger = Trigger(
         id=_unique_id(store, slug_for(name, resolved_kind)),
         name=name.strip(),
@@ -381,6 +431,8 @@ def create(
     lines = [f"Created automation '{saved.name}' ({saved.id}), kind {saved.kind}."]
     if because:
         lines.append(f"  {because}")
+    for w in spec_warnings:
+        lines.append(f"  Warning ({w.path}): {w.message}")
     if resolved_spec.get("expr"):
         lines.append(f"  cron: {resolved_spec['expr']}")
     if resolved_spec.get("paths"):

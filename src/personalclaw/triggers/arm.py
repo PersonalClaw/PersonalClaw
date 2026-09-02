@@ -32,8 +32,9 @@ computation for the same question, and its two subtle rules are preserved verbat
 from __future__ import annotations
 
 import logging
+import re
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -286,3 +287,171 @@ def needs_arming(trigger: Any) -> bool:
         and bool(getattr(trigger, "enabled", False))
         and not str(getattr(trigger, "next_fire_at", "") or "").strip()
     )
+
+
+# ── Semantic spec validation (#687/#483/#612/#560/#270) ──
+
+
+#: Fires sampled when measuring a cron's minimum gap. Eight consecutive fires cover the
+#: common shapes (lists, steps, ranges) without turning validation into a simulation.
+_CADENCE_SAMPLE_FIRES = 8
+
+#: Skip dates examined per spec. Mirrors MAX_SKIP_ADVANCE's spirit — bound the loop; a
+#: pathological list is validated for its head rather than stalling every caller.
+_MAX_SKIP_DATES_CHECKED = 64
+
+_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _min_cron_gap_secs(expr: str) -> float:
+    """The smallest gap between consecutive fires of ``expr``, sampled, in seconds.
+
+    0.0 when the gap cannot be measured (croniter refusing, exhausted iterator) — an
+    unmeasurable cadence is reported by the validity check, not this one.
+    """
+    from croniter import croniter  # type: ignore[import-untyped]
+
+    try:
+        it = croniter(expr, datetime(2026, 1, 6, 0, 0, tzinfo=timezone.utc))
+        fires = [it.get_next(float) for _ in range(_CADENCE_SAMPLE_FIRES)]
+    except Exception:  # noqa: BLE001 - validity is the other check's job
+        return 0.0
+    gaps = [b - a for a, b in zip(fires, fires[1:]) if b > a]
+    return min(gaps) if gaps else 0.0
+
+
+def _cron_fires_on_date(expr: str, day: "date", tz_name: str) -> bool:
+    """Whether ``expr`` ever fires on the calendar date ``day`` in ``tz_name``.
+
+    Mirrors ``next_fire``'s own semantics exactly: skip dates are compared as
+    ``%Y-%m-%d`` strings against the fire instant in the trigger's OWN timezone, so
+    the question "is this skip date inert?" must be asked in that same timezone.
+    """
+    from croniter import croniter  # type: ignore[import-untyped]
+
+    try:
+        tz = ZoneInfo(tz_name) if tz_name else timezone.utc
+    except Exception:  # noqa: BLE001 - unknown zone falls back like _trigger_tz does
+        tz = timezone.utc
+    try:
+        base = datetime(day.year, day.month, day.day, tzinfo=tz) - timedelta(seconds=1)
+        nxt = croniter(expr, base).get_next(datetime)
+    except Exception:  # noqa: BLE001 - validity is the other check's job
+        return True
+    return bool(nxt.astimezone(tz).strftime("%Y-%m-%d") == day.isoformat())
+
+
+def semantic_spec_issues(kind: str, spec: dict[str, Any] | None) -> "list[Any]":
+    """Semantic problems in a clock spec — the half ``models.validate_spec`` leaves out.
+
+    ``validate_spec`` deliberately owns STRUCTURE only ("Structure here, semantics
+    there" — its own docstring); this is the "there", living beside the fire path so
+    every check mirrors what arming actually does and the two can never drift:
+
+    * an expression ``croniter`` refuses arms to nothing and never fires (#483/#687),
+    * a valid 6/7-field expression fires on a seconds cadence under a UI and API that
+      promise five fields (#612),
+    * a valid 5-field expression whose sampled gap sits under the
+      ``MIN_CLOCK_INTERVAL_SECS`` floor gets the same WARNING the interval kind gets —
+      overridable, but never the accident you get from a typo (#612),
+    * a skip date that is not ``YYYY-MM-DD`` can never match the fire path's
+      ``%Y-%m-%d`` string comparison, so it is protection the user believes in and
+      does not have (#270),
+    * a well-formed skip date the schedule never fires on is equally inert (#560).
+
+    Pure, never raises, and returns ``models.Issue`` rows so callers fold them into
+    the same reporting the structural checks use.
+    """
+    from personalclaw.triggers.models import MIN_CLOCK_INTERVAL_SECS, Issue
+
+    issues: list[Issue] = []
+    if kind != "clock" or not isinstance(spec, dict):
+        return issues
+
+    clock_kind = str(spec.get("kind", "") or "")
+    expr = str(spec.get("expr", "") or "").strip()
+    cron_usable = False
+    if clock_kind == "cron" and expr:
+        from croniter import croniter  # type: ignore[import-untyped]
+
+        fields = len(expr.split())
+        if not croniter.is_valid(expr):
+            issues.append(
+                Issue(
+                    path="spec.expr",
+                    severity="error",
+                    message=(
+                        f"{expr!r} is not a valid cron expression — the trigger would "
+                        f"arm to nothing and never fire"
+                    ),
+                )
+            )
+        elif not expr.startswith("@") and fields != 5:
+            # croniter happily accepts 6/7 fields (seconds / seconds+years), but this
+            # substrate's UI, API docs and humanizer all promise five. A silently
+            # accepted seconds field is a sub-second-cadence LLM poll nobody chose.
+            issues.append(
+                Issue(
+                    path="spec.expr",
+                    severity="error",
+                    message=(
+                        f"cron expressions are 5 fields (min hour dom month dow) or an "
+                        f"@alias; {expr!r} has {fields} — a seconds field would fire "
+                        f"far below the {MIN_CLOCK_INTERVAL_SECS}s cadence floor"
+                    ),
+                )
+            )
+        else:
+            cron_usable = True
+            gap = _min_cron_gap_secs(expr)
+            if 0 < gap < MIN_CLOCK_INTERVAL_SECS:
+                # WARNING, not error — same overridability contract as the interval
+                # floor above (models.py S109): a fast local-model poll is a legitimate
+                # choice, it just should not be an accident.
+                issues.append(
+                    Issue(
+                        path="spec.expr",
+                        message=(
+                            f"fires every {int(gap)}s at its fastest — below the "
+                            f"{MIN_CLOCK_INTERVAL_SECS}s floor for an LLM-invoking "
+                            f"trigger; it will still run, but confirm this is intended"
+                        ),
+                    )
+                )
+
+    tz_name = str(spec.get("timezone", "") or "")
+    for raw in list(spec.get("skip_dates") or [])[:_MAX_SKIP_DATES_CHECKED]:
+        s = str(raw).strip()
+        parsed: date | None = None
+        if _ISO_DATE_RE.fullmatch(s):
+            try:
+                parsed = date.fromisoformat(s)
+            except ValueError:
+                parsed = None
+        if parsed is None:
+            # The fire path (next_fire above) compares skip dates as %Y-%m-%d strings,
+            # so any other spelling can NEVER match: it is not a lenient format, it is
+            # a no-op the author believes is protection. Error: refused at authoring,
+            # reported by the doctor for existing rows.
+            issues.append(
+                Issue(
+                    path="spec.skip_dates",
+                    severity="error",
+                    message=(
+                        f"skip date {s!r} is not a real YYYY-MM-DD date — the fire "
+                        f"path matches dates as YYYY-MM-DD strings, so this entry can "
+                        f"never suppress a fire"
+                    ),
+                )
+            )
+        elif cron_usable and not _cron_fires_on_date(expr, parsed, tz_name):
+            issues.append(
+                Issue(
+                    path="spec.skip_dates",
+                    message=(
+                        f"the schedule never fires on {s} ({parsed.strftime('%A')}), "
+                        f"so this skip date is inert — check the date or the cron"
+                    ),
+                )
+            )
+    return issues
