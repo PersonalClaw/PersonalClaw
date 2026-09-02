@@ -1,4 +1,4 @@
-import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2 } from 'lucide-react'
+import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
 import type { InboxClassification, InboxConfidence, InboxItemStatus, InboxItemKind, InboxItem } from '../../lib/api'
@@ -64,6 +64,12 @@ export const ITEM_KINDS: KindMeta[] = [
   { key: 'proposal', label: 'Proposals', tone: 'var(--color-info)', icon: Lightbulb },
   { key: 'digest', label: 'Digests', tone: 'var(--color-on-surface-low)', icon: Newspaper },
   { key: 'system', label: 'System', tone: 'var(--color-on-surface-low)', icon: Settings2 },
+  // INU-9 — the only kind the USER writes. `info`, matching `proposal`: both are open items
+  // you will decide something about. NOT coral — coral in this registry is reserved for the
+  // three channel-shaped kinds and means "a conversation" (`design/accentChipTone.test.tsx`
+  // censuses exactly that, and it caught this row set to primary). NOT the low tone either:
+  // a note you left yourself is something you meant to return to, not background chatter.
+  { key: 'user_note', label: 'Notes', tone: 'var(--color-info)', icon: StickyNote },
 ]
 export function kindMeta(k?: string): KindMeta {
   return ITEM_KINDS.find((x) => x.key === (k || 'message')) ?? ITEM_KINDS[0]
@@ -74,6 +80,8 @@ export function kindMeta(k?: string): KindMeta {
  *  would be dead controls. */
 export const NON_CHANNEL_ITEM_KINDS: InboxItemKind[] = [
   'agent_request', 'proposal', 'needs_input', 'digest', 'system',
+  // A note has no sender to reply TO — you wrote it.
+  'user_note',
 ]
 
 /** The router PATH an item's `refs` point at, or '' when it has nowhere to go.

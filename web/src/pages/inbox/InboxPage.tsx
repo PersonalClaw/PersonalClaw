@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2, ExternalLink, LayoutGrid } from 'lucide-react'
+import { Inbox as InboxIcon, CheckCheck, RotateCcw, Circle, Reply, Settings as SettingsIcon, ScrollText, Loader2, ExternalLink, LayoutGrid, StickyNote } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -20,6 +20,7 @@ import { Segmented } from '../../ui/Segmented'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
 import { InboxSettingsPanel } from './InboxSettingsPanel'
+import { ComposeNoteModal } from './ComposeNoteModal'
 import { ProposalsLens } from './ProposalsLens'
 import { TriageDigestCard } from './TriageDigestCard'
 import { ContextMenu, EntranceGroup, EntranceRegion, type ContextMenuItem } from '../../ui/motion'
@@ -56,6 +57,12 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
   const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
   const openId = openIdRaw || null
   const [settingsOpen, setSettingsOpen] = useQueryFlag(query, setQuery, 'settings')
+  // INU-9 — `?capture=1` is the desktop tray's quick-capture deep link (`desktop/main.js`
+  // builds `${DEEP_LINKS.inbox}?capture=1`). Reading it here is what turns that tray row
+  // from a navigation into a capture: before this the flag was parsed by the router and
+  // dropped, so the menu item opened the inbox and wrote nothing. It is the same flag the
+  // header's Capture control sets, so the tray and the dashboard share one surface.
+  const [captureOpen, setCaptureOpen] = useQueryFlag(query, setQuery, 'capture')
   const [busy, setBusy] = useState(false)
 
   const load = () => { refreshItems(); refreshStatus() }
@@ -224,6 +231,12 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                   <HeaderControl icon={CheckCheck} label="Dismiss all" danger priority="low" onClick={dismissAll} disabled={busy} />
                 )}
                 <HeaderControl icon={RotateCcw} label="Restart sources" priority="low" onClick={restart} disabled={busy} />
+                {/* INU-9. `priority="primary"` so writing a note survives into the
+                    icon-only and overflow tiers — it is the one action on this page that
+                    CREATES something, and the cluster sheds `low` first. Placed after the
+                    destructive control and before the panel opener, per HeaderActions'
+                    ordering tenet. */}
+                <HeaderControl icon={StickyNote} label="Capture a note" priority="primary" onClick={() => setCaptureOpen(true)} />
                 <HeaderControl icon={SettingsIcon} label="Inbox settings" active={settingsOpen} priority="low" onClick={() => setSettingsOpen(!settingsOpen)} />
               </HeaderActions>
             </div>
@@ -245,7 +258,26 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
       panel={
         <>
           {open && (
-            <SidePanel key={open.id} fillHeight storeKey="inbox-panel-w" urlKey={{ key: 'open', setQuery }} icon={(() => { const cm = classMeta(open.classification); return <cm.icon size={18} style={{ color: cm.tone }} /> })()} title={open.sender_name || open.sender_id || 'Item'} onClose={() => setOpenId("")}>
+            /* 🔴 THE PANEL HEADER CONTRADICTED ITS OWN BODY. The row 120 lines below already
+                decides this — a non-channel kind's `sender_name` is the emitting SUBSYSTEM, so
+                those rows "lead with the KIND and its own icon instead" — and `InboxDetail:101`
+                already hides the sender line for exactly those rows. Only this header still
+                printed it, so a note the USER wrote opened a panel titled **"user"** under a
+                REPLY arrow (`classMeta` is the triage verdict, and a non-channel row was never
+                triaged — the same reason the row hides its confidence chip). Measured in the
+                browser on INU-9's own surface; the sibling kinds read "system" and "loop".
+                This applies the file's existing rule to the one place that had drifted from it,
+                rather than minting a note-only exception. */
+            <SidePanel key={open.id} fillHeight storeKey="inbox-panel-w" urlKey={{ key: 'open', setQuery }}
+              icon={(() => {
+                const channelBacked = !NON_CHANNEL_ITEM_KINDS.includes(open.item_kind || 'message')
+                const m = channelBacked ? classMeta(open.classification) : kindMeta(open.item_kind)
+                return <m.icon size={18} style={{ color: m.tone }} />
+              })()}
+              title={!NON_CHANNEL_ITEM_KINDS.includes(open.item_kind || 'message')
+                ? (open.sender_name || open.sender_id || 'Item')
+                : kindMeta(open.item_kind).label}
+              onClose={() => setOpenId("")}>
               <InboxDetail item={open} onChanged={load} navigate={navigate} />
             </SidePanel>
           )}
@@ -439,6 +471,19 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
         </div>
         </EntranceRegion>
       </EntranceGroup>
+      {/* INU-9 — a MODAL, not a SidePanel: composing is a focused, short-lived task with one
+          field, and the panel slot is already the place a row's detail lives. Rendered from
+          the same `?capture=1` flag the tray deep-links, so the tray's menu item and the
+          header's Capture control open the identical surface.
+          `onCreated` closes the flag AND refreshes, because the row the WS push announces is
+          the one this call just created — refreshing is what puts it on screen immediately
+          rather than on the next socket tick. */}
+      {captureOpen && (
+        <ComposeNoteModal
+          onClose={() => setCaptureOpen(false)}
+          onCreated={() => { setCaptureOpen(false); load() }}
+        />
+      )}
     </WorkbenchLayout>
   )
 }

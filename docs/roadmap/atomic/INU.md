@@ -4,7 +4,7 @@
 **Code:** `INU`  
 **Source status:** in_progress
 
-9 atoms: 8 done (S1-S5 as PRs #111-#115; S6 verification gate, S7 Proposals contract and S8 inbox provider-seam resolution closed since), 1 todo — `INU-9`, filed 2026-08-27 for the capability every existing source lacks: an inbox item a **user authored**, rather than one the system synthesized from a fired rule, a run needing input, or an app-contributed source. No blocking cross-plan deps — plan owns the attention contracts; all cross-plan edges are downstream consumers.
+9 atoms: 8 done (S1-S5 as PRs #111-#115; S6 verification gate, S7 Proposals contract and S8 inbox provider-seam resolution closed since), 1 in progress (`INU-9`, filed 2026-08-27 — the user-authored note, the first inbox source that is a person rather than a subsystem). No blocking cross-plan deps — plan owns the attention contracts; all cross-plan edges are downstream consumers.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -20,7 +20,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 
 ## Atom scopes
 | `INU-8` | ✅ | Resolve app-contributed inbox sources through the app registry's manifest factory (`InboxTypeHandler`) + make the `PROVIDER_TYPES`/handler guard bidirectional | — | An app declaring `{"type":"inbox","implementation":"mod:factory"}` has its provider resolved+registered at enable-time by a real `InboxTypeHandler` (the same `load_factory` path every other type uses) and deregistered on disable/uninstall; `get_default_provider` resolves app sources with documented precedence and the class-vs-instance mismatch handled explicitly; a fixture app's source is driven end-to-end; the #47 guard asserts BOTH directions with a reason-carrying allowlist and `agent` / `notification` / `skills` are each resolved (handler, removal, or allowlist naming the real mechanism) |
-| `INU-9` | ⬜ | A user-authored note reaches the inbox — the create-from-free-text capability the tray's quick-capture promises | — | A user can create an inbox item from free text through a real endpoint, and the item appears in the inbox list carrying a typed kind that identifies it as user-authored rather than synthesized from a system source (the typed-kind registry gains the kind, and the notification-rules vocabulary does NOT gain a phantom source it cannot deliver); the tray's quick-capture affordance reaches that endpoint so `?capture=1` (or its replacement) stops being an inert control, proven by a test that reds when the reader is removed while a sibling asserting plain inbox navigation stays green; the item survives a gateway restart, read back off disk rather than from memory; and a new wire error code, if any, carries its HTTP_ERROR_CODES row with a user-actionable meaning in the same change. Validated as a user: capture from a running shell, see the item in the inbox, act on it, restart, confirm it is still there. |
+| `INU-9` | 🟡 | A user-authored note reaches the inbox — the create-from-free-text capability the tray's quick-capture promises | — | A user creates an inbox item from free text through `POST /api/inbox/notes`, and it lists carrying `ItemKind.USER_NOTE` (`user_note`) — a typed kind that names its provenance, so a consumer tells user-authored from synthesized without a second field; the `user/note` notification pair is REGISTERED (default `badge`, `verifiable=False`) so the rules vocabulary gains a target it can actually deliver rather than a phantom; the tray's `?capture=1` is READ by `InboxPage` (same flag, same surface as the header's Capture control) so DC-4's deep link stops being an inert control; the note survives a restart, read back off disk; three new `HTTP_ERROR_CODES` rows carry user-actionable meanings |
 
 ### `INU-1` — Kind registry + rules engine (S1)
 
@@ -151,3 +151,32 @@ Deleting a declarable type is a manifest-contract narrowing: check no shipped ap
 8. **Hand off**: note in the Execution log that CE-8 part 1 and EIAT-2 are now unblocked, so their owners can land the staged app-side adapters.
 
 **Scope guard — what this atom is NOT.** It does not implement the Slack or mail sources (CE-8 / EIAT-2 own those), does not touch the entry-point mechanism for non-app providers, and does not redesign the inbox item model. It makes one seam resolve app-declared providers the way every other seam already does, and makes the guard capable of noticing the next time it doesn't.
+
+### `INU-9` — A user-authored note reaches the inbox
+
+**Status:** 🟡 in progress — 2026-08-27. Implemented on `feature-inu9-user-authored-note`. Capability, typed kind, notification registration, `?capture=1` reader, compose surface and the desktop rails all land in one commit; three falsification legs measured (below). Left for the owner: flipping `dag.json`.
+
+Filed 2026-08-27 as new scope. The natural assumption — that the missing `?capture=1` reader belonged to an existing atom of this plan — was wrong: this plan is 8/8 done and **none of its atoms covers a user-AUTHORED item**. Every inbox source that shipped is synthesized by the system (a rule fired, a run needs input, a poll found a message, an app contributed a proposal). So "owned elsewhere" would have orphaned it.
+
+**Done when:** a user creates an inbox item from free text through a real endpoint and it appears in the inbox list carrying a typed kind that identifies it as user-authored rather than synthesized (the typed-kind registry gains the kind, and the notification-rules vocabulary does NOT gain a phantom source it cannot deliver); the tray's quick-capture affordance reaches that endpoint so `?capture=1` stops being an inert control, proven by a test that reds when the reader is removed while a sibling asserting plain inbox navigation stays green; the item survives a gateway restart, read back off disk; and any new wire error code carries its `HTTP_ERROR_CODES` row.
+
+#### What shipped
+
+- **`POST /api/inbox/notes`** (`handlers_inbox.api_inbox_note_create`), registered before the `/api/inbox/{id}/…` routes so a dynamic id cannot shadow it. Routed through **`inbox.emit_attention_item`** — the same seam `api_inbox_proposal_create`, `notification_rules.run_digest` and `workflows/attention` use — so the row and its notification stay one event and the note inherits the store's id shape, dedup and durable `flush()`. A test proves the endpoint has **no write path of its own**: neutralise `emit_attention_item` and nothing is written.
+- **`ItemKind.USER_NOTE = "user_note"`**, added to `NON_CHANNEL_KINDS` (a note has no sender to reply to). Named `user_note` rather than `note` deliberately: the *value* carries the provenance, so a consumer answers "did a person write this?" from `item_kind` alone rather than joining `source`.
+- **`NotificationKind("user", "note", "Note you captured", "badge", …, verifiable=False)`** + `_ATTENTION_FLAT["user_note"]`. Registered, not skipped: `emit_attention_item` calls `state.notify` unconditionally, so an unregistered pair would still be delivered — just as `system/generic`, with no settings row and the digest grouping it under a colliding kind. `badge` is the second non-immediate default after `usage_recap` and for the opposite reason: a toast tells you something you did not know, and you cannot be informed of your own keystrokes. `verifiable=False` keeps INU-6's skeptic unable to file the user's own words as FILTERED.
+- **`?capture=1` READ, not replaced.** `InboxPage` gains `useQueryFlag(query, setQuery, 'capture')` — the same hook `?settings` uses, and `'1'` is exactly what it treats as on. `desktop/main.js` keeps the DC-4 URL byte-for-byte; only its (now-false) comment changed, so there is no window where the two halves disagree.
+- **Two entrances, one surface.** A `priority="primary"` Capture control in the inbox header sets the identical flag, so the tray was only ever the first consumer.
+- **Three `HTTP_ERROR_CODES` rows** — `note_text_empty`, `note_too_long`, `note_not_saved` — each with a different next move. `note_too_long` refuses rather than truncating and its site message carries the real count; `note_not_saved` is the one case where the text was NOT kept, so the sentence tells the user it is still in the compose box.
+
+#### Falsification (measured, per clause)
+
+| Mutation | Before | After | Reddened | Sibling that stayed green |
+|---|---|---|---|---|
+| `useQueryFlag(…, 'capture')` → `'capture_MUTATED'` | 5 passed | **4 failed, 1 passed** | the flag opens the composer; saving POSTs; closing clears | *plain inbox navigation renders the inbox and NO compose surface* |
+| `emit_attention_item` writes memory only (`flush()` removed) | 22 passed | **1 failed, 21 passed** | the restart/read-back-off-disk leg | the create leg (201 + the row on the wire) |
+| `NotificationKind("user","note",…)` → `"note_MUT"` | 75 passed | **9 failed, 66 passed** | registration, the phantom-target guard, `EVERY_EMITTER_IN_THE_TREE_IS_REGISTERED`, the wire round-trip | the capability itself — the registry is fail-open, so create + restart still pass, which is what proves those tests measure *registration* |
+
+Each mutation was `git grep`-ed back to prove it applied, and each restore was a file copy at the literal path with `git diff --stat HEAD` empty afterwards.
+
+**Scope guard — what this atom is NOT.** It adds no config field (a note is per-item state, not settings, so the round-trip contract does not bind), no second write path into the inbox, no editing of a captured note, and no new notification target beyond the one pair whose delivery it proves. It does not touch the channel-shaped kinds: `SOURCE_DECLARABLE_KINDS` stays exactly `{message, mention, email}`, so no message source can claim to author a user's note.

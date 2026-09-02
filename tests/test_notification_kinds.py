@@ -163,9 +163,16 @@ def test_the_kinds_defaulting_to_something_other_than_immediate_are_EXACTLY_thes
 
     `system/usage_recap` (MRT-3) is a monthly recap of a month that already closed: the least
     urgent thing the system emits, and its atom specifies digest delivery.
+
+    `user/note` (INU-9) is the one kind the USER emits. A toast tells you something you did not
+    know, and you cannot be informed of your own keystrokes — capturing three notes from the
+    tray would raise three toasts about text just typed, which teaches a user to mute the
+    channel that also carries a loop's question. `badge` still persists the note and still
+    counts it (`unread_count` counts open inbox items), so nothing is declined: delivery is one
+    click away in this very matrix.
     """
     quiet = sorted(k.key for k in nk.all_kinds() if k.default_mode != "immediate")
-    assert quiet == ["system/usage_recap"], (
+    assert quiet == ["system/usage_recap", "user/note"], (
         f"the non-immediate default population changed to {quiet} — every addition needs the "
         "same justification usage_recap carries, so widen this list deliberately"
     )

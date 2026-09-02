@@ -298,8 +298,15 @@ def test_the_kind_keeps_the_immediate_default_the_registry_ships():
     no setting the user knowingly changed. ``digest`` is one click in the rules matrix — the
     registry row is what makes that click possible."""
     assert nk.resolve_kind("knowledge", "research_finding").default_mode == "immediate"
+    # The population's CANONICAL home is
+    # `test_notification_kinds::test_the_kinds_defaulting_to_something_other_than_immediate_are_EXACTLY_these`,
+    # which carries the per-kind justification. This copy is the local vacuity floor: it keeps
+    # the assertion above from being the only thing standing between a future kind and a quiet
+    # default. Widened for `user/note` (INU-9) — a note the USER wrote defaults to `badge`,
+    # because a toast tells you something you did not know and you cannot be informed of your
+    # own keystrokes.
     quiet = sorted(k.key for k in nk.all_kinds() if k.default_mode != "immediate")
-    assert quiet == ["system/usage_recap"]
+    assert quiet == ["system/usage_recap", "user/note"]
 
 
 def test_the_semantics_module_is_the_canonical_home_of_the_string():

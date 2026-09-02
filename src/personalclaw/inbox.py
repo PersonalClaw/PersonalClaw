@@ -83,6 +83,13 @@ class ItemKind(str, Enum):
     NEEDS_INPUT = "needs_input"
     DIGEST = "digest"
     SYSTEM = "system"
+    #: A note the USER wrote (INU-9). Every other member above is synthesized by the
+    #: system — a rule fired, a run needs input, a source polled something in — so the
+    #: value spells out the provenance rather than leaving it to be inferred from
+    #: ``source``: a consumer that reads ``item_kind == "user_note"`` knows the text is
+    #: the user's own words without a second field lookup. Named ``user_note`` and not
+    #: ``note`` for exactly that reason; the system could one day write a note too.
+    USER_NOTE = "user_note"
 
 
 #: Kinds with no channel behind them: no draft, no reply routing, no send affordance.
@@ -94,6 +101,9 @@ NON_CHANNEL_KINDS = frozenset(
         ItemKind.NEEDS_INPUT.value,
         ItemKind.DIGEST.value,
         ItemKind.SYSTEM.value,
+        # A note has no sender to reply TO — the user wrote it. Rendering the reply
+        # machinery would offer to send the note back to whoever typed it.
+        ItemKind.USER_NOTE.value,
     }
 )
 

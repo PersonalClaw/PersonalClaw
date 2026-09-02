@@ -1,4 +1,4 @@
-import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, ShieldQuestion, RefreshCw, Receipt, UserRound } from 'lucide-react'
+import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, ShieldQuestion, RefreshCw, Receipt, UserRound, StickyNote } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { NotificationItem } from '../../lib/api'
 
@@ -61,6 +61,12 @@ const KINDS: Record<string, KindMeta> = {
   // emit_attention_item actually hands state.notify(). Both map to the registry's label.
   update: { label: 'App update available', icon: RefreshCw, tone: 'var(--color-primary)' },
   app_update: { label: 'App update available', icon: RefreshCw, tone: 'var(--color-primary)' },
+  // user/note (INU-9). ONLY the `user_note` wire string, not a bare `note` row: the
+  // registry maps `user_note` to the pair, and `kind_for_legacy_pair` therefore never
+  // emits the bare kind for it. A `note` row would be a key nothing can resolve.
+  // Defaults to `badge` server-side, so this label is read in the notification LIST rather
+  // than a toast — which is why it says whose note it is.
+  user_note: { label: 'Note you captured', icon: StickyNote, tone: 'var(--color-primary)' },
   session: { label: 'Session notice', icon: MessageCircle, tone: 'var(--color-on-surface-low)' },
   retire: { label: 'Retired a learned signal', icon: Archive, tone: 'var(--color-primary)' },
   feedback_retire: { label: 'Retired a learned signal', icon: Archive, tone: 'var(--color-primary)' },

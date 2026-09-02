@@ -2762,9 +2762,11 @@ export type InboxConfidence = 'high' | 'needs_review' | 'escalate'
 export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled' | 'filtered'
 // What kind of attention an item wants. 'message' is the default so every item written
 // before the inbox became a general attention store stays valid.
+// 'user_note' (INU-9) is the one kind a PERSON writes; every other member is synthesized by
+// the system, so the value itself carries the provenance a consumer needs.
 export type InboxItemKind =
   | 'message' | 'mention' | 'email' | 'agent_request'
-  | 'proposal' | 'needs_input' | 'digest' | 'system'
+  | 'proposal' | 'needs_input' | 'digest' | 'system' | 'user_note'
 export interface InboxThreadMsg { sender_name?: string; text?: string; ts?: string }
 export interface InboxItem {
   id: string; channel: string; channel_name: string; thread_ts?: string | null
@@ -6238,6 +6240,11 @@ export const api = {
   // dragged backwards. Idempotent.
   markInboxSeen: (body: { ids?: string[]; kind?: string } = {}) =>
     post<{ ok: boolean; seen: number }>('/api/inbox/seen', body),
+  // INU-9: the user writes their OWN inbox item. The tray's quick capture and the inbox
+  // compose control are two entry points onto this one endpoint; 201 carries the created
+  // row so a caller can render it without a refetch.
+  createInboxNote: (text: string) =>
+    post<{ ok: boolean; id: string; item: InboxItem }>('/api/inbox/notes', { text }),
   inboxStatus: () => get<InboxStatus>('/api/inbox/status'),
   inboxProviders: () => get<{ providers: InboxProvider[] }>('/api/inbox/providers').then((d) => d.providers),
   updateInboxItem: (id: string, body: Record<string, unknown>) => put<InboxItem>(`/api/inbox/${encodeURIComponent(id)}`, body),
