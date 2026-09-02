@@ -27,10 +27,40 @@ from typing import Any
 from personalclaw import concurrency, notification_kinds, shutdown_event
 from personalclaw.config.loader import AppConfig
 from personalclaw.loop import instrument, kinds, manager, store, supervisor
-from personalclaw.loop.loop import Loop, LoopStatus
+from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
 from personalclaw.workflows.supervisor_policy import policy_for_kind
 
 logger = logging.getLogger(__name__)
+
+
+# ── `AG-14` ceiling arithmetic (pure, module-level so tests exercise the shipped math) ──
+
+
+def active_runtime_secs(loop: Loop, now: float) -> float:
+    """A loop's ACTIVE runtime: banked ``elapsed_seconds`` plus the current running
+    stretch. The same clock the cockpit displays — a paused loop is not charged."""
+    active = float(loop.elapsed_seconds or 0.0)
+    if loop.started_at:
+        active += max(0.0, now - float(loop.started_at))
+    return active
+
+
+def deadline_reached(loop: Loop, now: float) -> float | None:
+    """The active seconds when ``deadline_secs`` is set and spent, else None (uncapped
+    or still inside the window)."""
+    if loop.deadline_secs and loop.deadline_secs > 0:
+        active = active_runtime_secs(loop, now)
+        if active >= loop.deadline_secs:
+            return active
+    return None
+
+
+def default_stop_reason(genuine: bool) -> LoopStopReason:
+    """The `AG-14` classification a completion carries when its caller names none:
+    a genuine finish is ``DONE``; a non-genuine one is the historical meaning of
+    non-genuine, ``CYCLE_BUDGET``."""
+    return LoopStopReason.DONE if genuine else LoopStopReason.CYCLE_BUDGET
+
 
 POLL_INTERVAL_SECS = 5
 #: Fallback for ``loops.stagnation_window`` when no config is reachable (WF2LOO-18).
@@ -244,6 +274,7 @@ class LoopWatchdog:
             store.update_status(
                 loop_id,
                 LoopStatus.FAILED,
+                stop_reason=LoopStopReason.WORKER_FAILED,
                 error_message=detail or f"Worker failed {n} cycles in a row.",
             )
         except (KeyError, store.TransitionError):
@@ -415,18 +446,33 @@ class LoopWatchdog:
 
     # ── completion ──
 
-    async def _complete(self, loop_id: str, *, reason: str = "", genuine: bool = True) -> None:
+    async def _complete(
+        self,
+        loop_id: str,
+        *,
+        reason: str = "",
+        genuine: bool = True,
+        stop_reason: LoopStopReason | None = None,
+    ) -> None:
         """Mark a loop COMPLETE. ``genuine`` (done-ness met / all stages gated) is a
-        clean finish. A NON-genuine complete — the cycle budget ran out with the goal
+        clean finish. A NON-genuine complete — a ceiling ran out with the goal
         possibly unmet — persists ``reason`` via error_message so the cockpit can tell
         "finished the work" from "stopped on budget" even after a reload, instead of an
-        identical green check. Ported from the legacy code watchdog's genuine flag."""
+        identical green check. Ported from the legacy code watchdog's genuine flag.
+
+        ``stop_reason`` is the `AG-14` closed classification. Callers that hit a specific
+        ceiling name it; unnamed, it defaults from ``genuine`` — a genuine finish is
+        ``DONE`` and a non-genuine one is the historical meaning of non-genuine,
+        ``CYCLE_BUDGET`` — so every completion carries a reason without every legacy
+        call site changing."""
+        if stop_reason is None:
+            stop_reason = default_stop_reason(genuine)
         fields = (
             {"error_message": None}
             if genuine
             else {"error_message": reason or "Stopped before the goal was met."}
         )
-        store.update_status(loop_id, LoopStatus.COMPLETE, **fields)
+        store.update_status(loop_id, LoopStatus.COMPLETE, stop_reason=stop_reason, **fields)
         store.write_status(loop_id, LoopStatus.COMPLETE, reason=reason)
         await manager.teardown_worker(self._svc, loop_id)
         await self._reconcile_linked_tasks(loop_id)
@@ -1051,8 +1097,52 @@ class LoopWatchdog:
                 # "stopped before done" for an inherently-ongoing loop that ran its course.
                 if loop.max_cycles > 0 and count >= loop.max_cycles:
                     genuine = supervisor.budget_stop_is_genuine(policy)
-                    await self._complete(cid, reason="cycle budget reached", genuine=genuine)
+                    await self._complete(
+                        cid,
+                        reason="cycle budget reached",
+                        genuine=genuine,
+                        stop_reason=LoopStopReason.CYCLE_BUDGET,
+                    )
                     continue
+
+                # `AG-14` ceilings — both opt-in (0 = uncapped), both NON-genuine (the
+                # goal may be unmet; a monitor's "budget is the plan" carve-out is about
+                # its cycle window, not about running out of money or time).
+                #
+                # Deadline bounds ACTIVE runtime: banked elapsed_seconds + the current
+                # running stretch — the same clock the cockpit displays — so a paused
+                # loop is not charged for the pause.
+                if (active := deadline_reached(loop, time.time())) is not None:
+                    await self._complete(
+                        cid,
+                        reason=(
+                            f"deadline reached ({int(active)}s active "
+                            f">= {int(loop.deadline_secs)}s)"
+                        ),
+                        genuine=False,
+                        stop_reason=LoopStopReason.DEADLINE,
+                    )
+                    continue
+                # Cost reads the usage ledger's spend for the loop's worker sessions —
+                # a FLOOR when any turn lacked a price row, so an unpriced loop stops
+                # late rather than early; the gate keeps the two ledger queries off
+                # every uncapped loop's poll.
+                if loop.max_cost_usd > 0:
+                    try:
+                        spent = float(manager.loop_spend(cid)["dollars_est"])
+                    except Exception:
+                        spent = 0.0  # an unreadable ledger never stops a loop
+                    if spent >= loop.max_cost_usd:
+                        await self._complete(
+                            cid,
+                            reason=(
+                                f"cost budget reached (${spent:.2f} "
+                                f">= ${loop.max_cost_usd:.2f})"
+                            ),
+                            genuine=False,
+                            stop_reason=LoopStopReason.COST_BUDGET,
+                        )
+                        continue
 
                 self._notify_progress(cid, count, loop.max_cycles)
                 # Stagnation — disabled for monitor goals (a quiet cycle is a valid
@@ -1082,6 +1172,7 @@ class LoopWatchdog:
                             store.update_status(
                                 cid,
                                 LoopStatus.FAILED,
+                                stop_reason=LoopStopReason.WORKER_FAILED,
                                 error_message="The worker produced no findings "
                                 "before the cycle budget was exhausted.",
                             )
@@ -1111,6 +1202,7 @@ class LoopWatchdog:
                     store.update_status(
                         cid,
                         LoopStatus.FAILED,
+                        stop_reason=LoopStopReason.WORKER_FAILED,
                         error_message=(
                             "Worker turn ran too long without producing "
                             "a finding (wedged). Resume to continue."

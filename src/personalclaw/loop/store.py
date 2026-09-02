@@ -31,6 +31,7 @@ from personalclaw.loop.loop import (
     TERMINAL_STATUSES,
     Loop,
     LoopStatus,
+    LoopStopReason,
 )
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sqlite_compat import sqlite3
@@ -244,6 +245,9 @@ def _connect() -> sqlite3.Connection:
             attended INTEGER NOT NULL DEFAULT 0,
             autopilot INTEGER NOT NULL DEFAULT 1,
             max_cycles INTEGER NOT NULL DEFAULT 30,
+            max_cost_usd REAL NOT NULL DEFAULT 0,
+            deadline_secs REAL NOT NULL DEFAULT 0,
+            stop_reason TEXT NOT NULL DEFAULT '',
             idle_secs INTEGER NOT NULL DEFAULT 120,
             success_criteria TEXT,
             kind_config TEXT NOT NULL DEFAULT '{}',
@@ -275,6 +279,11 @@ def _connect() -> sqlite3.Connection:
         conn,
         {
             "auto_teardown_on_complete": "INTEGER NOT NULL DEFAULT 0",
+            # `AG-14`: ceilings + the closed stop-reason. Same defaults as CREATE TABLE,
+            # so a migrated row behaves exactly like a fresh uncapped one.
+            "max_cost_usd": "REAL NOT NULL DEFAULT 0",
+            "deadline_secs": "REAL NOT NULL DEFAULT 0",
+            "stop_reason": "TEXT NOT NULL DEFAULT ''",
         },
     )
     conn.commit()
@@ -317,6 +326,8 @@ _SCALAR_COLS = (
     "attended",
     "autopilot",
     "max_cycles",
+    "max_cost_usd",
+    "deadline_secs",
     "idle_secs",
     "success_criteria",
     "status",
@@ -325,6 +336,7 @@ _SCALAR_COLS = (
     "completed_at",
     "elapsed_seconds",
     "error_message",
+    "stop_reason",
     "tasks_project_id",
     "session_key",
 )
@@ -469,6 +481,11 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
         if new_status in ENDED_STATUSES:
             sets.append("completed_at = ?")
             vals.append(now)
+            # `AG-14`: normalize the enum to its wire value; a transition that names no
+            # reason keeps whatever an earlier write stamped (COMPLETE -> COMPLETE re-stamps
+            # are reason-preserving that way).
+            if "stop_reason" in fields and isinstance(fields["stop_reason"], LoopStopReason):
+                fields["stop_reason"] = fields["stop_reason"].value
         else:
             # Leaving an ended state UN-ends the loop. Only reachable for FAILED — the one ended
             # state `RESUMABLE_ENDED_STATUSES` lets a loop leave — and without this a resumed
@@ -477,6 +494,8 @@ def update_status(loop_id: str, new_status: LoopStatus, **fields: Any) -> Loop:
             # "ended" and "terminal" having been one word: FAILED was ended enough to stamp and
             # non-terminal enough to leave, and nothing cleared the stamp on the way out.
             fields.setdefault("completed_at", None)
+            # A resumed FAILED loop is no longer ended, so its WHY is stale too (`AG-14`).
+            fields.setdefault("stop_reason", "")
         for key, value in fields.items():
             if key in _JSON_COLS:
                 value = json.dumps(value)
