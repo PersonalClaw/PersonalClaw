@@ -182,8 +182,13 @@ def verdict_task(
             skill=skill,
             verdict=None,
             reason=(
-                f"arm(s) {', '.join(empty)} produced no scored cell — this task was not "
-                "measured, which is not a tie and not a zero delta"
+                # 🔑 `empty` holds ONE or TWO arm names, and one is the ordinary case: a paired
+                # run where a single arm produced no scored cell. So `arm(s)` was wrong on its
+                # commonest input — and this string is not a log line. The runner writes it into
+                # the persisted report, `GET /api/evals/learning-benchmark` serves it as
+                # `BenchmarkTaskRow.reason`, and `learning/BenchmarkPanel.tsx` renders it VERBATIM.
+                f"arm{'s' if len(empty) != 1 else ''} {', '.join(empty)} produced no scored "
+                "cell — this task was not measured, which is not a tie and not a zero delta"
             ),
             absent_cells=absent_cells,
             tool_calls=tool_calls,
