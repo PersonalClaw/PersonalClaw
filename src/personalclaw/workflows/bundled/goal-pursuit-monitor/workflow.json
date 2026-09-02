@@ -1,0 +1,158 @@
+{
+ "name": "goal-pursuit-monitor",
+ "version": 1,
+ "description": "Watch a goal that outside events move — check it, then PARK until a self-scheduled wake instead of burning cycles. Between checks the run costs nothing and survives gateway restarts; the next check is a clock trigger the run created for itself.",
+ "source": "bundled",
+ "provenance": "bundled",
+ "tags": [
+  "loop",
+  "goal",
+  "monitor"
+ ],
+ "inputs": {
+  "task": {
+   "type": "string",
+   "required": true,
+   "help": "What you are monitoring and what outcome ends it. State the goal, not the polling mechanics — 'PR #123 is merged', 'the export job has finished', 'the vendor page announces the new API'."
+  },
+  "check_instructions": {
+   "type": "string",
+   "required": true,
+   "help": "How to perform ONE check — the commands to run, pages to read, or paths to inspect. Each cycle follows these instructions once."
+  },
+  "success_criteria": {
+   "type": "string",
+   "default": "",
+   "help": "When monitoring may END — the observable state that means the goal is met. Left blank, the monitor never self-completes and runs until you cancel it, which is the honest default for open-ended watching."
+  },
+  "cadence": {
+   "type": "string",
+   "default": "in 1 hour",
+   "help": "The default gap between checks, in plain language ('in 20 minutes', 'in 4 hours'). A check that sees change coming may schedule sooner; one that sees a dead calm may stretch it."
+  },
+  "scope": {
+   "type": "string",
+   "default": ".",
+   "help": "The directory checks run in."
+  }
+ },
+ "runtime_hints": {
+  "execution": {
+   "strategy_axes": {
+    "memory_extraction": "delta_only",
+    "observation_compression": "aggressive",
+    "retrieval_strategy": "recent_first",
+    "task_decomposition": "single_step"
+   },
+   "breaker": {
+    "fingerprint_window": 2,
+    "no_progress_stop": 0
+   }
+  }
+ },
+ "metadata": {
+  "risk": "medium",
+  "capabilities": [
+   "read",
+   "execute",
+   "schedule"
+  ],
+  "steering_examples": [
+   {
+    "event": "kickoff",
+    "description": "Watch PR #4521 until CI is green and it has an approval, checking every 30 minutes"
+   },
+   {
+    "event": "mutation",
+    "description": "Slow down — check twice a day instead, and only alert me on a red build"
+   }
+  ],
+  "keywords": [
+   "monitor",
+   "keep an eye on",
+   "watch until",
+   "babysit",
+   "check periodically"
+  ],
+  "example_outputs": [
+   "a goal watched to completion with checks logged and nothing burned between them"
+  ]
+ },
+ "root": {
+  "kind": "sequence",
+  "id": "root",
+  "children": [
+   {
+    "kind": "stage",
+    "id": "intake",
+    "label": "Baseline check + first self-scheduled wake",
+    "config": {
+     "capability": "mutating",
+     "timeout_stall_secs": 900,
+     "prompt": "You are starting a MONITOR: a goal that outside events move, watched on a schedule. Your job this stage: understand the goal, take the baseline reading, and schedule the first wake-up.\n\nGoal being monitored:\n{{inputs.task}}\n\nHow to perform one check:\n{{inputs.check_instructions}}\n\nWhen monitoring may end (empty means it never self-completes — the user cancels it):\n{{inputs.success_criteria}}\n\nDo these three things:\n1. Perform ONE check now, exactly per the instructions, from {{inputs.scope}}. Record what you observe — this is the baseline every later check diffs against.\n2. Decide whether the goal is ALREADY met against the success criteria. Even if it looks met, monitoring confirms stability: schedule one confirmation check rather than declaring victory from a single reading.\n3. Schedule the next check: call set_onetime_task with resume_run_id=\"self\", when set to the next check time (default gap: {{inputs.cadence}} — tighten it if change looks imminent, stretch it if nothing moves), name it after this monitor, and put in message what the next check should look at first. This trigger is what wakes this run; without it the run parks at the next gate until the gate's safety timeout surfaces it.\n\nReturn JSON: {\"baseline_summary\": string, \"goal_met\": boolean, \"next_check_when\": string, \"scheduled\": boolean}",
+     "schema": {
+      "baseline_summary": "string",
+      "goal_met": "boolean",
+      "next_check_when": "string",
+      "scheduled": "boolean"
+     }
+    }
+   },
+   {
+    "kind": "loop",
+    "id": "watch",
+    "config": {
+     "mode": "until",
+     "condition": "{{last.output.goal_met}}",
+     "max_iterations": 90
+    },
+    "body": {
+     "kind": "sequence",
+     "id": "watch-cycle",
+     "children": [
+      {
+       "kind": "gate",
+       "id": "park",
+       "label": "Parked until the self-scheduled trigger fires",
+       "config": {
+        "kind": "event",
+        "timeout_secs": 172800,
+        "message": "This monitor is parked between checks. It wakes when its self-scheduled trigger fires (visible under Automations, created_by: agent, with an expiry). If it has been parked unusually long, the trigger may have expired or been deleted — answer this gate to force a check now, or cancel the run to stop monitoring."
+       }
+      },
+      {
+       "kind": "stage",
+       "id": "check",
+       "label": "One check, then schedule the next or finish",
+       "config": {
+        "capability": "mutating",
+        "timeout_stall_secs": 900,
+        "prompt": "You are one wake of a parked MONITOR run. Perform ONE check, decide, and either finish or schedule the next wake. Do not busy-loop: one check, one decision, one action.\n\nGoal being monitored:\n{{inputs.task}}\n\nHow to perform one check:\n{{inputs.check_instructions}}\n\nWhen monitoring may end (empty means it never self-completes):\n{{inputs.success_criteria}}\n\nBaseline from the first check:\n{{nodes.intake.output.baseline_summary}}\n\nWhat the previous check found:\n{{last.output.summary | default(\"(this is the first scheduled check — diff against the baseline)\")}}\n\nDo these things, in order:\n1. Perform ONE check per the instructions, from {{inputs.scope}}.\n2. Diff against the previous state. Most checks find nothing — that is the expected case, and saying so plainly is a correct result, not a failure. Set changed accordingly and keep the summary short when nothing moved; an alert-shaped report about a quiet check teaches the reader to ignore real ones.\n3. Decide goal_met against the success criteria. Quote the observation that proves it — a paraphrase cannot be checked.\n4. If goal_met is FALSE: schedule the next check with set_onetime_task (resume_run_id=\"self\", when per the cadence — default {{inputs.cadence}}, adjusted by what you saw), then return. If TRUE: do NOT schedule anything — returning with goal_met true ends the watch.\n\nReturn JSON: {\"summary\": string, \"changed\": boolean, \"goal_met\": boolean, \"evidence\": string, \"next_check_when\": string}",
+        "schema": {
+         "summary": "string",
+         "changed": "boolean",
+         "goal_met": "boolean",
+         "evidence": "string",
+         "next_check_when": "string"
+        }
+       }
+      }
+     ]
+    }
+   },
+   {
+    "kind": "stage",
+    "id": "report",
+    "label": "Close out the watch",
+    "config": {
+     "timeout_stall_secs": 600,
+     "prompt": "The monitor's goal is met. Write the close-out report.\n\nGoal:\n{{inputs.task}}\n\nBaseline:\n{{nodes.intake.output.baseline_summary}}\n\nFinal check's finding:\n{{last.output.summary | default(\"(the goal was met at baseline confirmation)\")}}\n\nEvidence it is met:\n{{last.output.evidence | default(\"\")}}\n\nSummarize the arc briefly: what was watched, roughly how long and how many checks it took, what changed along the way, and the observation that ended it. Quote the evidence rather than paraphrasing it. If any self-scheduled trigger might still be outstanding, say so — an expired one cleans itself up, but the reader should know.\n\nReturn JSON: {\"report\": string, \"goal_evidence\": string}",
+     "schema": {
+      "report": "string",
+      "goal_evidence": "string"
+     }
+    }
+   }
+  ]
+ }
+}

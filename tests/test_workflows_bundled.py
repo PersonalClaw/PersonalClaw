@@ -63,6 +63,10 @@ EXPECTED = {
     # research-loop descendant, which is why there are five here rather than six.
     "goal-pursuit-open-ended",
     "goal-pursuit-verifiable",
+    # The monitor variant (WF2LOO-9 / R15): a parked run plus a self-created clock trigger.
+    # Its park gate has no provider to dispatch — the between-checks mechanism is the
+    # trigger substrate's resume target, not an action.
+    "goal-pursuit-monitor",
     "general-project",
     "design-project",
     "diagnose-run",
