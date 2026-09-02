@@ -115,6 +115,7 @@ of all 7 live gates in a change whose subject is enforcement, so the node keeps 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -391,6 +392,14 @@ class JudgeVerdict:
     #: reads it to choose `PROTOCOL` over `USER`: "the judge could not answer in the required
     #: shape" and "the work fell short" send a reader to two different places.
     protocol_error: bool = False
+    #: `ES-12`: sha256[:16] of the EXACT evidence slice this verdict judged, stamped by the
+    #: caller that assembled the slice (never by the model). Lets a reader confirm which
+    #: evidence a persisted verdict was answerable from; "" when the caller did not supply it.
+    evidence_hash: str = ""
+    #: `ES-12`: citations the answerability check could NOT ground in the shown evidence or
+    #: the declared observation commands. Non-empty = flagged; a PASS whose EVERY citation is
+    #: ungrounded is rejected outright (see `validate_verdict`).
+    unanswerable_refs: list[str] = field(default_factory=list)
 
     # ── The loop dialect, absorbed (WF2LOO-16) ──
     #: How much THIS cycle advanced beyond prior cycles, 0-5. The product's ONLY
@@ -470,6 +479,8 @@ class JudgeVerdict:
             "model_overall": self.model_overall,
             "proof": self.proof,
             "evidence_refs": list(self.evidence_refs),
+            "evidence_hash": self.evidence_hash,
+            "unanswerable_refs": list(self.unanswerable_refs),
             "cannot_judge": self.cannot_judge,
             "shortfalls": list(self.shortfalls),
             "invalid_reason": self.invalid_reason,
@@ -529,6 +540,8 @@ def adjudicate(primary: JudgeVerdict, skeptic: JudgeVerdict | None) -> JudgeVerd
         reasoning=primary.reasoning,
         scores=dict(primary.scores),
         evidence_refs=list(primary.evidence_refs),
+        evidence_hash=primary.evidence_hash,
+        unanswerable_refs=list(primary.unanswerable_refs),
         proof=primary.proof,
         done_reason=reason,
         marginal_value=primary.marginal_value,
@@ -614,11 +627,66 @@ def meets_ratchet(scores: dict[str, int], hints: JudgeHints) -> tuple[bool, list
     return overall >= hints.marginal_threshold / 2.5, shortfalls
 
 
+def evidence_hash_of(evidence_text: str) -> str:
+    """`ES-12`: the stable identity of one evidence slice — sha256[:16] of the exact text the
+    judge was shown. Stamped on the verdict record by the CALLER that assembled the slice, so a
+    persisted verdict names which evidence it was answerable from. Empty input hashes to ""
+    rather than the hash of the empty string: "no evidence supplied" must stay distinguishable
+    from "evidence supplied and it was empty-ish"."""
+    if not evidence_text:
+        return ""
+    return hashlib.sha256(evidence_text.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _normalize_for_grounding(text: str) -> str:
+    """Whitespace-collapsed, casefolded form used ONLY for the containment check — quoting
+    discipline should not fail on a wrapped line or a case-folded path."""
+    return " ".join((text or "").split()).casefold()
+
+
+def ungrounded_refs(
+    refs: list[str], evidence_text: str, hints: JudgeHints | None = None
+) -> list[str]:
+    """`ES-12`: the citations that cannot be grounded in what the judge was shown or did.
+
+    A ref is GROUNDED when (a) its text appears verbatim (whitespace/case-normalized) in the
+    evidence slice, or (b) it cites one of the observation commands the hints DECLARED the
+    judge should run itself (`proof_command`, `hidden_validation_commands`) — the judge is
+    told to re-run those and cite their output, so that output is legitimately outside the
+    slice. Everything else references evidence that was neither shown nor sanctioned: the
+    verdict asserts a conclusion the presented evidence cannot support (the T04 gap).
+
+    Short refs (< 12 normalized chars) are never flagged: a fragment that small ("passed",
+    "the diff") grounds against almost anything, so flagging it is noise, and passing it
+    proves nothing either way — the check stays honest by staying silent there.
+    """
+    norm_evidence = _normalize_for_grounding(evidence_text)
+    sanctioned: list[str] = []
+    if hints is not None:
+        if hints.proof_command:
+            sanctioned.append(_normalize_for_grounding(hints.proof_command))
+        sanctioned.extend(
+            _normalize_for_grounding(c) for c in hints.hidden_validation_commands if c
+        )
+    out: list[str] = []
+    for ref in refs:
+        norm = _normalize_for_grounding(str(ref))
+        if len(norm) < 12:
+            continue
+        if norm_evidence and norm in norm_evidence:
+            continue
+        if any(cmd and cmd in norm for cmd in sanctioned):
+            continue
+        out.append(str(ref))
+    return out
+
+
 def validate_verdict(
     raw: Any,
     hints: JudgeHints,
     *,
     fallback_result: bool | None = None,
+    evidence_text: str = "",
 ) -> JudgeVerdict:
     """Turn a raw judge response into a contract-validated verdict.
 
@@ -671,6 +739,13 @@ def validate_verdict(
         done_reason=str(raw.get("done_reason", "")).strip()[:500],
     )
 
+    # `ES-12`: stamp WHICH evidence this verdict judged, and ground its citations against it.
+    # Opt-in: both run only when the caller supplied the slice it showed the judge, so callers
+    # that assemble evidence elsewhere (or none) are untouched.
+    if evidence_text:
+        result.evidence_hash = evidence_hash_of(evidence_text)
+        result.unanswerable_refs = ungrounded_refs(result.evidence_refs, evidence_text, hints)
+
     if result.cannot_judge:
         # A typed escape hatch: parseable refusal rather than a parse failure. It is
         # NOT a pass, and it is not an error either.
@@ -688,6 +763,24 @@ def validate_verdict(
     # completion record without proof is just a claim.
     if not (result.proof or result.evidence_refs):
         result.invalid_reason = "PASS without cited proof or evidence refs"
+        result.protocol_error = True
+        return result
+
+    # `ES-12` answerability: a PASS whose EVERY substantive citation references evidence that
+    # was neither shown nor sanctioned is a conclusion the presented evidence cannot support —
+    # the same class of invalid answer as citing nothing, so it takes the same protocol exit.
+    # Partially-grounded verdicts are FLAGGED (unanswerable_refs above), not rejected: one bad
+    # citation beside grounded ones is a quality signal, not proof the verdict is baseless.
+    if (
+        evidence_text
+        and result.evidence_refs
+        and result.unanswerable_refs
+        and len(result.unanswerable_refs) == len(result.evidence_refs)
+        and not result.proof
+    ):
+        result.invalid_reason = "PASS cites only evidence not shown to the judge: " + "; ".join(
+            r[:80] for r in result.unanswerable_refs[:3]
+        )
         result.protocol_error = True
         return result
 
@@ -936,6 +1029,10 @@ def judge_instruction(prompt: str, hints: JudgeHints) -> str:
         "",
         "A PASS carrying neither `proof` nor `evidence_refs` is REJECTED by the engine: a "
         "completion record without proof is a claim, not a verdict.",
+        "Each `evidence_refs` entry must QUOTE the evidence: a verbatim span from the material "
+        "above, or the output of a command this instruction told you to run. A citation that "
+        "references evidence you were not shown is unanswerable — a PASS resting only on such "
+        "citations is rejected.",
         "If you genuinely cannot tell, say why in `cannot_judge` — that escalates to a human, "
         "which is useful. A coin flip dressed as a verdict is not.",
     ]
