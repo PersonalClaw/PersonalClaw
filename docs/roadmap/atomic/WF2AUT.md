@@ -23,7 +23,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2AUT-11` | 🔴 | idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption) | `WF2AUT-3`, `EXT:LOOPS-EVOLUTION:Phase 4 loop-ticker before autonudge deletion` | kind:idle fires for user automations preserving reactive re-arm/delivered-only counting/mid-turn-drop; autonudge.py deleted and the loop tick engine rides kind:idle (this half only after LOOPS-EVOLUTION Phase 4) |
 | `WF2AUT-12` | ⬜ | webhook kind fire endpoint + scoped token verification (E4-blocked) | `WF2AUT-5`, `EXT:MCP-READONLY-INBOUND:fail-closed inbound HTTP substrate`, `EXT:EXTERNAL-ACCESS:generalized inbound surface + owner E4 decision` | owner clears E4 and the inbound surface owner is decided; POST /api/triggers/{id}/fire verifies the SHA-256-hashed scoped bearer token and fences the payload; token_ref lint (shipped S119) then has a fire path to guard |
 | `WF2AUT-13` | ✅ | §3.3 cursor rule call site: the spool drain acts on `drain_decision` instead of acking unconditionally | `WF2AUT-1`, `WF2AUT-2` | the spool drain classifies each re-entry into `Handling` at an explicit side-effect boundary, calls `drain_decision`, and acts on every `DrainAction` (consume/hold/give-up/skip-duplicate) with a durable retry budget; a failure AFTER the boundary is never retried; `SKIP_CYCLE` deleted for want of an honest producer; exhaustiveness ratchet over both enums with a raising tail |
-| `WF2AUT-14` | ⬜ | Resume-target substrate: ratify shipped resume-targets + file the orphaned scope | — | The shipped resume-target surface is documented as the substrate contract (ratified as filed); the orphaned remainder (delta between original WF2AUT scope and what shipped 08-28) is enumerated and implemented or explicitly descoped with reasons; WF2LOO-9 consumes the contract without private workarounds; tests pin the contract surface. |
+| `WF2AUT-14` | 🟡 | Resume-target substrate: ratify shipped resume-targets + file the orphaned scope | — | The shipped resume-target surface is documented as the substrate contract (ratified as filed); the orphaned remainder (delta between original WF2AUT scope and what shipped 08-28) is enumerated and implemented or explicitly descoped with reasons; WF2LOO-9 consumes the contract without private workarounds; tests pin the contract surface. |
 
 ## Atom scopes
 
@@ -211,3 +211,44 @@ of that rule.
    (AST over both functions' source + both raising tails + a producer per `Handling` member).
 5. Regenerate `inert-surface-baseline.json` (a legitimate shrink) in the same commit.
 
+
+### `WF2AUT-14` — Resume-target substrate: ratify shipped resume-targets + file the orphaned scope
+
+**Status:** ratified (this PR); `dag.json` flip pending. Marked 🟡 above — the ratification
+artifact has landed; the atom stays open until the machine status flips.
+
+Full contract + orphan enumeration: [the resume-target contract design note](../design-notes/wf2aut14-resume-target-contract.md).
+
+The resume-target surface (`triggers/wakeup.py`: `resume_target_of` / `wakeup_for` /
+`dispatch_fires` / `RESUME_TARGET_KEY`; `triggers/models.py`: `_resume_target_issues` /
+`_RESUME_TARGET_FIELDS`) shipped 2026-08-28 with WF2AUT-2/§3.2 and is now **documented as
+the stable substrate contract for AUTO-R11, ratified as filed** — the authored form
+(`workflow.resume` = `{run_id, project_id?, resume_token?, answer?}`), the normalized shape
+`resume_target_of` returns (`{run_id, project_id, resume_token, gate_answer, answers_gate}`),
+the wake-vs-resume dispatch, and the fail-closed missing-target dispositions
+(`REFUSED` / `DEFERRED` / `FAILED`).
+
+**Orphaned scope (original plan vs shipped).** The original R11 authored form was
+`workflow: {resume: {run_id, node_id}}`, framed as resolving a wait/gate **node**. Delta:
+
+- `run_id` — **kept** (the whole target).
+- `node_id` — **descoped**: the resume resolves the run's *own* currently-pending
+  continuation (`workflows.human_input.list_continuations` / `consume_continuation`); a
+  caller-named node would be a second, forgeable answer to "which wait is pending" and a
+  mis-address hazard. Run-targeting is the safe contract.
+- the "resolve a wait/gate node" capability — **kept, reframed** to run-level (answer the
+  pending gate, or clear the pause).
+- the fire-path "resolve def / resume target" step and §3.2 / R16 wake-vs-resume — **kept**
+  (now wired end-to-end; had zero producers before this surface).
+- `project_id` / `resume_token` / `answer`-presence semantics / the fail-closed
+  dispositions — shipped **beyond** the original scope and **kept** as part of the contract.
+
+No orphan is left un-implemented: only `node_id` did not ship, and it is descoped.
+
+**Consumer.** WF2LOO-9's `set_onetime_task` / `set_recurring_task` (`triggers/tools.py`)
+writes `workflow = {"resume": target}` through the public key and reads back via
+`resume_target_of` — no private workaround.
+
+**Pins.** Behavioural pins in `tests/test_triggers_resume_target.py`; the ratified-shape
+ratchet (authored field set, normalized keys, `node_id`-is-descoped) in
+`tests/test_triggers_resume_target_contract.py`.
