@@ -34,15 +34,21 @@ def list_providers() -> list[str]:
 
 
 def register_builtin_providers() -> None:
-    """Register the always-present ``none`` provider. Idempotent.
+    """Register the always-present ``none`` provider and the core-native ``docker`` tier.
+    Idempotent.
 
-    Installed ``sandbox`` apps are NOT registered here — the extension system owns their
-    lifecycle via ``SandboxTypeHandler`` (enable/disable), keeping one source of truth per
-    extension-backed provider.
+    ``none`` and ``docker`` are core built-ins (EXECUTION-ISOLATION §1.2), registered here rather
+    than through the extension system: ``none`` is always available; ``docker`` self-gates via its
+    cached daemon probe, so registering it unconditionally is safe (an unavailable ``docker`` name
+    refuses at ``wrap`` with a typed error, it does not silently downgrade). Installed ``sandbox``
+    apps (a future ``podman``/``byoi``, or ``lima``) are NOT registered here — the extension system
+    owns their lifecycle via ``SandboxTypeHandler`` (enable/disable), one source of truth each.
     """
+    from personalclaw.sandbox_providers.docker import DockerSandboxProvider
     from personalclaw.sandbox_providers.none import NoneSandboxProvider
 
     register_provider(NoneSandboxProvider())
+    register_provider(DockerSandboxProvider())
 
 
 def resolve_provider(name: str = "") -> "SandboxProvider":

@@ -299,8 +299,25 @@ class Artifact:
 
 
 def normalize_kind(kind: str) -> str:
+    """Canonicalize a create-path kind — an UNKNOWN kind is refused, never coerced.
+
+    This used to fall back to ``"widget"``, which silently promoted the one case the
+    platform does not understand to the most capable kind in the registry: widget is
+    the sandboxed-EXECUTION kind, so a typo'd ``"markdwon"`` or ``"md"`` was stored as
+    executable payload instead of prose (and lost the comment layer, since sandboxed
+    kinds are not commentable). The binary sibling (``create_binary``) already raises
+    on exactly this shape — silent coercion there is how every generated video was
+    once stored as an image — and failing loudly is what stops the class recurring as
+    kinds are added. An ABSENT kind is different from an unknown one: callers default
+    it to ``"widget"`` deliberately (saving a chat widget is the primary flow), so
+    empty stays the documented default.
+    """
     k = (kind or "").strip().lower()
-    return k if k in ALLOWED_KINDS else "widget"
+    if not k:
+        return "widget"
+    if k in ALLOWED_KINDS:
+        return k
+    raise ValueError(f"unknown artifact kind {k!r}; allowed: {', '.join(sorted(ALLOWED_KINDS))}")
 
 
 def normalize_source(source: str) -> str:

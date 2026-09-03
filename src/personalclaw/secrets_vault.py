@@ -75,6 +75,22 @@ PROJECT_KEY_PREFIX = "PCPROJ_"
 #: underscore separator would split `proj_a__KEY` at the wrong place.
 PROJECT_KEY_SEP = "__"
 
+#: Credential-store key prefixes that are MACHINE-managed, not user secrets, and are therefore
+#: hidden from the vault read model. A user must never see — or be able to delete — one of these
+#: from the secrets UI: a browse profile-encryption key (`BROWSE_PROFILE_KEY_<slug>`) is key
+#: material a profile depends on, not a credential the user typed. Kept as a literal here because
+#: the vault owns its own hiding policy, with `test_secrets_vault` pinning it to the producer's
+#: `browse.handoff.PROFILE_KEY_PREFIX` so the two cannot drift without reddening the build.
+RESERVED_KEY_PREFIXES: tuple[str, ...] = ("BROWSE_PROFILE_KEY_",)
+
+
+def is_reserved_key(key: str) -> bool:
+    """Whether *key* is machine-managed key material hidden from the vault (see
+    :data:`RESERVED_KEY_PREFIXES`). Reserved keys live in the credential store like any other, but
+    the vault's read model omits them so they cannot be presented — or deleted — as user secrets."""
+    return any(key.startswith(prefix) for prefix in RESERVED_KEY_PREFIXES)
+
+
 #: Scope identifiers. Wire values as well as internal ones — one vocabulary, so the frontend's
 #: three-way branch and the backend's cannot drift into disagreeing about what a row is.
 SCOPE_GLOBAL = "global"
@@ -225,6 +241,10 @@ def list_presence(
     rows: list[SecretPresence] = []
 
     for key in stored:
+        if is_reserved_key(key):
+            # Machine-managed key material (a browse profile-encryption key): present in the
+            # credential store, deliberately absent from the vault. See RESERVED_KEY_PREFIXES.
+            continue
         split = split_project_key(key)
         if split is None:
             rows.append(
@@ -252,7 +272,7 @@ def list_presence(
     # the user the value is outside the vault when the vault is exactly where it is.
     vault_names = {r.name for r in rows if r.scope == SCOPE_GLOBAL}
     for name in _host_secret_names():
-        if name in vault_names or split_project_key(name) is not None:
+        if name in vault_names or split_project_key(name) is not None or is_reserved_key(name):
             continue
         rows.append(
             SecretPresence(name=name, scope=SCOPE_HOST, consumers=consumer_map.get(name, ()))

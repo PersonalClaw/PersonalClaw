@@ -106,8 +106,9 @@ describe('the rule-name fields cannot be squeezed out of existence', () => {
     const groupTag = source.slice(groupOpen, source.indexOf('>', groupOpen) + 1)
     expect(groupTag, 'Remove must sit in a group WITH the select').toMatch(/min-w-0/)
     expect(groupTag, 'and that group must not claim the line the field needs').not.toMatch(/\bflex-1\b/)
-    // The select is inside that same group, not a sibling of the field.
-    const selectAt = source.indexOf('<StrategyPicker value={rule.strategy}')
+    // The select is inside that same group, not a sibling of the field. (`shown` is the
+    // row's draft-or-rule view — the draft-and-commit editor renders from it.)
+    const selectAt = source.indexOf('<StrategyPicker value={shown.strategy}')
     expect(selectAt).toBeGreaterThan(groupOpen)
     expect(selectAt).toBeLessThan(at)
   })

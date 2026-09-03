@@ -34,12 +34,17 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
     [loops],
   )
   const unread = useMemo(() => notifications.filter((n) => !n.acked).length, [notifications])
+  // The "inbox" pill badges MESSAGES needing the user. Proposal mirrors
+  // (item_kind 'proposal') are the same skill proposals the Action Center lists
+  // with Accept/Reject — counting them here badged "31 inbox" for 1 real
+  // message + 30 mirrors, ~doubling the perceived backlog.
+  const inboxMsgs = useMemo(() => inbox.filter((i) => i.item_kind !== 'proposal').length, [inbox])
 
   const pills: { key: string; icon: LucideIcon; n: number; label: string; go: string; tone: string }[] = [
     { key: 'loops', icon: Activity, n: runningLoops, label: runningLoops === 1 ? 'loop running' : 'loops running', go: 'projects', tone: 'var(--color-primary)' },
     { key: 'appr', icon: ShieldCheck, n: approvals.length, label: approvals.length === 1 ? 'approval waiting' : 'approvals waiting', go: 'chat', tone: 'var(--color-warn)' },
     { key: 'tasks', icon: ListTodo, n: tasks.length, label: tasks.length === 1 ? 'task ready' : 'tasks ready', go: 'tasks', tone: 'var(--color-info)' },
-    { key: 'inbox', icon: Inbox, n: inbox.length, label: 'inbox', go: 'inbox', tone: 'var(--color-secondary)' },
+    { key: 'inbox', icon: Inbox, n: inboxMsgs, label: 'inbox', go: 'inbox', tone: 'var(--color-secondary)' },
     { key: 'notif', icon: Bell, n: unread, label: 'unread', go: 'notifications', tone: 'var(--color-on-surface-low)' },
   ]
 

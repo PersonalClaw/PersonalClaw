@@ -5,6 +5,7 @@ import { Field, TextInput, ChipInput } from '../../ui/forms'
 import { AddItemButton } from '../../ui/AddItemButton'
 import { detectPlaceholders, detectIncludes, promptVars } from './promptMeta'
 import { VariableRow } from './VariableRow'
+import { TextLink } from '../../ui/TextLink'
 
 export type SnippetDraft = { name: string; title: string; description: string; content: string; variables: PromptVariable[]; tags: string[]; source?: string }
 
@@ -96,7 +97,7 @@ export function SnippetForm({ draft, onChange, nameLocked, registerInsert }: { d
                 <Plus size={12} /> <span className="font-mono">{n}</span>
               </button>
             ))}
-            {undeclared.length > 1 && <button type="button" onClick={() => addVars(undeclared)} className="rounded-pill px-2 h-7 text-primary text-[0.75rem] hover:underline">Add all</button>}
+            {undeclared.length > 1 && <TextLink onClick={() => addVars(undeclared)} size="xs" className="rounded-pill px-2 h-7">Add all</TextLink>}
           </div>
         </div>
       )}

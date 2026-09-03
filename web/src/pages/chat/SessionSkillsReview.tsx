@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useFocusTrap } from '../../ui/useFocusTrap'
 import { fvs } from '../../design/fontWeight'
 import { GraduationCap, Loader2, Check, X, Pencil } from 'lucide-react'
 import { api, type EphemeralDraft } from '../../lib/api'
 import { Button } from '../../ui/Button'
+import { Modal } from '../../ui/Modal'
 
 /** Session-skills review (skill-ephemeral-promotion).
  *
@@ -61,44 +61,29 @@ function SessionSkillsModal({ sessionKey, agent, drafts, onClose, onChanged }: {
   onClose: () => void
   onChanged: () => void
 }) {
-  // The scrim closes this on click, which is a MOUSE-only exit. Escape gives the keyboard the same
-  // way out — the convention 39 sites in this app already follow (`ui/Popover` documents it).
-  //
-  // 🔑 AND THE TRAP COMPLETES THAT CONTRACT. Escape gave the keyboard a way OUT; nothing kept it IN.
-  // Measured before this: with the review open, Tab walked straight into the chat composer behind the
-  // scrim — a user could type into a surface they cannot see. The ref goes on the CARD rather than the
-  // scrim, because the card is the dialog; the scrim is only the click target that dismisses it.
-  //
-  // 🪤 The hook engages ONLY because this component mounts WITH the overlay (`{open && <…>}` above).
-  // Its effect reads `ref.current`, so putting the same hook in an always-mounted parent that toggles
-  // an `open` flag internally leaves it silently inert — that is exactly how `app/CommandPalette.tsx`
-  // shipped an inert trap, and the reason this is a separate component and not inlined JSX.
-  const trapRef = useFocusTrap<HTMLDivElement>()
-  useEffect(() => {
-    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
-    document.addEventListener('keydown', onEsc)
-    return () => document.removeEventListener('keydown', onEsc)
-  }, [onClose])
+  // The sheet rides ui/Modal: the dialog role + aria-modal, the focus trap, Escape,
+  // and scrim-click dismissal all come from the primitive. It stays a separate
+  // component that mounts WITH the overlay (`{open && <…>}` above) — that mounting
+  // is what arms the primitive's focus trap; an always-mounted wrapper toggling
+  // visibility internally would leave the trap silently inert.
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4" onClick={onClose}>
-      <div ref={trapRef} className="w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-2xl bg-surface p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-1 flex items-center gap-2">
-          <GraduationCap size={18} style={{ color: 'var(--color-primary)' }} />
-          <h2 className="text-on-surface text-[1.0625rem]" style={fvs(600)}>Skills taught this session</h2>
-        </div>
-        <p className="mb-4 text-on-surface-low text-[0.8125rem]">
-          Keep any of these for later? Save to just this agent, to all agents, or forget it.
-        </p>
-        <div className="flex flex-col gap-3">
-          {drafts.map((d) => (
-            <DraftCard key={d.slug} sessionKey={sessionKey} agent={agent} draft={d} onChanged={onChanged} />
-          ))}
-        </div>
-        <div className="mt-4 flex justify-end">
-          <Button variant="ghost" size="sm" onClick={onClose}>Done</Button>
-        </div>
+    <Modal
+      title="Skills taught this session"
+      icon={<GraduationCap size={18} style={{ color: 'var(--color-primary)' }} />}
+      onClose={onClose}
+    >
+      <p className="mb-4 text-on-surface-low text-[0.8125rem]">
+        Keep any of these for later? Save to just this agent, to all agents, or forget it.
+      </p>
+      <div className="flex flex-col gap-3">
+        {drafts.map((d) => (
+          <DraftCard key={d.slug} sessionKey={sessionKey} agent={agent} draft={d} onChanged={onChanged} />
+        ))}
       </div>
-    </div>
+      <div className="mt-4 flex justify-end">
+        <Button variant="ghost" size="sm" onClick={onClose}>Done</Button>
+      </div>
+    </Modal>
   )
 }
 

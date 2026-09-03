@@ -6,6 +6,7 @@ import { Button } from '../../ui/Button'
 import { ListSkeleton, EmptyState, LoadError } from '../../ui/ListScaffold'
 import { UnifiedDiff } from '../../ui/UnifiedDiff'
 import { useQuery, useMutation, invalidateKeys } from '../../lib/data'
+import { TextLink } from '../../ui/TextLink'
 
 /** Skill-proposals inbox (skill-evolution-proposal-only).
  *
@@ -46,7 +47,7 @@ export function SkillProposals() {
         {/* Cross-link, not a second queue: each proposal also appears in the inbox (plan 42
             S4) so it can't be missed while you're away. Both surfaces call the same
             accept/reject endpoints, and answering on either resolves the other. */}
-        {' '}They also appear in your <a href="#/inbox?kind=proposal" className="text-primary hover:underline">inbox</a>.
+        {' '}They also appear in your <TextLink href="#/inbox?kind=proposal">inbox</TextLink>.
       </p>
       {/* No `onChanged` prop. Each row's accept/reject DECLARES the keys it affects, and the layer
           re-reads them for every mounted reader — including this list and the SkillsPage badge that

@@ -148,8 +148,12 @@ describe('no composed sentence hedges its own count', () => {
     // And the eight formerly-exempt files are asserted CLEAN by the sweep above rather than skipped,
     // which is what makes the inversion real rather than cosmetic.
     expect(ONCE_EXEMPT_NOW_CLEAN.length, 'the family\'s hardest members stay named').toBe(8)
+    // One scan, checked eight times — offenders() walks the whole tree, and calling
+    // it per file ran ~9 full scans in one test, which is a 20s timeout on a loaded
+    // machine (and this test gates every push via the pre-push hook).
+    const found = offenders()
     for (const rel of ONCE_EXEMPT_NOW_CLEAN) {
-      expect(offenders().some((o) => o.startsWith(rel)), `${rel} regressed a hedged plural`).toBe(false)
+      expect(found.some((o) => o.startsWith(rel)), `${rel} regressed a hedged plural`).toBe(false)
     }
   })
 })

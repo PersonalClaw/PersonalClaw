@@ -14,12 +14,22 @@ Endpoints:
 Which model serves a use case is the active selection in ``active_models.json``
 (``/api/models/active`` — see ``dashboard/handlers/model_registry.py``); these
 ``/settings`` routes carry only provider-agnostic behavior (e.g. auto-speak).
+
+Every failure answers with the one wire error envelope
+(``{"error": {"code", "message"}}`` via :func:`personalclaw.http_errors.json_error`);
+only success keeps its ``{"ok": true, ...}`` shape. A "test connection" failure in
+particular is a real 4xx/5xx so the frontend's shared error funnel (which fires on
+``!response.ok``) surfaces guidance instead of a raw Python exception.
 """
 
 import logging
+import socket
+import ssl
 
+import aiohttp
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.providers import mcp_instances as _mcp
 
 logger = logging.getLogger(__name__)
@@ -89,9 +99,15 @@ async def handle_list_instances(request: web.Request) -> web.Response:
     registry = get_provider_registry()
     ext = registry.get(name)
     if not ext:
-        return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
+        return json_error(
+            "not_found", message="No provider is registered under that name.", status=404
+        )
     if not ext.provider_config.multiInstance:
-        return web.json_response({"error": f"Extension {name!r} is not multi-instance"}, status=400)
+        return json_error(
+            "bad_request",
+            message="This provider does not support multiple instances.",
+            status=400,
+        )
 
     # The mcp-tools card reads/writes the ONE store the native loop consumes
     # (~/.personalclaw/mcp.json), not the generic instance store.
@@ -116,31 +132,44 @@ async def handle_create_instance(request: web.Request) -> web.Response:
     registry = get_provider_registry()
     ext = registry.get(name)
     if not ext:
-        return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
+        return json_error(
+            "not_found", message="No provider is registered under that name.", status=404
+        )
     if not ext.provider_config.multiInstance:
-        return web.json_response({"error": f"Extension {name!r} is not multi-instance"}, status=400)
+        return json_error(
+            "bad_request",
+            message="This provider does not support multiple instances.",
+            status=400,
+        )
 
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "Invalid JSON body"}, status=400)
+        return json_error("invalid_json", status=400)
 
     display_name = str(body.get("display_name", "")).strip()
     config = body.get("config", {})
     if not isinstance(config, dict):
-        return web.json_response({"error": "config must be a JSON object"}, status=400)
+        return json_error(
+            "invalid_body", message="The 'config' field must be a JSON object.", status=400
+        )
 
     # Validate against schema
     schema = ext.provider_config.settingsSchema
     errors = ProviderSettings.validate(config, schema)
     if errors:
-        return web.json_response({"error": "Validation failed", "details": errors}, status=422)
+        return json_error(
+            "invalid_request",
+            message="The instance configuration failed validation.",
+            status=422,
+            error_extra={"details": errors},
+        )
 
     if name == _mcp.MCP_TOOLS_EXTENSION:
         try:
             inst = _mcp.create_instance(display_name, config)
         except ValueError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return json_error("bad_request", message=str(exc), status=400)
         _rebuild_agent_config_safe()
         return web.json_response({"instance": inst.to_dict()}, status=201)
 
@@ -158,11 +187,11 @@ async def handle_get_instance(request: web.Request) -> web.Response:
     if name == _mcp.MCP_TOOLS_EXTENSION:
         inst = _mcp.get_instance(instance_id)
         if not inst:
-            return web.json_response({"error": "Instance not found"}, status=404)
+            return json_error("not_found", message="No instance exists with that id.", status=404)
         return web.json_response({"instance": inst.to_dict()})
     inst = get_instance(name, instance_id)
     if not inst:
-        return web.json_response({"error": "Instance not found"}, status=404)
+        return json_error("not_found", message="No instance exists with that id.", status=404)
     return web.json_response({"instance": inst.to_dict()})
 
 
@@ -178,27 +207,36 @@ async def handle_update_instance(request: web.Request) -> web.Response:
     registry = get_provider_registry()
     ext = registry.get(name)
     if not ext:
-        return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
+        return json_error(
+            "not_found", message="No provider is registered under that name.", status=404
+        )
 
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "Invalid JSON body"}, status=400)
+        return json_error("invalid_json", status=400)
 
     # Validate config if provided
     config = body.get("config")
     if config is not None:
         if not isinstance(config, dict):
-            return web.json_response({"error": "config must be a JSON object"}, status=400)
+            return json_error(
+                "invalid_body", message="The 'config' field must be a JSON object.", status=400
+            )
         schema = ext.provider_config.settingsSchema
         errors = ProviderSettings.validate(config, schema)
         if errors:
-            return web.json_response({"error": "Validation failed", "details": errors}, status=422)
+            return json_error(
+                "invalid_request",
+                message="The instance configuration failed validation.",
+                status=422,
+                error_extra={"details": errors},
+            )
 
     if name == _mcp.MCP_TOOLS_EXTENSION:
         inst = _mcp.update_instance(instance_id, config=config, enabled=body.get("enabled"))
         if not inst:
-            return web.json_response({"error": "Instance not found"}, status=404)
+            return json_error("not_found", message="No instance exists with that id.", status=404)
         _rebuild_agent_config_safe()
         return web.json_response({"instance": inst.to_dict()})
 
@@ -210,7 +248,7 @@ async def handle_update_instance(request: web.Request) -> web.Response:
         enabled=body.get("enabled"),
     )
     if not inst:
-        return web.json_response({"error": "Instance not found"}, status=404)
+        return json_error("not_found", message="No instance exists with that id.", status=404)
     _refresh_tool_provider_safe(name)
     return web.json_response({"instance": inst.to_dict()})
 
@@ -223,14 +261,76 @@ async def handle_delete_instance(request: web.Request) -> web.Response:
     instance_id = request.match_info["id"]
     if name == _mcp.MCP_TOOLS_EXTENSION:
         if not _mcp.delete_instance(instance_id):
-            return web.json_response({"error": "Instance not found"}, status=404)
+            return json_error("not_found", message="No instance exists with that id.", status=404)
         _rebuild_agent_config_safe()
         return web.json_response({"ok": True})
     deleted = delete_instance(name, instance_id)
     if not deleted:
-        return web.json_response({"error": "Instance not found"}, status=404)
+        return json_error("not_found", message="No instance exists with that id.", status=404)
     _refresh_tool_provider_safe(name)
     return web.json_response({"ok": True})
+
+
+def _probe_failure(exc: BaseException, *, context: str) -> web.Response:
+    """Turn a connectivity-probe exception into the one wire error envelope.
+
+    The raw exception is logged for the operator; it is NEVER placed in the user
+    message (a truncated ``ConnectionRefusedError(...)`` is noise, not guidance).
+    Failing to reach the endpoint is an upstream problem (502 ``provider_unreachable``);
+    an unusable instance config is the caller's (400 ``provider_config_invalid``); any
+    other error is an unexpected, retryable test failure (502 ``provider_test_failed``).
+    """
+    logger.warning("provider connectivity test failed (%s)", context, exc_info=True)
+    # aiohttp wraps the OS-level cause on its connector errors; inspect it when present.
+    os_error = getattr(exc, "os_error", None)
+    root: BaseException = os_error if isinstance(os_error, BaseException) else exc
+    if isinstance(exc, (ValueError, KeyError)):
+        return json_error(
+            "provider_config_invalid",
+            message="This instance's configuration is incomplete or invalid, so it could "
+            "not be tested. Check its settings and try again.",
+            status=400,
+        )
+    if isinstance(root, ConnectionRefusedError):
+        return json_error(
+            "provider_unreachable",
+            message="Could not reach that endpoint — the connection was refused. Check the "
+            "URL and that the service is running.",
+            status=502,
+        )
+    if isinstance(root, TimeoutError):
+        return json_error(
+            "provider_unreachable",
+            message="The connection timed out. Check the URL and that the service is "
+            "reachable from here.",
+            status=502,
+        )
+    if isinstance(root, socket.gaierror):
+        return json_error(
+            "provider_unreachable",
+            message="That host could not be resolved. Check the endpoint's hostname.",
+            status=502,
+        )
+    if isinstance(root, ssl.SSLError) or isinstance(exc, aiohttp.ClientSSLError):
+        return json_error(
+            "provider_unreachable",
+            message="The TLS handshake failed. Check the endpoint's certificate and that it "
+            "expects HTTPS.",
+            status=502,
+        )
+    if isinstance(exc, aiohttp.ClientError):
+        return json_error(
+            "provider_unreachable",
+            message="Could not reach that endpoint. Check the URL and that the service is "
+            "running.",
+            status=502,
+        )
+    return json_error(
+        "provider_test_failed",
+        message="The connection test failed unexpectedly. Check the instance configuration "
+        "and try again.",
+        status=502,
+    )
 
 
 async def handle_test_instance(request: web.Request) -> web.Response:
@@ -244,7 +344,9 @@ async def handle_test_instance(request: web.Request) -> web.Response:
     registry = get_provider_registry()
     ext = registry.get(name)
     if not ext:
-        return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
+        return json_error(
+            "not_found", message="No provider is registered under that name.", status=404
+        )
 
     # mcp-tools instances live in ~/.personalclaw/mcp.json — probe the real
     # server (spawn → initialize → tools/list) for a true connectivity check.
@@ -253,22 +355,31 @@ async def handle_test_instance(request: web.Request) -> web.Response:
 
         target = next((s for s in list_servers() if s.name == instance_id), None)
         if target is None:
-            return web.json_response({"error": "Instance not found"}, status=404)
+            return json_error("not_found", message="No instance exists with that id.", status=404)
         try:
             probed = await probe_server(target)
         except Exception as exc:
-            return web.json_response({"ok": False, "message": str(exc)[:200]})
+            return _probe_failure(exc, context=f"mcp-tools/{instance_id}")
         if probed.status in ("ok", "ready", "connected"):
             return web.json_response(
                 {"ok": True, "message": f"Connected — {len(probed.tools)} tool(s)"}
             )
-        return web.json_response(
-            {"ok": False, "message": probed.error or f"Server status: {probed.status}"}
+        logger.warning(
+            "mcp-tools instance %s probed not-ready: status=%s error=%s",
+            instance_id,
+            probed.status,
+            probed.error,
+        )
+        return json_error(
+            "provider_test_failed",
+            message="Reached the MCP server, but it did not report ready. Check its command "
+            "and configuration.",
+            status=502,
         )
 
     inst = get_instance(name, instance_id)
     if not inst:
-        return web.json_response({"error": "Instance not found"}, status=404)
+        return json_error("not_found", message="No instance exists with that id.", status=404)
 
     # For model-type extensions with an endpoint, do HTTP connectivity check
     endpoint = inst.config.get("endpoint", "")
@@ -282,20 +393,22 @@ async def handle_test_instance(request: web.Request) -> web.Response:
         factory = load_factory(ext)
         provider = factory(inst.config)
         if hasattr(provider, "is_available"):
-
             available = await provider.is_available()
             if available:
                 return web.json_response({"ok": True, "message": "Provider available"})
-            return web.json_response({"ok": False, "message": "Provider not available"})
+            return json_error(
+                "provider_test_failed",
+                message="The provider was created but reports it is not available. Check its "
+                "configuration and that any backing service is running.",
+                status=502,
+            )
         return web.json_response({"ok": True, "message": "Provider created successfully"})
     except Exception as exc:
-        return web.json_response({"ok": False, "message": str(exc)[:200]})
+        return _probe_failure(exc, context=f"{name}/{instance_id}")
 
 
 async def _test_model_connectivity(endpoint: str) -> web.Response:
     """Test connectivity to a model endpoint (Ollama, vLLM, etc.)."""
-    import aiohttp
-
     endpoint = endpoint.rstrip("/")
     try:
         async with aiohttp.ClientSession() as session:
@@ -312,21 +425,15 @@ async def _test_model_connectivity(endpoint: str) -> web.Response:
                             "message": f"Connected — {len(models)} model(s) available",
                         }
                     )
-                return web.json_response(
-                    {
-                        "ok": False,
-                        "message": f"Endpoint returned HTTP {r.status}",
-                    }
+                logger.warning("model endpoint probe returned HTTP %s", r.status)
+                return json_error(
+                    "provider_test_failed",
+                    message=f"The endpoint is reachable but returned HTTP {r.status}. Check "
+                    "the URL and that it is a compatible model server.",
+                    status=502,
                 )
-    except aiohttp.ClientConnectorError:
-        return web.json_response(
-            {
-                "ok": False,
-                "message": f"Cannot connect to {endpoint}",
-            }
-        )
     except Exception as exc:
-        return web.json_response({"ok": False, "message": str(exc)[:200]})
+        return _probe_failure(exc, context="model-endpoint")
 
 
 # ── Per-Use-Case Settings (provider-agnostic behavior) ───────────────────────
@@ -338,7 +445,7 @@ async def handle_get_use_case_settings(request: web.Request) -> web.Response:
 
     use_case = request.match_info["use_case"]
     if use_case not in VALID_USE_CASES:
-        return web.json_response({"error": f"Invalid use case: {use_case!r}"}, status=400)
+        return json_error("bad_request", message="That is not a recognized use case.", status=400)
 
     settings = load_use_case_settings(use_case)
     return web.json_response({"use_case": use_case, "settings": settings})
@@ -350,15 +457,17 @@ async def handle_set_use_case_settings(request: web.Request) -> web.Response:
 
     use_case = request.match_info["use_case"]
     if use_case not in VALID_USE_CASES:
-        return web.json_response({"error": f"Invalid use case: {use_case!r}"}, status=400)
+        return json_error("bad_request", message="That is not a recognized use case.", status=400)
 
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "Invalid JSON body"}, status=400)
+        return json_error("invalid_json", status=400)
 
     if not isinstance(body, dict):
-        return web.json_response({"error": "Body must be a JSON object"}, status=400)
+        return json_error(
+            "invalid_body", message="The request body must be a JSON object.", status=400
+        )
 
     save_use_case_settings(use_case, body)
     return web.json_response({"ok": True, "use_case": use_case, "settings": body})

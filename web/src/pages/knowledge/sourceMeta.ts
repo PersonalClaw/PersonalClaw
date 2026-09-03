@@ -31,7 +31,7 @@ export interface HealthMeta {
   hint: string
 }
 
-/** The four statuses `record_poll` can persist, keyed by the exact stored string.
+/** The five statuses `record_poll` can persist, keyed by the exact stored string.
  *  `needs render tier` is separate from `degraded` on purpose: a timeout and a JS shell
  *  produce completely different remediations, and flattening them hides the one knob that
  *  fixes the second. */
@@ -40,6 +40,7 @@ export const HEALTH_META: Record<string, HealthMeta> = {
   'degraded': { label: 'Degraded', tone: 'warn', hint: 'The last poll failed in a way the next one may recover from. The cursor was kept.' },
   'error': { label: 'Error', tone: 'danger', hint: 'The poll could not run at all — usually no provider is enrolled for this kind.' },
   'needs render tier': { label: 'Needs render tier', tone: 'warn', hint: 'This page builds its content with JavaScript, so a plain fetch sees an empty shell.' },
+  'needs browse tier': { label: 'Needs browse tier', tone: 'warn', hint: 'Even a rendered fetch saw an empty shell; this page needs the full gateway browse tier, which is turned off by default.' },
 }
 
 /** Presentation for a status the backend has and this map does not — reached only if the

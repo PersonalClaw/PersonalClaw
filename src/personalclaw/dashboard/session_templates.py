@@ -51,7 +51,7 @@ _MAX_NAME = 80
 _MAX_PROMPT = 4000
 _MAX_TEMPLATES = 100
 
-_VALID_EFFORTS = frozenset({"", "low", "medium", "high"})
+_VALID_EFFORTS = frozenset({"", "low", "medium", "high", "max"})
 
 
 def _path() -> Path:

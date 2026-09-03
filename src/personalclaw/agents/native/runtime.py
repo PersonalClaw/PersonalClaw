@@ -1771,17 +1771,50 @@ class NativeAgentRuntime(AgentProvider):
     # Compact the native loop's history when context crosses this fraction of
     # the model's window (provider-reported context_usage_pct).
     _COMPACT_THRESHOLD_PCT = 70.0
+    # Conservative chars-per-token for the no-usage estimate. Real ratios run
+    # ~3–4 chars/token for prose and lower for code; 3.0 overestimates token
+    # usage, which errs toward compacting slightly early — cheap — rather than
+    # overflowing the window, which kills the turn.
+    _EST_CHARS_PER_TOKEN = 3.0
+
+    def _estimated_context_pct(self) -> float | None:
+        """Char-based context estimate for providers that report no usage.
+
+        Endpoints that reject ``stream_options`` never deliver a usage chunk, so
+        ``_last_context_pct`` stays ``None`` and threshold compaction would never
+        fire — history then grows without bound until the model breaks. This
+        estimate (total chars over the model window at a conservative
+        chars-per-token) is the backstop trigger for exactly that case. It feeds
+        COMPACTION ONLY and is never written to ``_last_context_pct``: an
+        estimate must not be displayed as a measurement.
+        """
+        from personalclaw import context_compaction as cc
+        from personalclaw.model_windows import model_context_window
+
+        chars = cc.total_chars(self._messages)
+        if chars <= 0:
+            return None
+        window_tokens = model_context_window(self.agent_model or None)
+        if window_tokens <= 0:
+            return None
+        return (chars / self._EST_CHARS_PER_TOKEN) / window_tokens * 100.0
 
     def _maybe_compact(self) -> None:
         """Run structured compaction on ``self._messages`` if over the threshold.
 
-        Trigger = provider-reported context usage ≥ threshold. Anti-thrashing
-        skips it when the last two passes each reclaimed <10%. Uses the no-LLM
-        path (tool-output pruning pre-pass + structured digest) — cheap, safe,
-        and synchronous; an LLM-summarized middle can layer on later. Records the
-        save fraction for the anti-thrashing guard.
+        Trigger = provider-reported context usage ≥ threshold, with a char-based
+        estimate as the trigger when the provider reports no usage at all (the
+        local-model path). Anti-thrashing skips it when the last two passes each
+        reclaimed <10%. Uses the no-LLM path (tool-output pruning pre-pass +
+        structured digest) — cheap, safe, and synchronous; an LLM-summarized
+        middle can layer on later. Records the save fraction for the
+        anti-thrashing guard.
         """
         measured_pct = self._last_context_pct
+        if measured_pct is None:
+            # No-usage backstop: estimate purely for the trigger decision. The
+            # displayed gauge stays unmeasured — see _estimated_context_pct.
+            measured_pct = self._estimated_context_pct()
         # Unmeasured context cannot cross a threshold — an unknown gauge must not
         # trigger compaction any more than it may print a percentage.
         if measured_pct is None or measured_pct < self._COMPACT_THRESHOLD_PCT:
@@ -1804,7 +1837,11 @@ class NativeAgentRuntime(AgentProvider):
             logger.debug("native: cache prefix invalidated → generation %d", self._cache_generation)
             # A compaction shrank context; the next provider turn re-measures, so
             # reset our gauge optimistically to avoid re-triggering immediately.
-            self._last_context_pct = measured_pct * (after / before)
+            # Only when the gauge was MEASURED: in the estimate-triggered path
+            # _last_context_pct is None and must stay None — scaling the estimate
+            # into it would display a number the provider never reported.
+            if self._last_context_pct is not None:
+                self._last_context_pct = measured_pct * (after / before)
             # Post-compaction guard (E3.1): re-arm structural detection so a loop
             # that resumes identically after the history was compacted is caught
             # fresh, instead of its pre-compaction signatures aging out silently.

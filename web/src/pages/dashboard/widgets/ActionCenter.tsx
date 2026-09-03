@@ -6,6 +6,7 @@ import { reportingWrite } from '../../../app/reportingWrite'
 import { rowSubject } from '../../../lib/rowSubject'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
+import { InlineError } from '../../../ui/InlineError'
 import type { RouteProps } from '../../../app/useQueryState'
 import { invalidateKeys } from '../../../lib/data'
 
@@ -23,7 +24,10 @@ export function ActionCenter({ navigate }: RouteProps) {
    *  read the same collection under `skill-proposals-count` and `skill-proposals`. Prefix mode
    *  keeps every key on that collection in step. */
   const bustProposals = () => invalidateKeys('skill-proposals', true)
-  const { approvals, inbox, proposals, refreshAll } = useDashboardLive()
+  const {
+    approvals, inbox, proposals, refreshAll,
+    approvalsErr, inboxErr, proposalsErr, retryApprovals, retryInbox, retryProposals,
+  } = useDashboardLive()
   const [busy, setBusy] = useState<Set<string>>(new Set())
   // Optimistically hidden rows (acted on) until the feed catches up.
   const [done, setDone] = useState<Set<string>>(new Set())
@@ -41,13 +45,35 @@ export function ActionCenter({ navigate }: RouteProps) {
 
   // Order by urgency: approvals (a run is blocked on you) first, then inbox
   // replies, then skill proposals (least time-critical).
+  //
+  // Dedup: most pending inbox items are proposal MIRRORS of the same skill
+  // proposals the third slice lists directly (item_kind 'proposal', with
+  // refs.skill_proposal naming the proposal id). Without this, every open
+  // proposal rendered twice and "+N more to triage" over-reported ~2x. Keep the
+  // PROPOSAL row (it carries Accept/Reject; the mirror's Reply is inert,
+  // can_reply=false) and keep a mirror whose proposal is NOT in the slice — a
+  // stale mirror must degrade to visible, not vanish.
+  const proposalIds = new Set(proposals.map((p) => p.id))
+  const liveInbox = inbox.filter(
+    (i) => !(i.refs?.skill_proposal && proposalIds.has(String(i.refs.skill_proposal))),
+  )
   const allEntries: Entry[] = [
     ...approvals.map((a) => ({ key: `a:${a.id}`, kind: 'approval' as const, id: a.id, title: `Run ${a.tool}`, sub: a.tool_purpose || a.source || 'Tool approval', session: a.session })),
-    ...inbox.map((i) => ({ key: `i:${i.id}`, kind: 'inbox' as const, id: i.id, title: i.sender_name || i.channel_name || 'Message', sub: i.message?.slice(0, 90) || '' })),
+    ...liveInbox.map((i) => ({ key: `i:${i.id}`, kind: 'inbox' as const, id: i.id, title: i.sender_name || i.channel_name || 'Message', sub: i.message?.slice(0, 90) || '' })),
     ...proposals.map((p) => ({ key: `p:${p.id}`, kind: 'proposal' as const, id: p.id, title: `Skill: ${p.slug}`, sub: p.description?.slice(0, 90) || '' })),
   ].filter((e) => !done.has(e.key))
 
-  if (allEntries.length === 0) {
+  // A lane whose READ failed keeps its last-good rows, so a partial failure would otherwise vanish
+  // into the queue — or into "All clear" when every lane is empty. Surface each failed lane with a
+  // Retry so a swallowed load can't hide a pending item (a tool approval is safety-relevant), and
+  // so a failed lane is never mistaken for an empty one. An empty lane stays silent.
+  const failures: { key: string; what: string; retry: () => void }[] = [
+    ...(approvalsErr ? [{ key: 'approvals', what: 'pending approvals', retry: retryApprovals }] : []),
+    ...(inboxErr ? [{ key: 'inbox', what: 'inbox items', retry: retryInbox }] : []),
+    ...(proposalsErr ? [{ key: 'proposals', what: 'skill proposals', retry: retryProposals }] : []),
+  ]
+
+  if (allEntries.length === 0 && failures.length === 0) {
     return <SlotEmptyState icon={CheckCheck}>All clear — nothing waiting on you.</SlotEmptyState>
   }
 
@@ -79,6 +105,11 @@ export function ActionCenter({ navigate }: RouteProps) {
 
   return (
     <div className="flex flex-col gap-xs pt-xs">
+      {failures.map((f) => (
+        <InlineError key={f.key} icon onRetry={f.retry}>
+          Couldn&rsquo;t load {f.what}.
+        </InlineError>
+      ))}
       <AnimatePresence initial={false}>
         {entries.map((e) => {
           const Icon = icon[e.kind]

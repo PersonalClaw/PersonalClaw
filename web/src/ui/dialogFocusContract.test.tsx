@@ -154,11 +154,13 @@ describe('the rail: a hand-rolled modal over live content owes containment', () 
     .filter((f) => !f.rel.startsWith('ui/') && /fixed inset-0/.test(f.src))
 
   it('finds the population — the census is not vacuous', () => {
+    // pages/chat/SessionSkillsReview left this list by adopting ui/Modal — the
+    // census shrinks when a hand-rolled overlay moves onto the primitive, which
+    // is the direction this rail exists to push.
     expect(overlays.map((f) => f.rel).sort()).toEqual([
       'app/CommandPalette.tsx',
       'app/Onboarding.tsx',
       'pages/chat/ChatFilePanel.tsx',
-      'pages/chat/SessionSkillsReview.tsx',
       'pages/knowledge/KnowledgeDetail.tsx',
     ])
   })

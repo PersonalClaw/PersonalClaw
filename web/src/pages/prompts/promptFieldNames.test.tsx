@@ -110,9 +110,13 @@ describe('VariableRow names each row after the variable it edits', () => {
 describe('the controls that had no name at all', () => {
   it('PromptEditFields names all four (its Section is an injected prop that publishes nothing)', () => {
     const src = code('PromptEditFields.tsx')
-    for (const n of ['Prompt title', 'Prompt description', 'Prompt tags', 'Prompt template']) {
+    for (const n of ['Prompt title', 'Prompt description', 'Prompt template']) {
       expect(src).toContain(`aria-label="${n}"`)
     }
+    // Tags is a ChipInput (the same primitive PromptForm uses), which resolves its
+    // accessible name from the ariaLabel prop when no Field label wraps it —
+    // promptTagsChipInput.test.tsx proves getByLabelText('Prompt tags') resolves.
+    expect(src).toContain(`ariaLabel="Prompt tags"`)
   })
 
   it('PromptDetail Try-it inputs name themselves — the id was DANGLING', () => {

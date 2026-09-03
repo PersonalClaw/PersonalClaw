@@ -1,4 +1,4 @@
-import { Circle, CircleDot, CircleSlash, CheckCircle2, XCircle, ListChecks } from 'lucide-react'
+import { Circle, CircleDot, CircleSlash, CheckCircle2, XCircle, CircleDashed, ListChecks } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ExitCriterion } from '../../lib/api'
 
@@ -25,10 +25,17 @@ export const STATUSES: StatusMeta[] = [
   { key: 'blocked', label: 'Blocked', icon: CircleSlash, tone: 'var(--color-warn)' },
   { key: 'done', label: 'Completed', icon: CheckCircle2, tone: 'var(--color-ok)' },
   { key: 'cancelled', label: 'Cancelled', icon: XCircle, tone: 'var(--color-on-surface-low)' },
+  { key: 'skipped', label: 'Skipped', icon: CircleDashed, tone: 'var(--color-on-surface-low)' },
 ]
 const STATUS_MAP = Object.fromEntries(STATUSES.map((s) => [s.key, s]))
 export const statusMeta = (k?: string): StatusMeta => STATUS_MAP[k ?? ''] ?? { key: k ?? '', label: k ?? 'Unknown', icon: Circle, tone: 'var(--color-on-surface-low)' }
-export const TERMINAL = new Set(['done', 'cancelled'])
+// Display grouping — "finished/declined, not active work": drives the Done filter, the
+// sort-to-bottom, and the dimmed row. `skipped` (a declined or made-unnecessary branch) belongs
+// here with `cancelled`, which is likewise closed-but-not-"done". This is deliberately WIDER than
+// the backend's `TERMINAL_STATUSES` (done, cancelled): that set governs whether a task satisfies a
+// dependency, where a skipped prerequisite must NOT count — a different question from how the list
+// groups it for a reader.
+export const TERMINAL = new Set(['done', 'cancelled', 'skipped'])
 
 /** Why a blocked task is blocked, from the backend's `blocked_reason_kind` ("" | "auto" | "manual").
  *

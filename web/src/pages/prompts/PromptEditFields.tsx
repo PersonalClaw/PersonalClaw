@@ -2,12 +2,14 @@ import { useMemo, useRef } from 'react'
 import { Plus, Wand2, Puzzle } from 'lucide-react'
 import type { PromptVariable, PromptVarType } from '../../lib/api'
 import { AddItemButton } from '../../ui/AddItemButton'
+import { ChipInput } from '../../ui/forms'
 import { detectPlaceholders, detectIncludes } from './promptMeta'
 import type { PromptDraft } from './PromptForm'
 import { PromptPreviewPane } from './PromptPreviewPane'
 import { SyntaxReference } from './SyntaxReference'
 import { RunnableTemplateField } from './RunnableTemplateField'
 import { VariableRow } from './VariableRow'
+import { TextLink } from '../../ui/TextLink'
 
 /** Edit-mode fields that mirror the view's section rhythm (Description → Tags →
  *  Variables → Template). Same `Section` wrapper as the read view, so toggling
@@ -55,13 +57,13 @@ export function PromptEditFields({ draft, onChange, Section }: {
       </Section>
 
       <Section label="Tags">
-        <input
-          value={draft.tags.join(', ')}
-          onChange={(e) => set('tags', e.target.value.split(',').map((s) => s.trim()).filter(Boolean))}
-          aria-label="Prompt tags"
-          placeholder="comma-separated"
-          className={inputCls}
-        />
+        {/* ChipInput, matching PromptForm's Tags field: it drafts locally and commits
+            per chip. The raw input this replaces re-parsed itself on every keystroke
+            (split → trim → filter(Boolean) → join), which ate the comma as soon as it
+            was typed — "red,green" became the single tag "redgreen", so the field
+            could never hold more than one tag. */}
+        <ChipInput values={draft.tags} onChange={(v) => set('tags', v)}
+          ariaLabel="Prompt tags" placeholder="Add a tag, Enter" />
       </Section>
 
       <Section label={`Variables · ${draft.variables.length}`}>
@@ -96,7 +98,7 @@ export function PromptEditFields({ draft, onChange, Section }: {
                   <Plus size={12} /> <span className="font-mono">{n}</span>
                 </button>
               ))}
-              {undeclared.length > 1 && <button type="button" onClick={() => addVars(undeclared)} className="rounded-pill px-2 h-7 text-primary text-[0.75rem] hover:underline">Add all</button>}
+              {undeclared.length > 1 && <TextLink onClick={() => addVars(undeclared)} size="xs" className="rounded-pill px-2 h-7">Add all</TextLink>}
             </div>
           </div>
         )}

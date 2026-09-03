@@ -2,6 +2,7 @@ import { type ReactNode, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowRight, Loader2, type LucideIcon } from 'lucide-react'
 import { Toggle } from '../../ui/Toggle'
+import { StatusPill as UiStatusPill } from '../../ui/StatusPill'
 import { StaleNotice } from '../../ui/StaleNotice'
 import { spring, expr } from '../../design/motion'
 import { fvs, withWeight } from '../../design/fontWeight'
@@ -241,18 +242,24 @@ export function KVList({ rows, query }: { rows: { k: string; v: ReactNode; vText
   )
 }
 
-/** A small status pill (on/off, ok/warn). */
+/** A small status pill (on/off, ok/warn): the toned variants compose the ui
+ *  primitive (identical 16% tint + ink pair); `muted` keeps its solid surface
+ *  fill locally — that is a neutral GROUND, not a tone tint, so it is not the
+ *  primitive's business. Local metrics (px-2, 22px height, label gap) stay here. */
 export function StatusPill({ label, tone, query }: { label: string; tone?: 'ok' | 'warn' | 'muted' | 'primary'; query?: string }) {
-  const map = {
-    ok: { bg: 'color-mix(in srgb, var(--color-ok) 16%, transparent)', fg: 'var(--color-ok)' },
-    warn: { bg: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', fg: 'var(--color-warn)' },
-    primary: { bg: 'color-mix(in srgb, var(--color-primary) 16%, transparent)', fg: 'var(--color-primary)' },
-    muted: { bg: 'var(--color-surface-high)', fg: 'var(--color-on-surface-low)' },
-  }[tone || 'muted']
+  const content = query ? <Highlight text={label} query={query} /> : label
+  if (!tone || tone === 'muted') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-pill px-2 h-[22px] text-[0.75rem]"
+        style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
+        {content}
+      </span>
+    )
+  }
   return (
-    <span className="inline-flex items-center gap-1 rounded-pill px-2 h-[22px] text-[0.75rem]" style={{ background: map.bg, color: map.fg }}>
-      {query ? <Highlight text={label} query={query} /> : label}
-    </span>
+    <UiStatusPill tone={tone} pad={false} className="gap-1 px-2 h-[22px]">
+      {content}
+    </UiStatusPill>
   )
 }
 

@@ -412,11 +412,25 @@ async def start_dashboard(
 
     register_device_routes(app)
 
+    # The browse user-browser connector. Beside the device routes because the
+    # connector IS a paired device — it announces its CDP page-target endpoint over loopback
+    # on the SAME dashboard server (no new listener) and is listed by the same registry.
+    from personalclaw.dashboard.handlers.browse_connector import register_browse_connector_routes
+
+    register_browse_connector_routes(app)
+
     # Push subscriptions. Next to the device routes because a
     # subscription is per-DEVICE state keyed on the same device id pairing writes.
     from personalclaw.dashboard.handlers.push import register_push_routes
 
     register_push_routes(app)
+
+    # Browse mirror + kill switch + auth_needed surfacing. The live
+    # `browse_step` relay rides the multiplexed WS registered just below; these are its read model
+    # (`/api/browse/status`) and the one-click kill controls.
+    from personalclaw.dashboard.handlers.browse_mirror import register_browse_mirror_routes
+
+    register_browse_mirror_routes(app)
 
     # WebSocket (multiplexed real-time events)
     app.router.add_get("/api/ws", ws.api_ws)
@@ -1922,10 +1936,15 @@ async def start_dashboard(
     ) -> web.StreamResponse:
         if request.method not in _safe_methods:
             if not check_origin(request, require=True, fallback_header="Referer"):
-                raise web.HTTPForbidden(
-                    text="CSRF check failed: request origin not allowed.",
-                    content_type="text/plain",
-                )
+                # The one wire error envelope, not plain text: the login page (and the
+                # FE error funnel generally) branches on {"error": {"code"}}, and a
+                # text body parsed as JSON became {} — which the login page then
+                # reported as "Wrong username or password." for a correct password
+                # from any non-loopback origin. Same code the auth routes return for
+                # their own origin rejections.
+                from personalclaw.http_errors import json_error
+
+                return json_error("auth_origin_not_allowed", status=403)
         return await handler(request)  # type: ignore[operator]
 
     @web.middleware  # type: ignore[misc]

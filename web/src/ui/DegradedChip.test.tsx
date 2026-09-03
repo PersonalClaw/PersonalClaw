@@ -64,6 +64,9 @@ function setViewport(isMobile: boolean) {
 
 beforeEach(() => {
   vi.spyOn(api, 'degraded').mockResolvedValue({ surfaces: SURFACES } as never)
+  // The configured world is every pre-existing test's premise: a provider exists, so the
+  // face keeps its degraded vocabulary. Setup-land gets its own describe below.
+  vi.spyOn(api, 'onboarding').mockResolvedValue({ has_model_provider: true } as never)
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -303,5 +306,41 @@ describe('the degraded popover links to where you fix it', () => {
     await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy())
     expect(container.textContent).toContain('Could not read the check')
     expect(container.querySelector(MODELS_LINK), 'no destination without a diagnosis').toBeNull()
+  })
+})
+
+describe('setup-land: no provider has ever been configured', () => {
+  // "Degraded" claims a decline; on a box whose config.json declares zero model
+  // providers nothing ever worked, so the face invites setup instead of alarming.
+  // `has_model_provider` is the registry read behind onboarding's `needs_model`
+  // (provider_bridge: the two "never disagree"), so the chip and the wizard can
+  // never tell a different story about the same config.
+  it('trades the degraded count for a setup invitation, info-toned', async () => {
+    setViewport(false)
+    vi.spyOn(api, 'onboarding').mockResolvedValue({ has_model_provider: false } as never)
+    render(<DegradedChip />)
+    const chip = await screen.findByRole('button', { name: /set up a model/i })
+    expect(chip.textContent).toContain('Set up a model')
+    expect(chip.getAttribute('style')).toContain('--color-info')
+    expect(chip.getAttribute('style')).not.toContain('--color-warn')
+  })
+
+  it('keeps the degraded vocabulary once a provider exists — a regression is not setup-land', async () => {
+    setViewport(false)
+    render(<DegradedChip />)
+    await waitFor(() => expect(api.degraded).toHaveBeenCalled())
+    const chip = await screen.findByTitle(/running without a model/i)
+    expect(chip.textContent).toContain('degraded')
+    expect(chip.getAttribute('style')).toContain('--color-warn')
+  })
+
+  it('a failing degraded check outranks setup-land — never a calm invitation over an unread state', async () => {
+    setViewport(false)
+    vi.spyOn(api, 'degraded').mockRejectedValue(new Error('boom'))
+    vi.spyOn(api, 'onboarding').mockResolvedValue({ has_model_provider: false } as never)
+    render(<DegradedChip />)
+    const chip = await screen.findByTitle(/status unknown/i)
+    expect(chip.textContent).toContain('Status unknown')
+    expect(chip.textContent).not.toContain('Set up a model')
   })
 })

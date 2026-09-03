@@ -818,6 +818,31 @@ _LOG_LEVELS = {
 }
 
 
+def apply_log_level(level_name: str) -> bool:
+    """Set the backend log level LIVE: every logger root we own plus their
+    RotatingFileHandler(s). Returns False for an unrecognized level so a caller
+    can decide whether that is an error.
+
+    Shared by ``POST /api/logs/level`` and the config PATCH path so a write to
+    ``agent.log_level`` from EITHER Settings surface takes effect immediately
+    rather than only at the next restart. The handler pass is load-bearing: a
+    boot-time RotatingFileHandler level would otherwise keep filtering
+    gateway.log at the old verbosity even after the logger level moved.
+    """
+    name = (level_name or "").upper()
+    if name not in _LOG_LEVELS:
+        return False
+    from personalclaw.apps.catalog import installed_logger_roots
+
+    for _lname in ("personalclaw", *installed_logger_roots()):
+        _lg = logging.getLogger(_lname)
+        _lg.setLevel(_LOG_LEVELS[name])
+        for _h in _lg.handlers:
+            if isinstance(_h, RotatingFileHandler):
+                _h.setLevel(_LOG_LEVELS[name])
+    return True
+
+
 async def api_log_level(request: web.Request) -> web.Response:
     """POST /api/logs/level — change the backend logger level at runtime.
 
@@ -835,19 +860,9 @@ async def api_log_level(request: web.Request) -> web.Response:
     level_name = raw_level.upper()
     if level_name not in _LOG_LEVELS:
         return web.json_response({"error": f"invalid level: {level_name}"}, status=400)
-    # Apply to the personalclaw logger AND the app-bundle logger roots (they
-    # log under their own namespaces — installed_logger_roots()), AND to the
-    # persistent RotatingFileHandler(s), whose boot-time level would otherwise
-    # keep filtering gateway.log at the old verbosity ("live" change was
-    # SSE-only before this).
-    from personalclaw.apps.catalog import installed_logger_roots
-
-    for _lname in ("personalclaw", *installed_logger_roots()):
-        _lg = logging.getLogger(_lname)
-        _lg.setLevel(_LOG_LEVELS[level_name])
-        for _h in _lg.handlers:
-            if isinstance(_h, RotatingFileHandler):
-                _h.setLevel(_LOG_LEVELS[level_name])
+    # Apply live (loggers + RotatingFileHandlers), then persist so it survives a
+    # restart. level_name is already validated against _LOG_LEVELS above.
+    apply_log_level(level_name)
     logger.info("Log level changed to %s via dashboard", level_name)
 
     # Persist to config so the level survives restarts.

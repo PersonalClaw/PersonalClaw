@@ -451,6 +451,7 @@ class NativeArtifactProvider(ArtifactProvider):
                     if self._binary_version_path(slug, version) is None:
                         return None
                     art.content = self._raw_ref(slug, version)
+                    art.version = version
                 else:
                     art.content = self._raw_ref(slug)
                 art.live_dirty = False
@@ -460,6 +461,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 if content is None:
                     return None
                 art.content = content
+                art.version = version
                 art.live_dirty = False
                 return art
             # Live view: disk for file-backed, else current.html.
@@ -743,7 +745,11 @@ class NativeArtifactProvider(ArtifactProvider):
             if source_path:
                 self._try_write_source_path(source_path, content or "")
             self._write_meta(art)
-            art.content = content
+            # Echo what _write_text actually persisted (sliced to MAX_CONTENT_BYTES), not
+            # the raw input: create() returns art in-hand rather than re-reading via get()
+            # the way update() does, so an over-cap body would otherwise report success at
+            # full size in the create response while only the first MiB reached disk.
+            art.content = (content or "")[:MAX_CONTENT_BYTES]
         # Mirroring observes the write from OUTSIDE the
         # lock: a listener reads the artifact back, and holding the store lock across an
         # index would serialize every concurrent save behind someone else's indexing.
@@ -794,14 +800,19 @@ class NativeArtifactProvider(ArtifactProvider):
                 art.collection = collection.strip()[:MAX_NAME_LEN]
                 meta_changed = True
 
-            wrote_content = False
+            # Track REAL change so the event / version / recency triad follows what
+            # actually happened, not merely which flags the caller passed. The write
+            # stays unconditional (idempotent), but content_changed gates the edit event
+            # and the updated_at bump so an identical save/snapshot is inert.
+            content_changed = False
             if content is not None:
                 d = self._artifact_dir(slug)
+                content_changed = content != (self._current_content(slug) or "")
                 self._write_text(d / "current.html", content)
                 if art.source_path:
                     self._try_write_source_path(art.source_path, content)
-                wrote_content = True
 
+            cut_version = False
             if snapshot:
                 # Capture live state if no explicit content was passed.
                 snap_content = content
@@ -811,8 +822,21 @@ class NativeArtifactProvider(ArtifactProvider):
                     )
                     if snap_content is None:
                         snap_content = self._current_content(slug) or ""
-                art.version += 1
-                self._snapshot_version(slug, art.version, snap_content)
+                # A snapshot whose bytes match the latest version records a change that
+                # did not happen — skip the version cut (#692). Save is disabled while the
+                # draft is clean; Snapshot is now equally inert on that same clean state.
+                nums = self._list_version_numbers(slug)
+                latest_snap = self._version_content(slug, nums[-1]) if nums else None
+                if latest_snap is None or snap_content != latest_snap:
+                    art.version += 1
+                    self._snapshot_version(slug, art.version, snap_content)
+                    cut_version = True
+
+            # ONE event per real change. A version cut carries the caller's type (or
+            # 'iterated' for the agent, else 'edited'); a content edit that cut no version
+            # is an edit — which previously logged NOTHING because the append was nested in
+            # the snapshot branch, dropping the event_type the UI sends on a plain save (#291).
+            if cut_version or content_changed:
                 resolved_type = event_type or ("iterated" if actor == "agent" else "edited")
                 ev = ArtifactEvent(
                     ts=_now(),
@@ -824,7 +848,8 @@ class NativeArtifactProvider(ArtifactProvider):
                 )
                 self._append_event(art, ev)
 
-            if snapshot or wrote_content or meta_changed:
+            changed = cut_version or content_changed or meta_changed
+            if changed:
                 art.updated_at = _now()
                 self._write_meta(art)
 
@@ -834,7 +859,7 @@ class NativeArtifactProvider(ArtifactProvider):
         # re-index. The name is part of the mirror's title, so a metadata-only rename IS a
         # change worth mirroring; the mirror's own content-hash gate decides whether that
         # costs a re-embed.
-        if updated is not None and (snapshot or wrote_content or meta_changed):
+        if updated is not None and changed:
             changes.emit(changes.UPSERT, slug)
         return updated
 

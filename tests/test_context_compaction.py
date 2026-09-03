@@ -200,3 +200,56 @@ def test_maybe_compact_anti_thrash_blocks_repeat():
     before = len(rt._messages)
     rt._maybe_compact()
     assert len(rt._messages) == before  # anti-thrash skipped it
+
+
+# ── no-usage char backstop (#1774): providers that report no usage still compact ──
+
+
+def test_no_usage_backstop_compacts_an_overgrown_history():
+    """With _last_context_pct None (stream_options-rejecting endpoint), an
+    over-window history must still trigger compaction via the char estimate."""
+    rt = _runtime()
+    # Model "s" is not in the windows table → DEFAULT window (200k tokens).
+    # 200_000 tokens * 3.0 chars/token * 70% ≈ 420M chars would be absurd, so
+    # pin the estimate path through a tiny fake window instead.
+    rt._messages = _convo(10)
+    assert rt._last_context_pct is None  # the no-usage state, as-initialized
+    from unittest.mock import patch
+
+    with patch("personalclaw.model_windows.model_context_window", return_value=2000):
+        # ~10 rounds * 2000-char tool outputs ≈ 20k+ chars ≈ 7000 est tokens
+        # over a 2000-token window → far past 70%.
+        before = total_chars(rt._messages)
+        rt._maybe_compact()
+    assert total_chars(rt._messages) < before  # backstop fired
+    assert rt._compaction_saves  # recorded for anti-thrash
+    # The estimate must never leak into the DISPLAYED gauge.
+    assert rt._last_context_pct is None
+
+
+def test_no_usage_backstop_stays_quiet_under_the_window():
+    """A small history on a no-usage provider must not compact (no false fire)."""
+    rt = _runtime()
+    rt._messages = _convo(1, tool_size=100)
+    assert rt._last_context_pct is None
+    from unittest.mock import patch
+
+    with patch("personalclaw.model_windows.model_context_window", return_value=200_000):
+        before = len(rt._messages)
+        rt._maybe_compact()
+    assert len(rt._messages) == before  # untouched
+    assert rt._last_context_pct is None
+
+
+def test_measured_gauge_still_wins_over_the_estimate():
+    """A MEASURED under-threshold gauge must suppress the backstop even when the
+    char estimate would scream: the provider's number is authoritative."""
+    rt = _runtime()
+    rt._messages = _convo(10)
+    rt._last_context_pct = 20.0  # provider says plenty of room
+    from unittest.mock import patch
+
+    with patch("personalclaw.model_windows.model_context_window", return_value=2000):
+        before = len(rt._messages)
+        rt._maybe_compact()
+    assert len(rt._messages) == before  # measured gauge ruled; no compaction

@@ -290,7 +290,7 @@ function EventRow({ ev }: { ev: SelEvent }) {
   const tampered = ev.integrity_ok === false
   return (
     <div className="rounded-md px-3 py-1.5" style={tampered
-      ? { background: 'color-mix(in srgb, var(--color-danger) 10%, var(--color-surface-container))', boxShadow: 'inset 2px 0 0 var(--color-danger)' }
+      ? { background: 'color-mix(in srgb, var(--color-danger) 16%, var(--color-surface-container))' }
       : { background: 'var(--color-surface-container)' }}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-2 text-left text-[0.75rem]">
         <span className="w-14 shrink-0 font-mono text-[0.75rem]" style={{ color: tone }}>{ev.outcome || '—'}</span>

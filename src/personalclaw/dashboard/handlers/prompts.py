@@ -107,6 +107,30 @@ def _list_provider_prompts(kind: str = "") -> list[dict[str, Any]]:
     return [_provider_prompt_to_listing(p) for p in prompts]
 
 
+def _value_map(body: dict, *, documented: str) -> tuple[dict[str, Any] | None, str | None]:
+    """The variable→value map for render/preview bodies, accepting both wire keys.
+
+    Render/launch/snippet-render documented ``variables``; preview documented
+    ``values`` (its ``variables`` key is the DECLARATIONS list). Each endpoint read
+    only its own key and silently ignored the other's, so the same well-formed map
+    produced a false ``missing required variable`` on render and a silent
+    no-substitution preview (#635). One contract for all four: the documented key
+    wins when present; the sibling key is accepted as an alias only when it
+    unambiguously holds a value map (a dict — preview's declarations LIST never
+    qualifies); a non-dict under the documented key is still a 400 naming that key.
+
+    Returns ``(values, None)`` or ``(None, error_message)``.
+    """
+    alias = "values" if documented == "variables" else "variables"
+    raw = body.get(documented)
+    if raw is None and isinstance(body.get(alias), dict):
+        raw = body.get(alias)
+    raw = raw or {}
+    if not isinstance(raw, dict):
+        return None, f"{documented} must be an object"
+    return raw, None
+
+
 async def api_prompts(request: web.Request) -> web.Response:
     """GET /api/prompts[?kind=system|user] — list prompt templates via the provider."""
     kind_q = request.query.get("kind", "")
@@ -279,9 +303,9 @@ async def api_prompt_render(request: web.Request) -> web.Response:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    values = body.get("variables") or {}
-    if not isinstance(values, dict):
-        return web.json_response({"error": "variables must be an object"}, status=400)
+    values, verr = _value_map(body, documented="variables")
+    if verr is not None:
+        return web.json_response({"error": verr}, status=400)
 
     provider = _get_default_prompt_provider()
     if provider is None:
@@ -344,9 +368,9 @@ async def api_campaign_template_launch(request: web.Request) -> web.Response:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    values = body.get("variables") or {}
-    if not isinstance(values, dict):
-        return web.json_response({"error": "variables must be an object"}, status=400)
+    values, verr = _value_map(body, documented="variables")
+    if verr is not None:
+        return web.json_response({"error": verr}, status=400)
 
     provider = _get_default_prompt_provider()
     if provider is None:
@@ -444,9 +468,9 @@ async def api_prompt_preview(request: web.Request) -> web.Response:
     content = body.get("content")
     if not isinstance(content, str):
         return web.json_response({"error": "content must be a string"}, status=400)
-    values = body.get("values") or {}
-    if not isinstance(values, dict):
-        return web.json_response({"error": "values must be an object"}, status=400)
+    values, verr = _value_map(body, documented="values")
+    if verr is not None:
+        return web.json_response({"error": verr}, status=400)
 
     from personalclaw.prompt_providers.base import PromptRenderError, PromptVariable
     from personalclaw.prompt_providers.engine import (
@@ -750,9 +774,9 @@ async def api_snippet_render(request: web.Request) -> web.Response:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    values = body.get("variables") or {}
-    if not isinstance(values, dict):
-        return web.json_response({"error": "variables must be an object"}, status=400)
+    values, verr = _value_map(body, documented="variables")
+    if verr is not None:
+        return web.json_response({"error": verr}, status=400)
     provider = _get_default_prompt_provider()
     if provider is None:
         return web.json_response({"error": "no prompt provider registered"}, status=503)

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { Sun, Moon, Monitor, Check, Plus, Trash2, ChevronDown, RotateCcw, Sliders, Boxes, Layout as LayoutIcon, PanelLeft, Type, Save } from 'lucide-react'
 import { Surface } from '../../ui/Surface'
 import { fvs } from '../../design/fontWeight'
@@ -8,7 +9,7 @@ import { confirmDelete } from '../../ui/dialog'
 import { ColorControl, ScalarControl, SelectControl } from '../../ui/TokenControls'
 import { TOKENS, type ColorToken, type ScalarToken, type SelectToken } from '../../design/tokenRegistry'
 import { useAppearance } from '../../app/appearance'
-import { useMode, type Preference } from '../../app/theme'
+import { useMode, DEFAULT_PREFERENCE, type Preference } from '../../app/theme'
 import { PersonalityPicker } from './PersonalityPicker'
 import { usePersonality } from '../../app/personality'
 import { DEFAULT_PERSONALITY } from '../../design/personalities'
@@ -30,9 +31,14 @@ export function DesignPanel() {
   // destructured here; `pickScheme` is the only way this panel changes a scheme, so the
   // bypass cannot come back by accident. See `pickScheme` in `app/personality.tsx`.
   const { personality, activate, pickScheme } = usePersonality()
+  const { mode, preference, setPreference } = useMode()
   const resetEverything = () => {
     if (personality.id !== DEFAULT_PERSONALITY) activate(DEFAULT_PERSONALITY)
     resetAll()
+    // Mode lives in its own store (localStorage 'mode', not 'appearance'), so the
+    // appearance reset never touched it: "Reset everything" left a Light UI light —
+    // and mode is exactly the control an unusable-contrast recovery needs (#675).
+    setPreference(DEFAULT_PREFERENCE)
   }
 
   /** Ask before deleting a saved theme, and say what that costs.
@@ -62,7 +68,6 @@ export function DesignPanel() {
     if (!ok) return
     await deleteCustomScheme(s.id).catch(() => {})
   }
-  const { mode, preference, setPreference } = useMode()
   const [editingColors, setEditingColors] = useState(false)
   const dark = mode === 'dark'
   const isCustom = (id: string) => id.startsWith('custom:') && id !== 'custom:unsaved'
@@ -147,7 +152,7 @@ export function DesignPanel() {
 
       {/* ── live preview ── */}
       <section>
-        <h2 className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-s">Preview</h2>
+        <Eyebrow as="h2" className="mb-s">Preview</Eyebrow>
         <Preview />
       </section>
 
@@ -224,7 +229,7 @@ function SchemeTile({ scheme, dark, active, custom, onPick, onDelete }: { scheme
         <div className="flex items-center gap-1.5">
           <span className="text-on-surface text-[0.8125rem] truncate" style={fvs(500)}>{scheme.label}</span>
           {active && <Check size={13} className="text-primary shrink-0" />}
-          {custom && <span className="ml-auto text-on-surface-low text-[0.75rem] uppercase tracking-wide rounded-pill bg-surface-high px-1.5 shrink-0">saved</span>}
+          {custom && <Eyebrow as="span" className="ml-auto rounded-pill bg-surface-high px-1.5 shrink-0">saved</Eyebrow>}
         </div>
       </button>
       {onDelete && (
@@ -353,7 +358,7 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
         if (!tokens.length) return null
         return (
           <Surface key={group} tone="container" radius="lg" className="px-l py-m">
-            <h3 className="text-on-surface-var mb-1 uppercase tracking-wide text-[0.75rem]">{group}</h3>
+            <Eyebrow as="h3" className="mb-1">{group}</Eyebrow>
             <div className="divide-y divide-outline-variant/30">
               {tokens.map((t) => <ColorControl key={t.varName} token={t as ColorToken} />)}
             </div>

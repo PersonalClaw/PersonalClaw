@@ -255,3 +255,73 @@ def test_credentials_in_an_artifact_body_are_redacted_on_the_way_in(provider):
     # pass just as well if nothing were injected at all, proving nothing.
     assert "const key" in out
     assert "sk-ant-api03-AAAA" not in out
+
+
+# ── create() echoes the PERSISTED body, not the raw input (#781) ──────────────
+
+
+def test_create_response_content_matches_the_persisted_cap(provider):
+    """An over-cap create must return what reached disk, not the full input.
+
+    _write_text slices the body to MAX_CONTENT_BYTES; create() used to set
+    art.content to the un-sliced input, so a >1 MiB save reported success at full
+    size in the create response while the next get() returned only the capped body.
+    The create echo and the subsequent read must agree.
+    """
+    from personalclaw.artifacts.models import MAX_CONTENT_BYTES
+
+    oversize = "x" * (MAX_CONTENT_BYTES + 4096)
+    art = provider.create(name="Big doc", content=oversize, kind="document")
+    assert len(art.content) == MAX_CONTENT_BYTES
+
+    fetched = provider.get(art.slug)
+    assert fetched is not None
+    assert fetched.content == art.content
+    assert len(fetched.content) == MAX_CONTENT_BYTES
+
+
+def test_create_under_cap_round_trips_unchanged(provider):
+    """The opposite failure mode: a normal (under-cap) body must not be mangled."""
+    body = "the whole body text"
+    art = provider.create(name="Small doc", content=body, kind="document")
+    assert art.content == body
+    assert provider.get(art.slug).content == body
+
+
+# ── save / snapshot / event triad tracks a REAL change (#692, #291) ──────────
+
+
+def _event_types(art):
+    return [e.type for e in (art.events or [])]
+
+
+def test_snapshot_of_unchanged_content_is_a_noop(provider):
+    """#692: Snapshot on a clean buffer must not cut a duplicate version or log an event."""
+    provider.create(name="Report", content="the body", kind="document")
+    v1 = provider.get("report")
+    assert v1.version == 1
+    # Snapshot with the SAME bytes the artifact already holds.
+    provider.update("report", content="the body", snapshot=True, event_type="iterated")
+    after = provider.get("report")
+    assert after.version == 1  # no duplicate version
+    assert _event_types(after) == _event_types(v1)  # no phantom 'iterated' event
+
+
+def test_snapshot_of_changed_content_still_cuts_a_version(provider):
+    """Opposite failure mode: a real snapshot must still cut a version + its event."""
+    provider.create(name="Report", content="v1 body", kind="document")
+    provider.update("report", content="v2 body", snapshot=True, event_type="iterated")
+    after = provider.get("report")
+    assert after.version == 2
+    assert after.events[-1].type == "iterated"
+
+
+def test_plain_save_records_an_edited_event_without_a_new_version(provider):
+    """#291: a content edit (no snapshot) must log its event_type, not silently drop it."""
+    provider.create(name="Note", content="original", kind="document")
+    before = provider.get("note")
+    assert _event_types(before) == ["created"]
+    provider.update("note", content="edited body", event_type="edited")
+    after = provider.get("note")
+    assert after.version == before.version  # Save edits live content; it does not cut a version
+    assert _event_types(after) == ["created", "edited"]  # the edit now appears in the history

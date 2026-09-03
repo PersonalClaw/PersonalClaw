@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, CloudOff } from 'lucide-react'
+import { ArrowRight, CloudOff, Sparkles } from 'lucide-react'
 import { api, type DegradedSurface } from '../lib/api'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { useIsMobile } from '../app/useIsMobile'
@@ -40,6 +40,9 @@ export function DegradedChip() {
   /** True while the degraded read is failing. Paired with `surfaces === null` it means "we have
    *  never been told", which must not render as "nothing is degraded". */
   const [unread, setUnread] = useState(false)
+  /** False = config.json declares zero model providers — setup-land, not a regression.
+   *  null (never answered) deliberately reads as configured; see the poll below. */
+  const [hasProvider, setHasProvider] = useState<boolean | null>(null)
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
 
@@ -86,6 +89,15 @@ export function DegradedChip() {
       // transient blip mid-session does not flicker the chip. The gap was the COLD one: a first poll
       // that fails has nothing to fall back on, and silence is the wrong default on this chip.
       .catch(() => setUnread(true))
+    // "Degraded" is decline-from-working vocabulary, and on a box with NO provider in
+    // config.json nothing has declined — nothing was ever bound. `has_model_provider`
+    // is the registry read behind onboarding's `needs_model` (provider_bridge: the two
+    // "never disagree"), so the same poll asks it and the face below can choose setup
+    // vocabulary over alarm vocabulary. A failing read RESETS to the cold default
+    // (null = treated as configured): the worse misread is a calm setup chip over a
+    // real regression, so a stale "no provider" answer must not outlive its check.
+    api.onboarding().then((s) => setHasProvider(s.has_model_provider))
+      .catch(() => setHasProvider(null))
   }, 20000)
 
   const down = (surfaces ?? []).filter((s) => !s.available)
@@ -95,8 +107,15 @@ export function DegradedChip() {
   if (down.length === 0 && !unknown) return null
 
   const worst = down[0]
+  // Setup-land: nothing in config.json has ever been bound, so nothing "degraded" —
+  // that word claims a decline that never happened. The face invites setup instead
+  // (info tone, not warn); the popover already reads perfectly for this state (every
+  // row names the missing binding and links to Models). `unknown` outranks it: a
+  // failing check must never render as a calm invitation.
+  const setupLand = !unknown && hasProvider === false && down.length > 0
   const summary = unknown
     ? 'Status unknown'
+    : setupLand ? 'Set up a model'
     : down.length === 1 ? `${label(worst.surface)} degraded` : `${down.length} degraded`
   const detail = unknown
     ? 'Status unknown — the degraded-surfaces check could not be read, so this may be hiding a surface running without a model'
@@ -111,7 +130,10 @@ export function DegradedChip() {
     // reader speaks the parenthesis" argument does NOT apply here and is not the reason to fix it.
     // The reason is simpler: the chip lives in the shell of every surface, and a tooltip is text a
     // user reads. (`title` can still reach AT as a *description*, which is a weaker claim.)
-    : `${summary} — ${down.length} surface${down.length === 1 ? '' : 's'} running without a model, click for detail`
+    : setupLand
+      ? 'No model provider is configured yet — click to see what unlocks once you bind one'
+      : `${summary} — ${down.length} surface${down.length === 1 ? '' : 's'} running without a model, click for detail`
+  const FaceIcon = setupLand ? Sparkles : CloudOff
   return (
     <div className="relative">
       <button ref={triggerRef} type="button" onClick={() => setOpen((o) => !o)}
@@ -126,13 +148,18 @@ export function DegradedChip() {
         // defines it and this was its only reference, so the fallback was always what shipped.
         // Naming a token that isn't there hid the real value from anyone reading the line;
         // dropping it makes the tint depth visible and lints alongside its siblings.
-        style={{ background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}
+        //
+        // Setup-land trades the warn pair for the info pair at the SAME 16% budget — the
+        // tone changes, the tint math doesn't.
+        style={setupLand
+          ? { background: 'color-mix(in srgb, var(--color-info) 16%, transparent)', color: 'var(--color-info)' }
+          : { background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}
         aria-expanded={open}
         // Icon-only has no visible text, so the name must come from aria-label — a title
         // alone is not an accessible name for AT in every engine.
         aria-label={isMobile ? summary : undefined}
         title={detail}>
-        <CloudOff size={13} className="shrink-0" />
+        <FaceIcon size={13} className="shrink-0" />
         {!isMobile && <span>{summary}</span>}
       </button>
       {open && (

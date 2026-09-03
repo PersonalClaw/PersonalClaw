@@ -90,6 +90,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # ── auth (handlers/auth.py) — fixed message per code, never request-derived ──
     "auth_not_enabled": "Owner authentication is not enabled on this instance.",
     "auth_invalid_credentials": "The submitted credential did not verify.",
+    "auth_origin_not_allowed": "The request origin is not allowed on this instance.",
     "auth_locked_out": "Too many failed attempts from this address; try again later.",
     "auth_totp_required": "A second factor is required to finish this login.",
     "auth_enroll_code_invalid": "The enrollment code did not verify.",
@@ -99,6 +100,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "device_pair_origin_rejected": "The request origin is not allowed to pair a device.",
     "device_pair_locked_out": "Too many failed pairing attempts; try again later.",
     "device_unknown": "No such paired device.",
+    # ── browse user-browser connector (handlers/browse_connector.py) ──
+    # The connector is the operator's own browser on THIS machine, so all three are
+    # distinct because their remedies differ: `loopback_only` is "you reached a
+    # same-machine surface from elsewhere" (nothing the caller can retry into), `unpaired`
+    # is "pair this device first" (a step to take), and `endpoint_invalid` is "the CDP
+    # page-target you announced is missing or is not a loopback ws(s) URL" (a value to fix).
+    "browse_connector_loopback_only": "The browse connector is reachable over loopback only.",
+    "browse_connector_unpaired": "Only a paired device may attach as the browse connector.",
+    "browse_connector_endpoint_invalid": "The announced CDP page-target endpoint is missing "
+    "or is not a loopback ws(s) URL.",
     # ── channel sender trust (handlers/channel_trust.py) ──
     "channel_trust_sender_unknown": "That sender is not on this channel's allowlist.",
     # ── push subscriptions (handlers/push.py) ──
@@ -462,6 +473,25 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The project's bound workspace directory is not a safe place to write generated agent "
         "files (a relative path, the home directory itself, a credential directory, or an "
         "OS/system root)."
+    ),
+    # ── provider instance connectivity test (providers/instance_routes.py) ──
+    # The "test connection" button on a provider instance. Codes split by remedy:
+    # `provider_unreachable` (502) — the endpoint/server could not be reached (connection
+    # refused, timeout, DNS, TLS, or it answered but did not report ready); the operator
+    # checks the URL and that the service is running. `provider_config_invalid` (400) — the
+    # instance's own config is unusable, fixed in its settings. `provider_test_failed` (502)
+    # — an unexpected error while testing; the raw exception is logged, never returned, so
+    # the user reads guidance rather than a truncated Python traceback.
+    "provider_unreachable": (
+        "A provider instance's endpoint or server could not be reached, so its connection "
+        "test did not pass."
+    ),
+    "provider_config_invalid": (
+        "A provider instance's configuration is incomplete or invalid, so it could not be tested."
+    ),
+    "provider_test_failed": (
+        "A provider instance's connection test failed unexpectedly; the underlying error is "
+        "in the server log."
     ),
 }
 

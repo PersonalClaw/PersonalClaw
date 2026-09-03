@@ -365,6 +365,59 @@ async def test_rules_put_accepts_verify_on_a_verifiable_kind(_isolate_rules):
 
 
 @pytest.mark.asyncio
+async def test_rules_put_accepts_a_known_sound(_isolate_rules):
+    """A voice from the closed set persists and takes effect on the read path."""
+    from personalclaw import notification_rules as nr
+
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"approval/requested": {"sound": "coin_blip"}}})
+    )
+    assert resp.status == 200
+    assert nr.resolve_rule("approval", "requested").sound == "coin_blip"
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_an_unknown_sound(_isolate_rules):
+    """A voice outside soundCues would 'save' and then hand the client an unplayable name."""
+    from personalclaw import notification_rules as nr
+
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"approval/requested": {"sound": "ka-ching"}}})
+    )
+    assert resp.status == 400
+    assert "sound" in (await _json(resp))["error"]["message"]
+    assert nr.resolve_rule("approval", "requested").sound is None
+
+
+@pytest.mark.asyncio
+async def test_rules_put_null_sound_clears_it(_isolate_rules):
+    from personalclaw import notification_rules as nr
+
+    await er.handle_notification_rules_put(
+        _req({"rules": {"approval/requested": {"sound": "error"}}})
+    )
+    await er.handle_notification_rules_put(_req({"rules": {"approval/requested": {"sound": None}}}))
+    assert nr.resolve_rule("approval", "requested").sound is None
+
+
+@pytest.mark.asyncio
+async def test_rules_put_merges_fields_within_a_key(_isolate_rules):
+    """Two independent controls (mode, then sound) each save their OWN partial PUT — the second
+    must not clobber the first, or the sound picker would silently reset the delivery mode."""
+    from personalclaw import notification_rules as nr
+
+    await er.handle_notification_rules_put(
+        _req({"rules": {"approval/requested": {"mode": "badge"}}})
+    )
+    await er.handle_notification_rules_put(
+        _req({"rules": {"approval/requested": {"sound": "coin_blip"}}})
+    )
+    rule = nr.resolve_rule("approval", "requested")
+    assert rule.mode == "badge", "the sound PUT dropped the mode set a moment earlier"
+    assert rule.sound == "coin_blip"
+
+
+@pytest.mark.asyncio
 async def test_rules_put_rejects_non_bool_verify(_isolate_rules):
     resp = await er.handle_notification_rules_put(
         _req({"rules": {"skills/proposal": {"verify": "yes"}}})
@@ -479,3 +532,54 @@ async def test_legacy_alert_fields_are_readable_for_the_backfill(tmp_path, monke
 async def test_legacy_alert_read_is_empty_when_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(er, "_entity_settings_path", lambda entity: tmp_path / f"{entity}.json")
     assert er.legacy_inbox_alert_fields() == {}
+
+
+@pytest.mark.asyncio
+async def test_notifications_put_rejects_zero_length_quiet_window():
+    """#627 — a PARSEABLE but zero-length window (start == end) is the one pair
+    _in_quiet_window documents as never matching: accepting it showed quiet hours
+    enabled + Saved ✓ while nothing was ever suppressed. Same doctrine as the
+    unparseable-time guard, one case further."""
+    # Both keys in one write.
+    resp = await er.handle_notifications_settings_put(
+        _req({"quiet_hours_start": "08:00", "quiet_hours_end": "08:00"})
+    )
+    assert resp.status == 400
+    body = await _json(resp)
+    # The refusal teaches: it names the never-matches consequence and the all-day escape.
+    assert "never suppresses" in body["error"] and "00:00" in body["error"]
+    # Format variants cannot dodge the check — compared by parsed minutes.
+    resp = await er.handle_notifications_settings_put(
+        _req({"quiet_hours_start": "8:00", "quiet_hours_end": "08:00"})
+    )
+    assert resp.status == 400
+    # Store untouched.
+    got = (await _json(await er.handle_notifications_settings_get(_req({}))))["settings"]
+    assert got == er.NOTIFICATIONS_DEFAULTS
+
+
+@pytest.mark.asyncio
+async def test_notifications_put_rejects_degenerate_window_via_single_key():
+    """The degenerate pair is a property of the EFFECTIVE config: writing one key
+    that lands equal to the STORED sibling must be refused too."""
+    resp = await er.handle_notifications_settings_put(_req({"quiet_hours_end": "23:30"}))
+    assert resp.status == 200
+    # Now push start onto the stored end, one key at a time.
+    resp = await er.handle_notifications_settings_put(_req({"quiet_hours_start": "23:30"}))
+    assert resp.status == 400
+    got = (await _json(await er.handle_notifications_settings_get(_req({}))))["settings"]
+    assert got["quiet_hours_start"] != got["quiet_hours_end"]
+
+
+@pytest.mark.asyncio
+async def test_notifications_put_still_accepts_real_windows():
+    """Acceptance keeps the guard honest: the wrap-around window and a plain
+    window both still save (a guard that refuses everything would pass the
+    refusal tests above)."""
+    for start, end in (("22:00", "08:00"), ("09:00", "17:30")):
+        resp = await er.handle_notifications_settings_put(
+            _req({"quiet_hours_start": start, "quiet_hours_end": end})
+        )
+        assert resp.status == 200, f"rejected valid window {start}->{end}"
+        got = (await _json(resp))["settings"]
+        assert got["quiet_hours_start"] == start and got["quiet_hours_end"] == end

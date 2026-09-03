@@ -14,6 +14,7 @@ from personalclaw.sandbox_providers.base import (
     SandboxHandle,
     SandboxProvider,
     SandboxSpec,
+    SandboxUnavailableError,
 )
 from personalclaw.sandbox_providers.registry import (
     get_provider,
@@ -24,14 +25,15 @@ from personalclaw.sandbox_providers.registry import (
     unregister_provider,
 )
 
-# Register the always-present ``none`` provider on import (idempotent). Installed ``sandbox``
-# apps are added later by SandboxTypeHandler on enable.
+# Register the always-present ``none`` provider + the core-native ``docker`` tier on import
+# (idempotent). Installed ``sandbox`` apps are added later by SandboxTypeHandler on enable.
 register_builtin_providers()
 
 __all__ = [
     "SandboxProvider",
     "SandboxHandle",
     "SandboxSpec",
+    "SandboxUnavailableError",
     "register_provider",
     "unregister_provider",
     "get_provider",
