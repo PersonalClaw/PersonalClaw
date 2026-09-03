@@ -17,6 +17,7 @@ re-deriving over a deliberately mutated copy.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -97,8 +98,28 @@ def test_topo_order_is_a_valid_total_order(atoms: list[dict], fresh: dict) -> No
     assert checked > 100, f"only {checked} edges checked — the dep edges vanished"
 
 
+#: An INDEPENDENT re-statement of the gate rule, so these tests are an oracle rather than a
+#: re-call of the code under test. Must agree with regen_dag_derived.atom_gates by construction.
+_OWNER_GATE = re.compile(r"owner[-\s]?(?:gated|only)", re.IGNORECASE)
+
+
+def _gates(atom: dict) -> list[str]:
+    gates = []
+    if any(str(d).startswith("EXT:") for d in atom.get("deps") or []):
+        gates.append("ext")
+    if _OWNER_GATE.search(atom.get("blocked_reason") or ""):
+        gates.append("owner")
+    return gates
+
+
+def _startable(atom: dict, by_id: dict[str, dict], known: set[str]) -> bool:
+    if atom["status"] in NOT_STARTABLE:
+        return False
+    return all(by_id[d]["status"] == "done" for d in (atom.get("deps") or []) if d in known)
+
+
 def test_ready_frontier_is_startable_work(atoms: list[dict], fresh: dict) -> None:
-    """Every frontier atom is unfinished, unblocked, and has all intra-repo deps done."""
+    """A ready-frontier atom is unfinished, unblocked, all intra-repo deps done — and ungated."""
     frontier = fresh["ready_frontier"]
     assert frontier, "ready frontier is empty — nothing would be startable"
     by_id = {a["id"]: a for a in atoms}
@@ -107,19 +128,49 @@ def test_ready_frontier_is_startable_work(atoms: list[dict], fresh: dict) -> Non
         atom = by_id[entry["id"]]
         assert atom["status"] not in NOT_STARTABLE, f"{entry['id']} is {atom['status']}"
         assert entry["title"] == atom["title"]
-        for dep in atom.get("deps") or []:
-            if dep in known:
-                assert by_id[dep]["status"] == "done", (
-                    f"{entry['id']} is on the ready frontier but its dep {dep} is "
-                    f"{by_id[dep]['status']}"
-                )
-    # And nothing startable is missing: an atom whose deps are all done must be listed.
-    listed = {e["id"] for e in frontier}
+        assert _startable(atom, by_id, known), f"{entry['id']} has an unfinished intra-repo dep"
+        # The new invariant: a gated atom must NOT be on the ready frontier — it over-reports.
+        assert not _gates(atom), (
+            f"{entry['id']} is on ready_frontier but is gated {_gates(atom)} — it belongs in "
+            "gated_frontier"
+        )
+    # Nothing startable is missing: an ungated startable atom is on ready_frontier, a gated one
+    # is on gated_frontier — the two lists partition the startable-by-deps set with no leaks.
+    ready = {e["id"] for e in frontier}
+    gated = {e["id"] for e in fresh["gated_frontier"]}
+    assert ready.isdisjoint(gated), f"an atom is on BOTH frontiers: {ready & gated}"
     for atom in atoms:
-        if atom["status"] in NOT_STARTABLE:
+        if not _startable(atom, by_id, known):
             continue
-        if all(by_id[d]["status"] == "done" for d in (atom.get("deps") or []) if d in known):
-            assert atom["id"] in listed, f"{atom['id']} is startable but not on the frontier"
+        where = ready if not _gates(atom) else gated
+        assert atom["id"] in where, (
+            f"{atom['id']} is startable but on neither the correct frontier "
+            f"(gated={_gates(atom)})"
+        )
+
+
+def test_gated_frontier_is_gated_startable_work(atoms: list[dict], fresh: dict) -> None:
+    """Every gated-frontier atom is startable-by-deps, actually gated, and names its gate(s)."""
+    gated = fresh["gated_frontier"]
+    assert gated, "gated frontier is empty — the roadmap has owner/EXT-gated atoms, so this is off"
+    by_id = {a["id"]: a for a in atoms}
+    known = set(by_id)
+    for entry in gated:
+        atom = by_id[entry["id"]]
+        assert entry["title"] == atom["title"]
+        assert _startable(
+            atom, by_id, known
+        ), f"{entry['id']} is on gated_frontier but not startable by its intra-repo deps"
+        expected = _gates(atom)
+        assert expected, f"{entry['id']} is on gated_frontier but has no gate"
+        assert (
+            entry["gate"] == expected
+        ), f"{entry['id']} gate {entry['gate']!r} disagrees with the oracle {expected!r}"
+        assert entry["gate"] == sorted(entry["gate"]), f"{entry['id']} gate is not sorted"
+        assert set(entry["gate"]) <= {"ext", "owner"}, f"{entry['id']} has an unknown gate tag"
+    # Vacuity floor + the founding example: an EXT-gated atom (e.g. ET-8) must be represented
+    # here rather than on the ready frontier.
+    assert any("ext" in e["gate"] for e in gated), "no ext-gated atom found — the split is inert"
 
 
 def test_no_dangling_deps_and_every_ext_ref_is_decided(atoms: list[dict], fresh: dict) -> None:

@@ -4,7 +4,7 @@
 **Code:** `DL`  
 **Source status:** in_progress
 
-DISCOVERABILITY-LAUNCH decomposed into 9 atoms (DL-1..DL-9): 4 done (S1 migration/scaffold/sync; S2 docs site + llms.txt + landing + release flip, PR #20; S3 screenshots + README rework; T3.4 launch-post draft, published on a source-controlled blog tier in personalclaw.dev@cab5065), 5 todo (T3.1 demo-home seed [core], launch media GIF+social images, comparison pages, listing/checklist program, research republication). Verified against code: only the empty fixture ships (T3.1 open), screenshots+capture infra present, 14-topic learnings corpus at docs/research/learnings/, no live keyurgolani/ product URLs.
+DISCOVERABILITY-LAUNCH decomposed into 11 atoms (DL-1..DL-11): 4 done (S1 migration/scaffold/sync; S2 docs site + llms.txt + landing + release flip, PR #20; S3 screenshots + README rework; T3.4 launch-post draft, published on a source-controlled blog tier in personalclaw.dev@cab5065), 7 todo (T3.1 demo-home seed [core], launch media GIF+social images, comparison pages, listing/checklist program, research republication, plus the two owner-only launch actions DL-10 listing submissions and DL-11 P0-gate clearance carved from DL-8). Verified against code: only the empty fixture ships (T3.1 open), screenshots+capture infra present, 14-topic learnings corpus at docs/research/learnings/, no live keyurgolani/ product URLs.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -19,6 +19,8 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `DL-7` | ✅ | S4 T4.1: released-version capability matrix at /compare | `DL-1`, `EXT:LEARNING-VISIBILITY:benchmark results for matrix rows` | A /compare page publishes a capability matrix about PersonalClaw ONLY — what it does and does not do, with every row sourced to the PINNED/RELEASED core version (verified at the tag, not against main) and the 'does not do' rows included; the page is registered in the site contract and the sitemap, held to the metadata, runtime, axe WCAG A/AA and Lighthouse contracts, and carries an anti-vacuity check that FAILS when the matrix data is non-empty but the page renders no rows; peer/competitor columns are deliberately OUT of scope at pre-1.0 (owner taste call 2026-08-27 — see blocked_reason). |
 | `DL-8` | ⬜ | S4 T4.2+T4.3: listing submissions + P0 launch checklist | `DL-3`, `DL-6`, `EXT:CI-RELEASE:green main + CI badge`, `EXT:DISTRIBUTION:install one-liner verified working` | awesome-self-hosted + awesome-ai-agents PRs drafted per their CONTRIBUTING rules; selfh.st + AlternativeTo entries drafted; launch-checklist.md lists the P0 gate items each linking their proof (CI badge, install log, live screenshots) with Show HN / r/selfhosted / r/LocalLLaMA post drafts; gate all-green before any owner posting |
 | `DL-9` | ⬜ | S5 T5.1: research-learnings republication section | `DL-1` | the 14 learnings topics from core docs/research/learnings/ render on the site via a sync-script extension with intact cross-links, behind a preface owning the built-agentically story; preface approved by owner |
+| `DL-10` | ⬜ | Owner: submit community listings (awesome-self-hosted after 2026-11-21, awesome-ai-agents, selfh.st, AlternativeTo) | `DL-8`, `DL-11` | the awesome-self-hosted / awesome-ai-agents PRs and the selfh.st + AlternativeTo entries are submitted by the owner (awesome-self-hosted only on/after 2026-11-21) after the P0 launch gate (DL-11) is all-green — OWNER-ONLY (machine-PR ban + calendar-gated), belongs on gated_frontier |
+| `DL-11` | ⬜ | Owner: P0 launch-gate clearance sign-off before any public posting (Show HN / r/selfhosted / r/LocalLLaMA) | `DL-8` | the owner records a P0-gate clearance decision (all checklist items green with their linked proof) authorizing the launch posts; posting itself is owner-only and gated on this clearance — OWNER-ONLY, belongs on gated_frontier |
 
 ## Atom scopes
 
@@ -94,3 +96,19 @@ Session 5 — Research republication (T5.1, V5)
 
 **Done when:** the 14 learnings topics from core docs/research/learnings/ render on the site via a sync-script extension with intact cross-links, behind a preface owning the built-agentically story; preface approved by owner
 
+
+### `DL-10` — Owner: submit community listings (awesome-self-hosted after 2026-11-21, awesome-ai-agents, selfh.st, AlternativeTo)
+
+**Status:** todo — OWNER-ONLY (belongs on gated_frontier, never ready_frontier)
+
+DL-8 T4.2 owner action, minted explicit because these lists BAN automated/bot PRs — the owner must submit personally. awesome-self-hosted requires >=4 months since first release; v0.1.0 was 2026-07-21, so that submission is deferred until 2026-11-21. Submission drafts live in DL-8's launch/listing-submissions materials.
+
+**Done when:** the awesome-self-hosted / awesome-ai-agents PRs and the selfh.st + AlternativeTo entries are submitted by the owner (awesome-self-hosted only on/after 2026-11-21) after the P0 launch gate (DL-11) is all-green
+
+### `DL-11` — Owner: P0 launch-gate clearance sign-off before any public posting (Show HN / r/selfhosted / r/LocalLLaMA)
+
+**Status:** todo — OWNER-ONLY (belongs on gated_frontier, never ready_frontier)
+
+DL-8 T4.3 owner action: confirm every P0 launch-checklist gate item is all-green (CI badge, verified install one-liner + captured log, live screenshots, release integrity, honest front door) and sign off before the owner posts any launch thread. Checklist drafts live in DL-8's launch materials.
+
+**Done when:** the owner records a P0-gate clearance decision (all checklist items green with their linked proof) authorizing the launch posts; posting itself is owner-only and gated on this clearance

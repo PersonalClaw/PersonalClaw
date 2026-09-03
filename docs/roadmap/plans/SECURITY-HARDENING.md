@@ -806,3 +806,5 @@ nothing describes it, it gets **filed** — not left as a dep. Either way it sto
 
 Two atoms this week were parked exactly this way (`MC-6`, which owes its own `sound` field, and this one).
 Four more were found by a read-only audit of the 29 `EXT:`-only atoms.
+
+**2026-09-03 — SH-11 minted: owner supplies the Apple signing + notarization secrets and the minisign release key.** `SH-3` shipped the signing scheme + verifier with the trust store deliberately EMPTY — an agent must not generate the private key it would hand over — so the owner half was implicit in `SH-3`/`SH-4`/`DC-1` prose with no atom of its own. It now has one: run `scripts/sign_app.py gen-key --signer PersonalClaw`, drop the `.pub` into the trusted-keys store, and load the four Apple Developer signing secrets into the CI `release` environment. Marked OWNER-ONLY, so the new `gated_frontier` derived key carries it. It directly unblocks the SIGNING side of `DC-1` (signed+notarized mac build) and `SH-4` (release-pipeline signing); the task also grouped `DCU-3`, whose actual blocker is a separate macOS Accessibility/TCC grant tracked in `DCU-3`'s own annotation, not these secrets.

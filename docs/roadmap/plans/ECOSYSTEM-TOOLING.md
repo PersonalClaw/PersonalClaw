@@ -608,3 +608,17 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
   headless** — the exact Store path (`apps.source.resolve` → `apps.app_manager.install`) in an
   isolated `PERSONALCLAW_HOME`, all four install + register. **V3 fork-simulate PASS** —
   `channel-null` cloned → renamed to `my-null-channel` → installed through the same scanner gate.
+
+## Execution log — `ET-9` / `ET-10` (owner-provisioning atoms minted) — 2026-09-03
+
+- **2026-09-03 — MINTED (`ET-9`): create the github.com/PersonalClaw/registry public repo.** Carves
+  ECOSYSTEM-TOOLING owner task 1 into an explicit atom so its gate is legible on the roadmap instead
+  of living only in `ET-4`'s `blocked_reason` prose. The data tier (`ET-3`, done) and the
+  `app-registry.json` rename (`ET-4a`, 2026-08-27) are in place; the sole remaining blocker on
+  `ET-4`'s "a fresh dev home lists registry apps in the Store" clause is that the repo does not exist
+  yet, and creating it publishes `scratch/registry/` verbatim so it MUST follow the rename. Marked
+  OWNER-ONLY in `blocked_reason`, so the new `gated_frontier` derived key carries it and the ready
+  frontier no longer over-reports `ET-4`.
+- **2026-09-03 — MINTED (`ET-10`): provision GHCR publish credentials.** The container/registry
+  publication path `ET-8`'s personalclaw.dev registry surface depends on. Owner action, marked
+  OWNER-ONLY; lands on `gated_frontier`, never `ready_frontier`.

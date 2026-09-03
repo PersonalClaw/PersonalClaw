@@ -20,6 +20,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `SH-8` | ✅ | SEL audit surface: paginated /api/security/audit (caller/operation/outcome/downstream_service/time filters) + /api/security/audit/verify wrapping verify_integrity + 'What did my agent do' Settings page with credential-safe JSONL export | — | filters work; verify endpoint returns (checked, ok) with a tamper fixture showing ok=false; page renders real SEL events and shows a deliberately-broken chain link; export reuses redact and excludes secrets (fixture-verified); both themes/WCAG; export round-trips |
 | `SH-9` | ⬜ | External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan | — | docs/security/review-scope.md lists the five high-risk paths, the review format, and the publication plan; scope approved by owner (owner task 3); review executed or scheduled with a date |
 | `SH-10` | ✅ | Security panel: baseline denylist shown read-only with version + verified-hash indicator and 'N user additions'; anti-drift/anti-LLM-tamper (not anti-owner) limitation documented | `SH-6` | the /api/security/denied-commands payload + security settings page render the baseline-verified state; a tamper fixture flips the indicator; 'N user additions' shown; the anti-drift/anti-LLM-tamper-not-anti-owner threat model is documented in docs/security/ |
+| `SH-11` | ⬜ | Owner: supply Apple Developer signing + notarization secrets and the minisign release key to the CI `release` environment (gates DC-1/DCU-3/SH-4) | `SH-3` | the four Apple Developer signing secrets and the minisign signing key are present in the CI `release` environment and the PersonalClaw public key is in the trusted-keys store; DC-1's signed+notarized mac build and SH-4's release-pipeline signing are unblocked on the credential side — OWNER-ONLY, belongs on gated_frontier |
 
 ## Atom scopes
 
@@ -277,3 +278,11 @@ Amendment (2026-07-26) T4.4
 
 **Done when:** the /api/security/denied-commands payload + security settings page render the baseline-verified state; a tamper fixture flips the indicator; 'N user additions' shown; the anti-drift/anti-LLM-tamper-not-anti-owner threat model is documented in docs/security/
 
+
+### `SH-11` — Owner: supply Apple Developer signing + notarization secrets and the minisign release key to the CI `release` environment (gates DC-1/DCU-3/SH-4)
+
+**Status:** todo — OWNER-ONLY (belongs on gated_frontier, never ready_frontier)
+
+Owner provisioning of release-signing credentials, minted as an explicit atom so the signing gate blocking the desktop/release-signing atoms is legible. SH-3 (signing scheme + verifier, done) ships the trust store EMPTY on purpose — an agent must not generate the private key it would hand over. This is the owner half: run `scripts/sign_app.py gen-key --signer PersonalClaw`, drop the `.pub` into the trusted-keys store, and load the four Apple Developer signing secrets into the CI release environment. NOTE the task groups DCU-3 here; DCU-3's actual blocker is a macOS Accessibility/TCC grant (a different owner action) tracked in DCU-3's own annotation — this atom directly unblocks the SIGNING side of DC-1 and SH-4.
+
+**Done when:** the four Apple Developer signing secrets and the minisign signing key are present in the CI `release` environment and the PersonalClaw public key is in the trusted-keys store; DC-1's signed+notarized mac build and SH-4's release-pipeline signing are unblocked on the credential side

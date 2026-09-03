@@ -631,3 +631,18 @@ does read this file's citations, and really would red on a broken one.
   A project that has just discovered it was about to overclaim about itself has no standing to grade competitors. The
   honest and more useful half is an accurate statement of our own scope, **including the "does not do" rows**. The
   `done_when` is reworded in `dag.json`; `DL.md`'s copy needs the same edit.
+
+- **[2026-09-03] MINTED — `DL-10` + `DL-11`: the two owner-only launch actions carved out of `DL-8`.**
+  `DL-8` stays `todo` (its drafts exist but the gate must be all-green and the owner must actually
+  submit and post). The owner actions it implies are now explicit atoms so they are legible on the
+  roadmap rather than buried in `done_when`: `DL-10` — owner submits the community listings
+  (awesome-self-hosted, awesome-ai-agents, selfh.st, AlternativeTo); these lists BAN automated/bot
+  PRs so the owner must submit personally, and awesome-self-hosted is calendar-gated to 2026-11-21
+  (>=4 months after the v0.1.0 release of 2026-07-21). `DL-11` — owner records the P0 launch-gate
+  clearance before any Show HN / r/selfhosted / r/LocalLLaMA post. Both depend on `DL-8` and are
+  marked OWNER-ONLY, so once `DL-8` lands they surface on the new `gated_frontier` derived key rather
+  than the ready frontier. Source for the two: `DL-8`'s launch-checklist / listing-submission drafts
+  (PR #2363, still open at mint time), read from that PR's description.
+- **[2026-09-03] NOTE — `DL-8` NOT flipped.** Verified `gh pr view 2363` OPEN/unmerged at worktree cut;
+  and even merged, its `done_when` requires the owner to actually submit listings and post, so it
+  would at most be 🟡 PARTIAL, never `done`. Left `todo` unchanged.
