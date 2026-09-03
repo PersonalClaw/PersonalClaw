@@ -85,7 +85,7 @@ describe('a component that renders more than once must not carry a constant name
     expect(src).toMatch(/forRule\?: string/)
     // The existing-rule row passes the rule's name; the new-rule row deliberately passes nothing and
     // gets the 'new rule' branch. If the existing row stopped passing it, both would read the same.
-    expect(src).toMatch(/<StrategyPicker[\s\S]*?forRule=\{rule\.name\}/)
+    expect(src).toMatch(/<StrategyPicker[\s\S]*?forRule=\{shown\.name\}/)
   })
 
   it('HostList renders twice with different labels — which is why the name is derived', () => {

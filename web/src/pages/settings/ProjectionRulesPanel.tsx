@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { unavailableWhen } from '../../ui/unavailable'
 import { Scissors, Plus, X, AlertTriangle, Gauge, RotateCcw } from 'lucide-react'
 import { api, type ProjectionRule, type ProjectionStrategy, type ToolsSavings } from '../../lib/api'
@@ -156,16 +156,39 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
 }) {
   const hasOps = Boolean(rule.head || rule.tail || rule.keep || rule.skip || rule.count)
   const [showOps, setShowOps] = useState(hasOps)
+  // Draft-and-commit, mirroring AddRule below: edits land in a local draft and the
+  // save fires ONCE when focus leaves the row (or on Enter). Write-through per
+  // keystroke fired save()+refresh(), and the refresh re-seeded these controlled
+  // inputs mid-edit — every keystroke typed during the round-trip was discarded, so
+  // an existing rule's regex could not be edited past one character.
+  const [draft, setDraft] = useState<ProjectionRule | null>(null)
+  const shown = draft ?? rule
+  // Release the draft once the server state has caught up with the committed value —
+  // NOT at commit time: clearing on commit would re-render from the stale `rule` prop
+  // for the whole save round-trip, and a FAILED save would discard the user's typing
+  // (the error banner shows while the draft keeps their work).
+  useEffect(() => {
+    if (draft && JSON.stringify(draft) === JSON.stringify(rule)) setDraft(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rule])
+  const edit = (patch: Partial<ProjectionRule>) => setDraft({ ...shown, ...patch })
+  const commit = () => {
+    if (!draft) return
+    if (JSON.stringify(draft) === JSON.stringify(rule)) { setDraft(null); return }
+    onChange(draft)
+  }
+  const commitOnEnter = (e: React.KeyboardEvent) => { if (e.key === 'Enter') commit() }
   const inputCls = 'h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   return (
-    <div className="flex flex-col gap-2 rounded-lg bg-surface-container px-3 py-2.5">
+    <div className="flex flex-col gap-2 rounded-lg bg-surface-container px-3 py-2.5"
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) commit() }}>
       {/* Same pairing, same collapse: measured 16×36 at 390px for an EXISTING rule's name too, so
           the field holding the value you are editing had vanished. Both rows are the family. */}
       <div className="flex flex-wrap items-center gap-2">
         <Scissors size={13} className="shrink-0 text-on-surface-low" />
-        <input value={rule.name} disabled={disabled} placeholder="rule name"
+        <input value={shown.name} disabled={disabled} placeholder="rule name"
           aria-label="Rule name"
-          onChange={(e) => onChange({ ...rule, name: e.target.value })}
+          onChange={(e) => edit({ name: e.target.value })} onKeyDown={commitOnEnter}
           className="min-w-40 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         {/* The select and Remove travel TOGETHER when the row wraps. Wrapped independently, Remove
             landed alone on a third line — and before the row could wrap at all it was pushed off the
@@ -175,8 +198,8 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
             With an auto basis it is wider than the space left beside the field, so it wraps as a
             unit and the field keeps its width. */}
         <div className="flex min-w-0 items-center gap-2">
-          <StrategyPicker value={rule.strategy} disabled={disabled} forRule={rule.name}
-            onChange={(s) => onChange({ ...rule, strategy: s })} />
+          <StrategyPicker value={shown.strategy} disabled={disabled} forRule={shown.name}
+            onChange={(s) => edit({ strategy: s })} />
           {/* One button per rule row, so a constant "Remove rule" announces identically N times.
               Matches the sibling pattern in SecurityPanel (`Remove ${h}`). */}
           <button type="button" disabled={disabled} onClick={onRemove}
@@ -184,33 +207,33 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
             className="ml-auto shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface"><X size={15} /></button>
         </div>
       </div>
-      <input value={rule.match_regex} disabled={disabled} spellCheck={false} placeholder="match regex, e.g. ^\[MYAPP\]"
+      <input value={shown.match_regex} disabled={disabled} spellCheck={false} placeholder="match regex, e.g. ^\[MYAPP\]"
         aria-label={rule.name ? `Match regex for ${rule.name}` : 'Match regex'}
-        onChange={(e) => onChange({ ...rule, match_regex: e.target.value })}
+        onChange={(e) => edit({ match_regex: e.target.value })} onKeyDown={commitOnEnter}
         className={inputCls} />
       {/* Rule ops v2: declarative line operations. When any is set they replace the
           strategy projector; still pure data — no code runs. */}
       {showOps ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
           <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">head lines
-            <NumberField value={rule.head ?? 0} min={0} width="w-full" ariaLabel="Keep head lines"
-              onChange={(n) => onChange({ ...rule, head: n })} />
+            <NumberField value={shown.head ?? 0} min={0} width="w-full" ariaLabel="Keep head lines"
+              onChange={(n) => edit({ head: n })} />
           </div>
           <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">tail lines
-            <NumberField value={rule.tail ?? 0} min={0} width="w-full" ariaLabel="Keep tail lines"
-              onChange={(n) => onChange({ ...rule, tail: n })} />
+            <NumberField value={shown.tail ?? 0} min={0} width="w-full" ariaLabel="Keep tail lines"
+              onChange={(n) => edit({ tail: n })} />
           </div>
           <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">keep matching
-            <TextInput value={rule.keep ?? ''} size="sm" mono placeholder="regex" ariaLabel="Keep lines matching regex"
-              onChange={(v) => onChange({ ...rule, keep: v })} />
+            <TextInput value={shown.keep ?? ''} size="sm" mono placeholder="regex" ariaLabel="Keep lines matching regex"
+              onChange={(v) => edit({ keep: v })} />
           </div>
           <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">skip matching
-            <TextInput value={rule.skip ?? ''} size="sm" mono placeholder="regex" ariaLabel="Skip lines matching regex"
-              onChange={(v) => onChange({ ...rule, skip: v })} />
+            <TextInput value={shown.skip ?? ''} size="sm" mono placeholder="regex" ariaLabel="Skip lines matching regex"
+              onChange={(v) => edit({ skip: v })} />
           </div>
           <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">fold matching
-            <TextInput value={rule.count ?? ''} size="sm" mono placeholder="regex" ariaLabel="Fold lines matching regex"
-              onChange={(v) => onChange({ ...rule, count: v })} />
+            <TextInput value={shown.count ?? ''} size="sm" mono placeholder="regex" ariaLabel="Fold lines matching regex"
+              onChange={(v) => edit({ count: v })} />
           </div>
         </div>
       ) : (
