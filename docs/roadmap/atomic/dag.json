@@ -3865,14 +3865,16 @@
         {
           "id": "WF2AUT-12",
           "title": "webhook kind fire endpoint + scoped token verification",
-          "status": "todo",
+          "status": "done",
           "scope": "Status REMAINING BLOCKED (E4 owner decision); §1.2 webhook kind; §1.4 decision 12 scoped tokens; §7 step 6; S119/S123",
           "done_when": "owner clears E4 and the inbound surface owner is decided; POST /api/triggers/{id}/fire verifies the SHA-256-hashed scoped bearer token and fences the payload; token_ref lint (shipped S119) then has a fire path to guard",
           "deps": [
             "WF2AUT-5",
             "EXT:MCP-READONLY-INBOUND:fail-closed inbound HTTP substrate"
           ],
-          "blocked_reason": "OWNER RULING 2026-08-27 (question 8 of 11). Q (E4): does the webhook fire path ride the landed src/personalclaw/inbound/ substrate, or does EXTERNAL-ACCESS mint a new inbound surface? RULED: RIDE THE LANDED inbound/ SUBSTRATE. It already ships auth, capabilities, audit, mcp_http and tools. A second inbound surface would be two doors into the same house, each with its own auth and its own audit -- and the one that gets less attention becomes the way in. The scoped-token verification this atom needs is a capability on the existing door, not a new door. This also removes the EXT dependency the atom carried: nothing in EXTERNAL-ACCESS needs to land first."
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 8 of 11). Q (E4): does the webhook fire path ride the landed src/personalclaw/inbound/ substrate, or does EXTERNAL-ACCESS mint a new inbound surface? RULED: RIDE THE LANDED inbound/ SUBSTRATE. It already ships auth, capabilities, audit, mcp_http and tools. A second inbound surface would be two doors into the same house, each with its own auth and its own audit -- and the one that gets less attention becomes the way in. The scoped-token verification this atom needs is a capability on the existing door, not a new door. This also removes the EXT dependency the atom carried: nothing in EXTERNAL-ACCESS needs to land first.",
+          "pr": "#2345",
+          "status_note": "Shipped in PR #2345: POST /api/triggers/{id}/fire verifies the SHA-256-hashed scoped bearer token and fences the payload, riding the landed src/personalclaw/inbound/ substrate. The 2026-08-27 E4 owner ruling (see blocked_reason) cleared the block and retired the EXT dependency; the blocked_reason is kept as historical design context."
         },
         {
           "id": "WF2AUT-13",
@@ -3890,10 +3892,11 @@
         {
           "id": "WF2AUT-14",
           "title": "Resume-target substrate: ratify shipped resume-targets + file the orphaned scope",
-          "status": "todo",
+          "status": "done",
           "deps": [],
           "scope": "Owner-dossier recommendation A (rev-18): resume-targets shipped 08-28 breaking the WF2LOO-9<->WF2AUT-11 standoff, but part of the originally-scoped substrate surface was orphaned in the ship. Ratify what shipped as-is and implement the remaining orphaned scope.",
-          "done_when": "The shipped resume-target surface is documented as the substrate contract (ratified as filed); the orphaned remainder (delta between original WF2AUT scope and what shipped 08-28) is enumerated and implemented or explicitly descoped with reasons; WF2LOO-9 consumes the contract without private workarounds; tests pin the contract surface."
+          "done_when": "The shipped resume-target surface is documented as the substrate contract (ratified as filed); the orphaned remainder (delta between original WF2AUT scope and what shipped 08-28) is enumerated and implemented or explicitly descoped with reasons; WF2LOO-9 consumes the contract without private workarounds; tests pin the contract surface.",
+          "pr": "#2344"
         }
       ]
     },
@@ -7841,16 +7844,6 @@
         "id": "SV-11",
         "title": "Retire the interim commit-watcher cron script when the AUTO-R12 vcs trigger lands",
         "plan": "SV"
-      },
-      {
-        "id": "WF2AUT-12",
-        "title": "webhook kind fire endpoint + scoped token verification",
-        "plan": "WF2AUT"
-      },
-      {
-        "id": "WF2AUT-14",
-        "title": "Resume-target substrate: ratify shipped resume-targets + file the orphaned scope",
-        "plan": "WF2AUT"
       }
     ],
     "topo_order": [
@@ -9580,9 +9573,9 @@
         "code": "WF2AUT",
         "plan": "WORKFLOWS-V2-AUTOMATION-SUBSTRATE",
         "total_atoms": 14,
-        "done": 11,
+        "done": 13,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 0,
         "blocked": 1
       },
       {
