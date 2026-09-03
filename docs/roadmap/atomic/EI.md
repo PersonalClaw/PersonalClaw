@@ -59,7 +59,7 @@ Amendment 2026-07-26 EI-A3: AST spawn-audit vs ceiling-wrapped/operator-exempt m
 
 ### `EI-5` — BYO runner data catalog + Gemini CLI runner + adapter pin/verify + Settings→Agents evidence
 
-**Status:** todo
+**Status:** done
 
 §3.1 runners-stay-apps + <name>.runner.json sidecar (health evidence, capability persistence from normalize_discovery, pinned+sha256 adapter bundles), Gemini first-party app via acp_bundles/_register.py; §3.2 config wiring (agents.runner_* four-point); §11 Session 4
 

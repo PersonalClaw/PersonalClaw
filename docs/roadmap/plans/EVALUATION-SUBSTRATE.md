@@ -1917,3 +1917,11 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   quote-to-cite rule sits in `judge_instruction` AFTER the JSON schema block. T04's
   failing shape reproduces then passes. `tests/test_judge_verdict_answerability.py`
   (13) + 523 judge-adjacent green.
+
+## Execution log — ES-7 (Harness ablation runner + skills bench + model-upgrade watchdog)
+
+- [2026-09-02][ES-7] LANDED on main; atom flipped ✅. `evals/ablation.py` ships the periodic keep/remove/lighten ablation runner with child-process overlay toggling (live spec/config left untouched) that files ablation-grade evidence onto a LEARN-R9 retirement proposal; `evals/skills_bench.py` replays consulted runs with a skill surfaced-vs-suppressed; `evals/model_watchdog.py` fingerprints `active_models.json` changes, queues small-budget re-benchmarks, and emits exactly one digest with per-fingerprint `results.tsv` baselines. Locked by `tests/test_evals_ablation.py`, `tests/test_evals_skills_bench.py`, `tests/test_evals_model_watchdog.py`. WHY: every done_when clause maps to shipped, tested code and both cross-plan contracts it consumes are satisfied.
+
+## Execution log — ES-10 (Model bake-off from production-sampled inputs → per-use-case recommendation)
+
+- [2026-09-02][ES-10] LANDED on main; atom flipped ✅. `evals/bakeoff.py` runs candidate models over real inputs sampled from `model_calls.jsonl` (or a `redact()`-gated, off-by-default, auto-expiring capture), scores them by rubric-pinned comparative judging or task-native assertions, and lands a per-use-case recommendation proposal the user applies by rebinding `active_models.json`; sampled files live under the 0600 store, are excluded from portability export, and capture-flag flips are SEL-audited. WHY: the done_when clauses map to shipped code registered on both tree ratchets.

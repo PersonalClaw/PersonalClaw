@@ -48,7 +48,7 @@ Session 3 — Launch assets (T3.2 screenshots portion, T3.3)
 
 ### `DL-4` — T3.1: build the demo-home seed fixture (core)
 
-**Status:** todo
+**Status:** done
 
 Session 3 — Launch assets (T3.1)
 
@@ -64,7 +64,7 @@ Session 3 — Launch assets (T3.2 GIF) + Session 2 T2.4 residual (social-preview
 
 ### `DL-6` — T3.4: launch-post draft (architecture-receipts narrative)
 
-**Status:** todo
+**Status:** done
 
 Session 3 — Launch assets (T3.4)
 

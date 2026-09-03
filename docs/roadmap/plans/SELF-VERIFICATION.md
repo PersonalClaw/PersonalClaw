@@ -604,3 +604,7 @@ Sessions 1-2 ship standalone value immediately; 3-4 are the ones that must not s
   exactly that shape (`capture_store.prune` with no caller, `usage.UsageStore.record` with no writer,
   `surfacing_events` named with no table), so shipping a fifth one deliberately is not available. Nothing owns AUTO-R12
   today; the retirement `SV-11` describes is real work and gets an atom.
+
+## Execution log — SV-9 (Self-QA Companion core: commit-watch cron, self-qa bundled template, config wiring)
+
+- [2026-09-02][SV-9] LANDED on main; atom flipped ✅. The companion ships whole — `selfqa/scripts/selfqa_commit_watch.py` fires within one cron interval on a real commit to the watched repo; `selfqa/triage.py` yields a ledger-only skip with a one-line rationale for a test-only commit; the `self-qa` bundled workflow generates a scenario that mutates state through the real UI via Chrome DevTools MCP; and a failing scenario files exactly one Inbox item + one Task through `selfqa_finding_provider`. `SelfQaConfig` is wired at all four config points in `config/loader.py`. WHY: all four done_when clauses map to shipped code, and the Slices 0-5 / guardrails contracts it consumes are satisfied.
