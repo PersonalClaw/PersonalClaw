@@ -44,13 +44,22 @@ def model_context_window(model_id: str | None, default: int = DEFAULT_CONTEXT_WI
     mid = model_id.strip()
     if mid in windows:
         return windows[mid]
-    # Strip a "Provider:" / "Provider/" qualifier and re-check the bare id.
+    # A separator splits one of two shapes. A "Provider:" / "Provider/" qualifier
+    # ("Bedrock:global.anthropic.claude-opus-4-8", "OpenAI/gpt-4o") — the id is the TAIL.
+    # Ollama's "family:tag" ("llama3.1:8b", "qwen2.5:0.5b-instruct-q4_0", "mistral:7b") —
+    # the family is the HEAD and the tail is a size/quant tag the table never lists, so
+    # splitting to the tail alone missed the family and fell through to ``default`` (a
+    # too-large 200k window for a local model whose real one is smaller). Try an exact
+    # match on the tail first (the prefixed form is the common one), then the head, before
+    # loose matching on the tail-stripped id (dated provider variants).
     for sep in (":", "/"):
         if sep in mid:
-            bare = mid.split(sep, 1)[1]
-            if bare in windows:
-                return windows[bare]
-            mid = bare
+            head, tail = mid.split(sep, 1)
+            if tail in windows:
+                return windows[tail]
+            if head in windows:
+                return windows[head]
+            mid = tail
     # Loose containment match (a dated/suffixed id contains a catalog key, e.g.
     # "global.anthropic.claude-opus-4-8" ⊃ "claude-opus-4.8"-ish). Normalize dots
     # vs dashes so "4-8" and "4.8" reconcile. Longest key wins (most specific).
