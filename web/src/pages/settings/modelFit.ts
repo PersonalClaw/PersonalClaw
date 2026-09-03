@@ -10,16 +10,16 @@
 // a model that turns out not to fit. So `budgetKnown` gates every hide, and the gate lives here
 // (one function, one test) rather than as an `&&` inside a JSX expression.
 import type { AvailableModel, HostModelFit, ModelFitVerdict } from '../../lib/api'
+import type { StatusPillTone } from '../../ui/StatusPill'
 
-/** The tone token per verdict, in the vocabulary this panel already speaks: `--color-success` is
- *  the downloaded check, `--color-danger` is the per-row error line. 'unknown' is deliberately
- *  NEUTRAL — `residency.pressureTone` makes the same call, giving an unreadable host the neutral
- *  tone rather than "a warning colour on numbers nobody measured". */
-export const FIT_TONE: Record<ModelFitVerdict, string> = {
-  green: 'var(--color-success)',
-  yellow: 'var(--color-warning)',
-  red: 'var(--color-danger)',
-  unknown: 'var(--color-outline-variant)',
+/** The StatusPill tone per verdict: `ok` is the downloaded check, `danger` is the per-row error
+ *  line. 'unknown' is deliberately NEUTRAL — `residency.pressureTone` makes the same call, giving
+ *  an unreadable host the neutral tone rather than "a warning colour on numbers nobody measured". */
+export const FIT_TONE: Record<ModelFitVerdict, StatusPillTone> = {
+  green: 'ok',
+  yellow: 'warn',
+  red: 'danger',
+  unknown: 'neutral',
 }
 
 /** The chip's visible text. Short because it sits in a 260px row beside the model name; the full
