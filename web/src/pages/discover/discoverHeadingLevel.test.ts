@@ -93,9 +93,13 @@ describe("Discover's area headings sit one rung under the page title", () => {
     //   · `settings/VoicePanel` JOINED it — its "Learned corrections" sub-heading was an `h4` under a
     //     `Section` h2 (measured live: `H1 > H2 > H2 > H2 > H2 > H4`) and is now the h3 that nesting
     //     actually calls for. Panel-level, correctly nested: the classification above still holds.
+    // 2026-09-03, re-done again:
+    //   · `settings/DesignPanel` LEFT the list — its palette-group heading now renders through
+    //     `Eyebrow as="h3"` (the caption-tier heading treatment), so the file writes no literal
+    //     `<h3` tag; the rendered outline still carries the same h3 rung. Panel-level, correctly
+    //     nested: the classification above still holds.
     expect(withH3.sort(), 'files still using h3').toEqual([
       'pages/code/CodeCockpitPage.tsx',
-      'pages/settings/DesignPanel.tsx',
       'pages/settings/VoicePanel.tsx',
       'pages/workflows/IntrospectPanel.tsx',
       'pages/workflows/NodeInspectorDrawer.tsx',

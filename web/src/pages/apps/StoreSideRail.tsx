@@ -1,4 +1,5 @@
 import { Database, Plus, Tag } from 'lucide-react'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { Button } from '../../ui/Button'
 import { FilterRow } from '../../ui/FilterRow'
 
@@ -87,7 +88,7 @@ function StoreRailBlock({ title, allLabel, allCount, icon, options, value, onCha
     <div className="flex flex-col gap-0.5">
       {/* h2: the page's h1 is "Apps" (PageTitle), so a block heading sits one level under
           it — an h3 here would skip a level. */}
-      <h2 className="px-2 pb-0.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{title}</h2>
+      <Eyebrow as="h2" className="px-2 pb-0.5">{title}</Eyebrow>
       {rows.map((o) => (
         <FilterRow key={o.key} label={o.label} count={o.count} icon={icon}
           selected={value === o.key} pressed={value === o.key}

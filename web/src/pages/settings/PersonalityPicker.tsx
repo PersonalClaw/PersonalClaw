@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { Check, Sparkles, Volume2 } from 'lucide-react'
 import { usePersonality } from '../../app/personality'
 import { DEFAULT_PERSONALITY, type Personality } from '../../design/personalities'
@@ -136,9 +137,7 @@ export function PersonalityPicker() {
     <div>
       <div className="mb-s flex items-center gap-s">
         <Sparkles size={14} className="text-on-surface-low" />
-        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">
-          Personality
-        </span>
+        <Eyebrow as="span">Personality</Eyebrow>
       </div>
       <p className="mb-m text-on-surface-low text-[0.8125rem] leading-relaxed">
         A personality is a whole identity, not just a palette: it sets the colors, the
