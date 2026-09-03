@@ -221,6 +221,45 @@ async def test_a_cross_origin_login_is_rejected(_isolated) -> None:
         )
         assert resp.status == 403
         assert f"pc_token_{PORT}" not in resp.cookies
+        # The rejection must be DISTINGUISHABLE from bad credentials (#963): a LAN/tunnel
+        # user with a CORRECT password was told "Wrong username or password." because the
+        # origin branch returned the credentials code. Same distinctness reasoning as
+        # auth_not_enabled — the origin is the caller's own address, not a secret.
+        body = await resp.json()
+        assert body["error"]["code"] == "auth_origin_not_allowed"
+        assert body["error"]["code"] != "auth_invalid_credentials"
+
+
+def test_the_login_page_never_defaults_an_unknown_error_to_bad_credentials() -> None:
+    """#963's second layer: the page JS turned ANY unparseable/unmodelled error (the
+    middleware's old plain-text 403, a proxy 502) into 'Wrong username or password.'
+    via the `|| 'auth_invalid_credentials'` fallback. The fallback must be the honest
+    generic ('Sign-in failed (HTTP N).'), and the origin rejection must have a real
+    message that names the caller's own origin and the config that fixes it."""
+    script = auth_h._LOGIN_SCRIPT
+    assert "|| 'auth_invalid_credentials'" not in script
+    assert "|| 'auth_enroll_code_invalid'" not in script  # same fallback family
+    assert "auth_origin_not_allowed" in script
+    assert "PERSONALCLAW_CORS_ORIGINS" in script
+    assert "location.origin" in script  # the message names the address that was rejected
+
+
+def test_the_csrf_middleware_emits_the_wire_envelope_not_plain_text() -> None:
+    """#963's third layer: the server-level CSRF middleware answered with a plain-text
+    403 body, which the login page parsed as {} and mislabelled. It must emit the one
+    wire envelope with the same origin code the auth routes use. Source-level rail:
+    the middleware is a closure inside start_dashboard, so this pins the emitted shape
+    where a unit harness cannot reach."""
+    import inspect
+
+    from personalclaw.dashboard import server as dash_server
+
+    src = inspect.getsource(dash_server)
+    assert 'text="CSRF check failed' not in src
+    at = src.find("async def csrf_middleware")
+    assert at != -1
+    body = src[at : at + 1200]
+    assert 'json_error("auth_origin_not_allowed", status=403)' in body
 
 
 # ── Lockout ───────────────────────────────────────────────────────────────
