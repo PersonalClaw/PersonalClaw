@@ -71,8 +71,17 @@ export function AgentForm({ draft, onChange, nameLocked, compact }: { draft: Age
 
   return (
     <div className={`flex flex-col ${compact ? 'gap-l' : 'gap-xl'}`}>
-      <Field label="Name" hint="Lowercase, hyphenated — e.g. research-assistant">
-        <TextInput required value={draft.name} onChange={(v) => set('name', nameLocked ? draft.name : v.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-+/g, ''))} placeholder="research-assistant" autoFocus={!nameLocked} />
+      <Field label="Name"
+        hint={nameLocked
+          ? 'Names are fixed after creation — a rename would orphan every reference to this agent.'
+          : 'Lowercase, hyphenated — e.g. research-assistant'}>
+        {/* The lock is the PRIMITIVE's, not a no-op handler: the field used to discard
+            writes inside onChange while looking pixel-identical to the editable field
+            below it — focusable, no aria cue, keystrokes silently thrown away. */}
+        <TextInput required value={draft.name}
+          onChange={(v) => set('name', v.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-+/g, ''))}
+          placeholder="research-assistant" autoFocus={!nameLocked}
+          disabled={nameLocked} disabledReason="Names are fixed after creation" />
       </Field>
       <Field label="Description"><TextInput value={draft.description} onChange={(v) => set('description', v)} placeholder="One line: what this agent is for" /></Field>
 
