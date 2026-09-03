@@ -1077,6 +1077,11 @@ export interface ScheduleJob {
   last_run_ts?: number | null; next_run_ts?: number | null
   has_result?: boolean; last_result?: string | null; last_error?: string | null
   is_running?: boolean; running_since?: number | null; has_session?: boolean
+  // Parse errors from the store's lenient load (S87): a schedule the store kept despite a
+  // malformed field still lists, carrying its errors so the row can flag "needs attention"
+  // rather than hiding an automation the user cannot otherwise debug — the same `broken`
+  // contract the store-trigger wire row (`WireTrigger`) already carries.
+  broken?: string[]
 }
 // One run record from /history (no trace) or /history/{run_id} (with trace).
 export interface ScheduleRun {

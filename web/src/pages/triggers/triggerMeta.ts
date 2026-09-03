@@ -294,6 +294,9 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     lastStatus: j.last_run_status || (j.last_run_ts ? j.last_status : null) || null,
     runCount: null, usedBy: [],
     schedule: j,
+    // Parse errors carried, not hidden (S87 lenient load) — same as `storeToTrigger`, so a
+    // schedule that failed to parse flags "needs attention" instead of listing as if healthy.
+    broken: j.broken ?? [],
     author: j.author, readOnly: j.read_only === true,
   }
 }
