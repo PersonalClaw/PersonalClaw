@@ -8,6 +8,7 @@ import { InlineError } from '../../ui/InlineError'
 import { TextInput } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
 import { fvs } from '../../design/fontWeight'
+import { TextLink } from '../../ui/TextLink'
 
 /** The triage digest card (PROACTIVE-ASSISTANT §5.1) + the Morning-triage pack card (§5.4).
  *
@@ -124,7 +125,7 @@ export function TriageDigestCard() {
               triage rules are kept — turning it back on picks up exactly where you left off.
             </p>
             <p className="mt-s text-[0.8125rem]">
-              <a href="#/settings/inbox" className="text-primary-emphasis hover:underline">Turn triage on in Settings → Inbox</a>
+              <TextLink href="#/settings/inbox" ink="emphasis">Turn triage on in Settings → Inbox</TextLink>
             </p>
           </div>
         </div>
@@ -204,9 +205,9 @@ export function TriageDigestCard() {
           <div className="flex items-center gap-s">
             {view.degraded && <Badge tone="warn">Degraded</Badge>}
             {view.permalink && (
-              <a href={view.permalink} className="flex items-center gap-1 text-primary-emphasis text-[0.75rem] hover:underline">
-                Run journal <ExternalLink size={12} />
-              </a>
+              <TextLink href={view.permalink} ink="emphasis" size="xs" icon={ExternalLink} iconPosition="trailing" iconSize={12}>
+                Run journal
+              </TextLink>
             )}
           </div>
         }
@@ -315,9 +316,9 @@ export function TriageDigestCard() {
                 {row.rule ? <> · <code className="font-mono">{row.rule}</code></> : null}
               </span>
               {row.permalink && (
-                <a href={row.permalink} className="shrink-0 text-primary-emphasis hover:underline" aria-label={`Open the run journal for ${row.kind}`}>
+                <TextLink href={row.permalink} ink="emphasis" className="shrink-0" aria-label={`Open the run journal for ${row.kind}`}>
                   open
-                </a>
+                </TextLink>
               )}
             </li>
           ))}

@@ -11,6 +11,7 @@ import { api, type InboxItem, type InboxClassification, type SkillProposalDetail
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, sourceLabel, relPast, CLASSIFICATIONS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { WorkflowGateActions } from './WorkflowGateActions'
 import { invalidateKeys } from '../../lib/data'
+import { TextLink } from '../../ui/TextLink'
 
 /** Inbox item triage panel: the full message + thread context, the triage
  *  verdict (classification + confidence), the AI-drafted reply (generate / edit),
@@ -281,7 +282,7 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
     return (
       <Section label="Proposal">
         <p className="text-on-surface-low text-[0.8125rem]">
-          This proposal was already answered. <button type="button" onClick={() => navigate('skills')} className="text-primary hover:underline">Open Skills</button>
+          This proposal was already answered. <TextLink onClick={() => navigate('skills')}>Open Skills</TextLink>
         </p>
       </Section>
     )

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { FieldError } from '../../ui/forms'
 import { api, type WorkflowContinuation } from '../../lib/api'
 import { WorkflowAsk } from '../workflows/WorkflowAsk'
+import { TextLink } from '../../ui/TextLink'
 
 /** Answer a workflow's human-input gate from the inbox (WF2-R7).
  *
@@ -74,9 +75,9 @@ export function WorkflowGateActions({ runId, nodeId, onChanged, navigate }: {
     return (
       <p className="text-on-surface-low text-[0.8125rem]">
         This request was already answered.{' '}
-        <button type="button" onClick={() => navigate(`workflows/${runId}`)} className="text-primary hover:underline">
+        <TextLink onClick={() => navigate(`workflows/${runId}`)}>
           Open the run
-        </button>
+        </TextLink>
       </p>
     )
   }

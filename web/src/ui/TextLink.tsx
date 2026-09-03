@@ -54,6 +54,7 @@ const INK: Record<Ink, string> = {
 export function TextLink({
   children, href, external = false, onClick, icon: Icon, iconPosition = 'leading',
   iconSize = 13, size = 'inherit', ink = 'primary', disabled = false, title, className,
+  'aria-label': ariaLabel,
 }: {
   children: ReactNode
   href?: string
@@ -67,6 +68,9 @@ export function TextLink({
   disabled?: boolean
   title?: string
   className?: string
+  /** Accessible name when the visible label alone does not say what the link
+   *  opens ("open" beside a row) — same passthrough precedent as forms' id. */
+  'aria-label'?: string
 }) {
   // `py-0.5 -my-0.5`: measured 10 of these at **20px tall** inside `#/tasks`' clickable rows, where
   // SC 2.5.8's spacing exception cannot apply — a link nested in a larger target can never clear it.
@@ -93,14 +97,14 @@ export function TextLink({
 
   if (href !== undefined) {
     return (
-      <a href={href} onClick={onClick} title={title} className={cls}
+      <a href={href} onClick={onClick} title={title} aria-label={ariaLabel} className={cls}
         {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>
         {body}
       </a>
     )
   }
   return (
-    <button type="button" onClick={onClick} disabled={disabled} title={title} className={cls}>
+    <button type="button" onClick={onClick} disabled={disabled} title={title} aria-label={ariaLabel} className={cls}>
       {body}
     </button>
   )
