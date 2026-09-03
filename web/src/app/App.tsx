@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { MotionConfig, motion } from 'framer-motion'
 import { ease, duration } from '../design/motion'
 import { armCueAudio } from '../design/soundCues'
+import { installPushCuePlayback } from './pushCuePlayback'
 import { Bell, Blocks, BookOpen, Brain, Compass, FileCode, FileText, Files, FolderKanban, Inbox, LayoutDashboard, ListChecks, Loader2, MessageSquare, Radar, Settings, Sparkles, Terminal, Users, Workflow, Wrench, Zap } from 'lucide-react'
 import { NavRail, type NavItem } from '../ui/NavRail'
 import { ShellCornerLeft, ShellCornerRight } from '../ui/ShellCorners'
@@ -192,6 +193,10 @@ function AppInner() {
   // builds the single context. Does nothing while the toggle is off (Settings →
   // Design → Personality), which is the default.
   useEffect(() => { armCueAudio() }, [])
+  // A mobile push arrives silent/vibrate (the SW cannot play audio); an open client plays the
+  // per-kind voice it hands back (MOBILE-COMPANION MC-6). Mounted in the shell so any open tab
+  // can voice it, not just the notifications page. A no-op where service workers are unavailable.
+  useEffect(() => installPushCuePlayback(), [])
   const { onboarded, loaded } = useIdentity()
   const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSED_KEY) === '1')
   useEffect(() => { localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? '1' : '0') }, [navCollapsed])

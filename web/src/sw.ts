@@ -34,7 +34,14 @@
 // orphans — deterministically, with no timestamp to make builds irreproducible.
 
 import { APP_SHELL, SHELL_DOCUMENT, mayCache, strategyFor } from './app/swPolicy'
-import { isPushPayload, notificationFor, shouldFocus } from './app/pushPolicy'
+import {
+  PUSH_CUE_MESSAGE,
+  isPushPayload,
+  notificationFor,
+  shouldFocus,
+  soundMapFromRules,
+  type PushPayload,
+} from './app/pushPolicy'
 
 /** Injected by `scripts/buildServiceWorker.mjs` via esbuild `define`. */
 declare const __SW_CACHE_VERSION__: string
@@ -122,7 +129,7 @@ sw.addEventListener('fetch', (event) => {
   )
 })
 
-// ── Push → approval (MOBILE-COMPANION MC-5 / T3.4) ──────────────────────────
+// ── Push → approval (MOBILE-COMPANION MC-5 / MC-6) ──────────────────────────
 //
 // The payload is `{kind, item_id}` and nothing else. EVERY word the user reads is
 // composed here from `app/pushPolicy`'s fixed table, keyed on `kind` — the wire is
@@ -134,6 +141,10 @@ sw.addEventListener('fetch', (event) => {
 // notification rather than being dropped. On iOS a `showNotification`-less push
 // event can cost the site its push permission, and silently swallowing a wake-up
 // for a blocked run is the one failure this feature exists to prevent.
+//
+// MC-6: the notification is SILENT + vibrate. A service worker cannot play audio, so
+// the OS notification carries no sound; the per-kind VOICE (from plan-42's rules
+// field) is handed to an open client, which is the only thing that can play it.
 
 sw.addEventListener('push', (event) => {
   let parsed: unknown = null
@@ -143,21 +154,56 @@ sw.addEventListener('push', (event) => {
     parsed = null
   }
   const payload = isPushPayload(parsed) ? parsed : { kind: '', item_id: '' }
-  const note = notificationFor(payload)
-  event.waitUntil(
-    sw.registration.showNotification(note.title, {
-      body: note.body,
-      tag: note.tag,
-      requireInteraction: note.requireInteraction,
-      icon: '/icons/icon-192.png',
-      badge: '/icons/icon-192.png',
-      // The ONLY thing carried through to the click handler. Not the title, not
-      // the body: a click reads `data.url` and nothing else, so there is one path
-      // from a push to a navigation and it is a same-origin companion URL.
-      data: { url: note.url },
-    }),
-  )
+  event.waitUntil(deliverPush(payload))
 })
+
+/** Show the (silent + vibrate) notification and, in parallel, hand the per-kind VOICE to any
+ *  open client to play (MC-6).
+ *
+ *  The visible notification is shown WITHOUT waiting on the rules read: losing a wake-up for a
+ *  blocked run is the one failure this feature exists to prevent, so a network read only ever
+ *  gates the (best-effort) sound, never the banner. */
+async function deliverPush(payload: PushPayload): Promise<void> {
+  const base = notificationFor(payload)
+  // `vibrate` is a real `showNotification` option browsers honour, but the WebWorker lib's
+  // `NotificationOptions` omits it (non-standard in the core Notifications spec), so the
+  // haptic is typed as a local extension rather than dropped.
+  const options: NotificationOptions & { vibrate?: number[] } = {
+    body: base.body,
+    tag: base.tag,
+    requireInteraction: base.requireInteraction,
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    // Silent — the SW cannot voice a cue; an open client does. Vibrate is the haptic that
+    // replaces the OS sound, a little stronger for an approval that requires interaction.
+    silent: true,
+    vibrate: base.requireInteraction ? [120, 60, 120] : [60],
+    // The ONLY thing carried through to the click handler. Not the title, not
+    // the body: a click reads `data.url` and nothing else, so there is one path
+    // from a push to a navigation and it is a same-origin companion URL.
+    data: { url: base.url },
+  }
+  const shown = sw.registration.showNotification(base.title, options)
+  await Promise.allSettled([shown, voiceCue(payload)])
+}
+
+/** Resolve the per-kind cue voice from the notification rules and post it to every open client.
+ *  Best-effort and fail-open: an unreadable rules file (offline, unauthenticated) simply means no
+ *  cue, and `notificationFor` stays the one place the voice is read (MC-6 clause 3). */
+async function voiceCue(payload: PushPayload): Promise<void> {
+  let soundByKind: Record<string, string> = {}
+  try {
+    const res = await fetch('/api/notifications/rules', { credentials: 'same-origin' })
+    if (!res.ok) return
+    soundByKind = soundMapFromRules(await res.json())
+  } catch {
+    return
+  }
+  const note = notificationFor(payload, soundByKind)
+  if (!note.sound) return
+  const clients = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true })
+  for (const client of clients) client.postMessage({ type: PUSH_CUE_MESSAGE, cue: note.sound })
+}
 
 sw.addEventListener('notificationclick', (event) => {
   event.notification.close()

@@ -20,6 +20,7 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
+from personalclaw.http_errors import json_error
 
 logger = logging.getLogger(__name__)
 
@@ -390,7 +391,31 @@ async def handle_notification_rules_put(request: web.Request) -> web.Response:
                     return web.json_response(
                         {"error": f"notification kind '{key}' is not verifiable"}, status=400
                     )
-            stored[key] = raw
+            sound = raw.get("sound")
+            if sound is not None and (
+                not isinstance(sound, str) or sound not in notification_rules.SOUND_CUES
+            ):
+                # MOBILE-COMPANION MC-6. `null` clears it (silent) and is allowed; anything else
+                # must be a known voice, or a rule that "saved" would hand the client an
+                # unplayable name — the same silent-lie failure the mode/target guards prevent.
+                return json_error(
+                    "invalid_request",
+                    message=(
+                        f"rule '{key}': sound must be null or one of "
+                        f"{sorted(notification_rules.SOUND_CUES)}"
+                    ),
+                    status=400,
+                )
+            # Merge per-key rather than replace. The rules matrix saves each control (mode,
+            # targets, conditions, verify, sound) as its OWN partial PUT, so a bare
+            # `stored[key] = raw` would let setting the sound wipe the mode the user set a moment
+            # earlier. A field the body omits keeps its stored value; a field it names overwrites
+            # (a null `sound` clears it). Cross-key merging is unchanged and pinned by
+            # `test_rules_put_merges_rather_than_replacing`.
+            base = stored.get(key)
+            merged = dict(base) if isinstance(base, dict) else {}
+            merged.update(raw)
+            stored[key] = merged
         doc["rules"] = stored
 
     digest = body.get("digest")

@@ -365,6 +365,59 @@ async def test_rules_put_accepts_verify_on_a_verifiable_kind(_isolate_rules):
 
 
 @pytest.mark.asyncio
+async def test_rules_put_accepts_a_known_sound(_isolate_rules):
+    """MC-6: a voice from the closed set persists and takes effect on the read path."""
+    from personalclaw import notification_rules as nr
+
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"approval/requested": {"sound": "coin_blip"}}})
+    )
+    assert resp.status == 200
+    assert nr.resolve_rule("approval", "requested").sound == "coin_blip"
+
+
+@pytest.mark.asyncio
+async def test_rules_put_rejects_an_unknown_sound(_isolate_rules):
+    """A voice outside soundCues would 'save' and then hand the client an unplayable name."""
+    from personalclaw import notification_rules as nr
+
+    resp = await er.handle_notification_rules_put(
+        _req({"rules": {"approval/requested": {"sound": "ka-ching"}}})
+    )
+    assert resp.status == 400
+    assert "sound" in (await _json(resp))["error"]["message"]
+    assert nr.resolve_rule("approval", "requested").sound is None
+
+
+@pytest.mark.asyncio
+async def test_rules_put_null_sound_clears_it(_isolate_rules):
+    from personalclaw import notification_rules as nr
+
+    await er.handle_notification_rules_put(
+        _req({"rules": {"approval/requested": {"sound": "error"}}})
+    )
+    await er.handle_notification_rules_put(_req({"rules": {"approval/requested": {"sound": None}}}))
+    assert nr.resolve_rule("approval", "requested").sound is None
+
+
+@pytest.mark.asyncio
+async def test_rules_put_merges_fields_within_a_key(_isolate_rules):
+    """Two independent controls (mode, then sound) each save their OWN partial PUT — the second
+    must not clobber the first, or the sound picker would silently reset the delivery mode."""
+    from personalclaw import notification_rules as nr
+
+    await er.handle_notification_rules_put(
+        _req({"rules": {"approval/requested": {"mode": "badge"}}})
+    )
+    await er.handle_notification_rules_put(
+        _req({"rules": {"approval/requested": {"sound": "coin_blip"}}})
+    )
+    rule = nr.resolve_rule("approval", "requested")
+    assert rule.mode == "badge", "the sound PUT dropped the mode set a moment earlier"
+    assert rule.sound == "coin_blip"
+
+
+@pytest.mark.asyncio
 async def test_rules_put_rejects_non_bool_verify(_isolate_rules):
     resp = await er.handle_notification_rules_put(
         _req({"rules": {"skills/proposal": {"verify": "yes"}}})

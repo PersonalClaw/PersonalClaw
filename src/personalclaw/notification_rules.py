@@ -60,6 +60,20 @@ logger = logging.getLogger(__name__)
 TARGETS: tuple[str, ...] = ("dashboard", "channel_dm", "push", "native")
 DEFAULT_TARGETS: tuple[str, ...] = ("dashboard",)
 
+#: The closed set of cue VOICES a rule may name for a mobile push (MOBILE-COMPANION `MC-6`).
+#: A service worker cannot play audio, so the push notification is silent/vibrate and the SW maps
+#: the push's `kind` to this voice for an open client to play through `soundCues.playCue`. SOURCE OF
+#: TRUTH is `web/src/design/soundCues.ts` (`CueName` / the `CUES` keys) — mirrored here rather than
+#: imported because Python cannot read the TS module; `web/src/app/pushPolicy.test.ts` pins the
+#: frontend list to `CUES` so the two cannot drift. Absent (`None`) is the default: a silent push.
+SOUND_CUES: tuple[str, ...] = (
+    "turn_complete",
+    "approval_needed",
+    "error",
+    "coin_blip",
+    "terminal_bell",
+)
+
 #: The desktop target (DESKTOP-CAPABILITIES DC-5) and the shell capability it needs. Named
 #: because three files have to agree on both strings: this module decides, `dashboard/
 #: state.py` reads the decision onto the note, and `dashboard/desktop_registry.py` owns the
@@ -119,6 +133,11 @@ class Rule:
     #: ``verify:true`` on a non-verifiable kind, so a persisted ``verify`` on an ineligible
     #: kind cannot arise through the API. Defaults off: no rule verifies until asked.
     verify: bool = False
+    #: The cue VOICE an open client plays when a mobile push for this kind arrives
+    #: (MOBILE-COMPANION `MC-6`) — one of :data:`SOUND_CUES`, or ``None`` (the default) for a
+    #: silent/vibrate-only push. Validated at the PUT boundary and again on read
+    #: (:func:`_coerce_sound`), so a value outside the closed set never reaches the client.
+    sound: str | None = None
 
     @property
     def key(self) -> str:
@@ -133,7 +152,15 @@ class Rule:
         """
         if self.mode == "immediate":
             return self
-        return Rule(self.source, self.kind, "immediate", self.targets, self.conditions, self.verify)
+        return Rule(
+            self.source,
+            self.kind,
+            "immediate",
+            self.targets,
+            self.conditions,
+            self.verify,
+            self.sound,
+        )
 
 
 def native_delivery(rule: Rule | None, capability: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -214,6 +241,19 @@ def _coerce_conditions(raw: Any) -> Conditions:
     return Conditions(keywords=keywords, name_mention=bool(raw.get("name_mention")))
 
 
+def _coerce_sound(raw: Any) -> str | None:
+    """A known cue voice from *raw*, or ``None``.
+
+    Fail-open like every other field here: an unknown voice (one written by a NEWER build, or a
+    hand-edited file) resolves to ``None`` — a silent push — rather than failing the whole rule
+    or reaching the client. The PUT guard rejects an unknown voice before it can persist, so this
+    is the defense-in-depth read, not the primary check.
+    """
+    if isinstance(raw, str) and raw in SOUND_CUES:
+        return raw
+    return None
+
+
 def _coerce_rule(source: str, kind: str, raw: Any, default_mode: str) -> Rule:
     """One rule from its persisted form, falling back to *default_mode* per field.
 
@@ -240,6 +280,7 @@ def _coerce_rule(source: str, kind: str, raw: Any, default_mode: str) -> Rule:
         targets=_coerce_targets(raw.get("targets")),
         conditions=_coerce_conditions(raw.get("conditions")),
         verify=bool(raw.get("verify")),
+        sound=_coerce_sound(raw.get("sound")),
     )
 
 
@@ -423,6 +464,12 @@ def rules_document() -> dict[str, Any]:
                 # opted in (rule). The matrix renders the toggle only for a verifiable kind.
                 "verifiable": registered.verifiable,
                 "verify": rule.verify,
+                # MOBILE-COMPANION MC-6. `wire` is the flat kind a push payload carries — the SW
+                # keys the per-kind sound by it (same string `pushPolicy.COPY` is keyed on), so it
+                # is exposed here rather than re-deriving the registry mapping on the client.
+                # `sound` is the voice an open client plays for such a push (None ⇒ silent).
+                "wire": nk.kind_for_legacy_pair(rule.source, rule.kind),
+                "sound": rule.sound,
             }
         )
     return {"rules": rows, "digest": digest_settings(), "targets": list(TARGETS)}

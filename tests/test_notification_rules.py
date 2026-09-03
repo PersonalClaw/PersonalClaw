@@ -286,6 +286,59 @@ def test_escalation_preserves_conditions():
     assert nr.Rule("a", "b", "badge", ("dashboard",), conds).escalated().conditions is conds
 
 
+# ── per-kind push sound (MOBILE-COMPANION MC-6) ─────────────────────────
+
+
+@pytest.mark.parametrize("voice", list(nr.SOUND_CUES))
+def test_stored_sound_resolves(home, voice):
+    _write_rules(home, {"rules": {"approval/requested": {"sound": voice}}})
+    assert nr.resolve_rule("approval", "requested").sound == voice
+
+
+def test_absent_sound_is_none_by_default(home):
+    """No `sound` key ⇒ a silent push — the default the notification stays."""
+    assert nr.resolve_rule("approval", "requested").sound is None
+
+
+def test_unknown_stored_sound_falls_back_to_none(home):
+    """A voice from a NEWER build (or a hand-edit) must not reach the client."""
+    _write_rules(home, {"rules": {"approval/requested": {"sound": "ka-ching"}}})
+    assert nr.resolve_rule("approval", "requested").sound is None
+
+
+def test_non_string_sound_falls_back_to_none(home):
+    _write_rules(home, {"rules": {"approval/requested": {"sound": 7}}})
+    assert nr.resolve_rule("approval", "requested").sound is None
+
+
+def test_a_good_sound_survives_a_malformed_sibling(home):
+    """Per-FIELD fallback: a malformed targets list must not discard a deliberate sound."""
+    _write_rules(home, {"rules": {"approval/requested": {"sound": "coin_blip", "targets": "x"}}})
+    rule = nr.resolve_rule("approval", "requested")
+    assert rule.sound == "coin_blip"
+    assert rule.targets == ("dashboard",)
+
+
+def test_escalation_preserves_sound():
+    """A keyword hit that escalates the mode must not drop the chosen voice."""
+    rule = nr.Rule("cron", "result", "badge", ("dashboard",), sound="error")
+    assert rule.escalated().sound == "error"
+
+
+def test_rules_document_exposes_sound_and_wire(home):
+    """The matrix needs `sound` to show the current voice; the SW needs `wire` to key the map."""
+    _write_rules(home, {"rules": {"approval/requested": {"sound": "coin_blip"}}})
+    row = next(r for r in nr.rules_document()["rules"] if r["key"] == "approval/requested")
+    assert row["sound"] == "coin_blip"
+    assert row["wire"] == "approval"
+
+
+def test_rules_document_sound_defaults_to_none(home):
+    row = next(r for r in nr.rules_document()["rules"] if r["key"] == "hook/fired")
+    assert row["sound"] is None
+    assert row["wire"] == "hook"
+
+
 # ── digest schedule ─────────────────────────────────────────────────────
 
 

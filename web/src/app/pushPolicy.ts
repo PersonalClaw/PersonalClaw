@@ -19,6 +19,28 @@ export interface PushPayload {
   item_id: string
 }
 
+/** Cue voices a per-kind rule may name (MOBILE-COMPANION MC-6). Mirrors `CueName` in
+ *  `web/src/design/soundCues.ts` — DUPLICATED here, not imported, because this module is compiled
+ *  into the service-worker program too (`tsconfig.sw.json`, `lib: WebWorker` with no `dom`), and
+ *  `soundCues.ts` references `AudioContext`/`window`/`document`. `pushPolicy.test.ts` pins this
+ *  list to soundCues' `CUES` keys so the two cannot drift. */
+export type PushCue = 'turn_complete' | 'approval_needed' | 'error' | 'coin_blip' | 'terminal_bell'
+export const PUSH_CUES: readonly PushCue[] = [
+  'turn_complete',
+  'approval_needed',
+  'error',
+  'coin_blip',
+  'terminal_bell',
+]
+
+/** The message a push handler posts to an open client so it can VOICE a cue (a service worker
+ *  cannot play audio). Shared by `sw.ts` (sender) and `app/pushCuePlayback.ts` (receiver). */
+export const PUSH_CUE_MESSAGE = 'personalclaw:play-cue'
+
+function isPushCue(value: unknown): value is PushCue {
+  return typeof value === 'string' && (PUSH_CUES as readonly string[]).includes(value)
+}
+
 /** What the user sees. Composed here, never received. */
 export interface PushNotification {
   title: string
@@ -29,6 +51,9 @@ export interface PushNotification {
   url: string
   /** Approvals interrupt; everything else does not. */
   requireInteraction: boolean
+  /** The cue voice an open client should play for this push, or absent for a silent one
+   *  (MOBILE-COMPANION MC-6). Read from the per-kind rules, never from the wire. */
+  sound?: PushCue
 }
 
 /** Fixed copy per kind. A kind absent here gets the generic row — never the raw
@@ -69,9 +94,20 @@ export function deepLinkFor(kind: string, itemId: string): string {
   return COMPANION_PATH
 }
 
-/** The notification to show for *payload*. Text comes from COPY, never from the wire. */
-export function notificationFor(payload: PushPayload): PushNotification {
+/** The notification to show for *payload*. Text comes from COPY, never from the wire.
+ *
+ *  The VOICE is the one part that is a user PREFERENCE, so it is read from the per-kind rules
+ *  (*soundByKind*, keyed by the same wire kind as COPY) rather than a fixed table
+ *  (MOBILE-COMPANION MC-6). No map, an unconfigured kind, or an unknown voice ⇒ no cue: the push
+ *  stays silent. Validated against the closed set here too, so a stale map can never hand the
+ *  client an unplayable voice. */
+export function notificationFor(
+  payload: PushPayload,
+  soundByKind?: Readonly<Record<string, string>>,
+): PushNotification {
   const copy = COPY[payload.kind] ?? GENERIC
+  const configured = soundByKind?.[payload.kind]
+  const sound = isPushCue(configured) ? configured : undefined
   return {
     title: copy.title,
     body: copy.body,
@@ -82,7 +118,24 @@ export function notificationFor(payload: PushPayload): PushNotification {
     tag: `personalclaw:${payload.kind}:${payload.item_id}`,
     url: deepLinkFor(payload.kind, payload.item_id),
     requireInteraction: payload.kind === 'approval',
+    ...(sound ? { sound } : {}),
   }
+}
+
+/** Build the `{ wireKind: voice }` map `notificationFor` reads, from the rules document the SW
+ *  fetched (MOBILE-COMPANION MC-6). Defensive by contract — the document crosses the network: a
+ *  row without a string `wire`, or whose `sound` is not a registered voice, is skipped, so a
+ *  malformed or newer-build document degrades to "no cue" rather than an unplayable one. */
+export function soundMapFromRules(doc: unknown): Record<string, PushCue> {
+  const out: Record<string, PushCue> = {}
+  const rules = (doc as { rules?: unknown } | null)?.rules
+  if (!Array.isArray(rules)) return out
+  for (const row of rules) {
+    const wire = (row as { wire?: unknown }).wire
+    const sound = (row as { sound?: unknown }).sound
+    if (typeof wire === 'string' && wire && isPushCue(sound)) out[wire] = sound
+  }
+  return out
 }
 
 /** Whether an already-open client should be reused for *url* rather than opening
