@@ -33,9 +33,12 @@ export function Eyebrow({
   className,
 }: {
   children: ReactNode
-  /** Element to render: a block `div`/`p` section label, or an inline `span`
-   *  (a chip label, or an eyebrow sharing a flex row with a value). */
-  as?: 'div' | 'span' | 'p'
+  /** Element to render: a block `div`/`p` section label, an inline `span`
+   *  (a chip label, or an eyebrow sharing a flex row with a value), or a
+   *  semantic `h2`/`h3` — a section heading whose visual treatment is the
+   *  caption-tier label (the heading OUTLINE keeps its level; only the
+   *  rendering converges on the role). */
+  as?: 'div' | 'span' | 'p' | 'h2' | 'h3'
   /** Ink tone. `muted` (default) is the section-label grey; `info`/`primary`
    *  are for the semantic eyebrows (a queued nudge, an active marker). */
   tone?: keyof typeof TONE

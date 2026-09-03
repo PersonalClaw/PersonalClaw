@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Eyebrow } from '../../ui/Eyebrow'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { SearchX } from 'lucide-react'
 import { SearchField } from '../../ui/SearchField'
@@ -174,7 +175,7 @@ function Group({ title, items, query, go, onMatch }: {
   }, [onMatch])
   return (
     <section style={anyVisible ? undefined : { display: 'none' }}>
-      <h2 className="mb-2 px-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{title}</h2>
+      <Eyebrow as="h2" className="mb-2 px-1">{title}</Eyebrow>
       <div className="flex flex-col" style={{ gap: COL_GAP }}>
         {items.map((w) => <Cell key={w.id} widget={w} query={query} go={go} onMatch={report} />)}
       </div>
