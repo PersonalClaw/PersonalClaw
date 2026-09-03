@@ -743,7 +743,11 @@ class NativeArtifactProvider(ArtifactProvider):
             if source_path:
                 self._try_write_source_path(source_path, content or "")
             self._write_meta(art)
-            art.content = content
+            # Echo what _write_text actually persisted (sliced to MAX_CONTENT_BYTES), not
+            # the raw input: create() returns art in-hand rather than re-reading via get()
+            # the way update() does, so an over-cap body would otherwise report success at
+            # full size in the create response while only the first MiB reached disk.
+            art.content = (content or "")[:MAX_CONTENT_BYTES]
         # Mirroring (PRODUCT-EXPERIENCE-PARITY §6) observes the write from OUTSIDE the
         # lock: a listener reads the artifact back, and holding the store lock across an
         # index would serialize every concurrent save behind someone else's indexing.

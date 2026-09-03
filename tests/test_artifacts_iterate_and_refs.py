@@ -255,3 +255,34 @@ def test_credentials_in_an_artifact_body_are_redacted_on_the_way_in(provider):
     # pass just as well if nothing were injected at all, proving nothing.
     assert "const key" in out
     assert "sk-ant-api03-AAAA" not in out
+
+
+# ── create() echoes the PERSISTED body, not the raw input (#781) ──────────────
+
+
+def test_create_response_content_matches_the_persisted_cap(provider):
+    """An over-cap create must return what reached disk, not the full input.
+
+    _write_text slices the body to MAX_CONTENT_BYTES; create() used to set
+    art.content to the un-sliced input, so a >1 MiB save reported success at full
+    size in the create response while the next get() returned only the capped body.
+    The create echo and the subsequent read must agree.
+    """
+    from personalclaw.artifacts.models import MAX_CONTENT_BYTES
+
+    oversize = "x" * (MAX_CONTENT_BYTES + 4096)
+    art = provider.create(name="Big doc", content=oversize, kind="document")
+    assert len(art.content) == MAX_CONTENT_BYTES
+
+    fetched = provider.get(art.slug)
+    assert fetched is not None
+    assert fetched.content == art.content
+    assert len(fetched.content) == MAX_CONTENT_BYTES
+
+
+def test_create_under_cap_round_trips_unchanged(provider):
+    """The opposite failure mode: a normal (under-cap) body must not be mangled."""
+    body = "the whole body text"
+    art = provider.create(name="Small doc", content=body, kind="document")
+    assert art.content == body
+    assert provider.get(art.slug).content == body
