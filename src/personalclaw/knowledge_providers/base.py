@@ -75,8 +75,16 @@ HEALTH_ERROR = "error"
 #: prevent. The engine records whatever status a provider declares here, so a provider that
 #: knows WHY it found nothing is not flattened into "degraded".
 HEALTH_NEEDS_RENDER = "needs render tier"
+#: The page defeated even the render tier and needs the full gateway browse tier (BA-6), which
+#: is not allowed. Distinct from ``needs render tier`` for the same reason that one is distinct
+#: from ``degraded``: the remediation is its own knob (turn on ``budget.allow_browse`` and point
+#: ``budget.cdp_url`` at a gateway), and a source that quietly returns nothing forever is exactly
+#: what a specific, actionable status prevents.
+HEALTH_NEEDS_BROWSE = "needs browse tier"
 #: The closed vocabulary for ``sources.health_status``.
-SOURCE_HEALTH = frozenset({HEALTH_OK, HEALTH_DEGRADED, HEALTH_ERROR, HEALTH_NEEDS_RENDER})
+SOURCE_HEALTH = frozenset(
+    {HEALTH_OK, HEALTH_DEGRADED, HEALTH_ERROR, HEALTH_NEEDS_RENDER, HEALTH_NEEDS_BROWSE}
+)
 
 
 @dataclass

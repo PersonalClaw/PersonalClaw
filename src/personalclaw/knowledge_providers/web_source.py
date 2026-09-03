@@ -67,6 +67,7 @@ from urllib.parse import urljoin, urlsplit
 
 from personalclaw.knowledge_providers import conditional_get
 from personalclaw.knowledge_providers.base import (
+    HEALTH_NEEDS_BROWSE,
     HEALTH_NEEDS_RENDER,
     KnowledgeItem,
     KnowledgeSource,
@@ -150,6 +151,13 @@ LISTING_PAGE_GUIDANCE = (
 RENDER_TIER_GUIDANCE = (
     "This page builds its content with JavaScript, so a plain fetch sees an empty shell. "
     "Set budget.allow_render to true to let this source use the render tier."
+)
+
+#: The remediation when even the render tier saw a shell — the page needs the full gateway
+#: browser (BA-6): a real profile and the safety fence a plain headless render does not carry.
+BROWSE_TIER_GUIDANCE = (
+    "This page still had no content after a JavaScript render, so it needs the gateway browse "
+    "tier. Set budget.allow_browse to true and point budget.cdp_url at a gateway browser."
 )
 
 _WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
@@ -946,9 +954,10 @@ class WebSourceProvider(KnowledgeSourceProvider):
     """Poll-capable provider over a watched web page (§2).
 
     Spec keys are :data:`SPEC_SCHEMA`; ``budget`` (on the source row, not the spec) carries
-    ``{max_requests, allow_render}``. ``fetch_fn``/``render_fn`` are the two injectable seams
-    and the ONLY ways bytes enter — which is what keeps tier 1 under the engine's ``SOURCE``
-    egress policy and tier 2 on the guard-pre-flighting core render path.
+    ``{max_requests, allow_render, allow_browse, cdp_url}``. ``fetch_fn`` / ``render_fn`` /
+    ``browse_fn`` are the injectable seams and the ONLY ways bytes enter — which keeps tier 1 under
+    the engine's ``SOURCE`` egress policy, tier 2 on the guard-pre-flighting core render path, and
+    tier 3 (BA-6) on the gateway browser's egress-fenced session.
     """
 
     #: A page is more expensive to poll than a conditional-GET feed, and a changelog does not
@@ -961,10 +970,14 @@ class WebSourceProvider(KnowledgeSourceProvider):
         *,
         fetch_fn: Callable[..., Any] | None = None,
         render_fn: Callable[..., Any] | None = None,
+        browse_fn: Callable[..., Any] | None = None,
     ) -> None:
         self._store = store
         self._fetch_fn = fetch_fn
         self._render_fn = render_fn
+        # Tier 3 (BA-6): an injected `async (url, *, policy) -> obj with .html/.ok` browse tick.
+        # Left None in production, where the poll/preview callers build the gateway-backed tick.
+        self._browse_fn = browse_fn
 
     @property
     def name(self) -> str:
@@ -1024,6 +1037,119 @@ class WebSourceProvider(KnowledgeSourceProvider):
         from personalclaw.web.render import render_url
 
         return await render_url(url, policy=policy)
+
+    async def _browse_tier(
+        self,
+        *,
+        url: str,
+        spec: dict,
+        budget: _Budget,
+        policy: Any,
+        detector: str,
+        cursor_state: dict[str, str],
+        allow_browse: bool,
+        browse: Callable[..., Any] | None,
+        render_note: str,
+    ) -> _Collected:
+        """Tier 3 (BA-6) — ONE gateway browse tick when the render tier still saw a shell.
+
+        Draws on the SAME per-poll ``budget`` as the fetch and the render (§2.3): the browse tick
+        is one more request, not a fresh allowance. ``browse`` returns an object exposing ``.html``
+        (both ``TickResult`` from a poll's ``execute_tick`` and ``TickOutcome`` from a preview's
+        direct run satisfy that), which is parsed and re-run through the detector stack.
+        """
+        if not allow_browse:
+            return _Collected(
+                escalations=[render_note, "browse tier needed but budget.allow_browse is false"],
+                guidance=BROWSE_TIER_GUIDANCE,
+                health_status=HEALTH_NEEDS_BROWSE,
+                detector=detector,
+                cursor_state=cursor_state,
+            )
+        if browse is None:
+            # Allowed but no gateway wired (a preview with no browse binding). Same status: the
+            # remediation is to point budget.cdp_url at a gateway, not a different knob.
+            return _Collected(
+                escalations=[render_note, "browse tier allowed but no gateway is configured"],
+                guidance=BROWSE_TIER_GUIDANCE,
+                health_status=HEALTH_NEEDS_BROWSE,
+                detector=detector,
+                cursor_state=cursor_state,
+            )
+        if not budget.take():
+            return _Collected(
+                escalations=[
+                    render_note,
+                    "browse escalation refused: per-poll request budget spent "
+                    f"({budget.max_requests} requests)",
+                ],
+                guidance=BROWSE_TIER_GUIDANCE,
+                detector=detector,
+                cursor_state=cursor_state,
+            )
+        try:
+            browsed = await browse(url, policy=policy)
+        except Exception as exc:  # noqa: BLE001 — a browse crash is a reason, not a dead loop
+            return _Collected(
+                escalations=[render_note, f"browse tier raised: {type(exc).__name__}: {exc}"[:200]],
+                guidance=BROWSE_TIER_GUIDANCE,
+                health_status=HEALTH_NEEDS_BROWSE,
+                detector=detector,
+                cursor_state=cursor_state,
+            )
+        browsed_dom = parse_html(str(getattr(browsed, "html", "") or ""))
+        detector, items = await self._detect(
+            browsed_dom, page_url=url, spec=spec, budget=budget, policy=policy
+        )
+        return _Collected(
+            items=items,
+            detector=detector,
+            escalations=[
+                render_note,
+                (
+                    f"escalated to browse tier; extracted {len(items)} item(s)"
+                    if items
+                    else "escalated to browse tier; still no items after browse render"
+                ),
+            ],
+            guidance="" if items else LISTING_PAGE_GUIDANCE,
+            cursor_state=cursor_state,
+        )
+
+    def _browse_for(self, *, source_id: str | None, budget_cfg: dict) -> Callable[..., Any] | None:
+        """Bind the tier-3 browse tick for one poll/preview.
+
+        Returns the injected test seam when one was set. Otherwise a gateway-backed tick: a POLL
+        (real ``source_id``) runs it through ``execute_tick`` so the content-hash cursor gives the
+        browse tier the idempotency it has no conditional-GET of its own to provide; a PREVIEW (no
+        ``source_id``) runs the tick directly and persists nothing, matching the preview contract.
+        """
+        if self._browse_fn is not None:
+            return self._browse_fn
+        cdp_url = str((budget_cfg or {}).get("cdp_url") or "").strip()
+
+        async def _browse(url: str, *, policy: Any = None) -> Any:
+            from personalclaw.browse.plan_runner import (
+                make_content_tick_runner,
+                make_gateway_opener,
+            )
+            from personalclaw.browse.plans import KIND_WATCH_PAGE, BrowsePlan, execute_tick
+            from personalclaw.guardrails.autonomy import RUNG_ONE_TAP
+
+            runner = make_content_tick_runner(
+                open_session=make_gateway_opener(), resolve_url=lambda: cdp_url
+            )
+            plan = BrowsePlan(
+                id=f"web-source:{source_id}" if source_id else "web-source-preview",
+                goal=f"watch {url}",
+                kind=KIND_WATCH_PAGE,
+                start_url=url,
+            )
+            if source_id:
+                return await execute_tick(plan, run=runner, granted_rung=RUNG_ONE_TAP)
+            return await runner(plan)
+
+        return _browse
 
     # ── the detector stack ──────────────────────────────────────────────────────────
 
@@ -1145,6 +1271,8 @@ class WebSourceProvider(KnowledgeSourceProvider):
         policy: Any,
         validators: dict[str, str],
         allow_render: bool,
+        allow_browse: bool = False,
+        browse: Callable[..., Any] | None = None,
     ) -> _Collected:
         """Fetch, detect, and escalate to the render tier when the OUTCOME demands it.
 
@@ -1231,22 +1359,41 @@ class WebSourceProvider(KnowledgeSourceProvider):
                 detector=detector,
                 cursor_state=cursor_state,
             )
-        rendered_dom = parse_html(str(getattr(rendered, "html", "") or ""))
+        rendered_html = str(getattr(rendered, "html", "") or "")
+        rendered_dom = parse_html(rendered_html)
         detector, items = await self._detect(
             rendered_dom, page_url=url, spec=spec, budget=budget, policy=policy
         )
-        return _Collected(
-            items=items,
+        if items:
+            return _Collected(
+                items=items,
+                detector=detector,
+                escalations=[f"escalated to render tier; extracted {len(items)} item(s)"],
+                cursor_state=cursor_state,
+            )
+        render_note = "escalated to render tier; still no items after JS render"
+        if not looks_like_js_shell(rendered_html, rendered_dom):
+            # The render produced real content but still no items: a wrong/listing URL, not a
+            # rendering problem (mirror of tier 1). The heavier browse tier would find the same
+            # nothing, so give the listing-page guidance instead of launching a browser.
+            return _Collected(
+                detector=detector,
+                escalations=[render_note],
+                guidance=LISTING_PAGE_GUIDANCE,
+                cursor_state=cursor_state,
+            )
+        # Tier 3 (BA-6): still a shell after the render tier. Escalate to the gateway browse tier —
+        # the full browser carries a real profile and BA-2's safety fence a plain render lacks.
+        return await self._browse_tier(
+            url=url,
+            spec=spec,
+            budget=budget,
+            policy=policy,
             detector=detector,
-            escalations=[
-                (
-                    f"escalated to render tier; extracted {len(items)} item(s)"
-                    if items
-                    else "escalated to render tier; still no items after JS render"
-                )
-            ],
-            guidance="" if items else LISTING_PAGE_GUIDANCE,
             cursor_state=cursor_state,
+            allow_browse=allow_browse,
+            browse=browse,
+            render_note=render_note,
         )
 
     # ── preview (§2.4) ──────────────────────────────────────────────────────────────
@@ -1279,6 +1426,8 @@ class WebSourceProvider(KnowledgeSourceProvider):
             policy=policy,
             validators={},
             allow_render=_allow_render(budget),
+            allow_browse=_allow_browse(budget),
+            browse=self._browse_for(source_id=None, budget_cfg=budget or {}),
         )
         return SourcePreview(
             items=got.items[: _item_cap(spec or {})],
@@ -1319,6 +1468,8 @@ class WebSourceProvider(KnowledgeSourceProvider):
             policy=policy,
             validators=validators,
             allow_render=_allow_render(budget_cfg),
+            allow_browse=_allow_browse(budget_cfg),
+            browse=self._browse_for(source_id=source_id, budget_cfg=budget_cfg),
         )
         if got.not_modified:
             # Cursor returned verbatim so the SAME validators are offered next time; a 304 that
@@ -1388,6 +1539,12 @@ def _allow_render(budget: dict | None) -> bool:
     """§2.3's opt-in. Default FALSE, and only a literal ``True`` turns it on — a truthy
     string from a hand-edited row must not silently license a browser launch."""
     return (budget or {}).get("allow_render") is True
+
+
+def _allow_browse(budget: dict | None) -> bool:
+    """§(d)'s opt-in for the gateway browse tier (BA-6). Default FALSE; only a literal ``True``
+    licenses a full-browser launch, exactly as ``allow_render`` gates the render tier."""
+    return (budget or {}).get("allow_browse") is True
 
 
 def _item_cap(spec: dict) -> int:

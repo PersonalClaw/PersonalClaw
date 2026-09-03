@@ -149,7 +149,7 @@ def _cfg(**over):
     return SourcesConfig(**base)
 
 
-def _setup(store, fetcher, *, spec=None, budget=None, render=None, url=PAGE_URL):
+def _setup(store, fetcher, *, spec=None, budget=None, render=None, browse=None, url=PAGE_URL):
     sid = store.create_source(
         name="page",
         provider="watched-page",
@@ -158,7 +158,7 @@ def _setup(store, fetcher, *, spec=None, budget=None, render=None, url=PAGE_URL)
         budget=budget or {},
         item_type="bookmark",
     )
-    provider = WebSourceProvider(store, fetch_fn=fetcher, render_fn=render)
+    provider = WebSourceProvider(store, fetch_fn=fetcher, render_fn=render, browse_fn=browse)
     queue = _FakeQueue()
     engine = SourceEngine(store, queue, providers_lister=lambda: [provider], config_loader=_cfg)
     return sid, provider, engine, queue
@@ -831,6 +831,87 @@ async def test_escalations_are_overwritten_per_poll_not_appended(store):
     await _poll(engine, store, sid)
     await _poll(engine, store, sid)
     assert len(store.get_source(sid)["last_escalations"]) == 1
+
+
+# ── §(d) tier 3: the gateway browse escalation (BA-6) ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_browse_tier_extracts_when_the_render_is_still_a_shell(store):
+    # Plain fetch is a shell, the render tier ALSO returns a shell, so the poll escalates to one
+    # gateway browse tick — which finally renders the entries.
+    browse = _Render(_changelog())
+    sid, _p, engine, _q = _setup(
+        store,
+        _Fetcher(_Resp(_js_shell())),
+        budget={"allow_render": True, "allow_browse": True},
+        render=_Render(_js_shell()),
+        browse=browse,
+    )
+    assert await _poll(engine, store, sid) == 3
+    row = store.get_source(sid)
+    assert row["last_escalations"] == [
+        "escalated to render tier; still no items after JS render",
+        "escalated to browse tier; extracted 3 item(s)",
+    ]
+    assert browse.calls == [PAGE_URL]
+
+
+@pytest.mark.asyncio
+async def test_browse_tier_needed_but_not_allowed_is_a_distinct_status(store):
+    # Render tier exhausted on a still-shell page with browse not licensed: a distinct, actionable
+    # status, and the browser is never launched.
+    browse = _Render(_changelog())
+    sid, _p, engine, _q = _setup(
+        store,
+        _Fetcher(_Resp(_js_shell())),
+        budget={"allow_render": True},
+        render=_Render(_js_shell()),
+        browse=browse,
+    )
+    assert await _poll(engine, store, sid) == 0
+    row = store.get_source(sid)
+    assert row["last_escalations"] == [
+        "escalated to render tier; still no items after JS render",
+        "browse tier needed but budget.allow_browse is false",
+    ]
+    assert "browse tier" in (row["last_error_summary"] or "")
+    assert browse.calls == []  # not licensed → the browser is never launched
+
+
+@pytest.mark.asyncio
+async def test_browse_tier_that_still_finds_nothing_records_both_attempts(store):
+    # The browse tick ran but the page is genuinely empty: both escalation notes are recorded.
+    sid, _p, engine, _q = _setup(
+        store,
+        _Fetcher(_Resp(_js_shell())),
+        budget={"allow_render": True, "allow_browse": True},
+        render=_Render(_js_shell()),
+        browse=_Render(_js_shell()),
+    )
+    assert await _poll(engine, store, sid) == 0
+    assert store.get_source(sid)["last_escalations"] == [
+        "escalated to render tier; still no items after JS render",
+        "escalated to browse tier; still no items after browse render",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_browse_tier_soft_fails_when_no_gateway_is_configured(store):
+    # No injected seam: the REAL gateway-backed tick runs (the poll's `execute_tick` → the content
+    # runner → the gateway opener). With no budget.cdp_url it fails soft (empty render, no browser
+    # launched), proving the production wiring is connected end to end without a live browser.
+    sid, _p, engine, _q = _setup(
+        store,
+        _Fetcher(_Resp(_js_shell())),
+        budget={"allow_render": True, "allow_browse": True},
+        render=_Render(_js_shell()),
+    )
+    assert await _poll(engine, store, sid) == 0
+    assert store.get_source(sid)["last_escalations"] == [
+        "escalated to render tier; still no items after JS render",
+        "escalated to browse tier; still no items after browse render",
+    ]
 
 
 # ── §2.2 output hygiene: one adversarial case per default ───────────────────────────
