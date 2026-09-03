@@ -1,5 +1,6 @@
 import { Scissors, ShieldAlert } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
+import { Table, THead, Th, Td } from '../../ui/Table'
 import { fvs } from '../../design/fontWeight'
 import { hasApiCode } from '../../lib/api'
 import type {
@@ -81,28 +82,24 @@ export function AblationPanel({ view, error, onRetry }: {
         <span data-type="title-s" className="text-on-surface">
           {report.component_id || 'component'} · {report.kind} · {report.target}
         </span>
-        <div className="overflow-x-auto rounded-lg bg-surface-container">
-          <table className="w-full text-[0.75rem]">
-            <caption className="sr-only">
-              Per-arm results for the {report.component_id || 'ablated'} component, replayed over
-              the {report.subject || 'registered'} scenario
-            </caption>
-            <thead>
-              <tr className="text-on-surface-low">
-                <th scope="col" className="px-m py-s text-left">Arm</th>
-                <th scope="col" className="px-m py-s text-right">Cells</th>
-                <th scope="col" className="px-m py-s text-right">Scored</th>
-                <th scope="col" className="px-m py-s text-right">Mean score</th>
-                <th scope="col" className="px-m py-s text-right">Verifier absent</th>
-              </tr>
-            </thead>
-            <tbody>
-              {armKeys.map((arm) => (
-                <ArmRow key={arm || 'unattributed'} arm={arm} agg={report.arms[arm]} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table
+          wrapClassName="rounded-lg bg-surface-container"
+          caption={`Per-arm results for the ${report.component_id || 'ablated'} component, replayed over the ${report.subject || 'registered'} scenario`}>
+          <THead>
+            <tr>
+              <Th>Arm</Th>
+              <Th align="right">Cells</Th>
+              <Th align="right">Scored</Th>
+              <Th align="right">Mean score</Th>
+              <Th align="right">Verifier absent</Th>
+            </tr>
+          </THead>
+          <tbody>
+            {armKeys.map((arm) => (
+              <ArmRow key={arm || 'unattributed'} arm={arm} agg={report.arms[arm]} />
+            ))}
+          </tbody>
+        </Table>
         <p className="text-on-surface-low text-[0.75rem]">
           on − off: <span className="text-on-surface-var">{fmtDelta(report.delta)}</span>
           {report.cheap_delta !== null && (
@@ -196,13 +193,13 @@ function VerdictCard({ view }: { view: AblationView }) {
 function ArmRow({ arm, agg }: { arm: string; agg: AblationArmAggregate }) {
   return (
     <tr className="border-t border-outline-variant/30 align-top">
-      <td className="px-m py-s text-on-surface">{armLabel(arm)}</td>
-      <td className="px-m py-s text-right text-on-surface-var">{agg.total}</td>
-      <td className="px-m py-s text-right text-on-surface-var">{agg.scored_count}</td>
-      <td className="px-m py-s text-right text-on-surface-var">{fmtMean(agg.mean_score)}</td>
-      <td className="px-m py-s text-right text-on-surface-var">
+      <Td className="text-on-surface">{armLabel(arm)}</Td>
+      <Td align="right" className="text-on-surface-var">{agg.total}</Td>
+      <Td align="right" className="text-on-surface-var">{agg.scored_count}</Td>
+      <Td align="right" className="text-on-surface-var">{fmtMean(agg.mean_score)}</Td>
+      <Td align="right" className="text-on-surface-var">
         {agg.counts.verifier_absent ?? 0}
-      </td>
+      </Td>
     </tr>
   )
 }
@@ -232,33 +229,30 @@ function History({ history }: { history: AblationHistoryEntry[] }) {
   return (
     <div className="flex flex-col gap-xs">
       <span data-type="title-s" className="text-on-surface">Past cadences</span>
-      <div className="overflow-x-auto rounded-lg bg-surface-container">
-        <table className="w-full text-[0.75rem]">
-          <caption className="sr-only">
-            The last {rows.length} ablation cadence run{rows.length === 1 ? '' : 's'}, newest first
-          </caption>
-          <thead>
-            <tr className="text-on-surface-low">
-              <th scope="col" className="px-m py-s text-left">When</th>
-              <th scope="col" className="px-m py-s text-left">Component</th>
-              <th scope="col" className="px-m py-s text-left">Verdict</th>
-              <th scope="col" className="px-m py-s text-right">Delta</th>
-              <th scope="col" className="px-m py-s text-left">Proposal</th>
+      <Table
+        wrapClassName="rounded-lg bg-surface-container"
+        caption={`The last ${rows.length} ablation cadence run${rows.length === 1 ? '' : 's'}, newest first`}>
+        <THead>
+          <tr>
+            <Th>When</Th>
+            <Th>Component</Th>
+            <Th>Verdict</Th>
+            <Th align="right">Delta</Th>
+            <Th>Proposal</Th>
+          </tr>
+        </THead>
+        <tbody>
+          {rows.map((entry) => (
+            <tr key={`${entry.ts}-${entry.component_id}`} className="border-t border-outline-variant/30">
+              <Td className="text-on-surface-var">{entry.ts}</Td>
+              <Td className="text-on-surface">{entry.component_id}</Td>
+              <Td className="text-on-surface-var">{entry.verdict}</Td>
+              <Td align="right" className="text-on-surface-var">{fmtDelta(entry.delta)}</Td>
+              <Td className="text-on-surface-low">{proposalLabel(entry)}</Td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.map((entry) => (
-              <tr key={`${entry.ts}-${entry.component_id}`} className="border-t border-outline-variant/30">
-                <td className="px-m py-s text-on-surface-var">{entry.ts}</td>
-                <td className="px-m py-s text-on-surface">{entry.component_id}</td>
-                <td className="px-m py-s text-on-surface-var">{entry.verdict}</td>
-                <td className="px-m py-s text-right text-on-surface-var">{fmtDelta(entry.delta)}</td>
-                <td className="px-m py-s text-on-surface-low">{proposalLabel(entry)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </Table>
     </div>
   )
 }
