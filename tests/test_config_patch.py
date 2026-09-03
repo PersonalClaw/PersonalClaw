@@ -521,3 +521,29 @@ class TestAppsRegistrySource:
             assert resp.status == 400
         raw = json.loads(tmp_config.read_text(encoding="utf-8"))
         assert "apps" not in raw or "registry_source_enabled" not in raw.get("apps", {})
+
+
+# ── agent.log_level applies LIVE, not only at the next restart (#673) ─────────
+
+
+class TestLogLevelAppliesLive:
+    @pytest.mark.asyncio
+    async def test_patching_log_level_sets_the_live_logger(self, tmp_config) -> None:
+        import logging
+
+        lg = logging.getLogger("personalclaw")
+        prior = lg.level
+        try:
+            # A known baseline distinct from the target so the assertion is meaningful.
+            lg.setLevel(logging.WARNING)
+            async with TestClient(TestServer(_make_app())) as c:
+                resp = await _patch(c, "agent.log_level", "DEBUG")
+                assert resp.status == 200
+            # The Agent-defaults PATCH must APPLY the level live (the Diagnostics
+            # POST /api/logs/level path already did), not merely persist it.
+            assert lg.level == logging.DEBUG
+            # …and it still persists for the restart path.
+            saved = json.loads(tmp_config.read_text(encoding="utf-8"))
+            assert saved["agent"]["log_level"] == "DEBUG"
+        finally:
+            lg.setLevel(prior)
