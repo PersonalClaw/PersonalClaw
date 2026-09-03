@@ -451,6 +451,7 @@ class NativeArtifactProvider(ArtifactProvider):
                     if self._binary_version_path(slug, version) is None:
                         return None
                     art.content = self._raw_ref(slug, version)
+                    art.version = version
                 else:
                     art.content = self._raw_ref(slug)
                 art.live_dirty = False
@@ -460,6 +461,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 if content is None:
                     return None
                 art.content = content
+                art.version = version
                 art.live_dirty = False
                 return art
             # Live view: disk for file-backed, else current.html.
