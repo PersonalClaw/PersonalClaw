@@ -425,6 +425,13 @@ async def start_dashboard(
 
     register_push_routes(app)
 
+    # Browse mirror + kill switch + auth_needed surfacing (BROWSE-AUTOMATION BA-5). The live
+    # `browse_step` relay rides the multiplexed WS registered just below; these are its read model
+    # (`/api/browse/status`) and the one-click kill controls.
+    from personalclaw.dashboard.handlers.browse_mirror import register_browse_mirror_routes
+
+    register_browse_mirror_routes(app)
+
     # WebSocket (multiplexed real-time events)
     app.router.add_get("/api/ws", ws.api_ws)
 

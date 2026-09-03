@@ -49,10 +49,14 @@ from personalclaw.browse.handoff import (
     SESSION_ABSENT,
     SESSION_EXPIRED,
     SESSION_FRESH,
+    ensure_profile_key,
+    expired_sites,
+    has_profile_key,
     load_meta,
     looks_like_login_url,
     mark_expired,
     profile_dir,
+    profile_key_name,
     profiles_root,
     record_login,
     request_login,
@@ -761,3 +765,144 @@ class TestTheProfileNeverTravels:
         _zip_bytes, manifest = portability.create_export_zip()
         members = [str(m["path"]) for m in manifest["members"]]
         assert "config.json" in members, members
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BA-5 — the per-site profile-encryption key lives in the credential store,
+#        NEVER in the profile dir, and is hidden from the user's vault.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestTheProfileEncryptionKey:
+    def test_a_recorded_login_puts_the_profile_key_in_the_credential_store(self):
+        from personalclaw.config.credentials import credential_names
+
+        assert not has_profile_key(HOME_URL)
+        record_login(HOME_URL)
+        assert has_profile_key(HOME_URL)
+        assert profile_key_name(HOME_URL) in credential_names()
+        assert profile_key_name(HOME_URL) == "BROWSE_PROFILE_KEY_bank.test"
+
+    def test_the_key_is_generated_once_and_not_rotated(self):
+        """Idempotent: a re-login must not rotate the key out from under a profile it encrypts."""
+        first = ensure_profile_key(HOME_URL)
+        second = ensure_profile_key(HOME_URL)
+        assert first and first == second
+
+    def test_the_key_value_is_never_written_into_the_profile_dir(self):
+        """The whole point of §5.1: a key that sat beside the cookies it protects protects nothing.
+        Build a real profile with a session file, then sweep every byte under the profile dir."""
+        key = ensure_profile_key(HOME_URL)
+        pdir = profile_dir(HOME_URL)
+        (pdir / "Default").mkdir(parents=True, exist_ok=True)
+        (pdir / "Default" / "Cookies").write_text("session=abc", encoding="utf-8")
+        for path in pdir.rglob("*"):
+            if path.is_file():
+                assert key not in path.read_text(
+                    encoding="utf-8", errors="ignore"
+                ), f"the profile key leaked into {path}"
+
+    def test_the_profile_key_is_hidden_from_the_users_secrets_vault(self):
+        """It is machine-managed key material, not a secret the user typed — so it must never
+        appear as a vault row they could see or DELETE (which would break the profile)."""
+        from personalclaw.secrets_vault import is_reserved_key, list_presence
+
+        record_login(HOME_URL)
+        assert is_reserved_key(profile_key_name(HOME_URL))
+        rows = list_presence()
+        assert not any(r.name.startswith("BROWSE_PROFILE_KEY_") for r in rows)
+
+    def test_an_ordinary_secret_still_appears_in_the_vault(self):
+        """CONTROL for the test above: the SAME vault read DOES surface an ordinary user secret, so
+        the profile key's absence is the exclusion working, not `list_presence` being empty."""
+        from personalclaw.config.credentials import save_credential
+        from personalclaw.secrets_vault import list_presence
+
+        record_login(HOME_URL)  # also writes the (hidden) profile key
+        save_credential("MY_API_TOKEN", "value")
+        names = {r.name for r in list_presence()}
+        assert "MY_API_TOKEN" in names
+        assert not any(n.startswith("BROWSE_PROFILE_KEY_") for n in names)
+
+    def test_expired_sites_reports_key_presence(self):
+        record_login(HOME_URL)
+        mark_expired(HOME_URL)
+        rows = expired_sites()
+        row = next((r for r in rows if r["site"] == "bank.test"), None)
+        assert row is not None and row["key_present"] is True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BA-5 — an expired session surfaces a persistent banner + a needs_input inbox
+#        item, and produces zero failed ticks (the tick stays success=True).
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class _FakeDashboardState:
+    """Records WS frames + notifications; carries no `_inbox_svc`, so `emit_attention_item` falls
+    back to the on-disk InboxStore under the isolated home the test then reads."""
+
+    def __init__(self) -> None:
+        self.ws: list[tuple] = []
+
+    def broadcast_ws(self, msg_type, data) -> None:
+        self.ws.append((msg_type, data))
+
+    def notify(self, kind, title, body, *, meta=None) -> None:
+        pass
+
+
+class TestTheExpiredSurfacing:
+    def test_the_expired_park_surfaces_a_banner_and_a_needs_input_item(self):
+        """At the auth_state=expired write, BA-5 raises the banner (a `browse_auth_expired` frame)
+        and a durable needs_input inbox row — independent of the engine's own attention path, so a
+        schedule/hook/manual run surfaces it too. The tick stays success=True (no failed tick)."""
+        from personalclaw.inbox import InboxStore
+        from personalclaw.inbox_providers.native_source import set_dashboard_state
+
+        record_login(HOME_URL)
+        mark_expired(HOME_URL)
+        assert session_state(HOME_URL) == SESSION_EXPIRED
+
+        fake = _FakeDashboardState()
+        set_dashboard_state(fake)
+        try:
+            result = _run(
+                BrowseActionProvider().execute(
+                    {"goal": "read the balance", "start_url": HOME_URL}, ActionContext(event="e")
+                )
+            )
+        finally:
+            set_dashboard_state(None)
+
+        # Zero failed ticks: an expired session is needs_input, never a failure.
+        assert result.success is True
+        assert result.outcome == OUTCOME_NEEDS_INPUT
+        # The persistent banner.
+        assert any(t == "browse_auth_expired" for t, _ in fake.ws), "no banner broadcast"
+        # The durable inbox row.
+        store = InboxStore()
+        store.load()
+        rows = [i for i in store.items.values() if i.refs.get("browse_auth") == "expired"]
+        assert rows, "no needs_input inbox row for the expired session"
+        assert rows[0].item_kind == "needs_input"
+
+    def test_a_fresh_session_surfaces_nothing(self):
+        """CONTROL: a fresh session does NOT hit the expired path, so no banner and no row — the
+        surfacing above is the expiry, not something every run does."""
+        from personalclaw.inbox_providers.native_source import set_dashboard_state
+
+        record_login(HOME_URL)  # fresh, not expired
+        fake = _FakeDashboardState()
+        set_dashboard_state(fake)
+        try:
+            # No CDP target, so it stops at ERR_BROWSE_NO_TARGET — the point is it got PAST the
+            # session check without parking on auth, so nothing was surfaced.
+            _run(
+                BrowseActionProvider().execute(
+                    {"goal": "read", "start_url": HOME_URL}, ActionContext(event="e")
+                )
+            )
+        finally:
+            set_dashboard_state(None)
+        assert not any(t == "browse_auth_expired" for t, _ in fake.ws)

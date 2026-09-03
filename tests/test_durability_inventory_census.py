@@ -83,6 +83,11 @@ _UNDECLARED_DEBT = frozenset(
     {
         "app_messages",
         "auth",
+        # BA-5's browse kill switch, the sibling of `incident.json` below. Whether a restore
+        # should carry "browse is stopped" is a real kind/domain/merge decision: a human pulled
+        # it, so re-enabling browsing on restore may be wrong, yet carrying the stop onto a
+        # different machine may be too. Pinned as debt rather than guessed.
+        "browse_kill.json",
         "chat_plans",
         "control_bridge.json",
         "credentials.json",

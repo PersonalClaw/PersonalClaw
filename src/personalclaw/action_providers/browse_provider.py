@@ -62,6 +62,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -70,8 +71,10 @@ from personalclaw.browse.handoff import PARK_LOGIN_REQUIRED
 from personalclaw.browse.loop import (
     MAX_STEPS_DEFAULT,
     PARK_BUDGET_EXHAUSTED,
+    PARK_KILLED,
     PARK_STEP_EXHAUSTED,
     BrowseLoopResult,
+    BrowseStep,
     run_browse_loop,
 )
 from personalclaw.errors import AgentError
@@ -125,6 +128,23 @@ def _budget_check() -> tuple[str, str]:
     except Exception:
         logger.debug("browse: budget verdict unavailable", exc_info=True)
         return "ok", ""
+
+
+def _kill_check() -> tuple[bool, str]:
+    """The browse kill-switch verdict, consulted before every model call in the loop (BA-5).
+
+    Never raises — an unreadable flag answers "not killed" (the switch is opt-in; see
+    :func:`personalclaw.browse.killswitch.get_kill`), so a bookkeeping hiccup cannot halt browse
+    on its own. The flag itself is the deliberate control.
+    """
+    try:
+        from personalclaw.browse.killswitch import get_kill
+
+        st = get_kill()
+        return st.active, st.reason
+    except Exception:
+        logger.debug("browse: kill verdict unavailable", exc_info=True)
+        return False, ""
 
 
 async def _decide(prompt: str) -> str:
@@ -211,6 +231,25 @@ class BrowseActionProvider(ActionProvider):
                     what="browse refused to start because incident mode is active",
                     why="incident mode suspends all unattended work",
                     fix="clear incident mode in Settings → Guardrails, then re-run",
+                ),
+            )
+
+        from personalclaw.browse.killswitch import browse_killed, get_kill
+
+        if browse_killed():
+            # Refused, not failed — the same posture as the incident check above: a human pulled
+            # the browse kill switch, and a retry loop against it would be a storm against a control
+            # they deliberately engaged. Distinct from incident: this stops ONLY browse.
+            kill = get_kill()
+            return ActionResult(
+                success=False,
+                error="the browse kill switch is engaged — unattended browsing is stopped",
+                duration_ms=int((time.monotonic() - started) * 1000),
+                agent_error=AgentError(
+                    code="ERR_BROWSE_KILLED",
+                    what="browse refused to start because the kill switch is engaged",
+                    why=kill.reason or "a human stopped unattended browsing from the mirror panel",
+                    fix="release the kill switch (the browse mirror's Resume) then re-run",
                 ),
             )
 
@@ -310,6 +349,8 @@ class BrowseActionProvider(ActionProvider):
                 decide=_decide,
                 max_steps=max_steps,
                 budget_check=_budget_check,
+                on_step=self._mirror_sink(ctx),
+                kill_check=_kill_check,
             )
         finally:
             if closer is not None:
@@ -323,6 +364,33 @@ class BrowseActionProvider(ActionProvider):
         )
 
     # ── plumbing ─────────────────────────────────────────────────────────────
+
+    def _mirror_sink(self, ctx: ActionContext) -> Callable[[BrowseStep, str], None]:
+        """A per-step sink that relays each completed step to the live mirror (BA-5).
+
+        Bound to this run's ``run_id`` (from the structured event payload) so a watcher can tell
+        concurrent browse runs apart. It only RELAYS what the loop already produced — the SCREENED
+        URL, the rendered action line (a credential ``TYPE`` is already ``[withheld]`` by the loop),
+        and the screenshot PATH — so the mirror exposes nothing the run did not already record, and
+        the seam swallows a relay failure so watching a run can never break it.
+        """
+        run_id = str((getattr(ctx, "payload", None) or {}).get("run_id") or "")
+
+        def _sink(step: BrowseStep, screenshot: str) -> None:
+            from personalclaw.browse.mirror import broadcast_browse_step
+
+            broadcast_browse_step(
+                {
+                    "run_id": run_id,
+                    "step_n": step.index,
+                    "url": step.url,
+                    "action": step.action,
+                    "screenshot": screenshot,
+                    "note": step.note,
+                }
+            )
+
+        return _sink
 
     async def _open(
         self, action_config: dict[str, Any], ctx: ActionContext, *, cdp_url: str
@@ -385,6 +453,13 @@ class BrowseActionProvider(ActionProvider):
         )
         if reason == REASON_SESSION_EXPIRED:
             mark_expired(url)
+            # BA-5 §(c): the moment auth_state=expired is written, SURFACE it — a persistent banner
+            # and a needs_input inbox item — so an expired session is visible whether or not this
+            # run was dispatched through the workflow engine's own attention projection (a schedule
+            # tick, a hook, a manual run never touch that path). Best-effort inside the seam.
+            from personalclaw.browse.mirror import surface_auth_expired
+
+            surface_auth_expired(url)
         payload = handoff.to_payload()
         # The argv the caller needs to open the headful window on the RIGHT profile. Handed over
         # rather than executed — see the module docstring on why core does not launch Chrome.
@@ -470,6 +545,8 @@ class BrowseActionProvider(ActionProvider):
             head = f"Browse stopped after {result.step_count} steps without finishing"
         elif result.park_reason == PARK_BUDGET_EXHAUSTED:
             head = "Browse stopped because the model budget is spent"
+        elif result.park_reason == PARK_KILLED:
+            head = "Browse was stopped by the kill switch"
         elif result.park_reason == PARK_LOGIN_REQUIRED:
             # Unreachable via this method today — a login park is answered by `_login_park`, whose
             # sentence names the site and the handoff. Kept because `_park_sentence` is the

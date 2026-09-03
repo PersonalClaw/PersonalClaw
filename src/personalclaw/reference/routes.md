@@ -107,6 +107,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/browse/connector` — detach the operator's browser. Idempotent.
 - `GET /api/browse/connector` — whether a browser is attached right now.
 - `POST /api/browse/connector` — record the operator's attached browser.
+- `POST /api/browse/kill` — stop unattended browsing. Body: ``{reason?: str}``.
+- `POST /api/browse/kill/release` — re-enable unattended browsing.
+- `GET /api/browse/status` — the mirror's read model: kill state + expired sites.
 - `GET /api/changelog` — read full CHANGELOG.md from project.
 - `POST /api/channel/profile` — read a channel user's profile.
 - `POST /api/channel/upload-file` — upload a file to the active channel (internal, called by notify_attachment).
