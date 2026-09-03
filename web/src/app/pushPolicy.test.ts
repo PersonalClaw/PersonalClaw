@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { COMPANION_PATH, deepLinkFor, isPushPayload, notificationFor, shouldFocus } from './pushPolicy'
+import { COMPANION_PATH, deepLinkFor, isPushPayload, notificationFor, shouldFocus, soundMapFromRules, PUSH_CUES } from './pushPolicy'
+import { CUES } from '../design/soundCues'
 
 // ── Push policy (MOBILE-COMPANION MC-5 / T3.4) ───────────────────────────────
 //
@@ -93,5 +94,63 @@ describe('client reuse on click', () => {
   it('refuses a different origin and an unparseable url', () => {
     expect(shouldFocus('https://evil.example/#/companion', 'https://gw.example')).toBe(false)
     expect(shouldFocus('not a url', 'https://gw.example')).toBe(false)
+  })
+})
+
+// ── The per-kind push voice (MOBILE-COMPANION MC-6) ──────────────────────────
+//
+// The VOICE is the one part of a push notification that is a user preference, so it is read
+// from the per-kind rules map — never from the wire (that would reopen the leak the rest of
+// this file guards) and never from a fixed table (that would make it un-configurable).
+
+describe('the closed push voice set', () => {
+  it('matches soundCues CUES exactly — the two must not drift', () => {
+    // The vocabulary lives in `design/soundCues.ts`; `pushPolicy` mirrors it because the
+    // service-worker program cannot import that DOM-heavy module. This is the pin.
+    expect([...PUSH_CUES].sort()).toEqual(Object.keys(CUES).sort())
+  })
+})
+
+describe('notificationFor resolves the voice from the rules, not the wire or a fixed table', () => {
+  it('plays the voice the rules configured for that kind', () => {
+    const note = notificationFor({ kind: 'approval', item_id: 'a1' }, { approval: 'coin_blip' })
+    expect(note.sound).toBe('coin_blip')
+  })
+
+  it('is silent when the kind has no configured voice — absent is the default', () => {
+    expect(notificationFor({ kind: 'approval', item_id: 'a1' }, {}).sound).toBeUndefined()
+    expect(notificationFor({ kind: 'approval', item_id: 'a1' }).sound).toBeUndefined()
+  })
+
+  it('drops an unknown voice rather than handing the client an unplayable one', () => {
+    const note = notificationFor({ kind: 'approval', item_id: 'a1' }, { approval: 'ka-ching' })
+    expect(note.sound).toBeUndefined()
+  })
+
+  it('reads the voice per kind while the WORDS still come from the fixed table', () => {
+    const note = notificationFor({ kind: 'inbox_alert', item_id: 'i1' }, { inbox_alert: 'terminal_bell' })
+    expect(note.sound).toBe('terminal_bell')
+    expect(note.title).toBe('Inbox alert')
+  })
+})
+
+describe('soundMapFromRules', () => {
+  it('keys the map by WIRE kind and keeps only known, present voices', () => {
+    const doc = {
+      rules: [
+        { key: 'approval/requested', wire: 'approval', sound: 'coin_blip' },
+        { key: 'inbox/alert', wire: 'inbox_alert', sound: null },
+        { key: 'x/y', wire: 'xy', sound: 'ka-ching' },
+        { key: 'z/z', sound: 'error' },
+      ],
+    }
+    // Only the row with a string `wire` AND a registered voice survives.
+    expect(soundMapFromRules(doc)).toEqual({ approval: 'coin_blip' })
+  })
+
+  it('is defensive against a malformed document — degrades to no cue', () => {
+    expect(soundMapFromRules(null)).toEqual({})
+    expect(soundMapFromRules({})).toEqual({})
+    expect(soundMapFromRules({ rules: 'nope' })).toEqual({})
   })
 })

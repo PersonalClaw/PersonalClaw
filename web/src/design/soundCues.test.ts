@@ -511,3 +511,37 @@ describe('a personality can re-voice a cue point', () => {
     expect(tones).toEqual([])
   })
 })
+
+// ── Explicit voice override (MOBILE-COMPANION MC-6) ─────────────────────────
+//
+// A mobile push names a per-kind VOICE, so `playCue` takes an optional explicit voice that
+// overrides the point's own/personality voice. It is the SAME synth call behind the SAME
+// gates — proving that a push cue is a cue like any other, not a second sound path.
+
+describe('playCue accepts an explicit voice', () => {
+  it('plays the named voice instead of the point’s own', async () => {
+    const m = await audible()
+    m.playCue('turn_complete', 'coin_blip')
+    // Asserted on the coin's frequencies: the default recipe also has two tones, so a count
+    // would pass unchanged.
+    expect(tones.map((t) => t.freq)).toEqual(m.CUES.coin_blip.freqs)
+    expect(tones.map((t) => t.freq)).not.toEqual(m.CUES.turn_complete.freqs)
+  })
+
+  it('falls back to the point’s voice for an unknown or inherited voice name', async () => {
+    const m = await audible()
+    // `Object.hasOwn`, not a plain index — an inherited name must not reach the synth.
+    for (const bad of ['ka-ching', 'constructor', '__proto__'] as const) {
+      tones = []
+      m.playCue('error', bad as never)
+      expect(tones.map((t) => t.freq), bad).toEqual(m.CUES.error.freqs)
+    }
+  })
+
+  it('is still silenced by every suppressor', async () => {
+    const m = await audible()
+    localStorage.removeItem(m.SOUND_CUES_KEY)
+    m.playCue('turn_complete', 'coin_blip')
+    expect(tones).toEqual([])
+  })
+})

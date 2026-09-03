@@ -221,11 +221,17 @@ export function setSoundCuesEnabled(on: boolean): void {
  *  yet, no Web Audio. Never throws and never constructs a context — this runs from
  *  a toast render and an error path, where a throw would take the surface with it.
  *
+ *  An explicit *voice* (a mobile push naming a per-kind sound, MOBILE-COMPANION `MC-6`)
+ *  overrides the point's own/personality voice. It rides the SAME gates and the SAME
+ *  single synth call — a push cue is a cue like any other, not a second sound path —
+ *  and `Object.hasOwn` keeps a stale or inherited name off the synth, falling back to
+ *  the point's voice.
+ *
  *  🔑 THIS IS THE ONLY CALLER OF `synth`, and the four gates above it are the whole
  *  reason. `synth` is module-private and nothing else in here reaches it, so there is
  *  no way to make sound that skips the master toggle — which is what
  *  `personalityA11y.test.ts` asserts structurally rather than trusting to review. */
-export function playCue(point: CuePoint): void {
+export function playCue(point: CuePoint, voice?: CueName): void {
   if (!soundCuesEnabled()) return
   if (prefersReducedMotion()) return
   if (typeof document !== 'undefined' && document.hidden) return
@@ -233,7 +239,7 @@ export function playCue(point: CuePoint): void {
   if (!c) return
   try {
     if (c.state === 'suspended') void c.resume().catch(() => {})
-    synth(c, CUES[cueVoice(point)])
+    synth(c, CUES[voice && Object.hasOwn(CUES, voice) ? voice : cueVoice(point)])
   } catch {
     /* a node the browser refused to build — stay silent, never break the caller */
   }

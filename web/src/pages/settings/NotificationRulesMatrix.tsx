@@ -1,16 +1,33 @@
 import { useMemo, useState } from 'react'
 import { ChevronDown, RotateCcw } from 'lucide-react'
-import { api, type NotificationRuleRow, type NotificationRulesDoc, type NotificationMode, type NotificationTarget } from '../../lib/api'
+import { api, type NotificationRuleRow, type NotificationRulesDoc, type NotificationMode, type NotificationTarget, type NotificationSound } from '../../lib/api'
 import { Field, Row, SegPills, Section } from './settingsUI'
-import { ChipInput, Checkbox, TextInput, FieldError } from '../../ui/forms'
+import { ChipInput, Checkbox, TextInput, FieldError, Select } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
 import { Button } from '../../ui/Button'
+import { CUES, type CueName } from '../../design/soundCues'
 
 const MODES: { key: NotificationMode; label: string }[] = [
   { key: 'never', label: 'Never' },
   { key: 'badge', label: 'Badge' },
   { key: 'immediate', label: 'Notify' },
   { key: 'digest', label: 'Digest' },
+]
+
+// Per-kind sound options, sourced from the closed voice set in `design/soundCues.ts` (the `CUES`
+// keys). The voice is played by an OPEN device when a push for this kind arrives (MC-6) — a
+// service worker cannot play audio — and only ever if the user has turned sound cues on. "None"
+// (the default) is a silent/vibrate push.
+const SOUND_LABELS: Record<CueName, string> = {
+  turn_complete: 'Turn complete',
+  approval_needed: 'Approval',
+  error: 'Error',
+  coin_blip: 'Coin blip',
+  terminal_bell: 'Terminal bell',
+}
+const SOUND_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'None (silent)' },
+  ...(Object.keys(CUES) as CueName[]).map((v) => ({ value: v, label: SOUND_LABELS[v] })),
 ]
 
 // `push` is accepted and persisted but inert until MOBILE-COMPANION lands. Showing it as a
@@ -120,6 +137,13 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                               </label>
                             ))}
                           </div>
+                        </Field>
+                        <Field label="Sound"
+                          hint="Played on an open device when a push for this kind arrives — silent unless you turn on sound cues (Settings → Design → Personality).">
+                          <Select value={r.sound ?? ''}
+                            onChange={(v) => save(r.key, { sound: (v || null) as NotificationSound | null })}
+                            options={SOUND_OPTIONS}
+                            ariaLabel={`Sound for ${r.label}`} />
                         </Field>
                         <Field label="Escalate on keywords"
                           hint="A match upgrades a quieter mode to Notify — it does not add delivery targets you didn't choose.">

@@ -2938,6 +2938,10 @@ export interface NotificationSettings {
 // mode to immediate on a keyword or name mention.
 export type NotificationMode = 'never' | 'badge' | 'immediate' | 'digest'
 export type NotificationTarget = 'dashboard' | 'channel_dm' | 'push' | 'native'
+/** A cue voice a per-kind rule may name for a mobile push (MOBILE-COMPANION MC-6) — the closed
+ *  set in `web/src/design/soundCues.ts` (`CueName`). A service worker cannot play audio, so it
+ *  maps a push's kind to this voice and an open client plays it; `null` means a silent push. */
+export type NotificationSound = 'turn_complete' | 'approval_needed' | 'error' | 'coin_blip' | 'terminal_bell'
 export interface NotificationRuleRow {
   key: string; source: string; kind: string; label: string; severity: number
   mode: NotificationMode
@@ -2947,6 +2951,8 @@ export interface NotificationRuleRow {
   configured: boolean
   targets: NotificationTarget[]
   conditions: { keywords: string[]; name_mention: boolean }
+  /** The cue voice an open device plays for a push of this kind, or null for a silent push. */
+  sound: NotificationSound | null
 }
 export interface NotificationRulesDoc {
   rules: NotificationRuleRow[]
@@ -2957,6 +2963,8 @@ export interface NotificationRulePatch {
   mode?: NotificationMode
   targets?: NotificationTarget[]
   conditions?: { keywords?: string[]; name_mention?: boolean }
+  /** null clears the sound (back to a silent push). */
+  sound?: NotificationSound | null
 }
 export type MemoryVaultMode = 'off' | 'mirror' | 'two_way'
 /** GET /api/memory/settings. Not every field is written the same way: the retention +
