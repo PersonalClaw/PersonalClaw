@@ -8,6 +8,7 @@ OpenAI-family adapters; this registry is provider-agnostic.
 """
 
 import logging
+from typing import Any, Mapping
 
 from personalclaw.tts.provider import TtsProvider
 
@@ -225,3 +226,81 @@ def active_voice_params(*, surface: str = "", profile_id: str = "") -> dict | No
         }
     )
     return params
+
+
+# ── Cloning-capable synthesis: the capability gate synth surfaces route through ──
+#
+# MI-2a. A voice PROFILE can carry a reference clip (clone kind) or a text/param
+# description (design kind); `active_voice_params` resolves those into its dict but
+# deliberately does not consume them — handing a reference clip to a non-cloning engine
+# would be the silent wrong-voice synthesis the plan forbids. This section is where that
+# refusal lives: a synth surface calls `route_synthesis`, which enforces the provider's
+# declared capability BEFORE any audio is produced.
+
+
+class CloningUnsupportedError(Exception):
+    """A clone-kind synth request routed to a provider that cannot clone (HTTP 409).
+
+    Mirrors :class:`~personalclaw.voice.profiles.VoiceProfileError`: the exception carries
+    the status the route should answer with — 409, because the requested voice CONFLICTS
+    with the bound engine's capabilities — and a stable ``reason`` an HTTP client branches
+    on. Its string form is ``cloning_unsupported:<provider>``.
+    """
+
+    def __init__(self, provider: str):
+        self.provider = provider
+        self.reason = "cloning_unsupported"
+        self.status = 409
+        self.message = f"cloning_unsupported:{provider}"
+        super().__init__(self.message)
+
+
+def is_clone_request(params: Mapping[str, Any]) -> bool:
+    """Whether resolved synth *params* ask for voice CLONING — i.e. carry a reference clip.
+
+    Clone kind is signalled by a non-empty ``ref_audio`` (the locked/reference clip the
+    profile resolves to). Voice-DESIGN (``design_params``/``instruct`` with no reference)
+    is a separate kind, not a clone request, and is not gated here.
+    """
+    return bool(params.get("ref_audio"))
+
+
+def guard_synthesis_capability(provider: TtsProvider, params: Mapping[str, Any]) -> None:
+    """Fail-closed capability gate for a synth request about to be dispatched.
+
+    Raises :class:`CloningUnsupportedError` (HTTP 409) when a clone-kind request
+    (:func:`is_clone_request`) is routed to a provider that does not declare
+    ``supports_cloning``. Fail-closed twice over: the flag itself defaults False AND the
+    lookup defaults False, so a provider that says nothing is treated as unable to clone
+    rather than assumed capable. A non-clone request is always allowed through.
+    """
+    if is_clone_request(params) and not getattr(provider, "supports_cloning", False):
+        raise CloningUnsupportedError(getattr(provider, "name", "") or "")
+
+
+async def route_synthesis(
+    params: Mapping[str, Any], text: str, *, output_path: str = ""
+) -> str | None:
+    """Route a resolved synth request to its provider, enforcing capability first.
+
+    The single chokepoint a synth surface hands the dict :func:`active_voice_params`
+    returns: it applies :func:`guard_synthesis_capability` (so a clone-kind request to a
+    non-cloning engine raises :class:`CloningUnsupportedError` — HTTP 409 — rather than
+    synthesizing in the wrong voice), then dispatches to ``provider.synthesize`` with the
+    conditioning set MI-1 threaded into the ABC signature. A backend ignores any knob it
+    does not use via ``**opts``, so piper/OpenAI are unchanged.
+    """
+    provider: TtsProvider = params["provider"]
+    guard_synthesis_capability(provider, params)
+    return await provider.synthesize(
+        text,
+        voice=str(params.get("voice", "") or ""),
+        output_path=output_path,
+        speed=float(params.get("speed", 1.0) or 1.0),
+        speech_voice=str(params.get("speech_voice", "") or ""),
+        ref_audio=str(params.get("ref_audio", "") or ""),
+        ref_text=str(params.get("ref_text", "") or ""),
+        seed=int(params.get("seed", 0) or 0),
+        instruct=str(params.get("instruct", "") or ""),
+        design_params=dict(params.get("design_params") or {}),
+    )
