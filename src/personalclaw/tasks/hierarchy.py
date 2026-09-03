@@ -415,6 +415,13 @@ class HierarchyStore:
             project = self.find_or_create_project(project_name)
         else:
             project = self.find_or_create_project("Personal")
+        # Per-project name uniqueness, to match `create_project` (which rejects a duplicate
+        # project name). Without it a project could hold two lists of the same name — including
+        # two "General" lists, which made the auto-attach in `handlers` pick an arbitrary one
+        # for a `project_id`-only task (#777). Scoped to the resolved project: the same name in a
+        # DIFFERENT project stays legitimate (every project has its own "General").
+        if any(tl.name == name for tl in self.list_task_lists(project_id=project.id)):
+            raise ValueError(f"a task list named '{name}' already exists in this project")
         now = _now_iso()
         tl = TaskList(
             id=f"tl-{uuid.uuid4().hex[:8]}",

@@ -222,7 +222,15 @@ def _attach_project_general_list(body: dict) -> None:
     from personalclaw.tasks.hierarchy import HierarchyStore
 
     store = HierarchyStore()
-    general = next((tl for tl in store.list_task_lists(project_id) if tl.name == "General"), None)
+    # Attach to the OLDEST "General" — the original default — not whichever id sorts first.
+    # `create_task_list` now rejects a duplicate name per project (#777), so new projects have
+    # exactly one; this only disambiguates a project that carried duplicates from before that
+    # check, keeping a `project_id`-only task's landing list deterministic rather than arbitrary.
+    general = min(
+        (tl for tl in store.list_task_lists(project_id) if tl.name == "General"),
+        key=lambda tl: tl.created_at or "",
+        default=None,
+    )
     if general is None:
         try:
             general = store.create_task_list(name="General", project_id=project_id)
