@@ -100,6 +100,51 @@ class TestCompleteGateHonoursDependencies:
         _run(_t())
 
 
+class TestCreateHonoursTheDoneGate:
+    # create_task builds a Task from a caller-supplied `status`, so `status="done"`
+    # bypassed the gate update enforces — a backdoor to the same invalid state (#475).
+    # create now runs the identical exit-criteria + dependency gate.
+    def test_create_done_with_unfinished_exit_criteria_is_refused(self, provider):
+        async def _t():
+            with pytest.raises(ValueError, match="unfinished exit criteria"):
+                await provider.create_task(
+                    title="Born done",
+                    status="done",
+                    exit_criteria=[{"description": "ship it", "status": "incomplete"}],
+                )
+
+        _run(_t())
+
+    def test_create_done_blocked_by_an_open_prerequisite_is_refused(self, provider):
+        async def _t():
+            a = await provider.create_task(title="Prereq")
+            with pytest.raises(ValueError, match="unfinished prerequisite"):
+                await provider.create_task(
+                    title="Born done, still blocked",
+                    status="done",
+                    dependencies=[{"depends_on_task_id": a.id}],
+                )
+
+        _run(_t())
+
+    def test_create_done_is_allowed_when_nothing_is_outstanding(self, provider):
+        # A genuinely-complete row (no unfinished criteria, no live prerequisite) must
+        # stay creatable — e.g. backfilling a historically-done task — so the gate refuses
+        # INVALID done, not done-on-create itself.
+        async def _t():
+            a = await provider.create_task(title="Prereq")
+            await provider.update_task(a.id, status="done")  # terminal prereq
+            b = await provider.create_task(
+                title="Born done, prereq terminal",
+                status="done",
+                dependencies=[{"depends_on_task_id": a.id}],
+                exit_criteria=[{"description": "done", "status": "complete"}],
+            )
+            assert b.status is TaskStatus.DONE
+
+        _run(_t())
+
+
 # ── #457: deleting a project cascades its tasks ──
 
 
