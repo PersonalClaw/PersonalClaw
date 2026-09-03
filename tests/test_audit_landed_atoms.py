@@ -1090,6 +1090,10 @@ def test_self_check_fires_when_key_extraction_regresses(
 ) -> None:
     # copied: the shared fixture must not be poisoned for other tests
     verdicts = [replace(v, keys=[]) for v in real_verdicts]
+    if not any(v.atom.id in KNOWN_LANDED for v in verdicts):
+        # Every hand-verified atom can flip to done and leave the census selection;
+        # re-badge one verdict so the per-atom message path is still exercised.
+        verdicts[0] = replace(verdicts[0], atom=replace(verdicts[0].atom, id=KNOWN_LANDED[0]))
     problems = self_check(verdicts, real_corpus, real_log_hits)
     assert any("key extractor found only 0 keys" in p for p in problems)
     assert any(">60%" in p for p in problems)
