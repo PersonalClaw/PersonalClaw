@@ -72,8 +72,8 @@ class CapabilityMatrix:
     """Per-model feature flags a binding UI renders as chips instead of guessing.
 
     Optional on :class:`LocalModel` (default ``None`` = "unknown, don't assert"). Kept a
-    flat, extensible dataclass on purpose — MI-2 will add cloning / voice-design flags —
-    so a new capability is one field, not a schema migration.
+    flat, extensible dataclass on purpose — MI-2 added the cloning / voice-design flags
+    below — so a new capability is one field, not a schema migration.
     """
 
     word_timestamps: bool = False
@@ -85,6 +85,12 @@ class CapabilityMatrix:
     hotword_budget: int = 0
     languages: list[str] = field(default_factory=list)  # [] = unknown / broad
     reasoning_budget_control: bool = False  # thinking-budget honored per request (chat)
+    # TTS synthesis (MI-2): a cloning engine conditions on a reference clip; a voice-design
+    # engine builds a voice from a text/param description. Default False so a card that
+    # declares neither reads as "cannot", never "unknown" — the fail-closed footing the
+    # clone-routing guard relies on before handing a reference clip to an engine.
+    supports_cloning: bool = False
+    supports_voice_design: bool = False
 
 
 @dataclass

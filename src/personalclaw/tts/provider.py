@@ -28,6 +28,15 @@ class TtsVoice:
 class TtsProvider(ABC):
     """Text-to-speech INFERENCE interface — ``synthesize`` only."""
 
+    #: TTS synthesis capabilities (MI-2), declared as class attributes so a backend opts in
+    #: by overriding one. Default False so the bundled providers (piper, OpenAI) are valid
+    #: untouched, and — fail-closed — a clone-kind request to a backend that never claimed
+    #: cloning is refused (see ``tts.registry.guard_synthesis_capability``) rather than
+    #: rendered in the wrong voice. ``supports_cloning`` conditions synthesis on a reference
+    #: clip; ``supports_voice_design`` builds a voice from a text/param description.
+    supports_cloning: bool = False
+    supports_voice_design: bool = False
+
     @property
     @abstractmethod
     def name(self) -> str: ...
