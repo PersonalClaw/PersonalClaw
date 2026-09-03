@@ -334,6 +334,26 @@ class NativeTaskProvider(TaskProvider):
             )
             if cycle:
                 raise reconcile.DependencyCycleError(cycle)
+            # Same DONE gate `update_task` enforces (#475 exit-criteria + the dependency
+            # gate): a task may not be BORN already done with unfinished exit criteria or a
+            # non-terminal BLOCKS prerequisite. `status` is caller-supplied here, so
+            # `create_task(status="done", …)` was an unguarded backdoor to the exact invalid
+            # state the update path refuses — a `can_mark_complete()==False` DONE row that
+            # counts toward graph completion and that reconcile never clears. Same predicates
+            # and 400-mapping as update, so create and update can never disagree. A done row
+            # with no unfinished criteria and no live prerequisite still creates (backfill).
+            if task.status == TaskStatus.DONE:
+                if not task.can_mark_complete():
+                    raise ValueError(
+                        "cannot complete: unfinished exit criteria — "
+                        + ", ".join(task.incomplete_exit_criteria())
+                    )
+                blocked = reconcile.block_reason(task, {**tasks, task.id: task})
+                if blocked["is_blocked"]:
+                    raise ValueError(
+                        "cannot complete: waiting on unfinished prerequisite — "
+                        + ", ".join(blocked["blocking_task_titles"])
+                    )
             tasks[task.id] = task
             reconcile.classify_manual_block(task, tasks)
             self._write_task(task)
