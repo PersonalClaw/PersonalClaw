@@ -119,6 +119,6 @@ export const liveMarkdownTheme = EditorView.theme({
   '.cm-rmd-em': { fontStyle: 'italic' },
   '.cm-rmd-strike': { textDecoration: 'line-through', opacity: '0.7' },
   '.cm-rmd-code': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.9em', color: 'var(--color-primary-emphasis, var(--color-primary))', background: 'var(--color-surface-high)', borderRadius: '4px', padding: '0.05em 0.3em' },
-  '.cm-rmd-quote': { color: 'var(--color-on-surface-var)', fontStyle: 'italic', borderLeft: '3px solid color-mix(in srgb, var(--color-primary) 50%, transparent)', paddingLeft: '0.5em' },
+  '.cm-rmd-quote': { color: 'var(--color-on-surface-var)', fontStyle: 'italic', borderLeft: '1px solid var(--color-outline-variant)', paddingLeft: '0.5em' },
   '.cm-rmd-bullet': { color: 'var(--color-primary)' },
 })
