@@ -29,6 +29,7 @@ export function Eyebrow({
   children,
   as = 'div',
   tone = 'muted',
+  id,
   className,
 }: {
   children: ReactNode
@@ -38,13 +39,17 @@ export function Eyebrow({
   /** Ink tone. `muted` (default) is the section-label grey; `info`/`primary`
    *  are for the semantic eyebrows (a queued nudge, an active marker). */
   tone?: keyof typeof TONE
+  /** DOM id for the rendered element, so a caption-tier label can be an
+   *  accessible-name target: a labelless control names itself by pointing at
+   *  this id with `aria-labelledby` (the canonical `Field` label does this). */
+  id?: string
   /** Layout/spacing utilities for this instance (margins, a flex row, a chip
    *  fill). Never `uppercase`/`tracking-*` — that is the drift this replaces. */
   className?: string
 }) {
   const Tag = as
   return (
-    <Tag data-type="caption" className={cx(TONE[tone], className)}>
+    <Tag id={id} data-type="caption" className={cx(TONE[tone], className)}>
       {children}
     </Tag>
   )

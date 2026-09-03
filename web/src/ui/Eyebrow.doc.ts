@@ -13,6 +13,7 @@ const doc: UiDoc = {
     { name: 'children', description: 'The label text (sentence case — never shouted in caps).' },
     { name: 'as', description: "Element to render: a block 'div'/'p' section label, or an inline 'span' for a chip label or an eyebrow sharing a flex row with a value. Defaults to 'div'." },
     { name: 'tone', description: "Ink tone: 'muted' (default, the section-label grey), or 'info'/'primary' for the semantic eyebrows (a queued nudge, an active marker). Exactly one color class is emitted so it never races a className color." },
+    { name: 'id', description: "DOM id for the rendered element, so a caption-tier label can be an accessible-name target — a labelless control names itself by pointing at this id via aria-labelledby (the canonical Field label uses this)." },
     { name: 'className', description: 'Layout/spacing utilities for this instance (margins, a flex row, a chip fill). Never uppercase/tracking-* — that is the drift this replaces.' },
   ],
   bestPractices: [

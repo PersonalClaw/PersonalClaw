@@ -10,9 +10,9 @@ const docs: UiDoc[] = [
     name: 'Field',
     keywords: ['field', 'label', 'form', 'wrapper', 'hint', 'accessibility', 'labelledby'],
     description:
-      'The wrapper for a labeled form control: an uppercase label row (with an optional right slot for a SoonTag) above the control, plus an optional hint below it. It publishes its label id via context so the wrapped control associates with it via aria-labelledby — turning the sighted-only label into a real accessible name with zero call-site changes.',
+      'The wrapper for a labeled form control: a caption-tier label row (with an optional right slot for a SoonTag) above the control, plus an optional hint below it. It publishes its label id via context so the wrapped control associates with it via aria-labelledby — turning the sighted-only label into a real accessible name with zero call-site changes.',
     props: [
-      { name: 'label', description: 'The visible uppercase label; carries a stable id exposed to the wrapped control for aria-labelledby.' },
+      { name: 'label', description: 'The visible caption-tier label (the Eyebrow primitive, sentence case per the Weight-First rule); carries a stable id exposed to the wrapped control for aria-labelledby.' },
       { name: 'hint', description: 'Optional muted helper text rendered below the control.' },
       { name: 'right', description: 'Optional slot on the label row (e.g. a SoonTag) aligned to the right.' },
       { name: 'children', description: 'The wrapped control (TextInput / Select / …).' },
@@ -22,7 +22,7 @@ const docs: UiDoc[] = [
       { guidance: true, description: "A control claims the Field label only when it passes no ariaLabel of its own — an explicit ariaLabel always WINS, which is how a multi-control Field (two password inputs under one 'Set a password' label) names each member distinctly instead of both announcing the Field label." },
       { guidance: false, description: 'Do not hardcode colors or px — the label tone and spacing route through design tokens (the token-lint ratchet fails the build otherwise).' },
     ],
-    anatomy: ['FieldLabelCtx provider', 'label row (uppercase label id + right slot)', 'wrapped control', 'optional hint paragraph'],
+    anatomy: ['FieldLabelCtx provider', 'label row (caption-tier Eyebrow label id + right slot)', 'wrapped control', 'optional hint paragraph'],
   },
   {
     name: 'FieldError',
