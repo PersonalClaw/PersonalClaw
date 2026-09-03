@@ -4,6 +4,7 @@ import { api, type UsageAgg, type UsageFold } from '../../lib/api'
 import { useQuery } from '../../lib/data'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Segmented } from '../../ui/Segmented'
+import { Table, THead, Th, Td } from '../../ui/Table'
 import { Meter } from '../../ui/Meter'
 import { PanelHeader, Section } from './settingsUI'
 import { BigStat, KVList } from './bento'
@@ -258,32 +259,33 @@ function UsageTable({ rows, keyField, empty }: {
     return <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low text-[0.8125rem]">{empty}</div>
   }
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-[0.8125rem]">
-        <thead>
-          <tr className="text-on-surface-low">
-            <th className="border-b border-outline-variant/40 px-2 py-1.5 text-left font-normal">{keyField === 'model' ? 'Model' : 'Source'}</th>
-            <th className="border-b border-outline-variant/40 px-2 py-1.5 text-right font-normal">Tokens</th>
-            <th className="border-b border-outline-variant/40 px-2 py-1.5 text-right font-normal">Cost</th>
-            <th className="border-b border-outline-variant/40 px-2 py-1.5 text-right font-normal">Share</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const label = r[keyField] || '(none)'
-            const share = total > 0 && r.priced ? Math.round((r.cost_usd / total) * 100) : 0
-            return (
-              <tr key={label} className="text-on-surface-var">
-                <td className="border-b border-outline-variant/25 px-2 py-1.5 font-mono">{label}</td>
-                <td className="border-b border-outline-variant/25 px-2 py-1.5 text-right tabular-nums">{fmtTokens((r.input_tokens || 0) + (r.output_tokens || 0))}</td>
-                <td className="border-b border-outline-variant/25 px-2 py-1.5 text-right tabular-nums">{r.priced ? fmtUsd(r.cost_usd) : 'unpriced'}</td>
-                <td className="border-b border-outline-variant/25 px-2 py-1.5 text-right tabular-nums text-on-surface-low">{r.priced ? `${share}%` : '—'}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
+    <Table
+      sized={false}
+      className="border-collapse text-[0.8125rem]"
+      caption={`Token usage and cost per ${keyField === 'model' ? 'model' : 'source'}`}>
+      <THead>
+        <tr>
+          <Th pad={false} className="border-b border-outline-variant/40 px-2 py-1.5 font-normal">{keyField === 'model' ? 'Model' : 'Source'}</Th>
+          <Th align="right" pad={false} className="border-b border-outline-variant/40 px-2 py-1.5 font-normal">Tokens</Th>
+          <Th align="right" pad={false} className="border-b border-outline-variant/40 px-2 py-1.5 font-normal">Cost</Th>
+          <Th align="right" pad={false} className="border-b border-outline-variant/40 px-2 py-1.5 font-normal">Share</Th>
+        </tr>
+      </THead>
+      <tbody>
+        {rows.map((r) => {
+          const label = r[keyField] || '(none)'
+          const share = total > 0 && r.priced ? Math.round((r.cost_usd / total) * 100) : 0
+          return (
+            <tr key={label} className="text-on-surface-var">
+              <Td pad={false} className="border-b border-outline-variant/25 px-2 py-1.5 font-mono">{label}</Td>
+              <Td align="right" pad={false} className="border-b border-outline-variant/25 px-2 py-1.5 tabular-nums">{fmtTokens((r.input_tokens || 0) + (r.output_tokens || 0))}</Td>
+              <Td align="right" pad={false} className="border-b border-outline-variant/25 px-2 py-1.5 tabular-nums">{r.priced ? fmtUsd(r.cost_usd) : 'unpriced'}</Td>
+              <Td align="right" pad={false} className="border-b border-outline-variant/25 px-2 py-1.5 tabular-nums text-on-surface-low">{r.priced ? `${share}%` : '—'}</Td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </Table>
   )
 }
 
