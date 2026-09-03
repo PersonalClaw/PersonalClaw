@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { parseDueDate, dueMeta, statusMeta, STATUSES } from './taskMeta'
+import { Circle } from 'lucide-react'
+import { parseDueDate, dueMeta, statusMeta, STATUSES, TERMINAL } from './taskMeta'
 
 /** The LOCAL calendar day `offset` days from today, at midnight. */
 const localDay = (offset = 0): Date => {
@@ -109,5 +110,26 @@ describe('status-label parity across task surfaces', () => {
     // grey "never run" for a real `failed` state elsewhere in this app.
     expect(statusMeta('some_new_backend_status').label).toBe('some_new_backend_status')
     expect(statusMeta(undefined).label).toBe('Unknown')
+  })
+})
+
+describe('the backend `skipped` status is represented on every surface (#776)', () => {
+  it('appears in STATUSES so the board gives it a column and the list a label/icon', () => {
+    const skipped = STATUSES.find((s) => s.key === 'skipped')
+    expect(skipped, 'skipped missing from STATUSES — a skipped task is invisible on the board').toBeTruthy()
+    expect(skipped!.label).toBe('Skipped')
+  })
+
+  it('statusMeta resolves it to its own label and a distinct icon, not the raw-key fallback', () => {
+    // The fallback returns { label: <raw key>, icon: Circle } — a skipped task then read
+    // "skipped" with the not-started glyph. A real entry gives it a distinct word and icon.
+    const m = statusMeta('skipped')
+    expect(m.label).toBe('Skipped')
+    expect(m.icon).not.toBe(Circle)
+  })
+
+  it('groups with finished/declined work for display, matching cancelled', () => {
+    // Sort-to-bottom + the Done filter read TERMINAL; skipped is closed-but-not-active work.
+    expect(TERMINAL.has('skipped')).toBe(true)
   })
 })
