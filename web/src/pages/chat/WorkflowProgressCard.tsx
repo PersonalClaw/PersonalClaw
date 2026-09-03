@@ -9,6 +9,7 @@ import { Button } from '../../ui/Button'
 import { foldEvent, foldSnapshot, type WorkflowViewModel } from '../workflows/workflowFold'
 import { useWorkflowStream } from '../workflows/useWorkflowStream'
 import { fmtElapsed, isTerminal, nodeLook, runLook } from '../workflows/workflowMeta'
+import { TextLink } from '../../ui/TextLink'
 
 // Tools whose result means "a workflow run now exists worth watching". `workflow_start`
 // creates one; `workflow_status`/`workflow_observe` name one the agent inspected, and a
@@ -119,13 +120,10 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
             <StatusIcon size={12} className={look.spin ? 'animate-spin' : ''} /> {look.label}
           </span>
         )}
-        <a
-          href={`#/workflows/runs/${refObj.runId}`}
-          className="inline-flex shrink-0 items-center gap-1 text-primary text-[0.75rem] transition-colors hover:underline"
-          title="Open the run"
-        >
-          Open <ArrowUpRight size={12} />
-        </a>
+        <TextLink href={`#/workflows/runs/${refObj.runId}`} size="xs" icon={ArrowUpRight} iconPosition="trailing" iconSize={12}
+          className="shrink-0 transition-colors" title="Open the run">
+          Open
+        </TextLink>
       </div>
 
       {vm && vm.totalCount > 0 && (

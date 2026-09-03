@@ -8,6 +8,7 @@ import { PromptPreviewPane } from './PromptPreviewPane'
 import { SyntaxReference } from './SyntaxReference'
 import { RunnableTemplateField } from './RunnableTemplateField'
 import { VariableRow } from './VariableRow'
+import { TextLink } from '../../ui/TextLink'
 
 /** Edit-mode fields that mirror the view's section rhythm (Description → Tags →
  *  Variables → Template). Same `Section` wrapper as the read view, so toggling
@@ -96,7 +97,7 @@ export function PromptEditFields({ draft, onChange, Section }: {
                   <Plus size={12} /> <span className="font-mono">{n}</span>
                 </button>
               ))}
-              {undeclared.length > 1 && <button type="button" onClick={() => addVars(undeclared)} className="rounded-pill px-2 h-7 text-primary text-[0.75rem] hover:underline">Add all</button>}
+              {undeclared.length > 1 && <TextLink onClick={() => addVars(undeclared)} size="xs" className="rounded-pill px-2 h-7">Add all</TextLink>}
             </div>
           </div>
         )}

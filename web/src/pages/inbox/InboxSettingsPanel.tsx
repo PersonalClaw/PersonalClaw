@@ -4,6 +4,7 @@ import { Loading, LoadError } from '../../ui/ListScaffold'
 import { Row, Field, Toggle, SavedToast } from '../settings/settingsUI'
 import { NumberField } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
+import { TextLink } from '../../ui/TextLink'
 
 /** Inbox settings → GET/PUT /api/inbox/settings (alert keywords, name-mention
  *  alerts, auto-cleanup, retention). Lives in the Inbox SidePanel. */
@@ -78,7 +79,7 @@ export function InboxSettingsPanel() {
           rule, not two inbox-only fields. Pointing there beats leaving controls that write
           to a store nothing reads. */}
       <Row label="Alerts" hint="Keyword and name-mention alerts are now per-notification-kind, so the same rules cover loops, proposals and messages alike.">
-        <a href="#/settings/notifications" className="text-primary-emphasis text-[0.8125rem] hover:underline">Open notification rules</a>
+        <TextLink href="#/settings/notifications" ink="emphasis" size="sm">Open notification rules</TextLink>
       </Row>
 
       <Row label="Auto-cleanup" hint="Automatically prune items past the retention window.">

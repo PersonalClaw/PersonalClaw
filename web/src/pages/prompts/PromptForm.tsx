@@ -6,6 +6,7 @@ import { AddItemButton } from '../../ui/AddItemButton'
 import { detectPlaceholders, detectIncludes, promptVars } from './promptMeta'
 import { RunnableTemplateField } from './RunnableTemplateField'
 import { VariableRow } from './VariableRow'
+import { TextLink } from '../../ui/TextLink'
 
 // Runnable template (#17): the draft carries a launch_spec (undefined = plain prompt).
 export type PromptDraft = { name: string; kind: PromptKind; title: string; description: string; content: string; variables: PromptVariable[]; tags: string[]; source?: string; launchSpec?: LaunchSpec }
@@ -109,7 +110,7 @@ export function PromptForm({ draft, onChange, compact, nameLocked, registerInser
                 <Plus size={12} /> <span className="font-mono">{n}</span>
               </button>
             ))}
-            {undeclared.length > 1 && <button type="button" onClick={() => addVars(undeclared)} className="rounded-pill px-2 h-7 text-primary text-[0.75rem] hover:underline">Add all</button>}
+            {undeclared.length > 1 && <TextLink onClick={() => addVars(undeclared)} size="xs" className="rounded-pill px-2 h-7">Add all</TextLink>}
           </div>
         </div>
       )}

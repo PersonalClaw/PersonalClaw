@@ -77,10 +77,16 @@ describe('the two canvas-painted accent texts use the emphasis shade', () => {
       .toMatch(/borderColor: 'var\(--color-primary\)'/)
   })
 
-  it('the inbox-settings link uses the emphasis class, in both copies of the panel', () => {
+  it('the inbox-settings link uses the emphasis ink, in both copies of the panel', () => {
+    // The sites now speak `ui/TextLink` (the adoption rail converged the idiom), so the emphasis
+    // guarantee lives in two halves: the call site asks for the emphasis ink…
     for (const rel of ['pages/inbox/InboxSettingsPanel.tsx', 'pages/settings/InboxSettingsPanel.tsx']) {
-      expect(read(rel), `${rel} link ink`).toMatch(/text-primary-emphasis text-\[0\.8125rem\] hover:underline">Open notification rules/)
+      expect(read(rel), `${rel} link ink`).toMatch(/<TextLink[^>]*ink="emphasis"[^>]*>Open notification rules/)
     }
+    // …and the primitive maps that ink to the measured class. Both halves pinned, so neither a
+    // call-site downgrade to `ink="primary"` nor a primitive remap can silently reopen the 4.37:1 gap.
+    expect(read('ui/TextLink.tsx'), 'TextLink emphasis ink mapping')
+      .toMatch(/emphasis:\s*'text-primary-emphasis'/)
   })
 
   it('neither site carries the old failing ink any more', () => {
