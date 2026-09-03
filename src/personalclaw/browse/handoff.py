@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -286,6 +287,10 @@ def record_login(
     meta.session_valid_until = ts + max(0.0, float(ttl_secs))
     meta.auth_state = AUTH_STATE_ACTIVE
     save_meta(url, meta)
+    # BA-5: a persisted session is captured under a profile-encryption key held in the credential
+    # store (never in the profile dir). Ensured HERE — the moment a session first exists — so the
+    # key management ships with a real writer rather than as inert scaffolding.
+    ensure_profile_key(url)
     return meta
 
 
@@ -303,6 +308,90 @@ def mark_expired(url: str, *, now: float | None = None) -> ProfileMeta:
     meta.auth_state = AUTH_STATE_EXPIRED
     save_meta(url, meta)
     return meta
+
+
+#: Credential-store key prefix for a site's profile-encryption key (BA-5, plan §(c)). The key is
+#: generated once per site and stored through the ACTIVE credential backend (keychain, else
+#: ``.env`` at 0600); it is NEVER written into the profile directory, whose whole point is that it
+#: can be encrypted by a key that does not sit beside the cookies it protects. ``secrets_vault``
+#: hides this prefix from the user's vault — it is machine-managed key material, not a secret the
+#: user typed and could delete out from under a profile that depends on it.
+PROFILE_KEY_PREFIX = "BROWSE_PROFILE_KEY_"
+
+
+def _key_name_for_slug(slug: str) -> str:
+    return f"{PROFILE_KEY_PREFIX}{slug}"
+
+
+def profile_key_name(url: str) -> str:
+    """The credential-store key holding the profile-encryption key for ``url``'s site."""
+    return _key_name_for_slug(site_slug(url))
+
+
+def ensure_profile_key(url: str) -> str:
+    """The site's profile-encryption key, generated and stored in the credential store on first
+    use. Idempotent — an existing key is returned untouched, so a re-login never rotates the key
+    out from under a profile it already encrypts.
+
+    Held in the credential store and NEVER in the profile directory (§5.1 / BA-5): a key that sat
+    beside the cookies it protects would protect nothing. Generated with ``secrets.token_urlsafe``,
+    so it is a real 256-bit key rather than a marker.
+    """
+    from personalclaw.config.credentials import get_credential, save_credential
+
+    name = profile_key_name(url)
+    existing = get_credential(name)
+    if existing:
+        return existing
+    key = secrets.token_urlsafe(32)
+    save_credential(name, key)
+    return key
+
+
+def has_profile_key(url: str) -> bool:
+    """Whether a profile-encryption key exists for ``url``'s site — presence only, no value read.
+
+    Uses :func:`~personalclaw.config.credentials.credential_names` (name-only) rather than
+    ``get_credential(...) != ""`` so a presence check never puts the key value in a local a caller
+    could leak — the same discipline the secrets vault's read model follows."""
+    from personalclaw.config.credentials import credential_names
+
+    return profile_key_name(url) in credential_names()
+
+
+def expired_sites() -> list[dict[str, Any]]:
+    """Every site whose saved session is EXPIRED — the set BA-5's persistent banner renders.
+
+    Scans the profiles root (cheap, offline) and returns the sites whose ``.meta.json`` records
+    ``auth_state=expired``. ``key_present`` reports whether the site's profile-encryption key is in
+    the credential store, so the panel can tell the user that re-auth will reuse the existing
+    profile rather than establish a new one. An unreadable meta is surfaced as expired — a profile
+    we cannot read is precisely a session a human should re-establish.
+    """
+    import json
+
+    from personalclaw.config.credentials import credential_names
+
+    names = set(credential_names())
+    root = profiles_root()
+    out: list[dict[str, Any]] = []
+    try:
+        entries = sorted(p for p in root.iterdir() if p.is_dir())
+    except OSError:
+        return out
+    for pdir in entries:
+        meta_path = pdir / META_FILENAME
+        try:
+            if not meta_path.is_file():
+                continue
+            meta = ProfileMeta.from_dict(json.loads(meta_path.read_text(encoding="utf-8")))
+        except Exception:
+            meta = ProfileMeta(site=pdir.name, auth_state=AUTH_STATE_EXPIRED)
+        if meta.auth_state != AUTH_STATE_EXPIRED:
+            continue
+        slug = meta.site or pdir.name
+        out.append({"site": slug, "key_present": _key_name_for_slug(slug) in names})
+    return out
 
 
 def session_state(url: str, *, now: float | None = None) -> str:

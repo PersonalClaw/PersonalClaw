@@ -83,6 +83,11 @@ PARK_STEP_EXHAUSTED = "step_exhausted"
 PARK_BUDGET_EXHAUSTED = "budget_exhausted"
 PARK_STUCK = "stuck"
 PARK_NAVIGATION_BLOCKED = "navigation_blocked"
+#: BA-5's browse kill switch (distinct from the incident switch): a human stopped this run from the
+#: mirror panel. Parked, not failed — the notes so far are kept and a human decides whether to
+#: resume, exactly like the step/budget parks. ``killswitch`` owns the flag; the loop only reads a
+#: verdict through the injected ``kill_check``.
+PARK_KILLED = "killed"
 #: BA-4's credential handoff park is :data:`personalclaw.browse.handoff.PARK_LOGIN_REQUIRED`,
 #: imported above rather than restated here. ``handoff`` owns the value because it also builds the
 #: card that answers it; a second literal in this module would be the fifth park reason and the
@@ -159,6 +164,20 @@ Decide = Callable[[str], Awaitable[str]]
 #: Returns ("ok"|"warn"|"exceeded", reason). Injected rather than imported so the loop stays
 #: free of the guardrails package and a test can exhaust a budget without writing spend files.
 BudgetCheck = Callable[[], tuple[str, str]]
+
+#: Called once per completed step with the step record and its screenshot PATH (BA-5's live
+#: mirror). Injected, so the loop stays free of the dashboard: the provider's sink is what turns a
+#: step into a ``browse_step`` WS broadcast. The screenshot is passed separately rather than added
+#: to :class:`BrowseStep` so the run's persisted payload shape is unchanged — the path is a live
+#: relay detail, not part of the durable record. Best-effort at the call site: a sink that raises
+#: must never break the run.
+StepSink = Callable[["BrowseStep", str], None]
+
+#: Returns (killed, reason). Injected like :data:`BudgetCheck` so the loop stays free of the kill
+#: switch's storage; the provider supplies one that reads :mod:`personalclaw.browse.killswitch`.
+#: Checked before every model call — the same "guard where the work happens, not one caller away"
+#: placement as the budget.
+KillCheck = Callable[[], tuple[bool, str]]
 
 
 # ── results ───────────────────────────────────────────────────────────────────
@@ -408,6 +427,8 @@ async def run_browse_loop(
     max_steps: int = MAX_STEPS_DEFAULT,
     budget_check: BudgetCheck | None = None,
     settle: Callable[[], Awaitable[None]] | None = None,
+    on_step: StepSink | None = None,
+    kill_check: KillCheck | None = None,
 ) -> BrowseLoopResult:
     """Drive ``page`` toward ``goal``, navigating only through ``session``'s gate.
 
@@ -418,9 +439,27 @@ async def run_browse_loop(
 
     ``budget_check`` is consulted before EVERY model call. Placing it here rather than in the
     provider is the point: the provider is one caller, and a guard that lives in one caller
-    is bypassed by the next one.
+    is bypassed by the next one. ``kill_check`` (BA-5) is checked at the SAME seam and for the
+    same reason — the mirror's stop button must halt an in-flight run, not just refuse the next.
+
+    ``on_step`` (BA-5) is called once per completed step with the step record and its screenshot
+    path — the provider turns each into a ``browse_step`` broadcast so a human can watch the run
+    live. It is a relay only: it never changes control flow, and a sink that raises is swallowed.
     """
     st = _LoopState()
+
+    def _emit(bs: BrowseStep, shot: str) -> None:
+        """Record a completed step and relay it to the live mirror. The ONE place a step is
+        appended, so every step — including an unparseable reply, a stuck park and DONE — reaches
+        the mirror, and the sink cannot be forgotten at one of five call sites."""
+        st.steps.append(bs)
+        if on_step is None:
+            return
+        try:
+            on_step(bs, shot)
+        except Exception:
+            logger.debug("browse: step sink failed", exc_info=True)
+
     goal = (goal or "").strip()
     if not goal:
         return BrowseLoopResult(ok=False, goal=goal, error="browse needs a `goal`")
@@ -452,6 +491,14 @@ async def run_browse_loop(
     st.visited.append(url)
 
     for step in range(1, max(1, int(max_steps)) + 1):
+        if kill_check is not None:
+            killed, why = kill_check()
+            if killed:
+                # A human hit the mirror's stop. Parked before the model call so the kill is felt
+                # within one step, exactly where the budget ceiling is felt.
+                return _park(
+                    st, goal=goal, url=url, reason=PARK_KILLED, detail=why or "kill switch engaged"
+                )
         if budget_check is not None:
             verdict, why = budget_check()
             if str(verdict) == "exceeded" or getattr(verdict, "value", "") == "exceeded":
@@ -517,14 +564,15 @@ async def run_browse_loop(
             st.warnings.append(
                 "your last reply contained no recognised action line; reply with exactly one"
             )
-            st.steps.append(
+            _emit(
                 BrowseStep(
                     index=step,
                     url=url,
                     action="",
                     fenced=True,
                     note="unparseable reply",
-                )
+                ),
+                screenshot,
             )
             continue
 
@@ -548,11 +596,11 @@ async def run_browse_loop(
                 "different approach, or DONE to exit."
             )
         elif stuck == "park":
-            st.steps.append(BrowseStep(index=step, url=url, action=rendered, fenced=True))
+            _emit(BrowseStep(index=step, url=url, action=rendered, fenced=True), screenshot)
             return _park(st, goal=goal, url=url, reason=PARK_STUCK, detail=rendered)
 
         if isinstance(action, DoneAction):
-            st.steps.append(BrowseStep(index=step, url=url, action=rendered, fenced=True))
+            _emit(BrowseStep(index=step, url=url, action=rendered, fenced=True), screenshot)
             return BrowseLoopResult(
                 ok=True,
                 goal=goal,
@@ -621,8 +669,9 @@ async def run_browse_loop(
             # `_park` keeps the notes, and the provider projects a park into the shipped needs-input
             # gate. The detail names the FIELD's ref; there is no value to name, because
             # `extraction` never read one.
-            st.steps.append(
-                BrowseStep(index=step, url=url, action=rendered, fenced=True, note=outcome_note)
+            _emit(
+                BrowseStep(index=step, url=url, action=rendered, fenced=True, note=outcome_note),
+                screenshot,
             )
             return _park(
                 st,
@@ -632,7 +681,7 @@ async def run_browse_loop(
                 detail=f"field {st.login_required_ref} is a credential field",
             )
 
-        st.steps.append(
+        _emit(
             BrowseStep(
                 index=step,
                 url=url,
@@ -640,7 +689,8 @@ async def run_browse_loop(
                 fenced=True,
                 note=outcome_note,
                 verification=verification,
-            )
+            ),
+            screenshot,
         )
 
     return _park(
