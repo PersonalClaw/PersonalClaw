@@ -6110,3 +6110,15 @@ own commit.
   each with its own auth and audit — and the one that gets less attention becomes the way in. Scoped-token
   verification is a capability on the existing door. This also retires the atom's EXT dependency: nothing in
   EXTERNAL-ACCESS needs to land first.
+
+- **[2026-09-03][`WF2AUT-12`] FLIP → `done` (merged PR #2345).** The webhook fire endpoint landed:
+  `POST /api/triggers/{id}/fire` verifies the SHA-256-hashed scoped bearer token and fences the payload,
+  riding the landed `src/personalclaw/inbound/` substrate per the 2026-08-27 E4 ruling above. `dag.json`
+  status flipped `todo` → `done` with `pr: "#2345"` in this roadmap accounting fold; the pre-ruling
+  `blocked_reason` is retained as historical design context and annotated stale via `status_note`.
+
+- **[2026-09-03][`WF2AUT-14`] FLIP → `done` (merged PR #2344).** The resume-target substrate shipped
+  2026-08-28 with WF2AUT-2/§3.2 and was ratified as the AUTO-R11 contract (authored `workflow.resume` form,
+  normalized `resume_target_of` shape, wake-vs-resume dispatch, fail-closed missing-target dispositions;
+  `node_id` descoped — run-targeting is the safe contract). The 🟡 landed-but-open ratchet marker in the
+  atomic table is promoted to ✅ and `dag.json` flipped `todo` → `done` with `pr: "#2344"`.
