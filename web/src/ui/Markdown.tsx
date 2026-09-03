@@ -248,7 +248,7 @@ const COMPONENTS: Record<string, React.ComponentType<any>> = {
     if (!safe) return <span className="text-on-surface-low italic">{alt || 'image'}</span>
     return <InlineArtifactImage src={safe} alt={alt || ''} />
   },
-  blockquote({ children }: any) { return <blockquote className="my-2 border-l-[3px] border-primary pl-m italic text-on-surface-var">{children}</blockquote> },
+  blockquote({ children }: any) { return <blockquote className="my-2 border-l border-outline-variant pl-m italic text-on-surface-var">{children}</blockquote> },
   hr() { return <hr className="my-4 border-outline-variant/40" /> },
   h1({ children }: any) { return <h1 className="mt-4 mb-2 text-on-surface" data-type="headline-s">{children}</h1> },
   h2({ children }: any) { return <h2 className="mt-3 mb-2 text-on-surface text-[1.0625rem]" style={fvs(500)}>{children}</h2> },
