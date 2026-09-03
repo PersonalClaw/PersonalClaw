@@ -12,6 +12,10 @@ interface Ctx {
 const ThemeCtx = createContext<Ctx>({ mode: 'dark', preference: 'dark', toggle: () => {}, setPreference: () => {} })
 
 const KEY = 'mode'
+/** The out-of-the-box preference. Named so "Reset everything" (DesignPanel) resets
+ *  mode to the SAME default the first-load fallback uses — the two were separate
+ *  literals, and the reset skipped mode entirely (#675). */
+export const DEFAULT_PREFERENCE: Preference = 'dark'
 
 function systemMode(): Mode {
   return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
@@ -23,7 +27,7 @@ function systemMode(): Mode {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preference, setPref] = useState<Preference>(() => {
     const v = localStorage.getItem(KEY)
-    return v === 'light' || v === 'dark' || v === 'auto' ? v : 'dark'
+    return v === 'light' || v === 'dark' || v === 'auto' ? v : DEFAULT_PREFERENCE
   })
   const [sysMode, setSysMode] = useState<Mode>(systemMode)
 

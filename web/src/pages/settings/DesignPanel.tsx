@@ -8,7 +8,7 @@ import { confirmDelete } from '../../ui/dialog'
 import { ColorControl, ScalarControl, SelectControl } from '../../ui/TokenControls'
 import { TOKENS, type ColorToken, type ScalarToken, type SelectToken } from '../../design/tokenRegistry'
 import { useAppearance } from '../../app/appearance'
-import { useMode, type Preference } from '../../app/theme'
+import { useMode, DEFAULT_PREFERENCE, type Preference } from '../../app/theme'
 import { PersonalityPicker } from './PersonalityPicker'
 import { usePersonality } from '../../app/personality'
 import { DEFAULT_PERSONALITY } from '../../design/personalities'
@@ -30,9 +30,14 @@ export function DesignPanel() {
   // destructured here; `pickScheme` is the only way this panel changes a scheme, so the
   // bypass cannot come back by accident. See `pickScheme` in `app/personality.tsx`.
   const { personality, activate, pickScheme } = usePersonality()
+  const { mode, preference, setPreference } = useMode()
   const resetEverything = () => {
     if (personality.id !== DEFAULT_PERSONALITY) activate(DEFAULT_PERSONALITY)
     resetAll()
+    // Mode lives in its own store (localStorage 'mode', not 'appearance'), so the
+    // appearance reset never touched it: "Reset everything" left a Light UI light —
+    // and mode is exactly the control an unusable-contrast recovery needs (#675).
+    setPreference(DEFAULT_PREFERENCE)
   }
 
   /** Ask before deleting a saved theme, and say what that costs.
@@ -62,7 +67,6 @@ export function DesignPanel() {
     if (!ok) return
     await deleteCustomScheme(s.id).catch(() => {})
   }
-  const { mode, preference, setPreference } = useMode()
   const [editingColors, setEditingColors] = useState(false)
   const dark = mode === 'dark'
   const isCustom = (id: string) => id.startsWith('custom:') && id !== 'custom:unsaved'
