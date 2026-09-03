@@ -1206,6 +1206,18 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
 
     _log_sel("success", f"{path_key}={value}")
 
+    # Log level carries a live side effect — the same one POST /api/logs/level
+    # applies — so set every logger + handler now. Without this, the Agent-defaults
+    # row only persisted the key and the change took effect at the next restart,
+    # diverging from the Diagnostics control that writes the identical key live.
+    if path_key == "agent.log_level":
+        try:
+            from personalclaw.dashboard.handlers.updates import apply_log_level  # noqa: F811
+
+            apply_log_level(value)
+        except Exception:
+            logger.warning("Failed to apply log level live after config patch", exc_info=True)
+
     # Orchestrator skill toggle: generate the always-loaded routing skill when
     # enabled, or remove it (incl. the pre-rename conductor/ dir) when disabled —
     # so the single-field toggle actually takes effect (the FE patches via this
