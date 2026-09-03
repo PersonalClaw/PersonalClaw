@@ -15,6 +15,18 @@ import pytest
 from personalclaw.memory_service import MemoryService
 from personalclaw.vector_memory import VectorMemoryStore
 
+# The first digest test to land on a fresh xdist worker pays a one-time ~3s first-touch cost
+# (importing/initialising the faiss + memory stack); every case here is otherwise ~0.01s
+# (measured: 3.17s setup on the first test, 13s for the module single-process; #1611 saw 41s
+# under light load). The suite runs `--dist worksteal`, which ignores `xdist_group` (PHF-9), so
+# a heavy module cannot be pulled into its own serial group — and under pathological local
+# contention (dozens of worktrees + rival pytest processes) that first-touch case is starved
+# past the 120s ceiling, tripping pytest-timeout and crashing the worker (#1611; CI, unstarved,
+# stays green). A per-module 300s budget is headroom over the measured floor and mirrors
+# test_inert_surface_baseline's fix; being per-test scope, not the global timeout, it does not
+# mask the next slow test.
+pytestmark = pytest.mark.timeout(300)
+
 _EMB_DIM = 64
 _seen_texts: list[str] = []
 
