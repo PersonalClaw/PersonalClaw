@@ -412,6 +412,13 @@ async def start_dashboard(
 
     register_device_routes(app)
 
+    # The browse user-browser connector (BA-8). Beside the device routes because the
+    # connector IS a paired device — it announces its CDP page-target endpoint over loopback
+    # on the SAME dashboard server (no new listener) and is listed by the same registry.
+    from personalclaw.dashboard.handlers.browse_connector import register_browse_connector_routes
+
+    register_browse_connector_routes(app)
+
     # Push subscriptions (MOBILE-COMPANION MC-5). Next to the device routes because a
     # subscription is per-DEVICE state keyed on the same device id pairing writes.
     from personalclaw.dashboard.handlers.push import register_push_routes
