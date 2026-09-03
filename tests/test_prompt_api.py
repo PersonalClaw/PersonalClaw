@@ -452,3 +452,89 @@ class TestSkillDetailPut:
         assert resp.status == 200
         assert _body(resp)["ok"] is True
         assert loader.load_skill("editable") == "# Updated\nNew body."
+
+
+# ── #635: one value-map contract across render/preview (both wire keys accepted) ──
+#
+# Render/launch/snippet-render documented `variables`; preview documented `values`
+# (its `variables` key is the DECLARATIONS list). Each read only its own key: the
+# same well-formed map got a false "missing required variable" on render and a
+# silent no-substitution preview. These rails pin the shared contract: documented
+# key wins, the sibling dict is accepted as an alias, a declarations LIST is never
+# swallowed as a value map, and a non-dict under the documented key still 400s.
+
+
+def _seed_greet():
+    prov = _provider()
+    from personalclaw.prompt_providers.base import PromptTemplate, PromptVariable
+
+    prov.create_prompt(
+        PromptTemplate(
+            name="greet",
+            kind="user",
+            content="Hi {{who}}!",
+            variables=[PromptVariable(name="who")],
+        )
+    )
+
+
+def test_render_accepts_the_values_alias():
+    _seed_greet()
+    resp = _run(api_prompt_render(_req("greet", body={"values": {"who": "Sam"}})))
+    assert resp.status == 200
+    assert _body(resp)["rendered"] == "Hi Sam!"
+
+
+def test_render_documented_key_wins_over_the_alias():
+    _seed_greet()
+    resp = _run(
+        api_prompt_render(
+            _req("greet", body={"variables": {"who": "Doc"}, "values": {"who": "Alias"}})
+        )
+    )
+    assert resp.status == 200
+    assert _body(resp)["rendered"] == "Hi Doc!"
+
+
+def test_render_still_rejects_a_non_dict_under_the_documented_key():
+    _seed_greet()
+    resp = _run(api_prompt_render(_req("greet", body={"variables": "nope"})))
+    assert resp.status == 400
+    assert "variables must be an object" in _body(resp)["error"]
+
+
+def test_preview_accepts_the_variables_alias_when_it_is_a_map():
+    resp = _run(
+        api_prompt_preview(_req(body={"content": "Hi {{who}}!", "variables": {"who": "Sam"}}))
+    )
+    assert resp.status == 200
+    body = _body(resp)
+    assert body["ok"] is True
+    assert "Hi Sam!" in body["rendered"]
+
+
+def test_preview_never_swallows_a_declarations_list_as_the_value_map():
+    # `variables` as a LIST is the declarations payload preview already reads —
+    # it must keep meaning that. A list misrouted into the value map would 400
+    # ("values must be an object"); the 200/ok here plus the unsubstituted body
+    # proves it stayed a declarations list and the render ran with no values.
+    resp = _run(
+        api_prompt_preview(_req(body={"content": "Hi {{who}}!", "variables": [{"name": "who"}]}))
+    )
+    assert resp.status == 200
+    body = _body(resp)
+    assert body["ok"] is True
+    assert "Hi Sam!" not in (body.get("rendered") or "")
+
+
+def test_snippet_render_accepts_the_values_alias():
+    _run(
+        api_snippet_create(
+            _req(
+                body={"name": "sig2", "content": "— {{author}}", "variables": [{"name": "author"}]}
+            )
+        )
+    )
+    resp = _run(api_snippet_render(_req("sig2", body={"values": {"author": "Ada"}})))
+    assert resp.status == 200
+    assert _body(resp)["rendered"] == "— Ada"
