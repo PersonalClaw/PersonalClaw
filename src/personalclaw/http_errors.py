@@ -473,6 +473,25 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "files (a relative path, the home directory itself, a credential directory, or an "
         "OS/system root)."
     ),
+    # ── provider instance connectivity test (providers/instance_routes.py) ──
+    # The "test connection" button on a provider instance. Codes split by remedy:
+    # `provider_unreachable` (502) — the endpoint/server could not be reached (connection
+    # refused, timeout, DNS, TLS, or it answered but did not report ready); the operator
+    # checks the URL and that the service is running. `provider_config_invalid` (400) — the
+    # instance's own config is unusable, fixed in its settings. `provider_test_failed` (502)
+    # — an unexpected error while testing; the raw exception is logged, never returned, so
+    # the user reads guidance rather than a truncated Python traceback.
+    "provider_unreachable": (
+        "A provider instance's endpoint or server could not be reached, so its connection "
+        "test did not pass."
+    ),
+    "provider_config_invalid": (
+        "A provider instance's configuration is incomplete or invalid, so it could not be tested."
+    ),
+    "provider_test_failed": (
+        "A provider instance's connection test failed unexpectedly; the underlying error is "
+        "in the server log."
+    ),
 }
 
 
