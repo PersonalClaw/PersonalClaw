@@ -1112,7 +1112,7 @@ export interface ScheduleRun {
 // notes, agent_instructions_template, task_list hierarchy) anticipate the
 // TasksMultiServer construct — the UI renders them but the backend may not
 // persist them yet (surfaced with a "soon" tag in the form).
-export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'done' | 'cancelled'
+export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'done' | 'cancelled' | 'skipped'
 export type TaskPriority = 'critical' | 'high' | 'medium' | 'low' | 'trivial'
 export type DependencyType = 'BLOCKS' | 'REQUIRED_FOR'
 export interface TaskDependency { task_id?: string; depends_on_task_id?: string; dependency_type?: DependencyType }

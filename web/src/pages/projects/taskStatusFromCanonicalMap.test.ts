@@ -110,7 +110,7 @@ describe('the canonical map still says what this fix relied on', () => {
 
   it('blocked and cancelled each have their own icon', () => {
     const names = new Set(STATUSES.map((s) => s.icon.displayName ?? s.icon.name))
-    expect(names.size, 'five statuses must not share icons').toBeGreaterThanOrEqual(4)
+    expect(names.size, 'six statuses must not share icons').toBeGreaterThanOrEqual(4)
     expect(statusMeta('blocked').icon).not.toBe(statusMeta('open').icon)
     expect(statusMeta('cancelled').icon).not.toBe(statusMeta('open').icon)
   })
@@ -120,7 +120,11 @@ describe('the canonical map still says what this fix relied on', () => {
     expect(STATUSES.map((s) => s.key)).toContain('cancelled')
   })
 
-  it('TERMINAL is both finished states', () => {
-    expect([...TERMINAL].sort()).toEqual(['cancelled', 'done'])
+  it('TERMINAL is the finished/declined display set', () => {
+    // done + cancelled + skipped: all closed-but-not-active, so the project card strikes them through
+    // and the list sorts them below live work. Deliberately WIDER than the backend's
+    // dependency-terminal set (done, cancelled) — a skipped prerequisite must not satisfy a
+    // dependency, but for display it is finished work. See taskMeta's TERMINAL note.
+    expect([...TERMINAL].sort()).toEqual(['cancelled', 'done', 'skipped'])
   })
 })

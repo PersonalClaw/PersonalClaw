@@ -43,10 +43,10 @@ const SRC = (rel: string) => readFileSync(join(process.cwd(), 'src/pages/tasks',
 describe('the status vocabulary has a label for every key', () => {
   // Vacuity floor. Every assertion below leans on STATUSES having real labels; an emptied or
   // relabelled registry would make them pass while announcing nothing.
-  it('all five backend statuses carry a non-empty label', () => {
-    expect(STATUSES).toHaveLength(5)
+  it('all six backend statuses carry a non-empty label', () => {
+    expect(STATUSES).toHaveLength(6)
     expect(STATUSES.map((s) => s.key).sort())
-      .toEqual(['blocked', 'cancelled', 'done', 'in_progress', 'open'])
+      .toEqual(['blocked', 'cancelled', 'done', 'in_progress', 'open', 'skipped'])
     for (const s of STATUSES) {
       expect(s.label.trim(), `${s.key} has a label`).not.toBe('')
       expect(s.label, `${s.key}'s label is prose, not the key`).not.toBe(s.key)
