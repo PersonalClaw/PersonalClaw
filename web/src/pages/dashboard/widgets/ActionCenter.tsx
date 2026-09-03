@@ -45,9 +45,21 @@ export function ActionCenter({ navigate }: RouteProps) {
 
   // Order by urgency: approvals (a run is blocked on you) first, then inbox
   // replies, then skill proposals (least time-critical).
+  //
+  // Dedup: most pending inbox items are proposal MIRRORS of the same skill
+  // proposals the third slice lists directly (item_kind 'proposal', with
+  // refs.skill_proposal naming the proposal id). Without this, every open
+  // proposal rendered twice and "+N more to triage" over-reported ~2x. Keep the
+  // PROPOSAL row (it carries Accept/Reject; the mirror's Reply is inert,
+  // can_reply=false) and keep a mirror whose proposal is NOT in the slice — a
+  // stale mirror must degrade to visible, not vanish.
+  const proposalIds = new Set(proposals.map((p) => p.id))
+  const liveInbox = inbox.filter(
+    (i) => !(i.refs?.skill_proposal && proposalIds.has(String(i.refs.skill_proposal))),
+  )
   const allEntries: Entry[] = [
     ...approvals.map((a) => ({ key: `a:${a.id}`, kind: 'approval' as const, id: a.id, title: `Run ${a.tool}`, sub: a.tool_purpose || a.source || 'Tool approval', session: a.session })),
-    ...inbox.map((i) => ({ key: `i:${i.id}`, kind: 'inbox' as const, id: i.id, title: i.sender_name || i.channel_name || 'Message', sub: i.message?.slice(0, 90) || '' })),
+    ...liveInbox.map((i) => ({ key: `i:${i.id}`, kind: 'inbox' as const, id: i.id, title: i.sender_name || i.channel_name || 'Message', sub: i.message?.slice(0, 90) || '' })),
     ...proposals.map((p) => ({ key: `p:${p.id}`, kind: 'proposal' as const, id: p.id, title: `Skill: ${p.slug}`, sub: p.description?.slice(0, 90) || '' })),
   ].filter((e) => !done.has(e.key))
 
