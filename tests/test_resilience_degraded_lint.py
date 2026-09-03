@@ -92,6 +92,14 @@ _CALL_SITE_SURFACES = {
     # costs a study its statistical power and says so, instead of feeding the judge an empty
     # answer and letting the other arm win on infrastructure failure.
     "evals/study_arms.py": "assistant_reasoning",
+    # ES-10's bake-off runner (`live_bakeoff_caller`): the one function in that module that
+    # spends money, one `one_shot_completion` per cell with the candidate ref as an explicit
+    # override so the matrix compares the models named on the axis. Reasoning-axis, and its
+    # no-model floor is BUILT IN at the run loop: a provider fault — including nothing
+    # resolving — records the cell `VERIFIER_ABSENT` rather than a fabricated zero, so an
+    # outage costs the matrix its samples and says so, instead of letting one candidate win
+    # on infrastructure failure.
+    "evals/bakeoff.py": "assistant_reasoning",
     "dashboard/chat_retag.py": "assistant_reasoning",
     "dashboard/chat_handlers.py": "assistant_reasoning",
     "dashboard/handlers/loop_routes.py": "assistant_reasoning",
