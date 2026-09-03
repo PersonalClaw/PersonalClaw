@@ -1573,13 +1573,14 @@
         {
           "id": "BA-6",
           "title": "Scheduled-actuator: persisted idempotent browse plans + WATCHED-SOURCES escalation tick + rung caps",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 (d) Scheduled-actuator pattern; §8.1 WATCHED-SOURCES headless-fetch escalation; §8.2 deep-research template consumption; task A3",
           "done_when": "Persisted plans (browse/plans/<id>.json {goal,kind,cursor,notes}) execute as idempotent one-tick runs — killing the gateway mid-flow loses <=1 step and re-firing the same tick is a no-op at the same cursor; the WATCHED-SOURCES escalation chain falls through from web_fetch to exactly one browse tick that returns meaningful content for a JS-rendered page (SC 7); read-only plans graduate per the AUTONOMY-GUARDRAILS ladder while any SUBMIT-bearing plan registers floor=draft_only and cannot run unattended until promoted — task A3",
           "deps": [
             "BA-3",
             "BA-4"
-          ]
+          ],
+          "evidence": "Core PR #2339 (feat(browse): persisted idempotent scheduled-actuator plans, MERGED 2026-09-03, commit 242a8b253). Persisted browse/plans/<id>.json idempotent one-tick runs (kill mid-flow loses <=1 step; re-fire is a no-op at cursor), the WATCHED-SOURCES escalation fall-through to exactly one browse tick for a JS-rendered page, and rung caps (read-only plans graduate; any SUBMIT-bearing plan registers floor=draft_only) all landed."
         },
         {
           "id": "BA-7",
@@ -1596,12 +1597,13 @@
         {
           "id": "BA-8",
           "title": "Browser extension connector: loopback-only typed local contract, paired via COMPANION-APPS device-session machinery, shipped as an app bundle",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-29 (b) The connector is a browser extension talking to the local gateway + (e) egress still applies; task B2",
           "done_when": "The extension connects to the gateway over loopback only (LOOPBACK_INTERNAL rail, no new listening surface) and is listed as a connected device using the shipped COMPANION-APPS device-session/pairing (§C1/C2 — consumed, not forked); it speaks a typed local contract (navigate/read-outline/click/type/close); ships as an app bundle in the apps repo with zero browser-vendor strings in core — task B2",
           "deps": [
             "BA-7"
-          ]
+          ],
+          "evidence": "Core PR #2350 (feat(browse): loopback user_browser connector route, MERGED 2026-09-03, commit cf5b3f661) + apps PR PersonalClawApps#58 (loopback browser-extension connector bundle, MERGED 2026-09-03). Loopback-only (LOOPBACK_INTERNAL) typed local contract (navigate/read-outline/click/type/close), paired via the shipped COMPANION-APPS device-session/pairing (consumed, not forked), shipped as an app bundle with zero browser-vendor strings in core."
         },
         {
           "id": "BA-9",
@@ -3658,6 +3660,16 @@
             "MI-3",
             "MI-4"
           ]
+        },
+        {
+          "id": "MI-6",
+          "title": "Voice-clone engine spike: OmniVoice vs CosyVoice on fixtures, pick one, real zero-shot inference + resumable weights + LMM-V2 through-clone selftest",
+          "status": "todo",
+          "scope": "MI-2 §2.2 engine-selection remainder carved out of MI-2 (tracked informally as 'MI-2c'; minted as the next free numeric id MI-6 because the status-sync id regex is [A-Z0-9]+-\\d+ and a letter suffix like MI-2c is unrepresentable). Run the OmniVoice-vs-CosyVoice bake-off on the voice fixtures, PICK ONE engine and commit the loser's rejection notes to the plan dir; stand up real zero-shot cloning inference in the apps/voice-clone-tts sidecar with resumable model-weight download; prove an LMM-V2 selftest that synthesizes THROUGH a clone reference.",
+          "done_when": "the OmniVoice-vs-CosyVoice bake-off is run on fixtures and ONE engine is chosen with the loser's rejection notes committed to the plan dir; the chosen engine performs real zero-shot cloning inference (not a stub) inside apps/voice-clone-tts with a resumable weight download that survives an interrupted fetch; an LMM-V2 selftest synthesizes a clone through a reference-audio fixture end to end; a sidecar killed mid-inference leaves the gateway up with a typed crash reason",
+          "deps": [
+            "MI-2"
+          ]
         }
       ]
     },
@@ -5527,7 +5539,8 @@
           "status": "todo",
           "scope": "Session 1 — Rebuild + signing + updater (T1.1-T1.4, V1); Contract C4 (install-kind + updater)",
           "done_when": "CI mac-runner job builds `make desktop` -> electron-builder signed+notarized dmg/zip attached to the GitHub Release (spctl -a passes on a clean Mac); electron-updater checks Releases and prompts a one-version-behind install; shell sets PERSONALCLAW_INSTALL_KIND=desktop and the gateway Updates panel shows 'managed by the desktop app'; desktop/test/packaging.test.js green; V1 clean-machine install+update recorded. (Owner task 1 supplies the four Apple Developer signing secrets to the CI `release` environment.)",
-          "deps": []
+          "deps": [],
+          "blocked_reason": "OWNER-GATED (2026-09-03): the mac-runner signed+notarized build path needs the four Apple Developer signing secrets supplied to the CI `release` environment — an owner action, now tracked as the explicit owner atom SH-11. DC-1 has no intra-repo deps, so before this annotation it read as ready-to-start; it is not truly startable by a tick until SH-11 lands. Recorded so the ready frontier reflects the gate instead of over-reporting DC-1."
         },
         {
           "id": "DC-2",
@@ -6221,6 +6234,29 @@
           "deps": [
             "DL-1"
           ]
+        },
+        {
+          "id": "DL-10",
+          "title": "Owner: submit community listings (awesome-self-hosted after the 2026-11-21 eligibility date, awesome-ai-agents, selfh.st, AlternativeTo)",
+          "status": "todo",
+          "scope": "DL-8 T4.2 owner action, minted explicit because these lists BAN automated/bot PRs — the owner must submit personally. awesome-self-hosted requires >=4 months since first release; v0.1.0 was 2026-07-21, so that submission is deferred until 2026-11-21. Submission drafts live in DL-8's launch/listing-submissions materials.",
+          "done_when": "the awesome-self-hosted / awesome-ai-agents PRs and the selfh.st + AlternativeTo entries are submitted by the owner (awesome-self-hosted only on/after 2026-11-21) after the P0 launch gate (DL-11) is all-green",
+          "deps": [
+            "DL-8",
+            "DL-11"
+          ],
+          "blocked_reason": "OWNER-ONLY (2026-09-03): the target lists prohibit machine/bot submissions and require a human contributor, and awesome-self-hosted is calendar-gated to 2026-11-21. Belongs on gated_frontier once its deps land, never ready_frontier."
+        },
+        {
+          "id": "DL-11",
+          "title": "Owner: P0 launch-gate clearance sign-off before any public posting (Show HN / r/selfhosted / r/LocalLLaMA)",
+          "status": "todo",
+          "scope": "DL-8 T4.3 owner action: confirm every P0 launch-checklist gate item is all-green (CI badge, verified install one-liner + captured log, live screenshots, release integrity, honest front door) and sign off before the owner posts any launch thread. Checklist drafts live in DL-8's launch materials.",
+          "done_when": "the owner records a P0-gate clearance decision (all checklist items green with their linked proof) authorizing the launch posts; posting itself is owner-only and gated on this clearance",
+          "deps": [
+            "DL-8"
+          ],
+          "blocked_reason": "OWNER-ONLY (2026-09-03): the launch-gate clearance and the public posts are owner judgment/actions an agent must not take. Belongs on gated_frontier once DL-8 lands, never ready_frontier."
         }
       ],
       "summary": "DISCOVERABILITY-LAUNCH decomposed into 9 atoms (DL-1..DL-9): 3 done (S1 migration/scaffold/sync; S2 docs site + llms.txt + landing + release flip, PR #20; S3 screenshots + README rework), 6 todo (T3.1 demo-home seed [core], launch media GIF+social images, launch-post draft, comparison pages, listing/checklist program, research republication). Verified against code: only the empty fixture ships (T3.1 open), screenshots+capture infra present, 14-topic learnings corpus at docs/research/learnings/, no live keyurgolani/ product URLs."
@@ -6501,6 +6537,28 @@
             "EXT:DISCOVERABILITY-LAUNCH:the site sync pipeline this registry surface extends"
           ],
           "blocked_reason": "PARTIAL 2026-08-26 (personalclaw.dev#31, rebase-merged 3cc45c89) - the pages, the cards, the per-app pages, the README fetch and the rebuild-picks-up-changes clause are all shipped and railed. TWO clauses remain, and the first is a PREMISE CORRECTION worth reading before anyone re-picks this. (1) THE REGISTRY DOES NOT EXIST AT THE PINNED CORE RELEASE. scratch/registry/registry.json 404s at v0.1.3 (2026-07-30); the registry tier landed on core main on 2026-08-18 (24f3f5c9, ET-3) and there is no newer tag. Verified independently with `git cat-file -e v0.1.3:scratch/registry/registry.json`. Reading core main instead would publish UNRELEASED core state as released state, so absence is recorded as a state (availability: 'absent-at-pin') and the page says so; the loader renders THREE states a card count cannot distinguish - absent-at-pin, empty, listed. So done_when's V4 ('a merged registry PR appears on the site after rebuild') is unreachable until the pin moves to a release containing the registry. What IS proven instead: changing the input and rebuilding changes the output. (2) 'card data matches the Store consent surface' is unverified against a live Store; what is asserted is that every consent value renders byte-equal and order-equal to its registry field, so it cannot disagree with any other reader of the same field. SECURITY SHAPE, since this is a pre-install trust surface: only the exact string 'clean' gets tone 'pass'; an unrecognised verdict presents as BLOCKING, never reassuring; 'no scan on record' renders as a distinct dashed treatment; permissions render permissions_declared verbatim and order-preserved. Anti-vacuity is explicit because the production registry is empty - a generator over it renders a clean zero-card page and every test passes for the wrong reason - so validate-registry-render.mjs fails if a registry with readable listings renders zero cards. CLEARS WHEN: core cuts a release containing scratch/registry/registry.json AND a community registry PR merges; then re-point the pin and V4 is measurable."
+        },
+        {
+          "id": "ET-9",
+          "title": "Owner: create the github.com/PersonalClaw/registry public repo (gates ET-4 default-source seeding)",
+          "status": "todo",
+          "scope": "ECOSYSTEM-TOOLING owner task 1, minted as an explicit atom so its gate is legible on the roadmap. The registry data tier (ET-3, done) and the app-registry.json rename (ET-4a, landed 2026-08-27) are in place; ET-4's remaining 'a fresh dev home lists registry apps in the Store' blocker is that github.com/PersonalClaw/registry does not exist yet. Creating it publishes scratch/registry/ verbatim and MUST follow the ET-4a rename, or the rename becomes a breaking change on a repo third parties may have cloned.",
+          "done_when": "github.com/PersonalClaw/registry exists as a public repo seeded from scratch/registry/ (post-ET-4a rename) with the ET-3 PR-validation workflow wired; ET-4's default-source seeding then resolves real registry apps",
+          "deps": [
+            "ET-3"
+          ],
+          "blocked_reason": "OWNER-ONLY (2026-09-03): creating a GitHub org repo is an owner action an agent cannot and must not perform. Gates ET-4 (and by extension ET-5). Belongs on gated_frontier, never ready_frontier."
+        },
+        {
+          "id": "ET-10",
+          "title": "Owner: provision GHCR (GitHub Container Registry) publish credentials (gates ET-8 registry-surface publication)",
+          "status": "todo",
+          "scope": "Owner provisioning for the container/registry publication path ET-8's personalclaw.dev registry surface depends on. Minted as an explicit owner atom so the gate is legible.",
+          "done_when": "GHCR publish credentials are provisioned in the CI environment so the artifacts ET-8's registry surface references can be published; ET-8's site-sync consumes them",
+          "deps": [
+            "ET-3"
+          ],
+          "blocked_reason": "OWNER-ONLY (2026-09-03): provisioning GHCR credentials is an owner action. Gates ET-8. Belongs on gated_frontier, never ready_frontier."
         }
       ]
     },
@@ -6821,6 +6879,17 @@
             "SH-6"
           ],
           "pr": 1290
+        },
+        {
+          "id": "SH-11",
+          "title": "Owner: supply Apple Developer signing + notarization secrets and the minisign release key to the CI `release` environment (gates DC-1/DCU-3/SH-4)",
+          "status": "todo",
+          "scope": "Owner provisioning of release-signing credentials, minted as an explicit atom so the signing gate blocking the desktop/release-signing atoms is legible. SH-3 (signing scheme + verifier, done) ships the trust store EMPTY on purpose — an agent must not generate the private key it would hand over. This is the owner half: run scripts/sign_app.py gen-key --signer PersonalClaw, drop the .pub into src/personalclaw/trusted_keys/, and load the four Apple Developer signing secrets into the CI release environment. NOTE the task groups DCU-3 here; DCU-3's actual blocker is a macOS Accessibility/TCC grant (a different owner action) tracked in DCU-3's own annotation — this atom directly unblocks the SIGNING side of DC-1 and SH-4.",
+          "done_when": "the four Apple Developer signing secrets and the minisign signing key are present in the CI `release` environment and the PersonalClaw public key is in src/personalclaw/trusted_keys/; DC-1's signed+notarized mac build and SH-4's release-pipeline signing are unblocked on the credential side",
+          "deps": [
+            "SH-3"
+          ],
+          "blocked_reason": "OWNER-ONLY (2026-09-03): supplying Apple Developer signing secrets and generating the production minisign key are owner actions an agent must never perform (SH-3 ships the trust store empty for exactly this reason). Gates DC-1, DCU-3, SH-4. Belongs on gated_frontier, never ready_frontier."
         }
       ]
     },
@@ -7666,44 +7735,19 @@
         "plan": "APE"
       },
       {
-        "id": "AR-1",
-        "title": "Un-defer the plan: ship the council precursor, re-confirm demand, and resolve the 6 design questions into contracts",
-        "plan": "AR"
-      },
-      {
         "id": "BA-5",
         "title": "Live browse mirror panel + kill switch + auth_needed first-class state",
         "plan": "BA"
       },
       {
-        "id": "BA-6",
-        "title": "Scheduled-actuator: persisted idempotent browse plans + WATCHED-SOURCES escalation tick + rung caps",
+        "id": "BA-9",
+        "title": "Per-task grant flow (fail-closed ApprovalGate, task-named tab, close-to-kill, SEL audit) + security posture docs + as-a-user validation",
         "plan": "BA"
-      },
-      {
-        "id": "BA-8",
-        "title": "Browser extension connector: loopback-only typed local contract, paired via COMPANION-APPS device-session machinery, shipped as an app bundle",
-        "plan": "BA"
-      },
-      {
-        "id": "CA-8",
-        "title": "S4 desktop connect-to-gateway mode + multi-gateway switcher (T4.1 + amendment T4.4)",
-        "plan": "CA"
-      },
-      {
-        "id": "CE-9",
-        "title": "Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note",
-        "plan": "CE"
       },
       {
         "id": "CRE-7",
         "title": "Owner real-world provisioning remainder",
         "plan": "CRE"
-      },
-      {
-        "id": "DC-1",
-        "title": "S1: Rebuild + signing + notarization + electron-updater + install-kind",
-        "plan": "DC"
       },
       {
         "id": "DC-3",
@@ -7716,28 +7760,13 @@
         "plan": "DC"
       },
       {
-        "id": "DCU-3",
-        "title": "macOS accessibility driver (indexed AX tree)",
-        "plan": "DCU"
-      },
-      {
         "id": "DIST-11",
         "title": "Owner clean-machine walkthroughs V1–V4 (wheel install, getting-started, container, per-kind self-update)",
         "plan": "DIST"
       },
       {
-        "id": "DIST-12",
-        "title": "Convenience channels: Homebrew tap + Nix flake (S5, post-launch, out of scope for this loop)",
-        "plan": "DIST"
-      },
-      {
         "id": "DL-5",
         "title": "T3.2 remainder + T2.4 residual: launch media assets (60-90s demo GIF + social-preview images)",
-        "plan": "DL"
-      },
-      {
-        "id": "DL-8",
-        "title": "S4 T4.2+T4.3: listing submissions + P0 launch checklist",
         "plan": "DL"
       },
       {
@@ -7751,44 +7780,14 @@
         "plan": "EA"
       },
       {
-        "id": "EI-2",
-        "title": "`docker` provider + engine/workspace-block adoption + cgroup v2 tier",
-        "plan": "EI"
-      },
-      {
-        "id": "EI-6",
-        "title": "Runner lifecycle (idle-release/lease/reconnect) + durable tmux-backed sessions",
-        "plan": "EI"
-      },
-      {
         "id": "ES-8",
         "title": "Trust-graduation ladder: trust records, graduation/revocation, rungs, attention accounting",
         "plan": "ES"
       },
       {
-        "id": "ET-4",
-        "title": "Default-source seeding: ship the registry URL as a removable default git source",
-        "plan": "ET"
-      },
-      {
-        "id": "ET-7",
-        "title": "Bounty board: labeled `bounty` issues for wanted apps, linking scaffold/guide/conformance",
-        "plan": "ET"
-      },
-      {
-        "id": "ET-8",
-        "title": "Registry surface on personalclaw.dev generated from `registry.json`",
-        "plan": "ET"
-      },
-      {
         "id": "LMMV-7",
         "title": "Session 5b — Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation",
         "plan": "LMMV"
-      },
-      {
-        "id": "LV-7",
-        "title": "S4 benchmark implementation as an eval-substrate study + publish",
-        "plan": "LV"
       },
       {
         "id": "MC-6",
@@ -7816,34 +7815,176 @@
         "plan": "PCS"
       },
       {
-        "id": "PEP-11",
-        "title": "First-party product-app suite program",
-        "plan": "PEP"
-      },
-      {
         "id": "PP-16",
         "title": "A Loop becomes a WorkflowRun (retire the second work-unit noun)",
         "plan": "PP"
       },
       {
+        "id": "SV-10",
+        "title": "Self-QA evidence bundle capture + optional fix-branch + end-to-end validation",
+        "plan": "SV"
+      }
+    ],
+    "gated_frontier": [
+      {
+        "id": "AR-1",
+        "title": "Un-defer the plan: ship the council precursor, re-confirm demand, and resolve the 6 design questions into contracts",
+        "plan": "AR",
+        "gate": [
+          "ext"
+        ]
+      },
+      {
+        "id": "CA-8",
+        "title": "S4 desktop connect-to-gateway mode + multi-gateway switcher (T4.1 + amendment T4.4)",
+        "plan": "CA",
+        "gate": [
+          "ext"
+        ]
+      },
+      {
+        "id": "CE-9",
+        "title": "Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note",
+        "plan": "CE",
+        "gate": [
+          "ext"
+        ]
+      },
+      {
+        "id": "DC-1",
+        "title": "S1: Rebuild + signing + notarization + electron-updater + install-kind",
+        "plan": "DC",
+        "gate": [
+          "owner"
+        ]
+      },
+      {
+        "id": "DCU-3",
+        "title": "macOS accessibility driver (indexed AX tree)",
+        "plan": "DCU",
+        "gate": [
+          "ext"
+        ]
+      },
+      {
+        "id": "DIST-12",
+        "title": "Convenience channels: Homebrew tap + Nix flake (S5, post-launch, out of scope for this loop)",
+        "plan": "DIST",
+        "gate": [
+          "owner"
+        ]
+      },
+      {
+        "id": "DL-8",
+        "title": "S4 T4.2+T4.3: listing submissions + P0 launch checklist",
+        "plan": "DL",
+        "gate": [
+          "ext"
+        ]
+      },
+      {
+        "id": "EI-2",
+        "title": "`docker` provider + engine/workspace-block adoption + cgroup v2 tier",
+        "plan": "EI",
+        "gate": [
+          "ext"
+        ]
+      },
+      {
+        "id": "EI-6",
+        "title": "Runner lifecycle (idle-release/lease/reconnect) + durable tmux-backed sessions",
+        "plan": "EI",
+        "gate": [
+          "ext"
+        ]
+      },
+      {
+        "id": "ET-4",
+        "title": "Default-source seeding: ship the registry URL as a removable default git source",
+        "plan": "ET",
+        "gate": [
+          "owner"
+        ]
+      },
+      {
+        "id": "ET-7",
+        "title": "Bounty board: labeled `bounty` issues for wanted apps, linking scaffold/guide/conformance",
+        "plan": "ET",
+        "gate": [
+          "ext"
+        ]
+      },
+      {
+        "id": "ET-8",
+        "title": "Registry surface on personalclaw.dev generated from `registry.json`",
+        "plan": "ET",
+        "gate": [
+          "ext"
+        ]
+      },
+      {
+        "id": "ET-9",
+        "title": "Owner: create the github.com/PersonalClaw/registry public repo (gates ET-4 default-source seeding)",
+        "plan": "ET",
+        "gate": [
+          "owner"
+        ]
+      },
+      {
+        "id": "ET-10",
+        "title": "Owner: provision GHCR (GitHub Container Registry) publish credentials (gates ET-8 registry-surface publication)",
+        "plan": "ET",
+        "gate": [
+          "owner"
+        ]
+      },
+      {
+        "id": "LV-7",
+        "title": "S4 benchmark implementation as an eval-substrate study + publish",
+        "plan": "LV",
+        "gate": [
+          "ext"
+        ]
+      },
+      {
+        "id": "PEP-11",
+        "title": "First-party product-app suite program",
+        "plan": "PEP",
+        "gate": [
+          "ext"
+        ]
+      },
+      {
         "id": "PUBL-10",
         "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
-        "plan": "PUBL"
+        "plan": "PUBL",
+        "gate": [
+          "ext"
+        ]
       },
       {
         "id": "SH-4",
         "title": "Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing",
-        "plan": "SH"
+        "plan": "SH",
+        "gate": [
+          "ext"
+        ]
       },
       {
-        "id": "SV-10",
-        "title": "Self-QA evidence bundle capture + optional fix-branch + end-to-end validation",
-        "plan": "SV"
+        "id": "SH-11",
+        "title": "Owner: supply Apple Developer signing + notarization secrets and the minisign release key to the CI `release` environment (gates DC-1/DCU-3/SH-4)",
+        "plan": "SH",
+        "gate": [
+          "owner"
+        ]
       },
       {
         "id": "SV-11",
         "title": "Retire the interim commit-watcher cron script when the AUTO-R12 vcs trigger lands",
-        "plan": "SV"
+        "plan": "SV",
+        "gate": [
+          "ext"
+        ]
       }
     ],
     "topo_order": [
@@ -8046,6 +8187,8 @@
       "DL-7",
       "DL-8",
       "DL-9",
+      "DL-11",
+      "DL-10",
       "DSC-1",
       "DSC-2",
       "DSC-3",
@@ -8105,6 +8248,8 @@
       "ET-6",
       "ET-7",
       "ET-8",
+      "ET-9",
+      "ET-10",
       "FM-1",
       "FM-2",
       "FM-3",
@@ -8196,6 +8341,7 @@
       "MI-3",
       "MI-4",
       "MI-5",
+      "MI-6",
       "MRI-1",
       "MRI-2",
       "MRI-3",
@@ -8348,6 +8494,7 @@
       "SH-8",
       "SH-9",
       "SH-10",
+      "SH-11",
       "SL-1",
       "SL-2",
       "SL-3",
@@ -9393,9 +9540,9 @@
         "code": "BA",
         "plan": "BROWSE-AUTOMATION",
         "total_atoms": 9,
-        "done": 5,
+        "done": 7,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -9554,10 +9701,10 @@
       {
         "code": "MI",
         "plan": "MULTIMODAL-IO",
-        "total_atoms": 5,
+        "total_atoms": 6,
         "done": 3,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 3,
         "blocked": 0
       },
       {
@@ -9788,10 +9935,10 @@
       {
         "code": "DL",
         "plan": "DISCOVERABILITY-LAUNCH",
-        "total_atoms": 9,
+        "total_atoms": 11,
         "done": 6,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 5,
         "blocked": 0
       },
       {
@@ -9815,10 +9962,10 @@
       {
         "code": "ET",
         "plan": "ECOSYSTEM-TOOLING",
-        "total_atoms": 8,
+        "total_atoms": 10,
         "done": 4,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 6,
         "blocked": 0
       },
       {
@@ -9842,10 +9989,10 @@
       {
         "code": "SH",
         "plan": "SECURITY-HARDENING",
-        "total_atoms": 10,
+        "total_atoms": 11,
         "done": 8,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 2,
         "blocked": 1
       },
       {
@@ -9903,6 +10050,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 833
+    "edge_count": 840
   }
 }

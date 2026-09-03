@@ -49,16 +49,27 @@ which atom it actually lands on is a judgement, so that mapping is authored, not
 
 ``ready_frontier``
     ``{id, title, plan}`` (``plan`` holds the plan **code**, as it always has) for every
-    atom that is startable right now: status is neither ``done`` nor ``blocked``, and every
-    intra-repo dep is ``done``. Sorted by (plan code, atom number).
+    atom a tick can start right now: status is neither ``done`` nor ``blocked``, every
+    intra-repo dep is ``done``, AND the atom is **ungated** (see ``gated_frontier``). Sorted
+    by (plan code, atom number).
 
-    **EXT refs do not gate readiness.** Two reasons: the resolved-EXT graph is cyclic
-    (``CE-9 <-> ET-7``, ``CRE-4 -> DIST-3 -> DIST-1 -> CRE-4``), so treating EXT refs as
-    hard prerequisites would make those atoms permanently unstartable; and many EXT refs
-    are forward-looking notes ("federate when X lands"), not prerequisites. The ticks treat
-    EXT separately, and ``resolved_edges``/``unresolved``/``cycles`` are where an EXT ref
-    becomes visible. ``blocked`` atoms are excluded because an owner-declared block is not
-    startable no matter what its deps say.
+    **EXT refs still do not enter the ORDERING graph** — the resolved-EXT graph is cyclic
+    (``CE-9 <-> ET-7``, ``CRE-4 -> DIST-3 -> DIST-1 -> CRE-4``), so it cannot drive
+    ``topo_order``. But an EXT dep (or an OWNER-GATED annotation) DOES mean the atom is not
+    truly pickable, so such atoms are moved OFF this list into ``gated_frontier`` rather than
+    inflating it. ``blocked`` atoms are excluded here too, because an owner-declared block is
+    not startable no matter what its deps say.
+
+``gated_frontier``
+    ``{id, title, plan, gate}`` for every atom that would be on ``ready_frontier`` by its
+    intra-repo deps but is held back by a gate the ordering graph cannot see: an EXT dep
+    (``gate`` contains ``"ext"``) or an OWNER-GATED / OWNER-ONLY ``blocked_reason`` marker
+    (``gate`` contains ``"owner"``). Same sort as ``ready_frontier``. This split is why the
+    ready frontier stopped over-reporting startability: a tick reading ``ready_frontier`` no
+    longer picks an atom whose only remaining work is a cross-plan contract or an owner action
+    (creating a repo, provisioning a secret, submitting an external listing). Additive — a
+    consumer that only reads ``ready_frontier`` sees a strictly more accurate list and can
+    ignore this key. ``done_when`` prose is not read (see ``atom_gates``).
 
 ``topo_order``
     A real topological order over the ordering graph covering **all** atoms — deps strictly
@@ -100,6 +111,7 @@ from __future__ import annotations
 import argparse
 import heapq
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -111,9 +123,16 @@ EXT_PREFIX = "EXT:"
 KNOWN_STATUSES = ("done", "in_progress", "todo", "blocked")
 #: Statuses that keep an atom out of the ready frontier.
 NOT_STARTABLE = frozenset({"done", "blocked"})
+#: An owner-gate annotation in ``blocked_reason``: OWNER-GATED / OWNER-ONLY (any case, hyphen
+#: or space). It marks an atom whose remaining work is an OWNER action (provision a repo, a
+#: secret, an external listing), not engineering — so it is not startable by a tick even when
+#: every intra-repo dep is done. ``owner call`` and similar prose are deliberately NOT matched:
+#: only the explicit gated/only marker moves an atom off the ready frontier.
+OWNER_GATE_RE = re.compile(r"owner[-\s]?(?:gated|only)", re.IGNORECASE)
 #: Key order of the derived block, preserved so regeneration is a minimal diff.
 DAG_KEY_ORDER = (
     "ready_frontier",
+    "gated_frontier",
     "topo_order",
     "cycles",
     "dangling",
@@ -246,24 +265,76 @@ def carry_ext_resolution(
     )
 
 
+def atom_gates(atom: dict) -> list[str]:
+    """Why an otherwise-startable atom is NOT truly startable — [] when it is.
+
+    Two gate signals, both machine-readable and both invisible to the ordering graph:
+
+    * ``"ext"`` — the atom has at least one EXT dep. An EXT ref names a cross-plan/cross-repo
+      contract in prose; it is not an intra-repo edge, so it cannot gate ``topo_order`` (the
+      resolved-EXT graph is cyclic), yet it IS a real prerequisite for many atoms.
+    * ``"owner"`` — ``blocked_reason`` carries an OWNER-GATED / OWNER-ONLY marker: the
+      remaining work is an owner action, not engineering.
+
+    ``done_when`` prose is deliberately NOT read — a free-text owner note (e.g. DC-1's "Owner
+    task 1 supplies the signing secrets") is not machine-detectable without false positives;
+    an atom that wants to be gated on that basis carries the explicit ``blocked_reason`` marker.
+    """
+    gates: list[str] = []
+    if any(str(dep).startswith(EXT_PREFIX) for dep in atom.get("deps") or []):
+        gates.append("ext")
+    if OWNER_GATE_RE.search(atom.get("blocked_reason") or ""):
+        gates.append("owner")
+    return gates
+
+
+def _startable(
+    atoms: list[dict], index: dict[str, dict], edges: list[tuple[str, str]]
+) -> list[dict]:
+    """Atoms not done, not blocked, with every intra-repo dep done — before gate partition."""
+    blockers: dict[str, list[str]] = {}
+    for src, dst in edges:
+        blockers.setdefault(src, []).append(dst)
+    return [
+        atom
+        for atom in atoms
+        if atom.get("status") not in NOT_STARTABLE
+        and all(index[d].get("status") == "done" for d in blockers.get(atom["id"], ()))
+    ]
+
+
 def ready_frontier(
     atoms: list[dict],
     index: dict[str, dict],
     edges: list[tuple[str, str]],
     codes: dict[str, str],
 ) -> list[dict]:
-    """Atoms startable now: not done, not blocked, every intra-repo dep done."""
-    blockers: dict[str, list[str]] = {}
-    for src, dst in edges:
-        blockers.setdefault(src, []).append(dst)
-    frontier = [
-        atom
-        for atom in atoms
-        if atom.get("status") not in NOT_STARTABLE
-        and all(index[d].get("status") == "done" for d in blockers.get(atom["id"], ()))
-    ]
+    """Atoms a tick can start now: startable AND ungated (no EXT dep, no owner-gate marker)."""
+    frontier = [atom for atom in _startable(atoms, index, edges) if not atom_gates(atom)]
     frontier.sort(key=lambda a: id_key(a["id"]))
     return [{"id": a["id"], "title": a.get("title"), "plan": codes[a["id"]]} for a in frontier]
+
+
+def gated_frontier(
+    atoms: list[dict],
+    index: dict[str, dict],
+    edges: list[tuple[str, str]],
+    codes: dict[str, str],
+) -> list[dict]:
+    """Startable-by-deps atoms held back by a gate the ordering graph cannot see.
+
+    These used to inflate ``ready_frontier`` — a tick reading it would pick an atom whose only
+    remaining work is a cross-plan contract or an owner action. Carried in their own key so the
+    change is additive: ``ready_frontier`` shrinks to genuinely pickable work, and every entry
+    here names its gate(s) in ``gate`` (a sorted subset of ``["ext", "owner"]``).
+    """
+    gated = [(atom, atom_gates(atom)) for atom in _startable(atoms, index, edges)]
+    gated = [(atom, gates) for atom, gates in gated if gates]
+    gated.sort(key=lambda pair: id_key(pair[0]["id"]))
+    return [
+        {"id": a["id"], "title": a.get("title"), "plan": codes[a["id"]], "gate": gates}
+        for a, gates in gated
+    ]
 
 
 def topo_order(index: dict[str, dict], edges: list[tuple[str, str]]) -> list[str]:
@@ -381,6 +452,7 @@ def derive(data: dict) -> dict:
 
     derived = {
         "ready_frontier": ready_frontier(atoms, index, edges, codes),
+        "gated_frontier": gated_frontier(atoms, index, edges, codes),
         "topo_order": topo_order(index, edges),
         "cycles": find_cycles(index, full),
         "dangling": dangling,

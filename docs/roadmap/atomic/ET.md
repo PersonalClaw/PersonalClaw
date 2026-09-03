@@ -18,6 +18,8 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `ET-6` | ✅ | Build the four scaffold-generated exemplar apps and list them in the registry | `ET-1`, `ET-3`, `EXT:WATCHED-SOURCES:watched-source provider contract the github exemplar implements` | all four exemplars scaffold-generated then minimally implemented (each ≤300 LOC, README-led), each installs from its git URL through the Store and is registry-listed; V3: fork-simulate one exemplar (clone, rename, install) proves the third-party path end to end post-registry. NOTE: watched-source-github's provider shape must track the WATCHED-SOURCES contract; action-home-assistant may be community-validated if no HA instance (Owner task 4) |
 | `ET-7` | ⬜ | Bounty board: labeled `bounty` issues for wanted apps, linking scaffold/guide/conformance | `ET-1`, `ET-2`, `EXT:CHANNEL-EXPANSION:channel wants-list (T7.3) + channel scaffold template the channel bounties reference` | ≥6 `bounty` GitHub issues live (channels + providers + sources from the wants-list), each linking the scaffold, guide, and conformance kit; showcase thread seeded in the community surface. Channel bounties draw from CHANNEL-EXPANSION's wants-list (T7.3) and its channel scaffold template |
 | `ET-8` | ⬜ | Registry surface on personalclaw.dev generated from `registry.json` | `ET-3`, `EXT:DISCOVERABILITY-LAUNCH:the site sync pipeline this registry surface extends` | static registry pages generated on personalclaw.dev from registry.json (cards: name/types/permissions/verdict/maintainer; per-app page with README fetch); declared permissions + last scan verdict visible pre-install; a rebuild picks up registry changes; V4: a merged registry PR appears on the site after rebuild and card data matches the Store consent surface |
+| `ET-9` | ⬜ | Owner: create the github.com/PersonalClaw/registry public repo (gates ET-4) | `ET-3` | github.com/PersonalClaw/registry exists as a public repo seeded from scratch/registry/ (post-ET-4a rename) with the ET-3 PR-validation workflow wired; ET-4's default-source seeding then resolves real registry apps — OWNER-ONLY, belongs on gated_frontier |
+| `ET-10` | ⬜ | Owner: provision GHCR (GitHub Container Registry) publish credentials (gates ET-8) | `ET-3` | GHCR publish credentials are provisioned in the CI environment so the artifacts ET-8's registry surface references can be published; ET-8's site-sync consumes them — OWNER-ONLY, belongs on gated_frontier |
 
 ## Atom scopes
 
@@ -93,3 +95,19 @@ Session 4 (T4.1, V4); Design — Registry surface (S4)
 
 **Done when:** static registry pages generated on personalclaw.dev from registry.json (cards: name/types/permissions/verdict/maintainer; per-app page with README fetch); declared permissions + last scan verdict visible pre-install; a rebuild picks up registry changes; V4: a merged registry PR appears on the site after rebuild and card data matches the Store consent surface
 
+
+### `ET-9` — Owner: create the github.com/PersonalClaw/registry public repo (gates ET-4)
+
+**Status:** todo — OWNER-ONLY (belongs on gated_frontier, never ready_frontier)
+
+ECOSYSTEM-TOOLING owner task 1, minted as an explicit atom so its gate is legible on the roadmap. The registry data tier (ET-3, done) and the app-registry.json rename (ET-4a, landed 2026-08-27) are in place; ET-4's remaining "a fresh dev home lists registry apps in the Store" blocker is that github.com/PersonalClaw/registry does not exist yet. Creating it publishes scratch/registry/ verbatim and MUST follow the ET-4a rename, or the rename becomes a breaking change on a repo third parties may have cloned.
+
+**Done when:** github.com/PersonalClaw/registry exists as a public repo seeded from scratch/registry/ (post-ET-4a rename) with the ET-3 PR-validation workflow wired; ET-4's default-source seeding then resolves real registry apps
+
+### `ET-10` — Owner: provision GHCR (GitHub Container Registry) publish credentials (gates ET-8)
+
+**Status:** todo — OWNER-ONLY (belongs on gated_frontier, never ready_frontier)
+
+Owner provisioning for the container/registry publication path ET-8's personalclaw.dev registry surface depends on. Minted as an explicit owner atom so the gate is legible.
+
+**Done when:** GHCR publish credentials are provisioned in the CI environment so the artifacts ET-8's registry surface references can be published; ET-8's site-sync consumes them

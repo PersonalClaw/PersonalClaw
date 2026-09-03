@@ -1146,3 +1146,11 @@ class ElementRef:
   require-env set, a browser that will not launch is a red, not twenty skips — but the first run is
   the measurement, not this entry. `dag.json` untouched; the standing owner question from 2026-08-24
   (flip `BA-2` on `done_when`, or wait for §4 Stealth Stack + §10 launcher) is unchanged.
+
+### `BA-6` — scheduled-actuator (flipped `done` 2026-09-03)
+
+**2026-09-03 — DONE (`BA-6`).** Merged via core PR #2339 (commit 242a8b253, "feat(browse): persisted idempotent scheduled-actuator plans"). Persisted `browse/plans/<id>.json` idempotent one-tick runs (kill mid-flow loses <=1 step; re-fire is a no-op at the cursor), the WATCHED-SOURCES escalation fall-through to exactly one browse tick for a JS-rendered page, and the rung caps (read-only plans graduate; any SUBMIT-bearing plan registers `floor=draft_only`) all landed. `dag.json` flipped to `done` with the PR/commit recorded in `evidence`; the `BA.md` row is now ✅.
+
+### `BA-8` — extension connector (flipped `done` 2026-09-03)
+
+**2026-09-03 — DONE (`BA-8`).** Merged via core PR #2350 (commit cf5b3f661, "feat(browse): loopback user_browser connector route") + apps PR PersonalClawApps#58 (loopback browser-extension connector bundle). Loopback-only (`LOOPBACK_INTERNAL`) typed local contract (navigate/read-outline/click/type/close), paired via the shipped COMPANION-APPS device-session/pairing (consumed, not forked), shipped as an app bundle with zero browser-vendor strings in core. `dag.json` flipped to `done`; the `BA.md` row is now ✅. `BA-9` (per-task grant flow) remains the last open BA atom.

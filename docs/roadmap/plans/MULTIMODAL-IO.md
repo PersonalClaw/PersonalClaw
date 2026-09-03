@@ -405,3 +405,14 @@ the mode to the user. Recorded in `screen_context.py` beside the policy.
 `dashboard.screen_share_enabled` was also added to `docs/reference/configuration.md`,
 which the implementation session missed. (Seven other `dashboard.*` fields are missing
 from that table on `main`; those are pre-existing and left alone.)
+
+**2026-09-03 — MI-6 minted (the "MI-2c" engine-selection remainder).** The OmniVoice-vs-CosyVoice
+engine spike is carved out of `MI-2` §2.2 into its own atom so it can be picked up on its own once
+the MI-2 halves land. It takes the next FREE numeric id `MI-6` rather than a letter suffix, because
+the status-sync id regex is `[A-Z0-9]+-\d+` and `MI-2c` is unrepresentable — it would be an
+unmatched row and a silent drift. Scope: run the bake-off on fixtures, pick ONE engine with the
+loser's notes committed to the plan dir, stand up real zero-shot cloning inference in the
+apps/voice-clone-tts sidecar with resumable weights, and prove an LMM-V2 through-clone selftest.
+Deps: `MI-2` (the atom owning both halves — core capability surface PR #2351 merged; apps sidecar
+PR PersonalClawApps#60 still open), so `MI-6` is not startable until MI-2 completes. `MI-2` itself
+is deliberately NOT flipped — the engine spike is its remainder and now lives in `MI-6`.
