@@ -23,6 +23,13 @@ export interface DashboardLiveData {
   approvals: PendingApproval[]
   inbox: InboxItem[]
   proposals: SkillProposal[]
+  /** The three triage lanes' own read failures, each distinct from an empty lane. ActionCenter
+   *  merges approvals+inbox+proposals into one queue; without these a swallowed lane silently
+   *  under-reports (a missing PENDING TOOL APPROVAL reads as "all clear"). Same shape and reason as
+   *  `discoverErr`/`doctorErr` below. */
+  approvalsErr: unknown
+  inboxErr: unknown
+  proposalsErr: unknown
   loops: Loop[]
   tasks: TaskItem[]
   schedule: ScheduleRun[]
@@ -53,6 +60,11 @@ export interface DashboardLiveData {
    *  and critically distinct from a healthy report, because a health surface that goes quiet is
    *  read as "nothing wrong". Consumers must render "unknown", never silence. */
   doctorErr: unknown
+  /** Re-run ONE triage lane's read — the Retry beside its failure row. Per-lane, so retrying a
+   *  failed approvals read doesn't refetch a healthy inbox. */
+  retryApprovals: () => void
+  retryInbox: () => void
+  retryProposals: () => void
   /** Dismiss a Discover tip forever, then refetch the slice so it drops from the
    *  feed (propose-don't-write: this hides, never enables). */
   dismissDiscoverTip: (id: string) => void
@@ -79,6 +91,14 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [approvals, setApprovals] = useState<PendingApproval[]>([])
   const [inbox, setInbox] = useState<InboxItem[]>([])
   const [proposals, setProposals] = useState<SkillProposal[]>([])
+  // Per-lane read failures for the three triage-queue lanes (ActionCenter merges them into one
+  // list). Paired with the arrays above the way `discoverErr`/`doctorErr` pair with their slices:
+  // an array left at its last-good value cannot say "this lane failed to load", so a swallowed
+  // approvals/inbox/proposals read used to vanish into ActionCenter's "All clear" — hiding, e.g.,
+  // a pending TOOL APPROVAL. Tracked so the queue tells a failed lane from an empty one, and retries.
+  const [approvalsErr, setApprovalsErr] = useState<unknown>(null)
+  const [inboxErr, setInboxErr] = useState<unknown>(null)
+  const [proposalsErr, setProposalsErr] = useState<unknown>(null)
   const [loops, setLoops] = useState<Loop[]>([])
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [schedule, setSchedule] = useState<ScheduleRun[]>([])
@@ -100,9 +120,21 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const guard = <T,>(set: (v: T) => void) => (v: T) => { if (alive.current) set(v) }
 
-  const loadApprovals = useCallback(() => { api.approvals().then(guard(setApprovals)).catch(() => {}) }, [])
-  const loadInbox = useCallback(() => { api.inboxPending().then(guard(setInbox)).catch(() => {}) }, [])
-  const loadProposals = useCallback(() => { api.skillProposals().then(guard((d) => setProposals(d.proposals))).catch(() => {}) }, [])
+  // 🔴 The three triage lanes surface their own read failures (like `loadDiscover`/`loadDoctor`
+  // below) instead of swallowing. `catch(() => {})` left each array at its last-good value, so a
+  // failed read was indistinguishable from an empty lane — and ActionCenter folded that into "All
+  // clear — nothing waiting on you", the one sentence that must never appear over a swallowed
+  // PENDING TOOL APPROVAL. A later failure keeps the last-good rows (this only assigns on success);
+  // the cold case surfaces the error so the lane can say it failed and offer a retry.
+  const loadApprovals = useCallback(() => {
+    api.approvals().then((d) => { guard(setApprovals)(d); guard(setApprovalsErr)(null) }).catch((e) => guard(setApprovalsErr)(e))
+  }, [])
+  const loadInbox = useCallback(() => {
+    api.inboxPending().then((d) => { guard(setInbox)(d); guard(setInboxErr)(null) }).catch((e) => guard(setInboxErr)(e))
+  }, [])
+  const loadProposals = useCallback(() => {
+    api.skillProposals().then((d) => { guard(setProposals)(d.proposals); guard(setProposalsErr)(null) }).catch((e) => guard(setProposalsErr)(e))
+  }, [])
   const loadLoops = useCallback(() => { api.uLoops().then(guard(setLoops)).catch(() => {}) }, [])
   const loadTasks = useCallback(() => { api.readyTasks().then(guard(setTasks)).catch(() => {}) }, [])
   // 🔴 Keeps the archive split, which this call discarded (S165). The backend has returned
@@ -194,9 +226,12 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   useVisiblePoll(() => { loadSchedule(); loadStatus(); loadNotifications(); loadDiscover(); loadDoctor() }, SLOW_POLL)
 
   const value: DashboardLiveData = {
-    approvals, inbox, proposals, loops, tasks, schedule, scheduleDidIds, scheduleSuppressed,
+    approvals, inbox, proposals, approvalsErr, inboxErr, proposalsErr,
+    loops, tasks, schedule, scheduleDidIds, scheduleSuppressed,
     status, notifications, system,
-    discover, discoverErr, doctor, doctorErr, dismissDiscoverTip, refreshAll,
+    discover, discoverErr, doctor, doctorErr,
+    retryApprovals: loadApprovals, retryInbox: loadInbox, retryProposals: loadProposals,
+    dismissDiscoverTip, refreshAll,
   }
   return <DashboardLiveContext.Provider value={value}>{children}</DashboardLiveContext.Provider>
 }
