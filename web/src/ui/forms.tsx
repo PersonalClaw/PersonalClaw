@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { cx } from './cx'
+import { Eyebrow } from './Eyebrow'
 
 // ── Shared form-field family (design-system consistency, plan S2/Owner task 2) ─
 // The canonical form primitives, extracted from pages/tasks/formControls.tsx so
@@ -89,7 +90,7 @@ export function Field({ label, hint, right, children }: { label: string; hint?: 
       <FieldHintCtx.Provider value={hint ? hintId : undefined}>
       <div>
         <div className="mb-1.5 flex items-center gap-s">
-          <span id={labelId} className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</span>
+          <Eyebrow as="span" id={labelId}>{label}</Eyebrow>
           {right}
         </div>
         {children}
