@@ -67,7 +67,7 @@ def test_invalid_reasoning_effort_is_rejected():
     assert "reasoning_effort" in err
 
 
-@pytest.mark.parametrize("effort", ["", "low", "medium", "high"])
+@pytest.mark.parametrize("effort", ["", "low", "medium", "high", "max"])
 def test_valid_reasoning_efforts_accepted(effort):
     tid, err = st.save_template({"name": f"t-{effort or 'none'}", "reasoning_effort": effort})
     assert err == ""
