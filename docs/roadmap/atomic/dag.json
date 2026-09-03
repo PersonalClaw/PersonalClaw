@@ -1799,7 +1799,7 @@
         {
           "id": "ES-7",
           "title": "Harness ablation runner + skills bench + model-upgrade watchdog",
-          "status": "todo",
+          "status": "done",
           "scope": "§3 (3.1 ablation runner, 3.2 model-upgrade watchdog, 3.3 skills/templates impact bench)",
           "done_when": "the periodic ablation runner produces a keep/remove/lighten report for one component per cadence with measured on-vs-off deltas via child-process overlay toggling (live spec/config never mutated), and a no-delta component's report attaches as the ablation-grade evidence on a LEARN-R9 retirement proposal; the §3.3 skills bench replays consulted runs with a skill surfaced-vs-suppressed; the watchdog computes a model fingerprint on active_models.json changes, queues small-budget re-benchmarks, and emits exactly ONE digest notification, with per-fingerprint results.tsv baselines",
           "deps": [
@@ -1833,7 +1833,7 @@
         {
           "id": "ES-10",
           "title": "Model bake-off from production-sampled inputs → per-use-case recommendation",
-          "status": "todo",
+          "status": "done",
           "scope": "§7 (production sampling, privacy floor, matrix run, per-use-case recommendation)",
           "done_when": "candidate models run over real inputs sampled from model_calls.jsonl (or a temporary size-capped capture behind a redact()-gated, off-by-default, auto-expiring flag), scored by rubric-pinned comparative judging or task-native assertions; a per-use-case recommendation row lands as a proposal the user applies by rebinding active_models.json; sampled files live under the 0600 store, are excluded from portability export, and capture-flag flips are SEL-audited",
           "deps": [
@@ -2944,7 +2944,7 @@
     {
       "plan": "PROACTIVE-ASSISTANT",
       "code": "PA",
-      "status": "in_progress",
+      "status": "done",
       "summary": "6 atoms, all todo. Triage flagship = PA-1 (approval memory + config foundation, independently landable) → PA-2 (5-stage digest pipeline) → PA-3 (inbox-op action provider + budgeted auto-execution) → PA-5 (triage FE + validation). Decision journal = PA-4 (native type + tools + horizon triggers + R18 lesson) → PA-6 (journal view + calibration FE). Cross-plan deps (substrate/guardrails/flywheel/inbox-notif) are already DONE/shipped enough to unblock, but recorded as EXT edges.",
       "atoms": [
         {
@@ -2996,7 +2996,7 @@
         {
           "id": "PA-5",
           "title": "Triage FE surfaces + as-a-user validation (Session 5a)",
-          "status": "todo",
+          "status": "done",
           "scope": "§5.1 Digest card; §5.2 Triage rules manager; §5.4 Template pack card; Success Criteria 1/3/4/9/10",
           "done_when": "Digest card renders auto-done+undo, pending proposals with tier badges and one-tap yes/no/always, and the ledger \"what your machine did\" section with permalinks; the rules-manager settings card shows/revokes rules with the send-capable graduation toggle; the Morning-triage template pack card installs an editable trigger; triage flow validated as-a-user incl. quiet-hours deferral, gateway-restart reply idempotency, and rule revocation (criteria 1/3/4/9/10)",
           "deps": [
@@ -3864,14 +3864,13 @@
         },
         {
           "id": "WF2AUT-12",
-          "title": "webhook kind fire endpoint + scoped token verification (E4-blocked)",
+          "title": "webhook kind fire endpoint + scoped token verification",
           "status": "todo",
           "scope": "Status REMAINING BLOCKED (E4 owner decision); §1.2 webhook kind; §1.4 decision 12 scoped tokens; §7 step 6; S119/S123",
           "done_when": "owner clears E4 and the inbound surface owner is decided; POST /api/triggers/{id}/fire verifies the SHA-256-hashed scoped bearer token and fences the payload; token_ref lint (shipped S119) then has a fire path to guard",
           "deps": [
             "WF2AUT-5",
-            "EXT:MCP-READONLY-INBOUND:fail-closed inbound HTTP substrate",
-            "EXT:EXTERNAL-ACCESS:generalized inbound surface + owner E4 decision"
+            "EXT:MCP-READONLY-INBOUND:fail-closed inbound HTTP substrate"
           ],
           "blocked_reason": "OWNER RULING 2026-08-27 (question 8 of 11). Q (E4): does the webhook fire path ride the landed src/personalclaw/inbound/ substrate, or does EXTERNAL-ACCESS mint a new inbound surface? RULED: RIDE THE LANDED inbound/ SUBSTRATE. It already ships auth, capabilities, audit, mcp_http and tools. A second inbound surface would be two doors into the same house, each with its own auth and its own audit -- and the one that gets less attention becomes the way in. The scoped-token verification this atom needs is a capability on the existing door, not a new door. This also removes the EXT dependency the atom carried: nothing in EXTERNAL-ACCESS needs to land first."
         },
@@ -4410,7 +4409,7 @@
         {
           "id": "EA-6",
           "title": "Local A/B replay harness — evidence generator on captured sessions",
-          "status": "todo",
+          "status": "done",
           "scope": "§9 (Local A/B replay harness): replay-case mining on curator cadence, current-vs-candidate replay + LLMJudge scoring, evidence-manifest attachment. Session 5.",
           "done_when": "Curator-cadence background pass extracts replay_cases (tool-free-preferring, ≤3/session, provenance-pointed) from capture sessions; given a pending skill/template proposal, run each case twice via one_shot_completion(use_case=background) — baseline vs candidate — scored with eval/judge.py:LLMJudge (eval_judge binding, parse-failure→0 reject); verdict {cases,candidate_mean,baseline_mean,verdict:improved|neutral|regressed} attached to the proposal's evidence manifest and rendered on the Proposal Inbox card (NOT a gate — human still accepts; feeds LEARN-R2); composes one_shot_completion+LLMJudge directly, NEVER eval/runner.py (env-mutation hazard); replay LLM spend meters via ModelCallGuard under a learning-scope budget, exhaustion defers replays with labeled cards (Success Criterion 7).",
           "deps": [
@@ -5124,7 +5123,7 @@
         {
           "id": "SV-9",
           "title": "Self-QA Companion core: commit-watch cron script, self-qa bundled template, self_qa config four-point wiring",
-          "status": "todo",
+          "status": "done",
           "scope": "§3.1 (interim commit-watch cron script + state file), §3.2 steps 1-5 (triage/scenario-gen/execute/evidence/file-findings nodes), §5 (self_qa config through all four wiring points)",
           "done_when": "a real commit to the watched repo fires the companion within one cron interval; a test-only commit yields a ledger-only skip with a one-line rationale; a user-impacting commit generates a scenario that mutates state through the real UI via Chrome DevTools MCP; a failing scenario files one Inbox item + one Task (Success Criterion #6)",
           "deps": [
@@ -6756,7 +6755,7 @@
           "done_when": "released bundles carry valid signatures verified in CI; registry validation script records signer per listing",
           "deps": [
             "SH-3",
-            "EXT:CI-RELEASE-ENGINEERING:release.yml pipeline to sign artifacts (present/done)",
+            "EXT:CI-RELEASE-ENGINEERING:release.yml pipeline to sign artifacts",
             "EXT:ECOSYSTEM-TOOLING:registry.json listings record signer identity"
           ]
         },
@@ -7744,11 +7743,6 @@
         "plan": "DL"
       },
       {
-        "id": "EA-6",
-        "title": "Local A/B replay harness — evidence generator on captured sessions",
-        "plan": "EA"
-      },
-      {
         "id": "EA-7",
         "title": "Sender-trust substrate — channels' inbound-identity half + DM pairing",
         "plan": "EA"
@@ -7764,13 +7758,8 @@
         "plan": "EI"
       },
       {
-        "id": "ES-7",
-        "title": "Harness ablation runner + skills bench + model-upgrade watchdog",
-        "plan": "ES"
-      },
-      {
-        "id": "ES-10",
-        "title": "Model bake-off from production-sampled inputs → per-use-case recommendation",
+        "id": "ES-8",
+        "title": "Trust-graduation ladder: trust records, graduation/revocation, rungs, attention accounting",
         "plan": "ES"
       },
       {
@@ -7819,11 +7808,6 @@
         "plan": "OU"
       },
       {
-        "id": "PA-5",
-        "title": "Triage FE surfaces + as-a-user validation (Session 5a)",
-        "plan": "PA"
-      },
-      {
         "id": "PCS-9",
         "title": "V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs)",
         "plan": "PCS"
@@ -7849,13 +7833,18 @@
         "plan": "SH"
       },
       {
-        "id": "SV-9",
-        "title": "Self-QA Companion core: commit-watch cron script, self-qa bundled template, self_qa config four-point wiring",
+        "id": "SV-10",
+        "title": "Self-QA evidence bundle capture + optional fix-branch + end-to-end validation",
+        "plan": "SV"
+      },
+      {
+        "id": "SV-11",
+        "title": "Retire the interim commit-watcher cron script when the AUTO-R12 vcs trigger lands",
         "plan": "SV"
       },
       {
         "id": "WF2AUT-12",
-        "title": "webhook kind fire endpoint + scoped token verification (E4-blocked)",
+        "title": "webhook kind fire endpoint + scoped token verification",
         "plan": "WF2AUT"
       },
       {
@@ -8874,11 +8863,6 @@
         "to_atom": "MRI-1"
       },
       {
-        "atom": "WF2AUT-12",
-        "ext_ref": "EXT:EXTERNAL-ACCESS:generalized inbound surface + owner E4 decision",
-        "to_atom": "EA-1"
-      },
-      {
         "atom": "AR2-5",
         "ext_ref": "EXT:FEEDBACK-SIGNAL:routing_suggestion target-kind + routing_pair producer-kind vocabulary and record_feedback API (plan 58, shipped 2026-07-27)",
         "to_atom": "FS-1"
@@ -9190,7 +9174,7 @@
       },
       {
         "atom": "SH-4",
-        "ext_ref": "EXT:CI-RELEASE-ENGINEERING:release.yml pipeline to sign artifacts (present/done)",
+        "ext_ref": "EXT:CI-RELEASE-ENGINEERING:release.yml pipeline to sign artifacts",
         "to_atom": "CRE-4"
       },
       {
@@ -9434,9 +9418,9 @@
         "code": "ES",
         "plan": "EVALUATION-SUBSTRATE",
         "total_atoms": 12,
-        "done": 8,
+        "done": 10,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -9524,9 +9508,9 @@
         "code": "PA",
         "plan": "PROACTIVE-ASSISTANT",
         "total_atoms": 6,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
@@ -9650,9 +9634,9 @@
         "code": "EA",
         "plan": "EXTERNAL-ACCESS",
         "total_atoms": 9,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
@@ -9713,9 +9697,9 @@
         "code": "SV",
         "plan": "SELF-VERIFICATION",
         "total_atoms": 11,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -9926,6 +9910,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 834
+    "edge_count": 833
   }
 }

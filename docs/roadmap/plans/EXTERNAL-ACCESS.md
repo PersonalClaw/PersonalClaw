@@ -1610,3 +1610,7 @@ follows in the next tracking batch.
   `AcceptedChange`, one line in `record_accepted_change`, and a decision about whether a pre-accept
   replay delta belongs in the same comparison as post-accept run failure rates — that decision is the
   actual work, not the plumbing.
+
+## Execution log — EA-6 (Local A/B replay harness — evidence generator on captured sessions)
+
+- [2026-09-02][EA-6] LANDED on main; atom flipped ✅. `learning/replay.py` ships the harness end to end — `mine_cases()` extracts tool-free-preferring replay cases (≤3/session, provenance-pointed) at curator cadence, runs each twice through `one_shot_completion` (baseline vs candidate) scored by `eval/judge.py` `LLMJudge` (parse-failure→0 reject), and attaches a `ReplayReport` verdict to the proposal evidence manifest that renders on the Proposal Inbox card; replay spend rides `ModelCallGuard` under a learning budget, and it composes the judge directly rather than `eval/runner.py`, so it stays an evidence generator, not a gate. Locked by `tests/test_ea6_replay_harness.py`. WHY: every done_when clause maps to shipped, tested code; the LEARNING-FLYWHEEL LEARN-R2 note was descriptive context, not a prerequisite, so it is dropped from deps.

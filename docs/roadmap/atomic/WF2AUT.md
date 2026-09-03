@@ -21,7 +21,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `WF2AUT-9` | ✅ | §3.5 skip_if_active liveness guard + acting_on resource claim on mutating triggers | `WF2AUT-3` | skip_if_active declared on the Trigger entity and evaluated at fire time via cheap liveness heuristics (dirty worktree/lockfiles/recent mtime); acting_on resource claim serializes two trigger-fired runs targeting the same resource; a busy target yields a typed deferred ledger row |
 | `WF2AUT-10` | ✅ | §5 did/suppressed fold affordance FE consumer | `WF2AUT-5` | the Automations runs-inbox surfaces the did-vs-suppressed fold control so archived/inert rows can be revealed on demand; backend archive split already present, this wires the FE toggle |
 | `WF2AUT-11` | 🔴 | idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption) | `WF2AUT-3`, `EXT:LOOPS-EVOLUTION:Phase 4 loop-ticker before autonudge deletion` | kind:idle fires for user automations preserving reactive re-arm/delivered-only counting/mid-turn-drop; autonudge.py deleted and the loop tick engine rides kind:idle (this half only after LOOPS-EVOLUTION Phase 4) |
-| `WF2AUT-12` | ⬜ | webhook kind fire endpoint + scoped token verification (E4-blocked) | `WF2AUT-5`, `EXT:MCP-READONLY-INBOUND:fail-closed inbound HTTP substrate`, `EXT:EXTERNAL-ACCESS:generalized inbound surface + owner E4 decision` | owner clears E4 and the inbound surface owner is decided; POST /api/triggers/{id}/fire verifies the SHA-256-hashed scoped bearer token and fences the payload; token_ref lint (shipped S119) then has a fire path to guard |
+| `WF2AUT-12` | ⬜ | webhook kind fire endpoint + scoped token verification | `WF2AUT-5`, `EXT:MCP-READONLY-INBOUND:fail-closed inbound HTTP substrate` | owner clears E4 and the inbound surface owner is decided; POST /api/triggers/{id}/fire verifies the SHA-256-hashed scoped bearer token and fences the payload; token_ref lint (shipped S119) then has a fire path to guard |
 | `WF2AUT-13` | ✅ | §3.3 cursor rule call site: the spool drain acts on `drain_decision` instead of acking unconditionally | `WF2AUT-1`, `WF2AUT-2` | the spool drain classifies each re-entry into `Handling` at an explicit side-effect boundary, calls `drain_decision`, and acts on every `DrainAction` (consume/hold/give-up/skip-duplicate) with a durable retry budget; a failure AFTER the boundary is never retried; `SKIP_CYCLE` deleted for want of an honest producer; exhaustiveness ratchet over both enums with a raising tail |
 | `WF2AUT-14` | 🟡 | Resume-target substrate: ratify shipped resume-targets + file the orphaned scope | — | The shipped resume-target surface is documented as the substrate contract (ratified as filed); the orphaned remainder (delta between original WF2AUT scope and what shipped 08-28) is enumerated and implemented or explicitly descoped with reasons; WF2LOO-9 consumes the contract without private workarounds; tests pin the contract surface. |
 
@@ -127,7 +127,7 @@ Unblock by porting the loop-cycle driver off autonudge first, per LOOPS-EVOLUTIO
 
 **Done when:** kind:idle fires for user automations preserving reactive re-arm/delivered-only counting/mid-turn-drop; autonudge.py deleted and the loop tick engine rides kind:idle (this half only after LOOPS-EVOLUTION Phase 4)
 
-### `WF2AUT-12` — webhook kind fire endpoint + scoped token verification (E4-blocked)
+### `WF2AUT-12` — webhook kind fire endpoint + scoped token verification
 
 **Status:** todo
 

@@ -808,3 +808,7 @@ Where each new piece plugs into the pluggable-provider architecture — nothing 
   superseded by the shipped frontend). Verified on `main` @`01e25c848`:
   `web/src/pages/knowledge/DecisionJournal.tsx` ships the journal view with the per-domain
   calibration strip (16 calibration references); `decisionJournal.test.tsx` 21 passed.
+
+## Execution log — PA-5 (Triage FE surfaces + as-a-user validation, Session 5a)
+
+- [2026-09-02][PA-5] LANDED on main; atom flipped ✅, and this closes the PROACTIVE-ASSISTANT plan (6/6). `web/src/pages/inbox/TriageDigestCard.tsx` renders the digest with auto-done + `autonomyUndo`, tier badges, one-tap yes/no/always (Always surfaced when a pattern exists), the "what your machine did" ledger with permalinks, and the Morning-triage template-pack card; `web/src/pages/settings/TriageRulesCard.tsx` shows/revokes rules with the send-capable graduation toggle; backends PA-1/PA-2/PA-3 are done. WHY: the FE done_when clauses are satisfied by shipped surfaces — the as-a-user sweep the atom also names is a validation pass over shipped code, not a build gap — so the atom flips and the plan closes.
