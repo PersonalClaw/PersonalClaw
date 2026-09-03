@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 from aiohttp import web
 
+from personalclaw.http_errors import json_error
 from personalclaw.resilience import degraded
 from personalclaw.resilience.doctor import DoctorContext, run_capability, run_doctor
 
@@ -50,10 +51,7 @@ def _resilience_cfg():
 async def api_doctor(request: web.Request) -> web.Response:
     """GET /api/doctor — all probes, grouped by capability, cached 30s."""
     if not _resilience_cfg().doctor_enabled:
-        return web.json_response(
-            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
-            status=404,
-        )
+        return json_error("doctor_disabled", status=404)
     global _doctor_cache, _doctor_cache_ts
     now = time.monotonic()
     if _doctor_cache is not None and now - _doctor_cache_ts < _DOCTOR_TTL:
@@ -67,20 +65,13 @@ async def api_doctor(request: web.Request) -> web.Response:
 async def api_doctor_capability(request: web.Request) -> web.Response:
     """GET /api/doctor/{capability} — re-run one capability's probes (uncached)."""
     if not _resilience_cfg().doctor_enabled:
-        return web.json_response(
-            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
-            status=404,
-        )
+        return json_error("doctor_disabled", status=404)
     capability = request.match_info.get("capability", "")
     result = await run_capability(capability, _ctx(request))
     if result.get("unknown"):
-        return web.json_response(
-            {
-                "error": {
-                    "code": "unknown_capability",
-                    "message": f"no such capability: {capability}",
-                }
-            },
+        return json_error(
+            "unknown_capability",
+            message=f"No such capability: {capability}.",
             status=404,
         )
     return web.json_response(result)
@@ -115,10 +106,7 @@ async def _run_degraded(state: object) -> list[dict]:
 async def api_doctor_fixes(request: web.Request) -> web.Response:
     """GET /api/doctor/fixes — the fix catalog with read-only dry-previews."""
     if not _resilience_cfg().doctor_enabled:
-        return web.json_response(
-            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
-            status=404,
-        )
+        return json_error("doctor_disabled", status=404)
     from personalclaw.resilience import fixes as _fixes
 
     def _catalog() -> list[dict]:
@@ -141,26 +129,18 @@ async def api_doctor_fix_apply(request: web.Request) -> web.Response:
     mutate. Every application is SEL-audited inside ``apply_fix``.
     """
     if not _resilience_cfg().doctor_enabled:
-        return web.json_response(
-            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
-            status=404,
-        )
+        return json_error("doctor_disabled", status=404)
     fix_id = request.match_info.get("fix_id", "")
     try:
         body = await request.json()
     except Exception:
         body = {}
     if not (isinstance(body, dict) and body.get("confirm") is True):
-        return web.json_response(
-            {"error": {"code": "confirm_required", "message": 'fix requires {"confirm": true}'}},
-            status=400,
-        )
+        return json_error("confirm_required", status=400)
     from personalclaw.resilience import fixes as _fixes
 
     if _fixes.get_fix(fix_id) is None:
-        return web.json_response(
-            {"error": {"code": "unknown_fix", "message": f"no such fix: {fix_id}"}}, status=404
-        )
+        return json_error("unknown_fix", message=f"No such fix: {fix_id}.", status=404)
     result = await asyncio.to_thread(_fixes.apply_fix, fix_id)
     return web.json_response(result)
 
@@ -173,19 +153,14 @@ async def api_doctor_simulate_surfacing(request: web.Request) -> web.Response:
     explain mode: per-candidate keyword/semantic scores, thresholds, and the
     inclusion/exclusion reason. Runs the SAME deterministic scorer a real turn runs."""
     if not _resilience_cfg().doctor_enabled:
-        return web.json_response(
-            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
-            status=404,
-        )
+        return json_error("doctor_disabled", status=404)
     try:
         body = await request.json()
     except Exception:
         body = {}
     text = str(body.get("text", "")) if isinstance(body, dict) else ""
     if not text.strip():
-        return web.json_response(
-            {"error": {"code": "text_required", "message": "a query text is required"}}, status=400
-        )
+        return json_error("text_required", status=400)
 
     def _simulate() -> list[dict]:
         from personalclaw.config.loader import AppConfig
@@ -442,10 +417,7 @@ async def api_doctor_simulate_automation(request: web.Request) -> web.Response:
     from personalclaw.http_errors import json_error
 
     if not _resilience_cfg().doctor_enabled:
-        return web.json_response(
-            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
-            status=404,
-        )
+        return json_error("doctor_disabled", status=404)
     try:
         body = await request.json()
     except Exception:
@@ -513,10 +485,7 @@ async def api_provider_selftest(request: web.Request) -> web.Response:
     guess ``test_connection`` gives. User-click only (it costs tokens/compute); never
     run by a background job. Hard-timeout-bounded per capability."""
     if not _resilience_cfg().doctor_enabled:
-        return web.json_response(
-            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
-            status=404,
-        )
+        return json_error("doctor_disabled", status=404)
     name = request.match_info.get("name", "")
     result = await _run_selftest(name)
     return web.json_response(result)
@@ -570,10 +539,7 @@ async def api_doctor_remediation(request: web.Request) -> web.Response:
     """GET /api/doctor/remediation — current health score, a dry-run plan preview, and
     the recent remediation-run ledger."""
     if not _resilience_cfg().doctor_enabled:
-        return web.json_response(
-            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
-            status=404,
-        )
+        return json_error("doctor_disabled", status=404)
 
     def _snapshot() -> dict:
         import time as _t
@@ -610,19 +576,13 @@ async def api_doctor_remediation(request: web.Request) -> web.Response:
 async def api_doctor_remediation_run(request: web.Request) -> web.Response:
     """POST /api/doctor/remediation/run — run the engine now (confirm-gated). SEL-audited."""
     if not _resilience_cfg().doctor_enabled:
-        return web.json_response(
-            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
-            status=404,
-        )
+        return json_error("doctor_disabled", status=404)
     try:
         body = await request.json()
     except Exception:
         body = {}
     if not (isinstance(body, dict) and body.get("confirm") is True):
-        return web.json_response(
-            {"error": {"code": "confirm_required", "message": 'requires {"confirm": true}'}},
-            status=400,
-        )
+        return json_error("confirm_required", status=400)
 
     def _run() -> dict:
         import time as _t
@@ -664,16 +624,11 @@ async def api_doctor_remediation_run(request: web.Request) -> web.Response:
 async def api_doctor_crash(request: web.Request) -> web.Response:
     """GET /api/doctor/crash/{filename} — the full JSON of one crash artifact."""
     if not _resilience_cfg().doctor_enabled:
-        return web.json_response(
-            {"error": {"code": "doctor_disabled", "message": "the Doctor surface is turned off"}},
-            status=404,
-        )
+        return json_error("doctor_disabled", status=404)
     from personalclaw.resilience import crashes as _crashes
 
     filename = request.match_info.get("filename", "")
     data = await asyncio.to_thread(_crashes.read_crash, filename)
     if data is None:
-        return web.json_response(
-            {"error": {"code": "not_found", "message": "no such crash artifact"}}, status=404
-        )
+        return json_error("not_found", message="No such crash artifact.", status=404)
     return web.json_response(data)

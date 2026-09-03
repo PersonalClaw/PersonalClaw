@@ -28,7 +28,7 @@ from pathlib import Path
 
 from personalclaw.config.loader import config_dir
 from personalclaw.record_ids import is_safe_record_id, record_path
-from personalclaw.tasks.models import DEFAULT_PROJECTS, Project, TaskList
+from personalclaw.tasks.models import BUILTIN_PROJECTS, Project, TaskList
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ class HierarchyStore:
         """Seed the Personal + Repeatable projects if absent."""
         self.migrate_layout()
         existing = {p.name for p in self._all_projects_raw()}
-        for name in DEFAULT_PROJECTS:
+        for name in BUILTIN_PROJECTS:
             if name not in existing:
                 now = _now_iso()
                 self._write_project(
@@ -209,7 +209,7 @@ class HierarchyStore:
         project = Project(
             id=f"p-{uuid.uuid4().hex[:8]}",
             name=name,
-            is_builtin=name in DEFAULT_PROJECTS,
+            is_builtin=name in BUILTIN_PROJECTS,
             created_at=now,
             updated_at=now,
         )
@@ -253,7 +253,7 @@ class HierarchyStore:
         project = Project(
             id=f"p-{uuid.uuid4().hex[:8]}",
             name=name,
-            is_builtin=name in DEFAULT_PROJECTS,
+            is_builtin=name in BUILTIN_PROJECTS,
             workspace_dir=self._validate_workspace_dir(workspace_dir),
             name_locked=bool(name_locked),
             agent_instructions_template=agent_instructions_template,
@@ -276,7 +276,7 @@ class HierarchyStore:
                 # A default's identity IS its name (task routing keys on the literal
                 # "Personal"/"Repeatable", and ensure_defaults re-seeds any missing name).
                 # Renaming it away would strand its task lists and spawn a duplicate default.
-                raise ValueError(f"the default project '{project.name}' cannot be renamed")
+                raise ValueError(f"the built-in project '{project.name}' cannot be renamed")
             other = self.get_project_by_name(new_name)
             if other and other.id != project_id:
                 raise ValueError(f"a project named '{new_name}' already exists")
@@ -309,8 +309,8 @@ class HierarchyStore:
         # would leave a stray duplicate carrying it permanently undeletable. Keying on the
         # current name still fully protects a genuine "Personal"/"Repeatable" while letting a
         # duplicate that no longer holds a protected name be cleaned up.
-        if project.name in DEFAULT_PROJECTS:
-            raise ValueError(f"the default project '{project.name}' cannot be deleted")
+        if project.name in BUILTIN_PROJECTS:
+            raise ValueError(f"the built-in project '{project.name}' cannot be deleted")
         # Cascade: drop the project's task lists (tasks are re-homed by the caller
         # / left orphaned-by-list — the task provider owns task deletion).
         for tl in self.list_task_lists(project_id=project_id):

@@ -91,7 +91,6 @@ _UNDECLARED_DEBT = frozenset(
         "chat_plans",
         "control_bridge.json",
         "credentials.json",
-        "crons",
         "digest_queue.jsonl",
         "doctor",
         "engagement.json",

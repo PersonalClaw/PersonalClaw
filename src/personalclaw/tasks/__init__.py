@@ -2,7 +2,7 @@
 
 from personalclaw.tasks.hierarchy import HierarchyStore
 from personalclaw.tasks.models import (
-    DEFAULT_PROJECTS,
+    BUILTIN_PROJECTS,
     Project,
     Task,
     TaskComment,
@@ -12,7 +12,7 @@ from personalclaw.tasks.models import (
 from personalclaw.tasks.provider import TaskProvider
 
 __all__ = [
-    "DEFAULT_PROJECTS",
+    "BUILTIN_PROJECTS",
     "HierarchyStore",
     "Project",
     "Task",

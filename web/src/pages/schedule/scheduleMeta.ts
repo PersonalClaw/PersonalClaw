@@ -159,6 +159,30 @@ export function triggerHealthMeta(health?: string | null, state?: string | null)
   return { label: '', tone: 'var(--color-on-surface-low)', icon: Circle }
 }
 
+/** The Last-run badge for a SCHEDULE trigger: the health rollup dominates the run row.
+ *
+ * 🔴 WHY THIS RECONCILES IN ONE PLACE. The reaper kills an overrunning turn and writes
+ * `health_status=degraded` + the reap reason into `last_error` — while the run-store row it
+ * launched still says `success`. Two renderers read the two fields through a bare
+ * `last_run_status || last_status` chain, so the ONE record where the fields disagree — the
+ * reaped run — rendered a green "ok" badge two lines above the red reap banner (#685), and the
+ * list's schedule-row dot fell through `statusMeta` to "never run" grey for the same value.
+ *
+ * The serializer aliases `health_status` onto the wire's `last_status`, so `health` here speaks
+ * `TriggerHealth`'s vocabulary (ok/degraded/parked/failing — see `triggers/models.py`) plus the
+ * legacy `error`. Precedence: a non-ok health renders through the shared health mapper; the
+ * legacy `error` keeps its `statusMeta` shape; an ok/absent health defers to the run row exactly
+ * as before, so `launched`/`ran_late`/the suppression family are untouched.
+ */
+export function lastRunMeta(runStatus?: string | null, health?: string | null): StatusMeta {
+  if (health && health !== 'ok' && health !== 'success') {
+    const hm = triggerHealthMeta(health)
+    if (hm.label) return hm
+    return statusMeta(health)
+  }
+  return statusMeta(runStatus || health)
+}
+
 // ── time helpers ──
 // Every one of these takes `number | string`, because the endpoints disagree: the schedule
 // fields (`next_run_ts`, `last_run_ts`) are epoch seconds while `/api/triggers/history`
