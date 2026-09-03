@@ -227,6 +227,22 @@ class TestTaskListRouting:
         with pytest.raises(ValueError, match="required"):
             store.create_task_list("  ")
 
+    def test_duplicate_name_in_same_project_rejected(self, store):
+        # Task lists match projects (#777): a duplicate name within one project is refused, so a
+        # project can never hold two same-named lists and the General auto-attach stays unambiguous.
+        p = store.create_project("Proj")
+        store.create_task_list("Dup", project_id=p.id)
+        with pytest.raises(ValueError, match="already exists in this project"):
+            store.create_task_list("Dup", project_id=p.id)
+
+    def test_same_name_in_different_projects_allowed(self, store):
+        # Uniqueness is PER PROJECT — every project legitimately has its own "General".
+        a = store.create_project("A")
+        b = store.create_project("B")
+        store.create_task_list("Shared", project_id=a.id)
+        tl = store.create_task_list("Shared", project_id=b.id)
+        assert tl.project_id == b.id
+
 
 class TestTaskListCrud:
     def test_list_by_project(self, store):
@@ -253,6 +269,37 @@ class TestTaskListCrud:
         tl = store.create_task_list("L", project_id=p.id)
         store.delete_project(p.id)
         assert store.get_task_list(tl.id) is None
+
+
+class TestGeneralAutoAttach:
+    def test_attaches_to_oldest_general_among_grandfathered_duplicates(self, store):
+        # `create_task_list` now rejects duplicate names, but a project migrated from before that
+        # check could carry two "General" lists. A `project_id`-only task must land on the ORIGINAL
+        # (oldest) one deterministically, not whichever id sorts first (#777). Written directly to
+        # bypass the new uniqueness check and reproduce the grandfathered shape; the newer list's id
+        # sorts BEFORE the older's, so a naive first-match would pick the wrong one.
+        from personalclaw.tasks.handlers import _attach_project_general_list
+
+        p = store.create_project("Legacy")
+        older = TaskList(
+            id="tl-older",
+            name="General",
+            project_id=p.id,
+            created_at="2020-01-01T00:00:00+00:00",
+            updated_at="2020-01-01T00:00:00+00:00",
+        )
+        newer = TaskList(
+            id="tl-a-newer",
+            name="General",
+            project_id=p.id,
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
+        store._write_list(older)
+        store._write_list(newer)
+        body: dict = {"project_id": p.id}
+        _attach_project_general_list(body)
+        assert body["task_list_id"] == older.id
 
 
 class TestModelSerialization:
