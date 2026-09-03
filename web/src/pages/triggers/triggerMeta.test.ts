@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
-  eventDormancyReason, eventIsDormant, lifecycleEventMeta, storeToTrigger,
+  eventDormancyReason, eventIsDormant, lifecycleEventMeta, storeToTrigger, scheduleToTrigger,
   EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon, eventSourceLabel,
   appEventOptions, actionIsSendCapable, eventToTrigger,
 } from './triggerMeta'
-import type { TriggerVariables, Trigger as WireTrigger } from '../../lib/api'
+import type { TriggerVariables, Trigger as WireTrigger, ScheduleJob } from '../../lib/api'
 
 // ── Lifecycle-event dormancy, from the UI's side (S67) ──────────────────────
 //
@@ -108,6 +108,26 @@ const storeRow = (over: Partial<WireTrigger> = {}): WireTrigger => ({
   name: 'Summarize notes', enabled: true, action: { provider: 'run-prompt', config: {} },
   store_kind: 'file', spec: { paths: ['~/notes/**'] }, broken: [],
   ...over,
+})
+
+describe('scheduleToTrigger', () => {
+  // A schedule the store kept despite a malformed field (S87 lenient load) carries its parse
+  // errors on the wire; the mapper must forward them so the row can flag "needs attention"
+  // rather than listing as if healthy — the same contract storeToTrigger honours.
+  const schedRow = (over: Partial<ScheduleJob> = {}): ScheduleJob => ({
+    id: 'clock:nightly', name: 'Nightly digest', message: '', enabled: true,
+    schedule: 'every day at 09:00', action: { provider: 'run-prompt', config: {} },
+    ...over,
+  })
+
+  it('carries a broken schedule’s parse errors rather than hiding them', () => {
+    const t = scheduleToTrigger(schedRow({ broken: ['unparseable cron expr'] }))
+    expect(t.broken).toEqual(['unparseable cron expr'])
+  })
+
+  it('defaults broken to an empty array for a healthy schedule', () => {
+    expect(scheduleToTrigger(schedRow()).broken).toEqual([])
+  })
 })
 
 describe('storeToTrigger', () => {
