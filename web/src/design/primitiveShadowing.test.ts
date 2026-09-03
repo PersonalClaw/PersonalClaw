@@ -159,6 +159,9 @@ describe('the census is DERIVED, so a ninth shadow cannot arrive unnoticed', () 
     'Button @ pages/settings/UpdatesPanel.tsx': 'fixed',
     'FilterMenu @ pages/artifacts/ArtifactsSection.tsx': 'fixed',
     'Toggle @ pages/tools/ToolsPage.tsx': 'composes',
+    // The toned variants render the ui primitive's exact tint+ink pair, so the local
+    // wrapper now composes it; 'muted' (a solid surface ground, not a tone tint) stays local.
+    'StatusPill @ pages/settings/bento.tsx': 'composes',
     'ContextMenu @ pages/files/browse/FileTree.tsx': 'distinct',
     'Spark @ pages/dashboard/widgets/SystemHealth.tsx': 'distinct',
     'Field @ pages/settings/settingsUI.tsx': 'distinct',

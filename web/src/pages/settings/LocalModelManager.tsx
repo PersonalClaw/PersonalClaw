@@ -9,6 +9,7 @@ import { WavyProgress } from '../../ui/WavyProgress'
 import { Toggle } from '../../ui/Toggle'
 import { Button } from '../../ui/Button'
 import { useModelDownloads } from './useModelDownloads'
+import { StatusPill } from '../../ui/StatusPill'
 import {
   FIT_LABEL, FIT_TONE, budgetKnown, filterByFit, fitDescription, hostFitOf, statedSizeMb, unrunnable,
 } from './modelFit'
@@ -37,11 +38,9 @@ function FitChip({ model }: { model: AvailableModel }) {
   const tone = FIT_TONE[verdict]
   const described = fitDescription(model)
   return (
-    <span role="img" aria-label={described} title={described}
-      className="inline-flex shrink-0 items-center rounded-pill px-1.5 text-[0.75rem]"
-      style={{ background: `color-mix(in srgb, ${tone} 16%, transparent)`, color: tone }}>
+    <StatusPill tone={tone} role="img" aria-label={described} title={described}>
       {FIT_LABEL[verdict]}
-    </span>
+    </StatusPill>
   )
 }
 

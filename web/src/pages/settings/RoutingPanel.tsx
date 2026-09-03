@@ -4,6 +4,7 @@ import { api, type RoutingPolicyRow, type RoutingProposal, type TelemetryRow } f
 import { useQuery } from '../../lib/data'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Button } from '../../ui/Button'
+import { StatusPill } from '../../ui/StatusPill'
 import { Segmented } from '../../ui/Segmented'
 import { Field, FieldError, Select } from '../../ui/forms'
 import { unavailableWhen } from '../../ui/unavailable'
@@ -552,11 +553,10 @@ function TelemetryTable({ rows }: { rows: TelemetryRow[] }) {
               <td className={`${td} text-right tabular-nums`}>{fmtCost(r.avg_cost_usd)}</td>
               <td className={`${td} text-right`}>
                 {r.on_frontier ? (
-                  <span className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.6875rem]"
-                    style={{ background: 'color-mix(in srgb, var(--color-ok) 16%, transparent)', color: 'var(--color-ok)' }}
+                  <StatusPill tone="ok" sized={false} className="gap-1 py-0.5 text-[0.6875rem]"
                     title="On the Pareto frontier — no other model beats this one on all of quality, speed, and cost.">
                     <Trophy size={9} aria-hidden /> frontier
-                  </span>
+                  </StatusPill>
                 ) : (
                   <span className="text-on-surface-low" title="Dominated — another model beats this one on quality, speed, and cost.">—</span>
                 )}
