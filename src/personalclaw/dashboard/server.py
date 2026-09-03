@@ -1936,10 +1936,15 @@ async def start_dashboard(
     ) -> web.StreamResponse:
         if request.method not in _safe_methods:
             if not check_origin(request, require=True, fallback_header="Referer"):
-                raise web.HTTPForbidden(
-                    text="CSRF check failed: request origin not allowed.",
-                    content_type="text/plain",
-                )
+                # The one wire error envelope, not plain text: the login page (and the
+                # FE error funnel generally) branches on {"error": {"code"}}, and a
+                # text body parsed as JSON became {} — which the login page then
+                # reported as "Wrong username or password." for a correct password
+                # from any non-loopback origin. Same code the auth routes return for
+                # their own origin rejections.
+                from personalclaw.http_errors import json_error
+
+                return json_error("auth_origin_not_allowed", status=403)
         return await handler(request)  # type: ignore[operator]
 
     @web.middleware  # type: ignore[misc]

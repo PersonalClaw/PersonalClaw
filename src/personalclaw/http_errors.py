@@ -90,6 +90,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # ── auth (handlers/auth.py) — fixed message per code, never request-derived ──
     "auth_not_enabled": "Owner authentication is not enabled on this instance.",
     "auth_invalid_credentials": "The submitted credential did not verify.",
+    "auth_origin_not_allowed": "The request origin is not allowed on this instance.",
     "auth_locked_out": "Too many failed attempts from this address; try again later.",
     "auth_totp_required": "A second factor is required to finish this login.",
     "auth_enroll_code_invalid": "The enrollment code did not verify.",

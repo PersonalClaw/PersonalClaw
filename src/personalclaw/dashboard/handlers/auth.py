@@ -18,7 +18,7 @@ and is deliberately **fail-open on bookkeeping errors** — a counter that break
 the owner out of their own dashboard, since the password check itself is still fail-closed.
 
 Error codes are Tier-S stable and must never be reworded: `auth_invalid_credentials`,
-`auth_totp_required`, `auth_locked_out`, `auth_not_enabled`.
+`auth_totp_required`, `auth_locked_out`, `auth_not_enabled`, `auth_origin_not_allowed`.
 """
 
 from __future__ import annotations
@@ -45,6 +45,11 @@ logger = logging.getLogger(__name__)
 
 #: Stable error codes (C3). Never reword — clients and docs match on these strings.
 ERR_INVALID = "auth_invalid_credentials"
+# Origin rejection is a MISCONFIGURATION signal, not a secret: the origin is the caller's
+# own address, and telling them "wrong password" for it sends the owner to reset a
+# password that was never wrong (the same distinctness reasoning as ERR_NOT_ENABLED
+# below). Mirrors device_pair_origin_rejected on the pairing routes.
+ERR_ORIGIN = "auth_origin_not_allowed"
 ERR_TOTP_REQUIRED = "auth_totp_required"
 ERR_LOCKED_OUT = "auth_locked_out"
 ERR_NOT_ENABLED = "auth_not_enabled"
@@ -136,12 +141,12 @@ async def api_auth_login(request: web.Request) -> web.Response:
     if not check_origin(request):
         _sel().log_api_access(
             caller=ip,
-            operation="login_failed",
+            operation="login_origin_rejected",
             outcome="denied",
             source="auth",
             error="origin rejected",
         )
-        return json_error(ERR_INVALID, status=403)
+        return json_error(ERR_ORIGIN, status=403)
 
     if not bool(cfg.login_enabled):
         # Explicitly distinct from bad credentials: "this door does not exist here" is not
@@ -262,7 +267,7 @@ async def api_auth_logout(request: web.Request) -> web.Response:
     it stays revoked across a restart.
     """
     if not check_origin(request):
-        return json_error(ERR_INVALID, status=403)
+        return json_error(ERR_ORIGIN, status=403)
 
     port = _cookie_port(request)
     token = request.cookies.get(f"pc_token_{port}", "") or request.query.get("token", "")
@@ -339,7 +344,7 @@ async def api_auth_set_password(request: web.Request) -> web.Response:
     be reached WITHOUT a session — it is behind the normal middleware, unlike `login`.
     """
     if not check_origin(request):
-        return json_error(ERR_INVALID, status=403)
+        return json_error(ERR_ORIGIN, status=403)
     try:
         body = await request.json()
     except Exception:
@@ -380,7 +385,7 @@ async def api_auth_enroll_start(request: web.Request) -> web.Response:
     back, because the store holds only its hash.
     """
     if not check_origin(request):
-        return json_error(ERR_INVALID, status=403)
+        return json_error(ERR_ORIGIN, status=403)
 
     from personalclaw.auth import enrollment
 
@@ -410,7 +415,7 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
     ip = _client_ip(request)
     cfg = _auth_cfg()
     if not check_origin(request):
-        return json_error(ERR_ENROLL_INVALID, status=403)
+        return json_error(ERR_ORIGIN, status=403)
 
     remaining = _lockout_remaining(ip, cfg)
     if remaining:
@@ -509,6 +514,9 @@ var MESSAGES = {
   auth_locked_out: 'Too many attempts. Wait a moment and try again.',
   auth_not_enabled: 'Password sign-in is not enabled on this instance.'
 };
+MESSAGES.auth_origin_not_allowed = 'This address (' + location.origin
+  + ") isn't an allowed sign-in origin. Add it to PERSONALCLAW_CORS_ORIGINS"
+  + ' (or set dashboard.url) on the gateway, then reload.';
 if (NEEDS_TOTP) { document.getElementById('t').style.display = 'block'; }
 MESSAGES.auth_enroll_code_invalid = 'That code is not valid, or has already been used.';
 document.getElementById('toggle').addEventListener('click', function (ev) {
@@ -532,13 +540,12 @@ document.getElementById('cf').addEventListener('submit', function (ev) {
     body: JSON.stringify({ code: document.getElementById('c').value })
   }).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (d) {
-      return { ok: r.ok, data: d };
+      return { ok: r.ok, status: r.status, data: d };
     });
   }).then(function (res) {
     if (res.ok) { window.location.href = '/'; return; }
-    var code = (res.data && res.data.error && res.data.error.code)
-      || 'auth_enroll_code_invalid';
-    err.textContent = MESSAGES[code] || 'Pairing failed.';
+    var code = (res.data && res.data.error && res.data.error.code) || '';
+    err.textContent = MESSAGES[code] || ('Pairing failed (HTTP ' + res.status + ').');
     btn.disabled = false;
   }).catch(function () {
     err.textContent = 'Could not reach the gateway.';
@@ -561,20 +568,22 @@ document.getElementById('f').addEventListener('submit', function (ev) {
     body: JSON.stringify(body)
   }).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (d) {
-      return { ok: r.ok, data: d };
+      return { ok: r.ok, status: r.status, data: d };
     });
   }).then(function (res) {
     if (res.ok) { window.location.href = '/'; return; }
     // `json_error` emits {"error": {"code", "message"}} (PL-8's one wire envelope). Reading
     // `res.data.error` as a bare string made every MESSAGES lookup miss, so this page only ever
     // said "Sign-in failed." and the auth_totp_required branch below could never fire.
-    var code = (res.data && res.data.error && res.data.error.code)
-      || 'auth_invalid_credentials';
+    // An UNMODELLED error (unparseable body, proxy 502) must NOT default to the credentials
+    // code: that told a user with a CSRF-rejected origin to fix a password that was never
+    // wrong. Report the status instead.
+    var code = (res.data && res.data.error && res.data.error.code) || '';
     if (code === 'auth_totp_required') {
       document.getElementById('t').style.display = 'block';
       document.getElementById('t').focus();
     }
-    err.textContent = MESSAGES[code] || 'Sign-in failed.';
+    err.textContent = MESSAGES[code] || ('Sign-in failed (HTTP ' + res.status + ').');
     btn.disabled = false;
   }).catch(function () {
     err.textContent = 'Could not reach the gateway.';
