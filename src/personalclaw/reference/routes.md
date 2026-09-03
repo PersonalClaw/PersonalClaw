@@ -104,6 +104,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/autonudge/{loop_id}` — stop and remove a loop.
 - `PATCH /api/autonudge/{loop_id}` — update message / idle_secs / active.
 - `GET /api/browse-dirs` — list subdirectories for directory browser.
+- `DELETE /api/browse/connector` — detach the operator's browser. Idempotent.
+- `GET /api/browse/connector` — whether a browser is attached right now.
+- `POST /api/browse/connector` — record the operator's attached browser.
 - `GET /api/changelog` — read full CHANGELOG.md from project.
 - `POST /api/channel/profile` — read a channel user's profile.
 - `POST /api/channel/upload-file` — upload a file to the active channel (internal, called by notify_attachment).

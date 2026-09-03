@@ -99,6 +99,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "device_pair_origin_rejected": "The request origin is not allowed to pair a device.",
     "device_pair_locked_out": "Too many failed pairing attempts; try again later.",
     "device_unknown": "No such paired device.",
+    # ── browse user-browser connector (handlers/browse_connector.py — BA-8) ──
+    # The connector is the operator's own browser on THIS machine, so all three are
+    # distinct because their remedies differ: `loopback_only` is "you reached a
+    # same-machine surface from elsewhere" (nothing the caller can retry into), `unpaired`
+    # is "pair this device first" (a step to take), and `endpoint_invalid` is "the CDP
+    # page-target you announced is missing or is not a loopback ws(s) URL" (a value to fix).
+    "browse_connector_loopback_only": "The browse connector is reachable over loopback only.",
+    "browse_connector_unpaired": "Only a paired device may attach as the browse connector.",
+    "browse_connector_endpoint_invalid": "The announced CDP page-target endpoint is missing "
+    "or is not a loopback ws(s) URL.",
     # ── channel sender trust (handlers/channel_trust.py) ──
     "channel_trust_sender_unknown": "That sender is not on this channel's allowlist.",
     # ── push subscriptions (handlers/push.py) ──
