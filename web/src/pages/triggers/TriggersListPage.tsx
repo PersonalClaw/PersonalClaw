@@ -20,7 +20,7 @@ import { api, type ActionProvider } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
-import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, type Trigger } from './triggerMeta'
+import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { statusMeta, triggerHealthMeta, relFuture } from '../schedule/scheduleMeta'
@@ -72,6 +72,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // lifecycle config that rarely changes → persist:true so they survive a reload.
   const { data: schedules, error: schedulesErr, refresh: refreshSchedules } = useQuery('triggers:schedules', () => api.schedules().then((d) => d.jobs), { persist: false })
   const { data: hooks, error: hooksErr, refresh: refreshHooks } = useQuery('triggers:hooks', () => api.hooks(), { persist: true })
+  // Issue 610: the badge reads each event's fire path from the server catalog (module-cached).
+  const catalog = useTriggerVariables()
   // Store triggers (file/web_watch/idle/…) carry live enabled/health state → persist:false, like
   // schedules: instant in-app revisit but never stale across a hard reload.
   const { data: stores, error: storesErr, refresh: refreshStores } = useQuery('triggers:store', () => api.storeTriggers(), { persist: false })
@@ -262,9 +264,20 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               "enforcing" the user was looking for. Non-blocking events keep
                               "· dormant": accurate for them, and crying wolf on 14 of the 15
                               would train the eye to skip the one that matters. */}
+                          {/* Issue 610: `used_by` is "which agents reference this", NOT "does it
+                              fire" — 7 of the 15 events fire GLOBALLY, agent references irrelevant
+                              (a MemoryWrite hook badged by used_by delivered its notification
+                              while reading "dormant"). So the badge reads the event's FIRE PATH
+                              from the server catalog: "dormant" is reserved for eventIsDormant's
+                              real meaning (an event nothing fires), agent-scoped events with no
+                              referencing agent say exactly that, and an unreferenced GLOBAL event
+                              gets no badge — it fires regardless. Catalog still loading / older
+                              backend → no claim at all (a wrong badge is the bug, silence is not). */}
                           {t.kind === 'lifecycle' && t.enforcement === 'not_enforcing'
                             ? <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]"><ShieldOff size={11} /> not enforcing</span>
-                            : t.kind === 'lifecycle' && t.usedBy.length === 0 && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· dormant</span>}
+                            : t.kind === 'lifecycle' && eventIsDormant(catalog, t.hook?.event)
+                              ? <span className="shrink-0 text-on-surface-low text-[0.75rem]">· dormant</span>
+                              : t.kind === 'lifecycle' && t.usedBy.length === 0 && eventIsAgentScoped(catalog, t.hook?.event) && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· no agent references this</span>}
                           {t.broken && t.broken.length > 0 && <span className="shrink-0 text-danger text-[0.75rem]">· needs attention</span>}
                           {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
                           {/* The AUTHOR chip §2.2 asks for. Shown only for a foreign row — a chip

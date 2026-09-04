@@ -1889,7 +1889,7 @@ export interface ActionProvider {
 // `dormant` (S67): the event is declared and configurable but NO code fires it — 7 of the 15 are.
 // Server-sourced for the same reason the vars are: a hard-coded list here would tell a user their
 // working hook is dead the moment the backend wires one.
-export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string }
+export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string; agent_scoped?: boolean }
 // One app-contributed trigger source and the events it declares (AUTO-A4). Read from the LIVE
 // `trigger_sources` registry, so a disabled app's source is absent rather than offered — authoring a
 // trigger against an event that cannot fire is the failure this list exists to prevent.
