@@ -173,25 +173,33 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
           </Section>
 
           {/* drafted reply — the draft is an AI judgment: thumbs attribute to the
-              inbox_draft prompt binding (plan 58). Only shown once a draft exists. */}
-          <Section label="Drafted reply"
-            right={item.draft ? (
-              <FeedbackThumbs targetKind="inbox_draft" targetId={item.id}
-                producer={item.feedback_producers?.draft}
-                snapshot={{ draft_preview: (item.draft ?? '').slice(0, 200) }} />
-            ) : undefined}>
-            <TextArea value={draft} onChange={setDraft} rows={5} placeholder="No draft yet — generate one or write your own." ariaLabel="Drafted reply" />
-            <div className="mt-2 flex flex-wrap items-center gap-s">
-              <Button size="sm" variant="secondary" onClick={generate} disabled={busy === 'draft'}>{busy === 'draft' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
-              {dirtyDraft && <Button size="sm" variant="ghost" onClick={() => patch({ draft }, 'savedraft')} disabled={busy === 'savedraft'}><Check size={14} /> Save draft</Button>}
-              {canReply ? (
+              inbox_draft prompt binding (plan 58). Only shown once a draft exists.
+              Issue 621: composing is gated by canReply like SENDING always was — the
+              composer ran the model and badged the row on items whose Send is
+              permanently disabled. Same doctrine as the needs_input comment
+              above: hidden rather than shown inert. A legacy draft saved before
+              the gate still displays (it exists), with why it cannot be sent. */}
+          {canReply ? (
+            <Section label="Drafted reply"
+              right={item.draft ? (
+                <FeedbackThumbs targetKind="inbox_draft" targetId={item.id}
+                  producer={item.feedback_producers?.draft}
+                  snapshot={{ draft_preview: (item.draft ?? '').slice(0, 200) }} />
+              ) : undefined}>
+              <TextArea value={draft} onChange={setDraft} rows={5} placeholder="No draft yet — generate one or write your own." ariaLabel="Drafted reply" />
+              <div className="mt-2 flex flex-wrap items-center gap-s">
+                <Button size="sm" variant="secondary" onClick={generate} disabled={busy === 'draft'}>{busy === 'draft' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {item.draft ? 'Regenerate' : 'Generate draft'}</Button>
+                {dirtyDraft && <Button size="sm" variant="ghost" onClick={() => patch({ draft }, 'savedraft')} disabled={busy === 'savedraft'}><Check size={14} /> Save draft</Button>}
                 <Button size="sm" onClick={send} disabled={busy === 'send' || !draft.trim()}
                   disabledReason={!draft.trim() ? 'Write a reply first' : undefined}>{busy === 'send' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Send reply</Button>
-              ) : (
-                <span title="This item's source doesn't support replies (notifications are read-only)." className="inline-flex"><Button size="sm" variant="ghost" disabled><Send size={14} /> Send reply</Button></span>
-              )}
-            </div>
-          </Section>
+              </div>
+            </Section>
+          ) : item.draft ? (
+            <Section label="Drafted reply">
+              <div className="rounded-m bg-surface-container px-m py-s text-on-surface-var text-[0.8125rem] whitespace-pre-wrap">{item.draft}</div>
+              <p className="mt-1.5 text-on-surface-low text-[0.75rem]">This item&rsquo;s source doesn&rsquo;t support replies (notifications are read-only), so this saved draft can&rsquo;t be sent.</p>
+            </Section>
+          ) : null}
         </>
       )}
 
