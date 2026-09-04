@@ -28,6 +28,20 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
   const [draft, setDraft] = useState<AgentDraft>(() => toDraft(agent))
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  // Trigger bindings store the hook's raw id (unlike skills/tools, whose stored
+  // values ARE their labels), so the panel resolves ids through the same
+  // endpoint the picker built its options from (#629). null = not loaded (no
+  // bindings, or the fetch failed) — then Caps renders the raw id and CLAIMS
+  // nothing; a loaded map that lacks an id marks a genuinely dangling binding.
+  const [triggerNames, setTriggerNames] = useState<Map<string, string> | null>(null)
+  useEffect(() => {
+    if (!agent.triggers?.length) { setTriggerNames(null); return }
+    let alive = true
+    api.hooks()
+      .then((hs) => { if (alive) setTriggerNames(new Map(hs.map((h) => [h.id, h.event ? `${h.name} · ${h.event}` : h.name]))) })
+      .catch(() => { if (alive) setTriggerNames(null) })
+    return () => { alive = false }
+  }, [agent.triggers])
   // The agent-scoped-SOP list was here (workflows whose scope_ref matched this
   // agent's binding id, via the used-by reverse index). Both the endpoint and the
   // scope_ref model are gone with the old feature (WORKFLOWS-V2 Phase 1); v2
@@ -94,7 +108,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
 
       <Caps label="Skills" items={agent.skills} />
       <Caps label="Tools" items={agent.tools} />
-      <Caps label="Triggers" items={agent.triggers} />
+      <Caps label="Triggers" items={agent.triggers} resolve={triggerNames} />
 
       {!reserved && <AgentAdvanced agentName={agent.name} />}
     </div>
@@ -308,11 +322,22 @@ export function DiscoveredAgentDetail({ agent, providerId }: { agent: Discovered
   )
 }
 
-function Caps({ label, items }: { label: string; items?: string[] }) {
+function Caps({ label, items, resolve }: { label: string; items?: string[]; resolve?: Map<string, string> | null }) {
   if (!items || items.length === 0) return null
   return (
     <Section label={`${label} · ${items.length}`}>
-      <div className="flex flex-wrap gap-1.5">{items.map((i) => <span key={i} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{i}</span>)}</div>
+      <div className="flex flex-wrap gap-1.5">{items.map((i) => {
+        const name = resolve?.get(i)
+        // Only a LOADED map may call an id dangling — a failed/absent fetch
+        // renders the raw value and claims nothing (it cannot know).
+        const dangling = resolve != null && !name
+        return (
+          <span key={i} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center gap-1 text-on-surface-var text-[0.75rem]">
+            {name ?? i}
+            {dangling && <span className="text-[0.6875rem]" style={{ color: 'var(--color-warning)' }}>· trigger no longer exists</span>}
+          </span>
+        )
+      })}</div>
     </Section>
   )
 }
