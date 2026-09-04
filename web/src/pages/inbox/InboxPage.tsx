@@ -16,6 +16,7 @@ import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type InboxItem, type InboxStatus } from '../../lib/api'
 import { rowSubject } from '../../lib/rowSubject'
+import { previewText } from '../../lib/previewText'
 import { Segmented } from '../../ui/Segmented'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
@@ -454,7 +455,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                     back in, and ListRow's entrance stagger is keyed on the index — so an
                     index-keyed delay replays the fade on every row, on every scroll. */}
                 <ListRow index={listCtx.windowed ? 0 : i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)}
-                  label={rowSubject([channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label, (it.message ?? '').replace(/\s+/g, ' ')])}>
+                  label={rowSubject([channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label, previewText(it.message)])}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${accentTone} 16%, transparent)` }}>
                     {channelBacked ? <cm.icon size={18} style={{ color: cm.tone }} /> : <km.icon size={18} style={{ color: km.tone }} />}
                   </span>
@@ -471,7 +472,10 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                           users who need it most. */}
                       {it.favorited && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} aria-label="Favorited" />}
                     </div>
-                    <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{it.message}</p>
+                    {/* The panel renders this content as real markup; the ROW is a one-line
+                        plain-text preview, so the marks must go — a digest body's `**` and `##`
+                        rendered literally here for every digest row (issue 618). */}
+                    <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{previewText(it.message)}</p>
                   </div>
                   <div className="hidden sm:flex shrink-0 items-center gap-s">
                     {/* Confidence is a TRIAGE judgment; a needs_input row was never triaged,
