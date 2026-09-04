@@ -582,13 +582,17 @@ _WF_DEF_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 #: path join. Mirrors `history._safe_key`'s output alphabet, which is what writes those names.
 _SESSION_ID_RE = re.compile(r"^[\w\-][\w\-.]{0,127}$")
 _WF_MODES = frozenset({"blocking", "background"})
-_WF_RIGOR = frozenset({"minimal", "standard", "deep"})
 
 WORKFLOW_AUTHOR_SCHEMA = ToolSchema(
     tool_name="workflow_author",
     fields=[
-        FieldSpec("name", str, required=True, max_len=63, pattern=_WF_DEF_NAME_RE),
-        FieldSpec("root", dict, required=True),
+        # Structural bounds only. Name VOCABULARY and root PRESENCE are the def
+        # layer's rules, answered with its structured errors (WF_DEF_NAME_INVALID,
+        # WF_DEF_ROOT_REQUIRED — pinned by test_workflows_tools.TestErrorContract);
+        # duplicating them here would preempt those answers with this boundary's
+        # generic ones (issue 592's enforcement wiring surfaced exactly that).
+        FieldSpec("name", str, required=True, max_len=63),
+        FieldSpec("root", dict),
         FieldSpec("description", str, max_len=2000),
         FieldSpec("inputs", dict, default={}),
         FieldSpec("tags", list, item_type=str, item_max_len=64, max_items=16),
@@ -604,7 +608,10 @@ WORKFLOW_PLAN_SCHEMA = ToolSchema(
         # WF_PLAN_GOAL_REQUIRED, which is where that rule belongs: a schema-level `required`
         # here would reject the mining-only call before the handler ever saw it.
         FieldSpec("goal", str, max_len=MAX_LONG_STRING),
-        FieldSpec("rigor", str, max_len=16, allowed=_WF_RIGOR),
+        # No allowed= list: an unknown rigor FALLS BACK to "standard" in the planner
+        # (pinned by TestPlan.test_an_unknown_rigor_falls_back_to_standard) — a closed
+        # vocabulary here would reject what the handler deliberately accepts.
+        FieldSpec("rigor", str, max_len=16),
         FieldSpec("template", str, max_len=63, pattern=_WF_DEF_NAME_RE),
         FieldSpec("project_id", str, max_len=MAX_SHORT_STRING),
         # A session id is a filename component. The pattern is the fence: an id reaching
@@ -1221,6 +1228,23 @@ MCP_AUTOMATION_SCHEMAS: dict[str, ToolSchema] = {
         fields=[FieldSpec("confirm", bool)],
     ),
 }
+
+
+def validated_tool_names() -> frozenset[str]:
+    """Tool names with ENFORCED argument validation — the union of the dispatch maps.
+
+    This is the number the Security panel reports ("Tools with enforced argument
+    validation"). It is a count of TOOLS, taken from the maps the dispatchers actually
+    consult (``MCP_*_SCHEMAS.get(name)``): a tool absent from every map skips
+    validation entirely, so map membership IS enforcement. The old ``dir()`` sweep over
+    ``*_SCHEMA`` constants counted the wrong thing in both directions — schemas can be
+    shared by several tools or referenced by no map at all (issue 592).
+    """
+    return (
+        frozenset(MCP_CORE_SCHEMAS)
+        | frozenset(MCP_WORKFLOW_SCHEMAS)
+        | frozenset(MCP_AUTOMATION_SCHEMAS)
+    )
 
 
 # ── Response Schemas ──

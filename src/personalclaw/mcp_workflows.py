@@ -524,7 +524,35 @@ def _fmt(body: dict[str, Any], *, summary: str = "") -> str:
     return f"{summary}\n{rendered}" if summary else rendered
 
 
-def _call_tool(name: str, args: dict[str, Any]) -> str:
+def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Validate against the shared MCP schema; unschem'd tools pass through unchanged."""
+    from personalclaw.validation import MCP_WORKFLOW_SCHEMAS, validate_tool_args
+
+    schema = MCP_WORKFLOW_SCHEMAS.get(name)
+    return validate_tool_args(args, schema) if schema else args
+
+
+def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
+    """One boundary, the shared one (issue 592). This module used to jump straight to
+    `_dispatch`, which silently skipped everything `call_tool_with_logging` provides:
+    the 19 MCP_WORKFLOW_SCHEMAS were dead (defined, key-tested, never consulted), no
+    workflow tool call was SEL-logged, and — the sharp edge — `leaf_tool_denial` never
+    ran, so a compiled batch leaf could call `workflow_start`/`workflow_fork` past the
+    orchestration denial that exists precisely to stop a leaf fanning out unbudgeted.
+    """
+    from personalclaw.mcp_shared import call_tool_with_logging
+
+    return call_tool_with_logging(
+        name,
+        raw_args,
+        _validate_args,
+        _call_tool_inner,
+        session_key="mcp_workflows",
+        downstream_service="personalclaw-workflows",
+    )
+
+
+def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     """Dispatch one tool, appending the staged-turn spec echo where it applies.
 
     The echo (WF2-R20f) is the whole reason inspect tools are worth calling before a

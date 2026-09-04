@@ -359,7 +359,11 @@ async def api_security_stats(_request: web.Request) -> web.Response:
 
     denied = len(denied_command_patterns())
 
-    schemas = sum(1 for name in dir(_validation_mod) if name.endswith("_SCHEMA") and name.isupper())
+    # Tools, not constants: the panel's hint says "Tools with enforced argument
+    # validation", so the number must come from the enforcement maps themselves
+    # (issue 592 — the old dir() sweep over *_SCHEMA names both undercounted the
+    # gated set and read as a coverage figure it wasn't).
+    schemas = len(_validation_mod.validated_tool_names())
 
     # 5 output paths where redaction is applied (architectural constant from
     # security-deep-dive.md): dashboard streaming mid-flush, dashboard streaming
