@@ -45,6 +45,13 @@ class NotifyActionProvider(ActionProvider):
         title = render_template(action_config.get("title_template", ""), ctx).strip()
         if not title:
             return ActionResult(success=False, error="notify hook is missing 'title_template'")
+        # A rehearsal delivers for real (that is what Test verifies), but says so:
+        # both trigger test paths tag their payload (#609 / the event-fire seam's
+        # contract "so a provider can tell a rehearsal from the real thing"), and
+        # an unmarked test notification is indistinguishable from a live alert in
+        # the inbox — the measured confusion this exists to end.
+        if bool((ctx.payload or {}).get("test")):
+            title = f"[test] {title}"
         body = render_template(action_config.get("body_template", ""), ctx)
         kind = (action_config.get("kind") or "info").strip().lower()
         if kind not in _ALLOWED_KINDS:

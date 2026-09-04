@@ -1885,7 +1885,10 @@ async def api_trigger_test(request: web.Request) -> web.Response:
     except Exception:
         body = {}
     context = sanitize_string(body.get("context", "test"))[:10000]
-    result = await run_script_hook(hook, context)
+    # A rehearsal, not a fire (#609): gates all hold and the action really executes,
+    # but the payload is tagged and the hook's real run_count/last_run/last_status
+    # stay untouched — mirroring the event-trigger /test path.
+    result = await run_script_hook(hook, context, test=True)
     return web.json_response(
         {
             "ok": True,
