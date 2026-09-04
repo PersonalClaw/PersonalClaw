@@ -564,6 +564,15 @@ class ConversationLog:
         """Public access to session messages."""
         return self._read_messages(key)
 
+    def has_session(self, key: str) -> bool:
+        """Whether a session file exists for *key*.
+
+        A pure existence probe (no read, no cache): the wire layer needs to
+        distinguish "no such session" from "a session with no messages yet",
+        and ``read_messages`` alone answers ``[]`` for both.
+        """
+        return self._path(key).exists()
+
     def read_messages_chained(self, key: str) -> list[dict]:
         """Read messages from all session files sharing the same ``tab_id``.
 
