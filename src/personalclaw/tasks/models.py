@@ -418,9 +418,12 @@ class TaskComment:
 
 # ── Hierarchy: Project → TaskList → Task ──
 
-# The two protected, always-present projects. ``Personal`` is the catch-all for
-# work created without a chosen project; ``Repeatable`` hosts resettable lists.
-DEFAULT_PROJECTS = ("Personal", "Repeatable")
+# The two protected, always-present BUILT-IN projects (seeded on first access,
+# never deletable). ``Personal`` is the catch-all for work created without a
+# chosen project; ``Repeatable`` hosts resettable lists. "Built-in" is the wire
+# and UI vocabulary too (``is_builtin``, the Built-in badge) — there is no
+# single-"default" pointer among projects, so nothing here is named default.
+BUILTIN_PROJECTS = ("Personal", "Repeatable")
 
 
 # ── The ONE coercion table for a task field ──────────────────────────────────
@@ -701,7 +704,7 @@ class Project:
     updated_at: str = ""
 
     def is_builtin_project(self) -> bool:
-        return self.is_builtin or self.name in DEFAULT_PROJECTS
+        return self.is_builtin or self.name in BUILTIN_PROJECTS
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -715,7 +718,7 @@ class Project:
             id=d.get("id", ""),
             name=name,
             is_builtin=bool(d.get("is_builtin", d.get("is_default", False)))
-            or name in DEFAULT_PROJECTS,
+            or name in BUILTIN_PROJECTS,
             status=str(d.get("status") or "active"),
             workspace_dir=str(d.get("workspace_dir") or ""),
             name_locked=bool(d.get("name_locked", False)),
