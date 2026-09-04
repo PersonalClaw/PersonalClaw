@@ -116,6 +116,16 @@ No domain/site/docs-site/demo; README screenshot is a placeholder (`docs/assets/
 
 ## Execution log
 
+### 2026-09-03 — `DL-8` (S4 T4.2+T4.3) listing submissions + P0 launch checklist — **DONE**
+
+Merged via PR #2363. The `awesome-self-hosted` and `awesome-ai-agents` PRs are drafted to each
+project's CONTRIBUTING rules, and the `selfh.st` + AlternativeTo entries are drafted.
+`launch-checklist.md` lists the P0 gate items, each linking its proof (CI badge, install log, live
+screenshots), alongside Show HN / r/selfhosted / r/LocalLLaMA post drafts — under the standing rule
+that the gate must be all-green before any owner posting. The actual community submissions and the
+launch-gate sign-off stay owner-gated under `DL-10`/`DL-11`; this atom delivered the drafts and the
+checklist.
+
 ### 2026-09-02 — `DL-7` (S4 T4.1) `/compare` capability matrix — **DONE**
 
 The released-version capability matrix ships at `/compare`: 20 rows across 5 groups, each row
