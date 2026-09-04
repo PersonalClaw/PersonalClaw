@@ -4078,6 +4078,54 @@ export interface CodeClassification {
 // cockpits/composers migrate onto it in 2d(iii), then the legacy types retire at the
 // 2e cutover. Mirrors the backend loop/loop.py entity + loop_routes.py redacted view:
 // shared spine fields at top level, everything kind-specific in `kind_config`.
+// ── Voice profiles (MULTIMODAL-IO §1) ──────────────────────────────────────────
+/** `clone` conditions on reference audio and needs a `supports_cloning` provider;
+ *  `design` carries parameters/instructions and needs `supports_voice_design`. A
+ *  plain piper voice is representable as `design` with empty params, which is what
+ *  makes the §6 migration lossless rather than a re-pick. */
+export type VoiceProfileKind = 'clone' | 'design'
+/** The §3 precedence chain, reported BY THE SERVER for a surface. The UI displays
+ *  which level won; it never recomputes the chain, or the two could disagree. */
+export type VoiceLevel = 'explicit' | 'binding' | 'default' | 'built-in'
+export interface VoiceProfile {
+  id: string; name: string; kind: VoiceProfileKind; provider: string; model: string
+  /** Relative to the profile dir, never absolute — a record stays bundle-able. */
+  ref_audio: string; ref_text: string
+  design_params: Record<string, unknown>; instruct: string
+  /** 0 means unseeded. While `locked`, the resolver always passes the pinned seed. */
+  seed: number; language: string; speed: number
+  locked: boolean; locked_at: string
+  /** Consent-as-provenance (§1.3). Absence is NOT an error — it only makes an
+   *  agentic binding warn, and never gates plain local synthesis. */
+  verified_own_voice: boolean; consent_text: string; consent_audio: string; consent_recorded_at: string
+  history: { path: string; seed: number; text_hash: string; created_at: string }[]
+  created_at: string; updated_at: string
+  /** Which artifacts exist ON DISK, answered from the files rather than the record,
+   *  so an abandoned upload can never read as complete. */
+  artifacts: { ref_audio?: boolean; consent?: boolean; locked?: boolean }
+  history_count: number
+}
+/** What create/update accept. Deliberately a subset of the record: ids, timestamps,
+ *  lock state and consent fields are server-owned and have their own endpoints. */
+export interface VoiceProfileDraft {
+  name?: string; kind?: VoiceProfileKind; provider?: string; model?: string
+  ref_text?: string; instruct?: string; design_params?: Record<string, unknown>
+  seed?: number; language?: string; speed?: number
+}
+/** surface → profile id. `default` is a legal key alongside `channel:`/`agent:`/`client:`. */
+export type VoiceBindings = Record<string, string>
+export interface VoiceResolution {
+  surface: string
+  /** False means nothing resolved and the built-in voice speaks — a real answer,
+   *  not a failure, so it must not render as an error. */
+  resolved: boolean
+  level: VoiceLevel
+  profile_id?: string; provider?: string; voice?: string
+  speed?: number; seed?: number; locked?: boolean
+  /** Presence, not the path. */
+  has_ref_audio?: boolean
+}
+
 export type LoopKind = 'general' | 'goal' | 'code' | 'design' | 'research'
 // The union of every kind's lifecycle states (goal adds `stagnant`; code adds `blocked`).
 export type UnifiedLoopStatus =
@@ -5516,6 +5564,41 @@ export const api = {
   forkRewound: (session: string, index: number, snapshot_index?: number) =>
     post<{ ok: boolean; key: string; title: string; messages: number }>(`/api/chat/sessions/${session}/fork-rewound`, { index, ...(snapshot_index != null ? { snapshot_index } : {}) }),
   voiceSynthesize: (text: string, session = '') => post<{ ok: boolean; chunks: number }>('/api/voice/synthesize', { text, session }),
+
+  // ── Voice profiles + bindings (MULTIMODAL-IO §1/§3/§6, atom MI-5) ──────────
+  /** Every profile plus the binding map, in one read. */
+  voiceProfiles: () => get<{ profiles: VoiceProfile[]; bindings: VoiceBindings }>('/api/voice/profiles'),
+  voiceProfileCreate: (body: VoiceProfileDraft) => post<VoiceProfile>('/api/voice/profiles', body),
+  /** Patch the mutable fields. The server decides which are mutable; a rejected
+   *  field comes back as a typed reason, so never pre-filter here. */
+  voiceProfileUpdate: (id: string, body: Partial<VoiceProfileDraft>) =>
+    put<VoiceProfile>(`/api/voice/profiles/${encodeURIComponent(id)}`, body),
+  /** Record, artifacts, and any bindings — one call, no orphan bindings left behind. */
+  voiceProfileDelete: (id: string) => del(`/api/voice/profiles/${encodeURIComponent(id)}`),
+  /** Consent is PROVENANCE, not a gate on local synthesis (§1.3): recording it
+   *  unlocks warning-free agentic bindings, and its absence is never an error. */
+  voiceProfileConsentRecord: (id: string, consent_text: string) =>
+    post<VoiceProfile>(`/api/voice/profiles/${encodeURIComponent(id)}/consent`, { consent_text }),
+  voiceProfileConsentVerify: (id: string) =>
+    post<VoiceProfile>(`/api/voice/profiles/${encodeURIComponent(id)}/consent/verify`, {}),
+  voiceProfileConsentRevoke: (id: string) => del(`/api/voice/profiles/${encodeURIComponent(id)}/consent`),
+  /** Pin a generation's seed + audio so "the voice I got on Tuesday" is reproducible. */
+  voiceProfileLock: (id: string, history_index: number) =>
+    post<VoiceProfile>(`/api/voice/profiles/${encodeURIComponent(id)}/lock`, { history_index }),
+  voiceProfileUnlock: (id: string) => post<VoiceProfile>(`/api/voice/profiles/${encodeURIComponent(id)}/unlock`, {}),
+  /** Bind one surface (or `default`). `warning` is advisory — §1.3 warns on a
+   *  consent-less clone bound to an agentic surface and never refuses the bind. */
+  voiceBindingSet: (surface: string, profile_id: string) =>
+    put<{ bindings: VoiceBindings; warning: string }>('/api/voice/bindings', { surface, profile_id }),
+  voiceBindingClear: (surface: string) => del(`/api/voice/bindings?surface=${encodeURIComponent(surface)}`),
+  /** §6 one-click migration: the active flat TTS selection becomes a design-kind
+   *  profile bound `default`. Only ever on an explicit click — nothing calls this
+   *  on a startup path. 409 `no_active_voice` when no TTS model is bound. */
+  voiceMigrate: (name = '') => post<VoiceProfile>('/api/voice/migrate', name ? { name } : {}),
+  /** Which level wins for a surface, and why — the resolver made legible so the
+   *  bindings table never re-implements the §3 precedence chain client-side. */
+  voiceResolve: (surface: string) =>
+    get<VoiceResolution>(`/api/voice/resolve?surface=${encodeURIComponent(surface)}`),
 
   // ── Unified Loop client (/api/loops, kind-aware) — the ONE surface for every kind
   // (goal/code/general/design). EVERY FE surface (Goal + Code) is migrated onto these
