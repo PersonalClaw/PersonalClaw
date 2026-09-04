@@ -34,7 +34,14 @@ const healthy = { surfaces: [{ surface: 'chat', available: true, backlog: 0, flo
 function mockApi(over: Record<string, unknown>) {
   vi.doMock('../lib/api', async (orig) => ({
     ...(await orig<Record<string, unknown>>()),
-    api: { degraded: () => Promise.resolve(healthy), ...over },
+    api: {
+      degraded: () => Promise.resolve(healthy),
+      // The chip's poll also reads onboarding readiness (setup-land vs regression
+      // vocabulary); these tests are about the UNKNOWN state, so answer as the
+      // configured world unless a case overrides.
+      onboarding: () => Promise.resolve({ has_model_provider: true }),
+      ...over,
+    },
   }))
 }
 
