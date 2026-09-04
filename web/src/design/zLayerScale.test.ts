@@ -135,10 +135,16 @@ describe('no bespoke numeric z-[N] outside the shrinking baseline', () => {
     ).toBeLessThanOrEqual(baseline.maxArbitraryZLayers)
   })
 
-  it('the scanner is not vacuously green — it finds the baselined stragglers', () => {
-    // Guard against the regex rotting into a no-op: if it stopped matching, both
-    // assertions above would pass on an empty set. The baseline names real files,
-    // so the scan must still see at least one of them.
-    expect(offenders.length, 'the scan must still find numeric z-[N] somewhere').toBeGreaterThan(0)
+  it('the scanner is not vacuously green — the regex still recognizes the violation shapes', () => {
+    // Guard against the regex rotting into a no-op. With the migration complete the
+    // tree holds no live offender to find, so the anti-rot probe is synthetic: the
+    // pattern must still match the shapes the rail exists to catch, and must NOT
+    // match the token form the rail prescribes — a rot in either direction fails.
+    for (const bad of ['z-[200]', 'z-[9999]', '-z-[10]', 'z-[60]']) {
+      expect(NUMERIC_Z.test(bad), `NUMERIC_Z must match "${bad}"`).toBe(true)
+    }
+    for (const good of ['z-[var(--z-toast)]', 'z-[var(--z-modal)]', 'z-[calc(var(--z-content)+1)]']) {
+      expect(NUMERIC_Z.test(good), `NUMERIC_Z must NOT match "${good}"`).toBe(false)
+    }
   })
 })

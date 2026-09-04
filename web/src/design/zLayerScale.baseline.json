@@ -1,8 +1,5 @@
 {
-  "_comment": "z-layer scale ratchet (CD-05). Every fixed/portaled overlay must ride the --z-* scale in design/tokens.css via z-[var(--z-*)], NOT a bespoke numeric z-[N]. These are the files that still carry a numeric z-[N] at the ratchet's introduction; zLayerScale.test.ts asserts the live count may only be <= maxArbitraryZLayers AND that no OTHER file carries one — a numeric z-[N] in a clean file turns CI red. Following primitiveAdoption.baseline.json: the count may only SHRINK; ratchet it DOWN in the same commit that clears a file. SessionSkillsReview.tsx is cleared by the sibling PR that routes it through the Modal primitive (which rides --z-modal); CodeCockpitPage.tsx's local bottom-right handoff panel is a follow-up.",
-  "maxArbitraryZLayers": 2,
-  "files": [
-    "pages/chat/SessionSkillsReview.tsx",
-    "pages/code/CodeCockpitPage.tsx"
-  ]
+  "_comment": "z-layer scale ratchet (CD-05), COMPLETE. Every fixed/portaled overlay rides the --z-* scale in design/tokens.css via z-[var(--z-*)]; no app source carries a bespoke numeric z-[N]. zLayerScale.test.ts keeps it that way: a numeric z-[N] in ANY file turns CI red (the files list is empty, so every file is a clean file), and the count ceiling is 0. The scanner's anti-rot guard is a synthetic regex self-test, since there are no live offenders left for it to find.",
+  "maxArbitraryZLayers": 0,
+  "files": []
 }
