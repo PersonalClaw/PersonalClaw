@@ -76,13 +76,31 @@ async def test_project_linked_lists_bound_loops_and_code(tmp_path):
 
             prov = NativeArtifactProvider(root=tmp_path / "artifacts")
             prov.create(name="Spec", content="<p>x</p>", project_id=pid)
+            # #639: a loop DELIVERABLE carries a `loop:<id>` tag and an empty
+            # project_id (the convention predates the project stamp). It must
+            # surface under the project that owns the loop — this was the one
+            # artifact class guaranteed to exist and guaranteed not to show.
+            own_loop_id = next(lp.id for lp in loop_store.list_all() if lp.project_id == pid)
+            code_id = next(lp.id for lp in loop_store.list_all() if lp.tasks_project_id == pid)
+            other_id = next(
+                lp.id
+                for lp in loop_store.list_all()
+                if pid not in (lp.project_id, lp.tasks_project_id)
+            )
+            prov.create(name="Deliverable", content="x", tags=["loop", f"loop:{own_loop_id}"])
+            prov.create(name="CodeOut", content="x", tags=[f"loop:{code_id}"])
+            # ...and another loop's deliverable must NOT leak in.
+            prov.create(name="ForeignDeliverable", content="x", tags=[f"loop:{other_id}"])
+            # Belt-and-braces: stamped AND tagged must appear exactly once.
+            prov.create(name="Both", content="x", project_id=pid, tags=[f"loop:{own_loop_id}"])
             with patch.object(art_reg, "get_provider", lambda name=None: prov):
                 r = await client.get(f"/api/projects/{pid}/linked")
             assert r.status == 200
             body = await r.json()
             assert [e["name"] for e in body["loops"]] == ["Loopy"]
             assert [c["name"] for c in body["code"]] == ["Codey"]
-            assert [a["name"] for a in body["artifacts"]] == ["Spec"]
+            got = sorted(a["name"] for a in body["artifacts"])
+            assert got == ["Both", "CodeOut", "Deliverable", "Spec"]
             # each row carries error_message so the FE can tell a genuine 'complete'
             # from a budget-exhausted finish ('Ended early') — present (None when unset).
             assert "error_message" in body["loops"][0] and "error_message" in body["code"][0]
