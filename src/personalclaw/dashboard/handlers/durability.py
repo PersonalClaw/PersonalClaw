@@ -32,6 +32,8 @@ from pathlib import Path, PurePosixPath
 from aiohttp import web
 from aiohttp.multipart import BodyPartReader
 
+from personalclaw.http_errors import json_error
+
 logger = logging.getLogger(__name__)
 
 # Jobs a caller may trigger by name. Closed set — this maps to real work on disk.
@@ -313,8 +315,14 @@ async def api_durability_import(request: web.Request) -> web.Response:
     except Exception as exc:  # noqa: BLE001
         logger.exception("durability import failed")
         _audit_api(request, "durability.import", "error", str(exc))
-        return web.json_response(
-            {"ok": False, "error": {"code": "import_failed", "message": str(exc)}}, status=500
+        # The exception text is internals (a traceback's last words), not user copy — it
+        # lives in the log line and audit row above; the wire carries the way forward.
+        return json_error(
+            "import_failed",
+            message="The archive could not be imported. "
+            "Check the gateway log for the failure detail.",
+            status=500,
+            ok=False,
         )
     finally:
         zip_path.unlink(missing_ok=True)
@@ -527,10 +535,18 @@ async def api_durability_archive_restore(request: web.Request) -> web.Response:
 
     try:
         result = await asyncio.get_event_loop().run_in_executor(None, _run)
-    except Exception as exc:  # noqa: BLE001 — report, never 500 on a restore refusal
+    except Exception as exc:  # noqa: BLE001
+        # A raise here is a CRASH, not a refusal: restore_apply reports its designed
+        # refusals (gateway running, bad archive shape) as ok:false VALUES on the result
+        # path below. So this answers 500 with guidance, and the exception text stays in
+        # the log and audit row — internals are not user copy.
         logger.warning("durability restore failed", exc_info=True)
-        return web.json_response(
-            {"error": {"code": "restore_refused", "message": str(exc)}}, status=400
+        _audit_api(request, "durability.restore", "error", str(exc))
+        return json_error(
+            "restore_failed",
+            message="The restore attempt failed. "
+            "Check the gateway log for the failure detail before retrying.",
+            status=500,
         )
 
     _audit_api(

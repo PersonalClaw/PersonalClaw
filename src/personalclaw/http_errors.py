@@ -88,6 +88,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "confirm_required": 'The operation needs an explicit {"confirm": true} in the body.',
     "unknown_fix": "No Doctor fix with that id exists.",
     "text_required": "A query text is required.",
+    # ── durability (dashboard/handlers/durability.py) — crash outcomes; designed
+    # refusals travel as ok:false result VALUES, never through these codes ──
+    "import_failed": "A snapshot import failed. The gateway log carries the failure detail.",
+    "restore_failed": "A restore attempt failed. The gateway log carries the failure detail.",
     # ── API version negotiation (dashboard/api_version_gate.py) ──
     # The `error` object additionally carries client_version, server_version,
     # min_supported_version and upgrade ("client"|"server") — a refusal that named
