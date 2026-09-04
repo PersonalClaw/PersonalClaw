@@ -179,6 +179,8 @@ Plan 42 rules-engine `push` target calls `send_push` with `{kind, item_id}` only
 
 ## Execution log
 
+**2026-09-04 — MC-6 validated done (evidence #2359).** Clause 2 — the SW per-kind sound + badge cue mapping — shipped: the `push` handler in `web/src/sw.ts` and `web/src/app/pushPolicy.ts`'s `notificationFor()` compose the notification from the payload `kind`; a `sound` key was added to `notification_rules.Rule` (+ coercion/PUT guard) with a control in `NotificationRulesMatrix.tsx`, the voice drawn from the closed set in `web/src/design/soundCues.ts` (a service worker cannot play audio, so a matched kind vibrates/badges and messages an open client to play the voice). Clause 1 (Running-loops/Tasks/Inbox/Recent sections) landed 2026-08-26; MC-5's push handler (done 2026-09-02) unblocked clause 2. `tests/test_notification_rules.py` + `tests/test_entity_settings_routes.py` green.
+
 **2026-09-02 — MC-5 validated done (impl pre-landed).** Web-push + ntfy adapter live as plan-42's `push` target (`push.py`, `handlers/push.py`; `notification_rules.py` marks push LIVE as of MC-5). `tests/test_mc5_push_to_approval.py` 34/34.
 
 ### 2026-08-13 — `MC-3` (S2 T2.1r + T2.2 approvals half) — **DONE**

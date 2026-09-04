@@ -692,48 +692,15 @@ def test_the_real_ws7_gate_is_its_own_partial_not_the_deferred_naming_wart(
     assert verdict != LogVerdict.GATED
 
 
-@pytest.mark.parametrize(
-    ("atom_id", "own_plan"),
-    [
-        ("EI-2", "EXECUTION-ISOLATION.md"),
-    ],
-)
-def test_the_real_inherited_verdicts_are_gone(
-    real_verdicts: list, real_log_hits: dict, atom_id: str, own_plan: str
-) -> None:
-    """Atoms bucketed LANDED-BUT-GATED with nothing of their own on the ref.
-
-    ``EI-2`` was scored off a sibling's entry in its own plan — ``EI-8``'s STOP POINT — while
-    ``sandbox_providers/`` holds only ``base``/``none``/``registry``. The bucket is what a human
-    acts on, so the bucket is pinned.
-
-    **``DCU-3`` GRADUATED off this list (2026-08-26) and that is the intended exit, not a
-    loosening.** It was here because it read LANDED-BUT-GATED off ``DCU-4``'s DONE headline
-    "while ``computer_use/`` has no ``macos_driver.py``". That module now exists, and the atom
-    wrote its own dated PARTIAL naming the one clause an OS permission still gates, so its
-    verdict is no longer inherited from anybody. The assertion below is what enforced the exit:
-    it reds the moment an atom here gains a headline entry, which is exactly what happened.
-
-    **``LV-7`` GRADUATED the same way (2026-08-26), and by the same evidence standard.** It was
-    here because it inherited a ``run_matrix`` DISCOVERY entry rather than owning a verdict. It
-    now writes four dated entries of its own — a PREMISE CORRECTION retiring ``LV-6``'s stale
-    "``arm_mask`` appears nowhere" blocking finding, a DESIGN RULE, a DISCOVERY about the §2.2
-    register, and three falsifications — so nothing about its state is inherited any more. Note
-    what did NOT change: the atom stays ``todo`` with four clauses named UNMET in
-    ``dag.json``'s ``blocked_reason``. Graduating off this list means "its verdict is its own",
-    not "it is done" — those are different claims and this rail only ever measured the first.
-    """
-    hits = [h for h in real_log_hits.get(atom_id, []) if h.plan_file == own_plan]
-    assert hits, f"{atom_id} has no entry at all in {own_plan}: this test is mute"
-    assert not any(h.headline for h in hits), (
-        f"{atom_id} now has an entry of its own in {own_plan} — re-read it rather than "
-        f"loosening this: {[h.excerpt[:90] for h in hits if h.headline]}"
-    )
-    assert decide_log(hits, own_plan_file=own_plan) == (LogVerdict.NONE, None)
-
-    verdict = next(v for v in real_verdicts if v.atom.id == atom_id)
-    assert verdict.bucket in (OPEN, UNKNOWN), verdict.why
-    assert verdict.bucket != GATED
+# ``test_the_real_inherited_verdicts_are_gone`` retired 2026-09-04 — its last subject graduated.
+# It pinned atoms bucketed LANDED-BUT-GATED off a SIBLING's entry with nothing of their own on
+# the ref (the bucket a human acts on). Atoms left it by growing a verdict of their own:
+# ``DCU-3`` and ``LV-7`` graduated 2026-08-26 (each wrote its own dated entry), and ``EI-2``
+# graduated 2026-09-04 — the ``docker`` sandbox provider landed on ``main`` (#2361), the atom
+# flipped ``done`` with its own validated-done Execution-log entry, so its verdict is no longer
+# inherited from ``EI-8``'s STOP POINT. With no remaining inherited-verdict atom the guard has
+# no subject; the census's own ``self_check`` rails (exercised by ``test_self_check_*`` above)
+# stay the standing protection against a verdict scored off nothing.
 
 
 def test_the_real_es7_verdict_comes_from_its_own_tagged_entry(real_log_hits: dict) -> None:

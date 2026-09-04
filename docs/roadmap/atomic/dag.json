@@ -6079,14 +6079,15 @@
         {
           "id": "MC-6",
           "title": "S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment §S3.5 (T3.5.1) — former S2 T2.1/T2.2 breadth",
           "done_when": "Companion adds Running-loops (pause/nudge/stop via loop_routes), tasks, inbox-resolve, and recent-notifications sections working per the original S2 done-whens; the SW maps a push payload's `kind` to per-kind sound/badge using plan-42's rules field (a distinct sound fires for a kind configured in the rules UI).",
           "deps": [
             "MC-3",
             "MC-4"
           ],
-          "blocked_reason": "PARTIAL, verified 2026-08-27. Clause 1 is FULLY SHIPPED and gated (the MC.md glyph understates it; the honest mark is a partial, not an empty box): CompanionSections ships RunningLoops/Tasks/Inbox/Recent in the asserted order, MC-3's 'Not on the phone yet' stub list is DELETED rather than flagged off, useCompanionAction owns revert AND reconcile once for all four, and every endpoint has a real client. Loops are read-only-plus-actions deliberately because PP-16 is unifying Loops concurrently. Clause 2 is UNMET on three independent absences, any one decisive: web/src/sw.ts is 122 lines with install/activate/fetch and NO push handler at all; web/src/app/pushPolicy.ts - the clause's actual call site for notificationFor() - does not exist; and the `rules` field the clause reads FROM does not exist, because notification_rules.Rule is mode/targets/conditions/verify with no `sound` and no per-kind badge key. SMALLEST REMAINING UNIT: land MC-5 first (it owns the sw.ts push handler and pushPolicy.notificationFor), then add `sound` to Rule + _coerce_rule + rules_document() + the PUT guard + a control in NotificationRulesMatrix, naming a voice from the EXISTING closed set in web/src/design/soundCues.ts rather than minting a vocabulary. This is entity_settings state, so the config round-trip contract does not apply and loader.py does not grow. Platform constraint for whoever takes it: a service worker CANNOT play audio, so 'a distinct sound fires' means silent/vibrate on the notification plus a message to an open client that plays the voice."
+          "blocked_reason": "PARTIAL, verified 2026-08-27. Clause 1 is FULLY SHIPPED and gated (the MC.md glyph understates it; the honest mark is a partial, not an empty box): CompanionSections ships RunningLoops/Tasks/Inbox/Recent in the asserted order, MC-3's 'Not on the phone yet' stub list is DELETED rather than flagged off, useCompanionAction owns revert AND reconcile once for all four, and every endpoint has a real client. Loops are read-only-plus-actions deliberately because PP-16 is unifying Loops concurrently. Clause 2 is UNMET on three independent absences, any one decisive: web/src/sw.ts is 122 lines with install/activate/fetch and NO push handler at all; web/src/app/pushPolicy.ts - the clause's actual call site for notificationFor() - does not exist; and the `rules` field the clause reads FROM does not exist, because notification_rules.Rule is mode/targets/conditions/verify with no `sound` and no per-kind badge key. SMALLEST REMAINING UNIT: land MC-5 first (it owns the sw.ts push handler and pushPolicy.notificationFor), then add `sound` to Rule + _coerce_rule + rules_document() + the PUT guard + a control in NotificationRulesMatrix, naming a voice from the EXISTING closed set in web/src/design/soundCues.ts rather than minting a vocabulary. This is entity_settings state, so the config round-trip contract does not apply and loader.py does not grow. Platform constraint for whoever takes it: a service worker CANNOT play audio, so 'a distinct sound fires' means silent/vibrate on the notification plus a message to an open client that plays the voice.",
+          "evidence": "done 2026-09-04 (evidence PR #2359, MERGED): clause 2 — the SW per-kind sound + badge cue mapping — shipped. The push handler in web/src/sw.ts and web/src/app/pushPolicy.ts's notificationFor() compose the notification from the payload kind; a `sound` key was added to notification_rules.Rule + its coercion/PUT guard and a control in web/src/pages/settings/NotificationRulesMatrix.tsx, with the voice drawn from the closed set in web/src/design/soundCues.ts (a service worker cannot play audio, so a matched kind vibrates/badges and messages an open client to play the voice). Clause 1 (RunningLoops/Tasks/Inbox/Recent sections) landed 2026-08-26; MC-5's push handler (done 2026-09-02) unblocked clause 2. Verified on main: tests/test_notification_rules.py + tests/test_entity_settings_routes.py green. Supersedes the blocked_reason above."
         },
         {
           "id": "MC-7",
@@ -6912,13 +6913,14 @@
         {
           "id": "EI-2",
           "title": "`docker` provider + engine/workspace-block adoption + cgroup v2 tier",
-          "status": "todo",
+          "status": "done",
           "scope": "§1.1 docker built-in + failure-honesty/downgrade; §1.3(2) code loops & workflow stage nodes (allowed_write_paths/egress_tier/safety_profile threaded into SandboxSpec); §11 Session 2; Amendment 2026-07-26 EI-A2 (cgroup v2 systemd-run transient scope + doctor probe)",
           "done_when": "SC1: a stage `sandbox: docker` runs its process tree in a UID-aligned bind-mount container over its WORK-R3 worktree; a write outside allowed_write_paths is blocked by the boundary; a no-Docker machine parks needs-input with a typed reason (no silent host downgrade for unattended). SC2: a subagent `sandbox: docker` without a grant to ~/.personalclaw/models cannot delete a real local model. Linux fork-bomb child hits pids.max; macOS logs a one-time not-enforced warning",
           "deps": [
             "EI-1",
             "EXT:WORK-CONTAINERS:WORK-R3 workspace block call sites + WORK-R20 mode:container re-expression"
-          ]
+          ],
+          "evidence": "done 2026-09-04 (evidence PR #2361, MERGED): the docker confinement sandbox provider shipped in src/personalclaw/sandbox_providers/docker.py — a stage/subagent `sandbox: docker` runs its process tree in a UID-aligned bind-mount container over its WORK-R3 worktree; a write outside allowed_write_paths is blocked by the boundary; a no-Docker machine parks needs-input with a typed reason (no silent host downgrade for unattended); the Linux cgroup v2 tier bounds pids.max (fork-bomb) and macOS logs the one-time not-enforced warning. SC1 + SC2 met. Verified on main: tests/test_sandbox_docker.py green, and the provider's spawn sites are classified in tests/test_spawn_ceiling_audit.py. Supersedes the blocked_reason above."
         },
         {
           "id": "EI-3",
@@ -7778,6 +7780,11 @@
         "plan": "EA"
       },
       {
+        "id": "EI-4",
+        "title": "Lima VM tier app + apps-sandbox (#71) + terminal sandbox picker",
+        "plan": "EI"
+      },
+      {
         "id": "ES-8",
         "title": "Trust-graduation ladder: trust records, graduation/revocation, rungs, attention accounting",
         "plan": "ES"
@@ -7786,11 +7793,6 @@
         "id": "LMMV-7",
         "title": "Session 5b — Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation",
         "plan": "LMMV"
-      },
-      {
-        "id": "MC-6",
-        "title": "S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping",
-        "plan": "MC"
       },
       {
         "id": "MC-7",
@@ -7883,14 +7885,6 @@
         "plan": "DL",
         "gate": [
           "owner"
-        ]
-      },
-      {
-        "id": "EI-2",
-        "title": "`docker` provider + engine/workspace-block adoption + cgroup v2 tier",
-        "plan": "EI",
-        "gate": [
-          "ext"
         ]
       },
       {
@@ -9930,9 +9924,9 @@
         "code": "MC",
         "plan": "MOBILE-COMPANION",
         "total_atoms": 10,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
@@ -10002,9 +9996,9 @@
         "code": "EI",
         "plan": "EXECUTION-ISOLATION",
         "total_atoms": 12,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
