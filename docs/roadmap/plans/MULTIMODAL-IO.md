@@ -293,6 +293,19 @@ Approved **AUTO-R20** (WORKFLOWS-V2-AUTOMATION-SUBSTRATE §1.2, `observe` trigge
 
 ## Execution log
 
+### `MI-2` — Cloning-capable TTS engine app beside piper + capability flags — DONE (2026-09-03)
+
+Shipped §2 across two PRs. Core PR #2351 (MI-2a) added the capability surface: `CapabilityMatrix`
+and `TtsProvider` gain `supports_cloning`/`supports_voice_design` plus defaulted
+`ref_audio`/`ref_text`/`seed`/`instruct`/`design_params` kwargs (piper and OpenAI compile
+unchanged), and a clone-kind profile bound to a non-cloning provider returns
+`409 cloning_unsupported:<provider>`. Apps PR PersonalClawApps#60 (MI-2b) ships
+`apps/voice-clone-tts` as a sidecar `LocalTtsProvider` app with `catalog.json` cards (runtime
+torch, matrix flags) declaring `supports_cloning`; killing the sidecar mid-synthesis leaves the
+gateway up with a typed crash reason. No new provider type and no hook-action creep (§2.3). The
+§2.2 OmniVoice-vs-CosyVoice engine spike (pick-one + real zero-shot inference + resumable weights
++ LMM-V2 through-clone selftest) was split out as its own atom `MI-6` and remains `todo`.
+
 ### `MI-4` — Screen-context observation channel — DONE (2026-08-16)
 
 Shipped §5 in full: `dashboard/screen_context.py` (the in-memory latest-wins slot +

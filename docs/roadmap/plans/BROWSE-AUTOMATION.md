@@ -1154,3 +1154,7 @@ class ElementRef:
 ### `BA-8` — extension connector (flipped `done` 2026-09-03)
 
 **2026-09-03 — DONE (`BA-8`).** Merged via core PR #2350 (commit cf5b3f661, "feat(browse): loopback user_browser connector route") + apps PR PersonalClawApps#58 (loopback browser-extension connector bundle). Loopback-only (`LOOPBACK_INTERNAL`) typed local contract (navigate/read-outline/click/type/close), paired via the shipped COMPANION-APPS device-session/pairing (consumed, not forked), shipped as an app bundle with zero browser-vendor strings in core. `dag.json` flipped to `done`; the `BA.md` row is now ✅. `BA-9` (per-task grant flow) remains the last open BA atom.
+
+### `BA-5` — live browse mirror panel (flipped `done` 2026-09-03)
+
+**2026-09-03 — DONE (`BA-5`).** Merged via core PR #2353 (commit 964bab2ca, "feat(browse): live mirror, kill switch & auth_needed state (BA-5)"). The FE mirror panel broadcasts a `browse_step` WS event per step (url + last action + screenshot path) with an adjacent one-click kill switch; an expired session sets `.meta.json` `auth_state=expired`, raises a persistent banner + a `needs_input` inbox item, and produces zero failed ticks; the per-site profile-encryption key lives in the credential store as `BROWSE_PROFILE_KEY_<slug>`, never in the profile dir. `dag.json` flipped to `done` with the PR/commit recorded in `evidence`; the `BA.md` row is now ✅. `BA-9` (per-task grant flow) is now the last open BA atom.

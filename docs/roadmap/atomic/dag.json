@@ -1562,13 +1562,14 @@
         {
           "id": "BA-5",
           "title": "Live browse mirror panel + kill switch + auth_needed first-class state",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-26 (b) Live browse mirror + (c) auth handoff honestly scoped; task A2",
           "done_when": "A user watches an unattended browse live in an FE mirror panel (browse_step WS broadcast per step: url + last action + screenshot path) and stops it in one click via the adjacent kill switch; an expired session sets .meta.json auth_state=expired, raises a persistent banner + a needs_input inbox item, and produces zero failed ticks; the per-site profile-encryption key lives in the credential store (BROWSE_PROFILE_KEY_<slug>), never in the profile dir — task A2",
           "deps": [
             "BA-3",
             "BA-4"
-          ]
+          ],
+          "evidence": "Core PR #2353 (feat(browse): live mirror, kill switch & auth_needed state (BA-5), MERGED 2026-09-03, commit 964bab2ca). FE mirror panel broadcasts browse_step per step (url + last action + screenshot path) with an adjacent one-click kill switch; expired sessions set auth_state=expired, raise a persistent banner + needs_input inbox item with zero failed ticks; per-site profile-encryption key lives in the credential store (BROWSE_PROFILE_KEY_<slug>)."
         },
         {
           "id": "BA-6",
@@ -3623,12 +3624,13 @@
         {
           "id": "MI-2",
           "title": "Cloning-capable TTS engine app beside piper + capability flags (supports_cloning/supports_voice_design) + typed refusal",
-          "status": "todo",
+          "status": "done",
           "scope": "§2 Provider Capability Flags + a Cloning Engine Beside Piper (§2.1 CapabilityMatrix + TtsProvider flags & defaulted synthesize kwargs; §2.2 apps/voice-clone-tts sidecar model app from OmniVoice-vs-CosyVoice spike; §2.3 no new provider type / no hook-action creep)",
           "done_when": "OmniVoice-vs-CosyVoice spike run on fixtures with the loser's notes in the plan dir; apps/voice-clone-tts ships as a sidecar LocalTtsProvider app with catalog.json cards (runtime torch, matrix flags), declaring supports_cloning; CapabilityMatrix + TtsProvider gain supports_cloning/supports_voice_design plus defaulted ref_audio/ref_text/seed/instruct/design_params kwargs (piper/OpenAI compile unchanged); a clone-kind profile bound to a non-cloning provider returns 409 cloning_unsupported:<provider>; LMM-V2 selftest synthesizes through a clone reference fixture; killing the sidecar mid-synthesis leaves the gateway up with a typed crash reason",
           "deps": [
             "MI-1"
-          ]
+          ],
+          "evidence": "Core PR #2351 (feat(tts): MI-2a cloning-capable TTS capability surface — CapabilityMatrix/TtsProvider supports_cloning/supports_voice_design + defaulted synthesize kwargs + 409 cloning_unsupported, MERGED) + apps PR PersonalClawApps#60 (feat(voice-clone-tts): MI-2b cloning-capable TTS sidecar app, MERGED). The OmniVoice-vs-CosyVoice engine-spike remainder was split out as atom MI-6; MI-2's capability-surface + sidecar-app scope is fully landed."
         },
         {
           "id": "MI-3",
@@ -6215,7 +6217,7 @@
         {
           "id": "DL-8",
           "title": "S4 T4.2+T4.3: listing submissions + P0 launch checklist",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 — Comparison + listing program (T4.2, T4.3, V4)",
           "done_when": "awesome-self-hosted + awesome-ai-agents PRs drafted per their CONTRIBUTING rules; selfh.st + AlternativeTo entries drafted; launch-checklist.md lists the P0 gate items each linking their proof (CI badge, install log, live screenshots) with Show HN / r/selfhosted / r/LocalLLaMA post drafts; gate all-green before any owner posting",
           "deps": [
@@ -6223,7 +6225,8 @@
             "DL-6",
             "EXT:CI-RELEASE:green main + CI badge",
             "EXT:DISTRIBUTION:install one-liner verified working"
-          ]
+          ],
+          "evidence": "PR #2363 (docs(launch): draft DL-8 launch checklist and listing submissions, MERGED) — awesome-self-hosted/awesome-ai-agents PRs + selfh.st/AlternativeTo entries drafted, launch-checklist.md P0 gate items each linking their proof, Show HN / r/selfhosted / r/LocalLLaMA post drafts."
         },
         {
           "id": "DL-9",
@@ -7735,11 +7738,6 @@
         "plan": "APE"
       },
       {
-        "id": "BA-5",
-        "title": "Live browse mirror panel + kill switch + auth_needed first-class state",
-        "plan": "BA"
-      },
-      {
         "id": "BA-9",
         "title": "Per-task grant flow (fail-closed ApprovalGate, task-named tab, close-to-kill, SEL audit) + security posture docs + as-a-user validation",
         "plan": "BA"
@@ -7800,8 +7798,13 @@
         "plan": "MC"
       },
       {
-        "id": "MI-2",
-        "title": "Cloning-capable TTS engine app beside piper + capability flags (supports_cloning/supports_voice_design) + typed refusal",
+        "id": "MI-5",
+        "title": "Voice bindings + profile-manager UI, one-click migration, and full-matrix as-a-user validation sweep",
+        "plan": "MI"
+      },
+      {
+        "id": "MI-6",
+        "title": "Voice-clone engine spike: OmniVoice vs CosyVoice on fixtures, pick one, real zero-shot inference + resumable weights + LMM-V2 through-clone selftest",
         "plan": "MI"
       },
       {
@@ -7875,11 +7878,11 @@
         ]
       },
       {
-        "id": "DL-8",
-        "title": "S4 T4.2+T4.3: listing submissions + P0 launch checklist",
+        "id": "DL-11",
+        "title": "Owner: P0 launch-gate clearance sign-off before any public posting (Show HN / r/selfhosted / r/LocalLLaMA)",
         "plan": "DL",
         "gate": [
-          "ext"
+          "owner"
         ]
       },
       {
@@ -9540,9 +9543,9 @@
         "code": "BA",
         "plan": "BROWSE-AUTOMATION",
         "total_atoms": 9,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
@@ -9702,9 +9705,9 @@
         "code": "MI",
         "plan": "MULTIMODAL-IO",
         "total_atoms": 6,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -9936,9 +9939,9 @@
         "code": "DL",
         "plan": "DISCOVERABILITY-LAUNCH",
         "total_atoms": 11,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 4,
         "blocked": 0
       },
       {
