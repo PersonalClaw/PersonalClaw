@@ -133,6 +133,15 @@ _CEILING_WRAPPED: dict[str, str] = {
         "none sandbox provider → profile ceiling via create_subprocess_limited (post-exec shim); "
         "the single routed-spawn seam (subsumes the former AcpProcess.spawn session_host site)"
     ),
+    # The ``docker`` confinement provider's handle exec (EI-2) — sibling to the ``none`` seam
+    # above. The wrapped inner argv is the agent's own process tree, so it is agent-influenced
+    # and routes through create_subprocess_limited on the docker client, mirroring the none
+    # seam. The container's REAL bound is the native --pids-limit/--memory flags that
+    # build_docker_argv adds; the client ceiling keeps the routed seam uniform with ``none``.
+    "sandbox_providers/docker.py::_DockerHandle.exec::create_subprocess_limited": (
+        "docker sandbox provider → profile ceiling via create_subprocess_limited on the docker "
+        "client (mirrors the none seam); container itself bounded by native --pids-limit/--memory"
+    ),
     # Cron/scheduled-script runner (EI-3). Agent-influenced: an agent authors the file under
     # `crons/` and the job that selects it, so the child gets the same `tool` ceiling an agent
     # bash command does. Its earlier exemption reasoned from the OS sandbox wrap + clean env —
@@ -406,6 +415,20 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "host-fact: sandbox-exec availability probe"
     ),
     "sandbox.py::_ssh_supports_accept_new::subprocess.run": "host-fact: ssh version probe",
+    # The docker provider's daemon probe (EI-2) — same class as the sandbox-exec/ssh probes
+    # above: a fixed ``docker version`` argv that reads a host fact (is the daemon answering),
+    # runs no agent code, and takes no agent-influenced input.
+    "sandbox_providers/docker.py::_daemon_ping::subprocess.run": (
+        "host-fact: docker daemon availability probe (fixed docker version argv)"
+    ),
+    # The docker provider's belt-and-suspenders container teardown (EI-2). The argv is
+    # ``docker rm -f <name>`` where <name> is the handle's OWN self-generated container id
+    # (``pclaw-sbx-<pid>-<ms>``); nothing agent-authored reaches it, so there is no
+    # agent-influenced input for a ceiling to bound — the same class as the tmux
+    # kill-our-own-session teardowns above.
+    "sandbox_providers/docker.py::_DockerHandle.cleanup::subprocess.run": (
+        "operator: docker rm -f of our own ephemeral container (fixed argv, self-generated name)"
+    ),
     # Service install/control — operator with sudo (launchd/systemd).
     "service/linux.py::_current_group::subprocess.run": "operator: service install id probe",
     "service/linux.py::_sudo_run::subprocess.run": "operator: service install sudo",
