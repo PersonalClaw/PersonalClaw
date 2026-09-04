@@ -5,7 +5,7 @@ import { EmptyState } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { useQuery } from '../../lib/data'
 import { api, type WeekProjection } from '../../lib/api'
-import { buildWeekGrid, cellLabel, visibleHours, weekSummary, startOfDay, type CellState, type WeekCell } from './weekGrid'
+import { buildWeekGrid, cellLabel, visibleHours, weekSummary, startOfDay, weekEnd, type CellState, type WeekCell } from './weekGrid'
 
 /** The Week tab — a 7×24 grid of every enabled clock trigger's fires (AUTO-A3 — S81).
  *
@@ -52,7 +52,7 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
   // would show a forecast that has already partly happened.
   const { data: week } = useQuery<WeekProjection>(
     `triggers:week:${start.toISOString().slice(0, 10)}`,
-    () => api.triggersWeek(localIso(start), 7),
+    () => api.triggersWeek(localIso(start), 7, localIso(weekEnd(start))),
     { persist: false },
   )
 

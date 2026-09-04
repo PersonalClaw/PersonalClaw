@@ -262,7 +262,9 @@ def _week_triggers(state: DashboardState) -> list[Any]:
     return rows
 
 
-def _project_one(trigger: Any, *, start: Any, days: int) -> tuple[list[Any], bool]:
+def _project_one(
+    trigger: Any, *, start: Any, days: int, until: Any = None
+) -> tuple[list[Any], bool]:
     """Project ONE clock trigger's fires across the window.
 
     🔴 A CRON NOW PLOTS. The old caller skipped every non-interval trigger with its own admission
@@ -287,6 +289,7 @@ def _project_one(trigger: Any, *, start: Any, days: int) -> tuple[list[Any], boo
         "trigger_name": trigger.name,
         "start": start,
         "days": days,
+        "until": until,
         "gates": getattr(trigger, "gates", None) or {},
         "skip_dates": [str(d) for d in (spec.get("skip_dates") or [])],
         "tz_name": str(spec.get("timezone") or ""),
@@ -2054,11 +2057,26 @@ async def api_triggers_week(request: web.Request) -> web.Response:
         days = max(1, min(int(request.query.get("days", "7")), 31))
     except ValueError:
         return web.json_response({"error": "days must be an integer"}, status=400)
+    # Optional exact window end (issue 608): the grid's 7 LOCAL days are 167h/169h across a
+    # DST transition while `days` arithmetic is fixed wall-clock fields — the client that
+    # draws the columns is the only party that knows their true end, so it may name it.
+    # Bounded to the same 31-day cap as `days` so the parameter cannot widen the projection.
+    until = None
+    raw_until = (request.query.get("until") or "").strip()
+    if raw_until:
+        try:
+            until = datetime.fromisoformat(raw_until)
+        except ValueError:
+            return web.json_response({"error": "until must be an ISO date"}, status=400)
+        if until <= start or until > start + timedelta(days=31):
+            return web.json_response(
+                {"error": "until must be after start and within 31 days"}, status=400
+            )
 
     occurrences: list[dict[str, Any]] = []
     truncated: list[str] = []
     for trigger in _week_triggers(state):
-        rows, cut = _project_one(trigger, start=start, days=days)
+        rows, cut = _project_one(trigger, start=start, days=days, until=until)
         occurrences.extend(row.to_dict() for row in rows)
         if cut:
             truncated.append(f"{_SCHEDULE}:{trigger.id}")
@@ -2069,7 +2087,7 @@ async def api_triggers_week(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "start": start.isoformat(),
-            "end": (start + timedelta(days=days)).isoformat(),
+            "end": (until or (start + timedelta(days=days))).isoformat(),
             "server_tz": tz_name,
             "occurrences": occurrences,
             # Named rather than a bare bool: "some trigger was capped" is not actionable, and a grid

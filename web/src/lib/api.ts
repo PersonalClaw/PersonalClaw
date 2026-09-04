@@ -5697,10 +5697,13 @@ export const api = {
     ),
   // The week-grid projection (AUTO-A3). `start` is a local ISO datetime; the backend computes every
   // occurrence from the recurrence each trigger already carries — read-only, no store changes.
-  triggersWeek: (start?: string, days = 7) => {
+  triggersWeek: (start?: string, days = 7, until?: string) => {
     const qs = new URLSearchParams()
     if (start) qs.set('start', start)
     qs.set('days', String(days))
+    // The exact end of the drawn week (issue 608): 7 LOCAL days are not 168h across a DST
+    // transition, so the grid names its true bound instead of letting the server derive one.
+    if (until) qs.set('until', until)
     return get<WeekProjection>(`/api/triggers/week?${qs.toString()}`)
   },
   // ── event-kind (data-event) triggers: the S67 parity surface ──
