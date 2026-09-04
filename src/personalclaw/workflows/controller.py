@@ -1154,6 +1154,12 @@ class RunController:
             epoch=cont.epoch,
             approved=approved,
             answer=filled,
+            # §4.4 human-attention accounting: how long this ask held human attention,
+            # explicit rather than re-derived from the continuation record. Only the
+            # human path carries it — an auto-approved gate cost no attention.
+            resolved_after_secs=(
+                round(max(0.0, time.time() - cont.created_at), 3) if cont.created_at else 0.0
+            ),
         )
         # Judge/human divergence → Run Ledger (LOOPS-EVOLUTION R3). If this gate had a judge
         # verdict and the human's decision contradicts it, record the direction: a judge that
