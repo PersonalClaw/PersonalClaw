@@ -80,8 +80,13 @@ export function useFileTabs(scope = '') {
   }, [])
 
   const close = useCallback(async (path: string) => {
-    if (dirtyRef.current[path] && !(await confirm({ title: `Discard unsaved changes to ${baseName(path)}?`, body: 'Your edits will be lost.', danger: true, confirmLabel: 'Discard' }))) return
+    // Reports whether the tab actually closed, so a host that owns a draft cache
+    // (FileViewer's draftStore contract) can purge its entry exactly when the user
+    // consented — a draft kept past a confirmed discard resurrects the edit on the
+    // next open of the same path (issue 2279).
+    if (dirtyRef.current[path] && !(await confirm({ title: `Discard unsaved changes to ${baseName(path)}?`, body: 'Your edits will be lost.', danger: true, confirmLabel: 'Discard' }))) return false
     closeNow(path)
+    return true
   }, [closeNow])
 
   const markDirty = useCallback((path: string, isDirty: boolean) => {
