@@ -20,6 +20,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.providers.failure_copy import relayed_failure_copy
 
 logger = logging.getLogger(__name__)
 
@@ -550,7 +551,8 @@ async def api_provider_models(request: web.Request) -> web.Response:
     try:
         models = await catalog.list_models()
     except Exception as exc:  # noqa: BLE001 — discovery failure is not a server error
-        return web.json_response({"models": [], "error": str(exc)[:200]})
+        logger.warning("model discovery failed for provider %r", name, exc_info=True)
+        return web.json_response({"models": [], "error": relayed_failure_copy(exc)})
     # ``name`` is the field this endpoint historically returned (the model id); keep
     # it alongside ``id`` for FE compatibility. to_dict() flattens extra fields
     # (owned_by / parameter_size / size_human / …) onto the top level.
@@ -594,7 +596,8 @@ async def api_provider_model_search(request: web.Request) -> web.Response:
     try:
         models = await catalog.search_catalog(q)
     except Exception as exc:  # noqa: BLE001
-        return web.json_response({"results": [], "error": str(exc)[:200]})
+        logger.warning("catalog search failed for provider %r", name, exc_info=True)
+        return web.json_response({"results": [], "error": relayed_failure_copy(exc)})
     # Preserve the historical result shape ({name, description, pulls, tags}).
     results = [
         {"name": m.name or m.id, "description": m.description, "pulls": 0, "tags": []}
@@ -638,7 +641,8 @@ async def api_provider_model_show(request: web.Request) -> web.Response:
     try:
         info = await catalog.show_model(model)
     except Exception as exc:  # noqa: BLE001
-        return web.json_response({"error": str(exc)[:200]}, status=500)
+        logger.warning("model detail failed for provider %r", name, exc_info=True)
+        return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
     # to_dict flattens the manager's extra fields (family / parameter_size /
     # context_length / …) onto the top level; keep the historical ``model`` key
@@ -733,8 +737,9 @@ async def api_provider_model_pull(request: web.Request) -> web.StreamResponse:
     except Exception as exc:
         # Best-effort error frame; the response is already prepared so we write
         # an error line rather than changing the status code.
+        logger.warning("model pull stream failed", exc_info=True)
         try:
-            await resp.write((_json.dumps({"error": str(exc)[:200]}) + "\n").encode())
+            await resp.write((_json.dumps({"error": relayed_failure_copy(exc)}) + "\n").encode())
         except Exception:
             logger.debug("pull: failed to write error frame", exc_info=True)
     finally:
@@ -791,7 +796,8 @@ async def api_provider_model_delete(request: web.Request) -> web.Response:
     try:
         await catalog.delete_model(model)
     except Exception as exc:  # noqa: BLE001
-        return web.json_response({"error": str(exc)[:200]}, status=500)
+        logger.warning("model delete failed for provider %r", name, exc_info=True)
+        return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
     return web.json_response({"ok": True, "model": model})
 
 
