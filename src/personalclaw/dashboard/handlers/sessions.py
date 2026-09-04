@@ -14,6 +14,7 @@ from aiohttp import web
 
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import SEARCH_MIN_CHARS
+from personalclaw.http_errors import json_error
 from personalclaw.mcp_discovery import (
     discover_servers_to_sync,
     register_servers_for_cc,
@@ -185,7 +186,18 @@ async def api_session_detail(request: web.Request) -> web.Response:
     key = request.match_info["key"]
     if not state.conversation_log:
         return web.json_response([])
-    return web.json_response(state.conversation_log.read_messages(key))
+    messages = state.conversation_log.read_messages(key)
+    if (
+        not messages
+        and not state.conversation_log.has_session(key)
+        and _live_session_key(state, key) is None
+    ):
+        # A missing session must be distinguishable from a real session with no
+        # messages yet: a polling client would otherwise read a mistyped or
+        # deleted key's emptiness as truth. A LIVE session whose file has not
+        # been written yet (a just-opened tab) still answers [].
+        return json_error("session_not_found", status=404)
+    return web.json_response(messages)
 
 
 async def api_session_delete(request: web.Request) -> web.Response:
@@ -205,28 +217,39 @@ async def api_session_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": ok})
 
 
+def _live_session_key(state: DashboardState, key: str) -> str | None:
+    """The stored key of the ACTIVE session matching a history key, or ``None``.
+
+    Session keys may be the raw history key (``dashboard_chat-X-TS`` when
+    resumed from history) or the stripped form (``chat-X-TS`` for sessions
+    that were never closed and resumed); the reverse also occurs (history key
+    unprefixed, session stored with a prefix). One resolver, so the detail
+    endpoint's existence check and the delete path's removal can never drift.
+    """
+    if key in state._sessions:
+        return key
+    stripped = key
+    if stripped.startswith("dashboard:"):
+        stripped = stripped[len("dashboard:") :]
+    while stripped.startswith("dashboard_"):
+        stripped = stripped[len("dashboard_") :]
+    if stripped in state._sessions:
+        return stripped
+    if ("dashboard_" + key) in state._sessions:
+        return "dashboard_" + key
+    return None
+
+
 async def _remove_session_for_history_key(state: DashboardState, key: str) -> None:
     """Remove the active chat session corresponding to a history key.
 
-    Session keys may be the raw history key (``dashboard_chat-X-TS`` when
-    resumed from history) or the stripped form (``chat-X-TS`` for
-    sessions that were never closed and resumed).  Try the exact key
-    first, then the stripped variant.  Also kills the ACP agent session
-    to prevent orphaned processes.
+    Key-form resolution lives in :func:`_live_session_key`. Also kills the
+    ACP agent session to prevent orphaned processes.
     """
     from personalclaw.dashboard.chat import _history_key_for  # circular import  # noqa: F811
 
-    session = state._sessions.pop(key, None)
-    if not session:
-        stripped = key
-        if stripped.startswith("dashboard:"):
-            stripped = stripped[len("dashboard:") :]
-        while stripped.startswith("dashboard_"):
-            stripped = stripped[len("dashboard_") :]
-        session = state._sessions.pop(stripped, None)
-    if not session:
-        # Reverse: history key has no prefix, but session was stored with one
-        session = state._sessions.pop("dashboard_" + key, None)
+    live_key = _live_session_key(state, key)
+    session = state._sessions.pop(live_key, None) if live_key is not None else None
     if session and session.running and session.task is not None:
         session.task.cancel()
         try:
