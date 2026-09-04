@@ -24,9 +24,15 @@ vi.mock('../../lib/api', () => ({
     personalclawConfig: () => config(),
     patchConfig: (path: string, value: unknown) => patchConfig(path, value),
     companionDiscovery: () => Promise.resolve({ advertising: false, reason: 'off', detail: 'Off.', service_type: '', instance_name: '', port: 0, addresses: [], txt: {} }),
+    pushStatus: () => pushStatusResult(),
   },
 }))
 vi.mock('../../app/appSdk', () => ({ notify: vi.fn() }))
+
+// Reassignable per-test; defaults to a ready keypair so pre-existing tests keep
+// their behavior (the readiness row simply reads "Ready" beneath the pills).
+let pushStatusResult = () =>
+  Promise.resolve({ backend: 'webpush', vapid_public_key: 'k', vapid_ready: true, devices: [] })
 
 const cfgWith = (mobile: Record<string, unknown>) => ({
   companion: { discovery_enabled: false, instance_name: '' },

@@ -33,6 +33,7 @@ const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 vi.mock('../../lib/api', () => ({
   api: {
     personalclawConfig: () => Promise.resolve({ companion: { discovery_enabled: false, instance_name: '' } }),
+    pushStatus: () => Promise.resolve({ backend: 'webpush', vapid_public_key: 'k', vapid_ready: true, devices: [] }),
     patchConfig: () => Promise.resolve({}),
     companionDiscovery: () => Promise.resolve({
       advertising: false, reason: 'disabled', detail: 'LAN discovery is off.',
