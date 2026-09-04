@@ -17,10 +17,10 @@ the crons dir is additionally passed explicitly.
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,11 +29,13 @@ import personalclaw.inbox_providers.native_source as ns
 from personalclaw.action_providers.base import ActionContext
 from personalclaw.action_providers.selfqa_finding_provider import SelfQaFindingActionProvider
 from personalclaw.action_providers.selfqa_triage_provider import SelfQaTriageActionProvider
+from personalclaw.action_providers.selfqa_watch_provider import SelfQaCommitWatchActionProvider
 from personalclaw.inbox import InboxState, InboxStore
 from personalclaw.ledger import DECISION, STEP_SKIPPED
 from personalclaw.selfqa import findings as findings_mod
+from personalclaw.selfqa import watch as watch_mod
 from personalclaw.selfqa.findings import ScenarioFinding, file_finding
-from personalclaw.selfqa.install import COMMIT_WATCH_SCRIPT, install_commit_watch_script
+from personalclaw.selfqa.install import WATCH_TRIGGER_ID, reconcile, remove_retired_script
 from personalclaw.selfqa.ledger import record_triage
 from personalclaw.selfqa.triage import (
     IMPACT_NONE,
@@ -93,22 +95,17 @@ def commit(repo: Path, rel: str, body: str, message: str) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
-@pytest.fixture
-def watcher(tmp_path):
-    """The INSTALLED cron script, imported from the file the installer wrote.
+@pytest.fixture(autouse=True)
+def watch_state(tmp_path, monkeypatch):
+    """Isolate the watcher's state file per test.
 
-    Loading the installed copy rather than the package module is the point: it proves the file a
-    Schedule would actually execute behaves correctly, and it exercises the installer on the way.
-    A test against a parallel implementation would pass while the shipped script was broken.
+    `watch.state_path()` derives from `config_dir()`, which conftest redirects once per
+    SESSION — shared state across tests in this file would make "first sight" true exactly
+    once and every later test's quiet/fire verdicts depend on ordering.
     """
-    crons = tmp_path / "crons"
-    path = install_commit_watch_script(crons)
-    assert path.name == COMMIT_WATCH_SCRIPT
-    spec = importlib.util.spec_from_file_location("_selfqa_watch_under_test", path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    path = tmp_path / "selfqa-state" / "commit_watch.state.json"
+    monkeypatch.setattr(watch_mod, "state_path", lambda: path)
+    return path
 
 
 @pytest.fixture
@@ -150,143 +147,191 @@ def inbox_items(store) -> list:
     return sorted(store.items.values(), key=lambda i: i.created_at)
 
 
-# ── Clause 1: a real commit fires the companion within one cron interval ─────
+# ── Clause 1: a real commit fires the companion (now via the vcs trigger, SV-11) ─────
 
 
 class TestClauseOneWatcherFires:
-    """`a real commit to the watched repo fires the companion within one cron interval`.
+    """`a real commit to the watched repo fires the companion` — SV-11's seam.
 
-    Driven directly rather than through a real cron tick, deliberately: deleting the last cron
-    entry mid-session has been observed to kill the scheduler, and a repo-tracked script run by
-    workspace cron changes behaviour with the checked-out branch. The unit under test is the
-    script's decision, and one `check()` call is one interval.
+    The decision under test is unchanged from the interim script (first-sight quiet,
+    fire-on-commit, state-advances-first); what changed is WHERE it runs: in-process
+    (`selfqa.watch.check`), invoked by the `selfqa-commit-watch` provider when the vcs
+    trigger fires, instead of a sandboxed cron script on an interval.
     """
 
-    def _ctx(self, repo: Path):
-        ctx = MagicMock()
-        ctx.message = str(repo)
-        return ctx
-
-    def test_first_sight_records_head_and_stays_quiet(self, watcher, repo):
+    def test_first_sight_records_head_and_stays_quiet(self, repo):
         """Enabling the companion must not fire a run against whatever was checked out."""
-        with pytest.raises(watcher.Skip):
-            watcher.check(self._ctx(repo))
-        state = watcher.read_state()
+        fire = watch_mod.check(str(repo))
+        assert fire.inputs is None
+        assert "first sight" in fire.quiet_reason
+        state = watch_mod.read_state()
         assert state["last_sha"] == _git(repo, "rev-parse", "HEAD")
         assert state["repo"] == str(repo)
 
-    def test_a_real_commit_fires_within_one_interval(self, watcher, repo):
-        """The clause itself: one commit, then ONE tick, and the SHA is in the payload."""
-        with pytest.raises(watcher.Skip):
-            watcher.check(self._ctx(repo))
-
+    def test_a_real_commit_fires_on_the_next_check(self, repo):
+        """The clause itself: one commit, then ONE fire, and the SHA is in the inputs."""
+        watch_mod.check(str(repo))
         sha = commit(repo, "src/personalclaw/thing.py", "x = 1\n", "feat: a thing")
+        fire = watch_mod.check(str(repo))
+        assert fire.inputs is not None
+        assert fire.inputs["commits"] == [sha]
+        assert fire.inputs["repo"] == str(repo)
+        # Keyed on the frontier, so two fires seeing the same HEAD open ONE run.
+        assert fire.idempotency_key == f"selfqa-{sha}"
+        # The state advanced, so the same commit does not re-fire and burn a run per change.
+        assert watch_mod.read_state()["last_sha"] == sha
 
-        with pytest.raises(watcher.Report) as caught:
-            watcher.check(self._ctx(repo))
-
-        payload = json.loads(caught.value.message)
-        assert payload["commits"] == [sha], payload
-        assert payload["repo"] == str(repo)
-        # The state advanced, so the same commit does not re-fire and burn a run every interval.
-        assert watcher.read_state()["last_sha"] == sha
-
-    def test_no_new_commit_is_silent(self, watcher, repo):
-        """The vacuity floor for the clause above.
-
-        Without it, a script that raised `Report` unconditionally would pass
-        `test_a_real_commit_fires_within_one_interval` — the SHA would be right, and the fire
-        would be meaningless.
-        """
-        with pytest.raises(watcher.Skip):
-            watcher.check(self._ctx(repo))
+    def test_no_new_commit_is_quiet_with_its_reason(self, repo):
+        """The vacuity floor: a check that fired unconditionally would pass the test above."""
+        watch_mod.check(str(repo))
         commit(repo, "src/personalclaw/thing.py", "x = 1\n", "feat: a thing")
-        with pytest.raises(watcher.Report):
-            watcher.check(self._ctx(repo))
-        # Third tick, nothing new.
-        with pytest.raises(watcher.Skip):
-            watcher.check(self._ctx(repo))
+        assert watch_mod.check(str(repo)).inputs is not None
+        third = watch_mod.check(str(repo))
+        assert third.inputs is None
+        assert third.quiet_reason == "no new commits"
 
-    def test_several_commits_all_arrive_oldest_first(self, watcher, repo):
-        """A push is a range, not a commit. Missing the middle of one is how a regression hides."""
-        with pytest.raises(watcher.Skip):
-            watcher.check(self._ctx(repo))
+    def test_several_commits_all_arrive_oldest_first(self, repo):
+        """A push is a range, not a commit. Missing the middle of one hides a regression."""
+        watch_mod.check(str(repo))
         first = commit(repo, "src/a.py", "a\n", "feat: a")
         second = commit(repo, "src/b.py", "b\n", "feat: b")
-        with pytest.raises(watcher.Report) as caught:
-            watcher.check(self._ctx(repo))
-        assert json.loads(caught.value.message)["commits"] == [first, second]
+        fire = watch_mod.check(str(repo))
+        assert fire.inputs is not None and fire.inputs["commits"] == [first, second]
 
-    def test_an_unreadable_repo_is_silent_rather_than_a_nag(self, watcher, tmp_path):
-        """A watcher pointed at a moved directory must not deliver a message every interval."""
-        ctx = MagicMock()
-        ctx.message = str(tmp_path / "not-a-repo")
-        with pytest.raises(watcher.Skip):
-            watcher.check(ctx)
+    def test_an_unreadable_repo_is_quiet_rather_than_a_nag(self, tmp_path):
+        """A watcher pointed at a moved directory must not error on every ref change forever."""
+        fire = watch_mod.check(str(tmp_path / "not-a-repo"))
+        assert fire.inputs is None
+        assert "not a readable git repo" in fire.quiet_reason
 
-    def test_the_env_var_overrides_the_job_message(self, watcher, repo, monkeypatch):
-        """`agent.self_qa.watched_repo` is the configured answer; the job message is not."""
-        monkeypatch.setenv(watcher.REPO_ENV, str(repo))
-        ctx = MagicMock()
-        ctx.message = str(repo.parent / "somewhere-else")
-        with pytest.raises(watcher.Skip):
-            watcher.check(ctx)
-        assert watcher.read_state()["repo"] == str(repo)
+    def test_the_provider_delegates_the_start_to_run_workflow(self, repo, monkeypatch):
+        """The loop's closing edge: the fire STARTS the run, through the one seam that owns
+        dedupe and supervisor registration — never a second start implementation."""
+        from personalclaw.action_providers import registry as reg
+        from personalclaw.action_providers.base import ActionResult
 
-    def test_the_repo_comes_from_the_file_not_the_env_or_the_message(self, watcher, repo, tmp_path):
-        """The channel the sandbox can actually read.
-
-        An env var is dropped by `build_child_env`'s allowlist and a trigger fire passes
-        `context=""`, so a script that depended on either would be inert in production while
-        passing any test that set them. This asserts the file is sufficient ON ITS OWN — the ctx
-        carries no message and no env var is set.
-        """
-        from personalclaw.selfqa.install import write_watch_config
-
-        write_watch_config(str(repo), tmp_path / "crons")
-        ctx = MagicMock()
-        ctx.message = ""
-        with pytest.raises(watcher.Skip):
-            watcher.check(ctx)
-        assert watcher.read_state()["repo"] == str(repo), "the config file was not the source"
-
-    def test_a_new_commit_starts_the_workflow_run(self, watcher, repo, tmp_path):
-        """The loop's closing edge: the watcher STARTS the run rather than hoping something reads
-        its message. Without this the `Report` would be a message nobody acts on."""
-        from personalclaw.selfqa.install import write_watch_config
-
-        write_watch_config(str(repo), tmp_path / "crons")
-        ctx = MagicMock()
-        ctx.message = ""
-        ctx.call_tool = MagicMock(return_value={"run_id": "r-1"})
-
-        with pytest.raises(watcher.Skip):
-            watcher.check(ctx)
-        assert ctx.call_tool.call_count == 0, "first sight started a run"
-
+        watch_mod.check(str(repo))  # first sight
         sha = commit(repo, "src/personalclaw/thing.py", "x = 1\n", "feat: a thing")
-        with pytest.raises(watcher.Report):
-            watcher.check(ctx)
 
-        assert ctx.call_tool.call_count == 1
-        tool, args = ctx.call_tool.call_args[0]
-        assert tool == "workflow_start"
-        assert args["name"] == "self-qa"
-        assert args["inputs"]["commits"] == [sha]
-        # Keyed on the frontier, so an overlapping tick cannot open a second browser session
-        # against the same commit.
-        assert args["idempotency_key"] == f"selfqa-{sha}"
+        runner = MagicMock()
 
-    def test_the_installer_is_idempotent_and_repairs_a_edited_copy(self, tmp_path):
+        async def fake_execute(action_config, ctx, timeout=30):
+            runner(action_config)
+            return ActionResult(success=True, stdout="run started")
+
+        runner_provider = MagicMock()
+        runner_provider.execute = fake_execute
+        monkeypatch.setattr(
+            reg,
+            "get_action_provider",
+            lambda name: runner_provider if name == "run-workflow" else None,
+        )
+
+        provider = SelfQaCommitWatchActionProvider()
+        result = _run(provider.execute({"repo": str(repo)}, MagicMock(), timeout=30))
+        assert result.success
+        assert runner.call_count == 1
+        cfg = runner.call_args[0][0]
+        assert cfg["workflow"] == "self-qa"
+        assert cfg["inputs"]["commits"] == [sha]
+        assert cfg["idempotency_key"] == f"selfqa-{sha}"
+
+    def test_a_quiet_fire_is_a_success_carrying_its_reason(self, repo, monkeypatch):
+        """First sight through the provider: no run started, and the skip SAYS why — a
+        silent skip and a dead watcher must never look alike."""
+        from personalclaw.action_providers import registry as reg
+
+        runner_provider = MagicMock()
+        monkeypatch.setattr(reg, "get_action_provider", lambda name: runner_provider)
+
+        provider = SelfQaCommitWatchActionProvider()
+        result = _run(provider.execute({"repo": str(repo)}, MagicMock(), timeout=30))
+        assert result.success
+        assert "first sight" in (result.stdout or "")
+        runner_provider.execute.assert_not_called()
+
+    def test_reconcile_swaps_an_interim_clock_row_in_place(self, repo, monkeypatch, tmp_path):
+        """An upgraded Wave-2 home carries a `clock` row under the same id: the swap edits
+        THAT row rather than minting a second watcher beside it."""
+        from personalclaw.config import loader as loader_mod
+        from personalclaw.triggers.models import Trigger
+
+        cfg = SimpleNamespace(
+            agent=SimpleNamespace(self_qa=SimpleNamespace(enabled=True, watched_repo=str(repo)))
+        )
+        monkeypatch.setattr(loader_mod.AppConfig, "load", staticmethod(lambda: cfg))
+
+        old = Trigger(
+            id=WATCH_TRIGGER_ID, name="Self-QA commit watch", kind="clock", created_by="system"
+        )
+        loaded = SimpleNamespace(trigger=old)
+        store = MagicMock()
+        store.get.return_value = loaded
+        reconcile(store, crons_dir=tmp_path / "crons")
+
+        trigger = store.upsert.call_args[0][0]
+        assert trigger is old
+        assert trigger.kind == "file"
+        assert trigger.workflow["inline"]["provider"] == "selfqa-commit-watch"
+
+    def test_reconcile_removes_the_retired_script_artifacts(self, monkeypatch, tmp_path):
+        """A Wave-2 home's installed script, config, and state are cleaned up — a dead
+        script left in the fenced crons dir invites a user to schedule it."""
+        from personalclaw.config import loader as loader_mod
+
         crons = tmp_path / "crons"
-        first = install_commit_watch_script(crons)
-        stamp = first.stat().st_mtime_ns
-        again = install_commit_watch_script(crons)
-        assert again == first
-        assert again.stat().st_mtime_ns == stamp, "an identical install rewrote the file"
-        first.write_text("# clobbered\n", encoding="utf-8")
-        install_commit_watch_script(crons)
-        assert "def check(" in first.read_text(encoding="utf-8")
+        crons.mkdir()
+        for name in (
+            "selfqa_commit_watch.py",
+            "selfqa_commit_watch.config.json",
+            "selfqa_commit_watch.state.json",
+        ):
+            (crons / name).write_text("retired\n", encoding="utf-8")
+
+        cfg = SimpleNamespace(
+            agent=SimpleNamespace(self_qa=SimpleNamespace(enabled=False, watched_repo=""))
+        )
+        monkeypatch.setattr(loader_mod.AppConfig, "load", staticmethod(lambda: cfg))
+        store = MagicMock()
+        store.get.return_value = None
+        reconcile(store, crons_dir=crons)
+
+        assert not any(crons.iterdir()), "retired artifacts survived the reconcile"
+        # And it is idempotent on the second pass.
+        assert remove_retired_script(crons) == []
+
+
+class TestTheInterimScriptStaysRetired:
+    """SV-11's rule spec: the interim seam must not come back.
+
+    The done_when asks for a spec that asserts the script's ABSENCE once the vcs trigger
+    kind exists — a grep-shaped rail, so a future change that re-materializes a watcher
+    script (or resurrects the installer) fails here with the reason attached.
+    """
+
+    SRC = Path(__file__).resolve().parents[1] / "src"
+
+    def test_the_vcs_trigger_kind_exists(self):
+        """The precondition the rule is scoped to, asserted rather than assumed."""
+        from personalclaw.triggers.file_watch import vcs_patterns
+        from personalclaw.triggers.models import KINDS
+
+        assert "file" in KINDS
+        assert any("refs/heads" in p for p in vcs_patterns("."))
+
+    def test_no_commit_watch_script_ships(self):
+        hits = [p for p in self.SRC.rglob("selfqa_commit_watch*") if p.is_file()]
+        assert hits == [], f"the interim commit-watch script came back: {hits}"
+
+    def test_install_no_longer_materializes_scripts(self):
+        import personalclaw.selfqa.install as install_mod
+
+        for retired in (
+            "install_commit_watch_script",
+            "write_watch_config",
+            "packaged_script_source",
+        ):
+            assert not hasattr(install_mod, retired), f"{retired} resurfaced in selfqa.install"
 
 
 # ── Clause 2: a test-only commit yields a ledger-only skip with a rationale ──
@@ -1288,11 +1333,7 @@ class TestWatchTriggerReconcile:
         assert store.get(WATCH_TRIGGER_ID) is None
 
     def test_enabled_with_a_repo_arms_the_watcher(self, tmp_path, monkeypatch):
-        from personalclaw.selfqa.install import (
-            COMMIT_WATCH_SPEC,
-            WATCH_TRIGGER_ID,
-            reconcile,
-        )
+        from personalclaw.selfqa.install import WATCH_TRIGGER_ID, reconcile
 
         self._configure(tmp_path, monkeypatch, enabled=True, watched_repo="/tmp/watched")
         store = self._store(tmp_path)
@@ -1301,25 +1342,22 @@ class TestWatchTriggerReconcile:
         row = store.get(WATCH_TRIGGER_ID)
         assert row is not None, "enabling the companion registered no watcher"
         assert row.trigger.enabled is True
-        assert row.trigger.spec["kind"] == "interval"
-        assert row.trigger.workflow["inline"]["config"]["script"] == COMMIT_WATCH_SPEC
-        # ARMED, not merely registered. `enabled=True` with no `next_fire_at` is a row the
-        # scheduler never picks up — the watcher would sit in the trigger list looking healthy
-        # and never fire, which is clause 1 failing in the shape that reads as working.
-        from datetime import datetime, timezone
-
-        from personalclaw.selfqa.install import WATCH_INTERVAL_SECS
-
-        assert row.trigger.next_fire_at, "the watcher was registered but never armed"
-        due = datetime.fromisoformat(row.trigger.next_fire_at)
-        delta = (due - datetime.now(timezone.utc)).total_seconds()
-        assert 0 < delta <= WATCH_INTERVAL_SECS + 5, f"first fire is {delta}s out"
-        # Decision 7: a script that starts a workflow run is write-capable, so the fence needs the
-        # frozen grant. Without it the fire is screened off and the watcher is inert a second way.
-        assert "run-script" in row.trigger.capabilities.get("providers", [])
-        # The script and the path it reads both landed.
-        config = json.loads((tmp_path / "crons" / "selfqa_commit_watch.config.json").read_text())
-        assert config["repo"] == "/tmp/watched"
+        # SV-11: the vcs preset, not an interval. A `file` trigger is POLLED (file_poll
+        # surfaces it by kind), so there is no `next_fire_at` to assert — the arming property
+        # is the kind + the preset paths themselves.
+        assert row.trigger.kind == "file"
+        paths = row.trigger.spec["paths"]
+        assert any("refs/heads" in p for p in paths), paths
+        assert any(p.endswith(".git/HEAD") for p in paths), paths
+        assert all("/tmp/watched" in p for p in paths), paths
+        assert row.trigger.spec["dedup"] == "content"
+        inline = row.trigger.workflow["inline"]
+        assert inline["provider"] == "selfqa-commit-watch"
+        assert inline["config"] == {"repo": "/tmp/watched"}
+        # Decision 7: an action that starts a workflow run is write-capable, so the fence
+        # needs the frozen grant. Without it the fire is screened off and the watcher is
+        # inert a second way.
+        assert "selfqa-commit-watch" in row.trigger.capabilities.get("providers", [])
 
     def test_enabled_without_a_repo_does_not_arm(self, tmp_path, monkeypatch):
         """A watcher with nowhere to look would tick forever doing nothing."""
@@ -1358,8 +1396,11 @@ class TestWatchTriggerReconcile:
         rows = [t for t in store.list_triggers() if t.id == WATCH_TRIGGER_ID]
         all_ids = [t.id for t in store.list_triggers()]
         assert len(rows) == 1, f"reconcile added a second watcher: {all_ids}"
-        config = json.loads((tmp_path / "crons" / "selfqa_commit_watch.config.json").read_text())
-        assert config["repo"] == "/tmp/two", "the watcher still points at the old repo"
+        row = store.get(WATCH_TRIGGER_ID)
+        assert (
+            row.trigger.workflow["inline"]["config"]["repo"] == "/tmp/two"
+        ), "the watcher still points at the old repo"
+        assert all("/tmp/two" in p for p in row.trigger.spec["paths"])
 
     def test_the_trigger_session_key_is_unattended(self):
         """A companion run must count as unattended, and that turns on a COLON.

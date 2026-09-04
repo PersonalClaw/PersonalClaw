@@ -323,12 +323,23 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
     # governed where they can be evaluated: the write-capable fence in `triggers/screen.py`, the
     # hard per-handoff timeout, and the disk re-diff that must confirm the edits before the
     # result is accepted at all.
+    # SV-11's `selfqa-commit-watch` shares this class on the same reasoning: what it
+    # ultimately does is start ONE workflow run, by delegating to the `run-workflow`
+    # provider listed beside it — its delta half is read-only git whose only output is
+    # that start-or-skip decision, so a second key would be a second name for one
+    # governed behavior.
     ActionTypeSpec(
         key="action.spawn_turn",
         floor=RUNG_AUTONOMOUS,
         ceiling=RUNG_AUTONOMOUS,
         leaves_machine=True,
-        providers=("run-prompt", "invoke-agent", "run-workflow", "second-opinion"),
+        providers=(
+            "run-prompt",
+            "invoke-agent",
+            "run-workflow",
+            "second-opinion",
+            "selfqa-commit-watch",
+        ),
     ),
     # BROWSE-AUTOMATION §9 (BA-3): drives a real browser, so its effect is a click and a form
     # POST on somebody else's site. `one_tap` at BOTH ends, which is the only spec here that

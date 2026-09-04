@@ -310,6 +310,14 @@ def test_the_site_list_is_not_STALE():
         # earn the exemption are asserted in
         # `test_the_create_time_provider_check_only_asks_existence` below.
         "personalclaw.triggers.tools",
+        # The delegating provider (SV-11) -- the one resolve in this set that lives INSIDE a
+        # provider rather than at a fire path. Every other entry in `EXECUTION_SITES` is a seam
+        # a trigger/hook/tile arrives at, and the gate belongs there: `selfqa-commit-watch` is
+        # only reachable THROUGH the gateway file-trigger path, which already carries the
+        # denylist and the kill switch, so a second gate here would fence an already-fenced
+        # call. The properties that earn the exemption are asserted in
+        # `test_the_delegating_provider_only_hands_off_to_a_frozen_name` below.
+        "personalclaw.action_providers.selfqa_watch_provider",
         "personalclaw.action_providers.registry",  # defines it
         "personalclaw.action_providers",  # re-exports it
     }
@@ -318,6 +326,34 @@ def test_the_site_list_is_not_STALE():
         "these modules reach an action provider but are not in EXECUTION_SITES: "
         f"{sorted(unaccounted)}. Add them (with a policy check) or document the exemption."
     )
+
+
+def test_the_delegating_provider_only_hands_off_to_a_frozen_name():
+    """The properties that earn `selfqa_watch_provider`'s exemption (SV-11).
+
+    It is the only resolve in the known set that happens inside a PROVIDER. A provider cannot
+    be an entry point: something already gated -- here the gateway's `file`-trigger fire path,
+    which carries the denylist and the kill switch -- has to dispatch it first, so the policy
+    check every `EXECUTION_SITES` entry shares has already run upstream by the time this code
+    executes. "It's downstream" is not an exemption on its own, so the two properties that make
+    it safe are asserted: it resolves a FROZEN literal name (never one a caller supplies, the
+    hole the reversal-site exemption also closes), and it delegates the start rather than
+    re-implementing it, so the dedupe and origin stamping stay single-writer.
+
+    If this provider ever resolves a name off its `action_config`, it becomes a
+    caller-steerable dispatcher and must argue its way into `EXECUTION_SITES` with a real
+    policy gate instead.
+    """
+    import re
+
+    src = _source("personalclaw.action_providers.selfqa_watch_provider")
+    calls = re.findall(r"get_action_provider\(([^)]*)\)", src)
+    assert calls, "the exemption is stale if the provider no longer delegates"
+    assert all(c.strip() in {'"run-workflow"', "'run-workflow'"} for c in calls), (
+        "every resolve must be the frozen `run-workflow` literal; a name read from "
+        f"action_config would make this a caller-steerable dispatcher. found: {calls}"
+    )
+    assert "action_config" not in "".join(calls), "the delegate name must not come from the caller"
 
 
 def test_the_create_time_provider_check_only_asks_existence():
