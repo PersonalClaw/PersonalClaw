@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { reportingWrite } from '../../app/reportingWrite'
+import { confirm } from '../../ui/dialog'
 import { fvs } from '../../design/fontWeight'
 import { Plus, Search, Star, Users, Lock, Cpu, Wrench, Sparkles, Zap, RefreshCw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
@@ -85,6 +86,21 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
   // left the old default in place with nothing said, and the reload re-rendered it — so the click read
   // as "nothing happened, twice".
   async function setDefault(name: string) {
+    // Confirm before the write (#666): this rewrites the GLOBAL default_agent —
+    // the agent every new chat starts with — and Delete three lines away in the
+    // same detail component both confirms and guards this exact state. Naming
+    // BOTH agents lets the user see what is being replaced; the previous
+    // default's name appears nowhere else in the interaction, so this dialog is
+    // the only record of the way back.
+    const prev = native?.defaultAgent
+    const ok = await confirm({
+      title: `Make “${name}” the default agent?`,
+      body: prev && prev !== name
+        ? `New chats currently start with “${prev}”. They will start with “${name}” instead.`
+        : `Every new chat will start with “${name}”.`,
+      confirmLabel: 'Set default',
+    })
+    if (!ok) return
     if (!(await reportingWrite(`make "${name}" the default agent`, () => api.setDefaultAgent(name)))) return
     reload()
   }
