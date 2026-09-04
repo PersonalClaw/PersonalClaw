@@ -761,6 +761,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/voice/bindings` — unbind one surface.
 - `GET /api/voice/bindings` — the surface → profile map.
 - `PUT /api/voice/bindings` — {surface, profile_id} — bind one surface.
+- `POST /api/voice/migrate` — {name?} — profile from the current voice, then default.
 - `GET /api/voice/profiles` — every profile plus the binding map.
 - `POST /api/voice/profiles` — {name, kind, provider, model, …}.
 - `DELETE /api/voice/profiles/{id}` — record, artifacts, and any bindings.
