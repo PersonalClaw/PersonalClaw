@@ -151,6 +151,26 @@ class TestGapClosure:
         backed_up = {e.path for e in inv.backup_entries()}
         assert "tasks" in backed_up and "projects" in backed_up
 
+    def test_script_cron_store_is_claimed_and_travels(self, tmp_path):
+        """`crons/` holds the scripts that `triggers.json` script jobs execute by path.
+        Before it was declared, EVERY fresh home failed the audit (self-QA seeds a
+        script cron at first boot) and a restore reproduced the trigger row while
+        losing its script — the automation survived as data and broke as behavior."""
+        # Claimed: a fresh-boot-shaped home with a seeded script cron audits clean.
+        home = tmp_path / "home"
+        (home / "crons").mkdir(parents=True)
+        (home / "crons" / "selfqa_commit_watch.py").write_text("# script cron")
+        (home / "crons" / "selfqa_commit_watch.config.json").write_text("{}")
+        result = inv.audit_home(home)
+        assert result.ok, f"unclaimed={result.unclaimed} dbs={result.undeclared_dbs}"
+        # The directory claim must not shadow the legacy single-file entry.
+        assert inv.claim_for("crons.json").id == "crons"
+        assert inv.claim_for("crons/anything.py").id == "cron_scripts"
+        # Travels: in the snapshot projection AND the portable export (scripts are
+        # user-authored automation, same standing as skills/workflows).
+        assert "crons" in {e.path for e in inv.backup_entries()}
+        assert "crons" in {e.path for e in inv.export_entries()}
+
 
 # ── 🔴 the claims-everything guard had never met a real home (S179) ──
 
