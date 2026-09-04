@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { ArrowLeft, Check, Zap, Settings2, AlertTriangle } from 'lucide-react'
+import { Info, ArrowLeft, Check, Zap, Settings2, AlertTriangle } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { Button } from '../../ui/Button'
@@ -17,7 +17,7 @@ import { findTriggerPreset, prefillDraft } from './triggerPresets'
 import { schemaProps } from '../tools/schema'
 import {
   TRIGGER_KINDS, type TriggerKind, useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher,
-  eventDormancyReason, eventIsDormant, EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon,
+  eventDormancyReason, eventIsDormant, eventIsAgentScoped, EVENT_PATTERN_META, eventPatternMeta, eventSourceIcon,
   eventSourceLabel, appEventOptions, lifecycleEventOptions, actionIsSendCapable,
 } from './triggerMeta'
 
@@ -220,6 +220,19 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
                     <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                     <span className="min-w-0 flex-1">
                       Nothing fires <span style={fvs(600)}>{em.label}</span> yet — {dormancyReason}. This trigger will save and stay idle.
+                    </span>
+                  </div>
+                )}
+                {/* Issue 610: the two fire paths differ in WHO a hook fires for, and only the
+                    backend knows which path an event rides. Disclosed at the point of choice,
+                    like the dormancy note above — picking Error means "inert until an agent
+                    references it", picking MemoryWrite means "fires on the next write". Info
+                    tone, not warn: agent scoping is a design property, not a defect. */}
+                {!dormancyReason && eventIsAgentScoped(catalog, event) && (
+                  <div role="note" className="mt-2 flex items-start gap-2 rounded-lg bg-info/10 px-3 py-2 text-info text-[0.8125rem]">
+                    <Info size={14} className="mt-0.5 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span style={fvs(600)}>{em.label}</span> is agent-scoped: it fires only for agents whose <code>triggers</code> list references this trigger. Until one does, it will not run.
                     </span>
                   </div>
                 )}

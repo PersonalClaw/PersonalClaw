@@ -118,6 +118,57 @@ class EventStatus(str, Enum):
 #:   for ungated tool calls — not a missing fire site, so it does NOT belong in the set below.
 DORMANT_EVENTS: frozenset[str] = frozenset()
 
+#: Lifecycle events fired ONLY through the agent-scoped path — `chat_runner._fire` →
+#: `fire_for_ids`, which resolves the AGENT's own `triggers` list and fires nothing when no
+#: agent references the hook. Every other declared event fires GLOBALLY (`lifecycle_fire.BUILDERS`
+#: → `store.fire`, plus `TaskComplete` via `tasks/native.py`), matching every enabled hook —
+#: agent references are irrelevant there.
+#:
+#: A reviewed constant with a guard, for the same reason `DORMANT_EVENTS` is one: the UI badges
+#: hang off this distinction, and a scan measured it wrong before (see the module docstring).
+#: `verify_agent_scoping()` keeps it honest against the global path's own registry — an event
+#: appearing in BOTH this set and `lifecycle_fire.BUILDERS` is a caught test failure, not a lie
+#: in the UI. Why this matters to a user: a `MemoryWrite` hook with no referencing agent FIRES
+#: (measured — issue 610's repro delivered its notification while badged "dormant"), while an
+#: `Error` hook with no referencing agent never runs. The badge must say which world a trigger
+#: lives in.
+AGENT_SCOPED_EVENTS: frozenset[str] = frozenset(
+    {
+        "SessionStart",
+        "AgentSpawn",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "Stop",
+        "Error",
+    }
+)
+
+
+def verify_agent_scoping() -> list[str]:
+    """Disagreements between `AGENT_SCOPED_EVENTS` and the global fire path's own registry.
+
+    Empty when honest. Two directions, both checked: an event claimed agent-scoped that the
+    global builder registry ALSO fires (the badge would say "needs an agent" about a hook that
+    fires for everyone), and a declared event on NEITHER path that is not in `DORMANT_EVENTS`
+    (a fire-less event must be declared dormant, not silently unclassified).
+    """
+    from personalclaw.hooks import HOOK_EVENTS
+    from personalclaw.triggers.lifecycle_fire import BUILDERS
+
+    problems: list[str] = []
+    for event in sorted(AGENT_SCOPED_EVENTS & set(BUILDERS)):
+        problems.append(
+            f"{event}: claimed agent-scoped but lifecycle_fire.BUILDERS fires it globally"
+        )
+    # TaskComplete fires globally through tasks/native.py's store.fire — a payload-driven call
+    # site with no constant reference, which is exactly why scans failed (module docstring).
+    globally_fired = set(BUILDERS) | {"TaskComplete"}
+    for event in sorted(set(HOOK_EVENTS) - AGENT_SCOPED_EVENTS - globally_fired - DORMANT_EVENTS):
+        problems.append(f"{event}: on neither fire path and not declared dormant")
+    return problems
+
+
 #: Why each dormant event does not fire, and what would wire it. Per-event rather than one generic
 #: sentence: "no code fires this" tells a user nothing actionable, while naming the subsystem that
 #: would own the fire site makes the gap legible and the fix findable.

@@ -537,7 +537,7 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
     """
     from personalclaw.hooks import LIFECYCLE_EVENT_CATALOG
     from personalclaw.schedule import SCHEDULE_VARS
-    from personalclaw.triggers.events import DORMANCY_NOTES, DORMANT_EVENTS
+    from personalclaw.triggers.events import AGENT_SCOPED_EVENTS, DORMANCY_NOTES, DORMANT_EVENTS
 
     lifecycle = [
         {
@@ -552,6 +552,12 @@ async def api_trigger_variables(request: web.Request) -> web.Response:
             # hook that never fires.
             "dormant": e["event"] in DORMANT_EVENTS,
             "dormant_reason": DORMANCY_NOTES.get(e["event"], ""),
+            # Issue 610: which fire path reaches this event. Agent-scoped events run through
+            # `fire_for_ids` against an agent's own `triggers` list — a hook on one fires for
+            # no one until an agent references it. Global events fire for every enabled hook.
+            # The badge and the create form both hang off this, so it rides the same catalog
+            # the dormancy flag does — one server-sourced list, no second vocabulary.
+            "agent_scoped": e["event"] in AGENT_SCOPED_EVENTS,
         }
         for e in LIFECYCLE_EVENT_CATALOG
     ]
