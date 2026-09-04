@@ -403,10 +403,10 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
           className="w-full resize-none bg-transparent px-s py-xs text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low"
         />
         <div className="flex items-center gap-s">
-          <button type="button" onClick={onOpen} title="Open the full chat UI"
-            className="inline-flex items-center gap-1 rounded-pill px-m h-7 text-on-surface-low text-[0.75rem] transition-colors hover:bg-surface-high hover:text-on-surface">
+          <Button variant="ghost" size="xs" onClick={onOpen} title="Open the full chat UI"
+            className="gap-1 text-on-surface-low hover:text-on-surface">
             Continue in full chat <ArrowRight size={11} className="shrink-0" />
-          </button>
+          </Button>
           <motion.button type="button" onClick={send}
             {...unavailableWhen(!input.trim(), 'Type a message first', { busy })}
             whileTap={{ scale: 0.92 }} transition={spring.spatialFast}
@@ -2768,11 +2768,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               {/* Regenerate title — a small magic-stars affordance hugging the title's
                   top-right edge, not a space-hungry header control. */}
               {sessionRef.current && (
-                <button type="button" onClick={regenTitle} disabled={regenningTitle}
-                  title="Regenerate title" aria-label="Regenerate title"
-                  className="shrink-0 -ml-0.5 self-start inline-flex size-5 items-center justify-center rounded-full text-on-surface-low hover:text-primary hover:bg-surface-high transition-colors disabled:opacity-50">
-                  {regenningTitle ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                </button>
+                <IconButton icon={Sparkles} label="Regenerate title" onClick={regenTitle}
+                  loading={regenningTitle} disabled={regenningTitle} size={20} iconSize={12}
+                  className="shrink-0 -ml-0.5 self-start text-on-surface-low hover:text-primary" />
               )}
               {/* Screen sharing (MI-4). Deliberately in the header rather than the
                   composer: it must stay visible while the user scrolls the transcript,
@@ -3784,11 +3782,10 @@ function AssistantSegments({ segments, isLast, messageTs, streaming, onApprove, 
           once it's done (the consent gate that keeps Ask/Plan from self-escalating). */}
       {isLast && !streaming && switchTo !== null && (
         <div className="mt-3">
-          <button type="button" onClick={() => onSwitchToAgent(switchTo)}
-            className="inline-flex items-center gap-1.5 rounded-pill bg-primary px-4 h-9 text-on-primary text-[0.8125rem] font-medium transition-opacity hover:opacity-90">
+          <Button variant="primary" size="sm" onClick={() => onSwitchToAgent(switchTo)} className="gap-1.5">
             <Bot size={15} strokeWidth={2.2} />
             Switch to Agent &amp; run it
-          </button>
+          </Button>
         </div>
       )}
 
