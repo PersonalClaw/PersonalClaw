@@ -1,114 +1,85 @@
-"""Materializing the commit-watch script into ``~/.personalclaw/crons/``.
+"""Converging the Self-QA commit watch onto the vcs trigger (SELF-VERIFICATION SV-11).
 
-The script cannot be served from the package the way bundled templates are.
-:func:`personalclaw.schedule_script.resolve_script_path` requires a script job's file to resolve
-*under* the crons dir — that path fence is the whole reason a script job is safe to schedule — so
-the file has to physically exist there.
+The Wave-2 companion shipped an interim seam — a cron script materialized into
+``~/.personalclaw/crons/`` on an interval trigger — because no vcs trigger existed yet and a
+script job may only load from that fenced directory. AUTOMATION-SUBSTRATE's ``vcs`` preset
+now exists (:func:`personalclaw.triggers.file_watch.vcs_patterns`), so this module does what
+the plan's §3.1 promised from the start: *"When AUTO-R12's vcs preset lands, the cron script
+retires and the same template binds to the real trigger — the template is the durable half,
+the trigger is a swap."*
 
-That makes this an install step, and install steps into the user's home need a story for "did the
-user edit it?" on upgrade. The answer here: the shipped copy is overwritten when its content
-differs, and the state file beside it is never touched. This script is companion machinery rather
-than a user template — the user's knobs are in `agent.self_qa`, not in this file — so silently
-preserving a local edit would strand a fixed watcher on a broken version. A user who wants
-different watch behaviour writes their own script under `crons/` and points a job at that.
+:func:`reconcile` therefore converges a ``file``-kind trigger (the vcs preset over
+``agent.self_qa.watched_repo``) whose action is the ``selfqa-commit-watch`` provider — the
+retired script's delta logic, moved in-process (:mod:`personalclaw.selfqa.watch`). It also
+REMOVES any interim artifacts a Wave-2 home still carries (the installed script, its config,
+its state file beside them): pre-1.0 clean break, per CONTRIBUTING's breaking-changes
+posture, and leaving a dead script in the crons dir would invite a user to schedule it.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from importlib import resources
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_SCRIPTS_PKG = "personalclaw.selfqa.scripts"
-
-#: The installed filename, and the `file.py:func` spec a Schedule's `script` field uses.
-COMMIT_WATCH_SCRIPT = "selfqa_commit_watch.py"
-COMMIT_WATCH_SPEC = f"{COMMIT_WATCH_SCRIPT}:check"
-COMMIT_WATCH_CONFIG = "selfqa_commit_watch.config.json"
-
-#: The trigger's deterministic id. Deterministic because convergence needs it: a generated slug
-#: would add another watcher on every restart instead of recognising its own, the bug
-#: `reconcile_digest_cron` records.
+#: The trigger's deterministic id. Deterministic because convergence needs it: a generated
+#: slug would add another watcher on every restart instead of recognising its own — and it
+#: is unchanged from the interim seam, so the SAME row swaps kind in place on upgrade.
 WATCH_TRIGGER_ID = "system:selfqa-commit-watch"
 
-#: How often the watcher looks. Five minutes is the "within one cron interval" the atom means: a
-#: tick is one `git rev-parse`, so a tighter interval buys latency at no token cost, and a looser
-#: one lets a push sit unchecked.
-WATCH_INTERVAL_SECS = 300
+#: The interim seam's on-disk artifacts, removed on reconcile when found. Names are kept
+#: here (not imported from a scripts package — that package is gone) so the cleanup can
+#: recognise what an older version installed.
+_RETIRED_CRON_FILES = (
+    "selfqa_commit_watch.py",
+    "selfqa_commit_watch.config.json",
+    "selfqa_commit_watch.state.json",
+)
 
 
-def packaged_script_source() -> str:
-    """The shipped script's source text, read from the package.
+def remove_retired_script(crons_dir: Path | None = None) -> list[str]:
+    """Delete the interim commit-watch script artifacts, returning what was removed.
 
-    `importlib.resources` rather than `__file__` arithmetic, so this resolves identically for an
-    editable install, a wheel, and a source checkout.
-    """
-    return (resources.files(_SCRIPTS_PKG) / COMMIT_WATCH_SCRIPT).read_text(encoding="utf-8")
-
-
-def install_commit_watch_script(crons_dir: Path | None = None) -> Path:
-    """Write the commit-watch script into the crons dir and return its path.
-
-    Idempotent: an identical existing file is left alone (so the mtime does not churn on every
-    boot), a differing one is replaced. Creates the crons dir if it does not exist.
+    Best-effort and idempotent: a fresh home removes nothing, an upgraded Wave-2 home
+    removes up to three files. The state is NOT migrated — the new watcher's first fire
+    records HEAD and stays quiet (first-sight rule), which is the same behaviour a fresh
+    enable has always had.
     """
     if crons_dir is None:
         from personalclaw.config.loader import config_dir
 
         crons_dir = config_dir() / "crons"
-
-    crons_dir.mkdir(parents=True, exist_ok=True)
-    target = crons_dir / COMMIT_WATCH_SCRIPT
-    source = packaged_script_source()
-
-    try:
-        if target.read_text(encoding="utf-8") == source:
-            return target
-    except OSError:
-        pass
-
-    target.write_text(source, encoding="utf-8")
-    logger.info("selfqa: installed commit-watch script at %s", target)
-    return target
-
-
-def write_watch_config(repo: str, crons_dir: Path | None = None) -> Path:
-    """Write the watched-repo path where the sandboxed script can read it.
-
-    This file exists because the two channels one would reach for first are both silently dead
-    inside the sandbox — see the comment on `CONFIG_FILE` in the script itself. Written next to the
-    script, which is the crons dir, so the script derives the path from `__file__` and imports
-    nothing.
-    """
-    if crons_dir is None:
-        from personalclaw.config.loader import config_dir
-
-        crons_dir = config_dir() / "crons"
-    crons_dir.mkdir(parents=True, exist_ok=True)
-    target = crons_dir / COMMIT_WATCH_CONFIG
-    target.write_text(json.dumps({"repo": repo}, indent=2) + "\n", encoding="utf-8")
-    return target
+    removed: list[str] = []
+    for name in _RETIRED_CRON_FILES:
+        target = crons_dir / name
+        try:
+            if target.is_file():
+                target.unlink()
+                removed.append(name)
+        except OSError:
+            logger.debug("selfqa reconcile: could not remove retired %s", name, exc_info=True)
+    if removed:
+        logger.info("selfqa: removed retired commit-watch artifacts: %s", ", ".join(removed))
+    return removed
 
 
 def reconcile(store: Any, *, crons_dir: Path | None = None) -> None:
     """Make the commit watcher match `agent.self_qa`. Idempotent, best-effort.
 
-    Converges rather than only creating, so turning the companion on in Settings takes effect
-    without the user knowing a cron exists to be registered — and so editing `watched_repo`
-    re-points the existing watcher instead of leaving it on the old path.
+    Converges rather than only creating, so turning the companion on in Settings takes
+    effect without the user knowing a trigger exists to be registered — and so editing
+    `watched_repo` re-points the existing watcher instead of leaving it on the old path.
 
-    **A disabled companion DISABLES its trigger; it never deletes it.** Deleting the last entry has
-    been observed to stop the scheduler outright, and a disabled row is also the more honest
-    surface: the user sees the watcher they configured, switched off, rather than an empty list
-    that looks like their setting did not save.
+    **A disabled companion DISABLES its trigger; it never deletes it.** Deleting the last
+    entry has been observed to stop the scheduler outright, and a disabled row is also the
+    more honest surface: the user sees the watcher they configured, switched off, rather
+    than an empty list that looks like their setting did not save.
     """
     from personalclaw.config.loader import AppConfig
     from personalclaw.triggers import screen as _screen
-    from personalclaw.triggers.arm import arm as _arm
+    from personalclaw.triggers.file_watch import vcs_patterns
     from personalclaw.triggers.models import Trigger
 
     try:
@@ -118,16 +89,11 @@ def reconcile(store: Any, *, crons_dir: Path | None = None) -> None:
         return
 
     repo = (cfg.watched_repo or "").strip()
-    # `enabled` alone is not enough to run: a watcher with no repo would tick forever doing
-    # nothing, which reads as a broken feature rather than an unfinished setup.
+    # `enabled` alone is not enough to run: a watcher with no repo would watch nothing,
+    # which reads as a broken feature rather than an unfinished setup.
     active = bool(cfg.enabled and repo)
 
-    try:
-        install_commit_watch_script(crons_dir)
-        write_watch_config(repo, crons_dir)
-    except OSError:
-        logger.warning("selfqa reconcile: could not install the commit-watch script", exc_info=True)
-        return
+    remove_retired_script(crons_dir)
 
     try:
         existing = store.get(WATCH_TRIGGER_ID)
@@ -141,40 +107,44 @@ def reconcile(store: Any, *, crons_dir: Path | None = None) -> None:
         return
 
     try:
-        # `store.get` returns a `LoadedTrigger` — the row PLUS whatever was wrong with reading it.
-        # The entity to write is the `.trigger` inside; using the pair itself would set attributes
-        # on the wrapper and upsert something with no `id`.
+        # `store.get` returns a `LoadedTrigger` — the row PLUS whatever was wrong with reading
+        # it. The entity to write is the `.trigger` inside; using the pair itself would set
+        # attributes on the wrapper and upsert something with no `id`.
         trigger = (
             existing.trigger
             if existing is not None
             else Trigger(
                 id=WATCH_TRIGGER_ID,
                 name="Self-QA commit watch",
-                kind="clock",
+                kind="file",
                 created_by="system",
-                # `delivery: none` — the watcher's OUTPUT is a workflow run, which reports itself. A
-                # cron-result notification per tick would be a notification about looking.
+                # `delivery: none` — the watcher's OUTPUT is a workflow run, which reports
+                # itself. A fire notification per push would be a notification about looking.
                 delivery="none",
             )
         )
         trigger.enabled = active
-        trigger.spec = {"kind": "interval", "interval_secs": WATCH_INTERVAL_SECS}
+        # An upgraded Wave-2 row arrives as `clock`; the swap happens HERE, on the same id,
+        # so the user's trigger list shows one watcher whose kind changed — not two.
+        trigger.kind = "file"
+        # Content dedup: a ref rewritten to the same bytes (a no-op force-push) is not a
+        # change worth firing on. The preset's globs cover refs/heads/* AND .git/HEAD, so a
+        # branch switch re-seeds honestly instead of firing on the next commit with a stale
+        # idea of the branch.
+        trigger.spec = {"paths": vcs_patterns(repo or "."), "dedup": "content"}
         trigger.workflow = {
             "inline": {
-                "provider": "run-script",
-                "config": {"script": COMMIT_WATCH_SPEC, "timeout": 60},
+                "provider": "selfqa-commit-watch",
+                "config": {"repo": repo},
             }
         }
-        # The script starts a workflow run, so it is write-capable and the fence needs the frozen
-        # grant (decision 7). A system-created trigger's opt-in is the code path that created it.
+        # The provider starts a workflow run, so it is write-capable and the fence needs the
+        # frozen grant (decision 7). A system-created trigger's opt-in is the code path that
+        # created it.
         trigger.capabilities = _screen.capabilities_for_action(trigger)
-        if active:
-            armed = _arm(trigger)
-            if armed:
-                trigger.next_fire_at = armed
         store.upsert(trigger)
         logger.info(
-            "selfqa: commit watch %s (repo=%s)",
+            "selfqa: commit watch %s (repo=%s, vcs preset)",
             "armed" if active else "disabled",
             repo or "<unset>",
         )

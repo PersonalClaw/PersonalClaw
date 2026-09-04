@@ -250,8 +250,9 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # ref, and it is hex-validated before use (`selfqa/triage.py::_SHA_RE`) so nothing
     # option-shaped can pose as a sha — the same discipline as the state-history runner above.
     "selfqa/triage.py::_git::subprocess.run": "host-fact: read-only git commit inspection",
-    "selfqa/scripts/selfqa_commit_watch.py::_git::subprocess.run": (
-        "host-fact: read-only git HEAD probe"
+    "selfqa/watch.py::_git::subprocess.run": (
+        "host-fact: read-only git HEAD/rev-list probe (SV-11 — the retired sandbox "
+        "script's delta logic, moved in-process; same fixed argv, no shell, 30s timeout)"
     ),
     # SV-10's Self-QA evidence bundle uses ffmpeg as a host media tool, exactly like the
     # knowledge-pipeline and transcribe ffmpeg sites above. `_ffmpeg_ping` reads a host fact (is

@@ -482,6 +482,11 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # creating a branch are unattended local writes, so this lands on the stricter side beside
         # `selfqa-file-finding`.
         "selfqa-evidence",
+        # SV-11: the commit watch STARTS a workflow run unattended on every push — the same
+        # spend-and-act write that puts `run-workflow` itself on this side. The delta half is
+        # read-only git, but the pair lands on the stricter classification, exactly as
+        # `selfqa-file-finding` records directly above.
+        "selfqa-commit-watch",
         # PA-2: the triage digest spends two background model calls and DELIVERS a notification,
         # unattended, on a cron, forever. It executes no proposal — that is PA-3's `inbox-op`
         # under a budget floor — but "proposes nothing and only notifies" is still the same

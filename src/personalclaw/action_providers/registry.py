@@ -141,6 +141,19 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(SelfQaEvidenceActionProvider())
+    if "selfqa-commit-watch" not in _providers:
+        # SV-11: the vcs trigger's action — commit delta + delegated `run-workflow` start.
+        # Registered unconditionally for the reason `selfqa-file-finding` records above: the
+        # trigger row exists even when the companion is off (the reconciler disables rather
+        # than deletes), and a live row naming an unregistered provider validates, saves,
+        # and then fails at fire time. Added to `ALLOWED_HOOK_PROVIDERS`, to
+        # `triggers/screen.py`'s write-capable set and to `guardrails/rungs.py` in the SAME
+        # commit — a provider in one set but not the others is that save-then-refuse mismatch.
+        from personalclaw.action_providers.selfqa_watch_provider import (
+            SelfQaCommitWatchActionProvider,
+        )
+
+        register_action_provider(SelfQaCommitWatchActionProvider())
     if "triage-digest" not in _providers:
         # PROACTIVE-ASSISTANT §1.1-§1.5 (PA-2) — the triage digest's one call site. Registered
         # unconditionally, NOT behind `proactive.triage_enabled`: a provider the bundled

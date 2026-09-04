@@ -75,8 +75,9 @@ from personalclaw.selfqa.fix_branch import (
     fix_branch_name,
 )
 from personalclaw.selfqa.install import (
-    COMMIT_WATCH_SCRIPT,
-    install_commit_watch_script,
+    WATCH_TRIGGER_ID,
+    reconcile,
+    remove_retired_script,
 )
 from personalclaw.selfqa.ledger import record_triage
 from personalclaw.selfqa.triage import (
@@ -89,20 +90,24 @@ from personalclaw.selfqa.triage import (
     triage_commit,
     triage_commits,
 )
+from personalclaw.selfqa.watch import WatchFire, check
 
 __all__ = [
     "CommitTriage",
     "FiledFinding",
     "ScenarioFinding",
-    "COMMIT_WATCH_SCRIPT",
+    "WATCH_TRIGGER_ID",
+    "WatchFire",
     "IMPACT_NONE",
     "IMPACT_TEST",
     "IMPACT_USER",
     "SKIPPED_IMPACTS",
+    "check",
     "classify_paths",
     "file_finding",
-    "install_commit_watch_script",
+    "reconcile",
     "record_triage",
+    "remove_retired_script",
     "triage_commit",
     "triage_commits",
     # evidence bundle (SV-10)
