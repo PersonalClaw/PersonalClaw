@@ -55,6 +55,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.guardrails import trust_record
 from personalclaw.guardrails.incident import incident_active
 
 logger = logging.getLogger(__name__)
@@ -542,9 +543,15 @@ def resolve_rung(key: str) -> str:
     whose declared floor sits higher. That is what makes it a kill switch rather than
     a suggestion.
     """
-    if _REGISTRY.get(key) is None:
+    spec = _REGISTRY.get(key)
+    if spec is None:
         return RUNG_DRAFT_ONLY
     resolved = granted_rung(key)
+    if trust_record.is_revoked(key):
+        # The durable trust record outlives the flat store: a standing revocation
+        # clamps to the floor even if the store lost its demotion entry. Only a
+        # fresh human grant (record_grant) clears the flag.
+        resolved = _clamp(spec.floor, spec.floor, spec.ceiling)
     if incident_active() and rung_rank(resolved) > rung_rank(RUNG_ONE_TAP):
         return RUNG_ONE_TAP
     return resolved
@@ -810,6 +817,9 @@ def grant_rung(key: str, rung: str, *, evidence_window: str = "") -> str | None:
         demotions=existing.demotions if existing else (),
     )
     _save_store(store)
+    trust_record.record_grant(
+        key, rung, granted_at=now.isoformat(), evidence_window=evidence_window
+    )
     _audit("autonomy_granted", key=key, detail=f"rung={rung} evidence={evidence_window}")
     logger.info("autonomy: %s granted rung %s", key, rung)
     return rung
@@ -843,6 +853,7 @@ def demote(key: str, cause: str) -> Demotion:
         demotions=((existing.demotions if existing else ()) + (record,))[-_MAX_DEMOTIONS:],
     )
     _save_store(store)
+    trust_record.record_demotion(key, floor=floor, cause=record.cause, at=record.at)
     _audit(
         "autonomy_demoted", key=key, detail=f"cause={record.cause} until={record.cooldown_until}"
     )
