@@ -1884,11 +1884,19 @@ async def start_dashboard(
         try:
             return await handler(request)  # type: ignore[operator]
         except web.HTTPNotFound:
+            # An unmatched /api/* route must answer in the one wire envelope — a JSON
+            # client that mistypes or hits a removed route cannot parse aiohttp's
+            # text/plain default, and so cannot tell "route gone" from "server broke".
+            # Handlers that ANSWER 404 (rather than raising) are untouched here.
+            if request.path.startswith("/api/"):
+                from personalclaw.http_errors import json_error
+
+                return json_error("not_found", status=404)
             # `/icons/` is excluded for the PWA: a manifest icon that resolves to
             # index.html is an invalid icon, and the only symptom is an install
             # prompt that never appears. A 404 is diagnosable; HTML is not.
             if request.method == "GET" and not request.path.startswith(
-                ("/api/", "/assets/", "/icons/", "/sprites/", "/vendor/")
+                ("/assets/", "/icons/", "/sprites/", "/vendor/")
             ):
                 return await handlers.index(request)
             raise
