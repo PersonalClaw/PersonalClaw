@@ -455,6 +455,19 @@ async def api_inbox_draft(request: web.Request) -> web.Response:
         logger.warning("Draft request but inbox service not running")
         return web.json_response({"error": "Inbox service not running"}, status=503)
     item_id = request.match_info["id"]
+    # #621: the SEND gate below refuses a can_reply=False item, but drafting had
+    # no gate — so the model ran, a full reply persisted, the row badged
+    # 'draft', and Send stayed disabled. Refuse BEFORE the model call, with the
+    # same message family as the send gate: a reply that can never leave the
+    # item is not worth a token.
+    _, inbox = _get_inbox(state)
+    existing = inbox.items.get(item_id)
+    if not existing:
+        return web.json_response({"error": "not found"}, status=404)
+    if not getattr(existing, "can_reply", False):
+        return web.json_response(
+            {"error": "this item's source does not support replies"}, status=400
+        )
     item = await svc.draft_reply(item_id)
     if not item:
         logger.warning("Draft failed for %s", item_id)
