@@ -73,6 +73,7 @@ from personalclaw.browse.loop import (
     PARK_BUDGET_EXHAUSTED,
     PARK_KILLED,
     PARK_STEP_EXHAUSTED,
+    PARK_TAB_CLOSED,
     BrowseLoopResult,
     BrowseStep,
     run_browse_loop,
@@ -145,6 +146,21 @@ def _kill_check() -> tuple[bool, str]:
     except Exception:
         logger.debug("browse: kill verdict unavailable", exc_info=True)
         return False, ""
+
+
+def _revoke_reason(result: BrowseLoopResult | None) -> str:
+    """Why a granted user_browser run's authorization ended, for the ``browser_revoked`` row.
+
+    One task, one grant: the grant is spent when the task stops, and the reason distinguishes a
+    normal finish from the user closing the tab (BA-9) or a kill-switch stop (BA-5)."""
+    park = getattr(result, "park_reason", "") if result is not None else ""
+    if park == PARK_TAB_CLOSED:
+        return "tab_closed"
+    if park == PARK_KILLED:
+        return "kill_switch"
+    if result is None:
+        return "run_ended"
+    return "run_complete"
 
 
 async def _decide(prompt: str) -> str:
@@ -270,6 +286,8 @@ class BrowseActionProvider(ActionProvider):
                     agent_error=typed,
                 )
 
+        grant = None
+        close_check = None
         cdp_url = resolve_cdp_url(target, action_config)
         if target == TARGET_USER_BROWSER:
             status = connector_status()
@@ -286,6 +304,40 @@ class BrowseActionProvider(ActionProvider):
                     duration_ms=int((time.monotonic() - started) * 1000),
                     agent_error=typed,
                 )
+            # ── BA-9: the per-task grant, requested BEFORE the browser is touched ──
+            #
+            # A user_browser task drives the operator's already-logged-in browser, so it cannot
+            # start on the rung ladder's say-so: it needs a fresh, explicit human grant naming the
+            # sites it will touch, routed through the SHIPPED fail-closed ApprovalGate (300s ->
+            # REJECT). A denied / timed-out / channel-less grant REFUSES the run — it never falls
+            # open — and it is requested HERE, ahead of `_open`, so an unauthorized task never
+            # reaches the browser. The grant binds to THIS connector so close-to-kill can tell the
+            # authorized tab from a later re-attach.
+            from personalclaw.browse.grant import (
+                grant_denied_error,
+                grant_gate,
+                make_close_check,
+                request_grant,
+                scope_for_url,
+            )
+
+            grant = await request_grant(
+                task=goal,
+                scope=scope_for_url(start_url),
+                gate=grant_gate(),
+                bound_device_id=status.device_id,
+                bound_cdp_url=status.cdp_url,
+            )
+            if not grant.granted:
+                typed = grant_denied_error(grant)
+                return ActionResult(
+                    success=False,
+                    error=typed.what,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    agent_error=typed,
+                )
+            # Closing the task tab group is a hard stop the loop observes within one step.
+            close_check = make_close_check(grant)
 
         # ── BA-4 §5.3: the pre-run session check, before a browser or a token is spent ──
         from personalclaw.browse.handoff import (
@@ -340,6 +392,7 @@ class BrowseActionProvider(ActionProvider):
                 code="ERR_BROWSE_CONNECT_FAILED",
             )
 
+        result = None
         try:
             result = await run_browse_loop(
                 goal=goal,
@@ -351,6 +404,7 @@ class BrowseActionProvider(ActionProvider):
                 budget_check=_budget_check,
                 on_step=self._mirror_sink(ctx),
                 kill_check=_kill_check,
+                close_check=close_check,
             )
         finally:
             if closer is not None:
@@ -358,6 +412,17 @@ class BrowseActionProvider(ActionProvider):
                     await closer()
                 except Exception:
                     logger.debug("browse: session close failed", exc_info=True)
+            if grant is not None and grant.granted:
+                # BA-9: one task, one grant — the authorization is spent when the task ends
+                # (completed, parked, closed, or killed), so it is revoked HERE with the reason the
+                # run stopped for. In the finally so a close/kill or an exception still records the
+                # browser_revoked row; best-effort so an audit hiccup never masks the run's result.
+                from personalclaw.browse.grant import revoke_grant
+
+                try:
+                    revoke_grant(grant, reason=_revoke_reason(result))
+                except Exception:
+                    logger.debug("browse: grant revoke failed", exc_info=True)
 
         return self._to_result(
             result, started=started, ctx=ctx, start_url=start_url, session_before=state_before
@@ -547,6 +612,8 @@ class BrowseActionProvider(ActionProvider):
             head = "Browse stopped because the model budget is spent"
         elif result.park_reason == PARK_KILLED:
             head = "Browse was stopped by the kill switch"
+        elif result.park_reason == PARK_TAB_CLOSED:
+            head = "Browse stopped because you closed the task's browser tab"
         elif result.park_reason == PARK_LOGIN_REQUIRED:
             # Unreachable via this method today — a login park is answered by `_login_park`, whose
             # sentence names the site and the handoff. Kept because `_park_sentence` is the

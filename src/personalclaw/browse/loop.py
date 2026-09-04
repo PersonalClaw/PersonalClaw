@@ -88,6 +88,12 @@ PARK_NAVIGATION_BLOCKED = "navigation_blocked"
 #: resume, exactly like the step/budget parks. ``killswitch`` owns the flag; the loop only reads a
 #: verdict through the injected ``kill_check``.
 PARK_KILLED = "killed"
+#: BA-9's close-to-kill: the user closed the task's tab group. A HARD STOP OBSERVED as a connector
+#: disconnect, parked (not failed) within one step exactly like the kill switch — but DISTINCT from
+#: it: ``killswitch`` stops ALL unattended browse via a flag, this ends ONE attended run when its
+#: own tab closes. ``browse.grant`` owns the observation; the loop only reads the injected
+#: ``close_check``.
+PARK_TAB_CLOSED = "tab_closed"
 #: BA-4's credential handoff park is :data:`personalclaw.browse.handoff.PARK_LOGIN_REQUIRED`,
 #: imported above rather than restated here. ``handoff`` owns the value because it also builds the
 #: card that answers it; a second literal in this module would be the fifth park reason and the
@@ -178,6 +184,12 @@ StepSink = Callable[["BrowseStep", str], None]
 #: Checked before every model call — the same "guard where the work happens, not one caller away"
 #: placement as the budget.
 KillCheck = Callable[[], tuple[bool, str]]
+
+#: Returns (closed, reason). Injected like :data:`KillCheck`; the provider supplies one bound to the
+#: run's connector (:func:`personalclaw.browse.grant.make_close_check`). Checked before every model
+#: call — and BEFORE the kill switch, because the user closing the very tab this run drives is the
+#: most immediate hard stop of all, and it must be felt within one step (BA-9 close-to-kill).
+CloseCheck = Callable[[], tuple[bool, str]]
 
 
 # ── results ───────────────────────────────────────────────────────────────────
@@ -429,6 +441,7 @@ async def run_browse_loop(
     settle: Callable[[], Awaitable[None]] | None = None,
     on_step: StepSink | None = None,
     kill_check: KillCheck | None = None,
+    close_check: CloseCheck | None = None,
 ) -> BrowseLoopResult:
     """Drive ``page`` toward ``goal``, navigating only through ``session``'s gate.
 
@@ -491,6 +504,15 @@ async def run_browse_loop(
     st.visited.append(url)
 
     for step in range(1, max(1, int(max_steps)) + 1):
+        if close_check is not None:
+            closed, why = close_check()
+            if closed:
+                # BA-9: the user closed the task tab group. Observed as a HARD STOP and parked
+                # before the model call, so the close is felt within one step — checked FIRST,
+                # ahead of the kill switch and the budget, because it is the most immediate stop.
+                return _park(
+                    st, goal=goal, url=url, reason=PARK_TAB_CLOSED, detail=why or "tab closed"
+                )
         if kill_check is not None:
             killed, why = kill_check()
             if killed:
