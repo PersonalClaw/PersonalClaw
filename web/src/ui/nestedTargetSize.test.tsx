@@ -128,13 +128,15 @@ describe('the detail routes added after the first census', () => {
   const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
 
   it("the project header's Rename button carries a 24px hit box", () => {
+    // The box is now the PRIMITIVE's guarantee: IconButton sizes its hit area
+    // from the `size` prop, so the pin asserts the prop instead of a class recipe.
     expect(read('pages/projects/ProjectsSection.tsx'))
-      .toMatch(/aria-label="Rename"[\s\S]{0,120}?grid size-6 -m-0\.5 place-items-center/)
+      .toMatch(/IconButton icon=\{Pencil\} label="Rename" size=\{24\}/)
   })
 
   it("the context/workspace row's Open-in-Files button carries one too", () => {
     expect(read('pages/projects/ProjectsSection.tsx'))
-      .toMatch(/aria-label=\{`Open \$\{label\} in Files`\}[\s\S]{0,200}?grid size-6 -m-0\.5 place-items-center/)
+      .toMatch(/IconButton icon=\{FolderOpen\} label=\{`Open \$\{label\} in Files`\}[\s\S]{0,40}?size=\{24\}/)
   })
 
   it('neither reintroduces the bare padding that made them undersized', () => {
