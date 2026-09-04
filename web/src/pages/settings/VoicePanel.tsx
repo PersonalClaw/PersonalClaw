@@ -84,22 +84,42 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
           const provider = boundModel.includes(':') ? boundModel.split(':', 1)[0] : ''
           const isRemoteVoice = !!provider && !PIPER_PROVIDERS.includes(provider)
           const speechVoice = typeof s.speech_voice === 'string' && s.speech_voice ? s.speech_voice : 'alloy'
+          // One stored number, two consumer semantics (#657): Piper feeds it to
+          // --length-scale (LOWER is faster), OpenAI-compatible remotes pass it to the
+          // API's speed multiplier (HIGHER is faster). The value stays raw — both
+          // backends consume it correctly — so only what the user is TOLD flips.
+          const higherIsFaster = isRemoteVoice
+          // Gemini's generateContent speech API has no speaking-rate parameter and its
+          // own preset voice names (its provider ignores `speed` and `speech_voice`
+          // entirely), so it gets NEITHER control: a slider that does nothing is the
+          // dead-toggle shape the STT note above forbids. Same provider-name keying as
+          // PIPER_PROVIDERS until providers declare capabilities (the MI-2 flags).
+          const isGeminiVoice = GEMINI_TTS_PROVIDERS.includes(provider)
           return (
             <>
-              <Field label="Speaking speed" hint={`${speed.toFixed(2)}× — lower is faster.`}>
+              {isGeminiVoice ? (
+                <p data-type="body-s" className="text-on-surface-low">
+                  Gemini speaks at its model's own pace with its own preset voices — its speech
+                  API exposes no speaking-rate control, and it does not use the hosted personas
+                  other remote voices share. The speed and persona controls apply to Piper and
+                  OpenAI-compatible voices.
+                </p>
+              ) : (
+                <Field label="Speaking speed" hint={`${speed.toFixed(2)}× — ${higherIsFaster ? 'higher' : 'lower'} is faster.`}>
                 <div className="flex items-center gap-3">
-                  <span className="text-on-surface-low text-[0.75rem]">Fast</span>
+                  <span data-type="caption" className="text-on-surface-low">{higherIsFaster ? 'Slow' : 'Fast'}</span>
                   <input type="range" min={0.6} max={1.6} step={0.05} value={speed}
                     onChange={(e) => setLocalSpeed(s, setTtsSettings, Number(e.target.value))}
                     onPointerUp={(e) => save({ speed: Number((e.target as HTMLInputElement).value) })}
                     // Keyboard adjustments never fire pointerup — persist those too.
                     onKeyUp={(e) => { if (RANGE_KEYS.has(e.key)) save({ speed: Number((e.target as HTMLInputElement).value) }) }}
                     className="flex-1 accent-[var(--color-primary)]" />
-                  <span className="text-on-surface-low text-[0.75rem]">Slow</span>
+                  <span data-type="caption" className="text-on-surface-low">{higherIsFaster ? 'Fast' : 'Slow'}</span>
                   <span className="w-10 text-right font-mono text-on-surface text-[0.75rem] tabular-nums">{speed.toFixed(2)}×</span>
                 </div>
-              </Field>
-              {isRemoteVoice && (
+                </Field>
+              )}
+              {isRemoteVoice && !isGeminiVoice && (
                 <Field label="Voice persona" hint="The hosted voice used by remote TTS models.">
                   <select value={speechVoice} onChange={(e) => save({ speech_voice: e.target.value })} className={selectCls}>
                     {SPEECH_VOICES.map((v) => <option key={v} value={v}>{v}</option>)}
@@ -268,6 +288,10 @@ function PhraseRow({ label, hint, values, onChange }: {
 
 // Provider names that drive the bundled local Piper backend (no hosted persona).
 const PIPER_PROVIDERS = ['piper', 'piper-tts']
+// Provider names backed by Gemini's generateContent speech API, which has no
+// speaking-rate parameter and uses its own preset voice names — the provider
+// ignores `speed` and `speech_voice`, so the panel withholds both controls (#657).
+const GEMINI_TTS_PROVIDERS = ['google', 'google-models']
 // Keys that move a range input's value (persist on keyup for keyboard users).
 const RANGE_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'])
 // Built-in personas exposed by remote OpenAI-compatible TTS models.
