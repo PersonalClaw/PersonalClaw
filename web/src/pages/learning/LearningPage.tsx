@@ -7,8 +7,9 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
-import { api, type AblationView, type BenchmarkView, type IdentityReportView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
+import { api, type AblationView, type AttentionScope, type BenchmarkView, type IdentityReportView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
 import { AblationPanel } from './AblationPanel'
+import { AttentionPanel } from './AttentionPanel'
 import { BenchmarkPanel } from './BenchmarkPanel'
 import { HealthPanel } from './HealthPanel'
 import { IdentityReportPanel } from './IdentityReportPanel'
@@ -37,6 +38,10 @@ const ABLATION_KEY = 'learning:ablation'
  *  `ABLATION_KEY` is: `dataLayerAdoption`'s census resolves it, and it has exactly one reader, so
  *  a refetch IS the invalidation and there is nothing for `proposalCache.ts` to coordinate. */
 const BENCHMARK_KEY = 'learning:benchmark'
+
+/** The attention-accounting cache key (ES-16). Module-level for `ABLATION_KEY`'s reasons:
+ *  exactly one reader, so a refetch IS the invalidation. */
+const ATTENTION_KEY = 'learning:attention'
 
 /** The Learning page — the Proposal Inbox plus the capture week panel.
  *
@@ -68,6 +73,13 @@ export function LearningPage() {
   const { data: health, error: healthError, refresh: refreshHealth } = useQuery<LearningHealth>(
     HEALTH_KEY,
     () => api.learningHealth(7),
+  )
+  // §4.4 attention accounting (ES-16). `error` is read for the health panel's reason: the
+  // subject is "what does autonomy still cost?", and a swallowed failure would answer
+  // "nothing" — the one claim the panel must never make by accident.
+  const { data: attention, error: attentionError, refresh: refreshAttention } = useQuery<{ scopes: AttentionScope[] }>(
+    ATTENTION_KEY,
+    () => api.workflowAttention(),
   )
   // The judge tier table (ES-4). `error` is read for the same reason the health panel's is, plus
   // one more: its ORDINARY state is a 404 ("no benchmark has run"), and the panel needs the error
@@ -204,6 +216,8 @@ export function LearningPage() {
           />
 
           <HealthPanel health={health} error={healthError} onRetry={refreshHealth} />
+
+          <AttentionPanel scopes={attention?.scopes} error={attentionError} onRetry={refreshAttention} />
 
           <JudgeBenchPanel bench={judgeBench} error={judgeBenchError} onRetry={refreshJudgeBench} />
 

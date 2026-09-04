@@ -23,6 +23,7 @@ Three conventions this file follows from the surrounding code:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -329,6 +330,83 @@ def _template_run_stats(name: str) -> dict[str, Any]:
         except Exception:
             continue
     return {"clean_runs": clean, "evaluator_rejected": rejected}
+
+
+# ── §4.4 human-attention accounting (EVALUATION-SUBSTRATE, atom ES-16) ─────────
+
+
+def _attention_scopes(
+    *, per_scope_runs: int = 15, now: float | None = None
+) -> list[dict[str, Any]]:
+    """Per-template attention summaries, derived from recent run ledgers.
+
+    A bounded display read, same posture as :func:`_template_run_stats`: the most recent
+    runs grouped by template, each run's journal read once. Computed on request, stored
+    nowhere — the §4.4 discipline.
+    """
+    import time as _time
+
+    from personalclaw.workflows import introspection, journal
+
+    now = now if now is not None else _time.time()
+    runs, _ = store.list_runs(limit=120)
+    by_scope: dict[str, list[tuple[float, list[dict[str, Any]]]]] = {}
+    for run in runs:
+        scope = run.workflow_name or ""
+        if not scope:
+            continue
+        bucket = by_scope.setdefault(scope, [])
+        if len(bucket) >= per_scope_runs:
+            continue
+        try:
+            events = journal.ledger(run.id)
+        except Exception:
+            continue
+        started = introspection._epoch(run.started_at or run.created_at) or 0.0
+        bucket.append((started, events))
+    out = [
+        introspection.attention_stats(scope, pairs, now=now).to_dict()
+        for scope, pairs in sorted(by_scope.items())
+        if pairs
+    ]
+    out.sort(key=lambda row: row.get("debt", 0.0), reverse=True)
+    return out
+
+
+def promotion_attention_note(_key: str = "") -> str:
+    """The one-line attention citation a promotion proposal carries (§4.4).
+
+    Aggregated across templates and labeled so — run-ledger attention events are
+    template-scoped while rungs are action-type-scoped, and until the trust record binds
+    the two (ES-14/15) a per-key attribution would be an invention. Empty when there is
+    no sample; a proposal never cites a metric that does not exist. Best-effort: a
+    citation failure must never block the proposal itself.
+    """
+    try:
+        scopes = _attention_scopes()
+    except Exception:
+        return ""
+    total_runs = sum(int(s.get("runs", 0)) for s in scopes)
+    total_events = sum(int(s.get("attention_events", 0)) for s in scopes)
+    if not total_runs:
+        return ""
+    rising = sum(1 for s in scopes if s.get("trend") == "rising")
+    rate = round(total_events / total_runs, 2)
+    note = f"workflow attention (all templates): {rate}/run over {total_runs} runs"
+    if rising:
+        note += f", {rising} scope{'s' if rising != 1 else ''} rising"
+    return note
+
+
+async def api_attention(request: web.Request) -> web.Response:
+    """GET /api/workflows/attention — per-template §4.4 attention summaries."""
+    _audit(request, "workflow_attention", "success", "")
+    try:
+        scopes = await asyncio.to_thread(_attention_scopes)
+    except Exception:
+        logger.warning("attention accounting query failed", exc_info=True)
+        scopes = []
+    return web.json_response({"scopes": scopes})
 
 
 async def api_def_versions(request: web.Request) -> web.Response:
@@ -1106,6 +1184,7 @@ def register_workflow_routes(app: web.Application) -> None:
     """
     app.router.add_get("/api/workflows/manifest", api_manifest)
     app.router.add_get("/api/workflows/audit", api_audit)
+    app.router.add_get("/api/workflows/attention", api_attention)
 
     # Runs — before the def wildcard.
     app.router.add_get("/api/workflows/runs", api_runs_list)

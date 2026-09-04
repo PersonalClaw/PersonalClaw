@@ -931,3 +931,177 @@ def proof_section(stats: RunStats, *, evidence_files: list[str] | None = None) -
             f"what the run did with {'its output' if stats.steps_failed == 1 else 'their outputs'}"
         )
     return section
+
+
+# ── §4.4 human-attention accounting (EVALUATION-SUBSTRATE, atom ES-16) ────────
+#
+# Autonomy's honest objective is attention saved without outcome regression. The events
+# below already exist in the journal; this section is a QUERY over them — per the plan's
+# own discipline, "computed by ledger query, stored nowhere new". A human-answered gate,
+# a mid-flight edit, and a judge/human divergence each cost one unit of attention; an
+# auto-approved gate deliberately costs none (nobody looked at it).
+
+#: Half-life for the pending-attention debt decay, in days. A week: an intervention last
+#: night should weigh on today's graduation question; one from a month ago should not.
+ATTENTION_DEBT_HALF_LIFE_DAYS = 7.0
+
+#: Runs before a trend verdict counts as evidence — same reasoning as FAKE_CHECK_MIN_RUNS:
+#: "rising over 2 runs" is a sample-size artifact, not a signal.
+ATTENTION_TREND_MIN_RUNS = 6
+
+
+def _is_attention_event(event: dict[str, Any]) -> bool:
+    """Did this event cost human attention?
+
+    Human-answered gates (``GATE_RESOLVED`` without the ``auto`` answer marker),
+    mid-flight edits, and judge/human divergences. Auto-approved gates are excluded on
+    purpose: the whole point of the metric is what still NEEDS the user.
+    """
+    kind = str(event.get("kind") or "")
+    if kind in ("user_edited_mid_flight", "judge_divergence"):
+        return True
+    if kind == "gate_resolved":
+        answer = event.get("answer")
+        return not (isinstance(answer, dict) and answer.get("auto"))
+    return False
+
+
+def attention_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One run's attention events, in stream order."""
+    return [e for e in events if _is_attention_event(e)]
+
+
+def attention_debt(
+    event_times: list[float], *, now: float, half_life_days: float = ATTENTION_DEBT_HALF_LIFE_DAYS
+) -> float:
+    """Decayed pending-attention debt: recent interventions weigh ~1, old ones fade.
+
+    Exponential half-life decay over event ages. Pure arithmetic over timestamps the
+    events already carry — no store, no state. Events with no usable timestamp are
+    skipped rather than guessed: a fabricated age would silently skew the trend the
+    graduation proposal cites.
+    """
+    import math
+
+    half_life_secs = max(1.0, half_life_days * 86400.0)
+    debt = 0.0
+    for ts in event_times:
+        if not ts or ts > now:
+            continue
+        debt += math.pow(2.0, -((now - ts) / half_life_secs))
+    return round(debt, 4)
+
+
+def attention_trend(per_run_counts: list[int], *, min_runs: int = ATTENTION_TREND_MIN_RUNS) -> str:
+    """``rising`` / ``falling`` / ``flat`` / ``""`` (insufficient sample).
+
+    First-half vs second-half means over the per-run series, oldest first. Deliberately
+    coarse: the consumer is a one-word chip on a proposal and the Learning page, not a
+    statistics engine, and a verdict that needed explanation would not be glanceable.
+    """
+    if len(per_run_counts) < min_runs:
+        return ""
+    half = len(per_run_counts) // 2
+    older = per_run_counts[:half]
+    newer = per_run_counts[-half:]
+    older_mean = sum(older) / len(older)
+    newer_mean = sum(newer) / len(newer)
+    if newer_mean > older_mean * 1.25 and newer_mean - older_mean >= 0.5:
+        return "rising"
+    if newer_mean < older_mean * 0.75 and older_mean - newer_mean >= 0.5:
+        return "falling"
+    return "flat"
+
+
+def post_grant_rise(
+    per_run: list[tuple[float, int]], granted_at: float, *, min_runs: int = 3
+) -> bool:
+    """The mechanical demotion signal: did attention RISE after the grant?
+
+    ``per_run`` is (run start timestamp, attention event count), any order. True only
+    when both sides have a real sample and the post-grant mean exceeds the pre-grant
+    mean — a graduated scope the user keeps intervening in is not actually trusted,
+    whatever the record says. This is the SIGNAL; acting on it (revocation) is the
+    ladder's decision, not this projection's.
+    """
+    if not granted_at:
+        return False
+    before = [n for ts, n in per_run if ts and ts < granted_at]
+    after = [n for ts, n in per_run if ts and ts >= granted_at]
+    if len(before) < min_runs or len(after) < min_runs:
+        return False
+    return (sum(after) / len(after)) > (sum(before) / len(before)) + 0.25
+
+
+@dataclass(frozen=True)
+class AttentionStats:
+    """The §4.4 summary for one scope (a workflow template), derived per query."""
+
+    scope: str
+    runs: int = 0
+    attention_events: int = 0
+    events_per_run: float = 0.0
+    dwell_p50_secs: float = 0.0
+    debt: float = 0.0
+    trend: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope,
+            "runs": self.runs,
+            "attention_events": self.attention_events,
+            "events_per_run": self.events_per_run,
+            "dwell_p50_secs": self.dwell_p50_secs,
+            "debt": self.debt,
+            "trend": self.trend,
+        }
+
+    def note(self) -> str:
+        """One glanceable line for a promotion proposal to cite. Empty when no sample."""
+        if not self.runs:
+            return ""
+        line = f"attention: {self.events_per_run}/run over {self.runs} runs"
+        if self.dwell_p50_secs:
+            line += f", p50 dwell {self.dwell_p50_secs:g}s"
+        if self.trend:
+            line += f", trend {self.trend}"
+        return line
+
+
+def attention_stats(
+    scope: str, runs: list[tuple[float, list[dict[str, Any]]]], *, now: float
+) -> AttentionStats:
+    """Compute the per-scope summary from (run started_at, run events) pairs.
+
+    Everything derives from the pairs: counts, per-run series (ordered by run start for
+    the trend), dwell p50 from ``resolved_after_secs`` where the human gate path stamped
+    it, and the decayed debt from each attention event's own timestamp (falling back to
+    the run's start when an event carries none — a bounded approximation, biased old,
+    never inventing recency).
+    """
+    ordered = sorted(runs, key=lambda pair: pair[0] or 0.0)
+    per_run_counts: list[int] = []
+    dwells: list[float] = []
+    event_times: list[float] = []
+    total = 0
+    for started_at, events in ordered:
+        hits = attention_events(events)
+        per_run_counts.append(len(hits))
+        total += len(hits)
+        for e in hits:
+            ts = _epoch(e.get("ts")) or started_at or 0.0
+            if ts:
+                event_times.append(ts)
+            raw_dwell = e.get("resolved_after_secs")
+            if isinstance(raw_dwell, (int, float)) and raw_dwell > 0:
+                dwells.append(float(raw_dwell))
+    n = len(ordered)
+    return AttentionStats(
+        scope=scope,
+        runs=n,
+        attention_events=total,
+        events_per_run=round(total / n, 3) if n else 0.0,
+        dwell_p50_secs=round(percentile(dwells, 50), 3) if dwells else 0.0,
+        debt=attention_debt(event_times, now=now),
+        trend=attention_trend(per_run_counts),
+    )

@@ -2048,6 +2048,21 @@ export interface JudgeBenchRecommendation {
   cost_usd: number | null
   notes: string[]
 }
+/** One scope's (workflow template's) §4.4 human-attention summary (ES-16). Everything
+ *  arrives COMPUTED — events/run, decayed debt, the trend verdict — because the backend
+ *  derives them per query from run ledgers; a UI that re-derived the trend from the raw
+ *  numbers would eventually disagree with the one the promotion proposal cited. */
+export interface AttentionScope {
+  scope: string
+  runs: number
+  attention_events: number
+  events_per_run: number
+  dwell_p50_secs: number
+  debt: number
+  /** '' means "not enough runs to call it" — render as unmeasured, never as flat. */
+  trend: '' | 'rising' | 'falling' | 'flat'
+}
+
 export interface JudgeBenchView {
   bench_id: string
   columns: string[]
@@ -6748,6 +6763,9 @@ export const api = {
     get<{ healthy: boolean; dry_run: boolean; runs_scanned: number; counts: Record<string, number>; findings: Array<{ kind: string; run_id: string; detail: string; heal: string; healed: boolean }> }>(
       `/api/workflows/audit?dry_run=${dryRun ? 'true' : 'false'}`),
   workflowManifest: () => get<WorkflowManifest>('/api/workflows/manifest'),
+  /** Per-template §4.4 attention summaries (ES-16). Derived per request from run ledgers —
+   *  stored nowhere — so an empty list means "no workflow runs yet", never a failure. */
+  workflowAttention: () => get<{ scopes: AttentionScope[] }>('/api/workflows/attention'),
   // Bare URL for EventSource — auth rides the same-origin cookie, as with every other
   // per-resource stream.
   workflowRunStreamUrl: (id: string) => `/api/workflows/runs/${encodeURIComponent(id)}/events`,

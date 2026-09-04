@@ -50,6 +50,7 @@ import json
 import logging
 import re
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -587,7 +588,7 @@ def explain_refused_grant(key: str, rung: str) -> str:
 # ── the promotion proposal ────────────────────────────────────────────────────
 
 
-def propose_promotions() -> list[str]:
+def propose_promotions(note_for: Callable[[str], str] | None = None) -> list[str]:
     """File one inbox proposal per action type that has EARNED its next rung.
 
     The ladder only climbs on a click, which means the offer has to travel to the user;
@@ -614,7 +615,18 @@ def propose_promotions() -> list[str]:
             continue
         if not el.eligible or not el.next_rung:
             continue
-        if _file_proposal(spec.key, el.next_rung, el.reason):
+        record = el.reason
+        if note_for is not None:
+            # §4.4: the proposal cites the attention trend. Injected by the caller (the
+            # gateway sweep) rather than imported — guardrails must not depend on the
+            # workflows layer, and a failed citation must never block the proposal.
+            try:
+                extra = note_for(spec.key)
+            except Exception:  # noqa: BLE001
+                extra = ""
+            if extra:
+                record = f"{record} · {extra}"
+        if _file_proposal(spec.key, el.next_rung, record):
             proposed.append(spec.key)
     return proposed
 

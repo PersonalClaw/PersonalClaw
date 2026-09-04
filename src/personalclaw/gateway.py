@@ -1770,8 +1770,9 @@ class GatewayOrchestrator:
         self._last_autonomy_scan = now
         try:
             from personalclaw.guardrails.ladder import propose_promotions
+            from personalclaw.workflows.handlers import promotion_attention_note
 
-            proposed = propose_promotions()
+            proposed = propose_promotions(note_for=promotion_attention_note)
             if proposed:
                 logger.info(
                     "autonomy: proposed a promotion for %d action type(s): %s",
