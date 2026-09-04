@@ -84,7 +84,7 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
               light at 12px against a 4.5 floor. Measured by opening prompts on `#/prompts`. The other
               sources keep their tint and pass: `marketplace` is info, bundled/provider is
               `on-surface-low`. See `design/accentChipTone.test.tsx`. */}
-          <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source)}</span>
+          <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source, full?.tags)}</span>
         </div>
         {err && <FieldError>{err}</FieldError>}
         <PromptEditFields draft={draft} onChange={setDraft} Section={Section} />
@@ -128,7 +128,7 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
         {full.launch_spec && Object.keys(full.launch_spec).length > 0 && (
           <span className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]" style={accentChip}><Rocket size={11} /> runnable</span>
         )}
-        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source)}</span>
+        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source, full?.tags)}</span>
       </div>
       {err && <FieldError>{err}</FieldError>}
 

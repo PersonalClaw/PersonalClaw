@@ -198,7 +198,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
                   <div className="flex-1 min-w-0">
                     <span className="truncate text-on-surface text-[0.9375rem] font-mono" style={fvs(500)}>{r.name}</span>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
-                      <span>{sourceLabel(r.source)}</span>
+                      <span>{sourceLabel(r.source, r.tags)}</span>
                       {vars.length > 0 && <span>{vars.length} var{vars.length > 1 ? 's' : ''}</span>}
                       {/* 🪤 NO LITERAL `· ` HERE, AND A CONDITIONAL ONE WOULD NOT HELP. This read
                           `· {r.description}` — a separator hard-coded onto the description inside a
