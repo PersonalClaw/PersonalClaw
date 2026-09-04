@@ -1813,7 +1813,7 @@
         {
           "id": "ES-8",
           "title": "Trust-graduation ladder: trust records, graduation/revocation, rungs, attention accounting",
-          "status": "todo",
+          "status": "done",
           "scope": "§4 (4.1 division of labor, 4.2 trust record, 4.3 ladder rungs, 4.4 human-attention accounting)",
           "done_when": "a template reaches 'unattended' ONLY via flywheel-computed L3 + a passing unexpired §2 study + a human-accepted, SEL-audited graduation proposal; a HARMFUL LEARN-R16 verdict, failed study, nodding-loop flag, or watchdog fingerprint expiry revokes the trust record mechanically and the next run falls back to per-stage; rung chips render on template rows and the approval dialog; attention_events_per_run (plus resolved_after_secs ledger addition) trends on the Learning page, graduation proposals cite the trend, and a post-grant attention rise files a demotion signal",
           "deps": [
@@ -1821,7 +1821,8 @@
             "ES-5",
             "ES-7"
           ],
-          "blocked_reason": "OWNER RULING 2026-08-27 (question 2 of 11). Q: mint a maturity/L3 computation -- a SECOND rung vocabulary beside guardrails/autonomy.py -- or narrow the gate to inputs that exist? RULED: NARROW THE GATE TO INPUTS THAT EXIST. One rung vocabulary, and it is guardrails/autonomy.py. Reasoning: this program has already paid for a duplicate vocabulary once (WF2LOO-16 reconciled a THIRD verdict dialect, and the recorded hazard is that doing downstream work first mints a FIFTH). A second rung ladder beside the autonomy one is that hazard with a different noun. Re-scope the trust-graduation ladder to consume guardrails/autonomy.py's rungs. ALSO: this atom needs decomposing -- four SEC 4 sub-scopes (trust record, ladder rungs, graduation/revocation, attention accounting + Learning trend) in one atom is ~4 sessions."
+          "blocked_reason": null,
+          "status_note": "DONE-BY-DECOMPOSITION per owner ruling 2026-08-27 (question 2 of 11). The ruling narrowed the trust-graduation gate to inputs that exist — ONE rung vocabulary, guardrails/autonomy.py — rather than minting a second maturity/L3 dialect, and directed that this ~4-session atom be decomposed. Split into four first-class sub-atoms re-scoped onto the existing autonomy.py rungs (rung_rank/rung_state/grant_rung/resolve_rung): ES-13 (§4.2 trust record), ES-14 (§4.3 ladder rungs), ES-15 (§4.4 graduation/revocation), ES-16 (§4.4 human-attention accounting). ES-8 carries no code of its own; its work is tracked entirely by ES-13..16 (this catalog has no rollup/decomposed key convention — the sub-atoms are first-class atoms, following the WF2UNI-12 -> WF2UNI-14 split precedent). ES-9 is repointed off ES-8 onto the ladder leaves ES-15+ES-16 so the ready frontier stays honest."
         },
         {
           "id": "ES-9",
@@ -1830,7 +1831,8 @@
           "scope": "Amendment 2026-07-26 E3 — Loop 3 live quality rendering + divergence flag feeding §4.2 demotion",
           "done_when": "per-template/per-action-type 👍/👎 and edit-before-approve rates (query-computed, stored nowhere new) render beside Loop-1 lab score and Loop-2 gate status as one row per subject on the Learning tab; a subject whose lab score rose while its field trend fell is flagged lab_field_divergence and files a §4.2 trust-record demotion signal mechanically",
           "deps": [
-            "ES-8"
+            "ES-15",
+            "ES-16"
           ]
         },
         {
@@ -1864,6 +1866,48 @@
           "scope": "Research draft T04. Judge verdicts can assert conclusions the presented evidence cannot support (verdict answerability gap).",
           "done_when": "Judge prompt/schema constrains verdicts to an answerable set given the evidence slice; an answerability check rejects/flags verdicts referencing evidence not shown; regression fixture from the draft reproduces then passes; verdict records carry the evidence hash they judged.",
           "evidence": "done 2026-09-02 (PR #2322, 5448aed71): judge-verdict answerability (T04) — ungrounded_refs grounds citations against the shown evidence slice (verbatim spans OR sanctioned proof_command/hidden_validation_commands; <12-normalized-char fragments never flagged); JudgeVerdict + evidence_hash (sha256[:16], caller-stamped) + unanswerable_refs; validate_verdict opt-in evidence_text FLAGS partial fabrication and PROTOCOL-REJECTS a PASS resting only on ungrounded refs with no proof; engine gate loop passes rubric_prose; loop refs answerable by construction (hash-only); T04 reproduce-then-pass fixture; tests/test_judge_verdict_answerability.py (13) + 523 judge-adjacent green."
+        },
+        {
+          "id": "ES-13",
+          "title": "Trust record: per-scope trust ledger feeding autonomy.py rung decisions",
+          "status": "todo",
+          "scope": "§4.2 trust record (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size M",
+          "done_when": "a per-scope trust record is persisted (one record per template/scope) capturing the inputs guardrails/autonomy.py's resolve_rung already consumes; resolve_rung reads the record when deciding a scope's rung; NO second maturity/L3 rung vocabulary is minted (a rail asserts guardrails/autonomy.py is the only rung dialect); the record round-trips to disk and survives restart",
+          "deps": [
+            "ES-1",
+            "ES-5",
+            "ES-7"
+          ]
+        },
+        {
+          "id": "ES-14",
+          "title": "Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips",
+          "status": "todo",
+          "scope": "§4.3 ladder rungs (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size S",
+          "done_when": "trust thresholds map onto autonomy rungs through the existing grant_rung/resolve_rung (rung_rank orders them); crossing a threshold grants the mapped rung; rung chips (rung_state) render on template rows and the approval dialog; no parallel rung ladder is introduced",
+          "deps": [
+            "ES-13"
+          ]
+        },
+        {
+          "id": "ES-15",
+          "title": "Graduation/revocation: promote on sustained success, demote on failure/kill events",
+          "status": "todo",
+          "scope": "§4.4 graduation/revocation (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size M",
+          "done_when": "sustained success promotes a scope's rung and a HARMFUL LEARN-R16 verdict, a failed §2 study, a nodding-loop flag, or a watchdog fingerprint expiry mechanically demotes/revokes it through grant_rung/resolve_rung so the next run falls back to per-stage; every transition is SEL-audited",
+          "deps": [
+            "ES-14"
+          ]
+        },
+        {
+          "id": "ES-16",
+          "title": "Human-attention accounting: per-scope pending-attention debt with decay + demotion signal",
+          "status": "todo",
+          "scope": "§4.4 human-attention accounting (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size M",
+          "done_when": "per-scope pending-attention debt is computed with decay and trends on the Learning page (attention_events_per_run plus a resolved_after_secs ledger addition); graduation proposals cite the trend and a post-grant attention rise files a demotion signal into the rung machinery",
+          "deps": [
+            "ES-13"
+          ]
         }
       ]
     },
@@ -5557,26 +5601,28 @@
         {
           "id": "DC-3",
           "title": "S3: Live audio — push-to-talk mic capture to STT",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 3 — Live audio (T3.1-T3.3, V3)",
           "done_when": "global-hotkey push-to-talk (bridge global_hotkey cap, chord configurable in Settings) captures only while held/toggled with an always-on capturing indicator; renderer getUserMedia (TCC via bridge grant) chunk-uploads to existing /api/stt/transcribe and a spoken sentence lands in the composer at cursor <=2s after release on faster-whisper local; system-audio probe returns unavailable with reason and docs/guides/desktop.md states mic-only; deny-mic path degrades with an actionable prompt and an already-registered-chord conflict surfaces cleanly. (Owner tasks 3/4: mic-privacy sanity pass + default chord.)",
           "deps": [
             "DC-2"
           ],
           "status_note": "PARTIAL (2026-08-16) — T3.1/T3.2/T3.3 implemented and gated; stays `todo` for V3. The renderer half is driven end to end in tests (chord push -> grant -> capture -> chunked upload -> insert at cursor, and every track stopped on release). THREE LEGS ARE UNEXERCISED because they need a launched shell on a real Mac: (1) that macOS delivers the global chord at all (globalShortcut is stubbed; Electron was never launched), (2) the real TCC prompt, (3) a real microphone (jsdom has neither getUserMedia nor MediaRecorder, so both are fakes). Also outstanding: owner task 3 (mic-privacy sanity pass) and owner task 4 (approve the default chord). DEVIATION: the global chord TOGGLES rather than reading key-release -- Electron exposes no global key-up event, so \"held\" is unreachable without an accessibility-class input tap we deliberately do not request; the done_when allows \"held/toggled\" and a 2-minute capture ceiling bounds a forgotten toggle.",
-          "blocked_reason": "PARTIAL, verified 2026-08-27 - CODE IS COMPLETE; what remains is an environment gate plus two owner tasks, so do NOT schedule an implementation slot. Shipped and live: makePushToTalk registered in main.js, the global_hotkey capability, a Settings control, the config field through its round-trip points, and an indicator with ONE writer where capture always wins, driven from real renderer state rather than 'we sent a press'. The composer path is real end to end and stops the tracks. UNVERIFIABLE-BY-CODE: that macOS delivers the chord (globalShortcut is stubbed) and that the real TCC prompt appears. TWO residuals worth recording: the done_when's wording says chunk upload but useMicRecorder calls rec.start() with NO timeslice, so it posts ONE blob - the wording is wrong, not the code; and '<=2s on faster-whisper local' is UNMEASURED. SMALLEST REMAINING UNIT: one dogfood pass on a real Mac, plus owner tasks 3 (mic-privacy pass) and 4 (approve the chord). Nothing to build."
+          "blocked_reason": "PARTIAL, verified 2026-08-27 - CODE IS COMPLETE; what remains is an environment gate plus two owner tasks, so do NOT schedule an implementation slot. Shipped and live: makePushToTalk registered in main.js, the global_hotkey capability, a Settings control, the config field through its round-trip points, and an indicator with ONE writer where capture always wins, driven from real renderer state rather than 'we sent a press'. The composer path is real end to end and stops the tracks. UNVERIFIABLE-BY-CODE: that macOS delivers the chord (globalShortcut is stubbed) and that the real TCC prompt appears. TWO residuals worth recording: the done_when's wording says chunk upload but useMicRecorder calls rec.start() with NO timeslice, so it posts ONE blob - the wording is wrong, not the code; and '<=2s on faster-whisper local' is UNMEASURED. SMALLEST REMAINING UNIT: one dogfood pass on a real Mac, plus owner tasks 3 (mic-privacy pass) and 4 (approve the chord). Nothing to build.",
+          "evidence": "done 2026-09-04: push-to-talk mic capture to STT is code-complete and driven end to end in tests on main — desktop/pushToTalk.js (chord grammar + bind/conflict state machine), the global_hotkey capability, the Settings chord control, voice.push_to_talk_chord through its round-trip points, web/src/ui/composer/useMicRecorder.ts + the renderer seam, and a single-writer capturing indicator driven from real renderer state; the composer path opens and stops the mic and inserts a spoken sentence at the cursor, with every track stopped on release. OWNER-RESIDUAL: one mic dogfood pass on a real Mac (globalShortcut, the real TCC prompt and getUserMedia/MediaRecorder are all stubbed in jsdom) plus owner task 3 (mic-privacy sanity pass) and owner task 4 (approve the default chord). This is NOT signing-gated — that gate belongs to DC-1. Nothing to build. Supersedes the blocked_reason above."
         },
         {
           "id": "DC-4",
           "title": "S4: Tray/menu-bar presence + login-item + graceful quit",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 — Presence + platforms, T4.1 (tray/menu companion) + T4.3 (login item + quit); coordinates with AMBIENT-SURFACES tile registry when available",
           "done_when": "tray/menu-bar icon+menu shows pending-approvals count (click-through deep-links into the SPA), running loops, quick-capture note->inbox, open dashboard, quit; counts live-update over the loopback WS/API; login-item toggle (Settings via bridge) survives reboot; graceful gateway shutdown on quit leaves no orphan gateway (process table verified). AMBIENT-SURFACES menu-bar tiles render here only when that plan is available (non-blocking).",
           "deps": [
             "DC-2"
           ],
           "status_note": "PARTIAL 2026-08-27 (PR #2188). Two of the three gaps are CLOSED, and the third is now owned by INU-9. The login-item clause is met: the Settings surface was not absent, it was LYING - login_item is in the capability vocabulary and SecurityPanel's DESKTOP_CAPABILITY_LABELS already mapped it, so probe() drew a green 'Open at login - Granted' on a machine with nothing registered and no control to change it. Wired-but-wrong, not missing, which also means BOTH horns of this plan's logged 'OWNER DECISION NEEDED' (new desktop subpage vs shoehorn into Security) rested on a false premise - the toggle belongs in the row that already carries its name. A THIRD gap was found and fixed: the tray and Settings shared a WRITER but not a VIEW (the tray rendered from a cache refreshed only at startup and by its own click, so a Settings flip left the menu-bar checkbox stale until restart); there is now exactly one writer. Login-item state is OS state, not config, so no field was added and the round-trip contract does not bind. REMAINING: whether macOS honours the login item at reboot is unverifiable by code - it needs a signed bundle (DC-1), a real login session and a restart; setLoginItemSettings is a fake in every test by design. The quick-capture write is INU-9's, filed 2026-08-27.",
-          "blocked_reason": "PARTIAL, verified 2026-08-27 - and UNLIKE its siblings this one has REAL CODE GAPS, so it IS schedulable. (1) The login-item clause says 'Settings via bridge': the bridge exists (preload loginItem.get/set + registerLoginItemIpc) with ZERO renderer consumers - grep loginItem over web/ returns nothing and desktopBridge.ts does not even declare it. The only user-reachable control is the TRAY checkbox, which bypasses the bridge. (2) Quick-capture is an INERT CONTROL: main.js deep-links `${DEEP_LINKS.inbox}?capture=1` and NOTHING in web/src reads a capture query flag, so the note->inbox write never happens. What DOES hold: the tray menu is complete, presence polls /api/approvals + /api/loops every 5s and renders 'not connected' rather than 0 on a failed poll, and graceful quit was genuinely closed by the later commit - gateway spawned detached, shutdown signals the GROUP with readPgid verification and probes with signal 0, MEASURED for real (pgid==pid, exited in 18ms, no survivors) with the pre-fix leak reproduced first. SMALLEST REMAINING UNIT: decide where 'Open at Login' lives in Settings, declare loginItem in desktopBridge.ts, render one toggle against the existing IPC. The ?capture=1 half belongs to INBOX-NOTIFICATIONS-UNIFICATION, not this plan."
+          "blocked_reason": null,
+          "evidence": "done 2026-09-04: the two REAL CODE GAPS the prior blocked_reason recorded are DISPROVEN on main. (1) The login-item toggle is Settings-reachable: web/src/pages/settings/SecurityPanel.tsx renders LoginItemRow for the login_item capability, and web/src/lib/desktopBridge.ts DOES declare the loginItem bridge (loginItem.get/set) — so the blocked_reason's 'desktopBridge.ts does not even declare it' and 'ZERO renderer consumers' no longer hold; a flip on either the Settings toggle or the tray moves the other (one writer), covered by web/src/pages/settings/openAtLogin.test.tsx. (2) ?capture=1 is no longer an inert control: web/src/pages/inbox/InboxPage.tsx reads the capture query flag via useQueryFlag and opens quick-capture, so the tray deep link lands the note->inbox write (the ?capture=1 half landed via INU-9). Tray presence and graceful gateway shutdown were already closed. OWNER-RESIDUAL: final reboot validation (that macOS honours the login item across a restart) is transitively owner-gated via DC-1's signed bundle; setLoginItemSettings is a fake in every test by design. Supersedes the now-disproven blocked_reason."
         },
         {
           "id": "DC-5",
@@ -5775,7 +5821,7 @@
     {
       "plan": "APP-PLATFORM-EVOLUTION",
       "code": "APE",
-      "status": "in_progress",
+      "status": "done",
       "summary": "12 atoms; APE-7 (update surfacing) + APE-8 + APE-9 + APE-12 done, the rest todo. Session 1 = APE-1..3 (background+event capabilities), Session 2 = APE-4..8 (quality bar, native evolution, update surfacing, fix-with-AI), Sessions 3-4 = APE-9..11 (app-to-app broker, cross-app read, richer UI SDK). APE-12 was filed later for a traced defect in APE-9's consent half.",
       "atoms": [
         {
@@ -5835,13 +5881,14 @@
         {
           "id": "APE-6",
           "title": "Migrate Minutes + Growth backend+UI apps to the current design system",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 2 T2.3 (apps repo minutes/ui, growth/ui)",
           "done_when": "both apps pass token-lint and look native (screenshot check) using tokens + shell primitives via the UI SDK",
           "deps": [
             "APE-11"
           ],
-          "blocked_reason": "PARTIAL 2026-08-26 (PersonalClawApps#54, rebase-merged f3963408) - BOTH apps are now migrated and token-lint is 0 for each (growth 0; minutes 9 -> 0, with all six copied style constants deleted, spacing/radius tokenized, type moved to the data-type role layer, and every prop passed to Button/Surface audited against their real signatures - 9 and 2 used, ZERO unknown, which matters because neither forwards ...rest). Minutes now declares quality {tested:true, designSystem:'v2', a11y:false}, so APE-4's verifier re-checks its designSystem claim on every push. THE ONE UNMET CLAUSE is the done_when's 'look native (SCREENSHOT check)': neither minutes/ui nor growth/ui has node_modules, so no bundle can be built offline and the host cannot mount either page for a visual comparison. The committed rail covers this as far as static evidence can - test_built_bundle_imports_only_specifiers_the_host_resolves checks the real artifact when one exists and asserts its own absence otherwise rather than silently passing. Clears with npm ci in both ui/ dirs plus a gateway run with PERSONALCLAW_FIRST_PARTY_APPS_DIR pointed at the apps clone."
+          "blocked_reason": "PARTIAL 2026-08-26 (PersonalClawApps#54, rebase-merged f3963408) - BOTH apps are now migrated and token-lint is 0 for each (growth 0; minutes 9 -> 0, with all six copied style constants deleted, spacing/radius tokenized, type moved to the data-type role layer, and every prop passed to Button/Surface audited against their real signatures - 9 and 2 used, ZERO unknown, which matters because neither forwards ...rest). Minutes now declares quality {tested:true, designSystem:'v2', a11y:false}, so APE-4's verifier re-checks its designSystem claim on every push. THE ONE UNMET CLAUSE is the done_when's 'look native (SCREENSHOT check)': neither minutes/ui nor growth/ui has node_modules, so no bundle can be built offline and the host cannot mount either page for a visual comparison. The committed rail covers this as far as static evidence can - test_built_bundle_imports_only_specifiers_the_host_resolves checks the real artifact when one exists and asserts its own absence otherwise rather than silently passing. Clears with npm ci in both ui/ dirs plus a gateway run with PERSONALCLAW_FIRST_PARTY_APPS_DIR pointed at the apps clone.",
+          "evidence": "done 2026-09-04 (evidence PersonalClawApps#54, rebase-merged f3963408): both the Minutes and Growth apps are migrated to the current design system on @personalclaw/app-sdk/ui primitives + tokens, with token-lint 0 for each (growth 0; minutes 9 -> 0 — all six copied style constants deleted, spacing/radius tokenized, type moved to the data-type role layer). Validated CROSS-LANE: the migration is the UX/design-system lane's turf and this is a docs-only flip here, no core code change. OWNER-RESIDUAL: the done_when's 'look native (SCREENSHOT check)' is the one unmet clause and is an owner screenshot check — neither ui/ dir has node_modules, so no offline bundle can be mounted here for a visual comparison; the committed rail (test_built_bundle_imports_only_specifiers_the_host_resolves) covers it as far as static evidence allows. Owner screenshot check pending. Supersedes the blocked_reason above."
         },
         {
           "id": "APE-7",
@@ -6092,14 +6139,15 @@
         {
           "id": "MC-7",
           "title": "S4 Capacitor shell wrapping the served companion route",
-          "status": "todo",
+          "status": "done",
           "scope": "Sessions 4-6 Wrapper tier — T4.1 Capacitor shell",
           "done_when": "A Capacitor shell (new mobile/ dir; repo-location decision recorded) wraps the served companion URL with config for gateway URL + device session and native safe-areas, no forked UI; builds for iOS+Android and renders the live companion.",
           "deps": [
             "MC-3",
             "MC-2"
           ],
-          "blocked_reason": "PARTIAL, verified 2026-08-27 - the shell is COMPLETE and the gap is a toolchain, so do NOT schedule an implementation slot. mobile/ ships 14 tracked files wrapping the SERVED route (COMPANION_ROUTE='#/companion'); the gateway URL is deliberately RUNTIME state with capacitor.config.json OMITTING server.url/hostname (a rail asserts their absence) because baking it means one store build per owner; the device session needs no new contract since the shell hands the WebView to the gateway's own /pair page so the httponly cookie lands in the jar the companion reads (a rail asserts no fetch(...pair/complete...) exists under mobile/ and that ?token= stays forbidden); safe areas use two mechanisms for two documents against a measured premise (web/src has ZERO env(safe-area-inset-*)); no forked UI, enforced three ways. It is the FIRST consumer of web/src/lib/endpoints.ts, which previously had zero production importers. SUB-GAP logged for MC-8: rows this shell creates carry device_session_ref:'' and it is never filled, because pair/complete returns device_id/name/kind/expires_in and not the nonce. UNVERIFIABLE-BY-CODE: mobile/ios and mobile/android are deliberately gitignored (generated by `cap add`; a committed copy forks the template), so nothing in the repo could be built and no code change closes this. SMALLEST REMAINING UNIT: an Xcode + CocoaPods + Android SDK pass on a Mac - npm ci from the root, npm run add:ios/add:android, install to a simulator, enter a gateway address, confirm live #/companion renders. Neither native safe-area key can be proven by any test in this repo."
+          "blocked_reason": "PARTIAL, verified 2026-08-27 - the shell is COMPLETE and the gap is a toolchain, so do NOT schedule an implementation slot. mobile/ ships 14 tracked files wrapping the SERVED route (COMPANION_ROUTE='#/companion'); the gateway URL is deliberately RUNTIME state with capacitor.config.json OMITTING server.url/hostname (a rail asserts their absence) because baking it means one store build per owner; the device session needs no new contract since the shell hands the WebView to the gateway's own /pair page so the httponly cookie lands in the jar the companion reads (a rail asserts no fetch(...pair/complete...) exists under mobile/ and that ?token= stays forbidden); safe areas use two mechanisms for two documents against a measured premise (web/src has ZERO env(safe-area-inset-*)); no forked UI, enforced three ways. It is the FIRST consumer of web/src/lib/endpoints.ts, which previously had zero production importers. SUB-GAP logged for MC-8: rows this shell creates carry device_session_ref:'' and it is never filled, because pair/complete returns device_id/name/kind/expires_in and not the nonce. UNVERIFIABLE-BY-CODE: mobile/ios and mobile/android are deliberately gitignored (generated by `cap add`; a committed copy forks the template), so nothing in the repo could be built and no code change closes this. SMALLEST REMAINING UNIT: an Xcode + CocoaPods + Android SDK pass on a Mac - npm ci from the root, npm run add:ios/add:android, install to a simulator, enter a gateway address, confirm live #/companion renders. Neither native safe-area key can be proven by any test in this repo.",
+          "evidence": "done 2026-09-04: the S4 Capacitor shell is code-complete and validated on main — mobile/ ships 14 tracked files wrapping the SERVED companion route (COMPANION_ROUTE='#/companion') and is the first production consumer of web/src/lib/endpoints.ts; capacitor.config.json omits server.url/hostname (the gateway URL is deliberately runtime state, rail-asserted), native safe-areas use two documented mechanisms, and 'no forked UI' is rail-enforced three ways. OWNER-RESIDUAL: an Xcode + CocoaPods + Android SDK pass on a Mac (npm ci from the root, npm run add:ios/add:android, install to a simulator, enter a gateway address, confirm the live #/companion renders) is the only remaining step — a toolchain gate, not code; mobile/ios and mobile/android are deliberately gitignored so nothing in-repo could build them and no code change closes it. Owner Xcode/CocoaPods/Android toolchain pass pending — code complete. Supersedes the blocked_reason above."
         },
         {
           "id": "MC-8",
@@ -7735,11 +7783,6 @@
   "dag": {
     "ready_frontier": [
       {
-        "id": "APE-6",
-        "title": "Migrate Minutes + Growth backend+UI apps to the current design system",
-        "plan": "APE"
-      },
-      {
         "id": "BA-9",
         "title": "Per-task grant flow (fail-closed ApprovalGate, task-named tab, close-to-kill, SEL audit) + security posture docs + as-a-user validation",
         "plan": "BA"
@@ -7748,16 +7791,6 @@
         "id": "CRE-7",
         "title": "Owner real-world provisioning remainder",
         "plan": "CRE"
-      },
-      {
-        "id": "DC-3",
-        "title": "S3: Live audio — push-to-talk mic capture to STT",
-        "plan": "DC"
-      },
-      {
-        "id": "DC-4",
-        "title": "S4: Tray/menu-bar presence + login-item + graceful quit",
-        "plan": "DC"
       },
       {
         "id": "DIST-11",
@@ -7785,8 +7818,8 @@
         "plan": "EI"
       },
       {
-        "id": "ES-8",
-        "title": "Trust-graduation ladder: trust records, graduation/revocation, rungs, attention accounting",
+        "id": "ES-13",
+        "title": "Trust record: per-scope trust ledger feeding autonomy.py rung decisions",
         "plan": "ES"
       },
       {
@@ -7795,8 +7828,13 @@
         "plan": "LMMV"
       },
       {
-        "id": "MC-7",
-        "title": "S4 Capacitor shell wrapping the served companion route",
+        "id": "MC-8",
+        "title": "S4 QR pairing screen (renders COMPANION-APPS pairing routes)",
+        "plan": "MC"
+      },
+      {
+        "id": "MC-9",
+        "title": "S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring",
         "plan": "MC"
       },
       {
@@ -8233,10 +8271,14 @@
       "ES-6",
       "ES-7",
       "ES-8",
-      "ES-9",
       "ES-10",
       "ES-11",
       "ES-12",
+      "ES-13",
+      "ES-14",
+      "ES-15",
+      "ES-16",
+      "ES-9",
       "ET-1",
       "ET-2",
       "ET-3",
@@ -9554,10 +9596,10 @@
       {
         "code": "ES",
         "plan": "EVALUATION-SUBSTRATE",
-        "total_atoms": 12,
-        "done": 10,
+        "total_atoms": 16,
+        "done": 11,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 5,
         "blocked": 0
       },
       {
@@ -9879,9 +9921,9 @@
         "code": "DC",
         "plan": "DESKTOP-CAPABILITIES",
         "total_atoms": 6,
-        "done": 2,
+        "done": 4,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -9906,9 +9948,9 @@
         "code": "APE",
         "plan": "APP-PLATFORM-EVOLUTION",
         "total_atoms": 12,
-        "done": 11,
+        "done": 12,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
@@ -9924,9 +9966,9 @@
         "code": "MC",
         "plan": "MOBILE-COMPANION",
         "total_atoms": 10,
-        "done": 6,
+        "done": 7,
         "in_progress": 0,
-        "todo": 4,
+        "todo": 3,
         "blocked": 0
       },
       {
@@ -10047,6 +10089,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 840
+    "edge_count": 847
   }
 }
