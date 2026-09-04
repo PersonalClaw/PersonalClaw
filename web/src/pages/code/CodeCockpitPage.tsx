@@ -2542,7 +2542,9 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
     const wsBase = ws.replace(/\/$/, '').split('/').pop() || ''
     const underWs = (p: string) => p.startsWith(ws) || (!!wsBase && p.includes(`/${wsBase}/`))
     for (const t of tabs) {
-      if (!underWs(t.path)) closeNow(t.path)
+      // Purge the draft with the tab (issue 2279): a ws-switch close is programmatic,
+      // and a kept entry would resurrect the edit if the path reopens under a later ws.
+      if (!underWs(t.path)) { draftStore.delete(t.path); closeNow(t.path) }
     }
   }, [ws, tabs, closeNow])
   // Canonicalize an incoming path to the workspace (`ws`) form. Different sources
@@ -2679,7 +2681,7 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
       // Skip the erase animation for empty OR very-large last-content (a big generated
       // file animating char-by-char janks + mounts a giant string) — just close the tab.
       if (!d?.path || !text || !text.trim() || text.length > REVEAL_MAX_CHARS) {
-        if (d?.path) { lastContentRef.current.delete(d.path); closeNow(d.path) }
+        if (d?.path) { lastContentRef.current.delete(d.path); draftStore.delete(d.path); closeNow(d.path) }
         return
       }
       setDiff(null); setCommit(null)
