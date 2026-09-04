@@ -1425,3 +1425,7 @@ Four more were found by a read-only audit of the 29 `EXT:`-only atoms.
 ## Execution log — EI-10 (secrets vault UX + presence-only API) — validated done
 
 **2026-09-02 — validated on main (impl pre-landed).** `secrets_vault.py`: presence-only is STRUCTURAL (`SecretPresence` is a distinct type from value-carriers); grant-to-sandbox toggles + consumer links. `tests/test_secrets_vault.py` green.
+
+## Execution log — EI-2 (docker confinement sandbox provider) — validated done
+
+**2026-09-04 — validated on main (evidence #2361).** The `docker` provider shipped in `sandbox_providers/docker.py`: a stage/subagent `sandbox: docker` runs its process tree in a UID-aligned bind-mount container over its WORK-R3 worktree; a write outside `allowed_write_paths` is blocked by the boundary; a no-Docker machine parks needs-input with a typed reason (no silent host downgrade for unattended). SC2's `~/.personalclaw/models` grant boundary holds. The Linux cgroup v2 tier bounds `pids.max` (fork-bomb) and macOS logs the one-time not-enforced warning. SC1 + SC2 met. `tests/test_sandbox_docker.py` green; the provider's spawn sites are classified in `tests/test_spawn_ceiling_audit.py`.
