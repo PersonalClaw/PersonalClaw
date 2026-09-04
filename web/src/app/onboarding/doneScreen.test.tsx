@@ -26,6 +26,9 @@ vi.mock('../../lib/api', () => ({
     onboarding: () => onboarding(),
     themes: () => new Promise(() => {}),
     theme: () => new Promise(() => {}),
+    // The autonomy pointer's config read — PENDING here so its switch stays withheld;
+    // `autonomyDisclosure.test.tsx` owns that pointer's behaviour with a resolved read.
+    personalclawConfig: () => new Promise(() => {}),
   },
 }))
 vi.mock('../identity', () => ({

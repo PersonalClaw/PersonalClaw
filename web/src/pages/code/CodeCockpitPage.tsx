@@ -764,7 +764,7 @@ function CodeToast({ kind, text, onDismiss, onRespond }: {
   return createPortal(
     <motion.div role="alert" aria-live="assertive"
       variants={overlayEnter} initial="initial" animate="animate" exit="exit"
-      className="fixed bottom-4 right-4 z-[200] w-[360px] max-w-[calc(100vw-2rem)] rounded-xl border border-outline-variant/50 bg-surface-container p-3.5 shadow-lg">
+      className="fixed bottom-4 right-4 z-[var(--z-toast)] w-[360px] max-w-[calc(100vw-2rem)] rounded-xl border border-outline-variant/50 bg-surface-container p-3.5 shadow-lg">
       <div className="flex items-start gap-2.5">
         <Icon size={18} className="mt-0.5 shrink-0" style={{ color: tone }} />
         <div className="min-w-0 flex-1">

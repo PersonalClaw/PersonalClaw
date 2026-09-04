@@ -112,10 +112,14 @@ def _topic_keys(item) -> list[str]:
     return keys
 
 
-def _record_signal(state: "DashboardState", item, signal: str) -> None:
-    """Record an engagement signal against an item's topic keys (best-effort, gated).
-    No-op when ranking is disabled so we don't accrue state the user hasn't opted into."""
-    if item is None or not _engagement_enabled(state):
+def _record_signals(state: "DashboardState", items: list, signal: str) -> None:
+    """Record one engagement signal against every item's topic keys (best-effort, gated).
+
+    The bulk twin of :func:`_record_signal`: one gate check, one timestamp, one store save
+    for the whole batch — so a 33-item dismiss-all costs one write, not 33. No-op when
+    ranking is disabled so we don't accrue state the user hasn't opted into."""
+    items = [i for i in items if i is not None]
+    if not items or not _engagement_enabled(state):
         return
     store = _engagement_store(state)
     if store is None:
@@ -123,9 +127,15 @@ def _record_signal(state: "DashboardState", item, signal: str) -> None:
     import time
 
     now = time.time()
-    for tk in _topic_keys(item):
-        store.record(tk, signal, now=now)
+    for item in items:
+        for tk in _topic_keys(item):
+            store.record(tk, signal, now=now)
     store.save()
+
+
+def _record_signal(state: "DashboardState", item, signal: str) -> None:
+    """Single-item arity of :func:`_record_signals` — same gate, same store, same shape."""
+    _record_signals(state, [item], signal)
 
 
 def _rank_items(state: "DashboardState", items: list) -> list:
@@ -412,11 +422,17 @@ async def api_inbox_dismiss_all(request: web.Request) -> web.Response:
     state: "DashboardState" = request.app["state"]
     inbox_state, inbox = _get_inbox(state)
     count = 0
+    swept: list = []
     for item in inbox.open_items():
         inbox_state.dismissed.add(item.id)
         inbox.update(item.id, status=ItemStatus.DISMISSED)
+        swept.append(item)
         count += 1
     inbox_state.save()
+    # The same negative engagement signal the per-item dismiss records (PUT /api/inbox/{id}).
+    # Dismissing a whole queue in one click is the strongest topic-rejection a user can
+    # express — it must train the ranker exactly like dismissing each row would have.
+    _record_signals(state, swept, "dismiss")
     try:
         sel().log_tool_invocation(
             session_key="dashboard:inbox",

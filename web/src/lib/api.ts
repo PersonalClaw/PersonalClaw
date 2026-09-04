@@ -4258,7 +4258,10 @@ export interface Artifact {
   description: string; tags: string[]; version: number
   created_at: string; updated_at: string
   content?: string | null; events: ArtifactEvent[]
-  source_path: string; live_dirty: boolean; project_id?: string
+  // live_dirty pairs with `content`: both are computed per read by get(), so a
+  // LIST row carries neither (the server omits them — a list-shaped live_dirty
+  // was a fabricated False, #630). Present only on content-bearing responses.
+  source_path: string; live_dirty?: boolean; project_id?: string
   // Optional library collection label (ARTIFACTS S1). "" = uncollected.
   collection?: string
   /** Frozen record: the server refuses every content mutation on it (SM-9 — today only

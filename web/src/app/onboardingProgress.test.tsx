@@ -27,6 +27,9 @@ vi.mock('../lib/api', () => ({
     // PENDING deliberately — "themes have not loaded" is a real state and a promise settling
     // after render would land a setState outside act().
     themes: () => new Promise(() => {}),
+    // The done screen's autonomy pointer reads the config for the auto-update switch; kept
+    // PENDING for the same reason — the disclosure copy renders, the control stays withheld.
+    personalclawConfig: () => new Promise(() => {}),
     theme: () => new Promise(() => {}),
   },
 }))

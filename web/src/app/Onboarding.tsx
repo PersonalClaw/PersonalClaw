@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { unavailableWhen } from '../ui/unavailable'
 import { withWeight } from '../design/fontWeight'
 import { motion } from 'framer-motion'
-import { ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check, Compass, Inbox, Waves, PanelLeft, FolderInput } from 'lucide-react'
+import { ArrowRight, User, Boxes, Rocket, Sparkles, Loader2, Check, Compass, Inbox, Waves, PanelLeft, FolderInput, RefreshCw } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { ClawMark } from '../ui/ClawMark'
 import { DotGlow } from '../ui/DotGlow'
@@ -16,6 +16,7 @@ import { spring, stagger, listItemEnter } from '../design/motion'
 import { useIdentity, firstNameOf, DEFAULT_USER_NAME } from './identity'
 import { setNavMode } from './navDisclosure'
 import { APP_NAME } from './config'
+import { notify } from './appSdk'
 import { api, type OnboardingState, type OnboardingStatePatch } from '../lib/api'
 import { StepRow, type StepState } from './onboarding/StepStack'
 import { EssentialsStep } from './onboarding/EssentialsStep'
@@ -331,14 +332,22 @@ function NameStep({ value, onChange, onSubmit }: { value: string; onChange: (v: 
   )
 }
 
-/** The done screen — a recap of what this run actually did, then the three things worth
+/** The done screen — a recap of what this run actually did, then the four things worth
  *  knowing on day one, each with its real control rather than a sentence about one:
  *
  *   1. **the Inbox** is where work comes back to you (and you can land there instead);
  *   2. **Bounciness** — the live Settings → Design dial, so the app's feel reads as yours to
  *      set from the first minute rather than a taste you have to live with;
  *   3. **Show every surface** — the starter sidebar is a starting point, not a limit. The
- *      switch states intent; `finish()` performs the single write (see there).
+ *      switch states intent; `finish()` performs the single write (see there);
+ *   4. **what it does on its own** — auto-update pulls, rebuilds and restarts unattended,
+ *      and the Store starts with one seeded community source. Both default on, both
+ *      defensible for a tool that keeps itself healthy — but for a local-first product
+ *      they must be TOLD at first run, not discovered. The update half hands over the
+ *      real Settings → Updates switch; the Store half is a sentence plus the path to
+ *      where source removal actually persists (the seed already ran at gateway start,
+ *      so a toggle here would read as a live off-switch and retract nothing — exactly
+ *      the control shape users mis-trust, per the Store-sources hint).
  *
  *  It teaches by handing over controls, which is why the dial and the switch are the SAME
  *  objects Settings owns — a copy here would be a second mechanism to keep in step.
@@ -357,6 +366,36 @@ function DoneScreen({ name, modelSummary, triedSummary, showEverything, onShowEv
 }) {
   const chatReady = modelSummary && modelSummary !== 'Set up later'
   const tried = triedSummary && triedSummary !== 'Skipped'
+
+  /** The autonomy pointer's facts, read when the ready step opens (this component mounts
+   *  only then — StepRow renders children on the active step). `null` = still loading
+   *  (disclosure copy shows, control withheld); `'failed'` = unreadable config, so the
+   *  pointer offers the Settings path instead of a switch claiming a state it cannot
+   *  know — a control showing a guessed value is worse than none. */
+  const [autonomy, setAutonomy] = useState<{ autoUpdate: boolean; registrySeeded: boolean } | 'failed' | null>(null)
+  useEffect(() => {
+    let alive = true
+    api.personalclawConfig().then((c) => {
+      if (!alive) return
+      const apps = (c.apps ?? {}) as { registry_source_enabled?: boolean }
+      setAutonomy({ autoUpdate: c.auto_update !== false, registrySeeded: apps.registry_source_enabled !== false })
+    }).catch(() => { if (alive) setAutonomy('failed') })
+    return () => { alive = false }
+  }, [])
+
+  // The real Settings → Updates write, with that panel's exact remedy: flip optimistically,
+  // and on a refused write TELL (app toast) rather than fight the control the user just
+  // touched — see UpdatesPanel's reportSettingFailure note for why reverting is the wrong
+  // move in this family.
+  const toggleAutoUpdate = (v: boolean) => {
+    setAutonomy((p) => (p && p !== 'failed' ? { ...p, autoUpdate: v } : p))
+    api.setAutoUpdate(v).catch((e: unknown) => {
+      let msg = e instanceof Error ? e.message : 'the request failed'
+      try { msg = JSON.parse(msg).error || msg } catch { /* raw text */ }
+      notify(`Couldn't ${v ? 'enable' : 'disable'} automatic updates: ${msg}`, 'error')
+    })
+  }
+
   return (
     <div className="flex flex-col gap-l">
       <motion.div className="flex flex-col gap-1.5"
@@ -367,7 +406,7 @@ function DoneScreen({ name, modelSummary, triedSummary, showEverything, onShowEv
       </motion.div>
 
       <div className="flex flex-col gap-s">
-        <p data-type="label-s" className="text-on-surface-low">Three things to know</p>
+        <p data-type="label-s" className="text-on-surface-low">Four things to know</p>
         <Pointer icon={Inbox} title="Work comes back to you in the Inbox"
           body="Approvals, reminders and finished runs queue up there instead of chasing you across the app.">
           {/* `Pointer` paints `bg-surface-high`, where the base accent is the WORST of the four grounds:
@@ -390,6 +429,25 @@ function DoneScreen({ name, modelSummary, triedSummary, showEverything, onShowEv
           <div className="flex items-center gap-2">
             <Toggle on={showEverything} onChange={onShowEverything} label="Show every surface" />
             <span className="text-on-surface-var text-[0.8125rem]">Show every surface</span>
+          </div>
+        </Pointer>
+        <Pointer icon={RefreshCw} title="It keeps itself current on its own"
+          body="When a new version ships, it installs and restarts unattended. This is the real switch from Settings → Updates.">
+          <div className="flex flex-col gap-1.5">
+            {autonomy === 'failed' ? (
+              <TextLink size="sm" ink="emphasis" onClick={() => onExitTo('settings/updates')}>Manage updates in Settings</TextLink>
+            ) : autonomy ? (
+              <div className="flex items-center gap-2">
+                <Toggle on={autonomy.autoUpdate} onChange={toggleAutoUpdate} label="Update automatically" />
+                <span className="text-on-surface-var text-[0.8125rem]">Update automatically</span>
+              </div>
+            ) : null}
+            {autonomy !== 'failed' && autonomy?.registrySeeded && (
+              <p className="text-on-surface-low text-[0.8125rem]">
+                App discovery starts with one community source; installing anything still runs the
+                security scanner. <TextLink size="sm" ink="emphasis" onClick={() => onExitTo('apps')}>Review Store sources</TextLink>
+              </p>
+            )}
           </div>
         </Pointer>
       </div>

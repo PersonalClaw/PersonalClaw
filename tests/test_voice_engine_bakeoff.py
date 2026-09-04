@@ -28,14 +28,18 @@ def test_report_is_deterministic_and_omnivoice_wins() -> None:
     assert a.rejection_notes and "CosyVoice" in a.rejection_notes
 
 
-def test_footprint_excluded_because_unknown_not_guessed() -> None:
+def test_footprint_is_measured_not_guessed() -> None:
+    """The cell the spike EXCLUDED as unpublished now carries the integration-run
+    measurement — a real number with ``measured`` provenance, never a fabricated one,
+    and its inclusion did not flip the verdict."""
     report = vb.run_bakeoff()
     excluded = {c.criterion.key for c in report.cells if not c.scored}
-    assert "footprint" in excluded, "OmniVoice footprint is unpublished → must be excluded"
-    # the unknown cell carries None, never a fabricated number
+    assert "footprint" not in excluded
     omni = next(c for c in report.candidates if c.key == "omnivoice")
-    assert omni.metrics["footprint"].score is None
-    assert omni.metrics["footprint"].provenance == vb.UNKNOWN
+    assert omni.metrics["footprint"].provenance == vb.MEASURED
+    assert "3.27 GB" in omni.metrics["footprint"].raw
+    assert omni.metrics["footprint"].score is not None
+    assert report.winner == "omnivoice"
 
 
 def test_scores_bounded_and_renormalized_over_kept_criteria() -> None:
@@ -64,8 +68,9 @@ def test_every_known_metric_declares_provenance_and_literature_cites_a_url() -> 
                 assert metric.citation.url.startswith("http")
             if metric.provenance == vb.UNKNOWN:
                 assert metric.score is None
-            # no cell claims to be measured on the build host in the offline scorecard
-            assert metric.provenance != vb.MEASURED
+            # a measured cell must say WHERE it was measured — provenance is not a vibe
+            if metric.provenance == vb.MEASURED:
+                assert "integration host" in metric.raw
 
 
 def test_license_rule_matches_local_models_provider() -> None:
@@ -112,8 +117,8 @@ def test_cli_json_exits_zero_and_is_wellformed(capsys) -> None:
     assert payload["winner"] == "omnivoice"
     assert set(payload["scores"]) == {"omnivoice", "cosyvoice"}
     assert payload["rejection_notes"]
-    assert any(e["key"] == "footprint" for e in payload["excluded_criteria"])
-    assert payload["deferred"], "the deferred MI-6 remainder must be recorded"
+    assert not any(e["key"] == "footprint" for e in payload["excluded_criteria"])
+    assert payload["deferred"], "the remaining fixture-latency deferral must be recorded"
 
 
 def test_cli_measure_skip_prints_reason(capsys) -> None:

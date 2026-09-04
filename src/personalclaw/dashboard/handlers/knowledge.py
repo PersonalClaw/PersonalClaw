@@ -2898,9 +2898,19 @@ async def merge_tag(request: web.Request) -> web.Response:
             status=400,
         )
     store = _store(request)
+    # int() on a non-numeric raises TypeError/ValueError whose text is Python internals,
+    # not user copy — validate the field here so the except below only ever carries the
+    # store's own authored refusals ("no such item …", "needs two distinct item ids").
     try:
-        result = store.merge_tags(tid, int(body["into"]))
-    except (TypeError, ValueError) as exc:
+        into = int(body["into"])
+    except (TypeError, ValueError):
+        return web.json_response(
+            {"error": {"code": "into_required", "message": "supply into: <tag id> (an integer)"}},
+            status=400,
+        )
+    try:
+        result = store.merge_tags(tid, into)
+    except ValueError as exc:
         return web.json_response(
             {"error": {"code": "invalid_merge", "message": str(exc)}}, status=400
         )

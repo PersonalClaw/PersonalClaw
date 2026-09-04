@@ -1,0 +1,4 @@
+{
+  "_comment": "Type-role adoption ratchet (AB-1). Arbitrary rem text-size literals (text-[0.8125rem] etc.) across pages/app/ui/lib at the ratchet's introduction; typeRoleAdoption.test.ts holds the live count <= this and it may only SHRINK — lower it in the same commit that migrates a file onto the data-type roles (design/tokens.css).",
+  "arbitraryTextSizes": 2793
+}

@@ -381,6 +381,11 @@ class NativeArtifactProvider(ArtifactProvider):
         collection: str | None = None,
         folder: str | None = None,
     ) -> list[Artifact]:
+        # Deliberately content-free (#630): rows come off _read_meta, which never
+        # persists `live_dirty` — computing it would cost a live read + snapshot
+        # read PER artifact, defeating the cheap-list design. The API serializer
+        # therefore OMITS live_dirty from list-shaped responses (it pairs with
+        # `content` as computed-per-read); take it from get(), like every consumer.
         root = self._ensure_root()
         with self._lock:
             slugs = [p.name for p in root.iterdir() if p.is_dir()] if root.exists() else []

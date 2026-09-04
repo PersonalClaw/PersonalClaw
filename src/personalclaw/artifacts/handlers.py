@@ -69,6 +69,15 @@ def _serialize(art: Artifact, *, include_content: bool = False) -> dict[str, Any
         d["content"] = _redact(d["content"])
     else:
         d.pop("content", None)
+        # live_dirty is content's computed-per-read twin (models.to_dict's own
+        # docstring pairs them): get() computes it against the live source, while
+        # a list row comes off _read_meta, where the field is never persisted —
+        # so a list-shaped live_dirty was always a FABRICATED False, not even
+        # stale data. Serving it made the same artifact report False in the list
+        # and True in the detail. Absent beats wrong: a reader that needs the
+        # flag must take it from a content-bearing response, which every current
+        # consumer already does (#630).
+        d.pop("live_dirty", None)
     return d
 
 
