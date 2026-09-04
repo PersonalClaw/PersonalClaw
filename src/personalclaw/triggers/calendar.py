@@ -607,6 +607,7 @@ def project_occurrences(
     skip_dates: list[str] | None = None,
     tz_name: str = "",
     next_after: Any = None,
+    until: datetime | None = None,
 ) -> tuple[list[Occurrence], bool]:
     """Project one trigger's fires across the window. Returns `(occurrences, truncated)`.
 
@@ -649,7 +650,13 @@ def project_occurrences(
     # Accepting only one of the two would have quietly ignored half the triggers.
     skips = {str(d).strip() for d in (skip_dates or (gates or {}).get("skip_dates") or []) if d}
     job_zone = _resolve_zone(tz_name)
-    end_ts = (start + timedelta(days=days)).timestamp()
+    # The caller may name the exact window end (issue 608): the week grid draws 7 LOCAL
+    # calendar days, which is 167h or 169h across a DST transition, while `days=7` here is
+    # wall-clock field arithmetic — two window definitions that disagree exactly one week a
+    # year, dropping a real fire or projecting an hour the grid never draws. When `until`
+    # is given it IS the bound; `days` stays the fallback for callers that mean "about a
+    # week" rather than "this grid's exact columns".
+    end_ts = until.timestamp() if until is not None else (start + timedelta(days=days)).timestamp()
     start_ts = start.timestamp()
 
     # Advance to the first fire inside the window rather than iterating from `first_fire_at`, which
