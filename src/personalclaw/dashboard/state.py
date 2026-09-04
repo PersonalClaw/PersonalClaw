@@ -1530,8 +1530,7 @@ class DashboardState:
         if mode == "badge":
             # Persist and count, but do not push a toast: the badge is the delivery.
             note["badge_only"] = True
-            self._notification_log.append(note)
-            _persist_notification(note)
+            self._append_notification(note)
             return
 
         # The `native` target (DC-5). Decided HERE, on the one delivery choke point, and
@@ -1556,9 +1555,8 @@ class DashboardState:
         if native is not None:
             note["native"] = native
 
-        self._notification_log.append(note)
+        self._append_notification(note)
         self._broadcast(note)
-        _persist_notification(note)
         # Plan 42's `push` TARGET, live since MOBILE-COMPANION MC-5. Deliberately after the
         # dashboard broadcast and outside its try: the desktop delivery is the one that must
         # never wait on (or be broken by) a third-party push service. `deliver_async` hands
@@ -1752,6 +1750,22 @@ class DashboardState:
             _rewrite_notifications(self._notification_log)
             self.broadcast_ws("notification_removed", {"ts": removed_ts})
         return removed
+
+    def _append_notification(self, note: dict[str, Any]) -> None:
+        """Append to the log — the ONE seam that enforces the size cap.
+
+        Memory and file are trimmed together: the log floats up to 2× the cap
+        between trims, then both drop to the newest cap-many rows in the same
+        step. Keeping memory the exact mirror of the file is what makes every
+        `_rewrite_notifications` call lossless (Issue 420 — a load that capped
+        below the file's row count let one ack silently destroy the rest).
+        """
+        self._notification_log.append(note)
+        if len(self._notification_log) > _MAX_PERSISTED_NOTIFICATIONS * 2:
+            self._notification_log = self._notification_log[-_MAX_PERSISTED_NOTIFICATIONS:]
+            _rewrite_notifications(self._notification_log)
+        else:
+            _persist_notification(note)
 
     def ack_notification(self, ts: str) -> bool:
         """Mark a notification as acknowledged and persist."""
@@ -2405,7 +2419,15 @@ def _notifications_path() -> Path:
 
 
 def _load_notifications() -> list[dict[str, Any]]:
-    """Load persisted notifications from disk (newest last)."""
+    """Load persisted notifications from disk (newest last).
+
+    EVERY valid row loads — no cap slice. The in-memory log is the write
+    authority for `_rewrite_notifications`, so a load that silently truncated
+    below what the file holds turned the next read-state rewrite (one ack)
+    into permanent deletion of every unloaded row (Issue 420: the steady-state
+    file legitimately holds up to 2× the cap between trims). The size cap is
+    enforced at the append seam, on memory and file together.
+    """
     path = _notifications_path()
     if not path.exists():
         return []
@@ -2419,8 +2441,7 @@ def _load_notifications() -> list[dict[str, Any]]:
                 entries.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-        # Keep only the most recent N
-        return entries[-_MAX_PERSISTED_NOTIFICATIONS:]
+        return entries
     except Exception:
         logger.debug("Failed to load notifications", exc_info=True)
         return []
@@ -2433,33 +2454,25 @@ def _persist_notification(note: dict[str, str]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(note) + "\n")
-        # Trim if file grows too large (keep last N lines)
-        _maybe_trim_notifications(path)
     except Exception:
         logger.debug("Failed to persist notification", exc_info=True)
 
 
 def _rewrite_notifications(notifications: list[dict[str, str]]) -> None:
-    """Rewrite the entire notifications file from the in-memory list."""
+    """Rewrite the notifications file to exactly the given rows.
+
+    No cap slice here: this writes what the caller holds, so a read-state
+    change (ack/unack/delete) can never shorten the log below what memory —
+    which now mirrors the file in full — carries. The cap lives at the
+    append seam, where memory and file are trimmed together.
+    """
     path = _notifications_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [json.dumps(n) + "\n" for n in notifications[-_MAX_PERSISTED_NOTIFICATIONS:]]
+        lines = [json.dumps(n) + "\n" for n in notifications]
         path.write_text("".join(lines), encoding="utf-8")
     except Exception:
         logger.debug("Failed to rewrite notifications file", exc_info=True)
-
-
-def _maybe_trim_notifications(path: Path) -> None:
-    """Trim the notifications file if it exceeds 2x the max."""
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        if len(lines) <= _MAX_PERSISTED_NOTIFICATIONS * 2:
-            return
-        kept = lines[-_MAX_PERSISTED_NOTIFICATIONS:]
-        path.write_text("".join(kept), encoding="utf-8")
-    except Exception:
-        pass
 
 
 def _fmt_duration(secs: int) -> str:
