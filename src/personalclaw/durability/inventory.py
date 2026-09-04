@@ -329,6 +329,21 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_UNION_BY_ID,
         help="scheduled jobs (legacy; read-only, absorbed by triggers.json)",
     ),
+    # 🔴 The script-cron store, and it was never declared here. `schedule_script.py` requires
+    # every zero-token script job to live under `crons/` ("no escape"), and `triggers.json` —
+    # which travels — references those scripts by path. So a restore reproduced the trigger and
+    # lost its script: the automation survived as a row and broke as a behavior. Self-QA seeds a
+    # script cron on first boot, which is how `audit_home()` caught it — EVERY fresh home reported
+    # "1 unclaimed path(s)" and the dashboard strip opened coral on a box minutes old. The audit
+    # was honest (the store really was in no snapshot); this entry is the fix, not the alarm.
+    StateEntry(
+        id="cron_scripts",
+        kind=KIND_TREE,
+        path="crons",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_UNION_BY_ID,
+        help="script-cron files (the scripts + configs triggers.json script jobs execute)",
+    ),
     StateEntry(
         id="hooks",
         kind=KIND_JSON_FILE,
