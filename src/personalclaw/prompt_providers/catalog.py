@@ -1356,6 +1356,14 @@ BUNDLED_SNIPPETS: tuple[BundledSnippet, ...] = (
             "'retro-terminal' personality."
         ),
     ),
+    BundledSnippet(
+        name="persona-claw-arcade",
+        filename="persona-claw-arcade.md",
+        description=(
+            "The playful, high-energy arcade persona, appended on first turn for the "
+            "'claw-arcade' personality."
+        ),
+    ),
     # ── loop per-cycle directives (prepended to a worker's cycle nudge) ──
     BundledSnippet(
         name="loop-code-stage-directive",

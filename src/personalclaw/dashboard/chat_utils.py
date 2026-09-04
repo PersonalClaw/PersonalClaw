@@ -591,7 +591,7 @@ def _apply_incognito_prefix(session, message: str) -> str:
 # arrives from a client, and it selects a snippet name, so an open set would let a
 # caller name any snippet in the prompt store. Lumon is entry #1 rather than a
 # special case — the hardcoded branch it replaced is gone (clean break).
-_PERSONA_THEMES: frozenset[str] = frozenset({"lumon", "retro-terminal"})
+_PERSONA_THEMES: frozenset[str] = frozenset({"lumon", "retro-terminal", "claw-arcade"})
 
 
 def persona_themes() -> frozenset[str]:
