@@ -23,7 +23,7 @@ import { StoreTriggerDetail } from './StoreTriggerDetail'
 import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
-import { statusMeta, triggerHealthMeta, relFuture } from '../schedule/scheduleMeta'
+import { statusMeta, triggerHealthMeta, lastRunMeta, relFuture } from '../schedule/scheduleMeta'
 import { PageTitle } from '../../ui/PageTitle'
 
 // One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store.
@@ -230,7 +230,13 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                 {triggers.map((t, i) => {
                   const sd = t.kind === 'store'
                     ? triggerHealthMeta(t.lastStatus, t.state)
-                    : statusMeta(t.lastStatus)
+                    // A schedule row still carries the raw pair — reconcile health vs run
+                    // row in the ONE shared place, so a reaped run (health=degraded, run
+                    // row 'success') cannot dot green here while the detail says degraded
+                    // (#685; the schedule half of #496's dot gap).
+                    : t.schedule
+                      ? lastRunMeta(t.schedule.last_run_status, t.schedule.last_status)
+                      : statusMeta(t.lastStatus)
                   // Right-click / long-press → the scoped actions this list performs on
                   // a row (open the inspector, or open it straight into edit mode). Both
                   // route through the same `setQuery` the row's click uses — destructive
