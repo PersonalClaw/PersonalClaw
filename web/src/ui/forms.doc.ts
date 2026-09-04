@@ -146,9 +146,11 @@ const docs: UiDoc[] = [
       { name: 'ariaLabel', description: 'The accessible name for a Select outside any Field (a floating toolbar control, or a second control in a multi-control Field). Wins over the Field label, same precedence as TextInput.' },
       { name: 'disabledReason', description: 'Why the select is off, surfaced as a title WHILE disabled. Same carrier Button has: a natively disabled control leaves the tab order, so without it a keyboard user tabs past a dead control with no way to learn what is missing.' },
       { name: 'size', description: "Height/text scale, same vocabulary as TextInput ('sm' h-8, 'md' h-9, 'lg' h-10 default) — a Select inline in a dense toolbar row takes sm." },
+      { name: 'required', description: 'Publishes aria-required, exactly like TextInput. Visual treatment is deliberately unchanged — the caller marks the label. Added because a schema-driven form rendering a REQUIRED enum had no way to announce it, so the choice was read out as optional.' },
     ],
     bestPractices: [
       { guidance: true, description: 'Reach for Select for a short fixed set of options rather than a raw <select> — it matches the field family chrome and Field-label aria wiring.' },
+      { guidance: true, description: 'When the choice is mandatory, pass required AND mark the label — aria-required alone is invisible, and a label marker alone is not announced.' },
       { guidance: true, description: 'Outside a Field, pass ariaLabel — a select with no enclosing Field and no ariaLabel has no accessible name.' },
       { guidance: true, description: 'When `disabled` is CONDITIONAL, pass disabledReason — the disabled-reason census fails a new unexplained control, and the reason is the only thing a keyboard user can reach.' },
       { guidance: true, description: 'For a long or filterable option set, use Combobox instead — it adds type-to-filter and grouping.' },

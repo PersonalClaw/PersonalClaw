@@ -317,7 +317,7 @@ export function DateInput({ value, onChange }: { value: string; onChange: (v: st
 }
 
 /** Styled native select — matches the TextInput chrome. */
-export function Select({ value, onChange, options, disabled, name, ariaLabel, disabledReason, size = 'lg' }: { value: string; onChange: (v: string) => void
+export function Select({ value, onChange, options, disabled, name, ariaLabel, disabledReason, size = 'lg', required }: { value: string; onChange: (v: string) => void
   /** Per-option `disabled`/`title` ride through to the native `<option>` — a fixed choice set
    *  can carry individually unavailable entries (with the reason on hover) without the caller
    *  dropping to a raw `<select>`. */
@@ -338,7 +338,12 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel, di
   /** Same scale TextInput carries (`sm` h-8 / `md` h-9 / `lg` h-10): a Select inline in a dense
    *  toolbar row needs the sm height, and hardcoding lg here made this the family's only
    *  fixed-height field. */
-  size?: FieldSize }) {
+  size?: FieldSize
+  /** Publishes `aria-required`, exactly like `TextInput`'s. Visual treatment is deliberately
+   *  unchanged — a caller marks the label. Select was the odd primitive out here too (it had no
+   *  way to state a required choice), so a schema-driven form rendering a required enum could only
+   *  announce it as optional. */
+  required?: boolean }) {
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
   const autoId = useId()
@@ -346,7 +351,7 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel, di
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} name={name} id={name || autoId}
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
-      aria-describedby={hintId}
+      aria-describedby={hintId} aria-required={required || undefined}
       title={disabled ? disabledReason || undefined : undefined}
       className={cx('w-full appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50', FIELD_SIZE[size])}>
       {options.map((o) => <option key={o.value} value={o.value} disabled={o.disabled} title={o.title}>{o.label}</option>)}
