@@ -19,7 +19,15 @@ export function sourceTone(source?: string): string {
   if (source === 'marketplace') return 'var(--color-info)'
   return 'var(--color-on-surface-low)'  // bundled / provider
 }
-export function sourceLabel(source?: string): string {
+/** What the source pill SAYS. A shipped prompt is seeded to disk as an editable
+ *  native prompt, and the native provider stamps every on-disk prompt
+ *  `source = 'user'` — that is what keeps it editable, so the tone and
+ *  `isReadOnly` above are right to treat it as the user's. The LABEL was not:
+ *  it told you that you wrote PersonalClaw's own shipped prompt, while the tag
+ *  chips on the same panel said `bundled`. Provenance survives in the tags, so
+ *  the label reads it from there and leaves editability alone. */
+export function sourceLabel(source?: string, tags?: string[]): string {
+  if ((!source || source === 'user') && (tags ?? []).includes('bundled')) return 'bundled'
   return !source || source === 'user' ? 'user' : source
 }
 

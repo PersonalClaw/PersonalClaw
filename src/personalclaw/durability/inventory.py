@@ -344,6 +344,18 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_UNION_BY_ID,
         help="script-cron files (the scripts + configs triggers.json script jobs execute)",
     ),
+    # The self-QA companion's own data dir. SV-11 moved the commit-watch cursor here when the
+    # watch stopped being a `crons/` script: an in-process module keeps companion state with the
+    # companion. Declared rather than ignored because the cursor is what makes a restore quiet --
+    # without it the first fire on a restored home sees every commit in the repo as new.
+    StateEntry(
+        id="selfqa",
+        kind=KIND_TREE,
+        path="selfqa",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_LWW,
+        help="self-QA companion state (the commit-watch last-seen head)",
+    ),
     StateEntry(
         id="hooks",
         kind=KIND_JSON_FILE,

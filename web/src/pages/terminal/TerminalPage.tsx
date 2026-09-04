@@ -10,8 +10,9 @@ import { panesAfterClose, type PaneSelection } from './paneState'
 import { TerminalView } from './TerminalView'
 import { PageTitle } from '../../ui/PageTitle'
 import { tabListKeys } from '../../lib/tabListKeys'
+import { SandboxPicker, type SandboxProvider } from './SandboxPicker'
 
-export interface TermTab { id: string; label: string; cwd?: string; shell?: string; custom?: boolean }
+export interface TermTab { id: string; label: string; cwd?: string; shell?: string; sandbox?: string; custom?: boolean }
 
 const LABELS_KEY = 'terminal-labels'  // persisted {id: customLabel}
 
@@ -56,6 +57,16 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
       .then((c) => setPersist(Boolean(c?.dashboard?.terminal?.persist)))
       .catch(() => setPersist(false))
   }, [])
+  // EI-4 §1.3(3): the sandbox tiers a new session may open inside, and the current pick. The
+  // host ("none") is the default; a container/VM tier appears only when its provider app is
+  // enabled, so the picker is hidden entirely when host is the only option (nothing to choose).
+  const [providers, setProviders] = useState<SandboxProvider[]>([])
+  const [sandbox, setSandbox] = useState('none')
+  useEffect(() => {
+    api.sandboxProviders()
+      .then((r) => setProviders(r.providers || []))
+      .catch(() => setProviders([]))
+  }, [])
   const togglePersist = () => {
     const next = !persist
     setPersist(next)  // optimistic
@@ -90,9 +101,9 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   const newSession = useCallback(async (intoSplit = false) => {
     setBusy(true); setError('')
     try {
-      const r = await api.createTerminal()
+      const r = await api.createTerminal(undefined, sandbox === 'none' ? undefined : sandbox)
       setTabs((t) => {
-        const tab: TermTab = { id: r.session_id, label: `Session ${t.length + 1}`, cwd: r.cwd, shell: r.shell }
+        const tab: TermTab = { id: r.session_id, label: `Session ${t.length + 1}`, cwd: r.cwd, shell: r.shell, sandbox: r.sandbox || undefined }
         return [...t, tab]
       })
       if (intoSplit) setSplit(r.session_id)
@@ -100,7 +111,8 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not open a terminal session.')
     } finally { setBusy(false) }
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sandbox])
 
   const closeSession = useCallback(async (id: string) => {
     // 🔴 `catch(() => {})` then dropping the tab regardless told the user they had closed a terminal
@@ -156,6 +168,9 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
             <HeaderControl icon={SplitSquareHorizontal} label={split ? 'Close split' : 'Split right'}
               active={!!split}
               onClick={() => { if (split) setSplit(null); else if (tabs.length >= 2) setSplit(tabs.find((t) => t.id !== active)?.id ?? null); else newSession(true) }} />
+          )}
+          {providers.some((p) => p.name !== 'none') && (
+            <SandboxPicker providers={providers} value={sandbox} onChange={setSandbox} busy={busy} />
           )}
           <HeaderControl icon={busy ? Loader2 : Plus} label="New terminal session" priority="primary" onClick={() => newSession(false)} />
         </HeaderActions>}

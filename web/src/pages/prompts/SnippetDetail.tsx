@@ -86,7 +86,7 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
             <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
           </>
         )}
-        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(snippet.source), 16)}>{sourceLabel(snippet.source)}</span>
+        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(snippet.source), 16)}>{sourceLabel(snippet.source, full?.tags)}</span>
       </div>
       {err && <FieldError>{err}</FieldError>}
 

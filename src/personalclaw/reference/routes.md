@@ -625,6 +625,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/recent-projects` — list recently used project directories.
 - `GET /api/resilience/degraded` — per-surface no-model floor + availability.
 - `POST /api/reveal` — reveal a file/folder in Finder or open with default app.
+- `GET /api/sandbox/providers` — the sandbox tiers the terminal picker offers (EI-4 §1.3(3)).
 - `POST /api/screenshot` — capture screen region and return file path.
 - `GET /api/search/active` — bound provider name per use-case.
 - `PUT /api/search/active/{use_case}` — bind a provider to a use-case.
@@ -761,6 +762,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/voice/bindings` — unbind one surface.
 - `GET /api/voice/bindings` — the surface → profile map.
 - `PUT /api/voice/bindings` — {surface, profile_id} — bind one surface.
+- `POST /api/voice/migrate` — {name?} — profile from the current voice, then default.
 - `GET /api/voice/profiles` — every profile plus the binding map.
 - `POST /api/voice/profiles` — {name, kind, provider, model, …}.
 - `DELETE /api/voice/profiles/{id}` — record, artifacts, and any bindings.
@@ -776,6 +778,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/voice/synthesize` — sentence-chunked Piper TTS.
 - `GET /api/workflows` — _(no summary)_
 - `POST /api/workflows` — _(no summary)_
+- `GET /api/workflows/attention` — per-template §4.4 attention summaries.
 - `GET /api/workflows/audit` — Diagnose/heal. `dry_run` defaults TRUE — a GET-shaped repair that ran by default
 - `GET /api/workflows/manifest` — the machine-readable self-description of this instance.
 - `GET /api/workflows/runs` — Paginated run list. Reads the store directly: this is a projection for a table, not

@@ -86,6 +86,14 @@ _CEILING_WRAPPED: dict[str, str] = {
     "loop/worktree.py::_git::subprocess.run": (
         "loop worktree git → build ceiling via spawn_shim_argv"
     ),
+    # The Self-QA fix-branch git. Write-capable git (`git branch <name> <sha>`, never pushed)
+    # driven by an unattended run, so it takes the build ceiling the same way `loop/worktree.py`'s
+    # git does — fixed argv, no shell, a hex-validated ref, and `spawn_shim_argv` prepending the
+    # build profile. This is the closest structural sibling: git plumbing that creates a ref, run
+    # off a workflow.
+    "selfqa/fix_branch.py::_git::subprocess.run": (
+        "selfqa fix-branch git → build ceiling via spawn_shim_argv"
+    ),
     # React artifact bundle (build profile) — PRODUCT-EXPERIENCE-PARITY `PEP-9`. The source
     # handed to the bundler is a model- or user-authored artifact body, so this is
     # agent-influenced in the fullest sense and is exactly the unbounded build spawn §1
@@ -141,6 +149,15 @@ _CEILING_WRAPPED: dict[str, str] = {
     "sandbox_providers/docker.py::_DockerHandle.exec::create_subprocess_limited": (
         "docker sandbox provider → profile ceiling via create_subprocess_limited on the docker "
         "client (mirrors the none seam); container itself bounded by native --pids-limit/--memory"
+    ),
+    # The ``lima`` VM provider's handle exec — sibling to the ``none``/``docker`` seams.
+    # The wrapped inner argv is the agent's own process tree run via ``limactl shell``, so it is
+    # agent-influenced and routes through create_subprocess_limited on the ``limactl`` CLIENT,
+    # mirroring the docker seam. The guest VM's OWN pids/memory bounds are instance-creation
+    # config (not a per-exec flag); the client ceiling keeps the routed seam uniform.
+    "sandbox_providers/lima.py::_LimaHandle.exec::create_subprocess_limited": (
+        "lima sandbox provider → profile ceiling via create_subprocess_limited on the limactl "
+        "client (mirrors the none/docker seam); guest VM bounded by instance-creation config"
     ),
     # Cron/scheduled-script runner. Agent-influenced: an agent authors the file under
     # `crons/` and the job that selects it, so the child gets the same `tool` ceiling an agent
@@ -233,10 +250,31 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # ref, and it is hex-validated before use (`selfqa/triage.py::_SHA_RE`) so nothing
     # option-shaped can pose as a sha — the same discipline as the state-history runner above.
     "selfqa/triage.py::_git::subprocess.run": "host-fact: read-only git commit inspection",
-    "selfqa/scripts/selfqa_commit_watch.py::_git::subprocess.run": (
-        "host-fact: read-only git HEAD probe"
+    "selfqa/watch.py::_git::subprocess.run": (
+        "host-fact: read-only git HEAD/rev-list probe (SV-11 — the retired sandbox "
+        "script's delta logic, moved in-process; same fixed argv, no shell, 30s timeout)"
+    ),
+    # The Self-QA evidence bundle uses ffmpeg as a host media tool, exactly like the
+    # knowledge-pipeline and transcribe ffmpeg sites above. `_ffmpeg_ping` reads a host fact (is
+    # ffmpeg installed and runnable) with a fixed `ffmpeg -version` argv, mirroring the docker
+    # daemon probe; `_run_ffmpeg` derives the contact-sheet/GIF with a FIXED filter argv whose only
+    # caller-derived values are input/output paths inside the run's own bundle dir. No shell, and no
+    # agent-authored text reaches either argv — the recording's *pixels* are agent-driven, the
+    # command is not, which is precisely the host-tool disposition the ffmpeg entries below carry.
+    "selfqa/evidence.py::_ffmpeg_ping::subprocess.run": (
+        "host-fact: ffmpeg availability probe (fixed `ffmpeg -version` argv)"
+    ),
+    "selfqa/evidence.py::_run_ffmpeg::subprocess.run": (
+        "host tool: ffmpeg contact-sheet/GIF derivation "
+        "(fixed filter argv, paths in the bundle dir)"
     ),
     "durability/state_history.py::ensure_repo::subprocess.run": "operator: state-history repo init",
+    # The usability probe behind ensure_repo's self-heal:
+    # `git --git-dir <gd> rev-parse --git-dir`
+    # with a fixed argv, no shell, check=False, against a path already vetted by
+    # _assert_service_git_dir and the same hostile-to-third-party-code env as _git.
+    # Read-only judgment (git accepts the dir or it does not); operator, not agent-influenced.
+    "durability/state_history.py::_repo_usable::subprocess.run": "operator: repo usability probe",
     "durability/state_history.py::git_available::subprocess.run": "host-fact: git presence probe",
     # App install — operator-initiated (Store install), scanned+vetted.
     "apps/app_manager.py::_run_hook::subprocess.run": "operator: app install setup hook",
@@ -420,6 +458,13 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # runs no agent code, and takes no agent-influenced input.
     "sandbox_providers/docker.py::_daemon_ping::subprocess.run": (
         "host-fact: docker daemon availability probe (fixed docker version argv)"
+    ),
+    # The lima provider's instance-status probe — same class as the docker daemon probe
+    # above: a fixed ``limactl list <instance> --format {{.Status}}`` argv that reads a host fact
+    # (is the Lima instance Running), runs no agent code, and takes no agent-influenced input.
+    # The instance name is provider config (env override → default), never a model/turn value.
+    "sandbox_providers/lima.py::_probe::subprocess.run": (
+        "host-fact: lima instance status probe (fixed limactl list argv)"
     ),
     # The docker provider's belt-and-suspenders container teardown. The argv is
     # ``docker rm -f <name>`` where <name> is the handle's OWN self-generated container id

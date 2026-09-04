@@ -450,16 +450,63 @@ def git_available() -> bool:
     return proc.returncode == 0
 
 
+def _repo_usable(gd: Path) -> bool:
+    """Whether git itself accepts *gd* as a repository.
+
+    Asking git is the only judgment that cannot drift from reality: a repo can
+    lose ``objects/`` or ``refs/`` while ``HEAD`` survives (a /tmp cleaner
+    pruning by file age, a disk-full init, a sync tool), and any anatomy
+    checklist here would just be a second, incomplete copy of git's own rule.
+    """
+    proc = subprocess.run(  # noqa: S603
+        ["git", "--git-dir", str(gd), "rev-parse", "--git-dir"],  # noqa: S607
+        env=_git_env(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def _retire_broken_repo(gd: Path) -> Path:
+    """Move an unusable repo husk aside so a fresh history can start.
+
+    Renamed, never deleted: the husk holds no recoverable history (the objects
+    are what held it, and they are gone), but this module never destroys data —
+    the ``.broken-<ts>`` suffix also takes it out of the ``.git`` namespace, so
+    :func:`_assert_service_git_dir` refuses to ever operate on it again.
+    """
+    husk = gd.with_name(f"{gd.name}.broken-{int(time.time())}")
+    gd.rename(husk)
+    return husk
+
+
 def ensure_repo(root: HistoryRoot, *, home: Path | None = None) -> Path:
     """Create (or refresh) the root's repo and return its git dir. Idempotent.
 
     The exclude file is rewritten every call so a changed allowlist takes effect
     without a migration — the alternative is a repo that keeps committing a path
     a later release removed from the allowlist.
+
+    A repo that EXISTS but is UNUSABLE is healed here, not reported forever: the
+    ``HEAD``-file existence check alone once let a partially destroyed repo
+    (``HEAD`` intact, ``objects/`` pruned) fail every scheduled commit on a
+    five-minute cadence with no recovery — while the panel, whose ``has_head``
+    probe fails the other way, showed an innocently empty history. The history
+    in such a husk is unrecoverable, so the honest move is to retire it aside
+    and start recording again.
     """
     gd = git_dir(root, home=home)
     _assert_service_git_dir(gd, home=home)
     root.worktree.mkdir(parents=True, exist_ok=True)
+    if (gd / "HEAD").is_file() and not _repo_usable(gd):
+        husk = _retire_broken_repo(gd)
+        logger.warning(
+            "state-history repo for %s was unusable (partially destroyed); "
+            "retired it to %s and starting a fresh history",
+            root.id,
+            husk.name,
+        )
     if not (gd / "HEAD").is_file():
         gd.parent.mkdir(parents=True, exist_ok=True)
         proc = subprocess.run(  # noqa: S603

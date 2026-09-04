@@ -20,6 +20,7 @@ import userEvent from '@testing-library/user-event'
 const patchConfig = vi.fn((_path: string, _value: unknown) => Promise.resolve({}))
 vi.mock('../../lib/api', () => ({
   api: {
+    pushStatus: () => Promise.resolve({ backend: 'webpush', vapid_public_key: 'k', vapid_ready: true, devices: [] }),
     personalclawConfig: () =>
       Promise.resolve({
         companion: { discovery_enabled: false, instance_name: '' },

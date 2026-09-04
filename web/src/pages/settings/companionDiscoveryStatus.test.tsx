@@ -25,6 +25,7 @@ const discovery = vi.fn()
 vi.mock('../../lib/api', () => ({
   api: {
     personalclawConfig: () => Promise.resolve(CFG),
+    pushStatus: () => Promise.resolve({ backend: 'webpush', vapid_public_key: 'k', vapid_ready: true, devices: [] }),
     patchConfig: () => Promise.resolve({}),
     companionDiscovery: () => discovery(),
   },

@@ -38,9 +38,13 @@ import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from personalclaw.apps.manager import app_dir
 from personalclaw.apps.manifest import AppManifest
+
+if TYPE_CHECKING:
+    from personalclaw.sandbox_providers import SandboxSpec
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +109,42 @@ def shared_storage_env(consumer: str) -> dict[str, str]:
         mounts[shared_dir_env_name(sharer)] = str(app_data_dir(sharer))
         _sel_capability_grant(consumer=consumer, sharer=sharer)
     return mounts
+
+
+def build_backend_sandbox_spec(
+    *,
+    workspace_dir: str,
+    data_dir: object | None,
+    env: dict[str, str],
+    port: int,
+    can_network: bool,
+) -> "SandboxSpec":
+    """Map an app's declared permissions to a :class:`SandboxSpec` (EXECUTION-ISOLATION EI-4
+    §1.3(4)). Pure — no I/O, no spawn — so the mapping is unit-testable without a running tier.
+
+    * ``permissions.network`` → ``egress_tier``: a backend WITHOUT the network permission runs
+      ``off`` (the tier isolates outbound where it can); WITH it, ``all``.
+    * ``permissions.storage`` → ``allowed_write_paths``: the app's own data dir is the one host
+      path it may write — and it is granted that dir ONLY when storage is permitted (the caller
+      passes ``data_dir=None`` when it is not, mirroring the P3 storage gate). Without storage the
+      backend gets no writable host path beyond the workspace boundary.
+
+    ``expose_ports`` carries the backend's port so the tier maps it to the host (the gateway
+    reaches the backend over loopback). ``env`` becomes the container/guest environment verbatim —
+    it is already the allowlisted, secret-filtered child env the launcher built.
+    """
+    from personalclaw.sandbox import PROFILE_TOOL
+    from personalclaw.sandbox_providers import SandboxSpec
+
+    allowed_write_paths = (str(data_dir),) if data_dir is not None else ()
+    return SandboxSpec(
+        profile=PROFILE_TOOL,
+        workspace_dir=str(workspace_dir),
+        allowed_write_paths=allowed_write_paths,
+        egress_tier="all" if can_network else "off",
+        env=dict(env),
+        expose_ports=(int(port),),
+    )
 
 
 @dataclass
@@ -247,7 +287,49 @@ class BackendSupervisor:
             # preexec_fn here would fork the whole gateway from a non-loop thread while the
             # loop holds locks (see backend_runtime hazard audit / §1.1). The shim sets the
             # limit AFTER exec in the single-threaded child, so no fork-time lock hazard.
-            launch_cmd = spawn_shim_argv(list(cmd), PROFILE_TOOL)
+            # EI-4 §1.3(4): a backend that declares a sandbox tier launches THROUGH that
+            # provider — the app's declared permissions mapped to the tier's confinement policy
+            # (build_backend_sandbox_spec: network → egress_tier, storage → allowed_write_paths).
+            # A NAMED tier that is unregistered or unavailable refuses to launch rather than
+            # falling back to an unconfined host process (failure-honesty §1.1): a container/VM
+            # backend that silently ran on the host would defeat the isolation it asked for. The
+            # ceiling shim still wraps the resulting (client) argv exactly as the host path does.
+            inner_cmd = list(cmd)
+            sandbox_name = (backend.sandbox or "").strip()
+            if sandbox_name:
+                from personalclaw.sandbox_providers import (
+                    SandboxUnavailableError,
+                    get_provider,
+                )
+
+                provider = get_provider(sandbox_name)
+                if provider is None:
+                    logger.warning(
+                        "app %s backend: sandbox %r is not registered (install/enable the tier "
+                        "app); refusing to launch unconfined on the host",
+                        name,
+                        sandbox_name,
+                    )
+                    return None
+                spec = build_backend_sandbox_spec(
+                    workspace_dir=str(root),
+                    data_dir=data_dir,
+                    env=env,
+                    port=port,
+                    can_network=checker is not None and checker.can_use_network(),
+                )
+                try:
+                    handle = provider.wrap(spec, inner_cmd)
+                except SandboxUnavailableError as exc:
+                    logger.warning(
+                        "app %s backend: sandbox %r unavailable (%s); refusing host downgrade",
+                        name,
+                        sandbox_name,
+                        exc,
+                    )
+                    return None
+                inner_cmd = handle.argv
+            launch_cmd = spawn_shim_argv(inner_cmd, PROFILE_TOOL)
             try:
                 proc = subprocess.Popen(  # noqa: S603 — vetted app backend, scanned at install
                     launch_cmd,

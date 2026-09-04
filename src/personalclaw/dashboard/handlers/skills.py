@@ -718,8 +718,12 @@ async def api_ephemeral_skill_discard(request: web.Request) -> web.Response:
     if slug == "*":
         n = ephemeral.clear_session(session)
         return web.json_response({"ok": True, "cleared": n})
-    ok = ephemeral.discard(session, slug)
-    return web.json_response({"ok": ok})
+    # A missing draft is the sibling api_skills_delete's condition and gets its
+    # shape: 404, not 200 {ok:false} — no UI caller read the flag, so a stale
+    # slug reported "Forgotten" for a request that changed nothing (#636).
+    if not ephemeral.discard(session, slug):
+        return web.json_response({"error": f"draft '{slug}' not found"}, status=404)
+    return web.json_response({"ok": True})
 
 
 # ── Skill proposals inbox (skill-evolution-proposal-only) ────────────────────
@@ -809,4 +813,10 @@ async def api_skill_proposal_reject(request: web.Request) -> web.Response:
     pid = request.match_info.get("id", "")
     ok = proposals.reject(pid)
     _sel_log("skills.proposal_reject", "ok" if ok else "rejected", pid, request)
-    return web.json_response({"ok": ok})
+    # Same condition, same shape as api_skills_delete: a nonexistent proposal is
+    # a 404 — the 200 {ok:false} told every ignore-the-body caller "Rejected"
+    # while a double-submit or stale surface (Skills page / Inbox / ActionCenter
+    # all offer the same id) had changed nothing (#636).
+    if not ok:
+        return web.json_response({"error": f"proposal '{pid}' not found"}, status=404)
+    return web.json_response({"ok": True})

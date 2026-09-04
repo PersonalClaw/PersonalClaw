@@ -974,15 +974,25 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
     content = body.get("content", "").strip()
-    if not content:
-        return web.json_response({"error": "content required"}, status=400)
-    from personalclaw.agent_metadata import save  # noqa: F811
+    from personalclaw.agent_metadata import delete, save  # noqa: F811
 
-    save(name, content)
+    if not content:
+        # Clearing the field is the natural way to say "this agent has no routing
+        # note" — the empty state is already supported everywhere else (load()
+        # returns "" for a missing file), and only this write path forbade
+        # producing it, so an emptied editor 400'd 'content required' (#668).
+        # An empty PUT now clears the stored note; the file is removed so the
+        # canonical empty representation stays "absent", not littered empty .md.
+        delete(name)
+    else:
+        save(name, content)
     _regen_orchestrator()
     try:
         _sel().log_api_access(
-            caller=caller, operation="agent_metadata.put", outcome="ok", resources=name
+            caller=caller,
+            operation="agent_metadata.put",
+            outcome="ok",
+            resources=f"{name} (cleared)" if not content else name,
         )
     except Exception:
         logger.warning("SEL logging failed", exc_info=True)

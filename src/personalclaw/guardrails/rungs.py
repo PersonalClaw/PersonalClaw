@@ -192,6 +192,18 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         ceiling=RUNG_AUTONOMOUS,
         providers=("selfqa-triage",),
     ),
+    # Its own key rather than sharing `action.create_task`'s: its
+    # effect is registering an Artifact and — on a confirmed failure — opening a LOCAL git branch
+    # (never pushed), which is a different governed behavior from filing a task row. Both effects
+    # stay on this machine and are visible where the user already looks (the artifacts library, a
+    # `git branch -a`), and the branch is opened with no checkout and no push, so autonomous at
+    # both ends is honest: there is nothing external to reverse.
+    ActionTypeSpec(
+        key="action.selfqa_evidence",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("selfqa-evidence",),
+    ),
     # Local writes: the effect stays on this machine, where the user can see and undo it.
     ActionTypeSpec(
         key="action.create_task",
@@ -311,12 +323,23 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
     # governed where they can be evaluated: the write-capable fence in `triggers/screen.py`, the
     # hard per-handoff timeout, and the disk re-diff that must confirm the edits before the
     # result is accepted at all.
+    # The `selfqa-commit-watch` shares this class on the same reasoning: what it
+    # ultimately does is start ONE workflow run, by delegating to the `run-workflow`
+    # provider listed beside it — its delta half is read-only git whose only output is
+    # that start-or-skip decision, so a second key would be a second name for one
+    # governed behavior.
     ActionTypeSpec(
         key="action.spawn_turn",
         floor=RUNG_AUTONOMOUS,
         ceiling=RUNG_AUTONOMOUS,
         leaves_machine=True,
-        providers=("run-prompt", "invoke-agent", "run-workflow", "second-opinion"),
+        providers=(
+            "run-prompt",
+            "invoke-agent",
+            "run-workflow",
+            "second-opinion",
+            "selfqa-commit-watch",
+        ),
     ),
     # Drives a real browser, so its effect is a click and a form
     # POST on somebody else's site. `one_tap` at BOTH ends, which is the only spec here that

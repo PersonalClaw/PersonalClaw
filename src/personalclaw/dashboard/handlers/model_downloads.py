@@ -17,6 +17,8 @@ import logging
 
 from aiohttp import web
 
+from personalclaw.providers.failure_copy import relayed_failure_copy
+
 logger = logging.getLogger(__name__)
 
 
@@ -169,7 +171,8 @@ async def api_local_model_delete(request: web.Request) -> web.Response:
     try:
         ok = await provider.delete_model(model)
     except Exception as exc:  # noqa: BLE001 — surface a delete failure honestly
-        return web.json_response({"error": str(exc)[:200]}, status=500)
+        logger.warning("model delete failed for provider %r", provider_name, exc_info=True)
+        return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
     # The delete succeeded if either teardown path removed something: the shared
     # sweep freed a layout, or the provider's own teardown reported success.
     if ok or swept:
@@ -398,7 +401,8 @@ async def api_local_model_search(request: web.Request) -> web.Response:
     try:
         raw = await provider.search_models(query)
     except Exception as exc:  # noqa: BLE001 — search is fail-soft
-        return web.json_response({"models": [], "error": str(exc)[:200]})
+        logger.warning("model search failed for provider %r", provider_name, exc_info=True)
+        return web.json_response({"models": [], "error": relayed_failure_copy(exc)})
     from personalclaw.local_models.registry import capabilities_for
 
     caps = capabilities_for(provider_name)

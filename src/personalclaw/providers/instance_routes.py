@@ -23,14 +23,13 @@ particular is a real 4xx/5xx so the frontend's shared error funnel (which fires 
 """
 
 import logging
-import socket
-import ssl
 
 import aiohttp
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
 from personalclaw.providers import mcp_instances as _mcp
+from personalclaw.providers.failure_copy import connectivity_guidance
 
 logger = logging.getLogger(__name__)
 
@@ -282,8 +281,6 @@ def _probe_failure(exc: BaseException, *, context: str) -> web.Response:
     """
     logger.warning("provider connectivity test failed (%s)", context, exc_info=True)
     # aiohttp wraps the OS-level cause on its connector errors; inspect it when present.
-    os_error = getattr(exc, "os_error", None)
-    root: BaseException = os_error if isinstance(os_error, BaseException) else exc
     if isinstance(exc, (ValueError, KeyError)):
         return json_error(
             "provider_config_invalid",
@@ -291,40 +288,9 @@ def _probe_failure(exc: BaseException, *, context: str) -> web.Response:
             "not be tested. Check its settings and try again.",
             status=400,
         )
-    if isinstance(root, ConnectionRefusedError):
-        return json_error(
-            "provider_unreachable",
-            message="Could not reach that endpoint — the connection was refused. Check the "
-            "URL and that the service is running.",
-            status=502,
-        )
-    if isinstance(root, TimeoutError):
-        return json_error(
-            "provider_unreachable",
-            message="The connection timed out. Check the URL and that the service is "
-            "reachable from here.",
-            status=502,
-        )
-    if isinstance(root, socket.gaierror):
-        return json_error(
-            "provider_unreachable",
-            message="That host could not be resolved. Check the endpoint's hostname.",
-            status=502,
-        )
-    if isinstance(root, ssl.SSLError) or isinstance(exc, aiohttp.ClientSSLError):
-        return json_error(
-            "provider_unreachable",
-            message="The TLS handshake failed. Check the endpoint's certificate and that it "
-            "expects HTTPS.",
-            status=502,
-        )
-    if isinstance(exc, aiohttp.ClientError):
-        return json_error(
-            "provider_unreachable",
-            message="Could not reach that endpoint. Check the URL and that the service is "
-            "running.",
-            status=502,
-        )
+    guidance = connectivity_guidance(exc)
+    if guidance is not None:
+        return json_error("provider_unreachable", message=guidance, status=502)
     return json_error(
         "provider_test_failed",
         message="The connection test failed unexpectedly. Check the instance configuration "

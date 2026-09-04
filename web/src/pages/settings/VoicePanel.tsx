@@ -13,6 +13,7 @@ import { fvs } from '../../design/fontWeight'
 import { bindChord, chordFromEvent, formatChord, DEFAULT_PUSH_TO_TALK_CHORD } from '../../lib/pushToTalk'
 import { desktopBridge } from '../../lib/desktopBridge'
 import { ShortcutRecorder } from '../../ui/ShortcutRecorder'
+import { VoiceProfilesSection } from './VoiceProfilesSection'
 
 /** Speech & Transcription — provider/model-AGNOSTIC behavior for STT (transcription)
  *  + TTS (spoken replies), plus the Vocabulary & corrections section (the user-visible
@@ -109,6 +110,11 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
           )
         }}
       />
+      {/* Voices sits directly under Text-to-speech because it answers the next
+          question that section raises: the settings above are provider-agnostic
+          behavior for ONE flat voice, and this is where a voice becomes an entity
+          you can name, lock, and point at a specific channel or agent. */}
+      <VoiceProfilesSection />
       <HandsFreeSection />
       <VocabularySection scrollTo={query?.section === 'vocabulary'} />
     </div>

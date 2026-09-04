@@ -317,7 +317,11 @@ export function DateInput({ value, onChange }: { value: string; onChange: (v: st
 }
 
 /** Styled native select — matches the TextInput chrome. */
-export function Select({ value, onChange, options, disabled, name, ariaLabel, disabledReason }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; disabled?: boolean; name?: string
+export function Select({ value, onChange, options, disabled, name, ariaLabel, disabledReason, size = 'lg' }: { value: string; onChange: (v: string) => void
+  /** Per-option `disabled`/`title` ride through to the native `<option>` — a fixed choice set
+   *  can carry individually unavailable entries (with the reason on hover) without the caller
+   *  dropping to a raw `<select>`. */
+  options: { value: string; label: string; disabled?: boolean; title?: string }[]; disabled?: boolean; name?: string
   /** The accessible name for a Select OUTSIDE any `Field` (a floating toolbar control, or a
    *  second control in a multi-control Field). Mirrors `TextInput`/`ChipInput`, which both
    *  already take one — Select was the odd primitive out, so an unlabelled select was the
@@ -330,7 +334,11 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel, di
    *  the odd primitive out again, and a caller's only options were an unexplained dead
    *  control or wrapping it in something that could hold a `title`. Applied only WHILE
    *  disabled — a tooltip on a working select would be noise. */
-  disabledReason?: string }) {
+  disabledReason?: string
+  /** Same scale TextInput carries (`sm` h-8 / `md` h-9 / `lg` h-10): a Select inline in a dense
+   *  toolbar row needs the sm height, and hardcoding lg here made this the family's only
+   *  fixed-height field. */
+  size?: FieldSize }) {
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
   const autoId = useId()
@@ -340,8 +348,8 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel, di
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
       aria-describedby={hintId}
       title={disabled ? disabledReason || undefined : undefined}
-      className="w-full h-10 appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50">
-      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      className={cx('w-full appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50', FIELD_SIZE[size])}>
+      {options.map((o) => <option key={o.value} value={o.value} disabled={o.disabled} title={o.title}>{o.label}</option>)}
     </select>
   )
 }
