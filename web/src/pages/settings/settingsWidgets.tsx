@@ -631,9 +631,15 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
           {/* Same shape as the Inbox tile: a tile that shimmers forever is the same lie in miniature. */}
           {!data && Boolean(appsErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your apps.</div>}
           {data && <>
-            <BigStat value={nonProvider.length} caption={nonProvider.length === 1 ? 'installed app' : 'installed apps'} />
+            {/* #615: the stat names exactly what it counts, like every sibling tile.
+                Counting non-provider apps under the caption "installed apps" read as
+                "0 installed apps" on an instance with 33 — provider apps configure
+                under Settings › Providers (the panel this opens says so), so the
+                honest subject here is the apps that expose settings IN this panel,
+                with the installed total as context so 0 can't read as "no apps". */}
+            <BigStat value={configurable} caption={configurable === 1 ? 'app with settings' : 'apps with settings'} />
             <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
-              {configurable > 0 ? `${configurable} configurable` : 'No configurable settings'}
+              {data.length > 0 ? `of ${data.length} installed` : 'Nothing installed yet — browse the Store'}
             </div>
           </>}
         </BentoCard>
