@@ -238,13 +238,13 @@ function AppActionMenu({ item, onAction }: { item: StoreItem; onAction: Dispatch
                 ? <MenuRow icon={<Settings2 size={15} />} label="Configure" onClick={() => { onAction(app, 'configure'); close() }} />
                 : <div className="px-m py-2 text-on-surface-low text-[0.75rem]">Always on — manage its tools from the Tools page.</div>}
               <MenuRow icon={<RefreshCw size={15} />} label="Update…" onClick={() => { onAction(app, 'update'); close() }} />
-              <div className="px-m py-1.5 text-on-surface-low text-[0.75rem]">Native app — always on, can't be uninstalled.</div>
+              <div className="px-m py-1.5 text-on-surface-low text-[0.75rem]">Native app — always on, can't be deactivated.</div>
             </>
           ) : (
             <>
               {item.enabled && <MenuRow icon={<Settings2 size={15} />} label="Configure" onClick={() => { onAction(app, 'configure'); close() }} />}
               <MenuRow icon={<RefreshCw size={15} />} label="Update…" onClick={() => { onAction(app, 'update'); close() }} />
-              <MenuRow icon={<Power size={15} />} label={item.enabled ? 'Uninstall (deactivate)' : 'Install (activate)'} onClick={() => { onAction(app, 'toggle'); close() }} />
+              <MenuRow icon={<Power size={15} />} label={item.enabled ? 'Deactivate' : 'Activate'} onClick={() => { onAction(app, 'toggle'); close() }} />
               <div className="my-1 border-t border-outline-variant/30" />
               <div className="[&_button]:text-danger">
                 <MenuRow icon={<Trash2 size={15} />} label="Force uninstall…" onClick={() => { onAction(app, 'force-uninstall'); close() }} />
@@ -1007,7 +1007,7 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
         { icon: <RefreshCw size={15} />, label: 'Update…', onSelect: () => onAction(app, 'update') },
         // A native app is locked on — omit uninstall/disable + force-uninstall.
         ...(item.native ? [] : [
-          { icon: <Power size={15} />, label: item.enabled ? 'Uninstall (deactivate)' : 'Install (activate)', onSelect: () => onAction(app, 'toggle') },
+          { icon: <Power size={15} />, label: item.enabled ? 'Deactivate' : 'Activate', onSelect: () => onAction(app, 'toggle') },
           { icon: <Trash2 size={15} />, label: 'Force uninstall…', onSelect: () => onAction(app, 'force-uninstall'), danger: true },
         ]),
       ]
@@ -1128,7 +1128,7 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
             ) : (
               // Deactivated (uninstalled, files kept): state must be visible on the
               // card — a green "Installed" here hid the fact the app is off. One
-              // click re-activates (same toggle the ⋯ menu calls "Install (activate)").
+              // click re-activates (the same Activate/Deactivate toggle every surface shares).
               <span onClick={stop}><Button variant="primary" size="sm" onClick={() => onAction(app, 'toggle')}><Power size={14} /> Activate</Button></span>
             )
           ) : (
@@ -1344,8 +1344,8 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
               <div className="flex items-center gap-2 text-on-surface"><Power size={14} /> Native app — always on</div>
               <div className="mt-1 text-on-surface-low" data-type="label-s">
                 {app.hasConfig
-                  ? "Ships with PersonalClaw as part of the baseline; it can't be uninstalled or disabled. You can change its settings below."
-                  : "Ships with PersonalClaw as part of the baseline; it can't be uninstalled or disabled. Manage its individual tools from the Tools page."}
+                  ? "Ships with PersonalClaw as part of the baseline; it can't be deactivated or disabled. You can change its settings below."
+                  : "Ships with PersonalClaw as part of the baseline; it can't be deactivated or disabled. Manage its individual tools from the Tools page."}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1357,14 +1357,16 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
             </div>
           </>
         ) : (<>
-          {/* Install IS the on-switch; uninstall is the off-switch (deactivate,
-              files kept). So the primary control is activate/deactivate. */}
+          {/* ONE vocabulary for the state toggle: Activate / Deactivate, on every
+              surface (card, menus, this panel). "Install" is reserved for a real
+              store download — a deactivated app's files never left disk, so
+              offering "Install" here promised a fetch that would not happen. */}
           <div className="flex flex-wrap gap-2">
             {app.hasUI && app.enabled && (
               <Button variant="primary" size="sm" onClick={onOpen}><LayoutGrid size={15} /> Open</Button>
             )}
             <Button variant={app.enabled ? 'secondary' : 'primary'} size="sm" disabled={busy} onClick={toggle}>
-              <Power size={15} /> {app.enabled ? 'Uninstall' : 'Install'}
+              <Power size={15} /> {app.enabled ? 'Deactivate' : 'Activate'}
             </Button>
             {app.enabled && <Button variant="ghost" size="sm" onClick={() => setConfigOpen(true)}><Settings2 size={15} /> Configure</Button>}
             <Button variant="ghost" size="sm" onClick={() => setUpdateOpen(true)}><RefreshCw size={15} /> Update</Button>
@@ -1381,7 +1383,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
               <div className="mt-2 rounded-m border border-outline-variant bg-surface-high p-m">
                 <div data-type="body-s" className="text-on-surface">Force uninstall</div>
                 <div data-type="label-s" className="mt-0.5 text-on-surface-low">
-                  Remove this app's files from disk entirely. Uninstalling normally just deactivates it (files kept) — this can't be undone.
+                  Remove this app's files from disk entirely. Deactivating (the normal off-switch) keeps the files — this can't be undone.
                 </div>
                 <Button variant="danger" size="sm" className="mt-2" onClick={() => setConfirmUninstall(true)}>
                   <Trash2 size={15} /> Force uninstall
