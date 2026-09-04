@@ -1214,6 +1214,7 @@ async def start_dashboard(
     app.router.add_post("/api/terminal/sessions", handlers.api_terminal_create)
     app.router.add_get("/api/terminal/sessions", handlers.api_terminal_list)
     app.router.add_delete("/api/terminal/sessions/{session_id}", handlers.api_terminal_delete)
+    app.router.add_get("/api/sandbox/providers", handlers.api_sandbox_providers)
 
     # Channels (comms transports) — management surface over registered transports
     from personalclaw.dashboard.handlers.channel_trust import (

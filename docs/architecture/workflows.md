@@ -336,6 +336,29 @@ resolved (symlinks, `..`) at comparison time.
 Opt-in, deliberately: the tree walk is real work, and a fan-out of fast
 transforms must not each pay for one.
 
+## Sandbox tiers (EI-1/EI-2/EI-4)
+
+`allowed_write_paths` above is the *watched* side of confinement — snapshot-and-diff, after the
+fact. A **sandbox provider** is the *enforced* side: it runs a node's (or an app backend's, or a
+picked terminal's) process INSIDE a boundary, so an out-of-scope write fails because the path was
+never reachable, not because a diff noticed it afterward. The seam
+(`personalclaw/sandbox_providers/`) is a two-phase `wrap → exec` contract; a consumer's
+`allowed_write_paths`, `egress_tier`, and `safety_profile` thread into the `SandboxSpec` the
+selected tier translates to its native knobs.
+
+| Tier | Kind | Registration | Enforces |
+|---|---|---|---|
+| `none` | host | core builtin (always available) | OS path sandbox + resource ceilings only — no boundary |
+| `docker` | bind-mount container | core builtin (self-gates on the daemon probe) | UID-aligned bind-mount over the workspace; `allowed_write_paths`/`grant_paths` mounted rw, everything else unreachable; `egress_tier: off` → `--network none`; ceilings → `--pids-limit`/`--memory` |
+| `lima` | VM (`limactl shell`) | **app** (`apps/lima-sandbox`, enabled via `SandboxTypeHandler`) | full-VM isolation; host↔guest path translation for the guest workdir; availability = `limactl` present + instance `Running`, else a typed reasoned refusal (greyed-with-reason, never a silent host downgrade). Per-exec network / pids / memory are instance-creation config, so at this layer they are advisory rather than fabricated |
+
+A tier that is requested but unavailable **refuses** rather than downgrading to the host: an
+unattended run parks `needs-input`, an app backend declines to launch, and an interactive
+terminal falls back to a path-guard-only host shell (the picker already greyed the tier out with
+its reason). App backends select a tier through the `backend.sandbox` manifest field, with the
+app's `permissions.network` → `egress_tier` and `permissions.storage` → `allowed_write_paths`; a
+terminal session selects one per-session through the picker (`GET /api/sandbox/providers`).
+
 ## Templates
 
 Six ship in `workflows/bundled/`, served read-only from the package — an

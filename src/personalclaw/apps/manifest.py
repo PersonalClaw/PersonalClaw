@@ -280,6 +280,13 @@ class BackendConfig:
     port: str = "auto"  # "auto" or a specific port number
     healthCheck: str = "/health"  # health check endpoint path  # noqa: N815
     type: str = ""  # "python", "asgi", "node", or "" (auto-detect)
+    # EXECUTION-ISOLATION EI-4 §1.3(4): the sandbox provider tier this backend launches under
+    # (e.g. "docker", "lima"). Empty → the host (``none`` builtin, no confinement). A NAMED tier
+    # that is not registered/available refuses to launch rather than downgrading to the host —
+    # ``backend_runtime`` enforces that failure-honesty. The app's declared permissions map onto
+    # the tier's confinement policy at launch: ``permissions.network`` → egress_tier,
+    # ``permissions.storage`` → allowed_write_paths.
+    sandbox: str = ""
     # Declared agent-callable route surface (§4.2). Read without executing app
     # code; surfaced as ``app_<name>_<op>`` tools + drivable via ``call-app-route``.
     routes: list[RouteEntry] = field(default_factory=list)
@@ -294,6 +301,8 @@ class BackendConfig:
             d["healthCheck"] = self.healthCheck
         if self.type:
             d["type"] = self.type
+        if self.sandbox:
+            d["sandbox"] = self.sandbox
         if self.routes:
             d["routes"] = [r.to_dict() for r in self.routes]
         return d
@@ -305,6 +314,7 @@ class BackendConfig:
             port=str(data.get("port", "auto")),
             healthCheck=str(data.get("healthCheck", "/health")),  # noqa: N815
             type=str(data.get("type", "")),
+            sandbox=str(data.get("sandbox", "")),
             routes=[RouteEntry.from_dict(r) for r in data.get("routes", []) if isinstance(r, dict)],
         )
 
