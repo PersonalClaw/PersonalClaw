@@ -527,9 +527,93 @@ async def _run_selftest(name: str) -> dict:
         except Exception as exc:
             out["embedding"] = {"ok": False, "detail": str(exc)[:200]}
 
+    # tts — a real synthesis through the active voice (MI-6: the LMM-V2 through-clone
+    # selftest). When the resolved provider supports cloning, the probe conditions on a
+    # generated reference clip so the CLONE path — reference validation, sidecar round
+    # trip, engine inference — is what actually runs, not just the plain-voice path. A
+    # sidecar death surfaces its typed reason (`sidecar_crashed:<why>`) in the detail
+    # rather than a generic failure, which is the §1 tenet the crash boundary exists for.
+    tts_probe = await _tts_clone_probe(_timed)
+    if tts_probe is not None:
+        out["tts"] = tts_probe
+
     if not out:
         return {"provider": name, "capabilities": {}, "detail": "no testable capability bound"}
     return {"provider": name, "capabilities": out}
+
+
+def _write_reference_clip(path: str) -> None:
+    """A deterministic ~0.5 s 16 kHz mono sine WAV — the clone reference fixture.
+
+    Generated with the stdlib rather than committed as a binary: the selftest needs a
+    real, decodable clip on disk (the provider validates the path before synthesizing),
+    and a generated one keeps the wheel free of audio blobs.
+    """
+    import math
+    import struct
+    import wave
+
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        frames = bytearray()
+        for i in range(8000):
+            frames += struct.pack("<h", int(12000 * math.sin(2 * math.pi * 220 * i / 16000)))
+        w.writeframes(bytes(frames))
+
+
+async def _tts_clone_probe(_timed) -> dict | None:
+    """One real synthesis through the active TTS selection, clone-conditioned when the
+    provider can clone. Returns None when no voice is bound (nothing to test)."""
+    import os
+    import tempfile
+
+    try:
+        from personalclaw.tts.registry import active_voice_params, route_synthesis
+    except Exception:
+        return None
+
+    try:
+        params = active_voice_params()
+    except Exception as exc:
+        return {"ok": False, "detail": f"voice resolution failed: {str(exc)[:160]}"}
+    if not params or not params.get("provider"):
+        return None
+
+    provider = params["provider"]
+    clone_capable = bool(getattr(provider, "supports_cloning", False))
+    ref_path = ""
+    try:
+        if clone_capable and not params.get("ref_audio"):
+            # No locked profile clip — condition on the generated fixture so the clone
+            # path runs end to end even on a fresh install.
+            fd, ref_path = tempfile.mkstemp(suffix=".wav", prefix="pc-selftest-ref-")
+            os.close(fd)
+            _write_reference_clip(ref_path)
+            params = {**params, "ref_audio": ref_path, "ref_text": "reference clip"}
+        result = await _timed(route_synthesis(params, "Selftest.", output_path=""), timeout=60.0)
+        detail = "clone synthesis returned audio" if clone_capable else "synthesis returned audio"
+        return {
+            "ok": bool(result),
+            "detail": detail if result else "synthesize returned nothing",
+            "cloning": clone_capable,
+        }
+    except Exception as exc:
+        # A sidecar crash carries its typed reason — surface it verbatim so the FE can
+        # translate it instead of rendering a generic failure.
+        typed = getattr(exc, "typed_reason", "")
+        return {
+            "ok": False,
+            "detail": (typed or str(exc))[:200],
+            "cloning": clone_capable,
+        }
+    finally:
+        if ref_path:
+            try:
+                os.unlink(ref_path)
+            except OSError:
+                pass
 
 
 # ── Remediation engine (§4) ───────────────────────────────────────────────────
