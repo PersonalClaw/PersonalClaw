@@ -150,22 +150,18 @@
                   }
                 },
                 {
-                  "kind": "stage",
+                  "kind": "action",
                   "id": "evidence",
                   "label": "Seal the proof bundle",
                   "config": {
-                    "prompt": "Turn what the run captured into a proof bundle someone can watch without re-running anything.\n\nFrom `recording.mp4`, produce `contact-sheet.png` (ffmpeg tile filter, one frame per 5s) and `failure.gif` (palettegen, the failure window plus ten seconds either side — for a pass, the mutation window).\n\nThen write `manifest.json`: {\"schema_version\": 1, \"scenario_id\": \"{{nodes.scenario-gen.output.scenario_id}}\", \"sha\": \"{{item.sha}}\", \"passed\": {{nodes.execute.output.passed}}, \"files\": [{\"kind\": ..., \"name\": ..., \"size\": ..., \"sha256\": ...}]} with a real entry for every file you produced. Compute the digests; do not estimate them.\n\nReturn JSON: {\"manifest_written\": boolean, \"file_count\": number}",
-                    "schema": {
-                      "manifest_written": "boolean",
-                      "file_count": "number"
-                    },
-                    "model_tier": "standard",
-                    "tools_posture": "full",
-                    "required_artifacts": [
-                      "screenshots/*.png",
-                      "recording.mp4",
-                      "manifest.json"
-                    ]
+                    "provider": "selfqa-evidence",
+                    "with": {
+                      "scenario_id": "{{nodes.scenario-gen.output.scenario_id}}",
+                      "sha": "{{item.sha}}",
+                      "passed": "{{nodes.execute.output.passed}}",
+                      "repo": "{{inputs.repo}}",
+                      "fix_branch_enabled": "{{inputs.fix_branch_enabled}}"
+                    }
                   }
                 },
                 {
@@ -195,7 +191,9 @@
                               "scenario_id": "{{nodes.scenario-gen.output.scenario_id}}",
                               "title": "{{nodes.scenario-gen.output.title}}",
                               "scenario_text": "{{nodes.scenario-gen.output.steps}}",
-                              "repro_steps": "{{nodes.execute.output.repro_steps}}"
+                              "repro_steps": "{{nodes.execute.output.repro_steps}}",
+                              "evidence_ref": "{{nodes.evidence.output.evidence_ref}}",
+                              "fix_branch": "{{nodes.evidence.output.fix_branch}}"
                             }
                           }
                         },
@@ -216,7 +214,7 @@
                               "id": "fix-branch",
                               "label": "Propose a diff on its own branch",
                               "config": {
-                                "prompt": "Propose a fix for the failure this run found, on a branch of its own.\n\nCommit under test: {{item.sha}}\nWhat failed: {{nodes.execute.output.failure_detail}}\nWhat was observed: {{nodes.execute.output.observed}}\nReproduction:\n{{nodes.execute.output.repro_steps}}\n\nWork on a new branch named `pclaw/selfqa-{{item.sha}}`. Do NOT merge it and do NOT push it — a human reviews this diff before either happens, and a pushed branch takes that choice away.\n\nFix the cause, not the symptom. If the reproduction passes because you changed the assertion rather than the behaviour, you have made the next failure invisible; say you could not fix it instead.\n\nReturn JSON: {\"branch\": string, \"fixed\": boolean, \"diff_summary\": string, \"why_not\": string}",
+                                "prompt": "Propose a fix for the failure this run found, on a branch of its own.\n\nCommit under test: {{item.sha}}\nWhat failed: {{nodes.execute.output.failure_detail}}\nWhat was observed: {{nodes.execute.output.observed}}\nReproduction:\n{{nodes.execute.output.repro_steps}}\n\nWork on the branch `{{nodes.evidence.output.fix_branch}}` — it has already been opened off the failing commit for you (not checked out, not pushed). Do NOT merge it and do NOT push it — a human reviews this diff before either happens, and a pushed branch takes that choice away.\n\nFix the cause, not the symptom. If the reproduction passes because you changed the assertion rather than the behaviour, you have made the next failure invisible; say you could not fix it instead.\n\nReturn JSON: {\"branch\": string, \"fixed\": boolean, \"diff_summary\": string, \"why_not\": string}",
                                 "schema": {
                                   "branch": "string",
                                   "fixed": "boolean",

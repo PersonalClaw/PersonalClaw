@@ -131,6 +131,16 @@ def _ensure_default_providers_registered() -> None:
         )
 
         register_action_provider(SelfQaFindingActionProvider())
+    if "selfqa-evidence" not in _providers:
+        # SELF-VERIFICATION §3.3 (SV-10) — the Self-QA loop's evidence-sealing step. Registered
+        # unconditionally for the same reason as its siblings above: a provider the `self-qa`
+        # template names must be dispatchable whenever that template can run, and a registration
+        # gated on `agent.self_qa.enabled` is one the run-start preflight cannot see.
+        from personalclaw.action_providers.selfqa_evidence_provider import (
+            SelfQaEvidenceActionProvider,
+        )
+
+        register_action_provider(SelfQaEvidenceActionProvider())
     if "triage-digest" not in _providers:
         # PROACTIVE-ASSISTANT §1.1-§1.5 (PA-2) — the triage digest's one call site. Registered
         # unconditionally, NOT behind `proactive.triage_enabled`: a provider the bundled

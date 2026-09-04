@@ -86,6 +86,14 @@ _CEILING_WRAPPED: dict[str, str] = {
     "loop/worktree.py::_git::subprocess.run": (
         "loop worktree git → build ceiling via spawn_shim_argv"
     ),
+    # SV-10's Self-QA fix-branch git. Write-capable git (`git branch <name> <sha>`, never pushed)
+    # driven by an unattended run, so it takes the build ceiling the same way `loop/worktree.py`'s
+    # git does — fixed argv, no shell, a hex-validated ref, and `spawn_shim_argv` prepending the
+    # build profile. This is the closest structural sibling: git plumbing that creates a ref, run
+    # off a workflow.
+    "selfqa/fix_branch.py::_git::subprocess.run": (
+        "selfqa fix-branch git → build ceiling via spawn_shim_argv"
+    ),
     # React artifact bundle (build profile) — PRODUCT-EXPERIENCE-PARITY `PEP-9`. The source
     # handed to the bundler is a model- or user-authored artifact body, so this is
     # agent-influenced in the fullest sense and is exactly the unbounded build spawn §1
@@ -235,6 +243,20 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "selfqa/triage.py::_git::subprocess.run": "host-fact: read-only git commit inspection",
     "selfqa/scripts/selfqa_commit_watch.py::_git::subprocess.run": (
         "host-fact: read-only git HEAD probe"
+    ),
+    # SV-10's Self-QA evidence bundle uses ffmpeg as a host media tool, exactly like the
+    # knowledge-pipeline and transcribe ffmpeg sites above. `_ffmpeg_ping` reads a host fact (is
+    # ffmpeg installed and runnable) with a fixed `ffmpeg -version` argv, mirroring the docker
+    # daemon probe; `_run_ffmpeg` derives the contact-sheet/GIF with a FIXED filter argv whose only
+    # caller-derived values are input/output paths inside the run's own bundle dir. No shell, and no
+    # agent-authored text reaches either argv — the recording's *pixels* are agent-driven, the
+    # command is not, which is precisely the host-tool disposition the ffmpeg entries below carry.
+    "selfqa/evidence.py::_ffmpeg_ping::subprocess.run": (
+        "host-fact: ffmpeg availability probe (fixed `ffmpeg -version` argv)"
+    ),
+    "selfqa/evidence.py::_run_ffmpeg::subprocess.run": (
+        "host tool: ffmpeg contact-sheet/GIF derivation "
+        "(fixed filter argv, paths in the bundle dir)"
     ),
     "durability/state_history.py::ensure_repo::subprocess.run": "operator: state-history repo init",
     # The usability probe behind ensure_repo's self-heal:
