@@ -3619,6 +3619,9 @@ export interface RunnerLease {
 // JSON-Schema (Draft-07 + x-meta) describing one provider's user-config fields.
 export interface ProviderSchemaProp {
   type?: string; default?: unknown; enum?: string[]; minimum?: number; maximum?: number
+  // The string constraints the backend enforces (schema_validate.ENFORCED_KEYWORDS). Carried so
+  // the form can state them natively instead of letting a save be the first feedback (#491).
+  minLength?: number; maxLength?: number; pattern?: string
   'x-meta'?: { label?: string; help?: string; sensitive?: boolean; placeholder?: string; tags?: string[] }
 }
 export interface ProviderSchema { type?: string; properties?: Record<string, ProviderSchemaProp>; required?: string[] }

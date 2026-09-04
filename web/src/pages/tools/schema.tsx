@@ -39,6 +39,40 @@ export function schemaProps(parameters: unknown): { props: [string, JsonSchema][
   return { props, required: new Set(s.required ?? []) }
 }
 
+/** Required keys that carry no usable value, in the order given.
+ *
+ *  Lives here beside `schemaProps` (which reads the `required` array) so every schema-driven form
+ *  shares ONE emptiness rule. Getting this wrong is silent: a bare `!value` counts a legitimate
+ *  `false` or `0` as missing and blocks a save the user cannot explain.
+ *
+ *  - `undefined` / `null` / a blank-or-whitespace string are missing.
+ *  - `false` and `0` are PRESENT — values a schema can legitimately require.
+ *  - `satisfied` names keys some other mechanism already fills, so a blank input is fine. The only
+ *    case today is a write-only sensitive field whose secret is already stored: the backend never
+ *    sends it back, the input deliberately starts blank, and blank means "keep the stored secret"
+ *    (#43). Counting it missing would make such a form permanently unsavable.
+ *
+ *  Deliberately STRICTER than the backend, which checks presence only (`key not in values`), so a
+ *  blank string satisfies it. A schema author marking a field required does not mean "may be
+ *  empty", and a user reads a blank box as "not filled in" — so the form refuses it rather than
+ *  posting a value the author never intended. The asymmetry is safe in this direction: it can only
+ *  prevent a save, never permit one the server would reject. */
+export function missingRequired(
+  values: Record<string, unknown>,
+  required: readonly string[] | ReadonlySet<string>,
+  opts?: { satisfied?: readonly string[] },
+): string[] {
+  const satisfied = new Set(opts?.satisfied ?? [])
+  const out: string[] = []
+  for (const key of required) {
+    if (satisfied.has(key)) continue
+    const v = values[key]
+    if (v === undefined || v === null) { out.push(key); continue }
+    if (typeof v === 'string' && v.trim() === '') out.push(key)
+  }
+  return out
+}
+
 export function typeLabel(s: JsonSchema): string {
   const t = Array.isArray(s.type) ? s.type.join('|') : s.type
   if (t === 'array') return `${(s.items?.type as string) ?? 'any'}[]`
