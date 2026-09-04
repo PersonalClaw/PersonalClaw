@@ -75,6 +75,10 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
       const r = await api.testHook(hook.id)
       const out = r.result.stdout || r.result.error || r.result.stderr || `exit ${r.result.exit_code}`
       setTestOut(`${out} · ${r.result.duration_ms}ms`)
+      // Refresh like save/del/toggle do (#609): the panel must reflect whatever the
+      // server holds after the call — a rehearsal no longer writes fire history, and
+      // this keeps the Stats row honest either way.
+      onSaved()
     } catch (e) { setTestOut(e instanceof Error ? e.message : 'Test failed') } finally { setBusy(false) }
   }
 

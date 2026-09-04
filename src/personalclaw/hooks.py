@@ -680,6 +680,7 @@ async def run_script_hook(
     hook_event: dict | None = None,
     *,
     enforced: bool = False,
+    test: bool = False,
 ) -> ScriptHookResult:
     """Dispatch hook execution through its registered ActionProvider.
 
@@ -691,6 +692,14 @@ async def run_script_hook(
     :func:`fire_tool_hooks` seam, the "Run now" button in the trigger UI, any future site — gets
     the honest status without knowing this parameter exists. Claiming enforcement has to be
     opt-in, for the same reason :func:`hook_enforcement` never returns ``enforcing`` on a maybe.
+
+    ``test`` marks a REHEARSAL (the panel's Test button), mirroring the event-trigger fire
+    seam (#609): every gate — incident, denylist, rung routing — is preserved and NOT
+    bypassed, and the action genuinely executes, but (a) the payload is tagged ``test`` so a
+    provider can tell a rehearsal from the real thing, and (b) nothing is written into the
+    hook's ``run_count`` / ``last_run`` / ``last_status`` — that is the trigger's REAL fire
+    history, and "Ran 2×  · ok" where both runs were Test clicks is the UI's only claim about
+    a trigger that has never actually fired.
     """
     import os
 
@@ -702,12 +711,45 @@ async def run_script_hook(
 
     if hook_event is None:
         hook_event = {"hook_event_name": hook.event, "cwd": os.getcwd()}
+    if test:
+        # The event-path contract verbatim (event_triggers.fire_event_trigger): the tag
+        # rides the payload so a provider can tell a rehearsal from the real thing.
+        # Copied first — the caller's dict is not ours to mutate.
+        hook_event = dict(hook_event)
+        hook_event["test"] = True
+
+    def _record(status: str) -> None:
+        # Every terminal branch records through here so the rehearsal rule cannot
+        # drift per branch: a test NEVER writes the hook's real fire history.
+        # The conditional closes the vocabulary at this single choke point — the
+        # status rail infers exactly this tuple (plus the "error" fallback) and
+        # checks each member against HOOK_STATUS_TO_OUTCOME, so a branch inventing
+        # a status is a caught red and an unmapped one degrades to "error" rather
+        # than shipping unmapped.
+        if test:
+            return
+        hook.last_run = time.time()
+        hook.last_status = (
+            status
+            if status
+            in (
+                "ok",
+                "error",
+                "timeout",
+                "launched",
+                "queued",
+                "blocked",
+                "advisory",
+                "held_for_rung",
+                "skipped_incident",
+            )
+            else "error"
+        )
+        hook.run_count += 1
 
     provider = get_action_provider(hook.provider)
     if provider is None:
-        hook.last_run = time.time()
-        hook.last_status = "error"
-        hook.run_count += 1
+        _record("error")
         return ScriptHookResult(
             hook_id=hook.id,
             hook_name=hook.name,
@@ -723,9 +765,7 @@ async def run_script_hook(
     from personalclaw.guardrails.incident import incident_active
 
     if incident_active():
-        hook.last_run = time.time()
-        hook.last_status = "skipped_incident"
-        hook.run_count += 1
+        _record("skipped_incident")
         return ScriptHookResult(
             hook_id=hook.id,
             hook_name=hook.name,
@@ -756,9 +796,7 @@ async def run_script_hook(
         session_key=_session_key,
     )
     if _deny.blocked:
-        hook.last_run = time.time()
-        hook.last_status = "blocked"
-        hook.run_count += 1
+        _record("blocked")
         return ScriptHookResult(
             hook_id=hook.id,
             hook_name=hook.name,
@@ -785,9 +823,7 @@ async def run_script_hook(
             refs={"hook": hook.id, "provider": hook.provider},
             dedup_key=f"autonomy_hold:{route.key}:hook:{hook.id}",
         )
-        hook.last_run = time.time()
-        hook.last_status = "held_for_rung"
-        hook.run_count += 1
+        _record("held_for_rung")
         return ScriptHookResult(
             hook_id=hook.id,
             hook_name=hook.name,
@@ -803,9 +839,7 @@ async def run_script_hook(
         from personalclaw.action_providers import provider_failure
 
         logger.warning("Action provider %r raised for hook %s", hook.provider, hook.id)
-        hook.last_run = time.time()
-        hook.last_status = "error"
-        hook.run_count += 1
+        _record("error")
         agent_error = provider_failure(hook.provider, exc)
         return ScriptHookResult(
             hook_id=hook.id,
@@ -814,7 +848,6 @@ async def run_script_hook(
             error=agent_error.render(),
         )
 
-    hook.last_run = time.time()
     if result.blocked:
         # 🔴 REPORTED ≠ ENFORCED (G89). `ActionResult.blocked` is a REQUEST ("PreToolUse exit_code 2
         # is a block signal"), not evidence that anything was stopped, and only the gating seam
@@ -827,7 +860,7 @@ async def run_script_hook(
         # levels. `enforcement` says whether this hook CAN block; this says whether the last fire
         # DID. Both are needed — a bound, enforcing hook still reaches this branch when an ACP
         # `EVENT_TOOL_CALL` frame arrives already auto-approved.
-        hook.last_status = "blocked" if enforced else "advisory"
+        _status = "blocked" if enforced else "advisory"
     elif result.success:
         # Honest "started ≠ succeeded" (T7): a fire-and-forget action (run-prompt/
         # run-workflow/invoke-agent) only LAUNCHED a background turn — record
@@ -836,12 +869,12 @@ async def run_script_hook(
         # `queued` is carried through for the same reason and is weaker still: under
         # `on_overlap: queue` nothing started at all (WV-14), so folding it into "ok"
         # would report work that has not begun as work that finished.
-        hook.last_status = result.outcome if result.outcome in ("launched", "queued") else "ok"
+        _status = result.outcome if result.outcome in ("launched", "queued") else "ok"
     elif result.error and "Timed out" in result.error:
-        hook.last_status = "timeout"
+        _status = "timeout"
     else:
-        hook.last_status = "error"
-    hook.run_count += 1
+        _status = "error"
+    _record(_status)
 
     # `auto_with_undo`: persist the provider's reversal handle + passively notify. Only for
     # an action that actually did something — a failed action has nothing to take back.
