@@ -329,7 +329,9 @@ async def api_voice_migrate(request: web.Request) -> web.Response:
             resources="active_tts",
             error=exc.reason,
         )
-        return json_error(exc.reason, message=exc.message, status=exc.status)
+        if exc.reason == "no_active_voice":
+            return json_error("no_active_voice", message=exc.message, status=exc.status)
+        return json_error("invalid_request", message=exc.message, status=exc.status)
     _sel().log_api_access(
         caller=_caller(request),
         operation="voice_profile.migrate",
@@ -337,7 +339,7 @@ async def api_voice_migrate(request: web.Request) -> web.Response:
         resources=f"{profile.id} provider={profile.provider}",
     )
     _broadcast(request, "voice_profile_created", profile, migrated=True)
-    return web.json_response(vp.profile_payload(profile), status=201)
+    return web.json_response({**vp.profile_payload(profile)}, status=201)
 
 
 async def api_voice_resolve(request: web.Request) -> web.Response:

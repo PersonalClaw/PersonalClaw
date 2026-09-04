@@ -227,6 +227,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "consent_text_required": "Consent text is required for a cloned voice.",
     "empty_history": "The profile has no generation history.",
     "history_audio_missing": "That generation's audio file is gone.",
+    "no_active_voice": "There is no active TTS voice selection to migrate.",
     # ── session organize (handlers/session_organize.py) ──
     # (uses the generic bad_request/not_found rows above)
     # ── inbound control bridge (inbound/bridge.py — EXTERNAL-ACCESS §1.1/§4) ──
