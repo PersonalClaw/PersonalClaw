@@ -354,11 +354,9 @@ function ProjectPeekBody({ id, project, onOpen }: { id: string; project: Project
           </>
         )}
       </div>
-      <button type="button" onClick={onOpen}
-        className="flex shrink-0 items-center justify-center gap-1.5 rounded-pill bg-primary px-4 h-9 text-on-primary text-[0.8125rem] transition-colors hover:bg-primary-emphasis"
-        style={fvs(470)}>
+      <Button size="sm" onClick={onOpen} className="shrink-0">
         Open project <ChevronRight size={13} className="shrink-0" />
-      </button>
+      </Button>
     </div>
   )
 }
@@ -626,7 +624,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
           two-button pair announced as bare "button". That asymmetry is the tell. */}
       <Button size="sm" ariaLabel="Save the project name" onClick={() => { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) }} disabled={!nameDraft.trim()}
         disabledReason={!nameDraft.trim() ? 'Enter a project name first' : undefined}><Check size={14} /></Button>
-      <button type="button" onClick={() => setRenaming(false)} aria-label="Cancel" className="text-on-surface-low hover:text-on-surface"><X size={15} /></button>
+      <IconButton icon={X} label="Cancel" size={24} iconSize={15} onClick={() => setRenaming(false)} />
     </div>
   ) : (
     <div className="flex items-center gap-2 min-w-0">
@@ -637,24 +635,22 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
       <PageTitle className="truncate">{project.name}</PageTitle>
       {project.name_locked && <Lock size={12} className="shrink-0 text-on-surface-low" aria-label="Name locked" />}
       {!project.is_builtin && (
-        <button type="button" onClick={() => { setNameDraft(project.name); setRenaming(true) }} aria-label="Rename"
-          className="shrink-0 grid size-6 -m-0.5 place-items-center rounded-md text-on-surface-low hover:bg-surface-high hover:text-on-surface"><Pencil size={13} /></button>
+        <IconButton icon={Pencil} label="Rename" size={24} iconSize={13} onClick={() => { setNameDraft(project.name); setRenaming(true) }} className="shrink-0 -m-0.5" />
       )}
     </div>
   )
   const headerActions = (
     <>
-      <button type="button" onClick={() => { const next = active ? '' : id; setActiveProject(next); setActive(!active) }}
-        title={active ? 'Active project — new work defaults here' : 'Make this the active project'}
-        className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.75rem] ${active ? 'text-primary' : 'text-on-surface-low hover:bg-surface-high hover:text-on-surface'}`}>
+      <Button variant={active ? 'ghost-accent' : 'ghost'} size="xs" ariaPressed={active}
+        onClick={() => { const next = active ? '' : id; setActiveProject(next); setActive(!active) }}
+        title={active ? 'Active project — new work defaults here' : 'Make this the active project'}>
         <Star size={14} style={active ? { fill: 'var(--color-primary)' } : undefined} /> {active ? 'Active' : 'Set active'}
-      </button>
+      </Button>
       <Popover align="right" width={220} placement="bottom"
         trigger={(open, toggle) => (
-          <button type="button" onClick={toggle} aria-expanded={open} title="Launch new work scoped under this project"
-            className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[0.75rem] text-on-primary ${open ? 'bg-primary' : 'bg-primary hover:bg-primary-emphasis'}`}>
+          <Button size="xs" onClick={toggle} ariaExpanded={open} title="Launch new work scoped under this project">
             <Plus size={14} /> New <ChevronDown size={11} />
-          </button>
+          </Button>
         )}>
         {(close) => (
           <div className="flex flex-col gap-0.5">
@@ -891,13 +887,12 @@ function FolderChip({ label, icon: Icon, path, emptyText, title, onPeek, onBrows
         <span className="text-on-surface-low italic">{emptyText}</span>
       )}
       {path && onBrowse && (
-        <button type="button" onClick={onBrowse} aria-label={`Open ${label} in Files`} title="Open in Files"
-          className="shrink-0 grid size-6 -m-0.5 place-items-center rounded text-on-surface-low hover:bg-surface-high hover:text-primary"><FolderOpen size={12} /></button>
+        <IconButton icon={FolderOpen} label={`Open ${label} in Files`} title="Open in Files" size={24} iconSize={12} onClick={onBrowse} className="shrink-0 -m-0.5" />
       )}
       {onAction && actionLabel && (
-        <button type="button" onClick={onAction} className="shrink-0 rounded px-1.5 py-0.5 text-on-surface-low hover:bg-surface-high hover:text-on-surface">{actionLabel}</button>
+        <Button variant="ghost" size="xs" onClick={onAction} className="shrink-0">{actionLabel}</Button>
       )}
-      {onClear && <button type="button" onClick={onClear} aria-label={`Unbind ${label}`} className="shrink-0 rounded p-0.5 text-on-surface-low hover:text-on-surface" title="Unbind"><X size={12} /></button>}
+      {onClear && <IconButton icon={X} label={`Unbind ${label}`} title="Unbind" size={20} iconSize={12} onClick={onClear} className="shrink-0" />}
     </div>
   )
 }
@@ -1040,7 +1035,7 @@ function BriefRow({ brief, onSave }: { brief: string; onSave: (b: string) => voi
           className="resize-y rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] leading-relaxed text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <div className="flex items-center gap-1.5">
           <Button size="sm" onClick={() => { onSave(draft.trim()); setEditing(false) }}><Check size={13} /> Save brief</Button>
-          <button type="button" onClick={() => { setDraft(brief); setEditing(false) }} className="rounded-md px-2 py-1 text-[0.75rem] text-on-surface-low hover:text-on-surface">Cancel</button>
+          <Button variant="ghost" size="xs" onClick={() => { setDraft(brief); setEditing(false) }}>Cancel</Button>
         </div>
       </div>
     )
