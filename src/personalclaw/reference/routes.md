@@ -625,6 +625,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/recent-projects` — list recently used project directories.
 - `GET /api/resilience/degraded` — per-surface no-model floor + availability.
 - `POST /api/reveal` — reveal a file/folder in Finder or open with default app.
+- `GET /api/sandbox/providers` — the sandbox tiers the terminal picker offers (EI-4 §1.3(3)).
 - `POST /api/screenshot` — capture screen region and return file path.
 - `GET /api/search/active` — bound provider name per use-case.
 - `PUT /api/search/active/{use_case}` — bind a provider to a use-case.

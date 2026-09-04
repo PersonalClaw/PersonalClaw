@@ -32,6 +32,11 @@ _ORPHAN_TIMEOUT_S = 300  # 5 min with no WS → reap PTY
 # session_id but the PTY spawns on WS connect). Keyed by session_id.
 _pending_cwd: dict[str, str] = {}
 
+# EI-4 §1.3(3): the sandbox tier chosen for a session at create time, consumed by the WS spawn
+# so the PTY opens INSIDE that tier (the per-session sandbox picker). Empty/absent → the host
+# shell (unchanged, unsandboxed — the user's own interactive terminal). Keyed by session_id.
+_pending_sandbox: dict[str, str] = {}
+
 
 def _sel():
     import personalclaw.dashboard.handlers as _pkg  # circular import: __init__ imports terminal
@@ -329,6 +334,34 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
                 argv = ["tmux", "-L", _TMUX_SOCKET, "new-session", "-A", "-s", tname, shell, "-l"]
             else:
                 argv = [shell, "-l"]
+            # EI-4 §1.3(3): if this session picked a sandbox tier, open the shell INSIDE it —
+            # replace argv with the provider-wrapped launch (the SAME create_subprocess_limited
+            # below runs it, so the audited spawn site is unchanged). An interactive request is
+            # not an unattended run: when the chosen tier is unavailable we fall back to the host
+            # shell (path-guard-only) rather than hard-parking — the greyed-with-reason picker
+            # already warned the user pre-hoc. ``env={}`` so the guest/container uses its own base
+            # environment rather than the host terminal's.
+            _req_sandbox = _pending_sandbox.pop(session_id, "")
+            if _req_sandbox:
+                from personalclaw.sandbox_providers import (
+                    SandboxSpec,
+                    SandboxUnavailableError,
+                    get_provider,
+                )
+
+                _provider = get_provider(_req_sandbox)
+                if _provider is not None:
+                    try:
+                        argv = _provider.wrap(
+                            SandboxSpec(workspace_dir=cwd, egress_tier="all", env={}), argv
+                        ).argv
+                    except SandboxUnavailableError as _exc:
+                        logger.info(
+                            "terminal %s: sandbox %r unavailable (%s); host shell fallback",
+                            session_id,
+                            _req_sandbox,
+                            _exc,
+                        )
             # Resource ceiling (PHF-1): the interactive terminal gets the ``none`` profile
             # explicitly — it is the user's own shell, not agent-executed code, so it must
             # carry no limits and no OOM bias. The ``none`` profile makes the helper a
@@ -500,6 +533,37 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
     return ws
 
 
+async def api_sandbox_providers(request: web.Request) -> web.Response:
+    """GET /api/sandbox/providers — the sandbox tiers the terminal picker offers (EI-4 §1.3(3)).
+
+    Read-only. Each entry is ``{name, display_name, available}``: ``available`` is the tier's live
+    probe, so a container/VM tier whose runtime is down comes back greyed-with-reason. The host
+    ``none`` tier is always present and listed first; a container/VM tier appears only once its
+    provider app is enabled (registered through ``SandboxTypeHandler``)."""
+    caller = request.get("user")
+    if not caller:
+        return web.Response(status=401, text="Unauthorized")
+    from personalclaw.sandbox_providers import list_providers, resolve_provider
+
+    providers = []
+    for pname in list_providers():
+        prov = resolve_provider(pname)
+        try:
+            available = bool(prov.available())
+        except Exception:
+            available = False
+        providers.append(
+            {
+                "name": prov.name,
+                "display_name": getattr(prov, "display_name", "") or prov.name,
+                "available": available,
+            }
+        )
+    # Stable order: the host tier first, then the rest alphabetically.
+    providers.sort(key=lambda p: (p["name"] != "none", p["name"]))
+    return web.json_response({"providers": providers})
+
+
 async def api_terminal_create(request: web.Request) -> web.Response:
     """POST /api/terminal/sessions — create a new terminal session (returns session_id)."""
     caller = request.get("user")
@@ -545,11 +609,15 @@ async def api_terminal_create(request: web.Request) -> web.Response:
     # PTY spawns (WS handler) — here we just stash the requested cwd so the WS
     # handler can use it; falls back to cfg/HOME.
     requested_cwd = ""
+    requested_sandbox = ""
     if request.body_exists:
         try:
             body = await request.json()
-            if isinstance(body, dict) and isinstance(body.get("cwd"), str):
-                requested_cwd = body["cwd"]
+            if isinstance(body, dict):
+                if isinstance(body.get("cwd"), str):
+                    requested_cwd = body["cwd"]
+                if isinstance(body.get("sandbox"), str):
+                    requested_sandbox = body["sandbox"].strip()
         except Exception:
             pass
     if requested_cwd:
@@ -573,6 +641,18 @@ async def api_terminal_create(request: web.Request) -> web.Response:
                 status=403,
             )
         _pending_cwd[session_id] = requested_cwd
+    # EI-4 §1.3(3): stash the picked sandbox tier for the WS spawn. Only a CURRENTLY-registered
+    # provider name is honored — an unknown/uninstalled tier is dropped to the host shell, so a
+    # stale picker value can never silently redirect the spawn. "none"/host is the default.
+    if requested_sandbox and requested_sandbox != "none":
+        from personalclaw.sandbox_providers import get_provider
+
+        if get_provider(requested_sandbox) is not None:
+            _pending_sandbox[session_id] = requested_sandbox
+        else:
+            requested_sandbox = ""
+    else:
+        requested_sandbox = ""
     _sel().log_api_access(
         caller=caller,
         operation="terminal.session.create",
@@ -585,6 +665,7 @@ async def api_terminal_create(request: web.Request) -> web.Response:
             "session_id": session_id,
             "shell": shell,
             "cwd": requested_cwd or str(cfg.get("cwd") or os.environ.get("HOME", "/")),
+            "sandbox": requested_sandbox,
         }
     )
 

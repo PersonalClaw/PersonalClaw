@@ -5958,7 +5958,8 @@ export const api = {
     put<{ ok: boolean; settings: Record<string, unknown> }>(`/api/models/use-cases/${encodeURIComponent(useCase)}/settings`, settings),
 
   // terminal (PTY)
-  createTerminal: (cwd?: string) => post<{ session_id: string; shell?: string; cwd?: string }>('/api/terminal/sessions', cwd ? { cwd } : {}),
+  createTerminal: (cwd?: string, sandbox?: string) => post<{ session_id: string; shell?: string; cwd?: string; sandbox?: string }>('/api/terminal/sessions', { ...(cwd ? { cwd } : {}), ...(sandbox ? { sandbox } : {}) }),
+  sandboxProviders: () => get<{ providers: Array<{ name: string; display_name: string; available: boolean }> }>('/api/sandbox/providers'),
   terminalSessions: () => get<{ enabled?: boolean; sessions: Array<{ session_id: string; pid?: number; alive?: boolean; cols?: number; rows?: number; connected?: boolean; cwd?: string; shell?: string; label?: string }> }>('/api/terminal/sessions'),
   deleteTerminal: (id: string) => del(`/api/terminal/sessions/${encodeURIComponent(id)}`),
 

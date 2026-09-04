@@ -140,11 +140,12 @@ const docs: UiDoc[] = [
     props: [
       { name: 'value', description: 'The selected option value (controlled).' },
       { name: 'onChange', description: 'Fires with the newly selected value.' },
-      { name: 'options', description: 'The choices as `{ value, label }[]`, rendered as native <option>s.' },
+      { name: 'options', description: 'The choices as `{ value, label, disabled?, title? }[]`, rendered as native <option>s — per-option disabled/title let a fixed set carry individually unavailable entries with the reason on hover.' },
       { name: 'disabled', description: 'Dim + block the select.' },
       { name: 'name', description: 'Stable form name (also the id). When set the control uses its own name instead of claiming the Field label.' },
       { name: 'ariaLabel', description: 'The accessible name for a Select outside any Field (a floating toolbar control, or a second control in a multi-control Field). Wins over the Field label, same precedence as TextInput.' },
       { name: 'disabledReason', description: 'Why the select is off, surfaced as a title WHILE disabled. Same carrier Button has: a natively disabled control leaves the tab order, so without it a keyboard user tabs past a dead control with no way to learn what is missing.' },
+      { name: 'size', description: "Height/text scale, same vocabulary as TextInput ('sm' h-8, 'md' h-9, 'lg' h-10 default) — a Select inline in a dense toolbar row takes sm." },
     ],
     bestPractices: [
       { guidance: true, description: 'Reach for Select for a short fixed set of options rather than a raw <select> — it matches the field family chrome and Field-label aria wiring.' },

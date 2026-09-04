@@ -191,7 +191,7 @@ export function TerminalView({ tab, onExited, onClose, onSession }: { tab: TermT
     // dead session id is gone server-side → create a fresh one, then reconnect.
     setStatus('connecting'); setExitCode(null)
     try {
-      const r = await api.createTerminal(tab.cwd)
+      const r = await api.createTerminal(tab.cwd, tab.sandbox)
       sessionIdRef.current = r.session_id
       onSession?.(r.session_id)  // tell the host so its PTY teardown tracks the live id
     } catch { /* keep old id; connect will retry */ }

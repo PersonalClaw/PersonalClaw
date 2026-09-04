@@ -370,6 +370,7 @@ from personalclaw.dashboard.handlers.sessions import (  # noqa: E402, F401
     api_sessions_search,
 )
 from personalclaw.dashboard.handlers.terminal import (  # noqa: E402, F401
+    api_sandbox_providers,
     api_terminal_create,
     api_terminal_delete,
     api_terminal_list,
