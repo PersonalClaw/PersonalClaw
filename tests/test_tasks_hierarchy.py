@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from personalclaw.tasks.hierarchy import HierarchyStore
-from personalclaw.tasks.models import DEFAULT_PROJECTS, Project, TaskList
+from personalclaw.tasks.models import BUILTIN_PROJECTS, Project, TaskList
 
 
 @pytest.fixture()
@@ -20,7 +20,7 @@ class TestDefaults:
         names = {p.name for p in projects}
         assert "Personal" in names
         assert "Repeatable" in names
-        assert all(p.is_builtin_project() for p in projects if p.name in DEFAULT_PROJECTS)
+        assert all(p.is_builtin_project() for p in projects if p.name in BUILTIN_PROJECTS)
 
     def test_defaults_idempotent(self, store):
         store.ensure_defaults()
@@ -33,6 +33,25 @@ class TestDefaults:
         personal = store.get_project_by_name("Personal")
         with pytest.raises(ValueError, match="cannot be deleted"):
             store.delete_project(personal.id)
+
+    def test_guard_refusals_say_builtin_not_the_default(self, store):
+        # #638: two projects are protected, so a refusal saying "THE default
+        # project" (singular article) was wrong for each — and clashed with the
+        # UI's own vocabulary, which badges these rows "Built-in". Both guards
+        # must name the concept the flag actually means, for every protected
+        # project, and the word "default" must not resurface in either message
+        # (these strings travel verbatim to the HTTP 400 the dashboard shows).
+        store.ensure_defaults()
+        for name in BUILTIN_PROJECTS:
+            p = store.get_project_by_name(name)
+            with pytest.raises(ValueError) as del_err:
+                store.delete_project(p.id)
+            assert f"built-in project '{name}' cannot be deleted" in str(del_err.value)
+            assert "default" not in str(del_err.value)
+            with pytest.raises(ValueError) as ren_err:
+                store.update_project(p.id, name="Something Else")
+            assert f"built-in project '{name}' cannot be renamed" in str(ren_err.value)
+            assert "default" not in str(ren_err.value)
 
     def test_default_project_rename_refused_and_no_duplicate(self, store):
         # Renaming a default is refused (its identity is its name), and the refusal must
