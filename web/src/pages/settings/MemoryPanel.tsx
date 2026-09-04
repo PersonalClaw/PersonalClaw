@@ -107,7 +107,7 @@ export function MemoryPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'set
             // the model is worse than announcing nothing (the ux-689 lesson, one cycle later).
             <button key={t.id} type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1}
               onClick={() => setTab(t.id)}
-              className="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-[0.8125rem] transition-colors"
+              data-type="body-s" className="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 transition-colors"
               // 🔴 ACCENT TEXT ON THE CANVAS NEEDS THE EMPHASIS SHADE. Measured at 4.37:1 (need 4.5) by axe and
               //    ux-audit in light: `--color-primary` on `--color-canvas` (#c8452e on #f0f4f8). The scheme rail
               //    guaranteed accent text against **white**, and passes there (4.83) — but this sits on the canvas,
@@ -580,7 +580,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
         {addMode ? (
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
             <div className="flex items-center justify-between">
-              <span className="text-on-surface text-[0.8125rem] font-medium">{ADD_MODE_TITLE[addMode]}</span>
+              <span data-type="label-s" className="text-on-surface">{ADD_MODE_TITLE[addMode]}</span>
               <button type="button" onClick={() => setAddMode(null)} className="text-on-surface-low text-[0.75rem] hover:text-on-surface">Cancel</button>
             </div>
             {addMode === 'fact' && <AddSemanticForm onDone={(created) => { setAddMode(null); if (created) reloadAll() }} />}
@@ -594,7 +594,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
           <div className="grid flex-1 place-items-center p-6 text-center">
             <div className="text-on-surface-low">
               <Eye size={22} className="mx-auto mb-2 opacity-50" />
-              <p className="text-[0.8125rem]">Select a memory to inspect it.</p>
+              <p data-type="body-s">Select a memory to inspect it.</p>
               <p className="mt-1 text-[0.75rem]">Facts &amp; lessons light up their neighbourhood in the graph.</p>
             </div>
           </div>
@@ -624,7 +624,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-outline-variant/30 px-3 py-2.5">
         <Icon size={14} className="shrink-0 text-primary" />
-        <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.8125rem]">{item.title}</span>
+        <span data-type="body-s" className="min-w-0 flex-1 truncate font-mono text-on-surface">{item.title}</span>
         {/* Investigate (plan 60): "why do you believe this?" for a lesson (its
             provenance + supersession chain), "is this still true?" for a record.
             Docs are editable markdown, not stored memories — nothing to resolve. */}
@@ -640,7 +640,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {item.kind === 'fact' && item.fact && (
-          <div className="flex flex-col gap-3 text-[0.8125rem]">
+          <div data-type="body-s" className="flex flex-col gap-3">
             <div>
               <Eyebrow className="mb-1">Value</Eyebrow>
               <pre className="whitespace-pre-wrap rounded-lg bg-surface-high px-3 py-2 text-on-surface text-[0.75rem]">{readValue(item.fact.value_json)}</pre>
@@ -663,7 +663,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
           </div>
         )}
         {item.kind === 'episodic' && item.episodic && (
-          <div className="flex flex-col gap-3 text-[0.8125rem]">
+          <div data-type="body-s" className="flex flex-col gap-3">
             <p className="leading-snug text-on-surface">{item.episodic.text}</p>
             <StudioMeta pairs={[
               ['When', item.episodic.created_at ? fmtDate(item.episodic.created_at) : '—'],
@@ -672,7 +672,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
           </div>
         )}
         {item.kind === 'lesson' && item.lesson && (
-          <div className="flex flex-col gap-3 text-[0.8125rem]">
+          <div data-type="body-s" className="flex flex-col gap-3">
             <p className="leading-snug text-on-surface">{item.lesson.rule}</p>
             {/* The evidence behind the standing (WF2LEA-15). The server's own
                 `confidence_reason` sentence is rendered verbatim: it is composed from
@@ -698,7 +698,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
           </div>
         )}
         {item.kind === 'entity' && item.entity && (
-          <div className="flex flex-col gap-3 text-[0.8125rem]">
+          <div data-type="body-s" className="flex flex-col gap-3">
             <StudioMeta pairs={[
               ['Type', item.entity.entity_type],
               ['Also known as', item.entity.aliases.length ? item.entity.aliases.join(', ') : '—'],
@@ -812,7 +812,7 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') }
     setBusy(false)
   }
-  if (content === null) return <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]"><Loader2 size={14} className="animate-spin" /> Loading…</div>
+  if (content === null) return <div data-type="body-s" className="flex items-center gap-2 text-on-surface-low"><Loader2 size={14} className="animate-spin" /> Loading…</div>
   return (
     <div className="flex flex-col gap-2">
       <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={16} spellCheck={false}
@@ -983,7 +983,7 @@ function InspectTab() {
   }
   return (
     <div>
-      <p className="mb-3 text-on-surface-low text-[0.8125rem]">Preview the memory context that would be injected into a prompt for a given query.</p>
+      <p data-type="body-s" className="mb-3 text-on-surface-low">Preview the memory context that would be injected into a prompt for a given query.</p>
       <div className="mb-3 flex items-center gap-2">
         <div className="flex-1">
           <TextInput value={q} onChange={setQ} onKeyDown={(e) => { if (e.key === 'Enter') run() }}
@@ -1030,7 +1030,7 @@ function RecallTab() {
   }
   return (
     <div>
-      <p className="mb-3 text-on-surface-low text-[0.8125rem]">Ask your memory a question — a ranked deep recall across every stored fact, lesson, and episode (records the recall signal).</p>
+      <p data-type="body-s" className="mb-3 text-on-surface-low">Ask your memory a question — a ranked deep recall across every stored fact, lesson, and episode (records the recall signal).</p>
       <div className="mb-3 flex items-center gap-2">
         <div className="flex-1">
           <TextInput value={q} onChange={setQ} onKeyDown={(e) => { if (e.key === 'Enter') run() }}
@@ -1095,12 +1095,12 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
         )}
         <div className="mt-3 flex flex-col gap-1.5">
           {!lint || lint.flags.length === 0 ? (
-            <p className="text-on-surface-low text-[0.8125rem] italic">No issues flagged — memory is clean.</p>
+            <p data-type="body-s" className="text-on-surface-low italic">No issues flagged — memory is clean.</p>
           ) : lint.flags.map((f, i) => (
             <div key={i} className="flex items-start gap-2 rounded-lg bg-surface-container px-3 py-2">
               <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" />
               <div className="min-w-0">
-                <div className="text-on-surface text-[0.8125rem]"><Eyebrow as="span" className="rounded bg-surface-high px-1.5 py-0.5">{f.check.replace(/_/g, ' ')}</Eyebrow> <span className="font-mono">{f.key}</span></div>
+                <div data-type="body-s" className="text-on-surface"><Eyebrow as="span" className="rounded bg-surface-high px-1.5 py-0.5">{f.check.replace(/_/g, ' ')}</Eyebrow> <span className="font-mono">{f.key}</span></div>
                 <div className="text-on-surface-low text-[0.75rem]">{f.detail}</div>
               </div>
             </div>
@@ -1166,12 +1166,12 @@ function VolunteerPrecisionSection() {
   return (
     <Section title="Volunteered memory" hint="How often memory the assistant offered on its own actually got used afterwards.">
       {!data.enabled && (
-        <p className="mb-2 text-on-surface-low text-[0.8125rem]">
+        <p data-type="body-s" className="mb-2 text-on-surface-low">
           Volunteering is off. These are the numbers from when it was on.
         </p>
       )}
       {data.overall.n === 0 ? (
-        <p className="text-on-surface-low text-[0.8125rem]">
+        <p data-type="body-s" className="text-on-surface-low">
           Nothing volunteered yet. Mention a person, project or tool the entity graph knows and it'll start offering related memory.
         </p>
       ) : (
@@ -1283,7 +1283,7 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
   if (!data.enabled) {
     return (
       <Section title="Entity graph" hint="Off — memory recall falls back to search alone.">
-        <p className="text-on-surface-low text-[0.8125rem]">
+        <p data-type="body-s" className="text-on-surface-low">
           Turn on <span className="text-on-surface-var">Entity graph</span> in Settings to link
           memories to the people, projects and tools they mention.
         </p>
@@ -1396,7 +1396,7 @@ function SlotEditor({ slot, onChanged }: { slot: MemorySlot; onChanged: () => vo
   }
 
   return (
-    <div className="flex flex-col gap-3 text-[0.8125rem]">
+    <div data-type="body-s" className="flex flex-col gap-3">
       <p className="text-on-surface-low text-[0.75rem]">{slot.description || 'A register injected every session.'}</p>
       <StudioMeta pairs={[
         ['Budget', `${slot.live_chars} / ${slot.cap_chars} characters`],
@@ -1527,7 +1527,7 @@ function ProposalQueue({ proposals, onDecided }: { proposals: MemoryEntityPropos
       {proposals.map((p) => (
         <div key={p.name} className="flex flex-col gap-1.5 rounded-lg bg-surface-high px-2.5 py-2">
           <div className="flex items-baseline gap-2">
-            <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{p.name}</span>
+            <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{p.name}</span>
             <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{p.mention_count}×</span>
           </div>
           <Select value={types[p.name] ?? 'person'} onChange={(v) => setTypes((t) => ({ ...t, [p.name]: v as MemoryEntityType }))}
@@ -1585,7 +1585,7 @@ function MemoryMaintenance({ stats, onChanged }: { stats: MemoryStats | null | u
         </Button>
       </div>
       {stats && !stats.has_legacy_memory && <p className="mt-1.5 text-on-surface-low text-[0.75rem]">No legacy markdown memory to migrate.</p>}
-      {msg && <p className="mt-2 text-on-surface-var text-[0.8125rem]">{msg}</p>}
+      {msg && <p data-type="body-s" className="mt-2 text-on-surface-var">{msg}</p>}
     </Section>
   )
 }
@@ -1699,7 +1699,7 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
           <Button variant="secondary" size="sm" onClick={consolidate} disabled={consolidating}>
             {consolidating ? <><Loader2 size={15} className="animate-spin" /> Consolidating…</> : 'Consolidate now'}
           </Button>
-          {consolidateMsg && <span className="text-on-surface-low text-[0.8125rem]">{consolidateMsg}</span>}
+          {consolidateMsg && <span data-type="body-s" className="text-on-surface-low">{consolidateMsg}</span>}
         </div>
       </Section>
 
@@ -1733,7 +1733,7 @@ function DailyDigestSection() {
         <Button variant="secondary" size="sm" onClick={() => load(true)} disabled={busy}>
           {busy ? <><Loader2 size={15} className="animate-spin" /> Building…</> : 'Build / refresh'}
         </Button>
-        {digests && <span className="text-on-surface-low text-[0.8125rem]">{digests.length} digest{digests.length === 1 ? '' : 's'}</span>}
+        {digests && <span data-type="body-s" className="text-on-surface-low">{digests.length} digest{digests.length === 1 ? '' : 's'}</span>}
       </div>
       {!digests ? <ListSkeleton rows={3} what="daily digests" /> : digests.length === 0 ? (
         // Same reasoning as the entity graph: "Build / refresh" is directly above and
@@ -1756,7 +1756,7 @@ function DigestRow({ digest }: { digest: DailyDigest }) {
     <div className="rounded-lg bg-surface-container px-3 py-2">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="w-full text-left">
         <div className="flex items-center gap-2">
-          <span className="font-mono text-on-surface text-[0.8125rem]">{digest.day}</span>
+          <span data-type="body-s" className="font-mono text-on-surface">{digest.day}</span>
           <span className="text-on-surface-low text-[0.75rem]">daily digest</span>
         </div>
         <div className={`mt-0.5 text-on-surface-low text-[0.75rem] ${open ? 'whitespace-pre-wrap' : 'truncate'}`}>{digest.text}</div>
@@ -1845,7 +1845,7 @@ function VaultSection({ settings, onMode, onPath, saved }: {
         <Button variant="secondary" size="sm" onClick={sync} disabled={syncing}>
           {syncing ? <><Loader2 size={15} className="animate-spin" /> Syncing…</> : 'Sync now'}
         </Button>
-        {msg && <span className="text-on-surface-low text-[0.8125rem]">{msg}</span>}
+        {msg && <span data-type="body-s" className="text-on-surface-low">{msg}</span>}
       </div>
       <div className="mt-2"><SavedToast show={saved} /></div>
     </Section>
