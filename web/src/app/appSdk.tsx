@@ -24,6 +24,14 @@ import * as React from 'react'
 import * as ReactDOM from 'react-dom'
 import * as ReactDOMClient from 'react-dom/client'
 import { useEffect, useRef, useState, createContext, useContext, createElement } from 'react'
+import {
+  AlertTriangle, ArrowLeft, ArrowRight, BookOpen, Calendar, Check, CheckCircle2,
+  ChevronDown, ChevronRight, Clock, Download, ExternalLink, Eye, FileText,
+  FolderKanban, GitBranch, Inbox, Lightbulb, Link2, ListChecks, Loader2, Lock,
+  MessageSquare, Mic, NotebookPen, Pencil, Play, Plus, Presentation, Puzzle,
+  RefreshCw, RotateCcw, Search, Send, ShieldCheck, Sparkles, SquareCheck, Star,
+  Target, Trash2, Users, Video, X, Zap,
+} from 'lucide-react'
 import { useInvestigate } from '../lib/investigate'
 // The host's own design-system primitives, re-exported to apps under
 // `@personalclaw/app-sdk/ui` (APE-11). Imported by identity — an app page built from
@@ -547,6 +555,31 @@ export function resolvableAppSpecs(app?: Pick<AppContext, 'uiCapabilities'>): st
  *  are on the base module too) so "make this page look native" is one import. */
 const APP_SDK_UI = { Button, Surface, useTheme, readAppTheme }
 
+/** The `lucide-react` module a contributed bundle resolves — the promise
+ *  {@link resolvableAppSpecs} has always made and the map never kept: the spec was
+ *  listed in the ungated head, but with no entry here `appModuleShimUrl` returned
+ *  null, the bare specifier survived into the blob module, and the app's mount
+ *  THREW. growth's vite config documents hitting exactly that and leaving lucide
+ *  "external and unused" — the ecosystem is steered to emoji glyphs the host's own
+ *  design language forbids.
+ *
+ *  A CURATED vocabulary, not the whole namespace: the host page bundle tree-shakes
+ *  lucide to the icons it imports, so vending `import * as lucide` here would drag
+ *  ~1,500 modules into the shell bundle for anyone's hypothetical use. The set below
+ *  is the host's own measured vocabulary (every icon the host UI imports at 8+ sites)
+ *  plus the domain concepts the shipped apps mark with emoji today (mic / video /
+ *  notes / slides / calendar / link / git / target). An app needing an icon outside
+ *  the set asks the host to grow it — one line here — which is the same bargain the
+ *  `/ui` module strikes: shared identity over unbounded surface. */
+const APP_SDK_LUCIDE = {
+  AlertTriangle, ArrowLeft, ArrowRight, BookOpen, Calendar, Check, CheckCircle2,
+  ChevronDown, ChevronRight, Clock, Download, ExternalLink, Eye, FileText,
+  FolderKanban, GitBranch, Inbox, Lightbulb, Link2, ListChecks, Loader2, Lock,
+  MessageSquare, Mic, NotebookPen, Pencil, Play, Plus, Presentation, Puzzle,
+  RefreshCw, RotateCcw, Search, Send, ShieldCheck, Sparkles, SquareCheck, Star,
+  Target, Trash2, Users, Video, X, Zap,
+}
+
 /** The `@personalclaw/app-sdk/genui` module — see {@link GenerativeWidget}. */
 const APP_SDK_GENUI = { GenerativeWidget, registerComponent: registerAppGenUiComponent, unregisterComponents: unregisterAppGenUiComponents }
 
@@ -590,6 +623,9 @@ export function installAppSdk(): void {
     // specifiers a bundle's imports get REWRITTEN to — see resolvableAppSpecs.
     '@personalclaw/app-sdk/ui': APP_SDK_UI,
     '@personalclaw/app-sdk/genui': APP_SDK_GENUI,
+    // The ungated head's third member (react, the SDK, lucide) — see APP_SDK_LUCIDE
+    // for why this is a curated vocabulary rather than the whole namespace.
+    'lucide-react': APP_SDK_LUCIDE,
   }
 }
 
