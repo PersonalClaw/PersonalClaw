@@ -38,6 +38,8 @@ export function CompanionPanel() {
     })),
     { persist: true },
   )
+  // Same key as #/companion's reader: one collection, one namespace (splitCollectionBusts).
+  const { data: pushStatus } = useQuery('companion:push', () => api.pushStatus())
   const { data: mobileData } = useQuery('settings:companion:mobile', () =>
     api.personalclawConfig().then((c) => (c.mobile ?? {}) as CompanionCfg),
     { persist: true },
@@ -219,6 +221,22 @@ export function CompanionPanel() {
               ]}
             />
           </Field>
+          {/* Only shown for the backend that reads it — same rule as the ntfy field
+              below. Web push cannot deliver anything until the gateway holds a VAPID
+              keypair, and a selected backend that silently sends nothing is the
+              worst state: this row says the readiness OUT LOUD (words + tone, like
+              Install & offline), with the one command that fixes it. */}
+          {String(mobileCfg?.push_backend ?? 'webpush') === 'webpush' && pushStatus ? (
+            <Row label="Keypair"
+              hint={pushStatus.vapid_ready
+                ? 'Ready — subscribed devices can receive pushes.'
+                : 'Missing — run `personalclaw push init` on the gateway host, then reload. Until then, Web push sends nothing.'}>
+              <span className={`inline-flex items-center gap-1.5 text-[0.8125rem] ${pushStatus.vapid_ready ? 'text-ok' : 'text-warn'}`}>
+                {pushStatus.vapid_ready ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
+                {pushStatus.vapid_ready ? 'Ready' : 'Not set up'}
+              </span>
+            </Row>
+          ) : null}
           {/* Only shown for the backend that reads it. A URL field rendered beside "Web
               push" would look like a setting that does something, and it does not. */}
           {String(mobileCfg?.push_backend ?? '') === 'ntfy' ? (
