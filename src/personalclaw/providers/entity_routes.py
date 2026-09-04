@@ -294,6 +294,28 @@ async def handle_notifications_settings_put(request: web.Request) -> web.Respons
     for key in ("quiet_hours_start", "quiet_hours_end"):
         if key in known and _parse_hhmm(known[key]) is None:
             return web.json_response({"error": f"{key} must be a 24-hour HH:MM time"}, status=400)
+    # Same doctrine, one case further: a PARSEABLE but zero-length window
+    # (start == end) is documented by _in_quiet_window as never matching, so
+    # accepting it produces the exact end state the comment above warns about —
+    # quiet hours enabled in the UI, dead at delivery — with a Saved ✓ on top.
+    # The check runs on the EFFECTIVE pair (the write merged over what is
+    # stored), so a single-key update cannot sneak a degenerate window past it,
+    # and compares parsed minutes so "8:00" vs "08:00" cannot dodge it.
+    if "quiet_hours_start" in known or "quiet_hours_end" in known:
+        stored = load_notifications_settings()
+        eff_start = str(known.get("quiet_hours_start", stored.get("quiet_hours_start")) or "")
+        eff_end = str(known.get("quiet_hours_end", stored.get("quiet_hours_end")) or "")
+        s_min, e_min = _parse_hhmm(eff_start), _parse_hhmm(eff_end)
+        if s_min is not None and s_min == e_min:
+            return web.json_response(
+                {
+                    "error": (
+                        "quiet hours start and end must differ — a zero-length window "
+                        "never suppresses anything; for all-day quiet use 00:00 to 23:59"
+                    )
+                },
+                status=400,
+            )
     current = load_notifications_settings()
     current.update(known)
     _save_entity_settings("notifications", current)
