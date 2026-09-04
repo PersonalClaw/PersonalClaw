@@ -102,13 +102,16 @@ describe('the inbox row names itself by identity, not by kind', () => {
   it('collapses the message whitespace rather than taking its first line', () => {
     // 🪤 The distinction that made 34 rows distinct: an inbox subject wraps, so `firstLine` cut it at
     // "Refine a skill". If someone swaps this back to firstLine, the names collapse again.
-    expect(code).toMatch(/\(it\.message \?\? ''\)\.replace\(\/\\s\+\/g, ' '\)\]\)/)
+    // The transform is previewText (issue 618), which collapses whitespace AND strips markdown
+    // marks — strictly stronger than the bare collapse this pinned before; previewText.test.ts
+    // owns the collapse guarantee itself.
+    expect(code).toMatch(/previewText\(it\.message\)\]\)/)
     expect(code, 'firstLine is the wrong transform for this data').not.toMatch(/firstLine\(it\.message/)
   })
 
   it('the kind label is still the FIRST part, so the row still says what sort of thing it is', () => {
     // The kind was not wrong, only insufficient: it leads, the identity follows.
-    expect(code).toMatch(/: km\.label, \(it\.message/)
+    expect(code).toMatch(/: km\.label, previewText\(it\.message/)
   })
 })
 

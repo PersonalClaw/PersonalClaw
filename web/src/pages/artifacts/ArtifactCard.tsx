@@ -66,7 +66,11 @@ function previewsAsIframe(ctype: ReturnType<typeof resolveContentType>): boolean
 
 function ExcerptPreview({ content }: { content: string }) {
   return (
-    <pre className="h-full w-full overflow-hidden whitespace-pre-wrap break-words px-3 py-2 font-mono text-[0.625rem] leading-relaxed text-on-surface-low">
+    // aria-hidden: this is a decorative THUMBNAIL of the content, not the content —
+    // the TileButton around it already carries the artifact's name as its aria-label.
+    // Without it, AT content-walk reads up to 600 chars of raw markdown (`##`, `**`)
+    // per card as if it were the card (issue 631).
+    <pre aria-hidden="true" className="h-full w-full overflow-hidden whitespace-pre-wrap break-words px-3 py-2 font-mono text-[0.625rem] leading-relaxed text-on-surface-low">
       {content.slice(0, 600)}
     </pre>
   )
