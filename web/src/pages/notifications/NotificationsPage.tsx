@@ -16,7 +16,7 @@ import { RowHitTarget } from '../../ui/RowHitTarget'
 import { UnreadRail } from './UnreadRail'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { spring } from '../../design/motion'
-import { confirm } from '../../ui/dialog'
+import { confirm, confirmDelete } from '../../ui/dialog'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { rowSubject } from '../../lib/rowSubject'
 import { useQuery, invalidateKeys } from '../../lib/data'
@@ -108,6 +108,11 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
     load()
   }
   async function remove(n: NotificationItem) {
+    // #628: one row's delete is as irreversible as Clear all four lines down —
+    // the entry leaves disk and messaging.py has no restore. Every per-row
+    // delete in the app gates on confirmDelete; this was the one that did not.
+    // The subject line names WHICH notification, since rows can look alike.
+    if (!(await confirmDelete('notification', n.title || undefined))) return
     await api.deleteNotification(n.ts).catch((e) => notify(`Couldn't delete this notification: ${String((e as Error)?.message || e)}`, 'error'))
     if (openTs === n.ts) setOpenTs("")
     load()
