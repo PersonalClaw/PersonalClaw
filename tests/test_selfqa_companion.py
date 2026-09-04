@@ -865,13 +865,22 @@ class TestClauseThreeScenarioDrivesTheUI:
         assert "hard-reload" in prompt
 
     def test_the_proof_gate_is_engine_enforced(self):
-        """`required_artifacts` is checked by the engine, so the proof cannot be self-reported."""
-        cfg = self._nodes(self._spec())["evidence"]["config"]
-        assert cfg["required_artifacts"] == [
-            "screenshots/*.png",
-            "recording.mp4",
-            "manifest.json",
-        ]
+        """The proof cannot be self-reported. The evidence node is a deterministic ACTION
+        bound to the `selfqa-evidence` provider — code that hashes the real bytes and
+        refuses completion through `check_required_kinds` (the KIND-level successor of the
+        file-glob `required_artifacts` gate) — never an LLM stage grading its own bundle.
+        The refusal behaviour itself is pinned in `test_selfqa_evidence.py`; this pins the
+        TEMPLATE wiring and what the default gate requires."""
+        from personalclaw.selfqa import evidence as ev
+
+        node = self._nodes(self._spec())["evidence"]
+        assert node["kind"] == "action", "the proof seam regressed to a self-reporting stage"
+        assert node["config"]["provider"] == "selfqa-evidence"
+        assert ev.DEFAULT_REQUIRED_KINDS == (
+            ev.KIND_SCREENSHOT,
+            ev.KIND_RECORDING,
+            ev.KIND_MANIFEST,
+        )
 
     def test_ffmpeg_is_a_preflight_requirement_not_a_late_surprise(self):
         """Declared, so a run blocks cleanly at start instead of degrading at the evidence node."""

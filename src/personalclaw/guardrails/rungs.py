@@ -192,6 +192,18 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         ceiling=RUNG_AUTONOMOUS,
         providers=("selfqa-triage",),
     ),
+    # SELF-VERIFICATION §3.3 (SV-10). Its own key rather than sharing `action.create_task`'s: its
+    # effect is registering an Artifact and — on a confirmed failure — opening a LOCAL git branch
+    # (never pushed), which is a different governed behavior from filing a task row. Both effects
+    # stay on this machine and are visible where the user already looks (the artifacts library, a
+    # `git branch -a`), and the branch is opened with no checkout and no push, so autonomous at
+    # both ends is honest: there is nothing external to reverse.
+    ActionTypeSpec(
+        key="action.selfqa_evidence",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("selfqa-evidence",),
+    ),
     # Local writes: the effect stays on this machine, where the user can see and undo it.
     ActionTypeSpec(
         key="action.create_task",

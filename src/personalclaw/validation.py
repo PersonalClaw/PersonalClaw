@@ -828,6 +828,12 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # no task provider.
         "selfqa-triage",
         "selfqa-file-finding",
+        # SELF-VERIFICATION §3.3 (SV-10). The evidence-sealing step: it derives the contact-sheet
+        # and GIF, computes the SHA256 manifest, registers the bundle as one Artifact, and runs
+        # the required-kinds gate — following the same §5 rule as the two above (a new action
+        # provider MUST appear here or hook create/update rejects it), and still not the `qa-run`
+        # provider §5 forbids.
+        "selfqa-evidence",
         # PROACTIVE-ASSISTANT §1.1-§1.5 (PA-2): the triage digest. Added here in the SAME commit
         # that registers it in `action_providers.registry` — a provider in one set but not the
         # other is the mismatch that makes a trigger save and then fail to run.

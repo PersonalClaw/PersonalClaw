@@ -1031,6 +1031,7 @@ async def dispatch_action(
     run_id: str = "",
     project_id: str = "",
     instance_path: str = "",
+    cwd: str = "",
 ) -> NodeResult:
     """Dispatch to an action provider — zero tokens.
 
@@ -1089,6 +1090,13 @@ async def dispatch_action(
     # the written item unscoped — global, as it was before.
     if project_id:
         payload.setdefault("project_id", project_id)
+    # The run workspace, for a provider that reads or writes the run's own files. The artifact
+    # gate at this same dispatch seam already receives `cwd`; an action that PRODUCES those
+    # artifacts (selfqa-evidence seals a bundle out of the workspace the execute stage filled)
+    # needs the same path, and resolving it from `run_id` would couple a provider to the run store
+    # for a value the engine is already holding.
+    if cwd:
+        payload.setdefault("workspace", cwd)
     context = ActionContext(
         event="workflow_node", context=str(cfg.get("context", "") or ""), payload=payload
     )
@@ -2592,6 +2600,7 @@ async def _dispatch_inner(
             run_id=run_id,
             project_id=project_id,
             instance_path=instance_path,
+            cwd=cwd,
         )
     if kind == NodeKind.WAIT:
         return await dispatch_wait(node, ctx, now=clock)

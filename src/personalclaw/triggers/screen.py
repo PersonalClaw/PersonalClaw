@@ -476,6 +476,12 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # unattended "puts something in front of the user" write that puts `notification-digest`
         # on this side — so the pair lands here, on the stricter of the two classifications.
         "selfqa-file-finding",
+        # SV-10: registers an evidence Artifact AND, on a confirmed failure with the flag on,
+        # opens a LOCAL `pclaw/selfqa-<sha8>` branch (never pushed). `create-task` sits in the
+        # read-only table because a task row has no external effect, but writing an artifact and
+        # creating a branch are unattended local writes, so this lands on the stricter side beside
+        # `selfqa-file-finding`.
+        "selfqa-evidence",
         # PA-2: the triage digest spends two background model calls and DELIVERS a notification,
         # unattended, on a cron, forever. It executes no proposal — that is PA-3's `inbox-op`
         # under a budget floor — but "proposes nothing and only notifies" is still the same

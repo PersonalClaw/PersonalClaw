@@ -346,6 +346,29 @@ Authoring conventions, the lint that enforces them, and the macro/block
 libraries are documented in
 [`docs/guides/workflow-templates.md`](../guides/workflow-templates.md).
 
+### The `self-qa` template's evidence node (SV-10)
+
+The bundled `self-qa` template's `evidence` node is an **`action`** node backed by
+`selfqa-evidence`, not an LLM `stage`: sealing a proof bundle is deterministic work a model
+must not be trusted to fake ("compute the digests; do not estimate them"). Two new modules
+under `src/personalclaw/selfqa/` carry that work, consumed by the
+`action_providers/selfqa_evidence_provider.py` provider:
+
+| Module | Job |
+|---|---|
+| `selfqa/evidence.py` | the evidence bundle: a cached ffmpeg availability probe (modelled on the docker sandbox probe — `None` "never yet" sentinel, short TTL); contact-sheet + GIF derived via ffmpeg as a local subprocess with typed graceful degradation (a `Derivation` whose `degraded_reason` the manifest records, never a crash); a schema-versioned SHA256 `Manifest` (per-file `{kind,name,size,sha256}` computed from the bytes on disk); `check_required_kinds`, the bundle-level completion gate that names the missing kinds; and `register_bundle`, which composes the bundle into a single Artifact (manifest as content, files stored content-addressed under the artifact dir) |
+| `selfqa/fix_branch.py` | `create_fix_branch` opens `pclaw/selfqa-<sha8>` off the failing commit only when `fix_branch_enabled`, with no checkout and no push — the git runner mirrors `loop/worktree.py`'s build-ceiling discipline |
+
+The completion gate is a kind-level, deterministic counterpart to the engine's file-glob
+`required_artifacts` gate (`verify.check_required_artifacts`, WF2-R3): where that one refuses a
+node that did not write its declared *files*, `check_required_kinds` — run by the `selfqa-evidence`
+provider, not declared on the node — refuses a run whose bundle is missing a required *kind* and
+names it. The default required kinds are the ffmpeg-independent proof (screenshot, recording,
+manifest), so a degraded (ffmpeg-less) bundle is still complete and only a genuinely missing proof
+blocks; the provider returns a failed action (naming the missing kinds) to mark the run incomplete.
+The provider reads its bundle from the run workspace, threaded into the action payload as
+`workspace` at the dispatch seam (the same path the artifact gate already receives).
+
 ## The judge contract: self-approval is impossible, not discouraged
 
 A loop that judges its own work converges on whatever the worker finds easiest to
