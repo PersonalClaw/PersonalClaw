@@ -142,7 +142,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
               <>
                 {/* Native */}
                 {native && (
-                  <GroupSection title="Native" icon={Users} tone="var(--color-primary)" subtitle="Your PersonalClaw agent definitions — fully editable." count={native.agents.length}>
+                  <GroupSection title="Native" icon={Users} tone="var(--color-primary)" subtitle="Your PersonalClaw agent definitions — fully editable." count={shownNative.length}>
                     {shownNative.length === 0 ? (
                       // The group is filtered by `match(q)` first, so without the `n` branch a
                       // mistyped search reported "No native agents" — and offered to create one —
@@ -165,10 +165,12 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
                   const pm = providerMeta(g.providerId)
                   const items = g.agents.filter(agentMatch)
                   return (
-                    <GroupSection key={g.providerId} title={pm.label} icon={pm.icon} tone={pm.tone} count={g.agents.length}
+                    <GroupSection key={g.providerId} title={pm.label} icon={pm.icon} tone={pm.tone} count={items.length}
                       subtitle={g.ready ? 'Provided by the runtime — read-only.' : `Unavailable — ${g.detail || 'runtime not ready'}`} ready={g.ready}>
                       {!g.ready ? null : items.length === 0 ? (
-                        <p className="text-on-surface-low text-[0.8125rem]">No agents discovered.</p>
+                        // Same n-branch as the Native group: a search miss must not read as an
+                        // empty catalog — the count above it is filtered too, so they agree (#667).
+                        <p className="text-on-surface-low text-[0.8125rem]">{n ? 'No matching agents.' : 'No agents discovered.'}</p>
                       ) : (
                         <div className="flex flex-col gap-s">
                           {items.map((a, i) => (
