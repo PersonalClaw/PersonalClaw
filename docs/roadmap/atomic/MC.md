@@ -17,7 +17,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `MC-5` | ✅ | S3 push-to-approval milestone 1: web push + ntfy adapter + deep link to the approval | `MC-3`, `MC-4`, `MC-2`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:rules-engine push target must exist` | VAPID keypair generated via `personalclaw push init` (keys in credential store), per-device subscription endpoint, and a content-free {kind,item_id} sender are wired as plan-42's `push` target; ntfy topic-URL adapter is an alternative backend (config mobile.push_backend/ntfy_topic_url); a locked-phone push → tap opens #/companion?approval=<id> with the correct card focused → approve → the paused run proceeds, <30s on cell data (timed); payload inspection shows ids only. |
 | `MC-6` | ✅ | S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping | `MC-3`, `MC-4`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:per-(source,kind) sound/badge rules field + inbox resolve API` | Companion adds Running-loops (pause/nudge/stop via loop_routes), tasks, inbox-resolve, and recent-notifications sections working per the original S2 done-whens; the SW maps a push payload's `kind` to per-kind sound/badge using plan-42's rules field (a distinct sound fires for a kind configured in the rules UI). |
 | `MC-7` | ✅ | S4 Capacitor shell wrapping the served companion route | `MC-3`, `MC-2` | A Capacitor shell (new mobile/ dir; repo-location decision recorded) wraps the served companion URL with config for gateway URL + device session and native safe-areas, no forked UI; builds for iOS+Android and renders the live companion. |
-| `MC-8` | 🟡 | S4 QR pairing screen (renders COMPANION-APPS pairing routes) | `MC-7`, `MC-2`, `EXT:COMPANION-APPS:unified pairing routes /api/devices/pair/start|complete` | Settings > Devices > Pair phone renders a QR of {pairing_url, one-time code}; the shell scans and exchanges it for a device session end to end; code single-use (TTL 5min) verified. Pairing routes are consumed from plan 54, not defined here. |
+| `MC-8` | ✅ | S4 QR pairing screen (renders COMPANION-APPS pairing routes) | `MC-7`, `MC-2`, `EXT:COMPANION-APPS:unified pairing routes /api/devices/pair/start|complete` | Settings > Devices > Pair phone renders a QR of {pairing_url, one-time code}; the shell scans and exchanges it for a device session end to end; code single-use (TTL 5min) verified. Pairing routes are consumed from plan 54, not defined here. |
 | `MC-9` | ⬜ | S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring | `MC-7`, `MC-5` | ntfy-app integration works as the documented default; the optional stateless open-source push-relay (org repo) plus APNs/FCM wiring in the shell also delivers; an audit fixture confirms relay logs contain no content (ids-only pings). |
 | `MC-10` | ⬜ | S4 store packaging + mobile-release docs | `MC-7`, `MC-9` | Icons/splash from brand assets, truthful no-data-collection privacy declarations, and docs/maintainers/mobile-release.md produce installable TestFlight/internal-track builds via the documented steps (owner performs the actual store submissions). |
 
@@ -182,7 +182,15 @@ Sessions 4-6 Wrapper tier — T4.1 Capacitor shell
 
 ### `MC-8` — S4 QR pairing screen (renders COMPANION-APPS pairing routes)
 
-**Status:** todo
+**Status:** done — 2026-09-04. The pairing screen is code-complete on main: the in-repo QR
+model-2 encoder `web/src/lib/qr.ts` (its header names MC-8 as the atom that made the
+build-vs-install call) is RS-syndrome-verified by `web/src/lib/qr.test.ts`;
+`web/src/pages/settings/PairingQr.tsx` renders the {pairing_url, one-time code} QR inside
+Settings > Devices (`DevicesPanel.tsx`), covered by `devicesPanel.test.tsx`; the pairing
+routes are consumed from plan 54 (`/api/devices/pair/start|complete` in
+`dashboard/server.py`), which owns the single-use + TTL contract. OWNER-RESIDUAL (not
+code): the physical phone-scan end-to-end pass — the same device-toolchain gate class as
+MC-7's.
 
 Sessions 4-6 — T4.2 QR pairing + C4 (SUPERSEDED — renders plan-54 §C2 /api/devices/pair/* rather than defining them)
 

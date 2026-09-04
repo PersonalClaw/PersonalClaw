@@ -429,3 +429,13 @@ apps/voice-clone-tts sidecar with resumable weights, and prove an LMM-V2 through
 Deps: `MI-2` (the atom owning both halves — core capability surface PR #2351 merged; apps sidecar
 PR PersonalClawApps#60 still open), so `MI-6` is not startable until MI-2 completes. `MI-2` itself
 is deliberately NOT flipped — the engine spike is its remainder and now lives in `MI-6`.
+
+### `MI-6` — Voice-clone engine spike: OmniVoice chosen, real zero-shot inference + through-clone selftest — DONE (2026-09-04)
+
+Shipped §2.2's remainder across three PRs. Core #2436 ran the OmniVoice-vs-CosyVoice bake-off on
+fixtures — OmniVoice chosen, the loser's rejection notes committed to the plan dir.
+PersonalClawApps #70 landed the runner: `apps/voice-clone-tts` performs real zero-shot cloning
+inference (not a stub) with a resumable weight download that survives an interrupted fetch. Core
+#2425 (merge 2ec168d00) closed the loop: the LMM-V2 selftest synthesizes a clone through a
+reference-audio fixture end to end, and a sidecar killed mid-inference leaves the gateway up with
+a typed crash reason. `MI-5` is the plan's last open atom.
