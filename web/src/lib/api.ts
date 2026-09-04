@@ -2786,7 +2786,7 @@ export interface KnowledgeStats { items: number; entities: number; relations: nu
 // classification + confidence + an optional drafted reply. Shape matches the
 // backend InboxItem dataclass (inbox.py).
 export type InboxClassification = 'needs_reply' | 'fyi' | 'noise'
-export type InboxConfidence = 'high' | 'needs_review' | 'escalate'
+export type InboxConfidence = 'high' | 'needs_review' | 'escalate' | 'user'
 // 'seen' is the read/unread boundary: surfaced to the user but not yet resolved.
 export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled' | 'filtered'
 // What kind of attention an item wants. 'message' is the default so every item written
