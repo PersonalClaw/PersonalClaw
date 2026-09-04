@@ -1514,15 +1514,19 @@ function ConfigModal({ name, onClose }: { name: string; onClose: () => void }) {
           : !cfg.hasSchema ? (
             <div data-type="body-s" className="text-on-surface-low">This app declares no configurable options.</div>
           ) : (
-            <AppConfigFields appName={name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} />
+            <AppConfigFields appName={name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} required={cfg.required} />
           )}
         {cfg.err && <div data-type="body-s" className="text-negative">{cfg.err}</div>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {/* Save stays out of reach until the config it would REPLACE has actually loaded — the
               footer sits outside the branch above, so this button was clickable during the load. */}
-          <Button variant="primary" disabled={cfg.busy || cfg.loading || !!cfg.error}
-            disabledReason={cfg.error ? 'The configuration failed to load' : cfg.loading ? 'Still loading the configuration' : undefined}
+          <Button variant="primary" disabled={cfg.busy || cfg.loading || !!cfg.error || cfg.missing.length > 0}
+            disabledReason={cfg.error ? 'The configuration failed to load'
+              : cfg.loading ? 'Still loading the configuration'
+              // #491: naming the LABELS is the fix — the old feedback was a server 400 quoting the
+              // schema key, which the user then had to map to a form row themselves.
+              : cfg.missing.length > 0 ? `Fill in ${cfg.missingLabels.join(', ')}` : undefined}
             onClick={() => cfg.save(onClose)}>Save</Button>
         </div>
       </div>
