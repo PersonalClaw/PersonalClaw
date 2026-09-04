@@ -1150,6 +1150,7 @@ async def start_dashboard(
     app.router.add_get("/api/voice/bindings", _vprof.api_voice_bindings_get)
     app.router.add_put("/api/voice/bindings", _vprof.api_voice_bindings_put)
     app.router.add_delete("/api/voice/bindings", _vprof.api_voice_bindings_delete)
+    app.router.add_post("/api/voice/migrate", _vprof.api_voice_migrate)
     app.router.add_get("/api/voice/resolve", _vprof.api_voice_resolve)
     app.router.add_get("/api/voice/profiles/{id}", _vprof.api_voice_profile_get)
     app.router.add_put("/api/voice/profiles/{id}", _vprof.api_voice_profile_update)
