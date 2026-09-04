@@ -790,6 +790,101 @@ def redact_credentials(text: str) -> tuple[str, list[str]]:
     return result, warnings
 
 
+# Every mask this module writes. One expression, because `restore_masked_spans` has to
+# recognise exactly what `redact_for_display` produces — a mask the inverse cannot see is a
+# mask that gets persisted over real content.
+_MASK_RE = re.compile(r"\[REDACTED:[^\]\n]*\]")
+
+
+def redact_for_display(text: str) -> str:
+    """The display mask, defined once: credentials then exfiltration URLs.
+
+    Read paths that hand content to a UI apply BOTH redactors, in this order. Naming the
+    composition here is what lets `restore_masked_spans` be a true inverse instead of a
+    second, drifting guess at what a mask looks like.
+    """
+    masked, _ = redact_credentials(text)
+    masked, _ = redact_exfiltration_urls(masked)
+    return masked
+
+
+def _mask_pairs(masked: str, stored: str) -> list[tuple[str, str]] | None:
+    """Pair each mask in `masked` with the text it replaced in `stored`.
+
+    Deterministic rather than fuzzy: the literal segments AROUND the masks are unchanged by
+    redaction, so walking them through `stored` in order isolates each masked span exactly.
+    Returns None when the walk cannot account for the whole string — the caller must then
+    refuse the write rather than guess (a wrong guess writes a secret into the wrong place).
+    """
+    literals = _MASK_RE.split(masked)
+    masks = _MASK_RE.findall(masked)
+    pairs: list[tuple[str, str]] = []
+    pos = 0
+    for i, mask in enumerate(masks):
+        prefix = literals[i]
+        if not stored.startswith(prefix, pos):
+            return None
+        pos += len(prefix)
+        following = literals[i + 1]
+        # The masked span runs up to where the next unchanged literal resumes; for a mask at
+        # the very end of the content, to the end of the stored text.
+        end = stored.find(following, pos) if following else len(stored)
+        if end < pos:
+            return None
+        pairs.append((mask, stored[pos:end]))
+        pos = end
+    if stored[pos:] != literals[-1]:
+        return None
+    return pairs
+
+
+def restore_masked_spans(submitted: str, stored: str) -> str | None:
+    """Put back any span the client is echoing as one of OUR OWN masks.
+
+    Redaction is a display safeguard, so an editor seeded from a redacted read sends the mask
+    back verbatim — and a write path with no inverse persists `[REDACTED: credential]` over the
+    real content, irreversibly, on an edit the user never made to that span. This is the
+    inverse: each mask in `submitted` is restored from the corresponding span of `stored`, in
+    order, so every OTHER edit in the same save still lands.
+
+    The mask is never lifted onto the wire — the plaintext only ever moves from the store back
+    into the store — so the read path keeps masking unconditionally and no endpoint has to
+    serve a secret to un-break editing.
+
+    A mask is treated as a PLACEHOLDER standing for the n-th hidden value, so it restores
+    wherever the user left it, even in a heavily rewritten body: keeping the marker means
+    "keep the value it stands for". Deleting the marker deletes the value — that is a real
+    instruction and is honoured. Two identical markers are therefore interchangeable: reordering
+    them swaps which span each value lands in, which is why the mask text names its KIND.
+
+    Returns the content to persist, or None when the stored value cannot be walked to recover
+    what each mask replaced; the caller must then refuse the write rather than guess, since the
+    alternative is persisting a mask over real content.
+    """
+    if not _MASK_RE.search(submitted):
+        return submitted  # nothing echoed back → an ordinary edit, unchanged
+    masked = redact_for_display(stored)
+    if masked == stored:
+        # Nothing in the STORED value is masked, so any mask-looking text in the submission is
+        # the user's own writing. Hands off.
+        return submitted
+    if submitted == masked:
+        return stored  # an untouched round-trip (e.g. a title-only edit) → keep the store as-is
+    pairs = _mask_pairs(masked, stored)
+    if pairs is None:
+        return None
+    pending: dict[str, list[str]] = {}
+    for mask, original in pairs:
+        pending.setdefault(mask, []).append(original)
+
+    def _take(m: "re.Match[str]") -> str:
+        queue = pending.get(m.group(0))
+        # A mask with no original left to give is text the user typed themselves — leave it.
+        return queue.pop(0) if queue else m.group(0)
+
+    return _MASK_RE.sub(_take, submitted)
+
+
 # Suspicious bash patterns to flag during audit
 SUSPICIOUS_BASH_PATTERNS: list[str] = [
     "curl * | bash",
