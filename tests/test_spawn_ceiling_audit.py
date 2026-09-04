@@ -237,6 +237,12 @@ _OPERATOR_EXEMPT: dict[str, str] = {
         "host-fact: read-only git HEAD probe"
     ),
     "durability/state_history.py::ensure_repo::subprocess.run": "operator: state-history repo init",
+    # The usability probe behind ensure_repo's self-heal:
+    # `git --git-dir <gd> rev-parse --git-dir`
+    # with a fixed argv, no shell, check=False, against a path already vetted by
+    # _assert_service_git_dir and the same hostile-to-third-party-code env as _git.
+    # Read-only judgment (git accepts the dir or it does not); operator, not agent-influenced.
+    "durability/state_history.py::_repo_usable::subprocess.run": "operator: repo usability probe",
     "durability/state_history.py::git_available::subprocess.run": "host-fact: git presence probe",
     # App install — operator-initiated (Store install), scanned+vetted.
     "apps/app_manager.py::_run_hook::subprocess.run": "operator: app install setup hook",
