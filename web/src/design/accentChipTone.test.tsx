@@ -130,9 +130,11 @@ describe('a rung chip inks coral through the container pair, not a tint of itsel
     expect(coral.map(([k]) => k)).toEqual(['autonomous'])
   })
 
-  it('both consumers get the fix from the primitive, so neither can be missed', () => {
+  it('every consumer gets the fix from the primitive, so none can be missed', () => {
     const users = walk(SRC).filter((abs) => /<RungChip\b/.test(readFileSync(abs, 'utf8')))
     expect(users.map((a) => a.slice(SRC.length + 1)).sort()).toEqual([
+      'pages/chat/ApprovalCard.tsx',
+      'pages/companion/CompanionPage.tsx',
       'pages/settings/GuardrailsPanel.tsx',
       'pages/triggers/TriggersListPage.tsx',
     ])
