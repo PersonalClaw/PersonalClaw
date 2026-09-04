@@ -202,6 +202,37 @@ chokepoint:
   agent's primary fetch surface) and `triggers/web_poll.py` (watched-source
   polls, plain + headless tier).
 
+## Browsing on the user's behalf (`browse/`)
+
+The `browse` action provider has two execution targets. `gateway` drives the gateway's own
+Chrome profile under the egress chokepoint above. `user_browser` drives the operator's OWN,
+already-logged-in browser through a paired loopback extension (`browse/target.py`,
+`dashboard/handlers/browse_connector.py`). Because that target acts as the fully-authenticated
+user, its authorization is not the earned-autonomy ladder but a **per-task grant**, and these
+rules are load-bearing controls, not UX:
+
+- **Per-task grant, fail-closed.** Every `user_browser` task requires a fresh, explicit human
+  grant naming the site scope it will touch, routed through the shipped `ApprovalGate`
+  (`agents/native/approval.py`) before the browser is touched. No answer within 300s, no approval
+  channel, or any gate error is a **REJECT** — the run never starts, never falls open, and never
+  silently retargets the gateway profile (`browse/grant.py`).
+- **No-credential-access invariant.** The agent drives an already-authenticated browser; it never
+  reads, stores, or transmits a password field's value, a 2FA code, or a cookie jar. The grant and
+  revoke audit rows (`browser_grant`, `browser_revoked` in the SEL) carry only the task label, the
+  host scope, and a reason — never a credential, cookie, or token.
+- **Close-to-kill.** The task runs in a tab group named after the task; the user closing it is a
+  hard stop the run observes within one step. This is distinct from the browse kill switch
+  (`browse/killswitch.py`), which stops *all* unattended browse via a flag.
+- **Honest limit — no IP pinning on a real browser.** A real browser does its own DNS and opens
+  its own sockets, so `net.fetch`'s resolved-IP pinning does **not** apply to `user_browser`: every
+  navigation is still pre-flighted through the egress guard, but that is validation only and stays
+  rebind-vulnerable. This is inherent to driving any real browser and is stated here rather than
+  implied away.
+- **Not an anti-bot surface.** This target exists to let the agent act in the user's browser under
+  explicit per-task permission. PersonalClaw does **not** describe, design, or expose anti-bot or
+  CAPTCHA avoidance as a capability; any such effect is an incidental consequence of legitimate
+  traffic from the user's own machine, never a feature.
+
 ## Untrusted-content fencing
 
 `security.py::fence_untrusted` wraps third-party text in
