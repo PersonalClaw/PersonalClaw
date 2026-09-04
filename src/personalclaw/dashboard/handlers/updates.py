@@ -998,6 +998,16 @@ async def api_logs(request: web.Request) -> web.StreamResponse:
     except (ConnectionResetError, ClientConnectionResetError):
         return resp
 
+    # First byte immediately: on a quiet logger with an empty ring the stream
+    # otherwise stays byte-silent until the 30s keepalive, and a client (or an
+    # intermediary) cannot tell "connected and idle" from "hung". A comment
+    # frame is invisible to EventSource consumers — same idiom as the
+    # keepalive below.
+    try:
+        await resp.write(b": connected\n\n")
+    except (ConnectionResetError, ClientConnectionResetError):
+        return resp
+
     # Replay buffered history first (capped by ?lines=N)
     ring_snapshot = list(_log_ring)
     for data in ring_snapshot[-lines_cap:]:
