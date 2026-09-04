@@ -212,9 +212,23 @@ async def api_projects_linked(request: web.Request) -> web.Response:
 
         prov = get_provider()
         if prov is not None:
-            artifacts = [
-                {"slug": a.slug, "name": a.name, "kind": a.kind} for a in prov.list(project_id=pid)
-            ]
+            # Two linkage generations coexist (#639). New artifacts carry project_id
+            # (artifact_save stamps the turn's bound Project). But the loop
+            # deliverable convention predates that stamp: those artifacts carry a
+            # `loop:<id>` tag and an EMPTY project_id — and they are exactly the
+            # artifacts a project's inventory exists to show (the deliverables of
+            # its loops). Match both in ONE list() pass: project_id, or a loop tag
+            # naming a loop this handler just resolved as ours.
+            own_ids = {row["id"] for row in loops} | {row["id"] for row in code}
+            own_tags = {f"loop:{i}" for i in own_ids}
+            seen: set[str] = set()
+            for a in prov.list():
+                if a.project_id != pid and not (own_tags & set(a.tags)):
+                    continue
+                if a.slug in seen:
+                    continue
+                seen.add(a.slug)
+                artifacts.append({"slug": a.slug, "name": a.name, "kind": a.kind})
     except Exception:
         pass
 
