@@ -301,6 +301,45 @@ async def api_voice_bindings_delete(request: web.Request) -> web.Response:
     return web.json_response({"bindings": bindings})
 
 
+# ── one-click migration (§6, never automatic) ───────────────────────────────
+
+
+async def api_voice_migrate(request: web.Request) -> web.Response:
+    """POST /api/voice/migrate {name?} — profile from the current voice, then default.
+
+    The explicit action §6 requires: it captures the active flat TTS selection into a
+    new design-kind profile and binds it ``default``. Nothing calls this on a
+    startup/first-run path, so migration only ever happens on a user's click. An empty
+    body is fine — the button carries no fields beyond an optional name.
+    """
+    from personalclaw.voice import migration as vm
+
+    try:
+        raw = await request.json()
+    except Exception:
+        raw = {}
+    name = str(raw.get("name") or "") if isinstance(raw, dict) else ""
+    try:
+        profile = vm.migrate_active_to_default_profile(name=name)
+    except vp.VoiceProfileError as exc:
+        _sel().log_api_access(
+            caller=_caller(request),
+            operation="voice_profile.migrate",
+            outcome="denied",
+            resources="active_tts",
+            error=exc.reason,
+        )
+        return json_error(exc.reason, message=exc.message, status=exc.status)
+    _sel().log_api_access(
+        caller=_caller(request),
+        operation="voice_profile.migrate",
+        outcome="success",
+        resources=f"{profile.id} provider={profile.provider}",
+    )
+    _broadcast(request, "voice_profile_created", profile, migrated=True)
+    return web.json_response(vp.profile_payload(profile), status=201)
+
+
 async def api_voice_resolve(request: web.Request) -> web.Response:
     """GET /api/voice/resolve?surface=…[&profile_id=…] — which level wins, and why.
 
