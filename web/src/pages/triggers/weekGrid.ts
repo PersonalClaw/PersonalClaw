@@ -64,6 +64,9 @@ export type WeekGrid = {
   /** Hours that hold nothing all week. Used to COLLAPSE dead rows: a 24-row grid where 17 rows are
    *  empty makes the user scroll past nothing to find their 3am job. */
   emptyHours: number[]
+  /** Occurrences the server returned that land OUTSIDE the drawn columns. 0 when the fetch and
+   *  the grid agree on the window (the issue-608 fix); disclosed in the caption when not. */
+  outsideWindow: number
 }
 
 export const DAYS_IN_WEEK = 7
@@ -87,6 +90,20 @@ export function weekDays(start: Date): Date[] {
     d.setDate(d.getDate() + i)
     return d
   })
+}
+
+/** The exact END of the drawn week: local midnight after the 7th column.
+ *
+ *  This is the grid's own window bound, and it is NOT `start + 168h` (issue 608): across a DST
+ *  transition the 7 local calendar days span 167 or 169 real hours. The fetch sends this as the
+ *  server's `until` so the projection window and the drawn window are the SAME window — the
+ *  mismatch is what dropped a real fire on spring-forward weeks and painted a phantom hour on
+ *  fall-back weeks. Calendar arithmetic for the same reason `weekDays` uses it. */
+export function weekEnd(start: Date): Date {
+  const first = startOfDay(start)
+  const end = new Date(first)
+  end.setDate(end.getDate() + DAYS_IN_WEEK)
+  return end
 }
 
 /** Which column an epoch belongs to, or -1 when it is outside the week.
@@ -131,9 +148,16 @@ export function buildWeekGrid(occurrences: WeekOccurrence[], start: Date): WeekG
 
   let total = 0
   let suppressed = 0
+  let outside = 0
   for (const o of occurrences ?? []) {
     const day = dayIndex(days, o.at)
-    if (day < 0) continue  // outside the rendered week — the server may return a wider window
+    if (day < 0) {
+      // Outside the drawn week. With the fetch sending `until` this stays 0; counting it is
+      // the honesty backstop (issue 608) — a dropped real fire must surface in the caption,
+      // never vanish into a smaller, confident forecast.
+      outside++
+      continue
+    }
     const hour = new Date(o.at * 1000).getHours()
     const cell = index.get(`${day}:${hour}`)
     if (!cell) continue
@@ -163,7 +187,7 @@ export function buildWeekGrid(occurrences: WeekOccurrence[], start: Date): WeekG
     if (cells.every((c) => c.hour !== hour || c.count === 0)) emptyHours.push(hour)
   }
 
-  return { cells, days, totalFires: total, suppressedFires: suppressed, emptyHours }
+  return { cells, days, totalFires: total, suppressedFires: suppressed, emptyHours, outsideWindow: outside }
 }
 
 /** The hour rows worth rendering.
@@ -200,5 +224,8 @@ export function weekSummary(grid: WeekGrid): string {
   if (grid.totalFires === 0) return 'No scheduled fires this week'
   const live = grid.totalFires - grid.suppressedFires
   const base = `${live} fire${live === 1 ? '' : 's'} this week`
-  return grid.suppressedFires > 0 ? `${base} · ${grid.suppressedFires} suppressed` : base
+  const parts = [base]
+  if (grid.suppressedFires > 0) parts.push(`${grid.suppressedFires} suppressed`)
+  if (grid.outsideWindow > 0) parts.push(`${grid.outsideWindow} outside the drawn week`)
+  return parts.join(' · ')
 }
