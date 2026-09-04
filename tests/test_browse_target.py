@@ -104,6 +104,29 @@ def _done(value):
     return _coro()
 
 
+@pytest.fixture
+def auto_grant(monkeypatch):
+    """Answer the BA-9 per-task grant as an instantly-approving human.
+
+    The permitted-path legs reach `request_grant` (BA-9 inserted it ahead of `_open`), and
+    nothing in this file renders an approval surface — unanswered, the gate's fail-closed
+    timeout (300s) outlives pytest-timeout (120s) and the leg reads as a hang. Patching the
+    GATE and not `request_grant` keeps the real grant bookkeeping — pending add/remove, the
+    SEL row, close-check binding — inside the exercised path, so these legs now also prove
+    the granted flow completes. The refusal/skip legs stay unpatched: they must refuse
+    BEFORE any grant is requested, and an auto-approving gate would not mask a fall-through
+    (the run would then succeed and their `success is False` assertions would trip).
+    """
+    from personalclaw.agents.native.approval import APPROVE, ApprovalGate
+    from personalclaw.browse import grant as grant_mod
+
+    class _InstantYes(ApprovalGate):
+        async def request(self, request_id: str, *, timeout: float = 300.0) -> str:
+            return APPROVE
+
+    monkeypatch.setattr(grant_mod, "_gate", _InstantYes())
+
+
 def _execute(cfg: dict):
     import personalclaw.action_providers.browse_provider as bp
 
@@ -264,7 +287,7 @@ class TestAnUnconnectedUserBrowserTaskSkipsAndNeverFallsBack:
         assert bt.resolve_cdp_url(bt.TARGET_USER_BROWSER, {"cdp_url": GATEWAY_URL}) == ""
 
     def test_VACUITY_a_CONNECTED_user_browser_task_runs_the_same_path_and_does_not_skip(
-        self, monkeypatch, switch
+        self, monkeypatch, switch, auto_grant
     ):
         """The leg that proves the two assertions above are not vacuous: the same provider, the
         same config shape, the same `_open` seam — and it neither skips nor uses GATEWAY_URL."""
@@ -348,7 +371,7 @@ class TestTheUserBrowserTargetCanNeverRunUnattended:
         assert probe.connected == []
 
     def test_VACUITY_the_same_call_is_permitted_attended_and_for_the_gateway_target(
-        self, monkeypatch, switch
+        self, monkeypatch, switch, auto_grant
     ):
         from personalclaw.durability.state_history import SURFACE_BACKGROUND, writing_surface
 
