@@ -76,7 +76,12 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
           <>
             <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${cm.tone} 16%, transparent)`, color: cm.tone }}><cm.icon size={13} /> {cm.label}</span>
             <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${cf.tone} 16%, transparent)`, color: cf.tone }}><cf.icon size={13} /> {cf.label}</span>
-            {item.source === 'digest' ? (
+            {/* After a manual reclassification the displayed verdict is the user's own,
+                so there is no machine judgment on screen to rate — a thumbs-down here
+                would file feedback against a classification the model never produced.
+                Hidden rather than shown inert, like every other gated control on this
+                page. The AI's verdicts on OTHER items stay ratable as before. */}
+            {item.confidence !== 'user' && (item.source === 'digest' ? (
               <FeedbackThumbs targetKind="inbox_digest" targetId={item.id}
                 producer={item.feedback_producers?.digest}
                 snapshot={{ classification: item.classification }} />
@@ -84,7 +89,7 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
               <FeedbackThumbs targetKind="inbox_classification" targetId={item.id}
                 producer={item.feedback_producers?.classification}
                 snapshot={{ classification: item.classification, confidence: item.confidence }} />
-            )}
+            ))}
           </>
         ) : (
           <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {km.label}</span>
@@ -168,8 +173,11 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
       {channelBacked && (
         <>
           <Section label="Reclassify">
+            {/* One patch, both fields: the new verdict is the USER's, so the model's
+                confidence in the verdict it replaced must not survive the override —
+                'Noise · High confidence' would borrow machine certainty for a human call. */}
             <Segmented ariaLabel="Reclassify" options={CLASSIFICATIONS.map((c) => ({ key: c.key, label: c.label, tone: c.tone, icon: c.icon }))}
-              value={item.classification} onChange={(v) => patch({ classification: v as InboxClassification }, 'class')} />
+              value={item.classification} onChange={(v) => patch({ classification: v as InboxClassification, confidence: 'user' }, 'class')} />
           </Section>
 
           {/* drafted reply — the draft is an AI judgment: thumbs attribute to the
