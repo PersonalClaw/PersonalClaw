@@ -30,10 +30,10 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `ES-10` | ✅ | Model bake-off from production-sampled inputs → per-use-case recommendation | `ES-1`, `ES-5`, `EXT:AUTONOMY-GUARDRAILS:model_calls.jsonl §2 attempt audit + SpendMeter` | candidate models run over real inputs sampled from model_calls.jsonl (or a temporary size-capped capture behind a redact()-gated, off-by-default, auto-expiring flag), scored by rubric-pinned comparative judging or task-native assertions; a per-use-case recommendation row lands as a proposal the user applies by rebinding active_models.json; sampled files live under the 0600 store, are excluded from portability export, and capture-flag flips are SEL-audited |
 | `ES-11` | ✅ | Bundled optimize-harness template (budgeted search over PClaw's own artifacts) | `ES-1`, `EXT:WORKFLOWS-V2:v2 node taxonomy (loop node) + allowed_write_paths write-scope + breaker/budget machinery`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R16 change manifests + LEARN-R3 sidecar overlays + refiner tool-scoping`, `EXT:AUTONOMY-GUARDRAILS:SpendMeter` | a starter template in workflows/bundled/ completes a budgeted loop-node search over one PClaw skill/template: candidates are scope-checked by diff (frozen-region touch → scope_violation), scored against the dual gate (harvested-suite threshold AND monotonic best-ever from results.tsv), and halted by hypothesis_abandon_after/no_improvement_halt/budget_usd; the winner arrives as a proposal (template version diff or LEARN-R3 sidecar overlay) the human installs, and nothing live mutates during the search |
 | `ES-12` | ✅ | Judge verdict integrity: verdicts must be answerable from the evidence shown (T04) | — | Judge prompt/schema constrains verdicts to an answerable set given the evidence slice; an answerability check rejects/flags verdicts referencing evidence not shown; regression fixture from the draft reproduces then passes; verdict records carry the evidence hash they judged. |
-| `ES-13` | ⬜ | Trust record: per-scope trust ledger feeding autonomy.py rung decisions | `ES-1`, `ES-5`, `ES-7` | a per-scope trust record is persisted (one per template/scope) capturing the inputs `guardrails/autonomy.py`'s `resolve_rung` already consumes; `resolve_rung` reads it when deciding a scope's rung; NO second maturity/L3 rung vocabulary is minted (a rail asserts autonomy.py is the only rung dialect); the record round-trips to disk and survives restart. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
+| `ES-13` | ✅ | Trust record: per-scope trust ledger feeding autonomy.py rung decisions | `ES-1`, `ES-5`, `ES-7` | a per-scope trust record is persisted (one per template/scope) capturing the inputs `guardrails/autonomy.py`'s `resolve_rung` already consumes; `resolve_rung` reads it when deciding a scope's rung; NO second maturity/L3 rung vocabulary is minted (a rail asserts autonomy.py is the only rung dialect); the record round-trips to disk and survives restart. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
 | `ES-14` | ⬜ | Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips | `ES-13` | trust thresholds map onto autonomy rungs via the existing `grant_rung`/`resolve_rung` (`rung_rank` orders them); crossing a threshold grants the mapped rung; rung chips (`rung_state`) render on template rows and the approval dialog; no parallel rung ladder is introduced. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size S. |
 | `ES-15` | ⬜ | Graduation/revocation: promote on sustained success, demote on failure/kill events | `ES-14` | sustained success promotes a scope's rung, and a HARMFUL LEARN-R16 verdict, failed §2 study, nodding-loop flag or watchdog fingerprint expiry mechanically demotes/revokes it through `grant_rung`/`resolve_rung` so the next run falls back to per-stage; every transition is SEL-audited. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
-| `ES-16` | ⬜ | Human-attention accounting: per-scope pending-attention debt with decay + demotion signal | `ES-13` | per-scope pending-attention debt is computed with decay and trends on the Learning page (attention_events_per_run plus a resolved_after_secs ledger addition); graduation proposals cite the trend and a post-grant attention rise files a demotion signal into the rung machinery. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
+| `ES-16` | ✅ | Human-attention accounting: per-scope pending-attention debt with decay + demotion signal | `ES-13` | per-scope pending-attention debt is computed with decay and trends on the Learning page (attention_events_per_run plus a resolved_after_secs ledger addition); graduation proposals cite the trend and a post-grant attention rise files a demotion signal into the rung machinery. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
 
 ## Atom scopes
 
@@ -236,7 +236,7 @@ the owner's `dag.json` flip.
 
 ### `ES-13` — Trust record: per-scope trust ledger feeding autonomy.py rung decisions
 
-**Status:** todo
+**Status:** done — merged via core PR #2416 (commit 00eda6a29).
 
 §4.2 trust record (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size M
 
@@ -260,7 +260,7 @@ the owner's `dag.json` flip.
 
 ### `ES-16` — Human-attention accounting: per-scope pending-attention debt with decay + demotion signal
 
-**Status:** todo
+**Status:** done — merged via core PR #2422 (commit 01fae0425).
 
 §4.4 human-attention accounting (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size M
 

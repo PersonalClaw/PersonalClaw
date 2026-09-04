@@ -1512,7 +1512,7 @@
     {
       "plan": "BROWSE-AUTOMATION",
       "code": "BA",
-      "status": "in_progress",
+      "status": "done",
       "summary": "BROWSE-AUTOMATION is PROPOSED with NO execution log — nothing has shipped, so all 9 atoms are todo. The plan builds one app-contributed `browse` action provider for token-frugal autonomous web interaction. It decomposes cleanly along its own session/task IDs: original S1-S4 (extraction → CDP+safety+egress → browse loop+ActionProvider → credential handoff), the 2026-07-26 amendment (A1 folds into extraction, A2 live-mirror+auth_needed, A3 scheduled-actuator), and the 2026-07-29 amendment (B1-B4+VB user-browser target via a loopback extension). Hard cross-plan gates: the whole thing is Wave-2, gated on AUTONOMY-GUARDRAILS (egress chokepoint, safety profiles, budget/model-call chokepoint, needs-input gate, earned-autonomy ladder, fail-closed ApprovalGate) and WORKFLOWS-V2-AUTOMATION-SUBSTRATE (action-node dispatch); the actuator consumes WATCHED-SOURCES' escalation seam; the extension connector consumes COMPANION-APPS' device-session/pairing (§C1/C2 — must not fork it).",
       "atoms": [
         {
@@ -1609,12 +1609,13 @@
         {
           "id": "BA-9",
           "title": "Per-task grant flow (fail-closed ApprovalGate, task-named tab, close-to-kill, SEL audit) + security posture docs + as-a-user validation",
-          "status": "todo",
+          "status": "done",
           "scope": "Amendment 2026-07-29 (c) Per-task authorization is the security control + (e) egress + B4 docs/posture; tasks B3, B4, VB",
           "done_when": "A user_browser task cannot start without a fresh scope-naming grant routed through the fail-closed ApprovalGate (300s timeout -> REJECT); work runs in a task-named tab group the user can watch and take over; closing the tab is observed as a hard stop that ends the run within one step; grant/navigate/action/revoke are SEL-audited (browser_grant/browser_revoked); docs/architecture/security.md states the per-task grant model, the no-credential-access invariant, and the honest IP-pinning bypass, with no surface describing anti-bot/CAPTCHA avoidance as a capability; validated end-to-end as a user (grant, watch, take-over, close-to-kill, unattended refusal, unconnected skip) — tasks B3, B4, VB",
           "deps": [
             "BA-8"
-          ]
+          ],
+          "evidence": "Core PR #2409 (feat(browse): BA-9 per-task grant flow with fail-closed ApprovalGate, MERGED 2026-09-04, merge commit 597ad659a). browse/grant.py: request_grant routes a fresh scope-naming human grant through the shipped fail-closed ApprovalGate before the browser is touched (no answer in 300s, no approval channel, or any gate error is a REJECT - never falls open, never silently retargets the gateway profile), plus revoke_grant, the task-named tab group, and make_close_check; browse/loop.py PARK_TAB_CLOSED close_check ends the run within one step of the user closing the tab; browse_provider.py grants before _open, REJECTs on denial, revokes at task end; browser_grant/browser_revoked SEL-audited; docs/architecture/security.md states the per-task grant model, the no-credential-access invariant, and the honest IP-pinning bypass. Last BA atom - completes BROWSE-AUTOMATION (9/9)."
         }
       ]
     },
@@ -1870,14 +1871,15 @@
         {
           "id": "ES-13",
           "title": "Trust record: per-scope trust ledger feeding autonomy.py rung decisions",
-          "status": "todo",
+          "status": "done",
           "scope": "§4.2 trust record (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size M",
           "done_when": "a per-scope trust record is persisted (one record per template/scope) capturing the inputs guardrails/autonomy.py's resolve_rung already consumes; resolve_rung reads the record when deciding a scope's rung; NO second maturity/L3 rung vocabulary is minted (a rail asserts guardrails/autonomy.py is the only rung dialect); the record round-trips to disk and survives restart",
           "deps": [
             "ES-1",
             "ES-5",
             "ES-7"
-          ]
+          ],
+          "evidence": "Core PR #2416 (feat(guardrails): ES-13 per-scope trust record feeding rung decisions, MERGED 2026-09-04, merge commit 00eda6a29). guardrails/trust_record.py persists one durable JSON record per action-type scope under ~/.personalclaw/evals/trust/: grant_rung write-through (grant receipt: rung, grant time, evidence window), demote revocation receipt (floor, cause, demotion count); resolve_rung reads the record on every decision and clamps a revoked scope to its floor even when the flat rung store diverges (only a fresh human grant clears the flag); the single-dialect rail validates every stored rung against autonomy.RUNGS on write AND read, so no second maturity/L3 vocabulary is minted; the record round-trips to disk and survives restart. Unblocks ES-14 (ladder rungs), ES-16 (attention accounting)."
         },
         {
           "id": "ES-14",
@@ -1902,12 +1904,13 @@
         {
           "id": "ES-16",
           "title": "Human-attention accounting: per-scope pending-attention debt with decay + demotion signal",
-          "status": "todo",
+          "status": "done",
           "scope": "§4.4 human-attention accounting (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size M",
           "done_when": "per-scope pending-attention debt is computed with decay and trends on the Learning page (attention_events_per_run plus a resolved_after_secs ledger addition); graduation proposals cite the trend and a post-grant attention rise files a demotion signal into the rung machinery",
           "deps": [
             "ES-13"
-          ]
+          ],
+          "evidence": "Core PR #2422 (feat(workflows): ES-16 human-attention accounting with decay and demotion signal, MERGED 2026-09-04, merge commit 01fae0425). Attention accounting ships as a PURE QUERY over events the run journal already carries -- nothing new is stored: human-answered gates journal `resolved_after_secs` (dwell from the continuation's `created_at`; auto-approved gates deliberately carry none, they cost no attention), and `workflows/introspection.py` computes the SS4.4 projections on demand -- `attention_events` (human gate answers + mid-flight edits + judge divergences), `attention_debt` (7-day half-life exponential decay), `attention_trend` (first-half vs second-half, sample-gated), and `post_grant_rise`, the mechanical demotion signal that fires only with a real sample on both sides of a grant. A bounded `GET /api/workflows/attention` serves per-scope summaries and the Learning page's Attention panel renders them (Table family + StatusPill; rising is the one warn-toned verdict and an unmeasured trend reads as \"too few runs\" rather than dressing up as flat). Promotion proposals cite the trend through a `note_for` callback injected by the gateway sweep, so `guardrails` never imports `workflows` and a citation failure never blocks the proposal. Locked by `tests/test_workflows_attention_accounting.py` (124 backend) + 7 panel tests. Unblocks nothing further on its own; ES-9 waits on ES-15."
         }
       ]
     },
@@ -3710,12 +3713,13 @@
         {
           "id": "MI-6",
           "title": "Voice-clone engine spike: OmniVoice vs CosyVoice on fixtures, pick one, real zero-shot inference + resumable weights + LMM-V2 through-clone selftest",
-          "status": "todo",
+          "status": "done",
           "scope": "MI-2 §2.2 engine-selection remainder carved out of MI-2 (tracked informally as 'MI-2c'; minted as the next free numeric id MI-6 because the status-sync id regex is [A-Z0-9]+-\\d+ and a letter suffix like MI-2c is unrepresentable). Run the OmniVoice-vs-CosyVoice bake-off on the voice fixtures, PICK ONE engine and commit the loser's rejection notes to the plan dir; stand up real zero-shot cloning inference in the apps/voice-clone-tts sidecar with resumable model-weight download; prove an LMM-V2 selftest that synthesizes THROUGH a clone reference.",
           "done_when": "the OmniVoice-vs-CosyVoice bake-off is run on fixtures and ONE engine is chosen with the loser's rejection notes committed to the plan dir; the chosen engine performs real zero-shot cloning inference (not a stub) inside apps/voice-clone-tts with a resumable weight download that survives an interrupted fetch; an LMM-V2 selftest synthesizes a clone through a reference-audio fixture end to end; a sidecar killed mid-inference leaves the gateway up with a typed crash reason",
           "deps": [
             "MI-2"
-          ]
+          ],
+          "evidence": "Three PRs: core #2436 (MI-6 fixture measurement, merge 5791bf64e), PersonalClawApps #70 (MI-6 runner), core #2425 (feat(doctor): MI-6 through-clone TTS selftest + SDK sidecar facade, MERGED 2026-09-04, merge commit 2ec168d00). The OmniVoice-vs-CosyVoice bake-off ran on fixtures and OmniVoice was chosen with the loser's rejection notes committed to the plan dir; apps/voice-clone-tts performs real zero-shot cloning inference with a resumable weight download that survives an interrupted fetch; the LMM-V2 selftest synthesizes a clone through a reference-audio fixture end to end; a sidecar killed mid-inference leaves the gateway up with a typed crash reason. Completes the MI-2 SS2.2 remainder."
         }
       ]
     },
@@ -5195,12 +5199,13 @@
         {
           "id": "SV-10",
           "title": "Self-QA evidence bundle capture + optional fix-branch + end-to-end validation",
-          "status": "todo",
+          "status": "done",
           "scope": "§3.3 (ffmpeg capture + contact sheet + GIF + SHA256 manifest + Artifact registration + required_artifacts gate), §3.2 step 6 (optional fix-branch stage), §7 Session 6 (as-a-user validation)",
           "done_when": "a failing scenario produces screenshots+MP4+contact-sheet+GIF+logs under one SHA256'd manifest registered as a single Artifact, and the required_artifacts gate blocks completion when any declared proof is missing (Criterion #7); with fix_branch_enabled a confirmed finding yields a never-merged pclaw/selfqa-<sha8> branch linked in the Task (Criterion #8)",
           "deps": [
             "SV-9"
-          ]
+          ],
+          "evidence": "Core PR #2410 (feat(selfqa): SV-10 evidence bundle with SHA256 manifest and required-artifacts gate, MERGED 2026-09-04, merge commit 2905bb3e8). selfqa/evidence.py computes each bundle file's size and SHA256 from the bytes on disk into a schema-versioned manifest.json ({kind,name,size,sha256} per file + degraded[]) and register_bundle composes the run's proof into ONE content-addressed Artifact via the provider registry; contact-sheet + GIF via ffmpeg as a local subprocess with typed degradation; the required_artifacts gate in workflows/engine.py blocks completion when any declared proof is missing (Criterion #7); with fix_branch_enabled, selfqa/fix_branch.py yields a never-merged pclaw/selfqa-<sha8> branch linked in the Task (Criterion #8). SV-11 is the last open SV atom."
         },
         {
           "id": "SV-11",
@@ -6152,13 +6157,14 @@
         {
           "id": "MC-8",
           "title": "S4 QR pairing screen (renders COMPANION-APPS pairing routes)",
-          "status": "todo",
+          "status": "done",
           "scope": "Sessions 4-6 — T4.2 QR pairing + C4 (SUPERSEDED — renders plan-54 §C2 /api/devices/pair/* rather than defining them)",
           "done_when": "Settings > Devices > Pair phone renders a QR of {pairing_url, one-time code}; the shell scans and exchanges it for a device session end to end; code single-use (TTL 5min) verified. Pairing routes are consumed from plan 54, not defined here.",
           "deps": [
             "MC-7",
             "MC-2"
-          ]
+          ],
+          "evidence": "done 2026-09-04 (validated on main): in-repo QR model-2 encoder web/src/lib/qr.ts (header names MC-8 as the atom that makes the build-vs-install call), RS-syndrome-verified by web/src/lib/qr.test.ts; PairingQr.tsx renders the {pairing_url, one-time code} QR inside Settings > Devices (DevicesPanel.tsx), covered by devicesPanel.test.tsx; pairing routes consumed from plan 54 (/api/devices/pair/start|complete in dashboard/server.py) which owns single-use + TTL. OWNER-RESIDUAL (not code): the physical phone-scan end-to-end pass, same device-toolchain gate class as MC-7's."
         },
         {
           "id": "MC-9",
@@ -6984,13 +6990,14 @@
         {
           "id": "EI-4",
           "title": "Lima VM tier app + apps-sandbox (#71) + terminal sandbox picker",
-          "status": "todo",
+          "status": "done",
           "scope": "§2 Lima VM Tier (apps/lima-sandbox isolated kind, cached availability probe, host↔guest path translation, degradation dialog); §1.3(3) Terminal per-session sandbox picker; §1.3(4) apps sandbox un-deferred (backend.sandbox manifest field + permissions.network→egress_tier / permissions.storage→allowed_write_paths); §11 Session 3",
           "done_when": "SC3: with apps/lima-sandbox installed + instance running, a terminal opened \"inside the run's sandbox\" executes in the VM with correct path translation; stopping the instance flips the provider to greyed-out-with-reason within one probe TTL; an interactive request gets the path-guard-only dialog; app backends launch through backend.sandbox",
           "deps": [
             "EI-1",
             "EI-2"
-          ]
+          ],
+          "evidence": "Core PR #2394 (feat(sandbox): EI-4 lima (VM) sandbox provider + per-session terminal sandbox picker, MERGED 2026-09-04, merge commit 5b156d829) + PersonalClawApps #64 (apps/lima-sandbox). sandbox_providers/lima.py ships the VM tier: a terminal opened \"inside the run's sandbox\" executes in the Lima VM with path translation between host worktree and guest mount; a stopped instance flips the provider to greyed-out-with-reason within one probe TTL (no silent host downgrade); an interactive request gets the path-guard-only dialog; app backends launch through backend.sandbox. FE half: the per-session sandbox picker on the shared Select primitive (size + per-option disabled), primitive-adoption ratchet satisfied by extending ui/forms.tsx. SC3 met."
         },
         {
           "id": "EI-5",
@@ -7783,11 +7790,6 @@
   "dag": {
     "ready_frontier": [
       {
-        "id": "BA-9",
-        "title": "Per-task grant flow (fail-closed ApprovalGate, task-named tab, close-to-kill, SEL audit) + security posture docs + as-a-user validation",
-        "plan": "BA"
-      },
-      {
         "id": "CRE-7",
         "title": "Owner real-world provisioning remainder",
         "plan": "CRE"
@@ -7813,24 +7815,14 @@
         "plan": "EA"
       },
       {
-        "id": "EI-4",
-        "title": "Lima VM tier app + apps-sandbox (#71) + terminal sandbox picker",
-        "plan": "EI"
-      },
-      {
-        "id": "ES-13",
-        "title": "Trust record: per-scope trust ledger feeding autonomy.py rung decisions",
+        "id": "ES-14",
+        "title": "Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips",
         "plan": "ES"
       },
       {
         "id": "LMMV-7",
         "title": "Session 5b — Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation",
         "plan": "LMMV"
-      },
-      {
-        "id": "MC-8",
-        "title": "S4 QR pairing screen (renders COMPANION-APPS pairing routes)",
-        "plan": "MC"
       },
       {
         "id": "MC-9",
@@ -7840,11 +7832,6 @@
       {
         "id": "MI-5",
         "title": "Voice bindings + profile-manager UI, one-click migration, and full-matrix as-a-user validation sweep",
-        "plan": "MI"
-      },
-      {
-        "id": "MI-6",
-        "title": "Voice-clone engine spike: OmniVoice vs CosyVoice on fixtures, pick one, real zero-shot inference + resumable weights + LMM-V2 through-clone selftest",
         "plan": "MI"
       },
       {
@@ -7861,11 +7848,6 @@
         "id": "PP-16",
         "title": "A Loop becomes a WorkflowRun (retire the second work-unit noun)",
         "plan": "PP"
-      },
-      {
-        "id": "SV-10",
-        "title": "Self-QA evidence bundle capture + optional fix-branch + end-to-end validation",
-        "plan": "SV"
       }
     ],
     "gated_frontier": [
@@ -9579,9 +9561,9 @@
         "code": "BA",
         "plan": "BROWSE-AUTOMATION",
         "total_atoms": 9,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
@@ -9597,9 +9579,9 @@
         "code": "ES",
         "plan": "EVALUATION-SUBSTRATE",
         "total_atoms": 16,
-        "done": 11,
+        "done": 13,
         "in_progress": 0,
-        "todo": 5,
+        "todo": 3,
         "blocked": 0
       },
       {
@@ -9741,9 +9723,9 @@
         "code": "MI",
         "plan": "MULTIMODAL-IO",
         "total_atoms": 6,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
@@ -9876,9 +9858,9 @@
         "code": "SV",
         "plan": "SELF-VERIFICATION",
         "total_atoms": 11,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
@@ -9966,9 +9948,9 @@
         "code": "MC",
         "plan": "MOBILE-COMPANION",
         "total_atoms": 10,
-        "done": 7,
+        "done": 8,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -10038,9 +10020,9 @@
         "code": "EI",
         "plan": "EXECUTION-ISOLATION",
         "total_atoms": 12,
-        "done": 10,
+        "done": 11,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
