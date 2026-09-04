@@ -150,6 +150,15 @@ _CEILING_WRAPPED: dict[str, str] = {
         "docker sandbox provider → profile ceiling via create_subprocess_limited on the docker "
         "client (mirrors the none seam); container itself bounded by native --pids-limit/--memory"
     ),
+    # The ``lima`` VM provider's handle exec (EI-4) — sibling to the ``none``/``docker`` seams.
+    # The wrapped inner argv is the agent's own process tree run via ``limactl shell``, so it is
+    # agent-influenced and routes through create_subprocess_limited on the ``limactl`` CLIENT,
+    # mirroring the docker seam. The guest VM's OWN pids/memory bounds are instance-creation
+    # config (not a per-exec flag); the client ceiling keeps the routed seam uniform.
+    "sandbox_providers/lima.py::_LimaHandle.exec::create_subprocess_limited": (
+        "lima sandbox provider → profile ceiling via create_subprocess_limited on the limactl "
+        "client (mirrors the none/docker seam); guest VM bounded by instance-creation config"
+    ),
     # Cron/scheduled-script runner (EI-3). Agent-influenced: an agent authors the file under
     # `crons/` and the job that selects it, so the child gets the same `tool` ceiling an agent
     # bash command does. Its earlier exemption reasoned from the OS sandbox wrap + clean env —
@@ -448,6 +457,13 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     # runs no agent code, and takes no agent-influenced input.
     "sandbox_providers/docker.py::_daemon_ping::subprocess.run": (
         "host-fact: docker daemon availability probe (fixed docker version argv)"
+    ),
+    # The lima provider's instance-status probe (EI-4) — same class as the docker daemon probe
+    # above: a fixed ``limactl list <instance> --format {{.Status}}`` argv that reads a host fact
+    # (is the Lima instance Running), runs no agent code, and takes no agent-influenced input.
+    # The instance name is provider config (env override → default), never a model/turn value.
+    "sandbox_providers/lima.py::_probe::subprocess.run": (
+        "host-fact: lima instance status probe (fixed limactl list argv)"
     ),
     # The docker provider's belt-and-suspenders container teardown (EI-2). The argv is
     # ``docker rm -f <name>`` where <name> is the handle's OWN self-generated container id
