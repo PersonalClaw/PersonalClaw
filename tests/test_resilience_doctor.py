@@ -182,6 +182,35 @@ async def test_run_capability_unknown_is_flagged():
     assert result["unknown"] is True and result["ok"] is True and result["probes"] == []
 
 
+def test_doctor_error_codes_ride_the_registry():
+    """The doctor's wire errors are registry-governed, not hand-built dicts.
+
+    ``unknown_capability`` and ``doctor_disabled`` used to be literal
+    ``{"error": {...}}`` payloads — codes the append-only rail could not see, so
+    nothing protected them from being reworded or dropped. Both must be
+    registered, and the handlers must emit them via ``json_error`` (asserted
+    against the handler source: any reintroduced literal envelope dict reds this).
+    """
+    import json
+    from pathlib import Path
+
+    import personalclaw.dashboard.handlers.doctor as doctor_handlers
+    from personalclaw.http_errors import HTTP_ERROR_CODES, json_error
+
+    assert "doctor_disabled" in HTTP_ERROR_CODES
+    assert "unknown_capability" in HTTP_ERROR_CODES
+
+    # The wire shape both handlers now produce.
+    resp = json_error("unknown_capability", message="No such capability: nope.", status=404)
+    body = json.loads(resp.body)
+    assert resp.status == 404
+    assert body["error"]["code"] == "unknown_capability"
+    assert body["error"]["message"] == "No such capability: nope."
+
+    source = Path(doctor_handlers.__file__).read_text(encoding="utf-8")
+    assert '"error": {' not in source, "doctor handlers must emit errors via json_error only"
+
+
 @pytest.mark.asyncio
 async def test_run_capability_runs_only_that_capability(monkeypatch):
     monkeypatch.setattr(

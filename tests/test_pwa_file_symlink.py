@@ -131,7 +131,27 @@ def test_icons_and_pwa_roots_are_excluded_from_the_spa_fallback() -> None:
     import personalclaw.dashboard.server as server_mod
 
     source = Path(server_mod.__file__).read_text(encoding="utf-8")
-    assert '("/api/", "/assets/", "/icons/", "/sprites/", "/vendor/")' in source
+    assert '("/assets/", "/icons/", "/sprites/", "/vendor/")' in source
+
+
+def test_unmatched_api_routes_answer_in_the_wire_envelope() -> None:
+    """An unmatched ``/api/*`` route must return the coded JSON envelope, never
+    aiohttp's text/plain default — a JSON client cannot parse plaintext, so it
+    cannot tell "route gone" from "server broke". Asserted against the source
+    (same closure as above): the ``/api/`` branch must precede the HTML fallback
+    and answer via ``json_error("not_found", …)``.
+    """
+    from pathlib import Path
+
+    import personalclaw.dashboard.server as server_mod
+
+    source = Path(server_mod.__file__).read_text(encoding="utf-8")
+    api_branch = source.find('if request.path.startswith("/api/"):')
+    html_fallback = source.find("return await handlers.index(request)")
+    assert api_branch != -1, "the spa_fallback /api branch is gone"
+    assert html_fallback != -1
+    assert api_branch < html_fallback, "the /api branch must precede the HTML fallback"
+    assert 'return json_error("not_found", status=404)' in source
 
 
 def test_pwa_routes_are_registered_at_the_origin_root() -> None:

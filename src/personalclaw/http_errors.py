@@ -80,6 +80,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "not_found": "The addressed resource does not exist.",
     "forbidden": "The caller is not permitted to touch this resource.",
     "confirmation_required": "The operation is destructive and needs an explicit confirm.",
+    # ── resilience doctor (dashboard/handlers/doctor.py) ──
+    "doctor_disabled": "The Doctor surface is turned off on this instance.",
+    "unknown_capability": "No capability with that name is registered with the Doctor.",
+    # `confirm_required` (not `confirmation_required`) is the string these routes
+    # shipped with — append-only means registering it as-is, not renaming it.
+    "confirm_required": 'The operation needs an explicit {"confirm": true} in the body.',
+    "unknown_fix": "No Doctor fix with that id exists.",
+    "text_required": "A query text is required.",
     # ── API version negotiation (dashboard/api_version_gate.py) ──
     # The `error` object additionally carries client_version, server_version,
     # min_supported_version and upgrade ("client"|"server") — a refusal that named
