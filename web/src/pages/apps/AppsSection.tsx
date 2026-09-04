@@ -1424,13 +1424,16 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
 
   return (
     <div className="flex flex-col gap-l p-l">
-      {/* Hero banner (optional) — the same adaptive treatment as the card. */}
-      {item.heroUrl && (
-        <div className="relative -mx-l -mt-l h-36 overflow-hidden bg-surface-high">
-          <img src={item.heroUrl} alt="" className="size-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-t from-surface/60 to-transparent" />
-        </div>
-      )}
+      {/* Hero banner — genuinely the same two-path treatment as the card: the app's own
+          image when it ships one, its deterministic token gradient when it does not. The
+          card and this panel are one continuous gesture (click card → panel), so a banner
+          that vanished for hero-less apps re-created the two-shapes defect the card fixed. */}
+      <div className="relative -mx-l -mt-l h-36 shrink-0 overflow-hidden bg-surface-high"
+        data-art={item.heroUrl ? 'hero' : 'generated'}
+        style={item.heroUrl ? undefined : { background: artGradient(item.name) }}>
+        {item.heroUrl && <img src={item.heroUrl} alt="" className="size-full object-cover" />}
+        <div className="absolute inset-0 bg-gradient-to-t from-surface/60 to-transparent" />
+      </div>
       <div>
         <div data-type="body-s" className="text-on-surface-low">{item.description || item.name}</div>
         <div data-type="label-s" className="mt-1 text-on-surface-low">
