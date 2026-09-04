@@ -44,6 +44,11 @@ function findSideStripes(): string[] {
       // hairline is sanctioned in any mechanism (CodeMirror theme objects cannot use the
       // border-l utility), so only widths above 1px match.
       if (/\bborderLeft\s*:\s*['"`]?\s*[2-9]\d*px/.test(line)) offenders.push(`${file.slice(ROOT.length + 1)}:${i + 1} ${line.trim()}`)
+      // An inset box-shadow whose x-offset is multi-pixel and whose y/blur are zero —
+      // the stripe smuggled through the shadow channel (`inset 2px 0 0 <tone>`, either
+      // sign, 3- or 4-value). A depth shadow (non-zero y or blur) never matches. Covers
+      // the inline string form and Tailwind's arbitrary `shadow-[inset_2px_0_...]`.
+      if (/inset\s+-?[2-9]\d*px\s+0(px)?\s+0(px)?/.test(line) || /shadow-\[inset_-?[2-9]\d*px_0/.test(line)) offenders.push(`${file.slice(ROOT.length + 1)}:${i + 1} ${line.trim()}`)
     })
   }
   return offenders
