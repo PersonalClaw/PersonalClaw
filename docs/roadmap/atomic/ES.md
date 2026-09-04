@@ -4,10 +4,14 @@
 **Code:** `ES`  
 **Source status:** proposed
 
-Of 12 atoms, four are `done` (ES-1, ES-2, ES-4, ES-5) and eight remain open; ES-11's implementation has
-landed in full and the atom is held only for the owner's `dag.json` flip. *(This narrative read "entirely
-unstarted; all 11 atoms are todo" until 2026-08-27 — stale against its own row marks. It is the free-text
-summary `test_roadmap_atomic_status_sync` deliberately does not rail, which is exactly why it drifted.)*
+Of 16 atoms, 11 are `done` and five remain open (ES-9 plus the four ES-13..16 trust-ladder
+sub-atoms). ES-8 (the trust-graduation ladder) was decomposed per owner ruling 2026-08-27
+(question 2 of 11): done-by-decomposition, re-scoped onto the EXISTING `guardrails/autonomy.py`
+rungs (no second maturity/L3 vocabulary) and split into ES-13 (§4.2 trust record), ES-14 (§4.3
+ladder rungs), ES-15 (§4.4 graduation/revocation) and ES-16 (§4.4 attention accounting); ES-9 now
+depends on the ladder leaves ES-15+ES-16 rather than the ES-8 rollup. *(This summary is the
+free-text narrative `test_roadmap_atomic_status_sync` deliberately does not rail — keep it honest
+by hand.)*
 §1/§5/§6 (+§3.2 watchdog) are v2-independent and startable now against the existing eval/ package; §2/§4/§7/§8 and the E3 amendment are gated on WORKFLOWS-V2 (Run Ledger), WORKFLOWS-V2-LEARNING-FLYWHEEL (proposal queue/maturity/manifests), WORKFLOWS-V2-UNIVERSAL-PLANNING (UP-R6 approval gate), AUTONOMY-GUARDRAILS (model_calls.jsonl, SpendMeter), and FEEDBACK-SIGNAL (plan 58). Cuts follow the plan's own §-sections and its ~6-session map; the E1/E2/E3 amendment items are given their own atoms with explicit edges.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
@@ -21,11 +25,15 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `ES-5` | ✅ | Pre-registered template A/B studies (the re-opened eval gate) | `ES-1`, `EXT:WORKFLOWS-V2:Run Ledger Slices 0-3 (§5 event table) for real-run input sampling + verdict events`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:proposal queue + LEARN-R2 harvested regression suite` | a flywheel template-diff runs a pre-registered study: k=5 paired old-vs-new over the harvested suite, immutable registration.json (rubric_sha256 pinned; mid-study rubric edit → invalidated), blinded median-of-3 position-swapped judging with agreement floor and judge_unreliable routing, locked/ checks executed supervisor-side in the child output workspace (never rendered into any worker prompt — regression-tested); verdict + agreement rate + per-run artifacts inspectable from the Learning page; a pass emits an evidence unit + results.tsv row, a fail auto-files a demotion/revert proposal |
 | `ES-6` | ✅ | Loop-2 cheap gate subset + before/after score columns on self-modification proposals (amendment E2) | `ES-2`, `ES-5`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:self-modification proposal cards (GateOK arm)` | a curated dozen fast assertion-heavy scenarios re-run before a prompt/skill/routing proposal ships; a planted regression in a candidate skill edit shows a score drop on its own proposal card ({before,after,pin}) before the user accepts; gate-run cost is bounded and metered via SpendMeter, and a proposal with no gate run renders 'ungated' honestly (never blocks) |
 | `ES-7` | ✅ | Harness ablation runner + skills bench + model-upgrade watchdog | `ES-1`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R9 retirement proposal kind + proposal queue`, `EXT:WORKFLOWS-V2:WF2-R13 consulted ledger event (for §3.3)` | the periodic ablation runner produces a keep/remove/lighten report for one component per cadence with measured on-vs-off deltas via child-process overlay toggling (live spec/config never mutated), and a no-delta component's report attaches as the ablation-grade evidence on a LEARN-R9 retirement proposal; the §3.3 skills bench replays consulted runs with a skill surfaced-vs-suppressed; the watchdog computes a model fingerprint on active_models.json changes, queues small-budget re-benchmarks, and emits exactly ONE digest notification, with per-fingerprint results.tsv baselines |
-| `ES-8` | ⬜ | Trust-graduation ladder: trust records, graduation/revocation, rungs, attention accounting | `ES-1`, `ES-5`, `ES-7`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R11 maturity + LEARN-R16 verdicts + LEARN-R10 nodding-loop + proposal queue`, `EXT:WORKFLOWS-V2-UNIVERSAL-PLANNING:UP-R6 approval gate reads the trust record`, `EXT:WORKFLOWS-V2:Run Ledger attention events (gate_rejected, user_edited_mid_flight, needs-input continuation)` | a template reaches 'unattended' ONLY via flywheel-computed L3 + a passing unexpired §2 study + a human-accepted, SEL-audited graduation proposal; a HARMFUL LEARN-R16 verdict, failed study, nodding-loop flag, or watchdog fingerprint expiry revokes the trust record mechanically and the next run falls back to per-stage; rung chips render on template rows and the approval dialog; attention_events_per_run (plus resolved_after_secs ledger addition) trends on the Learning page, graduation proposals cite the trend, and a post-grant attention rise files a demotion signal |
-| `ES-9` | ⬜ | Loop-3 live field metrics beside lab results + lab_field_divergence (amendment E3) | `ES-8`, `EXT:FEEDBACK-SIGNAL:plan-58 S1 👍/👎 + edit-before-approve records`, `EXT:AUTONOMY-GUARDRAILS:earned-autonomy ledger (autonomy_rungs.json) + SEL approval outcomes` | per-template/per-action-type 👍/👎 and edit-before-approve rates (query-computed, stored nowhere new) render beside Loop-1 lab score and Loop-2 gate status as one row per subject on the Learning tab; a subject whose lab score rose while its field trend fell is flagged lab_field_divergence and files a §4.2 trust-record demotion signal mechanically |
+| `ES-8` | ✅ | Trust-graduation ladder — decomposed into ES-13..16 (done-by-decomposition, owner ruling 2026-08-27 Q2/11) | `ES-1`, `ES-5`, `ES-7`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R11 maturity + LEARN-R16 verdicts + LEARN-R10 nodding-loop + proposal queue`, `EXT:WORKFLOWS-V2-UNIVERSAL-PLANNING:UP-R6 approval gate reads the trust record`, `EXT:WORKFLOWS-V2:Run Ledger attention events (gate_rejected, user_edited_mid_flight, needs-input continuation)` | a template reaches 'unattended' ONLY via flywheel-computed L3 + a passing unexpired §2 study + a human-accepted, SEL-audited graduation proposal; a HARMFUL LEARN-R16 verdict, failed study, nodding-loop flag, or watchdog fingerprint expiry revokes the trust record mechanically and the next run falls back to per-stage; rung chips render on template rows and the approval dialog; attention_events_per_run (plus resolved_after_secs ledger addition) trends on the Learning page, graduation proposals cite the trend, and a post-grant attention rise files a demotion signal |
+| `ES-9` | ⬜ | Loop-3 live field metrics beside lab results + lab_field_divergence (amendment E3) | `ES-15`, `ES-16`, `EXT:FEEDBACK-SIGNAL:plan-58 S1 👍/👎 + edit-before-approve records`, `EXT:AUTONOMY-GUARDRAILS:earned-autonomy ledger (autonomy_rungs.json) + SEL approval outcomes` | per-template/per-action-type 👍/👎 and edit-before-approve rates (query-computed, stored nowhere new) render beside Loop-1 lab score and Loop-2 gate status as one row per subject on the Learning tab; a subject whose lab score rose while its field trend fell is flagged lab_field_divergence and files a §4.2 trust-record demotion signal mechanically |
 | `ES-10` | ✅ | Model bake-off from production-sampled inputs → per-use-case recommendation | `ES-1`, `ES-5`, `EXT:AUTONOMY-GUARDRAILS:model_calls.jsonl §2 attempt audit + SpendMeter` | candidate models run over real inputs sampled from model_calls.jsonl (or a temporary size-capped capture behind a redact()-gated, off-by-default, auto-expiring flag), scored by rubric-pinned comparative judging or task-native assertions; a per-use-case recommendation row lands as a proposal the user applies by rebinding active_models.json; sampled files live under the 0600 store, are excluded from portability export, and capture-flag flips are SEL-audited |
 | `ES-11` | ✅ | Bundled optimize-harness template (budgeted search over PClaw's own artifacts) | `ES-1`, `EXT:WORKFLOWS-V2:v2 node taxonomy (loop node) + allowed_write_paths write-scope + breaker/budget machinery`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R16 change manifests + LEARN-R3 sidecar overlays + refiner tool-scoping`, `EXT:AUTONOMY-GUARDRAILS:SpendMeter` | a starter template in workflows/bundled/ completes a budgeted loop-node search over one PClaw skill/template: candidates are scope-checked by diff (frozen-region touch → scope_violation), scored against the dual gate (harvested-suite threshold AND monotonic best-ever from results.tsv), and halted by hypothesis_abandon_after/no_improvement_halt/budget_usd; the winner arrives as a proposal (template version diff or LEARN-R3 sidecar overlay) the human installs, and nothing live mutates during the search |
 | `ES-12` | ✅ | Judge verdict integrity: verdicts must be answerable from the evidence shown (T04) | — | Judge prompt/schema constrains verdicts to an answerable set given the evidence slice; an answerability check rejects/flags verdicts referencing evidence not shown; regression fixture from the draft reproduces then passes; verdict records carry the evidence hash they judged. |
+| `ES-13` | ⬜ | Trust record: per-scope trust ledger feeding autonomy.py rung decisions | `ES-1`, `ES-5`, `ES-7` | a per-scope trust record is persisted (one per template/scope) capturing the inputs `guardrails/autonomy.py`'s `resolve_rung` already consumes; `resolve_rung` reads it when deciding a scope's rung; NO second maturity/L3 rung vocabulary is minted (a rail asserts autonomy.py is the only rung dialect); the record round-trips to disk and survives restart. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
+| `ES-14` | ⬜ | Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips | `ES-13` | trust thresholds map onto autonomy rungs via the existing `grant_rung`/`resolve_rung` (`rung_rank` orders them); crossing a threshold grants the mapped rung; rung chips (`rung_state`) render on template rows and the approval dialog; no parallel rung ladder is introduced. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size S. |
+| `ES-15` | ⬜ | Graduation/revocation: promote on sustained success, demote on failure/kill events | `ES-14` | sustained success promotes a scope's rung, and a HARMFUL LEARN-R16 verdict, failed §2 study, nodding-loop flag or watchdog fingerprint expiry mechanically demotes/revokes it through `grant_rung`/`resolve_rung` so the next run falls back to per-stage; every transition is SEL-audited. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
+| `ES-16` | ⬜ | Human-attention accounting: per-scope pending-attention debt with decay + demotion signal | `ES-13` | per-scope pending-attention debt is computed with decay and trends on the Learning page (attention_events_per_run plus a resolved_after_secs ledger addition); graduation proposals cite the trend and a post-grant attention rise files a demotion signal into the rung machinery. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
 
 ## Atom scopes
 
@@ -186,7 +194,13 @@ artifact is renderable through its own install rail (`skill_promotion.candidate_
 
 ### `ES-8` — Trust-graduation ladder: trust records, graduation/revocation, rungs, attention accounting
 
-**Status:** todo
+**Status:** done — done-by-decomposition, 2026-09-04. Per owner ruling 2026-08-27 (question 2 of
+11) the trust-graduation gate was narrowed to inputs that exist — ONE rung vocabulary,
+`guardrails/autonomy.py` — and this ~4-session atom was decomposed. It carries no code of its own;
+its work is now four first-class sub-atoms re-scoped onto the existing autonomy.py rungs
+(`rung_rank`/`rung_state`/`grant_rung`/`resolve_rung`): **ES-13** (§4.2 trust record), **ES-14**
+(§4.3 ladder rungs), **ES-15** (§4.4 graduation/revocation), **ES-16** (§4.4 human-attention
+accounting). ES-9 is repointed onto the ladder leaves ES-15+ES-16.
 
 §4 (4.1 division of labor, 4.2 trust record, 4.3 ladder rungs, 4.4 human-attention accounting)
 
@@ -219,3 +233,35 @@ the owner's `dag.json` flip.
 
 **Done when:** a starter template in workflows/bundled/ completes a budgeted loop-node search over one PClaw skill/template: candidates are scope-checked by diff (frozen-region touch → scope_violation), scored against the dual gate (harvested-suite threshold AND monotonic best-ever from results.tsv), and halted by hypothesis_abandon_after/no_improvement_halt/budget_usd; the winner arrives as a proposal (template version diff or LEARN-R3 sidecar overlay) the human installs, and nothing live mutates during the search
 
+
+### `ES-13` — Trust record: per-scope trust ledger feeding autonomy.py rung decisions
+
+**Status:** todo
+
+§4.2 trust record (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size M
+
+**Done when:** a per-scope trust record is persisted (one record per template/scope) capturing the inputs `guardrails/autonomy.py`'s `resolve_rung` already consumes; `resolve_rung` reads the record when deciding a scope's rung; NO second maturity/L3 rung vocabulary is minted (a rail asserts `guardrails/autonomy.py` is the only rung dialect); the record round-trips to disk and survives restart.
+
+### `ES-14` — Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips
+
+**Status:** todo
+
+§4.3 ladder rungs (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size S
+
+**Done when:** trust thresholds map onto autonomy rungs through the existing `grant_rung`/`resolve_rung` (`rung_rank` orders them); crossing a threshold grants the mapped rung; rung chips (`rung_state`) render on template rows and the approval dialog; no parallel rung ladder is introduced.
+
+### `ES-15` — Graduation/revocation: promote on sustained success, demote on failure/kill events
+
+**Status:** todo
+
+§4.4 graduation/revocation (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size M
+
+**Done when:** sustained success promotes a scope's rung, and a HARMFUL LEARN-R16 verdict, a failed §2 study, a nodding-loop flag, or a watchdog fingerprint expiry mechanically demotes/revokes it through `grant_rung`/`resolve_rung` so the next run falls back to per-stage; every transition is SEL-audited.
+
+### `ES-16` — Human-attention accounting: per-scope pending-attention debt with decay + demotion signal
+
+**Status:** todo
+
+§4.4 human-attention accounting (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size M
+
+**Done when:** per-scope pending-attention debt is computed with decay and trends on the Learning page (attention_events_per_run plus a resolved_after_secs ledger addition); graduation proposals cite the trend and a post-grant attention rise files a demotion signal into the rung machinery.

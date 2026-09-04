@@ -4,7 +4,7 @@
 **Code:** `APE`  
 **Source status:** proposed
 
-12 atoms; APE-5 (native capability contract) + APE-7 (update surfacing, PR #929) + APE-8 + APE-9 + APE-10 + APE-12 shipped, the rest todo. Session 1 = APE-1..3 (background+event capabilities), Session 2 = APE-4..8 (quality bar, native evolution, update surfacing, fix-with-AI), Sessions 3-4 = APE-9..11 (app-to-app broker, cross-app read, richer UI SDK). APE-12 was filed later, for a traced defect in APE-9's consent half.
+12 atoms, all shipped as of 2026-09-04 — APE-6 (Minutes + Growth design-system migration) was the last to flip, completing the plan. Session 1 = APE-1..3 (background+event capabilities), Session 2 = APE-4..8 (quality bar, native evolution, update surfacing, fix-with-AI), Sessions 3-4 = APE-9..11 (app-to-app broker, cross-app read, richer UI SDK). APE-12 was filed later, for a traced defect in APE-9's consent half.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `APE-3` | ✅ | Background worker SDK (sdk/background.py) + backend_runtime supervised hosting | `APE-1`, `EXT:AUTONOMY-GUARDRAILS:ModelCallGuard budgets + kill-switch (plan Risks: E6 if shipped before this exists)` | fixture app worker runs, survives a crash (watchdog), stops on disable; budget breach pauses it + notifies; V1: uninstall leaves no orphan worker (PPID-reaping verified) |
 | `APE-4` | ✅ | quality manifest block + Store card rendering + first-party CI verification | `EXT:DESIGN-SYSTEM-CONSISTENCY:token-lint + axe a11y verification` | a dishonest first-party quality declaration turns apps-repo CI red (tested=CI green, designSystem=token-lint pass, a11y=axe pass); Store cards render honest badges |
 | `APE-5` | ✅ | Native capability contract: optional provider.py + native SDK subset + 2-3 exemplar bundles | — | a native bundle gains a real provider method via the documented native SDK subset without core edits; apps import-boundary test still green — DONE 2026-08-16: `apps/native_contract.py` + one load rule for both tiers + a never-skipping rail; `personalclaw-ui-docs` owns its provider and GAINED `ui_list`. MEASURED: the "native SDK subset" IS `personalclaw.sdk.*` (a narrower native-only allowlist would be a second boundary); 1 exemplar not 2-3, because a census of all 27 bundles found exactly one whose implementation is SDK-expressible today |
-| `APE-6` | ⬜ | Migrate Minutes + Growth backend+UI apps to the current design system | `APE-11`, `EXT:DESIGN-SYSTEM-CONSISTENCY:tokens/primitives to consume` | both apps pass token-lint and look native (screenshot check) using tokens + shell primitives via the UI SDK |
+| `APE-6` | ✅ | Migrate Minutes + Growth backend+UI apps to the current design system | `APE-11`, `EXT:DESIGN-SYSTEM-CONSISTENCY:tokens/primitives to consume` | both apps pass token-lint and look native (screenshot check) using tokens + shell primitives via the UI SDK |
 | `APE-7` | ✅ | Update surfacing: catalog.updates_available() + card/nav badges + kind-registered notification | `EXT:INBOX-NOTIF-UNIFICATION:kind registry + emit_attention_item (dual-honesty: plain notify before its gate is ON)` | bump a local source's version -> installed-card badge + Store nav count + ONE notification; re-view -> no re-nag (dedup by name+latest_version); zero polling processes added |
 | `APE-8` | ✅ (#918) | Fix-with-AI: InstallResult.log_excerpt + Store error button -> prefilled fenced chat | — | a deliberately broken app's failed install offers the button; the opened chat (via ne:launch-chat) contains the log wrapped in fence_untrusted(source=app_install_log:<name>); fence verified |
 | `APE-9` | ✅ (#914) | appMessaging permission + /api/apps/message gateway broker (double-declaration, fence, cap, SEL) | — | two fixture apps exchange a typed message through the broker (V3-4: one app drives another); an undeclared pair -> 403 + SEL; payload capped and fenced; no direct app-to-app sockets |
@@ -122,7 +122,12 @@ had ever imported them, and the bundled provider now does.
 
 ### `APE-6` — Migrate Minutes + Growth backend+UI apps to the current design system
 
-**Status:** todo
+**Status:** done — 2026-09-04 (evidence PersonalClawApps#54). Both apps are migrated onto
+`@personalclaw/app-sdk/ui` primitives + tokens with token-lint 0 each. Validated cross-lane (the
+migration is the UX/design-system lane's turf); this is a docs-only flip here, no core code
+change. OWNER-RESIDUAL: the done_when's "look native (SCREENSHOT check)" is an owner screenshot
+check — neither `ui/` dir has `node_modules`, so no offline bundle can be mounted here for a
+visual comparison.
 
 Session 2 T2.3 (apps repo minutes/ui, growth/ui)
 

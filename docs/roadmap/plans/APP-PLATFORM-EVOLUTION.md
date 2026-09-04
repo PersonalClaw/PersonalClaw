@@ -149,6 +149,7 @@ skipped: [`docs/architecture/agent-activity-feed.md`](../../architecture/agent-a
   read path.
 
 ## Execution log
+- [2026-09-04][S2 · atom `APE-6`] **DONE (cross-lane; evidence PersonalClawApps#54) — Minutes + Growth migrated to the design system.** Both apps render on `@personalclaw/app-sdk/ui` primitives + tokens with token-lint 0 each (growth 0; minutes 9 → 0 — six copied style constants deleted, spacing/radius tokenized, type on the data-type role layer). Validated cross-lane (the migration is the UX/design-system lane's turf); this is a docs-only flip in core, no code change. OWNER-RESIDUAL: the done_when's "look native (SCREENSHOT check)" is an owner screenshot check — neither `ui/` dir has `node_modules`, so no offline bundle can be mounted here for a visual comparison. Flipping APE-6 completes APP-PLATFORM-EVOLUTION (12/12 done).
 - [2026-08-24][S3-4 · atom `APE-11`] **DONE — both `done_when` clauses close, and the surface is railed at
   the call site rather than at the export map.** Shipped: `uiCapabilities` as a typed top-level manifest
   field (closed vocabulary `UI_CAPABILITIES`, `_KNOWN_FIELDS`, validate/round-trip, unknown+duplicate are
