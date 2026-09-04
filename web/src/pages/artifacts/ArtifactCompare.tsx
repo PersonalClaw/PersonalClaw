@@ -7,6 +7,7 @@ import { Segmented } from '../../ui/Segmented'
 
 // Monaco's side-by-side diff editor, lazy — it shares the locally-bundled monaco
 // from monacoSetup (never a CDN), same as the code cockpit's DiffView.
+import { useDiffTeardown } from '../../ui/useDiffTeardown'
 const MonacoDiff = lazy(() => import('@monaco-editor/react').then((m) => ({ default: m.DiffEditor })))
 
 /** Compare two versions of one artifact (ARTIFACTS-EVOLUTION S3, T3.3).
@@ -38,6 +39,9 @@ export function ArtifactCompare({ art, versions }: { art: Artifact; versions: nu
   const [error, setError] = useState('')
 
   const ctype = useMemo(() => resolveContentType({ kind: art.kind }), [art.kind])
+  // Issue 582: detach the models before unmount — Close compare hard-unmounts this
+  // component, the one teardown route the bodies-keeping comment below cannot cover.
+  const onDiffMount = useDiffTeardown()
   const isBinary = !!ctype?.binary
 
   useEffect(() => {
@@ -99,6 +103,7 @@ export function ArtifactCompare({ art, versions }: { art: Artifact; versions: nu
               ? <ImagePair art={art} left={left} right={right} />
               : <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div>}>
                   <MonacoDiff
+                    onMount={onDiffMount}
                     original={bodies.left} modified={bodies.right}
                     language={diffLanguage(art.kind)}
                     theme={mode === 'light' ? 'light' : 'vs-dark'}

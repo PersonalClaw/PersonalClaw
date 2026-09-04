@@ -81,6 +81,10 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
   // failure so the panel can say which of the two happened.
   const [versionsError, setVersionsError] = useState('')
   const [eventsError, setEventsError] = useState('')
+  // The selected VERSION's body failed to load (issue 581) — kept as state like its two
+  // siblings above, so the banner can tell the truth instead of claiming a read-only view
+  // of a version that never arrived.
+  const [viewError, setViewError] = useState('')
 
   // `quiet`: refresh in place without swapping the mounted body for the spinner.
   // A live refresh (the AE-10 socket trigger below) must not tear the render surface
@@ -140,9 +144,18 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
 
   // Load a historical version's immutable content when one is picked.
   useEffect(() => {
-    if (selVersion === null) { setViewContent(art?.content ?? ''); return }
+    if (selVersion === null) { setViewContent(art?.content ?? ''); setViewError(''); return }
     let alive = true
-    api.artifactVersion(slug, selVersion).then((a) => { if (alive) setViewContent(a.content ?? '') }).catch(() => {})
+    setViewError('')
+    // Issue 581: this catch was `() => {}`, so a 404 on `?v=99` left the CURRENT body on
+    // screen under a "Viewing historical v99 (read-only)" banner — and armed Revert for a
+    // version that does not exist. The failure is state now, same doctrine as the
+    // versionsError/eventsError fetches above: a swallowed error that reads as a fact
+    // about the data is worse than the error. Content is cleared so nothing renders as
+    // the version that failed to load.
+    api.artifactVersion(slug, selVersion)
+      .then((a) => { if (alive) setViewContent(a.content ?? '') })
+      .catch((e) => { if (alive) { setViewContent(''); setViewError(String((e as Error)?.message || e)) } })
     return () => { alive = false }
   }, [selVersion, slug, art])
 
@@ -299,7 +312,19 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
           </div>
         )}
 
-        {!isCurrent && (
+        {!isCurrent && viewError && (
+          <div className="flex items-center gap-2 border-b border-outline/40 bg-danger/10 px-m py-1.5 text-[0.75rem]">
+            <Clock size={12} className="text-danger" />
+            {/* Not "historical", not "read-only": that version never loaded. No Revert
+                either — reverting to a version that could not be fetched is the exact
+                false affordance issue 581 measured. */}
+            <span className="text-on-surface-low">Couldn't load v{selVersion} — {viewError}</span>
+            <button onClick={() => setSelVersion(null)} type="button" className="ml-auto inline-flex items-center gap-1 rounded-md border border-danger/35 px-2 h-6 text-danger text-[0.75rem]">
+              Back to current
+            </button>
+          </div>
+        )}
+        {!isCurrent && !viewError && (
           <div className="flex items-center gap-2 border-b border-outline/40 px-m py-1.5 text-[0.75rem]" style={{ background: 'color-mix(in srgb, var(--color-warning) 10%, transparent)' }}>
             <Clock size={12} style={{ color: 'var(--color-warning)' }} />
             <span className="text-on-surface-low">Viewing historical v{selVersion} (read-only)</span>

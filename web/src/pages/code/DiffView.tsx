@@ -7,6 +7,7 @@ import { monacoLang } from '../files/fileMeta'
 
 // Monaco's side-by-side diff editor, lazy like the main editor (shares the
 // locally-bundled monaco from monacoSetup).
+import { useDiffTeardown } from '../../ui/useDiffTeardown'
 const MonacoDiff = lazy(() => import('@monaco-editor/react').then((m) => ({ default: m.DiffEditor })))
 
 /** Working-vs-HEAD diff for a changed file in the cockpit's Changes tab.
@@ -15,6 +16,9 @@ const MonacoDiff = lazy(() => import('@monaco-editor/react').then((m) => ({ defa
  *  the normal editor tab. */
 export function DiffView({ path, name, ws, deleted = false }: { path: string; name: string; ws: string; deleted?: boolean }) {
   const { mode } = useMode()
+  // Issue 582: the cockpit conditionally unmounts this view; detach the models first
+  // or Monaco throws on every close (same guard as artifacts/ArtifactCompare).
+  const onDiffMount = useDiffTeardown()
   const [original, setOriginal] = useState<string | null>(null)
   const [modified, setModified] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -83,6 +87,7 @@ export function DiffView({ path, name, ws, deleted = false }: { path: string; na
       <div className="min-h-0 flex-1">
         <Suspense fallback={<div className="flex h-full items-center justify-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div>}>
           <MonacoDiff
+            onMount={onDiffMount}
             original={original} modified={modified}
             language={monacoLang(name)}
             theme={mode === 'light' ? 'light' : 'vs-dark'}
