@@ -21,10 +21,12 @@ carries a :class:`Provenance`. Two things are kept strictly apart:
 * the ``score`` in ``[0, 1]`` — the reviewer's JUDGMENT mapping of that evidence onto
   *this* product's use case, documented in the companion plan doc.
 
-No benchmark number in here was measured on the authoring host — the fixture-axis
-measurements MI-6 ultimately wants (MPS latency, RAM) are DEFERRED to the follow-up
-implementation run and are represented as measure-deferred metrics, not guesses. When
-:func:`measure_fixture_rtf` cannot run it says so; it never fabricates a latency.
+Provenance is per-cell: literature and judgment cells carry citations, and the
+``measured`` cells (footprint, load RSS) come from the project's Apple-silicon
+integration host — the one place MI-6's own flag said they must come from. The
+remaining fixture-axis latency measurement is represented as a measure-deferred
+item, not a guess. When :func:`measure_fixture_rtf` cannot run it says so; it never
+fabricates a latency.
 """
 
 from __future__ import annotations
@@ -274,9 +276,10 @@ def candidates() -> list[EngineCandidate]:
                 _OMNIVOICE_GH,
             ),
             "footprint": Metric(
-                "not published in the README/model card at spike time",
-                None,
-                UNKNOWN,
+                "3.27 GB on disk (HF snapshot k2-fsa/OmniVoice, 42 files; measured on the "
+                "project's Apple-silicon integration host — ~2.8 GB RSS after MPS load)",
+                0.60,
+                MEASURED,
                 _OMNIVOICE_HF,
             ),
             "license": Metric("Apache-2.0", 1.0, LITERATURE, _OMNIVOICE_GH),
@@ -388,12 +391,9 @@ def run_bakeoff() -> BakeoffReport:
         "in. Re-evaluate if PClaw ever grows a server-side or CUDA synthesis tier."
     )
     deferred = [
-        "MPS latency + RAM on the fixture set (MI-6 fixture axes) — real inference, "
-        "run in the follow-up via measure_fixture_rtf once weights are installed",
-        "footprint: OmniVoice on-disk weight size is unpublished — measure from the "
-        "downloaded checkpoint at integration time (excluded from this aggregate)",
-        "the winner's real zero-shot inference + resumable weight download + LMM-V2 "
-        "through-clone selftest + sidecar-kill typed crash reason (rest of MI-6)",
+        "fixture-set MPS latency (measure_fixture_rtf under a controlled host): the "
+        "integration run recorded cold load 66.6s / warm 8.0s and a 4.1s short-utterance "
+        "synthesis on MPS, but under loadavg ~15 — honest per-fixture RTF needs a quiet host",
     ]
     return BakeoffReport(
         candidates=cands,

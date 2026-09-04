@@ -9,7 +9,7 @@ through-clone selftest, and the sidecar-kill typed crash reason) is **deferred t
 follow-up run** — see [Deferred scope](#deferred-scope).
 
 **Verdict up front: ship k2-fsa OmniVoice. Reject FunAudioLLM CosyVoice.**
-Weighted score **0.906 vs 0.658** over the kept criteria.
+Weighted score **0.875 vs 0.662** over the kept criteria (footprint measured at integration time).
 
 Reproduce this scorecard at any time — it is pure, offline, and takes no model:
 
@@ -47,15 +47,19 @@ is the reviewer's judgment mapping of that evidence onto this product, in `[0, 1
 | Clone quality proxy (CER/SS) | 0.20 | SOTA-cloning claim; ASR-verified-lossless in its RTF bench; no public CER/SS table → **0.80** | Fun-CosyVoice3-0.5B-RL: test-en WER 1.68 / SS 69.5, test-zh CER 0.81 / SS 77.4 → **0.90** | literature |
 | Install weight / complexity | 0.15 | single `pip install omnivoice` (PyPI); `pynini` via conda only for the text-norm extra → **0.90** | recursive-submodule clone + conda py3.10 + `requirements.txt` + optional `ttsfrd` wheels + `sox` → **0.40** | judgment on cited READMEs |
 | Inference latency (RTF / first-packet) | 0.15 | RTF 0.0899 (batch=1, H100, fp16, `num_step=32`); ~0.025 batched/accelerated → **0.80** | bi-streaming first-packet as low as 150 ms → **0.85** | literature |
-| Weight footprint on disk | 0.10 | **not published** in README / model card at spike time → **excluded** | 0.5B params (CosyVoice2/3-0.5B) → 0.70 | literature / unknown |
+| Weight footprint on disk | 0.10 | **3.27 GB measured** (HF snapshot, 42 files; ~2.8 GB RSS after MPS load) → **0.60** | 0.5B params (CosyVoice2/3-0.5B) → 0.70 | **measured** (integration host) / literature |
 | License permissiveness | 0.10 | Apache-2.0 → **1.00** | Apache-2.0 → **1.00** | literature |
 | Language coverage | 0.05 | 600+ languages → **1.00** | 9 languages + 18+ Chinese dialects → **0.50** | literature |
-| **Weighted score (kept criteria)** | | **0.906** | **0.658** | |
+| **Weighted score (kept criteria)** | | **0.875** | **0.662** | |
 
-Footprint is **excluded from the aggregate, not guessed**: OmniVoice does not publish an
-on-disk weight size, so scoring a published 0.5B against a blank would be dishonest. Its
-weight is renormalized across the kept criteria and the number is flagged for measurement
-at integration time.
+Footprint was **excluded at spike time, then measured at integration time** — exactly
+what the spike's own flag demanded. The integration run on the project's Apple-silicon
+host downloaded the real `k2-fsa/OmniVoice` snapshot (**3.27 GB on disk**, 42 files),
+loaded it on MPS (**~2.8 GB RSS** after load; cold load 66.6 s, warm 8.0 s, short-utterance
+synthesis 4.1 s — timed under loadavg ~15, so latency stays a deferred fixture-set
+measurement), and re-scored the cell at 0.60 with `measured` provenance. Including it
+moves the aggregate from 0.906 to **0.875 vs 0.662** and does not change the verdict.
+Verdict text and rejection notes are regenerated from the harness.
 
 Latency and quality are **not directly comparable across the two** — OmniVoice publishes
 offline RTF on an H100; CosyVoice publishes streaming first-packet latency and CER/SS on
