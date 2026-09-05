@@ -130,12 +130,49 @@ OWN_SECRET_BASENAMES: frozenset[str] = frozenset(
 #: own project may reasonably hold a ``sessions.json``, and blocking that name everywhere
 #: would make the agent's bash guard refuse an ordinary file. Reading OURS forges a session
 #: token or leaks live nonces, so the path is what has to be refused.
-_SENSITIVE_PCLAW_HOME_ENTRIES: tuple[str, ...] = (
-    ".env",
-    "credentials",
-    "governance",
-    "session_key",
-    "sessions.json",
+#:
+#: Split into FILES and DIRS, and both EXPORTED, so that ``handlers/files.py`` can DERIVE its
+#: basename tier from this declaration instead of re-listing the same three names. That
+#: re-listing is not a stylistic point: it is the mechanism of #354. ``session_key`` was
+#: documented as "the signing key" in ``session_store.py`` and named a secret here, and the
+#: dashboard blocklist still did not know about it, because a hand-copied list only knows what
+#: someone remembered to copy. One declaration, every consumer derived.
+#:
+#: Names go in :data:`HOME_SECRET_FILE_BASENAMES` when the file itself is the secret, and in
+#: :data:`HOME_SECRET_DIRS` when the whole subtree is (every entry beneath a dir is refused,
+#: so a new file added inside one is covered on the day it is written — the property that
+#: makes the omission structurally impossible rather than merely fixed once).
+HOME_SECRET_FILE_BASENAMES: frozenset[str] = frozenset(
+    {
+        ".env",
+        "session_key",
+        "sessions.json",
+    }
+)
+
+#: Secret-bearing DIRECTORIES in the PersonalClaw home. The whole subtree is refused.
+#:
+#: 🔴 ``auth`` was MEASURED missing (#354, this fix). ``auth/credentials.json`` holds the
+#: argon2id password hash, ``auth/enroll_codes.json`` and ``auth/pair_codes.json`` hold the
+#: live redeemable device codes — and all three answered ``200`` with their contents through
+#: ``GET /api/file-read``, because the home is a browsable dashboard root and nothing in any
+#: guard named this directory. That is the SAME omission as ``session_key``, one directory
+#: over, found by asking the auth layer what files it writes instead of trusting the list.
+#: A dir entry rather than three basenames deliberately: ``credentials.json`` and
+#: ``pair_codes.json`` are plausible names in a user's own project, and the fourth auth file
+#: nobody has written yet must be covered too.
+HOME_SECRET_DIRS: frozenset[str] = frozenset(
+    {
+        "auth",
+        "credentials",
+        "governance",
+    }
+)
+
+#: The union, in a stable order. Every consumer that wants "the secret-bearing entries of the
+#: active home" reads this; nothing re-lists its members.
+_SENSITIVE_PCLAW_HOME_ENTRIES: tuple[str, ...] = tuple(
+    sorted(HOME_SECRET_FILE_BASENAMES | HOME_SECRET_DIRS)
 )
 
 
