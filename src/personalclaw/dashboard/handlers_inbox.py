@@ -1,5 +1,6 @@
 """Inbox API handlers — message inbox management and setup wizard."""
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -8,11 +9,13 @@ from aiohttp import web
 from personalclaw.http_errors import json_error
 from personalclaw.inbox import (
     NON_CHANNEL_KINDS,
+    InboxFieldTypeError,
     InboxState,
     InboxStore,
     ItemKind,
     ItemStatus,
     redact_item,
+    validate_updatable_fields,
 )
 from personalclaw.sel import sel
 
@@ -307,33 +310,65 @@ async def api_inbox_seen(request: web.Request) -> web.Response:
 
 
 async def api_inbox_update(request: web.Request) -> web.Response:
-    """PUT /api/inbox/{id} — update draft, status, etc."""
+    """PUT /api/inbox/{id} — update draft, status, etc.
+
+    Four things happen in a deliberate order here, and the order IS the fix (#338):
+    parse, resolve, validate, only then mutate.
+    """
     state: "DashboardState" = request.app["state"]
     inbox_state, inbox = _get_inbox(state)
     item_id = request.match_info["id"]
-    body = await request.json()
 
-    # Handle mute thread
+    # 1. Parse. This was an unguarded `await request.json()`, so a malformed body raised
+    #    into the framework as a bare 500, and a scalar body reached `body.get` for an
+    #    `AttributeError` 500. Seven sibling handlers in this package already do both checks.
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return json_error("invalid_json", message="Body must be valid JSON", status=400)
+    if not isinstance(body, dict):
+        return json_error("invalid_body", message="JSON body must be an object", status=400)
+
+    # 2. Resolve the item BEFORE any side effect. The 404 used to come from `inbox.update`
+    #    at the END, so the three blocks below had already run: dismissing an id that does
+    #    not exist persisted it into `inbox_state.dismissed` and recorded an engagement
+    #    signal, then answered 404. Two of the three happened to be guarded and one was not
+    #    — three places each deciding independently whether the item exists, which is the
+    #    defect rather than the missing guard.
+    item = inbox.items.get(item_id)
+    if item is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    # 3. Validate the field types BEFORE mutating anything. `inbox.update` validates too
+    #    (for the three callers that never come through HTTP), but doing it only there would
+    #    leave the side effects below already applied on a refused request — a partial
+    #    mutation, which is the same class of defect as the corruption itself.
+    updates = {k: v for k, v in body.items() if k in _UPDATABLE_FIELDS}
+    try:
+        validate_updatable_fields(updates)
+    except InboxFieldTypeError as exc:
+        logger.info("inbox update refused for %s: %s", item_id, exc)
+        return json_error("invalid_field_type", message=str(exc), status=400)
+
+    # 4. Mutate.
     if body.get("mute_thread"):
-        item = inbox.items.get(item_id)
-        if item:
-            thread_key = item.thread_ts or item.id.split("_", 1)[1]
-            inbox_state.muted_threads.add(thread_key)
-            inbox_state.save()
+        thread_key = item.thread_ts or item.id.split("_", 1)[1]
+        inbox_state.muted_threads.add(thread_key)
+        inbox_state.save()
 
     # Handle dismiss → track in state + record a negative engagement signal.
     if body.get("status") == ItemStatus.DISMISSED:
         inbox_state.dismissed.add(item_id)
         inbox_state.save()
-        _record_signal(state, inbox.items.get(item_id), "dismiss")
+        _record_signal(state, item, "dismiss")
 
     # A favorite toggled ON is a strong positive signal (off is not a negative — the user
     # is just un-starring, not disengaging).
     if body.get("favorited") is True:
-        _record_signal(state, inbox.items.get(item_id), "favorite")
+        _record_signal(state, item, "favorite")
 
-    updated = inbox.update(item_id, **{k: v for k, v in body.items() if k in _UPDATABLE_FIELDS})
-    if not updated:
+    updated = inbox.update(item_id, **updates)
+    if not updated:  # unreachable after the resolve above; keeps the Optional narrowed
         return web.json_response({"error": "not found"}, status=404)
 
     try:
