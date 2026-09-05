@@ -14,14 +14,22 @@ import { api, type Loop } from '../../lib/api'
 //   • sdlc kind on_new_cycle (loop/kinds/sdlc.py): stage_advance, rolled_back,
 //     stage_stalled, gate_check, task_started, task_done, blocked, needs_input
 //     (rolled_back = P6 metric regression → stepped back to the prior stage)
-//   • goal/design kinds: cycle_score, phase_advance (design per-cycle step advance)
+//   • goal/design kinds: phase_advance (design per-cycle step advance)
 //   • unified watchdog (loop/watchdog.py): new_finding, cycle_verdict, judge_error,
 //     complete, stagnant, needs_input, failed, ratchet_regression, judge_blind, ship_blocked
 //   • loop_routes handler (PATCH/POST actions): autopilot, queued, plan_step, deleted
 // judge_blind/ship_blocked are the P4 prove-the-instrument warnings (judge unreliable /
 // completion unconfirmed → output not graduated).
+//
+// 🪤 `cycle_score` used to be listed above and in the union, attributed to the goal/design kinds
+// beside `phase_advance` (issue 607). It has NEVER existed in `src/` — not a `publish(...)` site,
+// not a ledger kind, not a name in any plan, and no cockpit switched on it. Registering ahead of an
+// emitter IS this module's policy (see the four UNIVERSAL-PLANNING events below), but that policy
+// is for an emitter someone is coming for; a name with nothing behind it is just a claim. The
+// difference is now machine-checked: `AWAITING_EMITTER` names the exceptions and
+// `runLifecycle.test.ts` proves every other member is backed by real Python.
 export const RUN_LIFECYCLE = [
-  'new_finding', 'cycle_verdict', 'cycle_score', 'judge_error', 'complete', 'stagnant',
+  'new_finding', 'cycle_verdict', 'judge_error', 'complete', 'stagnant',
   'needs_input', 'failed', 'ratchet_regression', 'plan_step', 'phase_advance', 'rolled_back',
   'queued', 'autopilot', 'deleted', 'judge_blind', 'ship_blocked',
   'stage_advance', 'stage_stalled', 'gate_check', 'task_started', 'task_done', 'blocked',
@@ -59,6 +67,29 @@ export const RUN_LIFECYCLE = [
 ] as const
 
 export type RunLifecycleEvent = (typeof RUN_LIFECYCLE)[number]
+
+/** Members registered AHEAD of their emitter, each with the plan that owes one (issue 607).
+ *
+ *  This module's policy is that registering early is correct: an unregistered type is dropped by
+ *  EventSource with no error anywhere, so the union is the only place the drop can be prevented,
+ *  and it has to be edited before the emitter lands or the first frames vanish silently.
+ *
+ *  What the policy is NOT is a licence for a name with nothing behind it. `cycle_score` sat in the
+ *  union — and in the source list above, attributed to a real emitter beside `phase_advance` —
+ *  while never appearing anywhere in `src/` in the repository's whole history. Naming the exceptions
+ *  here makes the two cases distinguishable: `runLifecycle.test.ts` requires every OTHER member to
+ *  be backed by real Python, so the next invented name cannot hide among the legitimate ones.
+ *
+ *  This list should SHRINK. An entry graduates the moment its publish site lands — and the rail
+ *  reds if one is still listed here once it has, so it cannot rot into a permanent exemption. */
+export const AWAITING_EMITTER: readonly RunLifecycleEvent[] = [
+  // UNIVERSAL-PLANNING (WF2UNI) plan-review lifecycle — WORKFLOWS-V2 §"New SSE events" owes the
+  // planner's publish sites. `LoopPlanReview` already folds them.
+  'plan_streaming',
+  'revision',
+  'confirmation',
+  'demotion',
+] as const
 
 /** The coalesced frame the workflow engine batches high-frequency node chatter into
  *  (`coalescer.BATCH_EVENT`). It is NOT a lifecycle event — it is an envelope AROUND them.
