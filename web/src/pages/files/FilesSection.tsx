@@ -360,10 +360,12 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                 {/* Content search replaces the whole explorer body with hits, and said nothing about
                     how many. `showResults` is the surface's own threshold (>= 2 chars), so a
                     one-character query does not announce a count for a search that has not run.
-                    🪤 The noun is "lines", not "matches": a `ContentMatch` is one matching LINE
-                    (file + line + col + preview), and "No matching matches" is what the zero branch
-                    printed when the noun restated the word the copy already carries. */}
-                <ResultAnnouncement count={results.length} noun="lines" active={showResults} />
+                    🪤 The announced noun must be the VISIBLE noun: the counter below says
+                    "N matches" and the zero state says "No matches.", so announcing "lines" gave a
+                    screen-reader user different vocabulary for the same screen. "matches" breaks
+                    both ResultAnnouncement defaults ("No matching matches", "1 matche"), which is
+                    what `empty`/`singular` exist for — not a reason to announce a different word. */}
+                <ResultAnnouncement count={results.length} noun="matches" singular="match" empty="No matches" active={showResults} />
                 {showResults && (
                   <input value={include} onChange={(e) => setInclude(e.target.value)} placeholder="include glob e.g. *.py"
                     name="workspace-grep-include" aria-label="Restrict search to files matching glob"
