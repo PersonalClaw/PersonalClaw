@@ -375,14 +375,17 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
     # a per-phase TaskList map is a projection of run state — `materialize.py` already projects
     # tasks per phase — and the inert singular `WorkflowRun.task_list_id` slot is retired in the
     # same change, so a later migration cannot fill it with the wrong shape (singular where the
-    # loop keeps `{phase_key: id}`).
+    # loop keeps `{phase_key: id}`). Seam 4e shipped the constructive half: the projection
+    # function below is the row's destination.
     FieldHome(
         "task_list_ids",
         PROJECTION,
         "",
-        "Per-phase TaskLists are derived from run state the way `materialize.py` already "
-        "projects tasks per phase; the run-side singular slot was inert and is retired "
-        "(PP-16 seam 4c), so no stored destination remains to mis-shape.",
+        "SHIPPED (PP-16 seam 4e): `materialize.task_list_ids_for_run` derives the PLURAL "
+        "`{node_id: task_list_id}` map from the persisted bindings — a node id is the "
+        "run-side phase_key (the graph IS the plan, per this map's own `plan` row). The "
+        "singular run slot was retired in seam 4c, so the derived read is the ONLY "
+        "destination; nothing is stored.",
     ),
     FieldHome(
         "linked_task_ids",
