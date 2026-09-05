@@ -2076,6 +2076,47 @@ export interface JudgeBenchView {
   pin: Record<string, unknown> | null
   runs: string[]
 }
+
+/** One subject's Loop-3 field metrics (ES-9). Every rate is `null` when its denominator
+ *  is zero — "nobody thumbed this" is not "0% approval", and the backend refuses to
+ *  conflate them, so the UI must too. */
+export interface FieldMetricsField {
+  ups: number
+  downs: number
+  thumb_rate: number | null
+  edited_runs: number
+  clean_approved_runs: number
+  edit_before_approve_rate: number | null
+  approvals: number
+  rejections: number
+  undos: number
+  approval_rate: number | null
+  signals: number
+  /** '' means "not enough field signals to call it" — unmeasured, never flat. */
+  trend: '' | 'rising' | 'falling' | 'flat'
+}
+/** One Learning-tab lab-vs-field row (amendment E3 / ES-9): lab score (Loop 1, pinned) |
+ *  gate status (Loop 2) | field trend (Loop 3). The divergence verdict arrives DECIDED —
+ *  it is what the gateway sweep files demotions on, and a UI that re-derived it from the
+ *  visible numbers would eventually disagree with what was demoted. */
+export interface FieldMetricsRow {
+  subject_kind: 'template' | 'action_type'
+  subject: string
+  lab: {
+    score: number | null
+    previous: number | null
+    /** null when either arm went unmeasured — not a rise and not a fall. */
+    rose: boolean | null
+    verdict: string
+    study_id: string
+    model_fp: string
+    ts: number | null
+  } | null
+  gate: LearningGate | null
+  field: FieldMetricsField
+  lab_field_divergence: boolean
+  divergence_reason: string
+}
 /** One ARM's aggregate inside an ablation report (`evals.matrix.aggregate()`).
  *
  *  `mean_score` is `null` when the arm produced no SCORED cell — every cell came back
@@ -5971,6 +6012,9 @@ export const api = {
   evalStudies: () => get<{ studies: StudyRow[] }>('/api/evals/studies'),
   evalStudy: (studyId: string) =>
     get<StudyView>(`/api/evals/studies/${encodeURIComponent(studyId)}`),
+  /** ES-9's lab-vs-field table — one row per subject, divergence verdicts decided
+   *  server-side. Read-only: the demotion the flag feeds is the gateway sweep's. */
+  evalFieldMetrics: () => get<{ subjects: FieldMetricsRow[] }>('/api/evals/field-metrics'),
   /** The proposals queue AND the ladder's last pass, from one read. Returns the whole
    *  feed rather than unwrapping to the array: `lastReview` is what makes an empty
    *  `proposals` falsifiable, and a second accessor over the same route would be two

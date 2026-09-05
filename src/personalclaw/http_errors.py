@@ -175,6 +175,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "store_mutated": "A read-only harness pass wrote to a store and was refused.",
     "labels_required": "The request carries no qrels label mapping.",
     "labels_rejected": "The submitted qrels labels were refused.",
+    "field_metrics_unreadable": "The lab/field metric sources could not be read.",
     # ── packs (handlers/packs.py) ──
     "pack_not_installed": "No such installed pack.",
     "pack_not_bundled": "The pack is not bundled with this build.",

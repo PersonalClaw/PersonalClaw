@@ -70,6 +70,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
       // ES-16: LearningPage now also reads attention accounting; empty is its ordinary
       // state, and an omitted stub would throw inside a passive effect (see note above).
       workflowAttention: () => Promise.resolve({ scopes: [] }),
+      evalFieldMetrics: () => Promise.resolve({ subjects: [] }),
       learningProposals: () => learningProposals(),
       learningStagingWeek: () => learningStagingWeek(),
       learningHealth: () => learningHealth(),

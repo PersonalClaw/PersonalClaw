@@ -41,6 +41,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
     ...actual,
     api: {
       workflowAttention: () => Promise.resolve({ scopes: [] }),
+      evalFieldMetrics: () => Promise.resolve({ subjects: [] }),
       learningProposals: () => Promise.resolve(EMPTY_INBOX),
       learningStagingWeek: () => learningStagingWeek(),
       learningHealth: () => Promise.reject(new Error('not under test')),

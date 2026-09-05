@@ -9,6 +9,7 @@ import { StudiesPanel } from './StudiesPanel'
 import { RetrievalBenchPanel } from './RetrievalBenchPanel'
 import { AblationPanel } from './AblationPanel'
 import { BenchmarkPanel } from './BenchmarkPanel'
+import { FieldMetricsPanel } from './FieldMetricsPanel'
 
 // ── The typed error code the funnel was throwing away, and the six branches that waited ──────
 //
@@ -57,6 +58,7 @@ const WIRE = {
   retrieval_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish retrieval ablation reports."}}',
   ablation_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish ablation reports."}}',
   benchmark_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish benchmark reports."}}',
+  field_metrics_disabled: '{"error": {"code": "evals_disabled", "message": "The eval substrate is off. Turn on `evals.enabled` to publish field metrics."}}',
   judge_absent: '{"error": {"code": "judge_bench_absent", "message": "No judge benchmark has run yet. Run `personalclaw judge-bench` to produce one."}}',
   retrieval_absent: '{"error": {"code": "retrieval_absent", "message": "No retrieval benchmark has run yet. Run `personalclaw retrieval-eval` to score both stores."}}',
   ablation_absent: '{"error": {"code": "ablation_absent", "message": "No ablation has run yet. Register a component in `evals/ablation_registry.json` and run `personalclaw ablation --force`."}}',
@@ -165,6 +167,7 @@ describe('every eval panel says "the substrate is off" — and says it alike', (
     { name: 'retrieval', body: WIRE.retrieval_disabled, what: 'retrieval benchmark', el: (e: unknown) => <RetrievalBenchPanel bench={undefined} error={e} onRetry={() => {}} /> },
     { name: 'ablation', body: WIRE.ablation_disabled, what: 'ablation', el: (e: unknown) => <AblationPanel view={undefined} error={e} onRetry={() => {}} /> },
     { name: 'skill-impact benchmark', body: WIRE.benchmark_disabled, what: 'benchmark', el: (e: unknown) => <BenchmarkPanel view={undefined} error={e} onRetry={() => {}} /> },
+    { name: 'lab vs field', body: WIRE.field_metrics_disabled, what: 'lab-vs-field table', el: (e: unknown) => <FieldMetricsPanel rows={undefined} error={e} onRetry={() => {}} /> },
   ] as const
 
   for (const c of CASES) {
