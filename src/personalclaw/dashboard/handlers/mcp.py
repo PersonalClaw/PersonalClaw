@@ -61,6 +61,22 @@ def _legacy_mcp_json() -> Path:
     return config_dir() / "settings" / "mcp.json"
 
 
+# The INSTALLED agent config, resolved the same deferred way and for the same reason as
+# `_canonical_mcp_json()` above. Two call sites in this file spelled it
+# `Path.home() / ".personalclaw" / "agents" / "personalclaw.json"`, which ignores
+# PERSONALCLAW_HOME outright — so a dev gateway read the operator's REAL agent config and
+# `_remove_from_agent_file` DELETED a server from it.
+#
+# `config_dir()` and not `agent.AGENTS_DIR`, which four other modules use for this same file:
+# that constant is evaluated at IMPORT time and so freezes the home as it was then. Calling it
+# per use is the whole point here.
+def _installed_agent_json() -> Path:
+    from personalclaw.agent import AGENT_FILENAME
+    from personalclaw.config.loader import config_dir
+
+    return config_dir() / "agents" / AGENT_FILENAME
+
+
 def _migrate_legacy_mcp_json() -> None:
     """One-time fold of the legacy ``settings/mcp.json`` into the canonical file.
 
@@ -1059,7 +1075,7 @@ def _find_server_spec_anywhere(name: str) -> dict | None:
     ``disabled`` stripped (the caller decides whether to disable in its target scope).
     """
     candidates = [
-        Path.home() / ".personalclaw" / "agents" / "personalclaw.json",
+        _installed_agent_json(),
         _canonical_mcp_json(),
         _GLOBAL_MCP_JSON,
         _CC_GLOBAL_JSON,
@@ -1309,9 +1325,7 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
                 # so the next rebuild doesn't resurrect it via the
                 # "start from existing agent config" base.  Without this the
                 # additive merge keeps the entry around.
-                _remove_from_agent_file(
-                    Path.home() / ".personalclaw" / "agents" / "personalclaw.json", name
-                )
+                _remove_from_agent_file(_installed_agent_json(), name)
                 _remove_from_agent_file(
                     Path.home() / ".claude" / "agents" / "personalclaw.mcp.json", name
                 )
