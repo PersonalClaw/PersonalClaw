@@ -24,6 +24,14 @@ SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+([+-]|$)")
 # A backend-route ``op`` id (§4.2) — snake_case identifier; it becomes the tool
 # suffix ``app_<name>_<op>``, so keep it to a clean identifier shape.
 ROUTE_OP_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+# An ``icon`` value names a lucide component, so it is a bare identifier and nothing else.
+# This is the BOUNDARY half of two layers (SAX-04's defence in depth): it refuses the shapes it
+# can prove wrong without knowing lucide's export list — an emoji glyph, a phrase, a path — and
+# the render site stays fail-safe for a well-formed name that turns out not to be a component
+# (the `"icons"` case that crashed the shell, #579). Case-insensitive on purpose: the resolver
+# folds case, and 1 of the 58 icon values shipped across the first-party apps today ("brain") is
+# lowercase, so a PascalCase-only rule here would refuse to install an app that already works.
+ICON_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 
 
 def version_tuple(v: str) -> tuple[int, ...]:
@@ -1669,6 +1677,15 @@ class AppManifest:
                 "uiCapabilities, or drop the components module"
             )
 
+        # The card/detail icon. An app's icon reaches the dashboard SHELL (the sidebar nav
+        # resolves it), so a value that cannot name a component is worth catching at install
+        # rather than at paint — see ICON_NAME_RE for why this is the outer of two layers.
+        if self.icon and not ICON_NAME_RE.match(self.icon):
+            errors.append(
+                f"icon must be a lucide icon name (letters and digits, e.g. 'SquareTerminal'), "
+                f"got: {self.icon!r}"
+            )
+
         # UI page validation
         for page in self.ui.pages:
             if not page.route:
@@ -1677,6 +1694,18 @@ class AppManifest:
                 errors.append("ui page missing required field: label")
             if page.entryPoint and ".." in page.entryPoint:
                 errors.append(f"ui page entryPoint contains path traversal: {page.entryPoint!r}")
+            # A page icon is the one that lands in the nav, so it carries the shell risk the
+            # top-level icon does; same rule, named per page so the error is actionable.
+            if page.icon and not ICON_NAME_RE.match(page.icon):
+                errors.append(
+                    f"ui page {page.route!r} icon must be a lucide icon name "
+                    f"(letters and digits, e.g. 'SquareTerminal'), got: {page.icon!r}"
+                )
+            # `iconUrl` has no consumer today (nothing in web/ or src/ reads it), so this is
+            # prophylactic: every other app-supplied path in this manifest is checked rather
+            # than trusted, and the check belongs with the field, not with its first reader.
+            if page.iconUrl and ".." in page.iconUrl:
+                errors.append(f"ui page iconUrl contains path traversal: {page.iconUrl!r}")
 
         # Cron validation
         for cron in self.crons:
