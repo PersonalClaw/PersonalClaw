@@ -26,7 +26,7 @@ import { ProposalsLens } from './ProposalsLens'
 import { TriageDigestCard } from './TriageDigestCard'
 import { ContextMenu, EntranceGroup, EntranceRegion, type ContextMenuItem } from '../../ui/motion'
 import { PageTitle } from '../../ui/PageTitle'
-import { reportingWrite } from '../../app/reportingWrite'
+import { reportActionFailure, reportingWrite } from '../../app/reportingWrite'
 
 // 'open' means unresolved — pending OR seen. It replaces the old 'pending' key, which
 // compared status === 'pending' exactly: once viewing an item marks it SEEN, that filter
@@ -129,13 +129,33 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
       reload()
     } finally { setBusy(false) }
   }
-  async function restart() { setBusy(true); try { await api.restartInbox(); setTimeout(reload, 800) } finally { setBusy(false) } }
+  // Restart answers with an {ok,error} envelope instead of throwing on a failed relaunch, so both
+  // failure shapes funnel through the one sentence owner. The delayed reload is gated: refetching
+  // after a failure re-renders the same stalled sources as "nothing happened".
+  async function restart() {
+    setBusy(true)
+    try {
+      if (!(await reportingWrite('restart the inbox sources', async () => {
+        const r = await api.restartInbox()
+        if (!r?.ok) throw new Error(r?.error || 'the gateway declined to restart')
+      }))) return
+      setTimeout(reload, 800)
+    } finally { setBusy(false) }
+  }
   // Generate a catch-up digest for a channel → arrives as a new inbox item (also
   // pushed live over the WS); open it so the user lands on the summary.
   async function digest(channelId: string) {
     setBusy(true)
-    try { const it = await api.digestInboxChannel(channelId); reload(); if (it?.id) setOpenId(it.id) }
-    finally { setBusy(false) }
+    try {
+      // The result is needed (the new item is opened), so this takes the `.catch` form of the
+      // shared report rather than `reportingWrite`'s boolean. Reload only on success — after a
+      // failure it would re-render the same list, twice saying nothing.
+      const it = await api.digestInboxChannel(channelId)
+        .catch((e: unknown) => { reportActionFailure('generate the digest')(e); return null })
+      if (!it) return
+      reload()
+      if (it.id) setOpenId(it.id)
+    } finally { setBusy(false) }
   }
   // Digest picker channels: watched channels ∪ channels present in stored items
   // (the backend digests any channel's stored items — gating on watched_channels
