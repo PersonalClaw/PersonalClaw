@@ -159,8 +159,17 @@ def reconcile_source_digest_cron(store: Any) -> None:
     from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.arm import arm as _arm
     from personalclaw.triggers.models import Trigger
+    from personalclaw.triggers.system_singleton import converge_system_singleton
 
     try:
+        # An upgraded home can hold this same job under the RANDOM id the legacy
+        # `crons.json` gave it, which the id-keyed lookup below cannot see — so both copies
+        # survived and the job ran twice (issue 396). Converge on the JOB first; the returned
+        # flag is the retired row's `enabled`, so a job the user switched off does not come
+        # back on when the canonical row is created.
+        adopted_enabled = converge_system_singleton(
+            store, canonical_id=SOURCE_DIGEST_JOB_NAME, provider="source-digest"
+        )
         row = store.get(SOURCE_DIGEST_JOB_NAME)
     except Exception:
         logger.debug("source-digest cron: could not read the trigger store", exc_info=True)
@@ -173,7 +182,9 @@ def reconcile_source_digest_cron(store: Any) -> None:
             id=SOURCE_DIGEST_JOB_NAME,
             name=SOURCE_DIGEST_JOB_NAME,
             kind="clock",
-            enabled=True,
+            # True unless a retired duplicate says the user had switched this off — see
+            # `converge_system_singleton`. `None` means nothing was retired: a fresh install.
+            enabled=True if adopted_enabled is None else adopted_enabled,
             created_by="system",
             spec={"kind": "cron", "expr": SOURCE_DIGEST_SCHEDULE},
             # EMPTY config: the prompt is composed in `source_digest.build_prompt`, behind the
