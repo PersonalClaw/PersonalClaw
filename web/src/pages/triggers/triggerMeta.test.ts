@@ -386,6 +386,15 @@ describe('eventToTrigger', () => {
     expect(anyWrite.eventMatcher).toBe('')
   })
 
+  it('passes the server read_only verdict through, like its siblings', () => {
+    // Inert until `_serialize_event` sends attribution, but the mapper must not be why a
+    // foreign event row shows a Delete its schedule/store siblings would hide (TSE-4).
+    expect(eventToTrigger(wire).readOnly).toBe(false)
+    const foreign = eventToTrigger({ ...wire, read_only: true, author: 'alice' } as unknown as WireTrigger)
+    expect(foreign.readOnly).toBe(true)
+    expect(foreign.author).toBe('alice')
+  })
+
   it('does NOT set `hook`, which would open the wrong inspector', () => {
     // The panel's dispatch chain ends in an `open.hook` fallback to LifecycleDetail.
     const t = eventToTrigger(wire)

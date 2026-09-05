@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Plus, Zap, Clock, Pencil, CalendarDays, Users, ShieldOff } from 'lucide-react'
+import { Plus, Zap, Clock, Pencil, CalendarDays, Users, ShieldOff, Trash2 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
@@ -14,6 +14,8 @@ import { Segmented } from '../../ui/Segmented'
 import { WeekGridView } from './WeekGridView'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
+import { confirmDelete } from '../../ui/dialog'
+import { reportingWrite } from '../../app/reportingWrite'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type ActionProvider } from '../../lib/api'
@@ -81,7 +83,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // event, store — and this page fetched only three, so an event trigger created through the
   // create form (`trigger_type: 'event'`) existed, fired, and was never listed anywhere. It
   // carries live enabled/fire-count state → persist:false, like schedules and stores.
-  const { data: events, error: eventsErr } = useQuery('triggers:events', () => api.eventTriggers(), { persist: false })
+  const { data: events, error: eventsErr, refresh: refreshEvents } = useQuery('triggers:events', () => api.eventTriggers(), { persist: false })
   const { data: providers = [] } = useQuery('triggers:action-providers', () => api.actionProviders().catch(() => [] as ActionProvider[]), { persist: true })
   // How much each row's action may do UNATTENDED (AUTONOMY-GUARDRAILS §6.1). The ladder is
   // keyed on the action-provider name — the same identity the backend dispatch seams hold —
@@ -95,6 +97,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   const loadSchedules = () => { invalidateKeys('triggers:schedules'); refreshSchedules() }
   const loadHooks = () => { invalidateKeys('triggers:hooks'); refreshHooks() }
   const loadStores = () => { invalidateKeys('triggers:store'); refreshStores() }
+  const loadEvents = () => { invalidateKeys('triggers:events'); refreshEvents() }
   useEffect(() => {
     const t = window.setInterval(refreshSchedules, 10000)  // keep schedule next-run/running fresh
     return () => clearInterval(t)
@@ -169,10 +172,10 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
               : open.kind === 'store' && open.store
               ? <StoreTriggerDetail trigger={open.store} onChanged={loadStores} onDeleted={() => { setOpenId(""); loadStores() }} />
               : open.kind === 'event' && open.event
-              // Read-only for now: a data-event trigger has no editor yet, and an empty panel
-              // (what a fell-through event row rendered) is worse than an honest summary. Edit +
-              // delete land with its own inspector — tracked, not silently skipped.
-              ? <EventTriggerSummary t={open} />
+              // A data-event trigger has no editor yet (recreate to change its pattern), but
+              // Delete works: the backend DELETE branch has existed since EIAT and the panel is
+              // where destructive actions live on this page (see the menuItems comment below).
+              ? <EventTriggerSummary t={open} onDeleted={() => { setOpenId(""); loadEvents() }} />
               : open.hook
               ? <LifecycleDetail hook={open.hook} providers={providers} editing={editing} onEditingChange={setEditing} onSaved={loadHooks} onDeleted={() => { setOpenId(""); loadHooks() }} />
               : null}
@@ -248,9 +251,12 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                   // so offering Edit would be offering to change a row whose owner's machine — not
                   // this one — decides what it does. Open still works: the row is informational,
                   // and informational means readable.
+                  // An EVENT row gets no Edit either: its inspector has no editor (recreate to
+                  // change the pattern), so the item silently acted as a second Open — an
+                  // affordance that lies about what it does.
                   const menuItems: ContextMenuItem[] = [
                     { icon: <Zap size={15} />, label: 'Open', onSelect: () => setQuery({ open: t.id, edit: null }) },
-                    ...(t.readOnly ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) }]),
+                    ...(t.readOnly || t.kind === 'event' ? [] : [{ icon: <Pencil size={15} />, label: 'Edit', onSelect: () => setQuery({ open: t.id, edit: '1' }) }]),
                   ]
                   return (
                     <ContextMenu key={t.id} items={menuItems}>
@@ -331,7 +337,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
  *  Shows only the matcher the row's pattern actually reads — `eventPatternMeta().matcher` names
  *  it, and the other glob fields are inert for that pattern, so rendering them would claim a
  *  constraint that is not applied. */
-function EventTriggerSummary({ t }: { t: Trigger }) {
+export function EventTriggerSummary({ t, onDeleted }: { t: Trigger; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false)
   const pm = eventPatternMeta(t.eventPattern)
   const rows: Array<[string, string]> = [
     ['Fires on', pm.label],
@@ -339,6 +346,20 @@ function EventTriggerSummary({ t }: { t: Trigger }) {
     ['Then', t.actionLabel],
     ['Fired', t.runCount != null ? `${t.runCount}×` : '—'],
   ]
+  // Same shape as StoreTriggerDetail.remove(): confirm → reportingWrite (failure becomes a
+  // toast and returns false) → onDeleted closes the panel and reloads the event list. The
+  // default "This cannot be undone." body is accurate here — an event trigger keeps no run
+  // history, so deletion removes exactly the trigger.
+  async function remove() {
+    if (!(await confirmDelete('data-event trigger', t.name))) return
+    setBusy(true)
+    try {
+      if (!(await reportingWrite(`delete ${t.name}`, () => api.deleteEventTrigger(t.rawId)))) return
+      onDeleted()
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <div className="flex flex-col gap-l p-l">
       <p className="text-on-surface-var text-[0.8125rem]">{pm.desc}</p>
@@ -351,6 +372,17 @@ function EventTriggerSummary({ t }: { t: Trigger }) {
       <p className="text-on-surface-low text-[0.8125rem]">
         Editing a data-event trigger isn’t available here yet — recreate it to change its pattern.
       </p>
+      {/* No action row for a foreign row, same reasoning as StoreTriggerDetail: Delete is a
+          write to somebody else's automation. Inert today (events carry no attribution on the
+          wire yet) but the gate is the family invariant, not a per-panel choice. */}
+      {!t.readOnly && (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <div className="flex-1" />
+          <Button variant="ghost" size="sm" onClick={remove} disabled={busy} className="text-danger">
+            <Trash2 size={14} /> Delete
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
