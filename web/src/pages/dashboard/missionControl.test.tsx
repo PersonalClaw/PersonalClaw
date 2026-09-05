@@ -234,6 +234,11 @@ describe('answering a pending question', () => {
     expect(await screen.findByText(/no preset options/)).toBeTruthy()
     expect(screen.queryByRole('textbox')).toBeNull()
     expect(screen.queryByRole('button', { name: /^Answer/ })).toBeNull()
+
+    // …and the sentence's destination is a real link, not a hunt: the card already knows the
+    // run id, so "open the run" navigates there, named after its subject for a link list.
+    const link = screen.getByRole('link', { name: /^Open the run:/ })
+    expect(link.getAttribute('href')).toMatch(/^#\/workflows\/runs\//)
   })
 })
 

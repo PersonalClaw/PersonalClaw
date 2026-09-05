@@ -4,6 +4,7 @@ import { api, type ChatSessionSummary, type InboxItem, type PendingApproval } fr
 import { useQuery } from '../../lib/data'
 import { rowSubject } from '../../lib/rowSubject'
 import { Button } from '../../ui/Button'
+import { TextLink } from '../../ui/TextLink'
 import { LANES, toLanes, type Lane } from '../../lib/attentionLanes'
 
 // ── Mission Control — the locked four-lane attention view (AMBIENT-SURFACES AS-8) ──────────
@@ -479,9 +480,16 @@ function QuestionActions({
   onAnswer: (cardId: string, q: CardQuestion, choice: string) => void
 }) {
   if (question.choices.length === 0) {
+    // The one card type that REQUIRES leaving this surface used to name the destination and
+    // provide no way to get there — the card already knows the run id. The link carries the
+    // card's subject so a screen-reader list of links says WHICH run each one opens.
     return (
       <p data-type="body-s" className="text-on-surface-low">
-        This question has no preset options — open the run to answer it in your own words.
+        This question has no preset options —{' '}
+        <TextLink href={`#/workflows/runs/${question.runId}`} ink="emphasis" aria-label={`Open the run: ${subject}`}>
+          open the run
+        </TextLink>{' '}
+        to answer it in your own words.
       </p>
     )
   }
