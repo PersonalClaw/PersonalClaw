@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { reportActionFailure, reportingWrite } from '../../app/reportingWrite'
-import { BookOpen, FileClock, Home, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink, Gavel } from 'lucide-react'
+import { BookOpen, FileClock, Filter, Home, Plus, Search, Database, Sparkles, Network, Library, Trash2, Target, X, Pin, Star, Archive, Play, FileText, Loader2, CircleAlert, Boxes, WifiOff, Layers, Scale, Tag as TagIcon, Rss, ExternalLink, Gavel } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
@@ -670,7 +670,24 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                   <div role="status" className="mb-m text-on-surface-var text-[0.8125rem]">{bulkNote}</div>
                 )}
                 {(shown?.length ?? 0) === 0 ? (
-                  <EmptyState icon={Search} title="No matching items" hint="Try a different search or filter." />
+                  /* Narrowed-to-nothing split (emptyStateNoMatch): the old single state blamed
+                     "search or filter" at whichever the user touched. The search is SERVER-side
+                     (`submitted` shapes the fetch), so unlike the tasks list there is no honest
+                     library total in hand under a query — the hints teach the way out instead of
+                     counting. Search wins the blame when both narrow; the neutral fallback covers
+                     a shelf (collection) emptied by navigation, which has no in-page escape. */
+                  submitted ? (
+                    <EmptyState icon={Search} title={`No items match “${submitted}”`}
+                      hint="Try different words, or clear the search to browse the library."
+                      action={{ label: 'Clear search', onClick: () => { setQ(''); setSubmitted('') } }} />
+                  ) : typeFilter || providerFilter || tagFilter || curationFilter ? (
+                    <EmptyState icon={Filter} title="No items in this view"
+                      hint="Nothing matches the active filters."
+                      action={{ label: 'View all items', onClick: () => { setTypeFilter(''); setProviderFilter(''); setTagFilter(''); setCurationFilter('') } }} />
+                  ) : (
+                    <EmptyState icon={Search} title="Nothing here"
+                      hint={collectionTok ? 'This shelf has no items yet.' : 'No items to show.'} />
+                  )
                 ) : (
                   // DSC-13: the library is the surface the atom names first, and the one
                   // whose rows were MEASURED variable — 34-76px across a real 5,000-item

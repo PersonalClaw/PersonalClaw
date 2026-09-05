@@ -16,7 +16,7 @@ const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins } from 'lucide-react'
+import { Edit3, History, Search, MessageSquare, Trash2, Activity, ChevronRight, ChevronDown, Quote, PanelRight, Clipboard, X, Pin, FileText, BookText, AlertTriangle, Pencil, Sparkles, Link2, Check, Repeat, Rewind, PlayCircle, GitBranch, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, ListChecks, Filter, EyeOff, Clock, Loader2, Wrench, Target, Code2 as CodeIcon, Paperclip, ExternalLink, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, FolderKanban, GripVertical, MessageCircleQuestion, Bot, ShieldCheck, Shield, Eye, Zap, ClipboardList, Hammer, Camera, NotebookPen, FolderCog, Archive, ArchiveRestore, Boxes, CornerDownLeft, Download, Share2, Coins } from 'lucide-react'
 import { IconButton } from '../ui/IconButton'
 import { SquareIconButton } from '../ui/SquareIconButton'
 import { SearchField } from '../ui/SearchField'
@@ -4477,7 +4477,27 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
         {sessions === null && sessionsError ? <div className="flex-1 min-h-0"><LoadError what="chats" error={sessionsError} onRetry={refreshSessions} /></div>
           : sessions === null ? <div className="flex-1 min-h-0"><ListSkeleton rows={6} what="chats" /></div>
           : sessions.length === 0 ? <div className="flex-1 min-h-0"><EmptyState icon={MessageSquare} title="No chats yet" hint="Start a conversation — your sessions will appear here to search and revisit." action={{ label: 'New chat', onClick: () => navigate('chat/new'), icon: Edit3 }} /></div>
-          : filtered.length === 0 ? <div className="flex-1 min-h-0"><EmptyState icon={Search} title="No matches" hint="Try a different search or tag filter." /></div>
+          : filtered.length === 0 ? <div className="flex-1 min-h-0">{
+              /* Reachable through THREE narrowing controls (search, tag filter, origin scope) — and
+                 through NO control at all, when every loaded chat is a worker session hidden by the
+                 default 'manual' scope. The old single state ("No matches / Try a different search or
+                 tag filter") blamed the search at a user who only switched scope, and offered no way
+                 out. Same split as the tasks/code lists (emptyStateNoMatch): name the control that
+                 actually narrowed, offer the escape that undoes it, and count what is really loaded
+                 so the state cannot read as "you have no chats". Search wins the blame when both
+                 narrow; the view escape resets tags AND scope — 'all' genuinely shows everything, so
+                 unlike tasks there is no scope-only third case. `showArchived` is deliberately not a
+                 narrower here: it swaps WHICH list is fetched (server-side), not what this one shows. */
+              n ? (
+                <EmptyState icon={Search} title={`No chats match “${q.trim()}”`}
+                  hint={`You have ${sessions.length} chat${sessions.length === 1 ? '' : 's'} — just none matching the search.`}
+                  action={{ label: 'Clear search', onClick: () => setQ('') }} />
+              ) : (
+                <EmptyState icon={Filter} title="No chats in this view"
+                  hint={`You have ${sessions.length} chat${sessions.length === 1 ? '' : 's'} — just none in this view.`}
+                  action={{ label: 'View all chats', onClick: () => { setTagFilter(new Set()); setOrigin('all') } }} />
+              )
+            }</div>
           : view === 'board' ? (
             // Board fills the remaining height; columns are height-bounded and
             // each column's list scrolls on its own (kanban shell). Centered +

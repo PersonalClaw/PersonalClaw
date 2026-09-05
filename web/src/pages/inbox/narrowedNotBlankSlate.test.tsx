@@ -94,7 +94,11 @@ describe('the inbox distinguishes "nothing matches" from "you have nothing"', ()
     // names what the user should change. Asserted per file, since that is where a regression lands.
     const CANONICAL: [string, RegExp][] = [
       ['pages/artifacts/ArtifactGrid.tsx', /Try a different search, kind, or collection\./],
-      ['pages/knowledge/KnowledgeListPage.tsx', /Try a different search or filter\./],
+      // Knowledge graduated from the single narrowed sentence to the emptyStateNoMatch split
+      // (AUD-NZ10) — the pin follows the copy to its query-named form; the narrowed-vs-blank
+      // distinction this rail guards is still there (the blank slate stays "Knowledge base is
+      // empty" and is pinned by knowledgeNoMatch.test.ts alongside the split).
+      ['pages/knowledge/KnowledgeListPage.tsx', /No items match “\$\{submitted\}”/],
       ['pages/prompts/PromptsListPage.tsx', /Try a different term\./],
       ['pages/skills/SkillsPage.tsx', /Try a different term\./],
       ['pages/triggers/TriggersListPage.tsx', /Try a different filter\./],
