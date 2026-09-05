@@ -287,9 +287,21 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
   const labelId = useFieldLabelId()
   const hintId = useFieldHintId()
   const [local, setLocal] = useState(String(value))
-  // Re-sync when the committed value changes out from under us (external patch,
-  // clamp, another editor) — but never mid-edit, since we only read `value`.
-  useEffect(() => { setLocal(String(value)) }, [value])
+  // Re-sync when the committed value CHANGES out from under us (external patch,
+  // clamp, another editor) — but never mid-edit, since we only read `value`, and
+  // never on mount. The mount run is the one place this effect could fire with a
+  // STALE `value`: it flushes on React's own scheduler tick, so an edit that lands
+  // between the mount commit and that tick gets clobbered back to the initial
+  // value — and the subsequent blur-commit then sees clamped === value and drops
+  // the edit entirely. Unreachable for a human, but jsdom tests hit that window
+  // (the #624 rollback rail flaked ~7% on exactly this), so the effect is gated
+  // to actual `value` movement.
+  const synced = useRef(value)
+  useEffect(() => {
+    if (synced.current === value) return
+    synced.current = value
+    setLocal(String(value))
+  }, [value])
   const commit = () => {
     const n = Number(local)
     if (local === '' || Number.isNaN(n)) { setLocal(String(value)); return }
