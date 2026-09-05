@@ -22,7 +22,7 @@ import { Button } from '../../ui/Button'
 import { FieldHintProvider, FieldLabelProvider, TextArea, TextInput } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { WorkspacePicker } from '../code/WorkspacePicker'
-import { api, ApiError, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
+import { api, ApiError, MAX_NAME_LEN, type ProjectItem, type TaskListItem, type LoopKind, type TaskItem, type FsEntry, type WorkRow, type WorkState, type WorkBoard, type ProjectKnowledgeItem, type SharingPolicy } from '../../lib/api'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { getActiveProject, setActiveProject } from '../../lib/activeProject'
 import { notify } from '../../app/appSdk'
@@ -467,6 +467,7 @@ function NewProjectModal({ busy, onClose, onCreate }: {
           <TextInput autoFocus value={name} onChange={setName}
             onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
             placeholder="Project name (or let the system name it later)…"
+            maxLength={MAX_NAME_LEN}
             surface="high" />
         </Field>
         <Field label="Brief" hint="The goal, scope, and background — shared as context with every agent working on this project's sessions and loops.">
@@ -662,6 +663,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery }: { id: stri
   const titleNode = renaming ? (
     <div className="flex items-center gap-2">
       <input autoFocus aria-label="Rename this project" value={nameDraft} onChange={(e) => setNameDraft(e.target.value)}
+        maxLength={MAX_NAME_LEN}
         onKeyDown={(e) => { if (e.key === 'Enter') { patch({ name: nameDraft.trim(), name_locked: true }); setRenaming(false) } else if (e.key === 'Escape') setRenaming(false) }}
         className="min-w-0 rounded-md bg-surface-high px-2.5 py-1 text-on-surface text-[1.0625rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       {/* Its sibling Cancel below carries an `aria-label`; this one did not — the confirm half of a
@@ -964,8 +966,8 @@ function FolderChip({ label, icon: Icon, path, emptyText, title, onPeek, onBrows
 
 /** A plain (non-expandable) task-list row in the hub's Tasks column. Clicking opens
  *  the list's tasks in the side panel. Shows the list's task count when known. */
-function TaskListRow({ list, active, onOpen }: { list: TaskListItem; active: boolean; onOpen: () => void }) {
-  const count = (list as { task_count?: number; count?: number }).task_count ?? (list as { count?: number }).count
+export function TaskListRow({ list, active, onOpen }: { list: TaskListItem; active: boolean; onOpen: () => void }) {
+  const count = list.task_count
   return (
     <button type="button" onClick={onOpen}
       className={`group flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[0.8125rem] transition-colors ${active ? 'bg-surface-high text-on-surface ring-1 ring-primary' : 'bg-surface-high/60 text-on-surface-var hover:bg-surface-high hover:text-on-surface'}`}>

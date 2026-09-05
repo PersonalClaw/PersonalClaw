@@ -66,6 +66,50 @@ def _current_origin_harness() -> str:
         return ""
 
 
+#: The longest a project or task-list NAME may be.
+#:
+#: A name is a human label that renders in the nav breadcrumb, project-hub list rows, the peek
+#: panel, every project-picker dropdown and the loop composer, so an unbounded one is a layout
+#: weapon rather than merely a long stored string -- measured: a 3000-character name persisted
+#: intact and rendered in all of them (#514). 200 is the same ceiling ``record_path`` already
+#: enforces on an id path segment, so the two limits agree instead of each inventing a number.
+MAX_NAME_LEN = 200
+
+
+def require_text(value: object, *, field: str) -> str:
+    """The stripped string in *value*, or raise ``ValueError`` if it is not a string.
+
+    The type gate that was missing on BOTH sides, in opposite directions (#456): the create
+    paths called ``.strip()`` on the raw body value and raised ``AttributeError`` -- an unhandled
+    500 -- for every non-string scalar, while the update paths called ``str()`` first and so
+    *invented* a plausible value instead of refusing one. ``None`` became the four-character name
+    ``None``; a dict became Python's ``repr``, ``{'a': 1}`` (Python syntax, not JSON), written
+    into ``project.json``.
+
+    Coercion is the more damaging half: a caller sending ``{"name": null}`` meaning "clear it"
+    got a project literally called "None". So neither side coerces now -- a wrong type is a
+    ``ValueError``, which every one of these handlers already maps to a 400.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string, got {type(value).__name__}")
+    return value.strip()
+
+
+def clean_name(value: object, *, field: str = "name") -> str:
+    """A validated project/task-list name: a real string, non-empty, within :data:`MAX_NAME_LEN`.
+
+    Over-long is REFUSED, not truncated. Silently storing the first 200 characters is the same
+    invent-a-value mistake as the ``str()`` coercion above -- the user never asked for a name they
+    did not type, and a truncated name can collide with one that already exists.
+    """
+    text = require_text(value, field=field)
+    if not text:
+        raise ValueError(f"{field} is required")
+    if len(text) > MAX_NAME_LEN:
+        raise ValueError(f"{field} must be at most {MAX_NAME_LEN} characters (got {len(text)})")
+    return text
+
+
 class HierarchyStore:
     """Filesystem-backed CRUD for projects and task lists."""
 
@@ -229,9 +273,12 @@ class HierarchyStore:
         return None
 
     def find_or_create_project(self, name: str) -> Project:
-        name = name.strip()
-        if not name:
+        text = require_text(name, field="name")
+        if not text:
+            # An EMPTY name means "the default project" and stays a documented fallback. A
+            # WRONG-TYPED one is a caller bug, and `require_text` above has already refused it.
             return self.find_or_create_project(PERSONAL_PROJECT)
+        name = clean_name(text, field="name")
         existing = self.get_project_by_name(name)
         if existing:
             return existing
@@ -275,9 +322,7 @@ class HierarchyStore:
         name_locked: bool = False,
         brief: str = "",
     ) -> Project:
-        name = name.strip()
-        if not name:
-            raise ValueError("project name is required")
+        name = clean_name(name, field="project name")
         if self.get_project_by_name(name):
             raise ValueError(f"a project named '{name}' already exists")
         now = _now_iso()
@@ -303,12 +348,9 @@ class HierarchyStore:
         if "name" in fields:
             # No `str()`: coercing here is what turned `{"name": null}` into a project
             # literally called "None" and a dict into Python's repr `{'a': 1}` (#456).
-            # A wrong type is REFUSED, never renamed.
-            if not isinstance(fields["name"], str):
-                raise ValueError("project name must be a string")
-            new_name = fields["name"].strip()
-            if not new_name:
-                raise ValueError("project name cannot be empty")
+            # A wrong type is REFUSED, never renamed. `clean_name` owns that gate now and
+            # adds the length cap the inline check lacked (#514).
+            new_name = clean_name(fields["name"], field="project name")
             if project.is_builtin_project() and new_name != project.name:
                 # A default's identity IS its name (task routing keys on the literal
                 # "Personal"/"Repeatable", and ensure_defaults re-seeds any missing name).
@@ -319,9 +361,16 @@ class HierarchyStore:
                 raise ValueError(f"a project named '{new_name}' already exists")
             project.name = new_name
         if "agent_instructions_template" in fields:
-            project.agent_instructions_template = fields["agent_instructions_template"]
+            # Was assigned with NO coercion and no check, so a dict round-tripped into
+            # `project.json` as a nested object where every reader expects a string (#456). Not
+            # length-capped: it is a template body, not a label.
+            project.agent_instructions_template = require_text(
+                fields["agent_instructions_template"], field="agent_instructions_template"
+            )
         if "brief" in fields:
-            project.brief = str(fields["brief"] or "").strip()
+            # `str(... or "")` here was the same invent-a-value coercion as `name`'s: a dict
+            # became "{'a': 1}". Leaving it would make this the last surviving instance.
+            project.brief = require_text(fields["brief"], field="brief")
         if "workspace_dir" in fields:
             project.workspace_dir = self._validate_workspace_dir(fields["workspace_dir"])
         if "status" in fields:
@@ -437,9 +486,7 @@ class HierarchyStore:
         """Create a task list, routing to a project by precedence:
         repeatable → Repeatable; explicit project_id → must exist;
         project_name → find-or-create; else → Personal."""
-        name = name.strip()
-        if not name:
-            raise ValueError("task list name is required")
+        name = clean_name(name, field="task list name")
         self.ensure_defaults()
         if repeatable:
             project = self.find_or_create_project(REPEATABLE_PROJECT)
@@ -491,11 +538,8 @@ class HierarchyStore:
             return None
         if "name" in fields:
             # Same as `update_project`: refuse a wrong type rather than rename it (#456).
-            if not isinstance(fields["name"], str):
-                raise ValueError("task list name must be a string")
-            new_name = fields["name"].strip()
-            if not new_name:
-                raise ValueError("task list name cannot be empty")
+            # `clean_name` owns the type gate and the length cap (#514).
+            new_name = clean_name(fields["name"], field="task list name")
             # ══ #2990 — the per-project name uniqueness `create_task_list` enforces,
             # re-asked on RENAME. Without it a project could still end up holding two
             # "General" lists on current `main` (the PUT accepted the exact name the POST
@@ -519,7 +563,11 @@ class HierarchyStore:
             self._refuse_duplicate_list_name(tl.name, target.id, tl.id)
             tl.project_id = target.id
         if "agent_instructions_template" in fields:
-            tl.agent_instructions_template = fields["agent_instructions_template"]
+            # Same ungated assignment the project path had: a dict round-tripped into the
+            # list's JSON where every reader expects a string (#456).
+            tl.agent_instructions_template = require_text(
+                fields["agent_instructions_template"], field="agent_instructions_template"
+            )
         tl.updated_at = _now_iso()
         self._write_list(tl)
         return tl

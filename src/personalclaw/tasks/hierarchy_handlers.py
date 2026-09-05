@@ -738,11 +738,54 @@ async def api_projects_delete(request: web.Request) -> web.Response:
 # ── Task lists ──
 
 
+async def _task_list_task_counts() -> dict[str, int] | None:
+    """``{task_list_id: task count}`` from ONE aggregation, or ``None`` when it cannot be computed.
+
+    ``None`` rather than an empty map is the load-bearing part. The project hub renders the count
+    badge only when the field IS a number, so omitting it hides the badge — whereas a ``0`` would
+    assert "this list is empty", which is the fabricate-a-value mistake rather than a missing
+    reading. Counting is best-effort decoration on an endpoint whose real job is the lists
+    themselves, so a provider failure must not fail the request.
+
+    One aggregation, not one per list: the six existing call sites of ``list_all_tasks`` each pass
+    a single ``task_list_id``, and doing that per row would re-scan every provider N times.
+    Inherits that helper's ceiling of 500 tasks per provider, the same ceiling those callers live
+    with.
+    """
+    try:
+        from personalclaw.tasks import registry
+
+        tasks, _ = await registry.list_all_tasks(limit=100_000)
+    except Exception:
+        logger.warning("task-list counts unavailable; omitting the field", exc_info=True)
+        return None
+    counts: dict[str, int] = {}
+    for t in tasks:
+        key = getattr(t, "task_list_id", "") or ""
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _task_list_payload(tl, counts: dict[str, int] | None) -> dict:
+    """Serialize a task list, enriched with ``task_count`` when it is known.
+
+    The hub's badge has read ``task_count`` since the initial public commit while NO endpoint ever
+    emitted it, so it could never render (#514) — the sibling project row does the same thing
+    correctly with ``task_list_count``. This is the missing emitter, not a new field.
+    """
+    d = tl.to_dict()
+    if counts is not None:
+        d["task_count"] = counts.get(tl.id, 0)
+    return d
+
+
 async def api_task_lists_list(request: web.Request) -> web.Response:
     """GET /api/task-lists?project_id=…"""
     project_id = request.query.get("project_id")
     lists = _store().list_task_lists(project_id=project_id)
-    return web.json_response({"task_lists": [tl.to_dict() for tl in lists]})
+    counts = await _task_list_task_counts()
+    return web.json_response({"task_lists": [_task_list_payload(tl, counts) for tl in lists]})
 
 
 async def api_task_lists_create(request: web.Request) -> web.Response:

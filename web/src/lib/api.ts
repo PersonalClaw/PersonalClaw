@@ -1256,7 +1256,18 @@ export interface WorkBoard {
   completeness: 'complete' | 'inferred' | 'partial' | 'error'
   attention: number; loadedAt: number
 }
-export interface TaskListItem { id: string; name: string; project_id: string; agent_instructions_template?: string; created_at?: string; updated_at?: string }
+/** The server-side cap on a project or task-list NAME, mirroring `hierarchy.MAX_NAME_LEN`.
+ *  Kept in step by `projectNameCap.test.ts`, which reads the Python constant — a name field
+ *  bounded here but not there (or vice versa) is exactly the drift that let 3000 characters
+ *  persist (#514). */
+export const MAX_NAME_LEN = 200
+export interface TaskListItem {
+  id: string; name: string; project_id: string; agent_instructions_template?: string
+  created_at?: string; updated_at?: string
+  /** Tasks in this list. ABSENT when the count could not be computed — the hub renders the badge
+   *  only for a number, so a missing reading hides it rather than claiming zero. */
+  task_count?: number
+}
 export interface BlockReason { is_blocked?: boolean; blocking_task_ids?: string[]; blocking_task_titles?: string[]; message?: string }
 export interface TaskItem {
   id: string; title: string; status: string; description?: string
