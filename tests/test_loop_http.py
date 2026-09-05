@@ -11,6 +11,7 @@ from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
 from personalclaw.dashboard.handlers import loop_routes as H
+from personalclaw.loop import files as loop_files
 
 
 def _run(coro):
@@ -19,7 +20,7 @@ def _run(coro):
 
 @pytest.fixture(autouse=True)
 def _tmp_config(monkeypatch, tmp_path):
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     monkeypatch.setattr("personalclaw.tasks.hierarchy.config_dir", lambda: tmp_path)
     import personalclaw.tasks.native as nat
 
@@ -1498,9 +1499,7 @@ class TestLifecycle:
         )
         assert r.status == 409 and "hasn't started" in _body(r)["error"]
         # and no orphan nudge was persisted
-        from personalclaw.loop import store
-
-        assert store.get_nudges(cid) == []
+        assert loop_files.get_nudges(cid) == []
 
     def test_task_scoped_nudge_rejects_foreign_task_id(self, state, svc, monkeypatch):
         # A task-scoped steer whose task_id isn't among THIS loop's tasks would write

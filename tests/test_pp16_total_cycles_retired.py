@@ -1,7 +1,7 @@
 """`loops.total_cycles` is retired — the cycle count is the ledger projection (PP-16 seam 4a).
 
 The column was a denormalized cache of something the ledger already derives: both of its writers in
-`loop/watchdog.py` wrote exactly ``len(store.get_findings(cid))``, and `get_findings` is a pure
+`loop/watchdog.py` wrote exactly ``len(loop_files.get_findings(cid))``, and `get_findings` is a pure
 projection over the `step_completed` records `PP-5` already ships. Deleting it removes a second
 source of truth rather than moving one.
 
@@ -18,7 +18,7 @@ What these rails are for, and why each can FAIL:
   would be defeated by the (deliberate) prose mentions of the name in comments and docstrings. It
   asserts on real syntax — a string literal in a SQL statement, an assignment, a keyword argument —
   and carries its own vacuity floor (it proves the census walks the files it claims to).
-* **Two expressions, one number.** `store.cycles_completed()` routes through the ledger's
+* **Two expressions, one number.** `loop_files.cycles_completed()` routes through the ledger's
   `run_totals` aggregate while the two redacted views count the findings they already hold. Those
   are two code paths to one quantity, so `test_the_two_projections_agree` pins them equal — the
   drift this atom exists to prevent, reintroduced one level down, would otherwise be invisible.
@@ -35,6 +35,7 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import journal as loop_journal
 from personalclaw.loop import store
 from personalclaw.loop.loop import Loop, LoopStatus
@@ -54,13 +55,13 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def _loop_with_cycles(n: int, *, loop_id: str = "abc12345") -> Loop:
     """A loop whose ledger carries `n` cycles, ingested through the production path."""
     loop = store.create(Loop(id=loop_id, name="L", kind="goal", task="t", max_cycles=30))
-    d = store.loop_dir(loop.id)
+    d = loop_files.loop_dir(loop.id)
     assert d is not None
     for i in range(1, n + 1):
         (d / "findings" / f"cycle_{i}.json").write_text(
             json.dumps({"cycle": i, "summary": f"s{i}", "step": "survey"}), encoding="utf-8"
         )
-    assert store.record_cycle_findings(loop.id) == n, "the ingest did not file every cycle"
+    assert loop_files.record_cycle_findings(loop.id) == n, "the ingest did not file every cycle"
     return loop
 
 
@@ -70,7 +71,7 @@ def _loop_with_cycles(n: int, *, loop_id: str = "abc12345") -> Loop:
 def test_the_loop_dataclass_declares_no_cached_cycle_count() -> None:
     assert _RETIRED not in Loop.__dataclass_fields__, (
         f"`Loop.{_RETIRED}` is back. It was a stored copy of the ledger's `step_completed` count; "
-        "read `store.cycles_completed(id)` (or `len(get_findings(id))`) instead."
+        "read `loop_files.cycles_completed(id)` (or `len(get_findings(id))`) instead."
     )
 
 
@@ -102,12 +103,12 @@ def test_the_setter_is_gone() -> None:
 def test_the_count_moves_with_the_ledger() -> None:
     """Append one more `step_completed` and every reader's number moves with it."""
     loop = _loop_with_cycles(3)
-    assert store.cycles_completed(loop.id) == 3
+    assert loop_files.cycles_completed(loop.id) == 3
     assert store.get_redacted(loop.id)["total_cycles"] == 3
 
     loop_journal.LoopJournal.open(loop.id).cycle(4, {"cycle": 4, "summary": "s4"})
 
-    assert store.cycles_completed(loop.id) == 4, "the accessor did not follow the ledger"
+    assert loop_files.cycles_completed(loop.id) == 4, "the accessor did not follow the ledger"
     assert store.get_redacted(loop.id)["total_cycles"] == 4, "the detail view is not derived"
     rows = store.list_redacted()
     assert len(rows) == 1
@@ -122,11 +123,11 @@ def test_the_count_does_not_move_with_an_unrelated_ledger_kind() -> None:
     defined over, and this is what proves the definition is real.
     """
     loop = _loop_with_cycles(3)
-    before = store.cycles_completed(loop.id)
+    before = loop_files.cycles_completed(loop.id)
 
     loop_journal.LoopJournal.open(loop.id).verdict({"cycle": 3, "verdict": "pass", "done": False})
 
-    assert store.cycles_completed(loop.id) == before, (
+    assert loop_files.cycles_completed(loop.id) == before, (
         "a `judge_verdict` changed the CYCLE count — the count is not defined over "
         "`step_completed` but over ledger lines"
     )
@@ -139,8 +140,8 @@ def test_the_two_projections_agree() -> None:
     loop_journal.LoopJournal.open(loop.id).verdict({"cycle": 5, "verdict": "pass"})
     loop_journal.LoopJournal.open(loop.id).breaker_trip(5, "stalled")
 
-    via_aggregate = store.cycles_completed(loop.id)
-    via_projection = len(store.get_findings(loop.id))
+    via_aggregate = loop_files.cycles_completed(loop.id)
+    via_projection = len(loop_files.get_findings(loop.id))
     assert via_aggregate == via_projection == 5, (
         f"the two paths to one number disagree: run_totals={via_aggregate}, "
         f"len(get_findings)={via_projection}"
@@ -154,8 +155,8 @@ def test_a_loop_with_no_ledger_counts_zero() -> None:
     `reap_orphan_dirs` uses `list_all()` as its GC oracle, so a read path that materialized a dir
     would resurrect exactly what the sweep just deleted.
     """
-    assert store.cycles_completed("deadbeef") == 0
-    root = store._loops_root()
+    assert loop_files.cycles_completed("deadbeef") == 0
+    root = loop_files._loops_root()
     assert not (root / "deadbeef").exists(), "reading a count created the loop's dir"
 
 
@@ -163,13 +164,13 @@ def test_the_orphan_reap_still_sees_a_backed_dir() -> None:
     """`reap_orphan_dirs` reads `list_all()`, which no longer carries a cycle count. Pin that the
     sweep still spares a dir with a row and still takes one without."""
     loop = _loop_with_cycles(2)
-    root = store._loops_root()
+    root = loop_files._loops_root()
     (root / "beefcafe").mkdir(parents=True, exist_ok=True)
 
-    assert store.reap_orphan_dirs() == 1, "the sweep stopped reaping an unbacked dir"
+    assert loop_files.reap_orphan_dirs() == 1, "the sweep stopped reaping an unbacked dir"
     assert (root / loop.id).is_dir(), "the sweep reaped a dir that HAS a row"
     assert not (root / "beefcafe").exists()
-    assert store.cycles_completed(loop.id) == 2, "the surviving loop lost its ledger"
+    assert loop_files.cycles_completed(loop.id) == 2, "the surviving loop lost its ledger"
 
 
 # ── no writer survives ──────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import manager, store
 from personalclaw.loop import watchdog as W
 from personalclaw.loop.loop import Loop, LoopStatus
@@ -20,7 +21,7 @@ def _run(coro):
 
 @pytest.fixture(autouse=True)
 def _tmp_config(monkeypatch, tmp_path):
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     return tmp_path
 
 
@@ -107,7 +108,7 @@ def _running(**over):
 
 
 def _write_finding(cid, cycle, **extra):
-    d = store.loop_dir(cid)
+    d = loop_files.loop_dir(cid)
     (d / "findings" / f"cycle_{cycle:03d}.json").write_text(
         json.dumps(
             {"cycle": cycle, "new_findings_count": extra.pop("new_findings_count", 1), **extra}
@@ -285,7 +286,7 @@ class TestNeedsInput:
         c = _running(attended=True)
         wd = _wd()
         wd._state._sessions[manager.session_key(c.id)] = _FakeSession(manager.session_key(c.id))
-        store.write_question(c.id, "which db?")
+        loop_files.write_question(c.id, "which db?")
         _run(wd._poll_once())
         assert store.get(c.id).status == LoopStatus.NEEDS_INPUT.value
 
@@ -293,10 +294,10 @@ class TestNeedsInput:
         c = _running(attended=False)
         wd = _wd()
         wd._state._sessions[manager.session_key(c.id)] = _FakeSession(manager.session_key(c.id))
-        store.write_question(c.id, "which db?")
+        loop_files.write_question(c.id, "which db?")
         _run(wd._poll_once())
         assert store.get(c.id).status == LoopStatus.RUNNING.value
-        assert store.pending_question(c.id) is None  # discarded
+        assert loop_files.pending_question(c.id) is None  # discarded
 
 
 class TestTrustTtl:
@@ -371,7 +372,7 @@ class TestCycleVerdictPublish:
     def test_publishes_persisted_verdict_and_regression(self):
         c = _running()
         wd, events = self._captured_wd()
-        store.write_verdict(
+        loop_files.write_verdict(
             c.id,
             3,
             {
@@ -398,7 +399,7 @@ class TestCycleVerdictPublish:
     def test_clean_verdict_emits_no_regression(self):
         c = _running()
         wd, events = self._captured_wd()
-        store.write_verdict(
+        loop_files.write_verdict(
             c.id,
             1,
             {
@@ -498,7 +499,7 @@ class TestDeliverableArtifact:
 
     def test_open_ended_report_registered(self, monkeypatch):
         c = _running(kind_config={"goal_type": "open_ended"})
-        (store.loop_dir(c.id) / "REPORT.md").write_text("# Findings\nReal content.")
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text("# Findings\nReal content.")
         prov = self._FakeProvider()
         monkeypatch.setattr("personalclaw.artifacts.registry.get_provider", lambda name=None: prov)
         _wd()._register_deliverable_artifact(c.id)
@@ -515,7 +516,7 @@ class TestDeliverableArtifact:
         real = NativeArtifactProvider(root=tmp_path / "artifacts")
         monkeypatch.setattr("personalclaw.artifacts.registry.get_provider", lambda name=None: real)
         c = _running(kind_config={"goal_type": "open_ended"})
-        (store.loop_dir(c.id) / "REPORT.md").write_text("# Findings\nThe report body.")
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text("# Findings\nThe report body.")
         _wd()._register_deliverable_artifact(c.id)
         # list() is metadata-only (omits content, by design) — assert the tag query
         # finds it; then fetch its content via get() like the cockpit does on click.
@@ -526,7 +527,9 @@ class TestDeliverableArtifact:
     def test_design_md_registered(self, monkeypatch):
         # a design loop's DESIGN.md is its document deliverable — must surface too.
         c = _running(kind="design", kind_config={})
-        (store.loop_dir(c.id) / "DESIGN.md").write_text("# Design System\nTokens + components.")
+        (loop_files.loop_dir(c.id) / "DESIGN.md").write_text(
+            "# Design System\nTokens + components."
+        )
         prov = self._FakeProvider()
         monkeypatch.setattr("personalclaw.artifacts.registry.get_provider", lambda name=None: prov)
         _wd()._register_deliverable_artifact(c.id)
@@ -535,7 +538,7 @@ class TestDeliverableArtifact:
     def test_verifiable_registers_nothing(self, monkeypatch):
         c = _running(kind_config={"goal_type": "verifiable", "verify_command": "true"})
         # even if a stray file exists, verifiable declares no deliverable name
-        (store.loop_dir(c.id) / "REPORT.md").write_text("noise")
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text("noise")
         prov = self._FakeProvider()
         monkeypatch.setattr("personalclaw.artifacts.registry.get_provider", lambda name=None: prov)
         _wd()._register_deliverable_artifact(c.id)

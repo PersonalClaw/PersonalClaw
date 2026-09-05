@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from personalclaw import seed as seed_mod
+from personalclaw.loop import files as loop_files
 
 FIXTURE_NAME = "demo-home"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -344,12 +345,12 @@ def test_the_demo_loop_loads_through_the_production_store(seeded_home: Path) -> 
     # ships real cycles rather than a stored number. The version this replaced asserted the column
     # and passed against `total_cycles=6` with an EMPTY ledger — six cycles claimed, none recorded,
     # which is what made the demo cockpit render "no per-cycle detail recorded for this loop".
-    findings = loop_store.get_findings(loop.id)
+    findings = loop_files.get_findings(loop.id)
     assert len(findings) == 6, (
         f"expected the fixture's six ledger cycles, got {len(findings)} — a completed loop with "
         "no cycles reads as never run"
     )
-    assert loop_store.cycles_completed(loop.id) == len(findings)
+    assert loop_files.cycles_completed(loop.id) == len(findings)
     for f in findings:
         assert f.get("summary") and f.get("evidence"), f"cycle {f.get('cycle')} is a stub"
     assert {f.get("step") for f in findings} == {"survey", "synthesize", "verify"}, (
@@ -398,7 +399,7 @@ def test_the_seeded_loop_dir_survives_the_boot_time_orphan_reap(seeded_home: Pat
     loop_dir = seeded_home / "loop" / loop_id
     assert loop_dir.is_dir(), "the fixture's loop dir did not survive seeding"
 
-    reaped = loop_store.reap_orphan_dirs()
+    reaped = loop_files.reap_orphan_dirs()
     assert reaped == 0, f"the boot-time reap deleted {reaped} seeded loop dir(s)"
     assert loop_dir.is_dir(), (
         "the seeded loop dir was reaped — its loops.db row is missing, so a real "

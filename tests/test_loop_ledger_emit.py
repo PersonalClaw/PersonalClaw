@@ -6,8 +6,8 @@ ALONE (the old findings/verdicts file store gone, not dual-written), and a super
 landing as a `judge_verdict` in the reconciled `JudgeVerdict` vocabulary (WF2LOO-16), not a fifth
 dialect.
 
-Every test drives loop cycles through the REAL emit path — `store.record_cycle_findings`
-(the worker's file → `step_started`/`step_completed`) and `store.write_verdict`
+Every test drives loop cycles through the REAL emit path — `loop_files.record_cycle_findings`
+(the worker's file → `step_started`/`step_completed`) and `loop_files.write_verdict`
 (→ `judge_verdict`) — under a tmp `PERSONALCLAW_HOME`, because the proposal/staging stores bind
 `config_dir` lazily and the env var is what actually isolates the write path.
 """
@@ -20,6 +20,7 @@ import pytest
 
 from personalclaw.learning import loop_end
 from personalclaw.learning import proposals as P
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import journal as loop_journal
 from personalclaw.loop import store
 from personalclaw.loop.loop import Loop, LoopStatus
@@ -35,7 +36,7 @@ def home(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     monkeypatch.setattr(P, "_surface_in_inbox", lambda prop: None)
     monkeypatch.setattr(P, "_resolve_inbox_item", lambda pid, status: None)
     from personalclaw.learning import staging as staging_mod
@@ -55,7 +56,7 @@ def _loop(kind: str = "code", task: str = "add oauth login", complete: bool = Tr
 
 def _write_finding(loop_id: str, cycle: int, stage: str, **extra) -> None:
     """Write ONE worker finding file — the worker's per-cycle deliverable (unchanged interface)."""
-    d = store.loop_dir(loop_id)
+    d = loop_files.loop_dir(loop_id)
     (d / "findings" / f"cycle_{cycle:03d}.json").write_text(
         json.dumps({"cycle": cycle, "stage": stage, "summary": f"{stage} work", **extra})
     )
@@ -88,7 +89,7 @@ def test_flywheel_produces_a_proposal_from_loop_evidence(home):
 
     # THE PP-5 EMIT: ingest each loop's cycles into the ledger (`step_started`/`step_completed`).
     for loop in loops:
-        assert store.record_cycle_findings(loop.id) == 2
+        assert loop_files.record_cycle_findings(loop.id) == 2
 
     # AFTER: three loops took the same named path — a procedure worth naming. The flywheel files it.
     after = loop_end.capture(loops[0], service=None)
@@ -111,7 +112,7 @@ def test_mining_reads_loop_steps_off_the_ledger(home):
     empty = mining.invert_intent(loop_end._LoopRunView.of(loop), journal=loop_journal)
     assert "no steps completed" in empty.did
 
-    store.record_cycle_findings(loop.id)
+    loop_files.record_cycle_findings(loop.id)
     inv = mining.invert_intent(loop_end._LoopRunView.of(loop), journal=loop_journal)
     assert "implement" in inv.did and "validate" in inv.did
 
@@ -126,31 +127,31 @@ def test_trajectory_reconstructs_from_the_ledger_alone(home):
     loop = _loop("code")
     _write_finding(loop.id, 1, "implement", key_insight="wired the button")
     _write_finding(loop.id, 2, "validate", key_insight="tests pass")
-    store.record_cycle_findings(loop.id)
-    store.write_verdict(
+    loop_files.record_cycle_findings(loop.id)
+    loop_files.write_verdict(
         loop.id, 2, {"cycle": 2, "verdict": "PASS", "done": True, "quality_score": 4}
     )
 
-    findings = store.get_findings(loop.id)
+    findings = loop_files.get_findings(loop.id)
     assert [f["stage"] for f in findings] == ["implement", "validate"]
     assert findings[0]["key_insight"] == "wired the button"
     # No projection carries the ingest bookkeeping key.
     assert all("_source_file" not in f for f in findings)
 
-    verdicts = store.get_verdicts(loop.id)
+    verdicts = loop_files.get_verdicts(loop.id)
     assert len(verdicts) == 1 and verdicts[0]["cycle"] == 2 and verdicts[0]["done"] is True
 
     # The second store is GONE: delete the worker's raw files and the verdicts dir; the projection
     # is unchanged because it reads the ledger, not the files.
     import shutil
 
-    shutil.rmtree(store.loop_dir(loop.id) / "findings")
-    assert not (store.loop_dir(loop.id) / "verdicts").exists()
-    assert [f["stage"] for f in store.get_findings(loop.id)] == ["implement", "validate"]
-    assert store.get_verdicts(loop.id)[0]["done"] is True
+    shutil.rmtree(loop_files.loop_dir(loop.id) / "findings")
+    assert not (loop_files.loop_dir(loop.id) / "verdicts").exists()
+    assert [f["stage"] for f in loop_files.get_findings(loop.id)] == ["implement", "validate"]
+    assert loop_files.get_verdicts(loop.id)[0]["done"] is True
 
     # The full journal carries the whole trajectory in order, step_started markers included.
-    journal_seq = [e["kind"] for e in store.read_jsonl(loop.id, loop_journal.JOURNAL_FILE)]
+    journal_seq = [e["kind"] for e in loop_files.read_jsonl(loop.id, loop_journal.JOURNAL_FILE)]
     assert journal_seq == [
         loop_journal.STEP_STARTED,
         loop_journal.STEP_COMPLETED,
@@ -181,7 +182,7 @@ def test_judge_verdict_carries_the_reconciled_vocabulary(home):
     verdict = JudgeVerdict(
         verdict=Verdict.PASS, done_reason="goal met", marginal_value=3.0, quality_score=4.0
     )
-    store.write_verdict(loop.id, 1, {"cycle": 1, **verdict.to_dict()})
+    loop_files.write_verdict(loop.id, 1, {"cycle": 1, **verdict.to_dict()})
 
     events = loop_journal.ledger(loop.id, kinds={loop_journal.JUDGE_VERDICT})
     assert len(events) == 1
@@ -204,10 +205,10 @@ def test_the_four_emit_points(home):
     loop = _loop("code")
 
     _write_finding(loop.id, 1, "implement")
-    store.record_cycle_findings(loop.id)
-    store.write_verdict(loop.id, 1, {"cycle": 1, "verdict": "RETRY", "done": False})
-    store.record_breaker_trip(loop.id, 1, "the cycle report has not changed")
-    store.record_watcher_reaped(loop.id, cycles=1, reason="worker process lost to restart")
+    loop_files.record_cycle_findings(loop.id)
+    loop_files.write_verdict(loop.id, 1, {"cycle": 1, "verdict": "RETRY", "done": False})
+    loop_files.record_breaker_trip(loop.id, 1, "the cycle report has not changed")
+    loop_files.record_watcher_reaped(loop.id, cycles=1, reason="worker process lost to restart")
 
     # The durable ledger mirror (events.jsonl) carries the four LEDGER_KINDS.
     events_kinds = {e["kind"] for e in loop_journal.ledger(loop.id)}
@@ -218,7 +219,7 @@ def test_the_four_emit_points(home):
         loop_journal.WATCHER_REAPED,
     }
     # step_started is emitted too — a journal-only progress marker, like the workflow engine's.
-    journal_kinds = {e["kind"] for e in store.read_jsonl(loop.id, loop_journal.JOURNAL_FILE)}
+    journal_kinds = {e["kind"] for e in loop_files.read_jsonl(loop.id, loop_journal.JOURNAL_FILE)}
     assert loop_journal.STEP_STARTED in journal_kinds
     # The breaker/reaper events carry their reason so a refiner can tell WHY the run was cut off.
     trip = loop_journal.ledger(loop.id, kinds={loop_journal.BREAKER_TRIP})[0]
@@ -232,11 +233,11 @@ def test_event_ids_are_stable_across_reopen(home):
     sequence rather than re-minting event ids the file already holds."""
     loop = _loop("code")
     _write_finding(loop.id, 1, "implement")
-    store.record_cycle_findings(loop.id)
+    loop_files.record_cycle_findings(loop.id)
     _write_finding(loop.id, 2, "validate")
-    store.record_cycle_findings(loop.id)
+    loop_files.record_cycle_findings(loop.id)
 
     ids = [e["event_id"] for e in loop_journal.ledger(loop.id)]
     assert len(ids) == len(set(ids)), "duplicate event ids — seq was not recovered on reopen"
-    seqs = [e["seq"] for e in store.read_jsonl(loop.id, loop_journal.JOURNAL_FILE)]
+    seqs = [e["seq"] for e in loop_files.read_jsonl(loop.id, loop_journal.JOURNAL_FILE)]
     assert seqs == sorted(seqs) and seqs[0] == 1

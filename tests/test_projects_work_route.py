@@ -33,7 +33,7 @@ async def _client(tmp_path):
         patch("personalclaw.workflows.store.config_dir", return_value=tmp_path),
         patch("personalclaw.workflows.leases.config_dir", return_value=tmp_path),
         patch("personalclaw.concurrency.config_dir", return_value=tmp_path),
-        patch("personalclaw.loop.store.config_dir", return_value=tmp_path),
+        patch("personalclaw.loop.files.config_dir", return_value=tmp_path),
     ):
         app = web.Application()
         register_task_routes(app)

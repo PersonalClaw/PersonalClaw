@@ -26,6 +26,7 @@ from typing import Any
 
 from personalclaw import concurrency, notification_kinds, shutdown_event
 from personalclaw.config.loader import AppConfig
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import instrument, kinds, manager, store, supervisor
 from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
 from personalclaw.workflows.supervisor_policy import policy_for_kind
@@ -375,7 +376,11 @@ class LoopWatchdog:
         writes no verdicts (verifiable/monitor/code) — the FE listens for these and
         the legacy goal watchdog published them at the same point."""
         verdict = next(
-            (v for v in reversed(store.get_verdicts(loop_id)) if int(v.get("cycle", -1)) == cycle),
+            (
+                v
+                for v in reversed(loop_files.get_verdicts(loop_id))
+                if int(v.get("cycle", -1)) == cycle
+            ),
             None,
         )
         if verdict is None:
@@ -436,11 +441,11 @@ class LoopWatchdog:
     def _handle_question(self, loop_id: str, *, attended: bool) -> bool:
         """True iff the loop should pause to NEEDS_INPUT. Unattended NEVER pauses —
         a stray question is discarded so 'unattended' is code-enforced."""
-        q = store.pending_question(loop_id)
+        q = loop_files.pending_question(loop_id)
         if not q:
             return False
         if not attended:
-            store.clear_question(loop_id)
+            loop_files.clear_question(loop_id)
             return False
         return True
 
@@ -473,7 +478,7 @@ class LoopWatchdog:
             else {"error_message": reason or "Stopped before the goal was met."}
         )
         store.update_status(loop_id, LoopStatus.COMPLETE, stop_reason=stop_reason, **fields)
-        store.write_status(loop_id, LoopStatus.COMPLETE, reason=reason)
+        loop_files.write_status(loop_id, LoopStatus.COMPLETE, reason=reason)
         await manager.teardown_worker(self._svc, loop_id)
         await self._reconcile_linked_tasks(loop_id)
         # P4 independent REPRODUCE: before graduating a GENUINE completion's deliverable to
@@ -702,7 +707,7 @@ class LoopWatchdog:
             cand = Path(ws) / name_on_disk
             if cand.is_file():
                 return cand
-        d = store.safe_loop_dir(loop.id)
+        d = loop_files.safe_loop_dir(loop.id)
         dcand = (d / name_on_disk) if d is not None else None
         if dcand is not None and dcand.is_file():
             return dcand
@@ -864,7 +869,7 @@ class LoopWatchdog:
             "loop-planning", loops, survived=_stranded_in_planning, decide=self._rekick_planning
         )
         try:
-            reaped = store.reap_orphan_dirs()
+            reaped = loop_files.reap_orphan_dirs()
             if reaped:
                 logger.info("loop: reaped %d orphan dir(s) with no DB row", reaped)
         except Exception:
@@ -878,9 +883,9 @@ class LoopWatchdog:
         # ledger event (PP-5) so the flywheel sees a watcher cut off before its cadence
         # (fewer cycles than the budget implies), not a template that simply under-produced.
         try:
-            store.record_watcher_reaped(
+            loop_files.record_watcher_reaped(
                 loop.id,
-                cycles=store.cycles_completed(loop.id),
+                cycles=loop_files.cycles_completed(loop.id),
                 reason="worker process lost to restart",
             )
         except Exception:
@@ -893,7 +898,7 @@ class LoopWatchdog:
         blocker = getattr(strat, "launch_blocker", None)
         reason = blocker(loop) if blocker else None
         if reason:
-            store.write_question(
+            loop_files.write_question(
                 loop.id, f"{reason} (the workspace went missing during a restart)."
             )
             store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
@@ -977,7 +982,7 @@ class LoopWatchdog:
             if loop.started_at and time.time() - loop.started_at > cfg.trust_ttl_secs:
                 if session is not None:
                     session._trust = False
-                store.write_question(
+                loop_files.write_question(
                     cid,
                     "Auto-approval expired after the trust window. "
                     "Resume to re-authorize and continue.",
@@ -995,8 +1000,8 @@ class LoopWatchdog:
             # Ingest any new worker finding files into the ledger BEFORE reading them back — the
             # findings the rest of this poll works with are the ledger projection (PP-5).
             # Idempotent (keyed by source file), so calling it every poll is safe.
-            store.record_cycle_findings(cid)
-            findings = store.get_findings(cid)
+            loop_files.record_cycle_findings(cid)
+            findings = loop_files.get_findings(cid)
             # The cycle count, full stop. This poll used to also write it back to a
             # `loops.total_cycles` column; PP-16 seam 4a deleted that column and both of its
             # writers, so `count` is now the only place the number exists and every reader
@@ -1018,8 +1023,8 @@ class LoopWatchdog:
                 self._running_since.pop(cid, None)
                 self._consec_errors[cid] = 0
                 latest = findings[-1]
-                store.clear_guidance(cid)
-                store.mark_nudges_applied(cid, count)
+                loop_files.clear_guidance(cid)
+                loop_files.mark_nudges_applied(cid, count)
                 self._publish(cid, "new_finding", {"loop_id": cid, "finding": latest})
 
                 # Done-ness — produced by something OTHER than the worker. A kind
@@ -1156,7 +1161,7 @@ class LoopWatchdog:
                     # A stall is a `breaker_trip` on the ledger (PP-5) — the same kind the workflow
                     # breaker emits — so the flywheel sees a loop was cut off, not just that it
                     # produced fewer cycles.
-                    store.record_breaker_trip(cid, count, why)
+                    loop_files.record_breaker_trip(cid, count, why)
                     logger.info("loop %s stalled: %s", cid, why)
                     self._publish(cid, "stagnant", {"loop_id": cid, "reason": why})
             else:
@@ -1195,8 +1200,8 @@ class LoopWatchdog:
                 ):
                     # A finding the worker wrote mid-poll is only on the ledger once ingested, so
                     # ingest before the "did progress land during a long turn?" re-check.
-                    store.record_cycle_findings(cid)
-                    if len(store.get_findings(cid)) > count:
+                    loop_files.record_cycle_findings(cid)
+                    if len(loop_files.get_findings(cid)) > count:
                         continue  # progress landed during a long turn
                     wedged = session is not None and getattr(session, "running", False)
                     store.update_status(

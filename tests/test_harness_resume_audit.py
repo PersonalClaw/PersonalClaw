@@ -11,6 +11,7 @@ import pytest
 
 from harness import resume_audit
 from harness.replay import FakeMcpServer, TraceEvent
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import store
 from personalclaw.loop.loop import Loop, LoopStatus
 
@@ -18,7 +19,7 @@ from personalclaw.loop.loop import Loop, LoopStatus
 @pytest.fixture(autouse=True)
 def _tmp_config(monkeypatch, tmp_path):
     # Isolate the loop store to a temp dir (destructive-test-isolation rule).
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     return tmp_path
 
 
@@ -88,7 +89,7 @@ def test_resume_after_simulated_restart_uses_disk_only() -> None:
     # only persisted state, so this models a fresh process after a crash/restart.
     g = _goal()
     store.update_status(g.id, LoopStatus.RUNNING)
-    store.write_verdict(g.id, 1, {"roi": 0.8, "summary": "found the N+1 query"})
+    loop_files.write_verdict(g.id, 1, {"roi": 0.8, "summary": "found the N+1 query"})
     r = resume_audit.audit_loop(g.id)
     assert r.ok
     assert r.detail["status"] == LoopStatus.RUNNING.value

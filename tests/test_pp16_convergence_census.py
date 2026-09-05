@@ -61,7 +61,8 @@ def _text(rel: str, root: Path = _SRC) -> str:
 #: The loop-side and run-side modules that must remain `personalclaw.ledger` writers. `PP-5`
 #: ("loops emit the ledger") is what put the first two on this list; `PP-4` extracted the primitive
 #: they all write through.
-_LEDGER_WRITERS = ("loop/journal.py", "loop/store.py", "workflows/journal.py")
+# loop/files.py carries the loop store's ledger-writing half since the PP-16 4b split
+_LEDGER_WRITERS = ("loop/journal.py", "loop/files.py", "workflows/journal.py")
 
 
 def test_the_ledger_clause_is_converged_and_stays_converged():

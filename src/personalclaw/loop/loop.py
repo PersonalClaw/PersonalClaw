@@ -24,6 +24,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw.loop import files as loop_files
 from personalclaw.workflows.models import LifecyclePhase
 
 
@@ -261,7 +262,8 @@ class Loop:
     completed_at: float | None = None
     elapsed_seconds: float = 0.0  # banked running time from PRIOR stretches (excludes pauses)
     # NO `total_cycles` here. It was a stored copy of the ledger's `step_completed` count, and
-    # PP-16 seam 4a retired it: ask `store.cycles_completed(id)` (or `len(get_findings(id))` when
+    # PP-16 seam 4a retired it: ask `loop_files.cycles_completed(id)` (or
+    # `len(get_findings(id))` when
     # you already hold the projection). The redacted views still PUBLISH `total_cycles`, derived —
     # the API shape is unchanged, the second source of truth is gone.
     error_message: str | None = None
@@ -331,9 +333,7 @@ def effective_dir(loop: "Loop") -> str:
     # the supervisor's deliverable gate reads where the worker actually wrote.
     if loop.kind == "code":
         try:
-            from personalclaw.loop import store
-
-            d = store.loop_dir(loop.id)
+            d = loop_files.loop_dir(loop.id)
             if d is not None and d.is_dir():
                 return str(d)
         except Exception:

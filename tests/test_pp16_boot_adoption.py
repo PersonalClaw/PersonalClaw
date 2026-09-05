@@ -56,12 +56,12 @@ def _isolated_homes(tmp_path, monkeypatch):
     sweeps would read the real home."""
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: home)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: home)
     monkeypatch.setattr("personalclaw.workflows.store.config_dir", lambda: home)
-    from personalclaw.loop import store as loop_store
+    from personalclaw.loop import files as loop_files
     from personalclaw.workflows import store as run_store
 
-    assert loop_store.config_dir() == home, "loop store still points at another home"
+    assert loop_files.config_dir() == home, "loop store still points at another home"
     assert run_store.config_dir() == home, "run store still points at another home"
     return home
 

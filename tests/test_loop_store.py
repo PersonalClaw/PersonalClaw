@@ -7,13 +7,14 @@ import json
 
 import pytest
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import store
 from personalclaw.loop.loop import Loop, LoopStatus
 
 
 @pytest.fixture(autouse=True)
 def _tmp_config(monkeypatch, tmp_path):
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     return tmp_path
 
 
@@ -46,7 +47,7 @@ def _code(**over):
 class TestCrud:
     def test_create_assigns_id_and_persists_kind_config(self):
         g = _goal()
-        assert store.valid_loop_id(g.id)
+        assert loop_files.valid_loop_id(g.id)
         got = store.get(g.id)
         assert got.kind == "goal"
         assert got.kind_config["goal_type"] == "open_ended"
@@ -75,7 +76,7 @@ class TestCrud:
 
     def test_delete_removes_row_and_dir(self):
         g = _goal()
-        d = store.loop_dir(g.id)
+        d = loop_files.loop_dir(g.id)
         assert d.exists()
         assert store.delete(g.id) is True
         assert store.get(g.id) is None
@@ -99,7 +100,7 @@ class TestStatusTransitions:
     def test_status_mirrors_to_status_json(self):
         g = _goal()
         store.update_status(g.id, LoopStatus.RUNNING)
-        sj = json.loads((store.safe_loop_dir(g.id) / "status.json").read_text())
+        sj = json.loads((loop_files.safe_loop_dir(g.id) / "status.json").read_text())
         assert sj["status"] == "running"
 
 
@@ -153,42 +154,42 @@ class TestKindConfigQueue:
 class TestFileHelpers:
     def test_findings_round_trip_and_attribution(self):
         g = _goal()
-        d = store.loop_dir(g.id)
+        d = loop_files.loop_dir(g.id)
         (d / "findings" / "cycle_001.json").write_text(json.dumps({"cycle": 1, "summary": "did x"}))
         (d / "findings" / "task_t-abc_001.json").write_text(
             json.dumps({"cycle": 1, "summary": "task work"})
         )
         # PP-5: the worker's files are ingested ONCE into the ledger; get_findings projects it back.
-        store.record_cycle_findings(g.id)
-        f = store.get_findings(g.id)
+        loop_files.record_cycle_findings(g.id)
+        f = loop_files.get_findings(g.id)
         assert f[0]["summary"] == "did x"
         # task finding gets its task_id derived from the filename (resolved at ingest)
         assert any(x.get("task_id") == "t-abc" for x in f)
         # task_finding_count is a ledger projection too
-        assert store.task_finding_count(g.id, "t-abc") == 1
+        assert loop_files.task_finding_count(g.id, "t-abc") == 1
         # Idempotent — a second ingest of the same files adds nothing.
-        assert store.record_cycle_findings(g.id) == 0
-        assert len(store.get_findings(g.id)) == 2
+        assert loop_files.record_cycle_findings(g.id) == 0
+        assert len(loop_files.get_findings(g.id)) == 2
 
     def test_nudges_applied_stamp(self):
         g = _goal()
-        store.append_nudge(g.id, "focus on the db path", 0)
-        store.mark_nudges_applied(g.id, 1)
-        assert store.get_nudges(g.id)[0]["applied_cycle"] == 1
+        loop_files.append_nudge(g.id, "focus on the db path", 0)
+        loop_files.mark_nudges_applied(g.id, 1)
+        assert loop_files.get_nudges(g.id)[0]["applied_cycle"] == 1
 
     def test_per_task_guidance_round_trip(self):
         c = _code()
-        store.write_task_guidance(c.id, "t-abc", "prefer pure fns")
-        assert store.read_task_guidance(c.id, "t-abc") == "prefer pure fns"
-        store.clear_task_guidance(c.id, "t-abc")
-        assert store.read_task_guidance(c.id, "t-abc") == ""
+        loop_files.write_task_guidance(c.id, "t-abc", "prefer pure fns")
+        assert loop_files.read_task_guidance(c.id, "t-abc") == "prefer pure fns"
+        loop_files.clear_task_guidance(c.id, "t-abc")
+        assert loop_files.read_task_guidance(c.id, "t-abc") == ""
 
     def test_question_round_trip_redacts(self):
         c = _code()
-        store.write_question(
+        loop_files.write_question(
             c.id, "Postgres or SQLite?", why="the key AKIAIOSFODNN7EXAMPLE implies scale"
         )
-        q = store.pending_question(c.id)
+        q = loop_files.pending_question(c.id)
         assert q["question"] == "Postgres or SQLite?"
         assert "AKIAIOSFODNN7EXAMPLE" not in q["why"]
 
@@ -205,7 +206,7 @@ class TestRedactedView:
 
     def test_read_deliverable_and_log(self):
         g = _goal()  # open_ended → REPORT.md is the deliverable
-        d = store.loop_dir(g.id)
+        d = loop_files.loop_dir(g.id)
         (d / "REPORT.md").write_text("# Report\nThe findings.")
         (d / "FINDINGS.md").write_text("cycle 1: did x")
         assert "The findings." in store.read_deliverable(g.id)
@@ -213,13 +214,13 @@ class TestRedactedView:
 
     def test_read_deliverable_falls_back_when_no_named_doc(self):
         g = _goal()
-        (store.loop_dir(g.id) / "FINDINGS.md").write_text("only the log exists")
+        (loop_files.loop_dir(g.id) / "FINDINGS.md").write_text("only the log exists")
         # no REPORT.md yet → falls back across known docs to FINDINGS.md
         assert "only the log" in store.read_deliverable(g.id)
 
     def test_get_redacted_attaches_verdicts_and_marginal_scores(self):
         g = _goal()
-        store.write_verdict(g.id, 1, {"cycle": 1, "done": False, "marginal_value": 2.5})
+        loop_files.write_verdict(g.id, 1, {"cycle": 1, "done": False, "marginal_value": 2.5})
         store.record_marginal_score(g.id, 2.5)
         red = store.get_redacted(g.id)
         # the cockpit ROI rail reads these off the redacted view for the initial render
@@ -228,10 +229,12 @@ class TestRedactedView:
 
     def test_list_redacted_attaches_findings_and_filters(self):
         g = _goal()
-        (store.loop_dir(g.id) / "findings" / "cycle_001.json").write_text(
+        (loop_files.loop_dir(g.id) / "findings" / "cycle_001.json").write_text(
             json.dumps({"cycle": 1, "summary": "found it"})
         )
-        store.record_cycle_findings(g.id)  # PP-5: ingest into the ledger the list view projects
+        loop_files.record_cycle_findings(
+            g.id
+        )  # PP-5: ingest into the ledger the list view projects
         _goal(project_id="p-2")
         rows = store.list_redacted()
         row = next(r for r in rows if r["id"] == g.id)
@@ -248,20 +251,20 @@ class TestReapOrphans:
         orphan = tmp_path / "loop" / "abcdef12"
         orphan.mkdir(parents=True)
         (orphan / "status.json").write_text("{}")
-        assert store.reap_orphan_dirs() >= 1
+        assert loop_files.reap_orphan_dirs() >= 1
         assert not orphan.exists()
 
     def test_reap_spares_live_dirs_db_and_non_id_entries(self, tmp_path):
         # A live loop's dir survives; the DB file + a non-id-shaped entry are never
         # touched (only valid_loop_id-shaped dirs are candidates).
         g = _goal()
-        live_dir = store.loop_dir(g.id)
+        live_dir = loop_files.loop_dir(g.id)
         root = tmp_path / "loop"
         (root / "loops.db").write_text("x") if not (root / "loops.db").exists() else None
         (root / "not-a-loop-id").mkdir(exist_ok=True)
         orphan = root / "deadbeef"
         orphan.mkdir()
-        store.reap_orphan_dirs()
+        loop_files.reap_orphan_dirs()
         assert live_dir.exists()  # backing row → spared
         assert (root / "not-a-loop-id").exists()  # wrong shape → never a candidate
         assert not orphan.exists()  # valid id, no row → reaped

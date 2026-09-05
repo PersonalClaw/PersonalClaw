@@ -8,6 +8,7 @@ import os
 
 import pytest
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import manager, store
 from personalclaw.loop import watchdog as W
 from personalclaw.loop.loop import Loop, LoopStatus
@@ -19,7 +20,7 @@ def _run(coro):
 
 @pytest.fixture(autouse=True)
 def _tmp_config(monkeypatch, tmp_path):
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     # manager.start → tasks_link.provision writes a Tasks Project + lists via the
     # Tasks hierarchy store (which projects.py also backs). Isolate it per-test too,
     # else every test that starts a loop leaks a Project into the shared/real config
@@ -150,7 +151,7 @@ class TestStartArmsWorker:
         out = _run(manager.start(state, svc, g.id))
         assert out.status == "running"
         # brief written + status mirrored
-        d = store.safe_loop_dir(g.id)
+        d = loop_files.safe_loop_dir(g.id)
         assert (d / "brief.md").exists() and "# Goal Loop Brief" in (d / "brief.md").read_text()
         # session armed with trust + the kind's default agent + recorded session_key
         sess = state._sessions[manager.session_key(g.id)]
@@ -324,7 +325,7 @@ class TestPauseStopResume:
         _run(manager.stop(state, svc, g.id))
         assert store.get(g.id).status == "stopped"
         assert manager.session_key(g.id) not in {lp.session_name for lp in svc._loops.values()}
-        assert store.stop_sentinel_path(g.id).exists()
+        assert loop_files.stop_sentinel_path(g.id).exists()
 
 
 class TestNudge:
@@ -333,18 +334,18 @@ class TestNudge:
         state, svc = _FakeState(), _FakeSvc()
         _run(manager.start(state, svc, g.id))
         _run(manager.nudge(state, svc, g.id, "focus on the db path"))
-        assert store.read_guidance(g.id) == "focus on the db path"
-        assert store.get_nudges(g.id)[0]["text"] == "focus on the db path"
+        assert loop_files.read_guidance(g.id) == "focus on the db path"
+        assert loop_files.get_nudges(g.id)[0]["text"] == "focus on the db path"
 
     def test_nudge_on_needs_input_resumes(self):
         g = _goal()
         state, svc = _FakeState(), _FakeSvc()
         _run(manager.start(state, svc, g.id))
         store.update_status(g.id, LoopStatus.NEEDS_INPUT)
-        store.write_question(g.id, "which db?")
+        loop_files.write_question(g.id, "which db?")
         _run(manager.nudge(state, svc, g.id, "use postgres"))
         assert store.get(g.id).status == "running"  # re-armed
-        assert store.pending_question(g.id) is None  # question cleared
+        assert loop_files.pending_question(g.id) is None  # question cleared
 
     def test_nudge_on_needs_input_brownfield_missing_workspace_stays_paused(self):
         # User typed an answer instead of re-picking a gone brownfield folder — the
@@ -364,7 +365,7 @@ class TestNudge:
         _run(manager.nudge(state, svc, c.id, "just an answer, not a re-pick"))
         assert store.get(c.id).status == LoopStatus.NEEDS_INPUT.value
         assert svc.get_by_session(manager.session_key(c.id)) is None  # NOT re-armed
-        assert "missing" in (store.pending_question(c.id) or {}).get("question", "").lower()
+        assert "missing" in (loop_files.pending_question(c.id) or {}).get("question", "").lower()
 
 
 class TestTaskWorker:
@@ -399,10 +400,10 @@ class TestTaskWorker:
         assert svc.get_by_session(skey) is not None
         assert state._sessions[skey]._trust is True
         # steer reaches the per-task channel; teardown clears it + removes the loop
-        store.write_task_guidance(c.id, tid, "prefer pure fns")
+        loop_files.write_task_guidance(c.id, tid, "prefer pure fns")
         _run(manager.teardown_task_worker(svc, c.id, tid))
         assert svc.get_by_session(skey) is None
-        assert store.read_task_guidance(c.id, tid) == ""
+        assert loop_files.read_task_guidance(c.id, tid) == ""
 
     def test_teardown_reaps_task_workers_with_main(self):
         # _teardown removes the main worker AND any loop-<id>-* task-workers.
