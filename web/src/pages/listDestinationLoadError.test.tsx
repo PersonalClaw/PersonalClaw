@@ -208,15 +208,18 @@ describe('the sources no longer swallow their own error', () => {
 // assertion above went green (they match /inbox/i), and the screen read **"Couldn't load your the
 // inbox"**. `LoadError` interpolates twice — `Couldn't load your {what}` and `Your {what} are safe`
 // — so `what` has one contract, stated in its own doc comment: a lowercase, PLURAL, bare noun.
-// Scoped to the four sites this cycle adds: a tree-wide version fails today on three pre-existing
-// values ("the Store catalog", "the pack catalog", "the autonomy ladder") plus every singular one
-// ("Your project are safe"), which is the next cycle's family and not this concern.
+// Scoped to the five sites the LoadError cycles have added: a tree-wide version fails today on
+// three pre-existing values ("the Store catalog", "the pack catalog", "the autonomy ladder") plus
+// every singular one ("Your project are safe"), which is the next cycle's family and not this
+// concern. Tasks joined with the false-empty family, when its search and Ready slices grew
+// LoadError branches beside the primary load's.
 describe("the what= values compose LoadError's sentence", () => {
   const SITES = [
     'pages/inbox/InboxPage.tsx',
     'pages/skills/SkillsPage.tsx',
     'pages/skills/SkillProposals.tsx',
     'pages/knowledge/KnowledgeListPage.tsx',
+    'pages/tasks/TasksListPage.tsx',
   ]
   it('reads as a sentence in both of the primitive\'s templates', () => {
     let checked = 0
@@ -232,10 +235,12 @@ describe("the what= values compose LoadError's sentence", () => {
         }
       }
     }
-    // Vacuity floor: SIX values across the four files (knowledge contributes three — its
-    // intents list joined with PEP-2, which gave that read an error branch before growing the
-    // empty state a create CTA).
-    expect(checked, 'the rail must actually find the values').toBe(6)
+    // Vacuity floor: FIFTEEN values across the five files. Knowledge contributes five (its
+    // intents list joined with PEP-2; intent outcomes and the entity "Mentioned in" read joined
+    // with the false-empty family), skills two (the marketplace search slice joined the same
+    // family), and tasks six — three slices (primary, search, ready), each rendered from both
+    // view containers.
+    expect(checked, 'the rail must actually find the values').toBe(15)
   })
 })
 

@@ -252,26 +252,30 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
   // many of its rows survived into this page of results.
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(false)
+  const [searchErr, setSearchErr] = useState<unknown>(null)
   const [installedIds, setInstalledIds] = useState<Set<string>>(new Set())
   const [openIdRaw, setOpenId] = useQueryParam(query, setQuery, 'open', '')
   const openId = openIdRaw || null
 
   async function search() {
     const query = q.trim()
-    if (!query) { setResults(null); setCounts({}); setInstallableSources(null); return }
+    if (!query) { setResults(null); setCounts({}); setInstallableSources(null); setSearchErr(null); return }
     setLoading(true)
     try {
       const { results: rows, counts: bySource, installableSources: reached } = await api.searchSkillsCounted(query, marketplace || undefined)
+      setSearchErr(null)
       setResults(rows)
       setInstallableSources(reached)
       setCounts(bySource)
     }
-    catch { setResults([]); setCounts({}); setInstallableSources(null) }
+    // The error is kept, not folded into `[]`: a failed search rendered as "No results — try a
+    // different search term", blaming the user's query for an outage.
+    catch (e) { setSearchErr(e); setResults(null); setCounts({}); setInstallableSources(null) }
     finally { setLoading(false) }
   }
   // Live-search as the user types (debounced) and when the marketplace scope changes.
   useEffect(() => {
-    if (!q.trim()) { setResults(null); return }
+    if (!q.trim()) { setResults(null); setSearchErr(null); return }
     const t = setTimeout(() => { search() }, 300)
     return () => clearTimeout(t)
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
@@ -309,6 +313,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
     >
       <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
         {loading ? <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]"><Loader2 size={15} className="animate-spin" /> Searching…</div>
+          : searchErr ? <LoadError what="skill search results" error={searchErr} onRetry={search} />
           : results === null ? <EmptyState icon={Store} title="Browse skills" hint={`Search ${marketplace || 'all marketplaces'} for skills to install — the agent loads them when relevant.`} />
           : results.length === 0 && installableSources === 0
             // Nothing to install FROM. Saying "no results" here blames the query for the
