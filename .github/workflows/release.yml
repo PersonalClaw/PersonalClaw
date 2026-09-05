@@ -1,7 +1,7 @@
 # Release — triggered by a version tag (v*). Builds the ONE artifact set every
-# install channel projects from (wheel with prebuilt web/dist + multi-arch images),
-# publishes to PyPI via Trusted Publishing (no stored tokens), and attaches
-# provenance. Publish jobs sit behind the `release` / `release-client` environments
+# install channel projects from (wheel with prebuilt web/dist + multi-arch images
+# + the unsigned Linux desktop AppImage/deb), publishes to PyPI via Trusted
+# Publishing (no stored tokens), and attaches provenance. Publish jobs sit behind the `release` / `release-client` environments
 # (owner-approved manual gate). Job ids per CI-RELEASE-ENGINEERING C1.
 name: Release
 
@@ -185,9 +185,71 @@ jobs:
             echo "::endgroup::"
           done
 
+  desktop-linux:
+    # Linux desktop shell — UNSIGNED AppImage + .deb (DC-6, owner ruling 2026-08-27:
+    # ship the Linux target now; Windows stays deferred — the native port is a no-go
+    # per docs/roadmap/research/windows-native-audit.md:302 and no Windows signing
+    # secrets exist). Unlike the macOS dmg (DC-1, blocked on Apple Developer secrets)
+    # this target needs no credentials at all: Linux has no OS-level signing gate, so
+    # "unsigned" is the platform norm, not a downgrade — docs/guides/desktop.md says
+    # what that means for users. x86-64 only (this runner's arch); arm64 desktop is
+    # not claimed anywhere until a job proves it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install uv + the venv the Makefile's pyinstaller target expects
+        uses: astral-sh/setup-uv@v7
+      - name: Create .venv for the bundled backend build
+        # Plain `.` is not enough: personalclaw-backend.spec collect_submodules()s
+        # openai/anthropic/slack_sdk into the frozen bundle, and those are extras —
+        # absent from core — so they must be importable in the build venv. The heavy
+        # [models] extra stays OUT deliberately (the spec excludes torch/faiss anyway).
+        run: |
+          uv python install 3.12
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python '.[anthropic,openai,slack]' pyinstaller
+      - name: Build unsigned AppImage + deb
+        # make desktop-dist-linux = web-build (SPA) -> pyinstaller (the bundled
+        # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist
+        # -> electron-builder --linux (AppImage + deb per desktop/package.json).
+        run: make desktop-dist-linux
+      - name: Smoke the artifacts (release-blocking)
+        # The Electron shell itself is NOT launched — that needs a display, and
+        # ci.yml's desktop tier declines display-dependent smoke on purpose. What
+        # IS run for real is the bundled backend: extract the AppImage (no FUSE
+        # needed) and execute the frozen personalclaw-backend on this OS/arch —
+        # a bundle that packages but cannot start must fail the release, same
+        # rationale as the images job's per-arch smoke.
+        run: |
+          set -euo pipefail
+          cd desktop/dist
+          ls -la
+          chmod +x ./PersonalClaw-*.AppImage
+          ./PersonalClaw-*.AppImage --appimage-extract > /dev/null
+          test -f squashfs-root/resources/app.asar
+          BACKEND=squashfs-root/resources/backend-dist/personalclaw-backend/personalclaw-backend
+          test -x "$BACKEND"
+          "$BACKEND" --version
+          # deb: correct package name + the same two load-bearing paths present.
+          dpkg-deb --info personalclaw-desktop_*.deb | grep -q "Package: personalclaw-desktop"
+          dpkg-deb --contents personalclaw-desktop_*.deb | grep -q "resources/app.asar"
+          dpkg-deb --contents personalclaw-desktop_*.deb | grep -q "backend-dist/personalclaw-backend/personalclaw-backend"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-linux
+          path: |
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+
   notes:
     # GitHub Release with notes drawn from CHANGELOG.md for this version.
-    needs: [build, pypi, images]
+    # desktop-linux is in `needs` so its AppImage/deb attach here and a broken
+    # Linux desktop build blocks the release (the images-smoke precedent).
+    needs: [build, pypi, images, desktop-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -197,6 +259,10 @@ jobs:
         with:
           name: dist
           path: dist/
+      - uses: actions/download-artifact@v8
+        with:
+          name: desktop-linux
+          path: desktop-dist/
       - name: Extract this version's CHANGELOG section
         run: |
           python - <<'PY' > release-notes.md
@@ -212,7 +278,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          gh release create "$GITHUB_REF_NAME" dist/* desktop-dist/* \
             --title "$GITHUB_REF_NAME" \
             --notes-file release-notes.md \
             $([ "${GITHUB_REF_NAME}" != "${GITHUB_REF_NAME%rc*}" ] && echo --prerelease)

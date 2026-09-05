@@ -226,3 +226,60 @@ Format: one line per task/event — `DONE` / `DEVIATION` / `DISCOVERY` / `BLOCKE
   needs the native audit **and** signing secrets, neither of which exists, so it keeps the dated DEFERRED note citing
   `windows-native-audit.md:302`. This splits a blocked atom into a shippable half and an honestly-parked half rather
   than parking both.
+
+### Session 7 — `DC-6`'s Linux half (2026-09-05)
+
+- **DONE (the target).** `desktop/package.json` gains the `linux` electron-builder config —
+  `target: ["AppImage", "deb"]` exactly (Windows shapes like nsis are deliberately absent; widening
+  the list is a ruling, not a tweak), the existing 1024×1024 `icon.png`, `category: Development`,
+  and an explicit `maintainer` with an email because the deb builder refuses to run without one and
+  this package sets no `author`. A `dist:linux` script mirrors the mac `dist` script's
+  `--config.electronVersion` pin (electron is hoisted to the workspace root, so electron-builder
+  cannot always detect it). `make desktop-dist-linux` is the local entry, riding the same
+  `desktop` staging target the dmg build uses — one backend-bundle path, two packagers.
+- **DONE (the release job).** `release.yml` gains `desktop-linux`: `make desktop-dist-linux` on
+  `ubuntu-latest` (uv venv with `.[anthropic,openai,slack]` + pyinstaller — the spec
+  `collect_submodules()`s those extras, so they must be importable at freeze time even though core
+  does not depend on them), then a **release-blocking smoke** in the images-job mold: the AppImage is
+  `--appimage-extract`ed (no FUSE on runners) and the bundled `personalclaw-backend --version` is
+  **executed** on the runner — a bundle that packages but cannot start must fail the release — plus
+  `dpkg-deb` info/contents checks on the deb (right `Package:` name, `app.asar` and the backend
+  binary present). The Electron shell itself is NOT launched: that needs a display, and ci.yml's
+  desktop tier already declines display-dependent smoke on purpose. `notes` adds `desktop-linux` to
+  its `needs` and attaches both artifacts to the GitHub Release.
+- **DECISION (unsigned IS the Linux signing story).** The atom's "per-OS signing docs" clause is
+  satisfied for Linux by documenting the *absence*: no OS-level gate consumes a signature on an
+  AppImage or a deb (nothing analogous to Gatekeeper/SmartScreen), so the artifacts ship unsigned
+  and `docs/guides/desktop.md`'s new Platforms section says exactly what users see instead —
+  `chmod +x` and no provenance prompt for the AppImage, no apt warning for a directly-installed deb,
+  and "download from the GitHub Release page" as the whole integrity story. Signing them anyway
+  would advertise a check no Linux system performs.
+- **DECISION (the npm package rename).** `personalclaw-electron-mac` → `personalclaw-desktop`,
+  because electron-builder derives the deb's `Package:` field from package.json `name`
+  (`appInfo.linuxPackageName`) and `dpkg -r personalclaw-electron-mac` on a Linux box would have
+  shipped the wrong OS's name into the user's package manager forever. Blast radius measured before
+  renaming: zero code references (`git grep` finds only `package-lock.json`'s two entries, both
+  updated in the same commit — the workspace is addressed by directory, `--workspace=desktop`,
+  everywhere).
+- **DONE (tests).** Five new cases in `desktop/test/packaging.test.js` pin the config: the exact
+  AppImage+deb target list, the icon existing on disk, the deb-required maintainer email shape, the
+  `dist:linux` script carrying `--linux` + the electronVersion pin, and the package name. Desktop
+  tier 185 → 190, all green.
+- **FALSIFIED (a real cross-build, and it caught what schema validation could not).** The full
+  `electron-builder --linux` run was executed on this mac (arm64 host → arm64 artifacts; CI produces
+  x64) with a stubbed `backend-dist`, after the config had already passed ajv validation against
+  electron-builder's own `scheme.json`. The schema pass was NOT sufficient — the build failed twice
+  on requirements the schema does not express, each fixed and re-run to green: (1) the deb's
+  FpmTarget refuses without a project `homepage` (now `https://personalclaw.dev`, matching
+  pyproject's Homepage); (2) the deb control carried `License: unknown` (package.json now says
+  `MIT`, matching the repo LICENSE). The build also warned that window association needs
+  `desktopName` + `linux.syncDesktopName` — set to `personalclaw-desktop`, and the shipped
+  `.desktop` file verified to carry that name. Final run: exit 0, both artifacts produced; the deb's
+  control block read back via `ar`/`tar` shows `Package: personalclaw-desktop`, the maintainer, the
+  homepage, and the data tree carries `resources/app.asar` + the backend binary at the exact path
+  `find-bin.js` probes (`resourcesPath/backend-dist/personalclaw-backend/personalclaw-backend`).
+- **REMAINING (what only CI can prove).** The artifacts built here are arm64 and were built against
+  a stub backend; the release-blocking smoke — extract the x64 AppImage and EXECUTE the real frozen
+  `personalclaw-backend --version` — runs on the first tag after this lands. Windows stays DEFERRED
+  with the dated note in `DC.md` `DC-6` citing `windows-native-audit.md:302` and the nonexistent
+  signing secrets. `DC-6` is 🟡 in `DC.md`; `dag.json` is the driver's to flip.
