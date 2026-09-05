@@ -5641,6 +5641,10 @@ export const api = {
   memoryEntities: () => get<MemoryEntitiesResponse>('/api/memory/entities'),
   memoryEntityCreate: (body: { name: string; entity_type: MemoryEntityType; aliases?: string[] }) =>
     post<{ ok: boolean; id: string }>('/api/memory/entities', body),
+  // The entity set used to be create-only. The store has tombstoned entities since the graph
+  // landed, but no route, wrapper or control reached it — so a mistyped entity was permanent,
+  // on a panel that actively proposes NEW ones to accept (#524).
+  memoryEntityDelete: (id: string) => del(`/api/memory/entities/${encodeURIComponent(id)}`),
   memoryEntityBacklinks: (id: string) =>
     get<{ links: MemoryLink[] }>(`/api/memory/entities/${encodeURIComponent(id)}/backlinks`),
   memoryEntityProposal: (body: { name: string; action: 'accept' | 'reject'; entity_type?: MemoryEntityType }) =>

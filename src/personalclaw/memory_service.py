@@ -625,6 +625,38 @@ class MemoryService:
         vs.invalidate_alias_index()
         return eid
 
+    def graph_entity_by_name(self, name: str) -> "dict | None":
+        """One live entity by name, or None — a READ, so a caller can check before declaring."""
+        vs = self._graph_store()
+        if vs is None:
+            return None
+        entity = vs.graph.entity_by_name(name)
+        if entity is None:
+            return None
+        return {
+            "id": entity.id,
+            "name": entity.name,
+            "entity_type": entity.entity_type,
+            "aliases": list(entity.aliases),
+            "source": entity.source,
+        }
+
+    def graph_delete_entity(self, entity_id: str) -> bool:
+        """Remove an entity by hand and stop matching it.
+
+        The mirror of :meth:`graph_add_entity`, and it needs the same index invalidation for
+        the same reason: the alias index is a compiled snapshot, so without this the deleted
+        entity would keep matching text — and keep being linked to new records — until the
+        process restarted.
+        """
+        vs = self._graph_store()
+        if vs is None:
+            return False
+        removed = vs.graph.delete_entity(entity_id)
+        if removed:
+            vs.invalidate_alias_index()
+        return removed
+
     def graph_accept_proposal(self, name: str, entity_type: str) -> str:
         vs = self._graph_store()
         if vs is None:

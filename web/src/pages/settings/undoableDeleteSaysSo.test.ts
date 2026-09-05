@@ -1,6 +1,6 @@
-/** Two of Memory's three deletes said "This cannot be undone" over a one-click Undo.
+/** Two of Memory's deletes said "This cannot be undone" over a one-click Undo.
  *
- * `confirmDelete`'s default body is `'This cannot be undone.'`, and all three deletes in
+ * `confirmDelete`'s default body is `'This cannot be undone.'`, and every delete in
  * `MemoryPanel.remove()` took it. For two of them it is false:
  *
  *   · **a semantic fact** — `vector_memory.delete_semantic` is a TOMBSTONE
@@ -43,12 +43,14 @@ const code = panel
   .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
   .replace(/^(\s*)\/\/.*$/gm, '$1')
 
-/** The three `confirmDelete` calls in `remove()`, in source order. */
+/** Every `confirmDelete` call in `remove()`, in source order. */
 const calls = [...code.matchAll(/confirmDelete\(\s*'([^']+)'[\s\S]{0,600}?\)\)\)/g)]
 
 describe('the two reversible deletes say they are reversible', () => {
-  it('found all three deletes', () => {
-    expect(calls.map((m) => m[1])).toEqual(['memory', 'episodic memory', 'lesson'])
+  // 🪤 A CENSUS, not a sample: this list is what stops a later delete from quietly taking the
+  // default body. A new one reds here first, and the indices below are addressed from it.
+  it('found all four deletes', () => {
+    expect(calls.map((m) => m[1])).toEqual(['memory', 'episodic memory', 'lesson', 'entity'])
   })
 
   it('🔴 the semantic-fact delete no longer claims irreversibility', () => {
@@ -71,6 +73,15 @@ describe('the two reversible deletes say they are reversible', () => {
     const ep = calls[1][0]
     // No custom body: it takes `confirmDelete`'s 'This cannot be undone.', which is true for this one.
     expect(ep, 'episodic must NOT gain a body claiming reversibility').not.toMatch(/body:/)
+  })
+
+  it('🔑 the ENTITY delete states the claim itself — its links have no route back', () => {
+    const entity = calls[3][0]
+    // It passes a body for the blast radius (how many memories link to it), so it cannot lean on the
+    // default the way episodic does — it has to carry the irreversibility clause in its own copy.
+    expect(entity, 'a custom body is passed').toMatch(/body:/)
+    expect(entity, 'and it still says so, because it is true here').toMatch(/cannot be undone/)
+    expect(entity, 'never claiming the undo the other two have').not.toMatch(/History tab/)
   })
 })
 
@@ -105,6 +116,18 @@ describe('VACUITY: the undo this copy promises actually exists', () => {
     const fn = vm.match(/def undo_event\(self[\s\S]*?(?=\n    def )/)?.[0] ?? ''
     expect(fn, 'found undo_event').not.toBe('')
     expect(fn, 'a semantic-only guard exists').toMatch(/semantic/)
+  })
+
+  it('🔑 an entity delete really has no route back — the LINKS are a hard DELETE', () => {
+    // The other side of the same honesty: the entity claims irreversibility, so that has to be true.
+    // The entity row is a tombstone, but its links are dropped outright and `undo_event` is
+    // semantic-only, so nothing un-drops them. If either changed, the entity copy would go stale.
+    const graph = readFileSync(join(REPO, 'src/personalclaw/memory_graph.py'), 'utf8')
+    const fn = graph.match(/def delete_entity\(self[\s\S]*?(?=\n    def )/)?.[0] ?? ''
+    expect(fn, 'found delete_entity').not.toBe('')
+    expect(fn, 'the links go outright, not tombstoned').toMatch(/DELETE FROM mem_links WHERE to_entity/)
+    expect(code, 'and the undo is still gated to semantic events, which excludes entities')
+      .toMatch(/ev\.memory_type === 'semantic'/)
   })
 
   it("the default body really is the irreversibility claim, so taking it was the defect", () => {

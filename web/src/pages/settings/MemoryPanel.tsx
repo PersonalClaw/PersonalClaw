@@ -497,6 +497,20 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
           + 'that earned it.',
       }))) return
       try { await api.deleteLesson(selected.lesson.rule) } catch (e) { return fail('lesson', e) }
+    } else if (selected.kind === 'entity' && selected.entity) {
+      // 🔑 The blast radius is the whole reason this affordance was missing: the code here said an
+      // entity's removal "has to reason about the links pointing at it". The store settled that
+      // question when it shipped — `delete_entity` tombstones the entity, drops the links that
+      // point AT it, and leaves the records those links came from untouched — so what was actually
+      // missing is a dialog that tells the user that answer before it happens. Stated in their
+      // terms (memories, not rows), with the count they can see in the row beside it.
+      const n = selected.entity.inbound_count
+      if (!(await confirmDelete('entity', selected.entity.name, {
+        body: n > 0
+          ? `${n} ${n === 1 ? 'memory links' : 'memories link'} to it. ${n === 1 ? 'That link is' : 'Those links are'} dropped — the ${n === 1 ? 'memory itself stays' : 'memories themselves stay'}. This cannot be undone.`
+          : 'Nothing links to it yet, so no memories are affected. This cannot be undone.',
+      }))) return
+      try { await api.memoryEntityDelete(selected.entity.id) } catch (e) { return fail('entity', e) }
     } else return
     setSelUid(null); reloadAll()
   }
@@ -687,10 +701,18 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts }: 
   docDrafts: Map<string, string>
 }) {
   const Icon = STUDIO_KIND_META[item.kind].icon
-  // Slots and entities are not "delete"-able from here: a slot is a register (its LINES are
-  // retired individually, and the row itself is structural), and an entity's removal has to
-  // reason about the links pointing at it — which is the graph-maintenance path, not this one.
+  // A slot is not "delete"-able from here: it is a register — its LINES are retired
+  // individually and the row itself is structural.
+  //
+  // An entity IS, now. This used to read "an entity's removal has to reason about the links
+  // pointing at it — which is the graph-maintenance path, not this one", and that deferral is
+  // what made the entity list append-only for the life of a home: create was here, proposals to
+  // accept were here, and removal was nowhere at all (#524). The reasoning it was waiting for
+  // already exists in the store (tombstone the entity, drop the links pointing at it, keep the
+  // records), so the honest move is to state that consequence in the confirm dialog rather than
+  // withhold the action.
   const deletable = item.kind === 'fact' || item.kind === 'episodic' || item.kind === 'lesson'
+    || item.kind === 'entity'
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-outline-variant/30 px-3 py-2.5">
