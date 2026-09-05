@@ -32,10 +32,12 @@ that established it has no home.
 2. **The status vocabularies are not a superset relationship.** `LoopStatus` has twelve members and
    `RunStatus` eight, and each has members the other cannot express — see `STATUS_VOCABULARY_DELTA`.
    "One status vocabulary" therefore costs a decision per orphan, not a rename.
-3. **`WorkflowRun.task_list_id` is declared and inert.** It has no writer and no reader outside
-   `models.py`; and it is singular, where a loop keeps one TaskList PER PHASE
-   (`Loop.task_list_ids: {phase_key: task_list_id}`). So the projection to tasks is one field short
-   of the loop's shape before any code moves.
+3. **`WorkflowRun.task_list_id` was declared and inert — RETIRED (PP-16 seam 4c).** It had no
+   writer and no reader outside `models.py`, and it was singular where a loop keeps one TaskList
+   PER PHASE (`Loop.task_list_ids: {phase_key: task_list_id}`). The owner ruling re-homed the
+   loop field to `PROJECTION` (per-phase TaskLists derive from run state, the direction
+   `materialize.py` already proves) and deleted the singular slot, so a later migration cannot
+   fill it with the wrong shape.
 """
 
 from __future__ import annotations
@@ -369,13 +371,18 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "Tasks Project — and a run has only one `project_id`. Either they unify (a decision about "
         "whether a run's project and its task project are the same thing) or a field is needed.",
     ),
+    # Re-homed to PROJECTION by the seam-4c owner ruling (option b of the 2026-08-22 entry):
+    # a per-phase TaskList map is a projection of run state — `materialize.py` already projects
+    # tasks per phase — and the inert singular `WorkflowRun.task_list_id` slot is retired in the
+    # same change, so a later migration cannot fill it with the wrong shape (singular where the
+    # loop keeps `{phase_key: id}`).
     FieldHome(
         "task_list_ids",
-        RUN,
-        "WorkflowRun.task_list_id",
-        "SHAPE MISMATCH, recorded: singular on the run, `{phase_key: id}` on the loop — and "
-        "`WorkflowRun.task_list_id` has no writer or reader outside `models.py`, so the "
-        "destination is declared but inert.",
+        PROJECTION,
+        "",
+        "Per-phase TaskLists are derived from run state the way `materialize.py` already "
+        "projects tasks per phase; the run-side singular slot was inert and is retired "
+        "(PP-16 seam 4c), so no stored destination remains to mis-shape.",
     ),
     FieldHome(
         "linked_task_ids",

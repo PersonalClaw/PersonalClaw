@@ -8,6 +8,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+- The `runs` table no longer declares a `task_list_id` column and `WorkflowRun` no longer carries the field (PP-16 seam 4c). The column was never populated or read — per-phase task lists are projected from run state instead. Clean break under the pre-1.0 banner: no migration; an existing home keeps the inert column, which new code neither reads nor writes. `personalclaw snapshot` before upgrading is advised as usual.
+
 ### Fixed
 - **Set default** on an agent now confirms before rewriting the global `default_agent` — the agent every new chat starts with changed on a single unconfirmed click, while Delete in the same component both confirms and refuses to touch the default. The dialog names both agents (“New chats currently start with X. They will start with Y instead.”), which matters because the previous default's name appeared nowhere else in the interaction — there was no way back short of an out-of-band API call ([#666](https://github.com/PersonalClaw/PersonalClaw/issues/666)).
 - A lifecycle trigger's **Test** button is now a rehearsal, not a fire: it no longer writes into the trigger's real `run_count`/`last run`/`last status` (“Ran 2× · ok” could previously describe a trigger that had never actually fired — both runs were Test clicks), and the action's payload is tagged the way the event-trigger test path already tags it, so a provider can tell a rehearsal from the real thing. The notify action marks tagged rehearsals with a `[test]` title prefix on BOTH trigger paths — a test notification is no longer indistinguishable from a live alert in the inbox — and the panel's Test button now refreshes like its save/delete/toggle siblings. Every guardrail gate (incident, denylist, rung routing) still applies to a test fire, unchanged ([#609](https://github.com/PersonalClaw/PersonalClaw/issues/609)).
