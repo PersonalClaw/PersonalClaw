@@ -302,6 +302,32 @@ def _ensure_default_providers_registered() -> None:
         from personalclaw.action_providers.net_fetch_provider import NetFetchActionProvider
 
         register_action_provider(NetFetchActionProvider())
+    if "best-of-n" not in _providers:
+        # HARNESS-CRAFT §2.3 (HC-5): the engine-native half of best-of-N — a thin wrapper
+        # over the `sampling.best_of_n` core the bundled skill and MCP tool already call.
+        # Registered unconditionally for the reason `triage-digest` records above: a
+        # provider the bundled `best-of-n` template names must be dispatchable whenever
+        # that template can be instantiated, and a registration that depends on config is
+        # one the run-start preflight cannot see. The N× spend is governed at the core's
+        # own chokepoint (every call rides one_shot_completion → ModelCallGuard, N clamped
+        # to 5). Added to ALLOWED_HOOK_PROVIDERS, to `triggers/screen.py`'s write-capable
+        # set and to `guardrails/rungs.py`'s action table in the SAME commit — a provider
+        # in one set but not the others is the mismatch that makes a trigger save and then
+        # fail to run.
+        from personalclaw.action_providers.best_of_n_provider import BestOfNActionProvider
+
+        register_action_provider(BestOfNActionProvider())
+    if "check-work" not in _providers:
+        # HARNESS-CRAFT §3.2 (HC-5): the engine-native verification node — a thin wrapper
+        # over the `check_work.derive_and_run` core the bundled skill and the SDLC
+        # post-gate hook already share. Registered unconditionally for the same reason as
+        # `best-of-n` directly above. Zero tokens, bounded filesystem reads only (no
+        # command runner is injected, so command checks report `unverifiable`). Added to
+        # ALLOWED_HOOK_PROVIDERS, to `triggers/screen.py`'s read-only set and to
+        # `guardrails/rungs.py`'s action table in the SAME commit.
+        from personalclaw.action_providers.check_work_provider import CheckWorkActionProvider
+
+        register_action_provider(CheckWorkActionProvider())
     if "second-opinion" not in _providers:
         # EXECUTION-ISOLATION §4.1 (EI-7): hand a stalled loop/gate/session's state to a
         # DIFFERENT cataloged runner for one shot, and accept the answer only when a disk

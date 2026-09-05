@@ -1,0 +1,77 @@
+{
+  "name": "check-work",
+  "description": "Verification node any workflow can end with: reconstruct completion claims from the supplied text, derive 2-4 executable checks, run them against the work root, and fail the run when a claimed artifact is not actually there — the engine-native half of the check-work skill, calling the same derivation core.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "verification",
+    "qa"
+  ],
+  "inputs": {
+    "claims": {
+      "type": "string",
+      "required": true,
+      "help": "The text carrying the completion claims to verify — a stage's findings, a session summary, or the message that said the work was done. Checks are derived from what THIS text claims, not from the task description."
+    },
+    "root": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "Directory the derived checks run against. Blank uses the run's own workspace, which is where an upstream stage's files land."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "cost_tier": "free",
+    "why_free": "Zero model calls: claim reconstruction and check derivation are deterministic, and every check is a bounded filesystem read confined under the root. Command checks report unverifiable — this node never shells out on its own authority.",
+    "capabilities": [],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Verify the claims from the build stage's summary against the run workspace."
+      },
+      {
+        "event": "mutation",
+        "description": "Point the root at the repo checkout instead of the run workspace — the files were written there."
+      }
+    ],
+    "keywords": [
+      "check the work",
+      "verify claims",
+      "did it actually land",
+      "verification node",
+      "post-task check"
+    ],
+    "example_outputs": [
+      "a pass/fail/unverifiable verdict per derived check with quoted evidence, and a FAILED run when a claimed file is missing"
+    ],
+    "when_not_to_use": "whole-feature or spec-driven assurance — that is the deep QA companion's half; this is the light, immediate check over what was just claimed"
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "action",
+        "id": "check",
+        "label": "Derive and run the checks",
+        "config": {
+          "provider": "check-work",
+          "with": {
+            "text": "{{inputs.claims}}",
+            "root": "{{inputs.root}}"
+          }
+        }
+      },
+      {
+        "kind": "transform",
+        "id": "verdict",
+        "label": "The evidence report",
+        "config": {
+          "expr": "{{nodes.check.output.report}}"
+        }
+      }
+    ]
+  }
+}

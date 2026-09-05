@@ -1,0 +1,84 @@
+{
+  "name": "best-of-n",
+  "description": "Sample N candidate answers to one prompt in parallel (each at a different temperature), judge them against stated criteria, and select the winner — the engine-native half of the best-of-n skill, calling the same sampling core so template and skill cannot drift.",
+  "source": "bundled",
+  "provenance": "user",
+  "version": 1,
+  "tags": [
+    "sampling",
+    "quality"
+  ],
+  "inputs": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "help": "The prompt every candidate answers — identical for all N. The variation is the sampling temperature, not the ask."
+    },
+    "n": {
+      "type": "number",
+      "required": false,
+      "default": 3,
+      "help": "How many candidates to sample (1-5; the core clamps a larger ask to 5). Each candidate is a separate metered model call, so N is the cost multiplier."
+    },
+    "criteria": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "help": "What 'best' means for this ask — the judge scores every candidate against this. Blank falls back to the core's generic bar (an unstated bar is still a bar, just a weaker one)."
+    }
+  },
+  "metadata": {
+    "risk": "low",
+    "cost_tier": "metered",
+    "why_metered": "One run costs N sampling calls plus one judge pass per surviving candidate. Every call rides the ModelCallGuard chokepoint, so the multiplier is visible in model_calls.jsonl and bounded by the SpendMeter — and the core caps N at 5 so a template cannot quietly buy 20x spend.",
+    "capabilities": [],
+    "steering_examples": [
+      {
+        "event": "kickoff",
+        "description": "Sample 5 instead of 3, and judge on brevity above everything else."
+      },
+      {
+        "event": "mutation",
+        "description": "Change the criteria to 'no marketing language, concrete numbers only' before the sample node runs."
+      }
+    ],
+    "keywords": [
+      "best of n",
+      "sample and pick",
+      "give me versions",
+      "judge candidates",
+      "pick the best"
+    ],
+    "example_outputs": [
+      "the winning candidate's text, with the full slate (candidates + judgments + scores) in the sample node's output for 'use #2 instead'"
+    ],
+    "when_not_to_use": "anything with one correct answer — N samples of a lookup is N times the cost for the same answer; and never inside a foreach, which multiplies the spend per item"
+  },
+  "root": {
+    "kind": "sequence",
+    "id": "root",
+    "children": [
+      {
+        "kind": "action",
+        "id": "sample",
+        "label": "Fan out N samples, judge, select",
+        "config": {
+          "provider": "best-of-n",
+          "with": {
+            "prompt": "{{inputs.prompt}}",
+            "n": "{{inputs.n}}",
+            "criteria": "{{inputs.criteria}}"
+          }
+        }
+      },
+      {
+        "kind": "transform",
+        "id": "select",
+        "label": "The winner",
+        "config": {
+          "expr": "{{nodes.sample.output.winner}}"
+        }
+      }
+    ]
+  }
+}

@@ -941,6 +941,16 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # action, so it goes through this same validation — registered in the action-provider
         # registry in the same commit as this line, for the reason stated above.
         "second-opinion",
+        # HARNESS-CRAFT §2.3/§3.2 (HC-5): the engine-native halves of best-of-N and
+        # check-work — thin wrappers over the `sampling.best_of_n` and
+        # `check_work.derive_and_run` cores the bundled skills already call, so template
+        # and skill cannot drift. Registered in `action_providers.registry` in the SAME
+        # commit as these lines; the bundled `best-of-n` and `check-work` templates name
+        # them, and a provider a bundled template names must be allowlisted here or
+        # `test_every_action_node_names_a_registered_provider` reds — the registered
+        # catalog and this mirror moving together is that test's whole premise.
+        "best-of-n",
+        "check-work",
         # EXTERNAL-ACCESS §5 (EA-8, outbound half): sends ONE A2A task to an external agent.
         # Unlike every name above it, the provider behind this one is NOT in core's registry —
         # it is delivered by the `a2a-action` first-party app, exactly as `webhook` is. So the

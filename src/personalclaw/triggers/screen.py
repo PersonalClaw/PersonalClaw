@@ -427,6 +427,12 @@ READ_ONLY_PROVIDERS: frozenset[str] = frozenset(
         # effect is a run-ledger row. Zero tokens and nothing user-visible, so it belongs with
         # the deterministic knowledge probes above rather than with the writers below.
         "selfqa-triage",
+        # HC-5: the check-work verification node. Zero tokens and bounded filesystem READS
+        # confined under the given root (`check_work._resolve` refuses an escape); it never
+        # shells out — the provider injects no command runner, so a command check is reported
+        # `unverifiable` rather than executed. Its only output is the report in the node's own
+        # result, so it belongs with the deterministic probes above.
+        "check-work",
     }
 )
 
@@ -520,6 +526,12 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # The egress allow-list is a real control but it is the OPERATOR's, set once globally; this
         # opt-in is the per-trigger one, and neither substitutes for the other.
         "net-fetch",
+        # HC-5: best-of-N spends N sampling calls PLUS one judge pass per surviving candidate,
+        # every one a real model call. It writes nothing a user sees (its output is the node's
+        # own result and one bounded derived-telemetry row), but an unattended cron that could
+        # multiply model spend by up to 5 without an explicit opt-in is the same unattended-spend
+        # shape that puts `triage-digest` on this side — and the spend alone earns the opt-in.
+        "best-of-n",
         # EI-7: the second-opinion handoff spawns a cataloged runner (or a subagent) one-shot
         # with write access to a real workspace — the strictest side of this table is the only
         # honest one for it. Note the disk re-diff that gates ACCEPTANCE is not a substitute for
