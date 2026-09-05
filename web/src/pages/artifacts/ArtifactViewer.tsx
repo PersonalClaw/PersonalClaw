@@ -313,15 +313,15 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
         )}
 
         {!isCurrent && viewError && (
-          <div className="flex items-center gap-2 border-b border-outline/40 bg-danger/10 px-m py-1.5 text-[0.75rem]">
+          <div data-type="caption" className="flex items-center gap-2 border-b border-outline/40 bg-danger/10 px-m py-1.5">
             <Clock size={12} className="text-danger" />
             {/* Not "historical", not "read-only": that version never loaded. No Revert
                 either — reverting to a version that could not be fetched is the exact
                 false affordance issue 581 measured. */}
             <span className="text-on-surface-low">Couldn't load v{selVersion} — {viewError}</span>
-            <button onClick={() => setSelVersion(null)} type="button" className="ml-auto inline-flex items-center gap-1 rounded-md border border-danger/35 px-2 h-6 text-danger text-[0.75rem]">
+            <Button variant="ghost" size="xs" onClick={() => setSelVersion(null)} className="ml-auto shrink-0">
               Back to current
-            </button>
+            </Button>
           </div>
         )}
         {!isCurrent && !viewError && (
