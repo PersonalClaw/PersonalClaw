@@ -404,7 +404,13 @@ function WeekPanel({ week }: { week: StagingWeek }) {
     <div className="flex flex-col gap-m">
       <div className="flex flex-wrap items-center gap-s">
         <span data-type="title-m" className="text-on-surface">Capture, last {week.days} days</span>
-        {week.silent_days.length > 0 && (
+        {/* Never-ran is not a warning. Before the FIRST pass ever, "7 silent" would dress the
+            same fact this page's zero-states say quietly ("no capture pass has run"), so the
+            amber chip yields to that idiom. Strict `=== false` because a stale cached payload
+            without the field must keep the warning — ran-then-died is the case the chip is for. */}
+        {week.silent_days.length > 0 && (week.has_ever_run === false ? (
+          <span data-type="caption" className="text-on-surface-low">no capture pass has run yet</span>
+        ) : (
           <span
             className="inline-flex items-center gap-1.5 rounded-pill px-m h-6 text-[0.75rem]"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)', color: 'var(--color-warn)' }}
@@ -412,7 +418,7 @@ function WeekPanel({ week }: { week: StagingWeek }) {
           >
             <AlertTriangle size={12} /> {week.silent_days.length} silent
           </span>
-        )}
+        ))}
       </div>
       <div className="flex flex-wrap gap-s">
         {week.buckets.map((day) => {
