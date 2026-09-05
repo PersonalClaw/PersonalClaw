@@ -146,7 +146,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
     } catch (e) {
       // A preflight refusal is the common case and it is ACTIONABLE (missing credential, no
       // model) — surfacing the message is the whole point of failing at start.
-      notify(e instanceof Error ? e.message : 'Could not start the workflow')
+      notify(e instanceof Error ? e.message : 'Could not start the workflow', 'error')
     }
   }, [navigate])
 
@@ -186,7 +186,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
       await api.deleteWorkflowDef(name)
       load()
     } catch (e) {
-      notify(e instanceof Error ? e.message : 'Could not delete the definition')
+      notify(e instanceof Error ? e.message : 'Could not delete the definition', 'error')
     }
   }, [load])
 
@@ -211,7 +211,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
     } catch (e) {
       // The 409 ("cancel it before deleting") is the informative case — a run the user thought
       // was finished is still moving, and that is worth reading.
-      notify(e instanceof Error ? e.message : 'Could not delete the run')
+      notify(e instanceof Error ? e.message : 'Could not delete the run', 'error')
     }
   }, [load])
 

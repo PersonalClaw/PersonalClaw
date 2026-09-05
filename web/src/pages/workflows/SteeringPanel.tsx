@@ -60,7 +60,7 @@ export function SteeringPanel({
     try {
       const res = await api.steerWorkflowRun(runId, { text: t })
       if (res.ok === false) {
-        notify(res.error?.message ?? 'Could not queue that instruction.')
+        notify(res.error?.message ?? 'Could not queue that instruction.', 'error')
         return
       }
       setDraft('')
@@ -68,7 +68,7 @@ export function SteeringPanel({
       onSteered?.()
     } catch (e) {
       // A failed steer keeps the draft so the user can retry rather than silently losing it.
-      notify(e instanceof Error ? e.message : 'Could not queue that instruction.')
+      notify(e instanceof Error ? e.message : 'Could not queue that instruction.', 'error')
     } finally {
       setBusy(false)
     }
@@ -108,7 +108,7 @@ export function SteeringPanel({
       await api.updateProject(projectId, { agent_instructions_template: answers.guidance ?? '' })
       notify('Judge guidance saved for this project.')
     } catch (e) {
-      notify(e instanceof Error ? e.message : 'Could not save the guidance.')
+      notify(e instanceof Error ? e.message : 'Could not save the guidance.', 'error')
     }
   }, [projectId])
 
