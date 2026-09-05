@@ -1976,6 +1976,10 @@ export interface StagingWeek {
   days: number; buckets: StagingDay[]
   silent_days: string[]; error_days: string[]
   produced_total: number; cost_usd: number
+  /** False only before the FIRST pass EVER — an unbounded check, not the window's rows, because
+   *  an all-silent window is also what ran-then-died looks like. Optional so a stale cached
+   *  payload without the field defaults to showing the warning chip, never to hiding it. */
+  has_ever_run?: boolean
 }
 
 // The flywheel observability panel (GET /api/learning/health — LEARN-R14b).

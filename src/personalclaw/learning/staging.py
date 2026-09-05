@@ -621,6 +621,13 @@ class StagingStore:
             staged_rows = cur.execute(
                 "SELECT created_ts FROM staging WHERE created_ts >= ?;", (since,)
             ).fetchall()
+            # UNBOUNDED on purpose, never derived from the window rows above: "every day
+            # this window was silent" is also what a ran-then-died instance looks like,
+            # and that gap is the signal this panel exists to expose. Only "no pass has
+            # EVER run" may read as a calm first-run state.
+            has_ever_run = bool(
+                cur.execute("SELECT EXISTS(SELECT 1 FROM flush_records);").fetchone()[0]
+            )
 
         def _day(ts: float) -> str:
             return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
@@ -679,6 +686,9 @@ class StagingStore:
             "error_days": [b["day"] for b in ordered if b["errors"]],
             "produced_total": sum(b["produced"] for b in ordered),
             "cost_usd": round(sum(b["cost_usd"] for b in ordered), 6),
+            # False only before the FIRST pass ever — the panel renders that as a zero-state
+            # instead of dressing a week of silent days as a warning.
+            "has_ever_run": has_ever_run,
         }
 
     def prune(self, *, retention_days: int = DEFAULT_RETENTION_DAYS, now: float | None = None):

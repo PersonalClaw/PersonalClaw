@@ -61,9 +61,27 @@ describe('unmeasured renders as unmeasured', () => {
     expect(screen.queryByText('0')).toBeNull()
   })
 
-  it('counts the unmeasured components so exclusion is visible', () => {
+  it('does NOT dress never-ran as a warning — no unmeasured chip when nothing has run', () => {
+    // 🔁 Was pinned as `4 unmeasured`. With `measured: 0` the headline already says "not
+    // measured yet — nothing has run"; an amber chip beside it restated that zero-state as a
+    // problem, contradicting this panel's own null-not-zero rule (LEARN-1).
     render(<HealthPanel health={health()} error={null} onRetry={() => {}} />)
-    expect(screen.getByText(/4 unmeasured/)).toBeTruthy()
+    expect(screen.queryByText(/4 unmeasured/)).toBeNull()
+    expect(screen.getByText(/not measured yet — nothing has run/)).toBeTruthy()
+  })
+
+  it('counts the unmeasured components once SOMETHING has run, so exclusion is visible', () => {
+    const partial = health()
+    partial.composite = {
+      ...partial.composite,
+      score: 90,
+      measured: 1,
+      components: partial.composite.components.map((c) =>
+        c.name === 'capture' ? { ...c, score: 90, detail: '9 of 10 passes clean' } : c,
+      ),
+    }
+    render(<HealthPanel health={partial} error={null} onRetry={() => {}} />)
+    expect(screen.getByText(/3 unmeasured/)).toBeTruthy()
   })
 
   it('states the ideal band even with no samples', () => {
