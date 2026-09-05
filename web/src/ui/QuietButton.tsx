@@ -6,7 +6,7 @@ import { spring, expr } from '../design/motion'
 /** The quiet compact inline action in a content-viewer toolbar — a dimmed
  *  ink-low label + leading glyph, medium radius, 28px tall; hover fills to
  *  surface-high and brightens the ink. Deliberately smaller, dimmer, and
- *  square-cornered vs the pill ghost {@link Button} (h-7/text-[0.75rem]/
+ *  square-cornered vs the pill ghost {@link Button} (h-7/caption-tier type/
  *  text-on-surface-low, not h-8+/pill/text-on-surface) so it recedes into a
  *  header action row rather than reading as a CTA. Four toolbar actions —
  *  ArtifactViewer's "Source file" + "Download", FileViewer's "Artifact",
@@ -77,8 +77,9 @@ export function QuietButton({
       aria-expanded={ariaExpanded}
       whileTap={disabled ? undefined : { scale: pressScale }}
       transition={spring.spatialFast}
+      data-type="caption"
       className={cx(
-        'inline-flex items-center gap-xs rounded-md px-s h-7 text-[0.75rem]',
+        'inline-flex items-center gap-xs rounded-md px-s h-7',
         disabled
           ? 'text-on-surface-low opacity-40 cursor-not-allowed'
           : 'text-on-surface-low hover:bg-surface-high hover:text-on-surface',

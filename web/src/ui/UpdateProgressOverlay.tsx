@@ -145,7 +145,7 @@ function StepRow({ label, status }: { label: string; status: 'done' | 'active' |
           : status === 'active' ? <Loader2 size={13} className="animate-spin" />
           : <span className="size-1.5 rounded-full bg-current opacity-60" />}
       </span>
-      <span className="text-[0.8125rem]"
+      <span data-type="body-s"
         style={{ color: status === 'pending' ? 'var(--color-on-surface-low)' : 'var(--color-on-surface)' }}>
         {label}
       </span>
@@ -213,7 +213,7 @@ function UpdateSheet({ progress, cancel }: { progress: UpdateProgress; cancel: (
               <div className="min-w-0 flex-1">
                 <div data-type="title-l" className="text-on-surface">{title}</div>
                 {progress.detail && (
-                  <div className="mt-1 text-[0.8125rem]" style={{ color: isError ? 'var(--color-danger)' : 'var(--color-on-surface-var)' }}>
+                  <div data-type="body-s" className="mt-1" style={{ color: isError ? 'var(--color-danger)' : 'var(--color-on-surface-var)' }}>
                     {isRestartOnly && !isError && !isDone ? restartOnlyDetail(progress.detail) : progress.detail}
                   </div>
                 )}
@@ -232,8 +232,8 @@ function UpdateSheet({ progress, cancel }: { progress: UpdateProgress; cancel: (
 
             <div className="flex justify-end px-l py-l">
               {!isDone && (
-                <button type="button" onClick={cancel}
-                  className="rounded-pill px-4 h-9 text-[0.8125rem] text-on-surface-var bg-surface-high hover:bg-surface-highest transition-colors">
+                <button type="button" onClick={cancel} data-type="body-s"
+                  className="rounded-pill px-4 h-9 text-on-surface-var bg-surface-high hover:bg-surface-highest transition-colors">
                   {isError ? 'Dismiss' : 'Cancel'}
                 </button>
               )}

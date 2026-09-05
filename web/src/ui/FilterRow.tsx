@@ -49,10 +49,10 @@ export function FilterRow({
           className="absolute inset-0 rounded-md" style={{ background: 'color-mix(in srgb, var(--color-primary) 12%, transparent)' }} />
       )}
       {Icon && <Icon size={14} aria-hidden className="relative shrink-0" style={{ color: selected ? 'var(--color-primary)' : 'var(--color-on-surface-var)' }} />}
-      <span className="relative min-w-0 flex-1 truncate text-[0.8125rem]"
+      <span data-type="label-s" className="relative min-w-0 flex-1 truncate"
         style={withWeight({ color: selected ? 'var(--color-primary)' : 'var(--color-on-surface)' }, selected ? 550 : 400)}>{label}</span>
       {typeof count === 'number' && count > 0 && (
-        <span className="relative shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{count}</span>
+        <span data-type="caption" className="relative shrink-0 text-on-surface-low tabular-nums">{count}</span>
       )}
       {trailing}
     </motion.button>

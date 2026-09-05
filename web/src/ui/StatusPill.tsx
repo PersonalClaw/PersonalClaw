@@ -36,9 +36,9 @@ export function StatusPill({ tone, sized = true, pad = true, className, style, c
   /** Semantic tone from the closed set — picks BOTH the 16% tint ground and
    *  the ink, so the pair can never disagree. */
   tone: StatusPillTone
-  /** Emit the seed type size (text-[0.75rem]). Default true; set false when
-   *  the pill genuinely reads at another size and bring your own text utility
-   *  — cx is a plain joiner, so two text-size utilities would race. */
+  /** Ride the caption type role (the seed 0.75rem tier). Default true; set
+   *  false when the pill genuinely reads at another size and bring your own
+   *  type role or text utility. */
   sized?: boolean
   /** Emit the seed padding (px-1.5). Default true; set false when the pill
    *  genuinely needs other metrics and bring your own — same race rule. */
@@ -47,7 +47,8 @@ export function StatusPill({ tone, sized = true, pad = true, className, style, c
   const ink = TONE_VAR[tone]
   return (
     <span
-      className={cx('inline-flex shrink-0 items-center rounded-pill', pad && 'px-1.5', sized && 'text-[0.75rem]', className)}
+      data-type={sized ? 'caption' : undefined}
+      className={cx('inline-flex shrink-0 items-center rounded-pill', pad && 'px-1.5', className)}
       style={{ background: `color-mix(in srgb, ${ink} 16%, transparent)`, color: ink, ...style }}
       {...rest}>
       {children}

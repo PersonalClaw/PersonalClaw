@@ -254,7 +254,7 @@ function TimeTravelSection({ cfg, setCfg }: {
       </RowGroup>
 
       {gitMissing && (
-        <div className="mt-3 flex items-start gap-2 rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem]" style={{ color: 'var(--color-warn)' }}>
+        <div data-type="body-s" className="mt-3 flex items-start gap-2 rounded-lg bg-surface-container px-4 py-3" style={{ color: 'var(--color-warn)' }}>
           <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
           <span>Time travel needs <code>git</code> installed, and this machine has none. Nothing is being recorded.</span>
         </div>
@@ -263,7 +263,7 @@ function TimeTravelSection({ cfg, setCfg }: {
       {on && !gitMissing && (
         <div className="mt-3 rounded-lg bg-surface-container px-4 py-3">
           <div className="flex flex-wrap items-end gap-4">
-            <label className="flex min-w-0 flex-col gap-1 text-[0.75rem] text-on-surface-low">
+            <label data-type="caption" className="flex min-w-0 flex-col gap-1 text-on-surface-low">
               What to look through
               <Select
                 value={root}
@@ -281,14 +281,14 @@ function TimeTravelSection({ cfg, setCfg }: {
           </div>
 
           {timeline.error ? (
-            <div className="mt-3 text-[0.8125rem]" style={{ color: 'var(--color-error)' }}>
+            <div data-type="body-s" className="mt-3" style={{ color: 'var(--color-error)' }}>
               The history could not be read ({errorText(timeline.error)}). That is not the same
               as having no history.
             </div>
           ) : null}
 
           {timeline.data && timeline.data.entries.length === 0 && (
-            <p className="mt-3 text-on-surface-low text-[0.8125rem]">
+            <p data-type="body-s" className="mt-3 text-on-surface-low">
               {sleptOnly
                 ? 'Nothing changed here while you were away.'
                 : timeline.data.commits === 0
@@ -302,10 +302,10 @@ function TimeTravelSection({ cfg, setCfg }: {
               {timeline.data.entries.map((entry, i) => (
                 <li key={entry.sha} className="border-outline-var border-t pt-3 first:border-t-0 first:pt-0">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                    <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(550)}>
+                    <span data-type="label-s" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(550)}>
                       {entry.subject}
                     </span>
-                    <span className="shrink-0 text-on-surface-low text-[0.75rem]">
+                    <span data-type="caption" className="shrink-0 text-on-surface-low">
                       {relativeTime(entry.at)}
                       {entry.unattended ? ' · while you were away' : ''}
                     </span>
@@ -463,7 +463,7 @@ function PreviewCard({ preview, op, busy, files, paths, selected, root, error, o
   const changeWord = preview.commits_rolled_away === 1 ? 'change' : 'changes'
   return (
     <div className="mt-2 rounded-md bg-surface px-3 py-2">
-      <p className="text-on-surface-low text-[0.75rem]">
+      <p data-type="caption" className="text-on-surface-low">
         {op === 'rollback'
           ? n === 0
             ? `${preview.files.length} ${previewWord} would change, and ${preview.commits_rolled_away} later ${changeWord} would be set aside.`
@@ -473,13 +473,13 @@ function PreviewCard({ preview, op, busy, files, paths, selected, root, error, o
             : `${n} of ${files.length} ${fileWord} would change. Later edits are kept, and so is every file you did not pick.`}
       </p>
       {preview.files.length === 0 && (
-        <p className="mt-1 text-on-surface-low text-[0.75rem]">Nothing would change.</p>
+        <p data-type="caption" className="mt-1 text-on-surface-low">Nothing would change.</p>
       )}
       {/* The subset is opt-IN and says so, because an untouched list has to read as "all of it"
           rather than as "none of it" — the default here restores the whole root, exactly as it did
           before individual files could be picked. */}
       {files.length > 1 && (
-        <p className="mt-1 text-on-surface-low text-[0.75rem]">
+        <p data-type="caption" className="mt-1 text-on-surface-low">
           Tick individual files to {op === 'rollback' ? 'roll back' : 'undo'} only those. With
           nothing ticked, all {files.length} are.
         </p>
@@ -494,12 +494,12 @@ function PreviewCard({ preview, op, busy, files, paths, selected, root, error, o
                 checked={selected.includes(f.path)}
                 onChange={(v) => onToggleFile(f.path, v)}
                 ariaLabel={`${op === 'rollback' ? 'Roll back' : 'Undo'} ${f.path}`} />
-              <span className="min-w-0 flex-1 truncate text-on-surface text-[0.75rem]" style={fvs(550)}>{f.path}</span>
+              <span data-type="caption" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(550)}>{f.path}</span>
             </label>
             {f.rendered ? (
-              <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface-container px-2 py-1 text-[0.6875rem] leading-snug"><code>{f.diff}</code></pre>
+              <pre data-type="caption" className="mt-1 max-h-48 overflow-auto rounded bg-surface-container px-2 py-1"><code>{f.diff}</code></pre>
             ) : (
-              <div className="mt-1 text-on-surface-low text-[0.6875rem]">
+              <div data-type="caption" className="mt-1 text-on-surface-low">
                 Too large to show here ({formatSize(f.bytes)}).
               </div>
             )}
@@ -510,7 +510,7 @@ function PreviewCard({ preview, op, busy, files, paths, selected, root, error, o
           infer from a screen that looks the same as before they pressed the button. `role="alert"`
           because it is the result of an action they just took. */}
       {error && (
-        <div className="mt-3 flex items-start gap-2 text-[0.75rem]" role="alert"
+        <div data-type="caption" className="mt-3 flex items-start gap-2" role="alert"
           style={{ color: 'var(--color-error)' }}>
           <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
           <span>Nothing was changed: {error}</span>
@@ -574,7 +574,7 @@ function ScheduleSection({ cfg, setCfg, status }: {
 
         {status && (
           <div className="border-t border-outline-var py-3">
-            <div className="mb-2 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="mb-2 text-on-surface-low">
               {status.enabled
                 ? 'Last run of each job:'
                 : 'Automatic backups are off — these are the last runs from when they were on.'}
@@ -588,7 +588,7 @@ function ScheduleSection({ cfg, setCfg, status }: {
         )}
 
         <div className="flex flex-wrap items-center gap-2 border-t border-outline-var py-3">
-          <span className="mr-1 text-on-surface-var text-[0.8125rem]">Run now:</span>
+          <span data-type="body-s" className="mr-1 text-on-surface-var">Run now:</span>
           <RunButton label="Export" icon={HardDriveDownload} busy={running === 'export'}
             disabled={!!running} onClick={() => run('export', 'Export')} />
           <RunButton label="Snapshot" icon={HardDriveDownload} busy={running === 'snapshot'}
@@ -596,7 +596,7 @@ function ScheduleSection({ cfg, setCfg, status }: {
           <RunButton label="Verify a restore" icon={ShieldCheck} busy={running === 'drill'}
             disabled={!!running} onClick={() => run('drill', 'Restore drill')} />
         </div>
-        <p className="pb-3 text-on-surface-low text-[0.75rem]">
+        <p data-type="caption" className="pb-3 text-on-surface-low">
           To restore, use the archive list below. A full <em>replace</em> restore stays a
           command-line action — <code>personalclaw restore --replace</code> — because it has to
           overwrite live state while the gateway is stopped.
@@ -635,7 +635,7 @@ function RetentionSection({ cfg, setCfg, snaps }: {
           onCommit={(n, l) => patch('keep_monthly', n, undefined, l)} />
 
         {pruneCount > 0 && (
-          <div className="border-t border-outline-var py-3 text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="border-t border-outline-var py-3 text-on-surface-low">
             {pruneCount} of {snaps?.archives.length ?? 0} snapshots would be removed by the
             settings above on the next pass. They are struck through in the archive below.
           </div>
@@ -665,7 +665,7 @@ function ArchiveSection({ snaps, onChanged }: {
   if (!snaps) {
     return (
       <Section title="Archive" hint="Every snapshot on disk, what is in it, and whether a restore from it has been verified.">
-        <div className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
           The archive list could not be read. The backups above may still be running —
           reload to try again.
         </div>
@@ -707,7 +707,7 @@ function ArchiveSection({ snaps, onChanged }: {
       <div className="rounded-lg bg-surface-container px-4 py-3">
         <DrillLine drill={snaps.last_drill} />
         {snaps.archives.length === 0 ? (
-          <div className="text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="text-on-surface-low">
             No snapshots yet. One appears after the first nightly run, or as soon as you run
             a snapshot above.
           </div>
@@ -716,10 +716,10 @@ function ArchiveSection({ snaps, onChanged }: {
             {snaps.archives.map((a) => (
               <li key={a.id} className="border-outline-var border-t pt-3 first:border-t-0 first:pt-0">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <span className={`min-w-0 flex-1 truncate text-[0.8125rem] ${a.retained ? 'text-on-surface' : 'text-on-surface-low line-through'}`} style={fvs(500)}>
+                  <span data-type="label-s" className={`min-w-0 flex-1 truncate ${a.retained ? 'text-on-surface' : 'text-on-surface-low line-through'}`} style={fvs(500)}>
                     {a.name}
                   </span>
-                  <span className="shrink-0 text-on-surface-low text-[0.75rem]">{formatSize(a.size)}</span>
+                  <span data-type="caption" className="shrink-0 text-on-surface-low">{formatSize(a.size)}</span>
                   {a.validate && <ValidateBadge ok={a.validate.ok} detail={a.validate.detail} />}
                 </div>
                 <DomainCounts counts={a.domains} />
@@ -734,13 +734,13 @@ function ArchiveSection({ snaps, onChanged }: {
                   </Button>
                 </div>
                 {plan?.id === a.id && (
-                  <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface-var text-[0.6875rem]">{plan.text}</pre>
+                  <pre data-type="caption" className="mt-2 max-h-64 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface-var">{plan.text}</pre>
                 )}
               </li>
             ))}
           </ul>
         )}
-        <p className="mt-3 text-on-surface-low text-[0.75rem]">
+        <p data-type="caption" className="mt-3 text-on-surface-low">
           Stored in <code>{snaps.directory}</code>. A full <em>replace</em> restore is a
           command-line action — <code>personalclaw restore --replace</code> — because it has
           to overwrite live state while the gateway is stopped.
@@ -802,12 +802,12 @@ function SyncSection({ cfg, setCfg, status, transports }: {
         {/* A failed provider read is NOT "none installed" — those two need different words,
             because one is a reason to install something and the other is a reason to retry. */}
         {!transports.ok ? (
-          <div className="border-t border-outline-var py-3 text-[0.8125rem]" style={{ color: 'var(--color-error)' }}>
+          <div data-type="body-s" className="border-t border-outline-var py-3" style={{ color: 'var(--color-error)' }}>
             The installed transports could not be read ({transports.error}). Reload to try
             again — this is not the same as having none installed.
           </div>
         ) : enabledTransports.length === 0 ? (
-          <div className="border-t border-outline-var py-3 text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="border-t border-outline-var py-3 text-on-surface-low">
             No sync transport is installed and enabled yet. Install one from the Store (git-sync
             keeps a human-readable history in a repo you own; dir-sync uses any folder that
             already syncs itself), then enable it under Settings → Providers, where its own
@@ -847,9 +847,9 @@ function SyncSection({ cfg, setCfg, status, transports }: {
           <div className="border-t border-outline-var py-3">
             <div className="flex flex-col gap-1.5">
               <JobLine label="Last sync" when={status.sync.last_run} due={status.sync.due} />
-              <div className="flex items-baseline justify-between gap-3 text-[0.8125rem]">
+              <div data-type="body-s" className="flex items-baseline justify-between gap-3">
                 <span className="text-on-surface-var">Shards leaving this machine</span>
-                <span className="shrink-0 text-on-surface-low text-[0.75rem]">
+                <span data-type="caption" className="shrink-0 text-on-surface-low">
                   {!status.sync.transport
                     ? 'no transport chosen'
                     : status.sync.encrypted
@@ -858,7 +858,7 @@ function SyncSection({ cfg, setCfg, status, transports }: {
                 </span>
               </div>
             </div>
-            <p className="mt-2 text-on-surface-low text-[0.75rem]">
+            <p data-type="caption" className="mt-2 text-on-surface-low">
               Credentials never sync — API keys and this instance's secrets are excluded before
               any transport sees a byte, and re-enter per machine.
             </p>
@@ -903,7 +903,7 @@ function ConflictsSection({ read, onChanged }: {
   if (!read.ok) {
     return (
       <Section title="Conflicts to review" hint={hint}>
-        <div className="rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem]">
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3">
           <div className="flex items-start gap-2" style={{ color: 'var(--color-error)' }}>
             <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
             <span>
@@ -969,7 +969,7 @@ function ConflictsSection({ read, onChanged }: {
     <Section title="Conflicts to review" hint={hint}>
       <div className="rounded-lg bg-surface-container px-4 py-3">
         {pending.length === 0 ? (
-          <div className="text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="text-on-surface-low">
             {!sync.configured
               ? 'Nothing to review — but sync has never run on this instance, so no two versions have ever been compared. Choose a transport above first.'
               : 'Nothing to review. Every change either merged cleanly or only one machine had touched it.'}
@@ -979,27 +979,27 @@ function ConflictsSection({ read, onChanged }: {
             {pending.map((c) => (
               <li key={c.id} className="border-outline-var border-t pt-3 first:border-t-0 first:pt-0">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(550)}>
+                  <span data-type="label-s" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(550)}>
                     {c.entity_id}
                   </span>
-                  <span className="shrink-0 text-on-surface-low text-[0.75rem]">
+                  <span data-type="caption" className="shrink-0 text-on-surface-low">
                     in {c.entry_id}{c.detected_at ? ` · found ${relativeTime(c.detected_at)}` : ''}
                   </span>
                 </div>
-                <p className="mt-1 text-on-surface-low text-[0.75rem]">
+                <p data-type="caption" className="mt-1 text-on-surface-low">
                   Both machines changed this after they last agreed. This machine's version is
                   in place; nothing has been overwritten.
                 </p>
 
                 {c.proposal
                   ? (
-                    <div className="mt-2 rounded-md bg-surface px-3 py-2 text-[0.75rem]">
+                    <div data-type="caption" className="mt-2 rounded-md bg-surface px-3 py-2">
                       <div className="text-on-surface" style={fvs(550)}>Drafted merge</div>
                       {c.rationale && <p className="mt-1 text-on-surface-low">{c.rationale}</p>}
                     </div>
                   )
                   : (
-                    <p className="mt-2 text-on-surface-low text-[0.75rem]">
+                    <p data-type="caption" className="mt-2 text-on-surface-low">
                       {c.proposal_error
                         ? `No merge was drafted — ${c.proposal_error}. Choose a version yourself.`
                         : 'No merge has been drafted yet. Choose a version yourself, or wait for the next background pass.'}
@@ -1044,7 +1044,7 @@ function ConflictsSection({ read, onChanged }: {
         )}
 
         {elsewhere.length > 0 && (
-          <p className="mt-3 text-on-surface-low text-[0.75rem]">
+          <p data-type="caption" className="mt-3 text-on-surface-low">
             {elsewhere.map(([surface, n]) => `${n} ${surface}`).join(' and ')} conflict
             {elsewhere.reduce((t, [, n]) => t + n, 0) === 1 ? '' : 's'} are waiting on their own
             review surface — memory and knowledge divergences are reviewed where that data lives,
@@ -1052,7 +1052,7 @@ function ConflictsSection({ read, onChanged }: {
           </p>
         )}
         {decided.length > 0 && (
-          <p className="mt-3 text-on-surface-low text-[0.75rem]">
+          <p data-type="caption" className="mt-3 text-on-surface-low">
             {decided.length} already decided ({decided.map((c) => c.resolution).filter(Boolean).join(', ')}).
             Decisions are kept as the record of what needed one.
           </p>
@@ -1068,8 +1068,8 @@ function ConflictsSection({ read, onChanged }: {
 function RowVersion({ label, row }: { label: string; row: Record<string, unknown> }) {
   return (
     <div>
-      <div className="mb-1 text-on-surface-low text-[0.6875rem] uppercase tracking-wide">{label}</div>
-      <pre className="max-h-48 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface-var text-[0.6875rem]">{JSON.stringify(row, null, 1)}</pre>
+      <div data-type="caption" className="mb-1 text-on-surface-low uppercase tracking-wide">{label}</div>
+      <pre data-type="caption" className="max-h-48 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface-var">{JSON.stringify(row, null, 1)}</pre>
     </div>
   )
 }
@@ -1079,7 +1079,7 @@ function RowVersion({ label, row }: { label: string; row: Record<string, unknown
 function DrillLine({ drill }: { drill: DurabilityArchives['last_drill'] }) {
   if (!drill.ran) {
     return (
-      <div className="mb-3 flex items-start gap-2 text-on-surface-low text-[0.75rem]">
+      <div data-type="caption" className="mb-3 flex items-start gap-2 text-on-surface-low">
         <ShieldQuestion size={13} className="mt-0.5 shrink-0" />
         <span>No restore has been rehearsed yet. Run “Verify a restore” above to check that these snapshots can actually be restored.</span>
       </div>
@@ -1088,7 +1088,7 @@ function DrillLine({ drill }: { drill: DurabilityArchives['last_drill'] }) {
   const Icon = drill.ok === true ? ShieldCheck : drill.ok === false ? ShieldAlert : ShieldQuestion
   const tone = drill.ok === true ? 'text-success' : drill.ok === false ? 'text-error' : 'text-on-surface-low'
   return (
-    <div className={`mb-3 flex items-start gap-2 text-[0.75rem] ${tone}`}>
+    <div data-type="caption" className={`mb-3 flex items-start gap-2 ${tone}`}>
       <Icon size={13} className="mt-0.5 shrink-0" />
       <span>
         {drill.ok === true ? 'Last restore drill passed' : drill.ok === false ? 'Last restore drill FAILED' : 'Last restore drill ran; its result was not recorded'}
@@ -1101,21 +1101,21 @@ function DrillLine({ drill }: { drill: DurabilityArchives['last_drill'] }) {
 function ValidateBadge({ ok, detail }: { ok: boolean | null; detail: string }) {
   const label = ok === true ? 'verified' : ok === false ? 'failed verification' : 'result unknown'
   const tone = ok === true ? 'text-success' : ok === false ? 'text-error' : 'text-on-surface-low'
-  return <span className={`shrink-0 text-[0.6875rem] ${tone}`} title={detail || label}>{label}</span>
+  return <span data-type="caption" className={`shrink-0 ${tone}`} title={detail || label}>{label}</span>
 }
 
 /** `null` counts mean the archive recorded none (taken before MANIFEST v3). That reads
  *  differently from an empty archive, so it says so rather than showing zeros. */
 function DomainCounts({ counts }: { counts: DurabilityArchive['domains'] }) {
   if (counts === null) {
-    return <div className="mt-1 text-on-surface-low text-[0.75rem]">Contents not recorded in this snapshot.</div>
+    return <div data-type="caption" className="mt-1 text-on-surface-low">Contents not recorded in this snapshot.</div>
   }
   const rows = Object.entries(counts).filter(([, v]) => v.files > 0)
   if (rows.length === 0) {
-    return <div className="mt-1 text-on-surface-low text-[0.75rem]">This snapshot recorded no contents.</div>
+    return <div data-type="caption" className="mt-1 text-on-surface-low">This snapshot recorded no contents.</div>
   }
   return (
-    <ul className="mt-1 flex list-none flex-wrap gap-x-4 gap-y-0.5 p-0 text-on-surface-low text-[0.75rem]">
+    <ul data-type="caption" className="mt-1 flex list-none flex-wrap gap-x-4 gap-y-0.5 p-0 text-on-surface-low">
       {rows.map(([domain, v]) => (
         <li key={domain}>
           {domain}: {v.rows > 0 ? `${v.rows} rows` : `${v.files} files`}
@@ -1165,7 +1165,7 @@ function NumberRow({ label, hint, value, min, max, suffix, onCommit, saved }: {
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
         <NumberField value={value} min={min} max={max} step={1} onChange={(n) => onCommit(n, label)} ariaLabel={label} />
-        {suffix && <span className="w-14 text-on-surface-low text-[0.75rem]">{suffix}</span>}
+        {suffix && <span data-type="caption" className="w-14 text-on-surface-low">{suffix}</span>}
       </div>
     </Row>
   )
@@ -1186,9 +1186,9 @@ function RunButton({ label, icon: Icon, busy, disabled, onClick }: {
 
 function JobLine({ label, when, due }: { label: string; when: number; due: boolean }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 text-[0.8125rem]">
+    <div data-type="body-s" className="flex items-baseline justify-between gap-3">
       <span className="text-on-surface-var">{label}</span>
-      <span className="shrink-0 text-on-surface-low text-[0.75rem]">
+      <span data-type="caption" className="shrink-0 text-on-surface-low">
         {when ? relativeTime(when) : 'never run'}{due && when ? ' · due' : ''}
       </span>
     </div>

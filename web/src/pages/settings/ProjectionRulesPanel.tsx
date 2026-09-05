@@ -72,12 +72,12 @@ export function ProjectionRulesPanel() {
           ) : rules === undefined ? (
             <ListSkeleton rows={2} what="custom rules" />
           ) : list.length === 0 ? (
-            <div className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low text-[0.8125rem]">
+            <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low">
               No custom rules — the builtin projectors handle logs, diffs, JSON, test output, CSV, and code automatically, and a builtin rule pack recognises common command output (git, pytest, npm, docker…). Add a rule only for a tool whose large output isn't recognised.
             </div>
           ) : null}
           <AddRule disabled={busy} onAdd={(r) => save([...list, r])} />
-          {err && <div className="flex items-center gap-1.5 text-danger text-[0.8125rem]"><AlertTriangle size={13} /> {err}</div>}
+          {err && <div data-type="body-s" className="flex items-center gap-1.5 text-danger"><AlertTriangle size={13} /> {err}</div>}
         </div>
       </Section>
     </div>
@@ -109,9 +109,9 @@ export function SavingsCard() {
   return (
     <div className="mb-4 flex items-start gap-3 rounded-lg bg-surface-container px-3 py-3">
       <Gauge size={16} className="mt-0.5 shrink-0 text-primary" />
-      <div className="min-w-0 text-[0.8125rem]">
+      <div data-type="body-s" className="min-w-0">
         <div className="text-on-surface">
-          TokenJuice saved <span className="font-medium">~{fmt(data.saved_tokens_estimated)}</span> tokens
+          TokenJuice saved <span className="fw-500">~{fmt(data.saved_tokens_estimated)}</span> tokens
           {' '}across {fmt(data.projection_count)} projected result{data.projection_count === 1 ? '' : 's'}
           {data.top_compressor ? <> — top compressor: <span className="font-mono">{data.top_compressor}</span></> : null}.
         </div>
@@ -145,7 +145,7 @@ function StrategyPicker({ value, disabled, onChange, forRule }: {
   return (
     <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as ProjectionStrategy)}
       aria-label={forRule ? `Strategy for ${forRule}` : 'Strategy for the new rule'}
-      className="min-w-0 max-w-full h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
+      data-type="body-s" className="min-w-0 max-w-full h-9 rounded-md bg-surface px-2 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
       {STRATEGIES.map((s) => <option key={s.id} value={s.id}>{s.label} — {s.blurb}</option>)}
     </select>
   )
@@ -178,7 +178,8 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
     onChange(draft)
   }
   const commitOnEnter = (e: React.KeyboardEvent) => { if (e.key === 'Enter') commit() }
-  const inputCls = 'h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
+  // Metrics + chrome only — the type size rides `data-type="body-s"` on the consumer.
+  const inputCls = 'h-9 rounded-md bg-surface px-2 font-mono text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   return (
     <div className="flex flex-col gap-2 rounded-lg bg-surface-container px-3 py-2.5"
       onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) commit() }}>
@@ -189,7 +190,7 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
         <input value={shown.name} disabled={disabled} placeholder="rule name"
           aria-label="Rule name"
           onChange={(e) => edit({ name: e.target.value })} onKeyDown={commitOnEnter}
-          className="min-w-40 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          data-type="body-s" className="min-w-40 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         {/* The select and Remove travel TOGETHER when the row wraps. Wrapped independently, Remove
             landed alone on a third line — and before the row could wrap at all it was pushed off the
             card entirely at 390px, so the only way to delete a rule was to widen the window. */}
@@ -210,28 +211,28 @@ function RuleRow({ rule, disabled, onChange, onRemove }: {
       <input value={shown.match_regex} disabled={disabled} spellCheck={false} placeholder="match regex, e.g. ^\[MYAPP\]"
         aria-label={rule.name ? `Match regex for ${rule.name}` : 'Match regex'}
         onChange={(e) => edit({ match_regex: e.target.value })} onKeyDown={commitOnEnter}
-        className={inputCls} />
+        data-type="body-s" className={inputCls} />
       {/* Rule ops v2: declarative line operations. When any is set they replace the
           strategy projector; still pure data — no code runs. */}
       {showOps ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-          <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">head lines
+          <div data-type="caption" className="flex flex-col gap-1 text-on-surface-low">head lines
             <NumberField value={shown.head ?? 0} min={0} width="w-full" ariaLabel="Keep head lines"
               onChange={(n) => edit({ head: n })} />
           </div>
-          <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">tail lines
+          <div data-type="caption" className="flex flex-col gap-1 text-on-surface-low">tail lines
             <NumberField value={shown.tail ?? 0} min={0} width="w-full" ariaLabel="Keep tail lines"
               onChange={(n) => edit({ tail: n })} />
           </div>
-          <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">keep matching
+          <div data-type="caption" className="flex flex-col gap-1 text-on-surface-low">keep matching
             <TextInput value={shown.keep ?? ''} size="sm" mono placeholder="regex" ariaLabel="Keep lines matching regex"
               onChange={(v) => edit({ keep: v })} />
           </div>
-          <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">skip matching
+          <div data-type="caption" className="flex flex-col gap-1 text-on-surface-low">skip matching
             <TextInput value={shown.skip ?? ''} size="sm" mono placeholder="regex" ariaLabel="Skip lines matching regex"
               onChange={(v) => edit({ skip: v })} />
           </div>
-          <div className="flex flex-col gap-1 text-on-surface-low text-[0.6875rem]">fold matching
+          <div data-type="caption" className="flex flex-col gap-1 text-on-surface-low">fold matching
             <TextInput value={shown.count ?? ''} size="sm" mono placeholder="regex" ariaLabel="Fold lines matching regex"
               onChange={(v) => edit({ count: v })} />
           </div>
@@ -271,17 +272,17 @@ function AddRule({ disabled, onAdd }: { disabled?: boolean; onAdd: (r: Projectio
         <input value={name} disabled={disabled} placeholder="new rule name"
           aria-label="New rule name"
           onChange={(e) => setName(e.target.value)}
-          className="min-w-40 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          data-type="body-s" className="min-w-40 flex-1 h-9 rounded-md bg-surface px-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <StrategyPicker value={strat} disabled={disabled} onChange={setStrat} />
       </div>
       <div className="flex items-center gap-2">
         <input value={rx} disabled={disabled} spellCheck={false} placeholder="match regex, e.g. ^\[MYAPP\]"
           aria-label="Match regex for the new rule"
           onChange={(e) => setRx(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add() }}
-          className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
-        <button type="button" onClick={add}
+          data-type="body-s" className="min-w-0 flex-1 h-9 rounded-md bg-surface px-2 font-mono text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        <button type="button" onClick={add} data-type="body-s"
           {...unavailableWhen(!rx.trim(), 'Enter a pattern first', { busy: disabled })}
-          className="shrink-0 h-9 rounded-md bg-primary px-3 text-on-primary text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">Add rule</button>
+          className="shrink-0 h-9 rounded-md bg-primary px-3 text-on-primary disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">Add rule</button>
       </div>
     </div>
   )

@@ -65,18 +65,18 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
     <div className="mb-1 rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3">
       <div className="mb-1.5 flex items-center gap-2">
         <span data-type="title-s" className="text-on-surface">{step.title}</span>
-        <span className="rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var">
+        <span data-type="caption" className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var">
           {open ? 'Awaiting your review' : 'Drafting…'}
         </span>
         {parked && (
-          <span className="rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var">
+          <span data-type="caption" className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var">
             Run parked — resumes when you approve
           </span>
         )}
       </div>
-      {step.objective && <p className="mb-2 text-[0.8125rem] text-on-surface-low">{step.objective}</p>}
+      {step.objective && <p data-type="body-s" className="mb-2 text-on-surface-low">{step.objective}</p>}
       {!open ? (
-        <p className="text-[0.8125rem] text-on-surface-low">
+        <p data-type="body-s" className="text-on-surface-low">
           Nothing runs until you approve. The plan appears here when this turn finishes.
         </p>
       ) : editText !== null ? (
@@ -85,7 +85,8 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void run(() => api.chatPlanEdit(session, step.id, editText)) } }}
             aria-label="Plan markdown"
             placeholder="Write the plan in markdown…"
-            className="w-full resize-y rounded-lg border border-outline-variant/60 bg-surface px-3 py-2 font-mono text-[0.75rem] text-on-surface outline-none placeholder:text-on-surface-low focus:border-primary" />
+            data-type="caption"
+            className="w-full resize-y rounded-lg border border-outline-variant/60 bg-surface px-3 py-2 font-mono text-on-surface outline-none placeholder:text-on-surface-low focus:border-primary" />
           <div className="flex items-center gap-2">
             {/* Saving RETURNS TO REVIEW. Leaving the editor open after a successful save
                 left "Cancel" as the only way out — a word that reads as "discard what I
@@ -117,7 +118,7 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
           {!!step.comments?.length && (
             <div className="mt-2 flex flex-col gap-1.5">
               {step.comments.map((c, i) => (
-                <div key={i} className="flex items-start gap-1.5 rounded-lg border border-outline-variant/40 bg-surface-container/40 px-2.5 py-1.5 text-[0.75rem]">
+                <div key={i} data-type="caption" className="flex items-start gap-1.5 rounded-lg border border-outline-variant/40 bg-surface-container/40 px-2.5 py-1.5">
                   <MessageSquarePlus size={12} className="mt-0.5 shrink-0 text-on-surface-low" />
                   <span className="min-w-0 whitespace-pre-wrap text-on-surface-var">{c.text}</span>
                 </div>
@@ -129,7 +130,8 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && comment.trim()) { e.preventDefault(); void run(() => api.chatPlanComment(session, step.id, comment.trim())) } }}
               aria-label="Comment on this plan"
               placeholder="Comment to refine the plan (⌘↵ to send), or approve as-is…"
-              className="w-full resize-none rounded-lg border border-outline-variant/60 bg-surface px-3 py-2 text-[0.8125rem] text-on-surface outline-none focus:border-primary" />
+              data-type="body-s"
+              className="w-full resize-none rounded-lg border border-outline-variant/60 bg-surface px-3 py-2 text-on-surface outline-none focus:border-primary" />
             <div className="flex flex-wrap items-center gap-2">
               <Button size="xs" disabled={busy}
                 onClick={() => void run(async () => { const r = await api.chatPlanApprove(session, step.id); if (r.complete) onTaskMode(r.task_mode) })}>
@@ -148,7 +150,7 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode }: {
           </div>
         </>
       )}
-      {err && <p role="alert" className="mt-2 text-[0.8125rem]" style={{ color: 'var(--color-danger)' }}>{err}</p>}
+      {err && <p role="alert" data-type="body-s" className="mt-2" style={{ color: 'var(--color-danger)' }}>{err}</p>}
     </div>
   )
 }

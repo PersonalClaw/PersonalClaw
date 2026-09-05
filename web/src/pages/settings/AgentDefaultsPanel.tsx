@@ -207,7 +207,7 @@ function RunnersSection() {
       {!rows && err ? <LoadError what="runners" error={err} onRetry={() => load(false)} />
         : !rows ? <FormSkeleton sections={1} rows={4} title={false} what="runners" />
         : rows.length === 0 ? (
-          <p className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">
+          <p data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
             No runners in the catalog. Drop a definition into <code className="font-mono">runners/&lt;id&gt;.json</code> under your PersonalClaw home to add one.
           </p>
         ) : (
@@ -225,10 +225,11 @@ function Chip({ children, tone = 'neutral' }: { children: React.ReactNode; tone?
   // light mode at every tint strength. The unhealthy chip keeps danger INK on the
   // neutral chip ground: the semantic tones have no `<tone>-container` sibling, so
   // inventing a red fill here would be a redesign, not a contrast fix.
-  const base = 'inline-flex items-center rounded-pill px-2.5 py-1 text-[0.75rem]'
-  if (tone === 'ok') return <span className={base} style={accentChip}>{children}</span>
+  // Metrics + chrome only — the type size rides `data-type="caption"` on each consumer.
+  const base = 'inline-flex items-center rounded-pill px-2.5 py-1'
+  if (tone === 'ok') return <span data-type="caption" className={base} style={accentChip}>{children}</span>
   const toneCx = tone === 'bad' ? 'text-danger' : 'text-on-surface'
-  return <span className={`${base} bg-surface-high ${toneCx}`}>{children}</span>
+  return <span data-type="caption" className={`${base} bg-surface-high ${toneCx}`}>{children}</span>
 }
 
 function RunnerRowItem({ row }: { row: RunnerRow }) {
@@ -237,8 +238,8 @@ function RunnerRowItem({ row }: { row: RunnerRow }) {
   return (
     <li className="px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-on-surface text-[0.875rem]">{row.display_name}</span>
-        <span className="font-mono text-on-surface-low text-[0.75rem]">{row.runtime_id}</span>
+        <span data-type="body-m" className="text-on-surface">{row.display_name}</span>
+        <span data-type="caption" className="font-mono text-on-surface-low">{row.runtime_id}</span>
         {row.source === 'user' && <Chip>your definition</Chip>}
         {h === null ? <Chip>never probed</Chip> : h.ok ? <Chip tone="ok">healthy</Chip> : <Chip tone="bad">unhealthy</Chip>}
         {/* An overdue check is not a verdict on the runner — it says the reading you are
@@ -255,7 +256,7 @@ function RunnerRowItem({ row }: { row: RunnerRow }) {
           "released in Ns" is when idle-release takes it back — together they tell a user
           whether to wait or to go look at that session. */}
       {row.lease !== null && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-on-surface-low text-[0.75rem]">
+        <div data-type="caption" className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-on-surface-low">
           <span>held for {row.lease.age_secs}s</span>
           <span>released in {row.lease.expires_in_secs}s if idle</span>
         </div>
@@ -266,7 +267,7 @@ function RunnerRowItem({ row }: { row: RunnerRow }) {
           labelled unknown rather than shown as a zero or an em dash that reads like a
           measurement. */}
       {h !== null && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-on-surface-low text-[0.75rem]">
+        <div data-type="caption" className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-on-surface-low">
           <span>{h.version ? `v${h.version}` : 'version unknown'}</span>
           <span>{h.latency_ms === null ? 'latency unknown' : `${h.latency_ms} ms`}</span>
           <span>last {h.probe} probe {new Date(h.checked_at).toLocaleString()}</span>
@@ -284,14 +285,14 @@ function RunnerRowItem({ row }: { row: RunnerRow }) {
           supports things nobody has ever seen it do. */}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {caps === null ? (
-          <span className="text-on-surface-low text-[0.75rem]">Capabilities unknown — no handshake recorded yet.</span>
+          <span data-type="caption" className="text-on-surface-low">Capabilities unknown — no handshake recorded yet.</span>
         ) : (
           <>
             {caps.permission_modes.map((m) => <Chip key={`m-${m}`}>{m}</Chip>)}
             {caps.efforts.map((e) => <Chip key={`e-${e}`}>effort: {e}</Chip>)}
             {caps.models.length > 0 && <Chip>{caps.models.length} model{caps.models.length === 1 ? '' : 's'}</Chip>}
             {caps.permission_modes.length === 0 && caps.efforts.length === 0 && caps.models.length === 0 && (
-              <span className="text-on-surface-low text-[0.75rem]">Handshake recorded no capabilities.</span>
+              <span data-type="caption" className="text-on-surface-low">Handshake recorded no capabilities.</span>
             )}
           </>
         )}
@@ -299,7 +300,7 @@ function RunnerRowItem({ row }: { row: RunnerRow }) {
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Chip tone={row.adapter.verified ? 'ok' : 'bad'}>adapter {row.adapter.state}</Chip>
-        <span className="text-on-surface-low text-[0.75rem]">{row.adapter.detail}</span>
+        <span data-type="caption" className="text-on-surface-low">{row.adapter.detail}</span>
       </div>
     </li>
   )
@@ -379,7 +380,7 @@ function NumberRow({ label, hint, cfg, field, patch, min, max, step, suffix }: {
         <SavedToast show={saved} />
         <NumberField value={Number(cfg[field] ?? min ?? 0)} min={min} max={max} step={step}
           onChange={(n) => patch(field, n, flash)} ariaLabel={label} />
-        {suffix && <span className="w-6 text-on-surface-low text-[0.75rem]">{suffix}</span>}
+        {suffix && <span data-type="caption" className="w-6 text-on-surface-low">{suffix}</span>}
       </div>
     </Row>
   )

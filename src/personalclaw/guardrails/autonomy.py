@@ -604,18 +604,13 @@ def _event_matches(event: dict, key: str) -> bool:
     return str(event.get("operation", "")) == key
 
 
-def _sel_evidence(key: str, cutoff: datetime) -> tuple[int, int, float]:
-    """(human approvals, rejections, observed span in days) for ``key`` since ``cutoff``.
-
-    Reads the SEL tail only. The span is measured between the FIRST and LAST approval
-    in the window, so "ten approvals over seven days" means what it says — ten
-    approvals in one afternoon spans zero days and does not qualify.
-    """
+def _outcome_events(key: str, cutoff: datetime) -> list[tuple[datetime, bool]]:
+    """Every human approval (``True``) / rejection (``False``) about ``key`` since
+    ``cutoff``, from the SEL tail. The ONE walk both eligibility and ES-9's field row
+    derive from, so the two can never disagree about which verdicts belong to a scope."""
     from personalclaw.sel import sel
 
-    approvals = 0
-    rejections = 0
-    stamps: list[datetime] = []
+    out: list[tuple[datetime, bool]] = []
     for event in sel().recent(_SEL_SCAN_LIMIT):
         if not _event_matches(event, key):
             continue
@@ -624,10 +619,37 @@ def _sel_evidence(key: str, cutoff: datetime) -> tuple[int, int, float]:
             continue
         outcome = str(event.get("outcome", ""))
         if outcome in _HUMAN_APPROVED_OUTCOMES:
-            approvals += 1
-            stamps.append(when)
+            out.append((when, True))
         elif outcome.startswith(_REJECTED_PREFIXES):
-            rejections += 1
+            out.append((when, False))
+    return out
+
+
+def approval_outcome_series(key: str, *, window_days: int) -> list[tuple[float, bool]]:
+    """(epoch seconds, human said yes?) for ``key``'s SEL verdicts, oldest first (ES-9).
+
+    The Loop-3 field row's read of the earned-autonomy evidence. Built on the SAME
+    attribution (:func:`_event_matches`) and outcome vocabulary
+    :func:`promotion_eligibility` counts — one dialect, so the approval a promotion
+    cites and the approval the Learning tab charts are the same event. Auto-approvals
+    stay excluded here for the same reason they are excluded there: an action nobody
+    looked at is evidence of nothing.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, window_days))
+    return sorted((when.timestamp(), good) for when, good in _outcome_events(key, cutoff))
+
+
+def _sel_evidence(key: str, cutoff: datetime) -> tuple[int, int, float]:
+    """(human approvals, rejections, observed span in days) for ``key`` since ``cutoff``.
+
+    Reads the SEL tail only. The span is measured between the FIRST and LAST approval
+    in the window, so "ten approvals over seven days" means what it says — ten
+    approvals in one afternoon spans zero days and does not qualify.
+    """
+    events = _outcome_events(key, cutoff)
+    approvals = sum(1 for _when, good in events if good)
+    rejections = sum(1 for _when, good in events if not good)
+    stamps = [when for when, good in events if good]
     span = (max(stamps) - min(stamps)).total_seconds() / 86_400.0 if len(stamps) > 1 else 0.0
     return approvals, rejections, span
 

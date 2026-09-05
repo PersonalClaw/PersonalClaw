@@ -423,6 +423,23 @@ def get(pid: str) -> Proposal | None:
     return _load(pid)
 
 
+def newest_gate_for_target(target: str) -> dict | None:
+    """The most recent gate report attached to ANY proposal for ``target``, or ``None``.
+
+    ES-9's Loop-2 column: the Learning tab's per-subject row shows the newest gate
+    verdict a change to this subject earned, whatever became of the proposal — an
+    accepted change's gate run is exactly the "before" the field trend is measured
+    against, so pending-only would hide the row's most load-bearing entry.
+    """
+    best: Proposal | None = None
+    for p in _all():
+        if p.target != target or not p.gate:
+            continue
+        if best is None or p.created_at > best.created_at:
+            best = p
+    return dict(best.gate) if best is not None else None
+
+
 # ── The resolve cascade ──
 
 

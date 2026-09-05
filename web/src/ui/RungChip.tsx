@@ -26,7 +26,10 @@ export function RungChip({ type, ladder = null }: { type: AutonomyType; ladder?:
   const skin = toneChipSkin(meta.tone, 14)
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-1 rounded-pill px-2 py-0.5 text-[0.6875rem]"
+      // 0.6875rem sat under the caption floor tokens.css documents; the caption
+      // role is that sub-tier drift's designated on-ramp home.
+      data-type="caption"
+      className="inline-flex shrink-0 items-center gap-1 rounded-pill px-2 py-0.5"
       style={skin}
       title={rungReason(type, ladder)}>
       <meta.icon size={11} className="shrink-0" />

@@ -36,7 +36,7 @@ function DiffBlock({ code }: { code: string }) {
   return (
     <div className="group/code my-3 overflow-hidden rounded-lg bg-surface-low">
       <div className="flex items-center gap-2 px-m pt-2">
-        <span className="text-[0.75rem] uppercase tracking-wide text-on-surface-low">diff</span>
+        <span data-type="caption" className="uppercase tracking-wide text-on-surface-low">diff</span>
         <button type="button" onClick={copy} aria-label="Copy diff" title={copied ? 'Copied' : 'Copy'}
           className="ml-auto inline-flex size-6 items-center justify-center rounded text-on-surface-low opacity-0 transition-opacity hover:bg-surface-high hover:text-on-surface group-hover/code:opacity-100 focus-within:opacity-100"
           style={copied ? { color: 'var(--color-success)' } : undefined}>
@@ -53,8 +53,10 @@ function DiffBlock({ code }: { code: string }) {
           `tabIndex={0}` + `role="group"` + `aria-label` is this repo's canonical form for a text scroll
           region (`ui/content/ContentSurface` ×2, `DiagnosticsPanel`, `SecurityPanel`), and a named
           `group` stops taking its name from its subtree. */}
-      <pre tabIndex={0} role="group" aria-label="Diff"
-        className="overflow-x-auto px-m py-2 text-[0.8125rem] leading-relaxed font-mono">
+      {/* leading-relaxed stays: code blocks read at the airier line-height on
+          purpose, and the utility (utilities layer) wins over the role's own. */}
+      <pre tabIndex={0} role="group" aria-label="Diff" data-type="body-s"
+        className="overflow-x-auto px-m py-2 leading-relaxed font-mono">
         {code.split('\n').map((ln, i) => {
           const add = /^\+(?!\+)/.test(ln), del = /^-(?!-)/.test(ln), hunk = /^@@/.test(ln)
           return (
@@ -115,22 +117,23 @@ function InlineArtifactImage({ src, alt, chatSessionKey }: {
   if (failed) {
     return (
       <div className="my-2 flex max-w-md flex-col gap-2 rounded-lg border border-outline-variant/40 bg-surface-low px-4 py-3">
-        <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]">
+        <div data-type="body-s" className="flex items-center gap-2 text-on-surface-low">
           <ImageOff size={14} className="shrink-0" />
           <span>This image is no longer available.</span>
         </div>
         {alt && (
-          <div className="text-on-surface-var text-[0.8125rem]">
+          <div data-type="body-s" className="text-on-surface-var">
             <span className="text-on-surface-low">Prompt:</span> {alt}
           </div>
         )}
         {chatSessionKey && slug && (
           <button type="button" onClick={regenerate} disabled={busy}
-            className="mt-0.5 inline-flex w-fit items-center gap-1.5 rounded-md bg-surface-high px-2.5 py-1 text-on-surface text-[0.75rem] transition-colors hover:bg-surface-highest disabled:opacity-60">
+            data-type="caption"
+            className="mt-0.5 inline-flex w-fit items-center gap-1.5 rounded-md bg-surface-high px-2.5 py-1 text-on-surface transition-colors hover:bg-surface-highest disabled:opacity-60">
             <RefreshCw size={12} className={busy ? 'animate-spin' : ''} /> {busy ? 'Regenerating…' : 'Regenerate image'}
           </button>
         )}
-        {err && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+        {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
       </div>
     )
   }
@@ -154,11 +157,11 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   return (
     <div className="group/code my-3 overflow-hidden rounded-lg bg-surface-low">
       <div className="flex items-center gap-2 px-m pt-2">
-        {lang && <span className="text-[0.75rem] uppercase tracking-wide text-on-surface-low">{lang}</span>}
+        {lang && <span data-type="caption" className="uppercase tracking-wide text-on-surface-low">{lang}</span>}
         <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100">
           {runnable && (
-            <button type="button" onClick={run} title="Run in terminal"
-              className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[0.75rem] text-on-surface-low hover:bg-surface-high hover:text-primary">
+            <button type="button" onClick={run} title="Run in terminal" data-type="caption"
+              className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-on-surface-low hover:bg-surface-high hover:text-primary">
               <Play size={11} /> Run
             </button>
           )}
@@ -176,8 +179,8 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
       </div>
       {/* Named by the fence's own language when it declares one — the same word this block already
           shows in its header — and "Code" when it does not. */}
-      <pre tabIndex={0} role="group" aria-label={lang ? `${lang} code` : 'Code'}
-        className="overflow-x-auto px-m py-2 text-[0.8125rem] leading-relaxed"><code className="hljs font-mono" dangerouslySetInnerHTML={{ __html: html }} /></pre>
+      <pre tabIndex={0} role="group" aria-label={lang ? `${lang} code` : 'Code'} data-type="body-s"
+        className="overflow-x-auto px-m py-2 leading-relaxed"><code className="hljs font-mono" dangerouslySetInnerHTML={{ __html: html }} /></pre>
     </div>
   )
 }
@@ -226,7 +229,7 @@ function renderCode({ className, children }: any) {
 const COMPONENTS: Record<string, React.ComponentType<any>> = {
   code: renderCode,
   pre({ children }: any) { return <>{children}</> },
-  table({ children }: any) { return <div className="my-3 overflow-x-auto"><table className="w-full border-collapse text-[0.8125rem]">{children}</table></div> },
+  table({ children }: any) { return <div className="my-3 overflow-x-auto"><table data-type="body-s" className="w-full border-collapse">{children}</table></div> },
   th({ children }: any) { return <th className="border-b border-outline-variant/50 bg-surface-high px-m py-2 text-left text-on-surface-var" style={fvs(500)}>{children}</th> },
   td({ children }: any) { return <td className="border-b border-outline-variant/30 px-m py-2">{children}</td> },
   a({ href, children }: any) {
@@ -253,11 +256,11 @@ const COMPONENTS: Record<string, React.ComponentType<any>> = {
   h1({ children }: any) { return <h1 className="mt-4 mb-2 text-on-surface" data-type="headline-s">{children}</h1> },
   h2({ children }: any) { return <h2 className="mt-3 mb-2 text-on-surface text-[1.0625rem]" style={fvs(500)}>{children}</h2> },
   h3({ children }: any) { return <h3 className="mt-3 mb-1.5 text-on-surface text-[1.0625rem]" style={fvs(500)}>{children}</h3> },
-  h4({ children }: any) { return <h4 className="mt-2 mb-1 text-on-surface text-[0.9375rem]" style={fvs(500)}>{children}</h4> },
+  h4({ children }: any) { return <h4 data-type="title-m" className="mt-2 mb-1 text-on-surface">{children}</h4> },
   ul({ children }: any) { return <ul className="my-2 list-disc space-y-1 pl-7 marker:text-on-surface-low">{children}</ul> },
   ol({ children }: any) { return <ol className="my-2 list-decimal space-y-1 pl-7 marker:text-on-surface-low">{children}</ol> },
-  li({ children }: any) { return <li className="text-[0.9375rem] leading-relaxed">{children}</li> },
-  p({ children }: any) { return <p className="my-1.5 leading-relaxed text-[0.9375rem]">{children}</p> },
+  li({ children }: any) { return <li data-type="body-m" className="leading-relaxed">{children}</li> },
+  p({ children }: any) { return <p data-type="body-m" className="my-1.5 leading-relaxed">{children}</p> },
   strong({ children }: any) { return <strong className="text-on-surface" style={fvs(600)}>{children}</strong> },
   em({ children }: any) { return <em className="italic">{children}</em> },
 }
@@ -385,8 +388,8 @@ function componentsWith(
       }
       return renderCode({ className, children })
     },
-    p({ children }: any) { return <p className="my-1.5 leading-relaxed text-[0.9375rem]">{L(children)}</p> },
-    li({ children }: any) { return <li className="text-[0.9375rem] leading-relaxed">{L(children)}</li> },
+    p({ children }: any) { return <p data-type="body-m" className="my-1.5 leading-relaxed">{L(children)}</p> },
+    li({ children }: any) { return <li data-type="body-m" className="leading-relaxed">{L(children)}</li> },
     td({ children }: any) { return <td className="border-b border-outline-variant/30 px-m py-2">{L(children)}</td> },
   }
 }

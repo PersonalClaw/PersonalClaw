@@ -2076,6 +2076,47 @@ export interface JudgeBenchView {
   pin: Record<string, unknown> | null
   runs: string[]
 }
+
+/** One subject's Loop-3 field metrics. Every rate is `null` when its denominator
+ *  is zero — "nobody thumbed this" is not "0% approval", and the backend refuses to
+ *  conflate them, so the UI must too. */
+export interface FieldMetricsField {
+  ups: number
+  downs: number
+  thumb_rate: number | null
+  edited_runs: number
+  clean_approved_runs: number
+  edit_before_approve_rate: number | null
+  approvals: number
+  rejections: number
+  undos: number
+  approval_rate: number | null
+  signals: number
+  /** '' means "not enough field signals to call it" — unmeasured, never flat. */
+  trend: '' | 'rising' | 'falling' | 'flat'
+}
+/** One Learning-tab lab-vs-field row (amendment E3 / ES-9): lab score (Loop 1, pinned) |
+ *  gate status (Loop 2) | field trend (Loop 3). The divergence verdict arrives DECIDED —
+ *  it is what the gateway sweep files demotions on, and a UI that re-derived it from the
+ *  visible numbers would eventually disagree with what was demoted. */
+export interface FieldMetricsRow {
+  subject_kind: 'template' | 'action_type'
+  subject: string
+  lab: {
+    score: number | null
+    previous: number | null
+    /** null when either arm went unmeasured — not a rise and not a fall. */
+    rose: boolean | null
+    verdict: string
+    study_id: string
+    model_fp: string
+    ts: number | null
+  } | null
+  gate: LearningGate | null
+  field: FieldMetricsField
+  lab_field_divergence: boolean
+  divergence_reason: string
+}
 /** One ARM's aggregate inside an ablation report (`evals.matrix.aggregate()`).
  *
  *  `mean_score` is `null` when the arm produced no SCORED cell — every cell came back
@@ -2897,6 +2938,40 @@ export interface SelVerify {
   window?: number | null
   error?: string
 }
+// ── Desktop computer-use live view ─────────────────────────────────────────────
+// One trail point of the cursor-motion overlay: where an APPROVED acting call was about to
+// land. `x`/`y` are screen coordinates and null when the driver reported no frame — the
+// overlay draws nothing for those rather than a phantom (0,0) landing. `method` is the
+// pointer story: 'ax_press' moved no real pointer; 'global' warped the operator's own.
+export interface ComputerUseTrailPoint {
+  seq: number; ts: number; tool: string; app: string
+  method: 'ax_press' | 'located' | 'global'
+  x: number | null; y: number | null; label: string
+}
+// One wireframe box of the live-view mirror: geometry and identity, never field contents.
+export interface ComputerUseElement {
+  index: number; role: string; title: string; enabled: boolean
+  frame: { x: number; y: number; width: number; height: number } | null
+}
+// One accessibility walk the model already read. Only the NEWEST snapshot carries
+// `elements` (the window the agent is acting in now); older ones are one-line facts.
+export interface ComputerUseSnapshot {
+  snapshot_id: string; app: string; age_secs: number; expired: boolean
+  element_count: number; elements?: ComputerUseElement[]
+}
+// One action-feed row — a computer-use SEL attempt, redacted and narrowed server-side.
+export interface ComputerUseFeedRow {
+  timestamp: string; operation: string; outcome: string; error: string
+  source: string; caller_identity: string; app: string
+}
+// GET /api/computer-use/live-view — everything here is a MIRROR of state that already
+// exists in the gateway (§3 floor 7: the views grant nothing). Renders on any posture:
+// `enabled: false` is itself the most useful thing the view can say on a disarmed machine.
+export interface ComputerUseLiveView {
+  enabled: boolean; allowed_apps: string[]; ttl_secs: number
+  snapshots: ComputerUseSnapshot[]; trail: ComputerUseTrailPoint[]; feed: ComputerUseFeedRow[]
+}
+
 // An archived chat session file (read-only browse). `key`=session key, `stamp`=
 // archive timestamp slug, `mtime`=epoch seconds.
 export interface SessionArchive { name: string; key: string; stamp: string; size: number; mtime: number }
@@ -5971,6 +6046,9 @@ export const api = {
   evalStudies: () => get<{ studies: StudyRow[] }>('/api/evals/studies'),
   evalStudy: (studyId: string) =>
     get<StudyView>(`/api/evals/studies/${encodeURIComponent(studyId)}`),
+  /** The lab-vs-field table — one row per subject, divergence verdicts decided
+   *  server-side. Read-only: the demotion the flag feeds is the gateway sweep's. */
+  evalFieldMetrics: () => get<{ subjects: FieldMetricsRow[] }>('/api/evals/field-metrics'),
   /** The proposals queue AND the ladder's last pass, from one read. Returns the whole
    *  feed rather than unwrapping to the array: `lastReview` is what makes an empty
    *  `proposals` falsifiable, and a second accessor over the same route would be two
@@ -6443,6 +6521,10 @@ export const api = {
     return get<AuditPage>(`/api/security/audit?${q}`)
   },
   auditVerify: (full = false) => get<SelVerify>(`/api/security/audit/verify${full ? '?full=1' : ''}`),
+  // desktop computer-use live view — a read-only mirror of what the agent is doing
+  // on this desktop: keystone posture, the walked window, the cursor-motion trail, the
+  // attempt feed. GET only; the one route that can act stays the internal dispatch POST.
+  computerUseLiveView: () => get<ComputerUseLiveView>('/api/computer-use/live-view'),
   // Mirrors `SecurityEventLog.rotate()` (src/personalclaw/sel.py): the log is archived and a fresh
   // chain started. `archive_path` is the timestamped `.bak.jsonl` the old entries moved to (empty when
   // there was nothing to archive). The old `{ ok?: boolean }` shape silently dropped all of this.

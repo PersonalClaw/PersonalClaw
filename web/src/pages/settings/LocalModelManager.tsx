@@ -166,12 +166,12 @@ export function LocalModelManager({
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="truncate text-on-surface text-[0.75rem] font-mono">{m.name}</span>
+              <span data-type="caption" className="truncate text-on-surface font-mono">{m.name}</span>
               {m.downloaded && <Check size={11} style={{ color: 'var(--color-success)' }} />}
               {gatedUndownloaded && <Lock size={10} className="shrink-0 text-on-surface-low" aria-label="Requires a token / license" />}
               <FitChip model={m} />
             </div>
-            <div className="truncate text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="truncate text-on-surface-low">
               {downloading
                 ? `downloading${job.downloaded_bytes ? ` · ${MB(job.downloaded_bytes)}${sizeMb ? ` / ${sizeMb}` : ''} MB` : ''}`
                 : <>{m.description || (m.capabilities?.length ? m.capabilities.join(', ') : '')}{stated.mb ? ` · ${stated.mb} MB` : ''}{stated.familyMedianMb ? ` · family median ~${stated.familyMedianMb} MB` : ''}</>}
@@ -206,7 +206,7 @@ export function LocalModelManager({
           )}
         </div>
         {err && (
-          <div className="mt-1 flex items-start gap-1 text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>
+          <div data-type="caption" className="mt-1 flex items-start gap-1" style={{ color: 'var(--color-danger)' }}>
             <AlertTriangle size={11} className="mt-0.5 shrink-0" /> <span className="min-w-0">{err}</span>
           </div>
         )}
@@ -216,7 +216,7 @@ export function LocalModelManager({
 
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">
+      <div data-type="caption" className="mb-1.5 flex items-center gap-1 text-on-surface-low uppercase tracking-wide">
         <HardDrive size={11} /> Models ({downloaded}/{models.length} downloaded)
       </div>
 
@@ -225,7 +225,7 @@ export function LocalModelManager({
           switch IS the way back to the full list. Rendered only on a measured host — offering a
           filter that provably cannot hide anything would be a control that lies about its effect. */}
       {fitFilterable && (
-        <div className="mb-1.5 flex items-center gap-1.5 text-[0.75rem]">
+        <div data-type="caption" className="mb-1.5 flex items-center gap-1.5">
           <Toggle size="sm" on={hiding} onChange={(v) => setShowAll(!v)} label={HIDE_LABEL} />
           <span className="text-on-surface-low">{HIDE_LABEL}</span>
           {hiding && hiddenCount > 0 && (
@@ -253,9 +253,9 @@ export function LocalModelManager({
       )}
 
       {showSearch && searching && rows.length === 0 ? (
-        <div className="py-1 text-on-surface-low text-[0.75rem] italic">Searching…</div>
+        <div data-type="caption" className="py-1 text-on-surface-low italic">Searching…</div>
       ) : rows.length === 0 ? (
-        <div className="py-1 text-on-surface-low text-[0.75rem] italic">
+        <div data-type="caption" className="py-1 text-on-surface-low italic">
           {/* The filter can empty the list completely, and "No downloadable models listed" would
               then be a flat lie about a provider whose catalog we just hid. The switch above is
               still on screen, so this states the cause and points at the way back. */}

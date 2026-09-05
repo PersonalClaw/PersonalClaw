@@ -184,7 +184,7 @@ export function DevicesPanel() {
         <div className="rounded-lg bg-surface-container px-4 py-4">
           {!pairing ? (
             <div className="flex flex-wrap items-center justify-between gap-l">
-              <p className="min-w-0 flex-1 text-on-surface-low text-[0.8125rem]">
+              <p data-type="body-s" className="min-w-0 flex-1 text-on-surface-low">
                 Generates a one-time code and a link for the device to open.
               </p>
               <Button size="sm" onClick={startPairing} loading={starting} ariaLabel="Pair a device">
@@ -204,7 +204,7 @@ export function DevicesPanel() {
                     a string to their phone that cannot possibly work, and to read the failure as
                     "pairing is broken" rather than "that code ran out". */}
                 {expired ? (
-                  <p className="min-w-0 flex-1 text-on-surface-low text-[0.8125rem]">
+                  <p data-type="body-s" className="min-w-0 flex-1 text-on-surface-low">
                     The code and link are no longer shown — this gateway refuses an expired code,
                     so there is nothing here that would still work.
                   </p>
@@ -221,7 +221,7 @@ export function DevicesPanel() {
                   <div ref={codeRef} tabIndex={-1} role="group" aria-label="Pairing code and link"
                     className="min-w-0 flex-1 flex flex-col gap-l outline-none">
                     <div>
-                      <div className="text-on-surface-low text-[0.8125rem]">Code</div>
+                      <div data-type="body-s" className="text-on-surface-low">Code</div>
                       <div className="mt-1 flex items-center gap-s">
                         {/* No `aria-label` here: `<code>` carries no role, so an aria-label on it is
                             ignored by assistive tech (and flagged by axe, which now scans this
@@ -235,9 +235,9 @@ export function DevicesPanel() {
                     </div>
 
                     <div>
-                      <div className="text-on-surface-low text-[0.8125rem]">Link to open on the device</div>
+                      <div data-type="body-s" className="text-on-surface-low">Link to open on the device</div>
                       <div className="mt-1 flex items-start gap-s">
-                        <code className="min-w-0 select-all break-all font-mono text-on-surface text-[0.8125rem]">
+                        <code data-type="body-s" className="min-w-0 select-all break-all font-mono text-on-surface">
                           {pairing.pairing_url}
                         </code>
                         <CopyButton value={pairing.pairing_url} label="pairing link" />
@@ -256,7 +256,7 @@ export function DevicesPanel() {
                     A ticking VALUE is not an event. The words and the tone stay (an expiry carried by
                     colour alone would fail 1.4.1); the announcing moved to the region below. */}
                 <span
-                  className={`inline-flex items-center gap-1.5 text-[0.8125rem] ${expired ? 'text-warn' : 'text-on-surface-low'}`}
+                  data-type="body-s" className={`inline-flex items-center gap-1.5 ${expired ? 'text-warn' : 'text-on-surface-low'}`}
                 >
                   {expired ? <XCircle size={14} /> : null}
                   {expired ? 'This code has expired — generate another.' : `Expires in ${mmss(left)}`}
@@ -304,19 +304,19 @@ export function DevicesPanel() {
                   <div className="flex min-w-0 items-start gap-3">
                     <KindIcon size={18} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
                     <div className="min-w-0">
-                      <div className="truncate text-on-surface text-[0.8125rem]">{name}</div>
+                      <div data-type="body-s" className="truncate text-on-surface">{name}</div>
                       {/* Every column the registry owes the owner, in one readable line:
                           kind · last seen · issuer · paired · expires. `last_seen` of 0 means the
                           device has never made an authorized request, and must read as "never" —
                           NOT as the pairing time, which would make an abandoned device look active. */}
-                      <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">
+                      <div data-type="body-s" className="mt-0.5 text-on-surface-low">
                         {kind.label}
                         {' · '}
                         <span>Last seen {d.last_seen > 0 ? relPast(d.last_seen) : 'never'}</span>
                         {' · '}
                         <span>{issuerLabel(d.issuer)}</span>
                       </div>
-                      <div className="mt-0.5 text-on-surface-low/80 text-[0.75rem]">
+                      <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
                         Paired {d.minted_at > 0 ? relPast(d.minted_at) : 'unknown'}
                         {d.expires_at > 0 ? ` · session expires ${absTime(d.expires_at)}` : ''}
                       </div>

@@ -29,6 +29,12 @@ one, and the token points at something you can go read or re-run:
 The arm64 rows became CI-backed in PLATFORM-REACH A1.3 (arm jobs in `full.yml`) and
 A2.1 (per-arch release smoke); before that they were aspirational.
 
+The matrix above is the **backend**. The desktop *shell* is narrower: unsigned Linux
+x86-64 AppImage/deb on every release (`CI:release/desktop-linux smoke`), macOS from a
+checkout only until signing credentials exist, and no Windows build — see
+[the desktop guide](desktop.md#platforms) for the per-OS signing story and the dated
+Windows deferral.
+
 ---
 
 ## The `[models]` extra, per architecture
@@ -251,5 +257,6 @@ The named volume survives, so your state carries across the upgrade.
 - **No `personalclaw service install`.** Container restart policy replaces it —
   `restart: unless-stopped` already brings the stack back when Docker Desktop
   starts. Enable *Start Docker Desktop when you log in* for boot behaviour.
-- **The desktop shell is macOS-only** and unrelated to this path.
+- **The desktop shell does not run on Windows** (it ships for macOS and Linux —
+  see [the desktop guide](desktop.md#platforms)) and is unrelated to this path.
 - **Docker Desktop's Hyper-V backend is untested**; use WSL2.

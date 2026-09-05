@@ -200,11 +200,11 @@ export function PortabilityPanel() {
                   ? <><Loader2 size={15} className="animate-spin" /> Packaging…</>
                   : <><Download size={15} /> Export {spec.label.toLowerCase()}</>}
               </Button>
-              <span className="text-on-surface-low text-[0.75rem]">{spec.hint}</span>
+              <span data-type="caption" className="text-on-surface-low">{spec.hint}</span>
             </div>
           ))}
         </div>
-        <p className="mt-3 text-on-surface-low text-[0.75rem]">
+        <p data-type="caption" className="mt-3 text-on-surface-low">
           Rebuildable caches (search indexes, model files) are left out — they regenerate,
           and a stale index restored next to newer data is worse than none. Large
           workspaces can take a minute to package.
@@ -213,7 +213,7 @@ export function PortabilityPanel() {
 
       <Section title="Import" hint="Bring settings and data in from another PersonalClaw instance.">
         <div className="rounded-lg border border-warn/30 bg-warn/5 px-4 py-3">
-          <div className="flex items-start gap-2 text-[0.8125rem]" style={{ color: 'var(--color-warning)' }}>
+          <div data-type="body-s" className="flex items-start gap-2" style={{ color: 'var(--color-warning)' }}>
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <span>Importing merges the archive's data into this instance — nothing you already have is overwritten. Choosing a file checks it first and shows what it contains.</span>
           </div>
@@ -226,11 +226,11 @@ export function PortabilityPanel() {
             <Button size="sm" onClick={runImport} disabled={busy !== null || !file || !manifest} disabledReason={!file && busy === null ? 'Choose a file first' : (!manifest && busy === null ? 'The archive has not passed validation' : undefined)}>
               {busy === 'import' ? <><Loader2 size={15} className="animate-spin" /> Importing…</> : <><Upload size={15} /> Import</>}
             </Button>
-            {busy === 'validate' && <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]"><Loader2 size={13} className="animate-spin" /> Checking archive…</span>}
-            {importResult && <span className="text-on-surface-low text-[0.75rem]">{importResult}</span>}
+            {busy === 'validate' && <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low"><Loader2 size={13} className="animate-spin" /> Checking archive…</span>}
+            {importResult && <span data-type="caption" className="text-on-surface-low">{importResult}</span>}
           </div>
           {manifest && (
-            <div className="mt-3 rounded-md bg-surface px-3 py-2 text-[0.75rem]">
+            <div data-type="caption" className="mt-3 rounded-md bg-surface px-3 py-2">
               <div className="text-on-surface" style={fvs(550)}>
                 Archive from {manifest.hostname} · {manifest.user} · {archiveWhen(manifest.created_at)}
               </div>

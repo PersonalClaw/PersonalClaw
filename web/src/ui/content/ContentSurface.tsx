@@ -268,7 +268,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
       {showToolbar && (
         <div className="flex flex-wrap items-center gap-s border-b border-outline/40 px-m py-1.5">
           {headerLeft}
-          {truncated && <span className="shrink-0 rounded px-1.5 py-0.5 text-[0.75rem] text-on-surface-low" style={{ background: 'var(--color-surface-high)' }} title="Only the first part of this large file was loaded — read-only so a save can't truncate the rest.">truncated · read-only</span>}
+          {truncated && <span data-type="caption" className="shrink-0 rounded px-1.5 py-0.5 text-on-surface-low" style={{ background: 'var(--color-surface-high)' }} title="Only the first part of this large file was loaded — read-only so a save can't truncate the rest.">truncated · read-only</span>}
           {anyDirty && <span className="size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} title="Unsaved changes" />}
           {/* This cluster wraps too, and both halves are needed: it is 399px wide on its own at a
               390px viewport, so letting only the OUTER row wrap would drop it onto a line it still
@@ -301,7 +301,8 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
                       {exports.map((ex) => (
                         <button key={ex.id} type="button"
                           onClick={() => { setExportOpen(false); void ex.run(draft, title) }}
-                          className="block w-full px-3 py-1.5 text-left text-[0.75rem] text-on-surface hover:bg-surface-high">{ex.label}</button>
+                          data-type="caption"
+                          className="block w-full px-3 py-1.5 text-left text-on-surface hover:bg-surface-high">{ex.label}</button>
                       ))}
                     </div>
                   </>
@@ -322,14 +323,16 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
                     `disabled:opacity-40` cannot match an `aria-disabled` element. */}
                 <button onClick={dirty ? save : undefined} disabled={saving} type="button"
                   aria-busy={saving || undefined} aria-disabled={(!dirty && !saving) || undefined}
-                  className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 text-[0.75rem] disabled:opacity-40 aria-disabled:opacity-40"
+                  data-type="caption"
+                  className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 disabled:opacity-40 aria-disabled:opacity-40"
                   style={{ background: dirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: dirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}
                   title={dirty ? 'Save (⌘S)' : 'Save (⌘S) — no changes to save'}>
                   {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {!compact && 'Save'}
                 </button>
                 {actions?.map((a) => (
                   <button key={a.label} onClick={() => runAction(a)} disabled={saving} type="button" aria-busy={saving || undefined}
-                    className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 text-[0.75rem] disabled:opacity-40"
+                    data-type="caption"
+                    className="inline-flex items-center gap-1 rounded-md px-2.5 h-7 disabled:opacity-40"
                     style={a.primary ? { background: 'var(--color-primary)', color: 'var(--color-on-primary)' } : { color: 'var(--color-on-surface-low)' }}
                     title={a.title || a.label}>
                     {saving ? <Loader2 size={13} className="animate-spin" /> : <a.icon size={13} />} {!compact && a.label}
@@ -379,7 +382,8 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
 function ToggleBtn({ icon: Icon, label, on, onClick, compact, indicatorId }: { icon: typeof Eye; label: string; on: boolean; onClick: () => void; compact?: boolean; indicatorId: string }) {
   return (
     <button onClick={onClick} type="button" title={compact ? label : undefined} aria-label={label}
-      className={`relative inline-flex items-center gap-1 rounded-pill h-6 text-[0.75rem] transition-colors ${compact ? 'px-2' : 'px-2.5'}`}
+      data-type="caption"
+      className={`relative inline-flex items-center gap-1 rounded-pill h-6 transition-colors ${compact ? 'px-2' : 'px-2.5'}`}
       style={{ color: on ? 'var(--color-on-surface)' : 'var(--color-on-surface-low)' }}>
       {/* liquid active pill — slides between Preview/Split/Edit via layoutId (the
           Segmented pattern) instead of the highlight blink-jumping. */}

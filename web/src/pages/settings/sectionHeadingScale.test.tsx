@@ -8,7 +8,8 @@ import { Section } from './settingsUI'
 // ── Two settings pages wrote their section titles 2px larger than the other 23 ─────────────
 //
 // Censused across `pages/settings/`: **23 panels render section titles through `Section` (72
-// instances) at `text-[0.9375rem]`**. Two hand-rolled theirs at `text-[1.0625rem]` — 17px beside a
+// instances) at the 15px tier (now `data-type="title-m"`)**. Two hand-rolled theirs at
+// `text-[1.0625rem]` — 17px beside a
 // sibling page's 15px, on pages a user flips between in one sitting. Measured live before and after:
 //
 //                          BEFORE                      AFTER
@@ -34,7 +35,7 @@ describe('Section carries what the outliers had opted out for', () => {
   it('renders the title at the panel-section scale, once', () => {
     const { container } = render(<Section title="Backdrop & motion">x</Section>)
     const h = container.querySelector('h2')!
-    expect(h.className).toContain('text-[0.9375rem]')
+    expect(h.getAttribute('data-type')).toBe('title-m')
     expect(h.textContent).toBe('Backdrop & motion')
   })
 

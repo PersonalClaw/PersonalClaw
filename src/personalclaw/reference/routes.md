@@ -200,6 +200,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/task-mode` — set the per-session TASK mode.
 - `GET /api/companion/discovery` — the live state of the LAN advertiser.
 - `POST /api/computer-use/dispatch` — run one computer-use tool through the chain.
+- `GET /api/computer-use/live-view` — the human-facing live view + overlay data (`DCU-7`).
 - `GET /api/config-fs/stream` — SSE feed of out-of-band config-tree changes (#44).
 - `GET /api/config/default-agent` — read or set the default agent.
 - `PUT /api/config/default-agent` — read or set the default agent.
@@ -253,6 +254,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/durability/run` — {job} — run one backup job now.
 - `GET /api/durability/status` — schedule state + what's due.
 - `GET /api/evals/ablation` — the newest keep/remove/lighten report (ES-7 §3.1).
+- `GET /api/evals/field-metrics` — Loop-3 field metrics beside lab results (E3 / ES-9).
 - `GET /api/evals/judge-bench` — the newest tier-recommendation table.
 - `GET /api/evals/learning-benchmark` — the newest skill-impact benchmark report (LV-7).
 - `GET /api/evals/retrieval` — the newest per-arm P@k/R@k table for BOTH stores (§5).

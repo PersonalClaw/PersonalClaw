@@ -101,7 +101,7 @@ describe('a config panel does not present fabricated values as saved state', () 
     const at = widgets.indexOf('title="Legibility"')
     const body = widgets.slice(at, at + 900)
     expect(body).toMatch(/loading=\{c === undefined && !legErr\}/)
-    expect(body).toMatch(/Boolean\(legErr\) && <div className="text-on-surface-low text-\[0\.75rem\]">Couldn&rsquo;t load/)
+    expect(body).toMatch(/Boolean\(legErr\) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load/)
   })
 
   it('the census is reproducible, and the rest of the population is stated not swept', () => {

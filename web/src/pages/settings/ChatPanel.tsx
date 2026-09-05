@@ -114,9 +114,9 @@ function StartersSection() {
     <Section title="Chat starters" hint="Reusable setups — agent, model and reasoning effort. Save one from a chat's header; they appear on the new-chat screen.">
       <RowGroup>
         {items === null ? (
-          <p className="py-3 text-[0.8125rem] text-on-surface-low">Loading…</p>
+          <p data-type="body-s" className="py-3 text-on-surface-low">Loading…</p>
         ) : items.length === 0 ? (
-          <p className="py-3 text-[0.8125rem] text-on-surface-low">
+          <p data-type="body-s" className="py-3 text-on-surface-low">
             No starters yet. Open a chat, set it up how you like, then use “Save as starter” in its header.
           </p>
         ) : items.map((t) => (
@@ -162,7 +162,7 @@ function MidTurnSection({ resilience, setResilience }: {
           </div>
         </Row>
         {policy === 'steer' && (
-          <p className="pb-3 text-[0.75rem] text-on-surface-low">
+          <p data-type="caption" className="pb-3 text-on-surface-low">
             Steering reaches the running answer on the built-in agent. Connected CLI
             agents (ACP) don't expose a mid-turn seam yet, so a message there queues
             instead — either way it appears above the composer, never dropped.
@@ -428,7 +428,7 @@ function AutoArchiveRow({ days, onCommit, saved }: {
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
         {shown > 0 && preview?.enabled && (
-          <span className="text-[0.75rem] text-on-surface-variant tabular-nums">
+          <span data-type="caption" className="text-on-surface-variant tabular-nums">
             {preview.count === 0 ? 'none stale now' : `${preview.count} stale now`}
           </span>
         )}
@@ -436,7 +436,7 @@ function AutoArchiveRow({ days, onCommit, saved }: {
           value={shown} min={0} max={3650} step={1} ariaLabel="Auto-archive after (days)"
           onChange={(n) => { setPending(n); onCommit(n, 'Auto-archive after (days)') }}
         />
-        <span className="text-[0.75rem] text-on-surface-variant">{shown > 0 ? 'days' : 'off'}</span>
+        <span data-type="caption" className="text-on-surface-variant">{shown > 0 ? 'days' : 'off'}</span>
       </div>
     </Row>
   )
@@ -460,7 +460,7 @@ function NumberRow({ label, hint, value, min, max, step, suffix, onCommit, saved
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
         <NumberField value={value} min={min} max={max} step={step} onChange={(n) => onCommit(n, label)} ariaLabel={label} />
-        {suffix && <span className="w-6 text-on-surface-low text-[0.75rem]">{suffix}</span>}
+        {suffix && <span data-type="caption" className="w-6 text-on-surface-low">{suffix}</span>}
       </div>
     </Row>
   )

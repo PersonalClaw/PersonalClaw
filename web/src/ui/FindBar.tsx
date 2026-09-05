@@ -171,8 +171,8 @@ export function FindBar<T>({ items, segmentsOf, nodeOf, scrollRef, label, onClos
           not what a screen reader reads out; the sr-only sibling carries the worded form
           ("Match 3 of 17" / "No matches"). It is mounted from the first render with empty
           content — a live region that appears WITH its text is not reliably announced. */}
-      <span aria-hidden="true"
-        className="min-w-[3.2rem] select-none text-center text-on-surface-low text-[0.75rem] tabular-nums">
+      <span aria-hidden="true" data-type="caption"
+        className="min-w-[3.2rem] select-none text-center text-on-surface-low tabular-nums">
         {debounced.trim() ? (matchIndices.length ? `${active + 1}/${matchIndices.length}` : '0/0') : ''}
       </span>
       <div role="status" aria-live="polite" className="sr-only">

@@ -41,10 +41,13 @@ type SearchSize = 'sm' | 'md' | 'lg'
 // blessed steps (0.8125 / 0.9375rem) — off-ramp sizes (0.75/0.78/0.85/0.95rem) are
 // drift these adopters normalize ONTO the scale.
 const OVERLAY_SIZE: Record<SearchSize, string> = {
-  sm: 'h-8 text-[0.8125rem] rounded-md',
-  md: 'h-9 text-[0.8125rem] rounded-md',
-  lg: 'h-10 text-[0.9375rem] rounded-pill',
+  sm: 'h-8 rounded-md',
+  md: 'h-9 rounded-md',
+  lg: 'h-10 rounded-pill',
 }
+// The typed text's type role per size — body-* (wght 400), the weight an input's
+// text always rendered at. Shared by both variants.
+const SIZE_ROLE: Record<SearchSize, string> = { sm: 'body-s', md: 'body-s', lg: 'body-m' }
 type SearchSurface = 'high' | 'container' | 'base'
 const SEARCH_SURFACE: Record<SearchSurface, string> = {
   high: 'bg-surface-high',
@@ -52,14 +55,9 @@ const SEARCH_SURFACE: Record<SearchSurface, string> = {
   base: 'bg-surface',
 }
 // The inline variant carries no height (the caller's row sets padding), so `size`
-// here selects only the text step — again the blessed steps: lg for the big ⌘K
-// palette (0.9375rem), sm/md for the denser filter rows (0.8125rem). Off-ramp
+// there selects only the text step via SIZE_ROLE — again the blessed steps: lg for
+// the big ⌘K palette (body-m), sm/md for the denser filter rows (body-s). Off-ramp
 // inline sizes (0.78/0.875rem) normalize onto these, mirroring the overlay scale.
-const INLINE_TEXT: Record<SearchSize, string> = {
-  sm: 'text-[0.8125rem]',
-  md: 'text-[0.8125rem]',
-  lg: 'text-[0.9375rem]',
-}
 // `type="search"` makes Chromium auto-render a native ::-webkit-search-cancel-button
 // glyph once there's a value. This field owns its clear affordance (the spring-pop
 // ClearButton for clearable fields, nothing for the opt-out palettes), so the native
@@ -178,6 +176,7 @@ export function SearchField({
     'aria-label': label, placeholder, autoFocus, spellCheck, autoCapitalize, autoCorrect,
     'aria-haspopup': ariaHasPopup, 'aria-controls': ariaControls, 'aria-activedescendant': ariaActiveDescendant,
     'aria-expanded': ariaExpanded,
+    'data-type': SIZE_ROLE[size],
   }
   const clearLabel = `Clear ${label.toLowerCase()}`
 
@@ -187,7 +186,7 @@ export function SearchField({
     return (
       <>
         <Search size={inlineIconSize} className="pointer-events-none shrink-0 text-on-surface-low" />
-        <input {...inputProps} className={cx('min-w-0 flex-1 bg-transparent', INPUT_CHROME, INLINE_TEXT[size])} />
+        <input {...inputProps} className={cx('min-w-0 flex-1 bg-transparent', INPUT_CHROME)} />
         {clearable && <ClearButton show={!!value} onClear={() => onChange('')} label={clearLabel} dense />}
         {trailingSlot}
       </>

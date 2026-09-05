@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { ListControls } from './ListControls'
+import { ListControls, ResultAnnouncement } from './ListControls'
 
 // ── Filtering a list changed the page and said nothing ───────────────────────────────
 //
@@ -40,12 +40,15 @@ import { ListControls } from './ListControls'
 // extracted piece, and the three hand-laid bars render the same one. Migrate the IDIOM, not the page
 // — copying the markup into three files is what turns one shared behaviour into four that drift.
 //
-// After, driven the same way: `"No matching tasks"` · `"No matching artifacts"` ·
-// `"No matching lines"`.
+// After, driven the same way: `"No matching tasks"` · `"No matching artifacts"` · `"No matches"`.
 //
-// 🪤 THE NOUN IS PART OF THE COPY, AND `files` GOT IT WRONG FIRST: `noun="matches"` made the zero
-// branch read **"No matching matches"**. A `ContentMatch` is one matching LINE (file + line + col +
-// preview), so the honest noun is "lines" — which also reads correctly at 1 ("1 line").
+// 🪤 THE NOUN IS PART OF THE COPY, AND `files` GOT IT WRONG TWICE: `noun="matches"` made the zero
+// branch read **"No matching matches"**, so the noun was switched to "lines" — which fixed the
+// sentence by announcing a DIFFERENT WORD than the visible counter ("N matches") and zero state
+// ("No matches."). A screen-reader user then heard vocabulary the screen never showed (AUD-A10).
+// The resolution is the `singular`/`empty` overrides: the announced noun is the visible noun
+// ("matches"), and the two sentences the defaults mangle are supplied by the surface —
+// `empty="No matches"`, `singular="match"`.
 //
 // Verified live after the change:
 //
@@ -185,6 +188,23 @@ describe('a filtered list announces its result count', () => {
         results={{ count: 4, noun: 'triggers', active: true }} />,
     )
     expect(container.querySelector('[role="status"]')!.textContent).toBe('4 triggers')
+  })
+
+  it('`empty` overrides the zero sentence for nouns the default composes badly with', () => {
+    // "No matching matches" is the regression that once pushed `files` onto a noun its screen
+    // never showed. The override keeps the announced noun equal to the visible one.
+    const { container } = render(
+      <ResultAnnouncement count={0} noun="matches" empty="No matches" active />,
+    )
+    expect(container.querySelector('[role="status"]')!.textContent).toBe('No matches')
+  })
+
+  it('`singular` overrides the trailing-"s" strip where it mangles the noun', () => {
+    // The naive strip yields "1 matche".
+    const { container } = render(
+      <ResultAnnouncement count={1} noun="matches" singular="match" active />,
+    )
+    expect(container.querySelector('[role="status"]')!.textContent).toBe('1 match')
   })
 })
 
@@ -353,7 +373,7 @@ describe('the hand-laid bars reach the same idiom', () => {
     // file, noun, the `active` expression that must be the surface's OWN definition of narrowed
     ['pages/tasks/TasksListPage.tsx', 'tasks', /active=\{query\.trim\(\)\.length > 0\}/],
     ['pages/artifacts/ArtifactsSection.tsx', 'artifacts', /active=\{!!\(q\.trim\(\) \|\| kind \|\| src \|\| col\)\}/],
-    ['pages/files/FilesSection.tsx', 'lines', /active=\{showResults\}/],
+    ['pages/files/FilesSection.tsx', 'matches', /active=\{showResults\}/],
     // The settings area's hand-laid bars. Each `active` is that panel's own narrowed flag, and each
     // count comes from the array its own body renders.
     ['pages/settings/ArchivePanel.tsx', 'archived sessions', /active=\{!!needle\}/],
@@ -540,10 +560,17 @@ describe('the hand-laid bars reach the same idiom', () => {
 
   it('the zero branch reads correctly for every noun in use', () => {
     // 🪤 "No matching matches" is what `files` printed first. The copy already carries the word
-    // "matching", so a noun that repeats it is wrong — pinned per noun rather than per file.
+    // "matching", so a noun that repeats it must supply its own `empty` — pinned per noun.
     for (const noun of ['tasks', 'artifacts', 'lines', 'items']) {
       expect(`No matching ${noun}`, `"${noun}" must not restate the copy`).not.toMatch(/matching match/)
     }
+    // `files` uses the one noun that DOES restate it, so its tag must carry both overrides —
+    // the announced words are then exactly the visible ones ("No matches", "1 match").
+    const files = readFileSync(join(SRC, 'pages/files/FilesSection.tsx'), 'utf8')
+    const tag = files.match(/<ResultAnnouncement[\s\S]{0,300}?\/>/)?.[0] ?? ''
+    expect(tag, 'files announces the visible noun').toContain('noun="matches"')
+    expect(tag, 'with the zero sentence the screen shows').toContain('empty="No matches"')
+    expect(tag, 'and the count-1 form the strip mangles').toContain('singular="match"')
   })
 
   it('scans real files (not vacuously green)', () => {

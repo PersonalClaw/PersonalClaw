@@ -68,7 +68,7 @@ export function SettingsHome({ go }: { go: (id: string) => void }) {
           {!anyMatch && (
             <div className="flex flex-col items-center gap-2 py-2xl text-center text-on-surface-low">
               <SearchX size={28} className="opacity-50" />
-              <p className="text-[0.9375rem]">No settings match “{q}”.</p>
+              <p data-type="body-m">No settings match “{q}”.</p>
             </div>
           )}
 

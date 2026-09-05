@@ -301,3 +301,135 @@ async def test_end_to_end_proxy_signed_and_direct_refused(tmp_path, monkeypatch)
             # /health is exempt so the watchdog convention still works directly.
             async with sess.get(f"{rb.base_url}/health") as h:
                 assert h.status == 200
+
+
+# ---------------------------------------------------------------------------
+# Failure copy (AUD-A12): what the proxy answers when the app backend fails.
+#
+# The raw aiohttp text ("Cannot connect to host 127.0.0.1:41733 ssl:default
+# [...]") used to travel to the app UI verbatim — appSdk's fetch helper
+# surfaces the JSON `error` field directly in an error toast. Each failure
+# class now answers ONE owned sentence on the wire; the raw exception text
+# goes to the log (the caller's job, per providers/failure_copy's contract).
+# Upstream 5xx bodies still pass through untouched — that is the app's own
+# answer, and rewrapping it would hide the app's error copy.
+# ---------------------------------------------------------------------------
+
+_RAW = "Cannot connect to host 127.0.0.1:41733 ssl:default [LEAK_MARKER]"
+
+_UNREACHABLE_COPY = "The app's backend could not be reached. Check the app's logs and try again."
+_TIMEOUT_COPY = "The app's backend timed out. Check the app's logs and try again."
+_UNEXPECTED_COPY = (
+    "The request to the app's backend failed unexpectedly. Check the app's logs and try again."
+)
+_NOT_RUNNING_COPY = "The app's backend is not running. Check the app's logs and try again."
+
+
+def _patch_proxy_world(
+    monkeypatch, *, running: bool = True, raise_exc: BaseException | None = None
+) -> None:
+    """Point api_app_proxy at an installed, enabled app; optionally make the session raise."""
+    from types import SimpleNamespace
+
+    import aiohttp
+
+    from personalclaw.apps import app_secret as app_secret_mod
+    from personalclaw.apps import backend_runtime as rt_mod
+    from personalclaw.apps import manager as manager_mod
+    from personalclaw.dashboard import token_auth as token_mod
+
+    monkeypatch.setattr(manager_mod, "_read_installed", lambda name: SimpleNamespace(enabled=True))
+    rb = SimpleNamespace(base_url="http://127.0.0.1:1") if running else None
+    monkeypatch.setattr(
+        rt_mod, "get_backend_supervisor", lambda: SimpleNamespace(get=lambda name: rb)
+    )
+    monkeypatch.setattr(app_secret_mod, "read_app_secret", lambda name: _SECRET)
+    monkeypatch.setattr(token_mod, "generate_token", lambda *a, **k: "tok")
+
+    if raise_exc is not None:
+
+        class _RaisingSession:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def request(self, *a, **k):
+                raise raise_exc
+
+        monkeypatch.setattr(aiohttp, "ClientSession", _RaisingSession)
+
+
+async def _proxy_call() -> web.StreamResponse:
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers.apps import api_app_proxy
+
+    req = make_mocked_request(
+        "GET", "/apps/demo/api/things", match_info={"name": "demo", "tail": "things"}
+    )
+    return await api_app_proxy(req)
+
+
+@pytest.mark.asyncio
+async def test_proxy_unreachable_backend_speaks_owned_copy(monkeypatch, caplog):
+    import json
+    import logging
+
+    import aiohttp
+
+    _patch_proxy_world(monkeypatch, raise_exc=aiohttp.ClientError(_RAW))
+    with caplog.at_level(logging.WARNING):
+        resp = await _proxy_call()
+    assert resp.status == 502
+    body = json.loads(resp.text)
+    assert body["error"] == _UNREACHABLE_COPY
+    # The raw aiohttp text is the log's, never the wire's.
+    assert "LEAK_MARKER" not in resp.text
+    assert "LEAK_MARKER" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_proxy_timeout_speaks_timeout_copy(monkeypatch, caplog):
+    import json
+    import logging
+
+    # A total-timeout raises the BUILTIN TimeoutError (asyncio.TimeoutError is its
+    # alias on the supported Pythons), which is NOT an aiohttp.ClientError — while a
+    # connect/read-phase ServerTimeoutError IS one. The handler's isinstance check
+    # must catch both shapes as "timed out".
+    _patch_proxy_world(monkeypatch, raise_exc=TimeoutError(_RAW))
+    with caplog.at_level(logging.WARNING):
+        resp = await _proxy_call()
+    assert resp.status == 502
+    assert json.loads(resp.text)["error"] == _TIMEOUT_COPY
+    assert "LEAK_MARKER" not in resp.text
+    assert "LEAK_MARKER" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_proxy_internal_crash_speaks_unexpected_copy(monkeypatch, caplog):
+    import json
+    import logging
+
+    _patch_proxy_world(monkeypatch, raise_exc=RuntimeError(_RAW))
+    with caplog.at_level(logging.WARNING):
+        resp = await _proxy_call()
+    assert resp.status == 502
+    assert json.loads(resp.text)["error"] == _UNEXPECTED_COPY
+    assert "LEAK_MARKER" not in resp.text
+    assert "LEAK_MARKER" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_proxy_backend_not_running_speaks_owned_copy(monkeypatch):
+    import json
+
+    _patch_proxy_world(monkeypatch, running=False)
+    resp = await _proxy_call()
+    assert resp.status == 502
+    assert json.loads(resp.text)["error"] == _NOT_RUNNING_COPY

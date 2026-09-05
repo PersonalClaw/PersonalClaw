@@ -25,9 +25,11 @@ describe('AddItemButton', () => {
     // gap-1/px-2 swap — and it lands on the same icon↔label gap QuietButton already uses.
     for (const t of ['inline-flex', 'items-center', 'gap-xs', 'rounded-md',
       'bg-surface-container', 'px-m', 'h-9', 'text-on-surface-var',
-      'text-[0.8125rem]', 'hover:bg-surface-high', 'transition-colors']) {
+      'hover:bg-surface-high', 'transition-colors']) {
       expect(have, `missing "${t}"`).toContain(t)
     }
+    // The type size rides the body-s role (the 0.8125rem tier), not a raw utility.
+    expect(getByRole('button').getAttribute('data-type')).toBe('body-s')
   })
 
   it('renders its children (the caller-owned leading glyph + label)', () => {

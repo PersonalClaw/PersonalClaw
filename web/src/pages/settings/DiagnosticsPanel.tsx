@@ -127,13 +127,14 @@ export function DiagnosticsPanel() {
                 return (
                   <button key={l} aria-label={`Backend log level: ${l}`} aria-pressed={on}
                     onClick={() => changeLevel(l)} disabled={levelBusy}
-                    className="rounded-pill px-m h-8 text-[0.8125rem] transition-colors disabled:opacity-60"
+                    data-type="body-s" className="rounded-pill px-m h-8 transition-colors disabled:opacity-60"
                     style={on ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
                     {l}
                   </button>
                 )
               })}
             </div>
+            {/* stays raw (ratchet): a role's inherited wght would flatten the <strong> level */}
             {level && <span className="text-on-surface-low text-[0.75rem]">Current: <strong className="text-on-surface-var">{level}</strong></span>}
           </div>
         </Surface>
@@ -159,7 +160,7 @@ export function DiagnosticsPanel() {
                 reader. This is the sighted half of that same fix.
                 `sm:` only: on phone the toolbar is tight and the two groups sit far apart under
                 their own headings, so the label buys less there than the width costs. */}
-            <span className="hidden shrink-0 text-on-surface-low text-[0.75rem] sm:inline">Show</span>
+            <span data-type="caption" className="hidden shrink-0 text-on-surface-low sm:inline">Show</span>
             {/* min-level floor for the VIEW (distinct from the backend level) */}
             <div className="inline-flex rounded-pill bg-surface-container p-1">
               {LEVELS.map((l) => {
@@ -167,7 +168,7 @@ export function DiagnosticsPanel() {
                 return (
                   <button key={l} aria-label={`Show ${l} and above`} aria-pressed={on}
                     onClick={() => setMinLevel(l)} title={`Show ${l} and above`}
-                    className="rounded-pill px-2.5 h-7 text-[0.75rem] transition-colors"
+                    data-type="caption" className="rounded-pill px-2.5 h-7 transition-colors"
                     style={on ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
                     {l}
                   </button>
@@ -209,11 +210,11 @@ export function DiagnosticsPanel() {
               the fold. A tab stop hands scrolling to the browser; role+label keep it
               announced as a named container. Same resolution as the kanban columns, the
               shell denylist and the inbox procedure. */}
-          <div ref={scrollRef} className="max-h-[60vh] min-h-[240px] overflow-y-auto p-3 font-mono text-[0.75rem] leading-relaxed"
+          <div ref={scrollRef} data-type="caption" className="max-h-[60vh] min-h-[240px] overflow-y-auto p-3 font-mono leading-relaxed"
             tabIndex={0} role="group" aria-label="Log output"
             style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
             {visible.length === 0 ? (
-              <div className="py-8 text-center text-on-surface-low text-[0.8125rem]" style={{ fontFamily: 'var(--font-sans)' }}>
+              <div data-type="body-s" className="py-8 text-center text-on-surface-low" style={{ fontFamily: 'var(--font-sans)' }}>
                 {paused ? 'Paused — resume to see live logs.' : entries.length === 0 ? 'Waiting for log entries…' : 'No lines match the current filter.'}
               </div>
             ) : (

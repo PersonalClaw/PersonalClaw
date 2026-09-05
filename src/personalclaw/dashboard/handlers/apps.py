@@ -1083,7 +1083,10 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
 
     rb = get_backend_supervisor().get(name)
     if rb is None:
-        return web.json_response({"error": f"app {name!r} backend not running"}, status=502)
+        return web.json_response(
+            {"error": "The app's backend is not running. Check the app's logs and try again."},
+            status=502,
+        )
 
     # The tail path (plus any query string) is exactly what the backend's aiohttp sees
     # as request.raw_path, so we sign THAT — the verifier reconstructs the identical
@@ -1141,11 +1144,31 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
                     await resp.write(chunk)
                 await resp.write_eof()
                 return resp
-    except aiohttp.ClientError as exc:
-        return web.json_response({"error": f"app backend error: {exc}"}, status=502)
+    except (aiohttp.ClientError, TimeoutError) as exc:
+        # The raw exception text ("Cannot connect to host 127.0.0.1:41733 ssl:default [...]")
+        # used to travel to the app UI verbatim — appSdk's fetch helper surfaces `error` in a
+        # toast (AUD-A12). One owned sentence per failure class on the wire; the raw text goes
+        # to the log, which is the caller's job per providers/failure_copy's contract.
+        # TimeoutError first: a total-timeout raises builtin TimeoutError (not a ClientError),
+        # while connect/read-phase ServerTimeoutError IS one — the isinstance catches both.
+        logger.warning("app %s proxy failed: %s", name, exc)
+        copy = (
+            "The app's backend timed out. Check the app's logs and try again."
+            if isinstance(exc, TimeoutError)
+            else "The app's backend could not be reached. Check the app's logs and try again."
+        )
+        return web.json_response({"error": copy}, status=502)
     except Exception as exc:  # noqa: BLE001
         logger.warning("app %s proxy failed: %s", name, exc)
-        return web.json_response({"error": "app backend proxy failed"}, status=502)
+        return web.json_response(
+            {
+                "error": (
+                    "The request to the app's backend failed unexpectedly. "
+                    "Check the app's logs and try again."
+                )
+            },
+            status=502,
+        )
 
 
 # ---------------------------------------------------------------------------

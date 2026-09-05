@@ -234,7 +234,7 @@ function EntitySection({ icon: Icon, label, hint, count, children }: {
   // primitive's `text-primary` tint; that is what adopting it looks like, and the diff shows it.
   return (
     <Section iconTone="muted" icon={Icon} hint={hint}
-      title={<>{label}<span className="ml-2 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums">{count}</span></>}>
+      title={<>{label}<span data-type="caption" className="ml-2 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low tabular-nums">{count}</span></>}>
       <div className="flex flex-col gap-2">{children}</div>
     </Section>
   )
@@ -263,7 +263,7 @@ function ModelEntitySection({ exts, availableByProvider, openProvider, openCfg, 
     <div className="flex flex-col gap-4">
       {(localCards.length > 0 || otherNative.length > 0) && (
         <div>
-          <div className="mb-2 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Native (bundled)</div>
+          <div data-type="caption" className="mb-2 text-on-surface-low uppercase tracking-wide">Native (bundled)</div>
           <div className="flex flex-col gap-2">
             {localCards.map((av) => {
               const ext = extByName.get(av.name)
@@ -272,7 +272,7 @@ function ModelEntitySection({ exts, availableByProvider, openProvider, openCfg, 
                 <div key={av.name}>
                   {ext
                     ? <ProviderCard ext={ext} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={onChanged} />
-                    : <div className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{av.displayName || av.name}</div>}
+                    : <div data-type="label-s" className="text-on-surface" style={fvs(600)}>{av.displayName || av.name}</div>}
                   {enabled && (
                     <div className={ext ? 'mt-2 pl-4' : 'mt-2'}>
                       <LocalModelManager provider={av.name} models={av.models ?? []} searchable={av.searchable} onChanged={onChanged} />
@@ -286,7 +286,7 @@ function ModelEntitySection({ exts, availableByProvider, openProvider, openCfg, 
         </div>
       )}
       <div>
-        <div className="mb-2 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Remote (multi-instance)</div>
+        <div data-type="caption" className="mb-2 text-on-surface-low uppercase tracking-wide">Remote (multi-instance)</div>
         <RemoteModelProviders />
       </div>
     </div>
@@ -306,7 +306,7 @@ function ActionGroups({ exts, openProvider, openCfg, onChanged }: { exts: Settin
     <div className="flex flex-col gap-4">
       {ordered.map((entity) => (
         <div key={entity}>
-          <div className="mb-2 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{ACTION_ENTITY_LABELS[entity] ?? 'Other actions'}</div>
+          <div data-type="caption" className="mb-2 text-on-surface-low uppercase tracking-wide">{ACTION_ENTITY_LABELS[entity] ?? 'Other actions'}</div>
           <div className="flex flex-col gap-2">
             {(byEntity.get(entity) ?? []).map((ext) => <ProviderCard key={ext.name} ext={ext} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={onChanged} />)}
           </div>

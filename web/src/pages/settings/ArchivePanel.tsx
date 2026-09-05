@@ -45,7 +45,7 @@ export function ArchivePanel() {
       {shown.length === 0 ? (
         <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-8 text-center">
           <Archive size={22} className="mx-auto mb-2 text-on-surface-low" />
-          <p className="text-on-surface-low text-[0.8125rem]">{q ? 'No archives match.' : 'No archived sessions yet. Closed sessions are archived here.'}</p>
+          <p data-type="body-s" className="text-on-surface-low">{q ? 'No archives match.' : 'No archived sessions yet. Closed sessions are archived here.'}</p>
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
@@ -76,20 +76,20 @@ function ArchiveRow({ a, open, onToggle }: { a: SessionArchive; open: boolean; o
       <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-3 text-left">
         <FileText size={16} className="shrink-0 text-on-surface-low" />
         <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-on-surface text-[0.8125rem]">{a.key}</div>
-          <div className="text-on-surface-low text-[0.75rem]">{fmtMtime(a.mtime)} · {fmtSize(a.size)}</div>
+          <div data-type="body-s" className="truncate font-mono text-on-surface">{a.key}</div>
+          <div data-type="caption" className="text-on-surface-low">{fmtMtime(a.mtime)} · {fmtSize(a.size)}</div>
         </div>
       </button>
       {open && (
         <div className="mt-2 border-t border-outline-variant/30 pt-2">
-          {loading ? <div className="py-2 text-on-surface-low text-[0.75rem]"><Loader2 size={12} className="inline animate-spin" /> Loading…</div>
+          {loading ? <div data-type="caption" className="py-2 text-on-surface-low"><Loader2 size={12} className="inline animate-spin" /> Loading…</div>
             /* The transcript overflows its own cap (measured: 394px of content in a 320px box), so it is
                a scroll region — `tabIndex={0}` + `role="group"` + a short `aria-label` is this repo's
                canonical trio for one. Without the name Chrome computes it from the subtree, which here
                is the whole JSONL transcript announced as the region's name. Static, not the session key:
                a name must stay a name, and a key is unbounded. */
             : <pre tabIndex={0} role="group" aria-label="Session transcript"
-                className="max-h-80 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface text-[0.75rem] whitespace-pre-wrap">{content}</pre>}
+                data-type="caption" className="max-h-80 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface whitespace-pre-wrap">{content}</pre>}
         </div>
       )}
     </div>

@@ -108,8 +108,8 @@ const SanitizedEmpty = memo(function SanitizedEmpty({ what }: { what: string }) 
     <div className="flex h-full items-center justify-center p-l">
       <div className="flex max-w-sm flex-col items-center gap-1.5 text-center text-on-surface-low">
         <ShieldAlert size={22} className="opacity-40" />
-        <p className="text-[0.8125rem]">Nothing to display.</p>
-        <p className="text-[0.75rem] opacity-80">The {what} had no renderable content after sanitizing — script, handlers, and unsafe markup are removed. Switch to Edit to see the raw source.</p>
+        <p data-type="body-s">Nothing to display.</p>
+        <p data-type="caption" className="opacity-80">The {what} had no renderable content after sanitizing — script, handlers, and unsafe markup are removed. Switch to Edit to see the raw source.</p>
       </div>
     </div>
   )
@@ -148,7 +148,7 @@ export const DocumentPreview = memo(function DocumentPreview({ content, ...rest 
 
 /** Plain text / JSON-as-text fallback — preformatted, wrapped. */
 export const TextPreview = memo(function TextPreview({ content }: PreviewProps) {
-  return <pre className="overflow-auto px-l py-m font-mono text-on-surface text-[0.8125rem] leading-relaxed whitespace-pre-wrap">{content}</pre>
+  return <pre data-type="body-s" className="overflow-auto px-l py-m font-mono text-on-surface leading-relaxed whitespace-pre-wrap">{content}</pre>
 })
 
 /** JSON — collapsible tree (file preview), graceful on invalid JSON. */
@@ -211,14 +211,15 @@ export const OfficeDocPreview = memo(function OfficeDocPreview({ path, content }
   const raw = content && /^(https?:|\/)/.test(content) ? content : path
   return (
     <div className="flex h-full flex-col gap-m overflow-auto p-m">
-      <p className="text-on-surface-low text-[0.75rem]">
+      <p data-type="caption" className="text-on-surface-low">
         Text preview — download for full formatting. The editable source is whatever this
         document was generated from.
       </p>
       {raw
         ? (
           <a href={raw} download
-            className="inline-flex w-fit items-center gap-1.5 rounded-md bg-surface-high px-3 h-8 text-on-surface text-[0.8125rem] transition-colors hover:bg-surface-container">
+            data-type="body-s"
+            className="inline-flex w-fit items-center gap-1.5 rounded-md bg-surface-high px-3 h-8 text-on-surface transition-colors hover:bg-surface-container">
             <Download size={13} /> Download
           </a>
         )
@@ -247,17 +248,17 @@ function OfficeExtractedText({ url }: { url: string | undefined }) {
   }, [url])
   if (failed) {
     return (
-      <p className="text-on-surface-low text-[0.8125rem]">
+      <p data-type="body-s" className="text-on-surface-low">
         Couldn't extract a text preview. The download above is unaffected.
       </p>
     )
   }
-  if (text === null) return <p className="text-on-surface-low text-[0.8125rem]">Reading…</p>
+  if (text === null) return <p data-type="body-s" className="text-on-surface-low">Reading…</p>
   if (!text.trim()) {
-    return <p className="text-on-surface-low text-[0.8125rem]">This document has no extractable text.</p>
+    return <p data-type="body-s" className="text-on-surface-low">This document has no extractable text.</p>
   }
   return (
-    <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-md bg-surface-container p-m text-on-surface-var text-[0.8125rem]">
+    <pre data-type="body-s" className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-md bg-surface-container p-m text-on-surface-var">
       {text}
     </pre>
   )
@@ -266,7 +267,7 @@ function OfficeExtractedText({ url }: { url: string | undefined }) {
 /** Shared "nothing to show" line for a binary preview with no resolvable source. */
 function PreviewUnavailable({ label }: { label: string }) {
   return (
-    <p className="text-on-surface-low text-[0.8125rem]">
+    <p data-type="body-s" className="text-on-surface-low">
       This {label} is no longer available.
     </p>
   )

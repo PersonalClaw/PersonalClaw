@@ -225,6 +225,25 @@ class SweepDecision:
         }
 
 
+def durable_worker_name(run: Any) -> str:
+    """The durable tmux session name for *run*'s worker — the ONE run→name derivation (§5.1).
+
+    Both halves of EI-6's mechanism call this: the spawn side names the session it opens and
+    the boot sweep RECOMPUTES the name to ask whether that worker outlived the gateway. The
+    recomputability is the whole trick — nothing is persisted at spawn time — which is exactly
+    why the derivation may exist once. Two inline copies of the ``or "default"`` fallbacks
+    would eventually disagree on one run, and that run's live worker would be invisible to the
+    sweep, which tombstones it.
+    """
+    from personalclaw import tmux_substrate
+
+    return tmux_substrate.durable_session_name(
+        str(getattr(run, "project_id", "") or "") or "default",
+        str(getattr(run, "id", "") or ""),
+        str(getattr(run, "workflow_name", "") or "") or "run",
+    )
+
+
 def sweep_decision(run: Any, substrate: Substrate) -> SweepDecision:
     """Decide one stale run's fate at boot. The substrate check comes FIRST.
 

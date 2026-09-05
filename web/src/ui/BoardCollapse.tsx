@@ -115,8 +115,8 @@ export function CollapsedBoardColumn({ icon: Icon, label, count, tone, onExpand,
       aria-label={onExpand ? `${label}, ${count} — expand column` : undefined}
       className={`flex min-h-0 flex-col items-center gap-1.5 rounded-xl px-1 py-2 transition-colors ${onExpand ? 'cursor-pointer hover:bg-surface-high focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary' : ''}`}>
       <Icon size={13} style={{ color: tone || 'var(--color-on-surface-low)' }} />
-      <span className="text-on-surface-low tabular-nums text-[0.75rem]">{count}</span>
-      <span className="min-h-0 flex-1 truncate text-on-surface-low text-[0.75rem]"
+      <span data-type="caption" className="text-on-surface-low tabular-nums">{count}</span>
+      <span data-type="caption" className="min-h-0 flex-1 truncate text-on-surface-low"
         style={{ writingMode: 'vertical-rl', ...fvs(550), color: tone || undefined }}>{label}</span>
     </div>
   )

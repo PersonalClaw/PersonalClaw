@@ -39,7 +39,7 @@ function ParamControl({ param, value, onChange }: {
           <input type="color" value={hex} onChange={(e) => onChange(e.target.value)}
             className="absolute inset-0 cursor-pointer opacity-0" aria-label={`${param.label} colour`} />
         </span>
-        <span className="font-mono text-on-surface-low text-[0.75rem]">{hex}</span>
+        <span data-type="caption" className="font-mono text-on-surface-low">{hex}</span>
       </div>
     )
   }
@@ -50,7 +50,7 @@ function ParamControl({ param, value, onChange }: {
         <Slider value={n} min={param.min} max={param.max} step={param.step}
           ariaLabel={param.label}
           onChange={(next) => onChange(`${next}${param.unit ?? ''}`)} />
-        <span className="w-14 shrink-0 text-right font-mono text-on-surface-low text-[0.75rem] tabular-nums">{value}</span>
+        <span data-type="caption" className="w-14 shrink-0 text-right font-mono text-on-surface-low tabular-nums">{value}</span>
       </div>
     )
   }
@@ -80,7 +80,7 @@ export function ArtifactIterationRail({ it, onClose, className = 'w-64 shrink-0 
       className={cx('flex flex-col gap-m border-outline-variant/50 bg-surface-container/60 p-m', className)}>
       <div className="flex items-center gap-s">
         <Sliders size={13} className="text-on-surface-low" />
-        <span className="flex-1 text-on-surface text-[0.75rem] uppercase tracking-wide" style={fvs(500)}>Iterate</span>
+        <span data-type="caption" className="flex-1 text-on-surface uppercase tracking-wide" style={fvs(500)}>Iterate</span>
         <SquareIconButton icon={X} label="Close the iteration rail" onClick={onClose} iconSize={13} />
       </div>
 
@@ -88,7 +88,7 @@ export function ArtifactIterationRail({ it, onClose, className = 'w-64 shrink-0 
         <div className="flex flex-col gap-m">
           {it.params.map((p) => (
             <div key={p.key} className="flex flex-col gap-1.5">
-              <span className="text-on-surface-low text-[0.75rem]">{p.label}</span>
+              <span data-type="caption" className="text-on-surface-low">{p.label}</span>
               <ParamControl param={p} value={it.values[p.key] ?? p.value}
                 onChange={(next) => it.setValue(p.key, next)} />
             </div>
@@ -101,13 +101,13 @@ export function ArtifactIterationRail({ it, onClose, className = 'w-64 shrink-0 
           )}
         </div>
       ) : (
-        <p className="text-on-surface-low text-[0.75rem]">
+        <p data-type="caption" className="text-on-surface-low">
           This artifact declares no tunable parameters. An agent adds them with an
           <code className="mx-1 font-mono">EDITMODE</code> block.
         </p>
       )}
       {it.droppedParams > 0 && (
-        <p className="text-on-surface-low text-[0.75rem]">
+        <p data-type="caption" className="text-on-surface-low">
           {it.droppedParams} declared parameter{it.droppedParams === 1 ? ' was' : 's were'} ignored —
           malformed, or past the {MAX_EDIT_PARAMS}-parameter limit.
         </p>
@@ -121,7 +121,7 @@ export function ArtifactIterationRail({ it, onClose, className = 'w-64 shrink-0 
         {it.annotations.map((a, i) => (
           <div key={`${a.selector}:${i}`} className="flex flex-col gap-1.5 rounded-md bg-surface-high p-s">
             <div className="flex items-start gap-s">
-              <code className="min-w-0 flex-1 truncate font-mono text-on-surface-var text-[0.6875rem]" title={a.selector}>{a.selector}</code>
+              <code data-type="caption" className="min-w-0 flex-1 truncate font-mono text-on-surface-var" title={a.selector}>{a.selector}</code>
               <SquareIconButton icon={X} label={`Unmark ${a.selector}`} onClick={() => it.removeAnnotation(i)} iconSize={11} />
             </div>
             <TextInput value={a.note} onChange={(v) => it.setNote(i, v)} size="sm"

@@ -38,7 +38,7 @@ export function InlineError({ children, onDismiss, icon = false, multiline = fal
    *  treatment is wrong at that scale, but the retry it offers is still the thing the user needs. */
   onRetry?: () => void
 }) {
-  const cls = cx('flex gap-2 rounded-lg px-3 py-2 text-[0.8125rem]', multiline ? 'items-start' : 'items-center', className)
+  const cls = cx('flex gap-2 rounded-lg px-3 py-2', multiline ? 'items-start' : 'items-center', className)
   const style = { background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)', color: 'var(--color-danger)' }
   const body = (
     <>
@@ -55,13 +55,13 @@ export function InlineError({ children, onDismiss, icon = false, multiline = fal
   )
   if (animated) {
     return (
-      <motion.div role="alert" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className={cls} style={style}>
+      <motion.div role="alert" data-type="body-s" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className={cls} style={style}>
         {body}
       </motion.div>
     )
   }
   return (
-    <div role="alert" className={cls} style={style}>
+    <div role="alert" data-type="body-s" className={cls} style={style}>
       {body}
     </div>
   )

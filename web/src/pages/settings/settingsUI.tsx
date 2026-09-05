@@ -53,7 +53,7 @@ export function PanelHeader({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="mb-l">
       <h1 className="text-on-surface" data-type="title-l">{title}</h1>
-      {hint && <p className="mt-1 text-on-surface-low text-[0.8125rem]">{hint}</p>}
+      {hint && <p data-type="body-s" className="mt-1 text-on-surface-low">{hint}</p>}
     </div>
   )
 }
@@ -90,11 +90,13 @@ export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, 
   // no `right`, no wrapper; no `icon`, no flex on the heading — and those two panels went back to
   // 0%. A primitive gaining an option must be inert for everyone who does not pass it.
   const heading = title && (
-    <h2 className={`mb-s text-on-surface text-[0.9375rem]${Icon ? ' flex items-center gap-s' : ''}`} style={fvs(600)}>
+    <h2 data-type="title-m" className={`mb-s text-on-surface${Icon ? ' flex items-center gap-s' : ''}`} style={fvs(600)}>
       {Icon && <Icon size={16} className={`shrink-0 ${iconTone === 'muted' ? 'text-on-surface-low' : 'text-primary'}`} />}
       {title}
     </h2>
   )
+  // The hint stays raw (ratchet): it is a ReactNode slot, and DesignPanel passes a <strong>
+  // that a role's inherited wght would flatten.
   const hintEl = hint && <p className="mb-m text-on-surface-low text-[0.8125rem]">{hint}</p>
   return (
     <section className="mb-2xl">
@@ -170,8 +172,8 @@ export function Row({ label, hint, children }: { label: string; hint?: string; c
   return (
     <FieldHintProvider value={hint ? hintId : undefined}>
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-l border-b border-outline-variant/30 py-3 last:border-0">
-        <div className="text-on-surface text-[0.8125rem]">{label}</div>
-        {hint && <div id={hintId} className="mt-0.5 text-on-surface-low text-[0.8125rem]">{hint}</div>}
+        <div data-type="body-s" className="text-on-surface">{label}</div>
+        {hint && <div id={hintId} data-type="body-s" className="mt-0.5 text-on-surface-low">{hint}</div>}
         {/* `flex items-center`, not a plain block: a block slot builds a LINE BOX around an
             inline-level control, so the control sits on the text baseline with the strut's
             descender space below it and ends up low of centre even inside a correctly centred
@@ -206,8 +208,8 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
     <FieldLabelProvider value={labelId}>
       <FieldHintProvider value={hint ? hintId : undefined}>
         <div className="border-b border-outline-variant/30 py-3 last:border-0">
-          <div id={labelId} className="text-on-surface text-[0.8125rem]">{label}</div>
-          {hint && <div id={hintId} className="mt-0.5 mb-2 text-on-surface-low text-[0.8125rem]">{hint}</div>}
+          <div id={labelId} data-type="body-s" className="text-on-surface">{label}</div>
+          {hint && <div id={hintId} data-type="body-s" className="mt-0.5 mb-2 text-on-surface-low">{hint}</div>}
           <div className="mt-2">{children}</div>
         </div>
       </FieldHintProvider>
@@ -241,7 +243,7 @@ export function SegPills<T extends string>({ value, onChange, options, ariaLabel
         return (
           <button key={o.key} type="button" onClick={() => onChange(o.key)}
             aria-label={`${ariaLabel}: ${o.label}`} aria-pressed={on}
-            className="relative rounded-pill px-3 h-7 text-[0.8125rem] transition-colors"
+            data-type="body-s" className="relative rounded-pill px-3 h-7 transition-colors"
             style={{ color: on ? 'var(--color-on-surface)' : 'var(--color-on-surface-low)' }}>
             {/* liquid active pill — slides between options via layoutId instead of
                 the highlight blink-jumping (the Segmented pattern, on a settings pill). */}
@@ -283,7 +285,7 @@ export function SavedToast({ show }: { show: boolean }) {
       <AnimatePresence>
         {show && (
           <motion.span aria-hidden="true" initial={{ opacity: 0, scale: 0.8, y: 2 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.8 }}
-            transition={physics.playful} className="text-[0.75rem]" style={{ color: 'var(--color-success)' }}>Saved ✓</motion.span>
+            transition={physics.playful} data-type="caption" style={{ color: 'var(--color-success)' }}>Saved ✓</motion.span>
         )}
       </AnimatePresence>
     </>
@@ -433,7 +435,7 @@ export function StrListField({ label, hint, cfg, field, patch, placeholder = 'Ad
     <Field label={label} hint={hint}>
       <div className="flex flex-wrap items-center gap-1.5">
         {list.map((v) => (
-          <span key={v} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface text-[0.75rem] font-mono">
+          <span key={v} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface font-mono">
             {v}
             <button type="button" onClick={() => commit(list.filter((x) => x !== v))} aria-label={`Remove ${v}`} className="text-on-surface-low hover:text-on-surface"><X size={12} /></button>
           </span>
@@ -444,7 +446,7 @@ export function StrListField({ label, hint, cfg, field, patch, placeholder = 'Ad
         <input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder={placeholder}
           aria-label={`Add to ${label.toLowerCase()}`}
           onKeyDown={(e) => { if (e.key === 'Enter' && adding.trim()) add() }}
-          className="h-8 w-40 rounded-md bg-surface-high px-2 text-[0.75rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          data-type="caption" className="h-8 w-40 rounded-md bg-surface-high px-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         {adding.trim() && (
           <SquareIconButton icon={Plus} iconSize={15} label={`Add ${label.toLowerCase()}`} onClick={add} />
         )}

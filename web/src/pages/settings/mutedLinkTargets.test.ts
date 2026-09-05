@@ -77,7 +77,7 @@ describe('the voice row converges on the link it already had', () => {
 
 describe('the design disclosure keeps its tone and takes the geometry', () => {
   it('grew by padding that is handed straight back', () => {
-    expect(codeOf(design)).toMatch(/className="flex items-center gap-s py-1 -my-1 text-on-surface-var text-\[0\.8125rem\]"/)
+    expect(codeOf(design)).toMatch(/data-type="body-s" className="flex items-center gap-s py-1 -my-1 text-on-surface-var"/)
   })
 
   it('did NOT become a coral TextLink', () => {

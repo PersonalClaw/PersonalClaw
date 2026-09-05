@@ -280,10 +280,11 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
             ? <CircleDot size={16} className="text-primary" />
             : <Loader2 size={16} className={stalled ? 'text-on-surface-low' : 'animate-spin text-primary'} />}
           <span data-type="title-l" className="text-on-surface">{headerLabel}</span>
-          <span className="text-on-surface-low text-[0.8125rem]">{cfg.copy.subtitle}</span>
+          <span data-type="body-s" className="text-on-surface-low">{cfg.copy.subtitle}</span>
         </div>}
         right={<button type="button" onClick={onBack}
-          className="rounded-pill px-3 h-9 text-on-surface-low text-[0.8125rem] transition-colors hover:bg-surface-high hover:text-on-surface">{cfg.copy.cancel}</button>}
+          data-type="body-s"
+          className="rounded-pill px-3 h-9 text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface">{cfg.copy.cancel}</button>}
       />
       {/* Fixed shell: the row fills the remaining height and NEITHER the page nor
           the grid scrolls — only each pane scrolls internally. The PLAN is the
@@ -294,7 +295,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
           {/* MAIN: the plan — compact steps rail + the current step's artifact gate */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
             <div className="rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3.5">
-              <div className="mb-2 text-on-surface-var text-[0.8125rem]" style={fvs(550)}>
+              <div data-type="label-s" className="mb-2 text-on-surface-var" style={fvs(550)}>
                 Planning steps {steps.length ? `(${approvedCount}/${steps.length} approved)` : ''}
               </div>
               {steps.length === 0 ? (
@@ -303,7 +304,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                 // an explicit Retry, instead of the indefinite "preparing…" spinner
                 // that used to mask a stuck planner silently re-spawning.
                 session?.design_error ? (
-                  <div className="flex flex-col items-start gap-1.5 text-[0.8125rem]">
+                  <div data-type="body-s" className="flex flex-col items-start gap-1.5">
                     <p className="inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
                       <AlertTriangle size={14} /> Planning didn't produce a plan
                     </p>
@@ -314,7 +315,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                     </button>
                   </div>
                 ) : stalled ? (
-                  <div className="flex flex-col items-start gap-1.5 text-[0.8125rem]">
+                  <div data-type="body-s" className="flex flex-col items-start gap-1.5">
                     <p className="text-on-surface-low">The planner has been quiet for a while — it may still be investigating, or it may have hit an error or an unavailable model. Retry only if it seems stuck.</p>
                     <button type="button" disabled={busy} onClick={retry}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/60 px-3 py-1.5 text-on-surface-var disabled:opacity-50">
@@ -322,19 +323,19 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                     </button>
                   </div>
                 ) : (
-                  <p className="text-on-surface-low text-[0.8125rem]">The planner is preparing the steps…</p>
+                  <p data-type="body-s" className="text-on-surface-low">The planner is preparing the steps…</p>
                 )
               ) : (
                 <motion.ol className="flex flex-col gap-1"
                   variants={{ animate: { transition: stagger() } }} initial="initial" animate="animate">
                   {steps.map((s, i) => (
-                    <motion.li key={s.id} variants={listItemEnter} className="flex items-center gap-2 text-[0.8125rem]">
+                    <motion.li key={s.id} variants={listItemEnter} data-type="body-s" className="flex items-center gap-2">
                       {s.status === 'approved' ? <Check size={14} className="shrink-0 text-ok" />
                         : s.status === 'awaiting_review' ? <CircleDot size={14} className="shrink-0 text-primary" />
                         : s.status === 'running' ? <Loader2 size={13} className="shrink-0 animate-spin text-primary" />
                         : <span className="ml-0.5 mr-0.5 h-2.5 w-2.5 shrink-0 rounded-full border border-outline-variant" />}
                       <span className={s.status === 'approved' ? 'text-on-surface-low line-through' : 'text-on-surface'}>{i + 1}. {s.title}</span>
-                      <span className="text-on-surface-low text-[0.75rem]">{s.kind.replace(/_/g, ' ')}</span>
+                      <span data-type="caption" className="text-on-surface-low">{s.kind.replace(/_/g, ' ')}</span>
                     </motion.li>
                   ))}
                 </motion.ol>
@@ -358,9 +359,9 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                 className="rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3.5">
                 <div className="mb-1.5 flex items-center gap-2">
                   <span data-type="title-s" className="text-on-surface">{current.title}</span>
-                  <span className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var text-[0.75rem]">{current.kind.replace(/_/g, ' ')}</span>
+                  <span data-type="caption" className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var">{current.kind.replace(/_/g, ' ')}</span>
                 </div>
-                {current.objective && <p className="mb-2 text-on-surface-low text-[0.8125rem]">{current.objective}</p>}
+                {current.objective && <p data-type="body-s" className="mb-2 text-on-surface-low">{current.objective}</p>}
                 {current.status === 'awaiting_review' ? (
                   <>
                     {editText !== null ? (
@@ -373,26 +374,29 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                       // — say so, so a blank box doesn't read as "the content is gone".
                       <div className="flex flex-col gap-2">
                         {!(typeof current.artifact?.markdown === 'string' && current.artifact.markdown.trim()) && (
-                          <p className="text-on-surface-low text-[0.75rem]">
+                          <p data-type="caption" className="text-on-surface-low">
                             This step's structured detail is preserved — this box only adds/edits a prose summary alongside it.
                           </p>
                         )}
                         <textarea autoFocus value={editText} onChange={(e) => setEditText(e.target.value)} rows={14}
                           onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!busy) void saveEdit(current) } }}
                           placeholder="Write the step's prose body in markdown…"
-                          className="w-full resize-y rounded-lg border border-outline-variant/60 bg-surface px-3 py-2 font-mono text-on-surface text-[0.75rem] outline-none focus:border-primary placeholder:text-on-surface-low" />
+                          data-type="caption"
+                          className="w-full resize-y rounded-lg border border-outline-variant/60 bg-surface px-3 py-2 font-mono text-on-surface outline-none focus:border-primary placeholder:text-on-surface-low" />
                         <div className="flex items-center gap-2">
                           <button type="button" disabled={busy} onClick={() => saveEdit(current)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-on-primary text-[0.8125rem] disabled:opacity-50">
+                            data-type="body-s"
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-on-primary disabled:opacity-50">
                             <Check size={14} /> Save edits
                           </button>
                           <button type="button" disabled={busy} onClick={() => setEditText(null)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/60 px-3 py-1.5 text-on-surface-var text-[0.8125rem]">
+                            data-type="body-s"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/60 px-3 py-1.5 text-on-surface-var">
                             <X size={14} /> Cancel
                           </button>
                         </div>
                         {err && (
-                          <p role="alert" className="text-[0.8125rem]" style={{ color: 'var(--color-danger)' }}>{err}</p>
+                          <p role="alert" data-type="body-s" style={{ color: 'var(--color-danger)' }}>{err}</p>
                         )}
                       </div>
                     ) : (
@@ -404,7 +408,8 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                             with a mouse (the WorkspacePicker "Use" fix, same class). */}
                         <button type="button" title="Edit this artifact"
                           onClick={() => setEditText(typeof current.artifact?.markdown === 'string' ? current.artifact.markdown as string : '')}
-                          className="absolute right-0 top-0 z-10 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[0.75rem] text-on-surface-low opacity-60 transition-opacity hover:bg-surface-high hover:text-on-surface hover:opacity-100 focus-visible:opacity-100 group-hover/art:opacity-100">
+                          data-type="caption"
+                          className="absolute right-0 top-0 z-10 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-on-surface-low opacity-60 transition-opacity hover:bg-surface-high hover:text-on-surface hover:opacity-100 focus-visible:opacity-100 group-hover/art:opacity-100">
                           <Pencil size={12} /> Edit
                         </button>
                         {cfg.renderArtifact(current.kind, current.artifact ?? {}, planningTarget((message) => { void cfg.api.comment(id, current.id, message) }))}
@@ -417,7 +422,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                       <motion.div className="mt-3 flex flex-col gap-1.5"
                         variants={{ animate: { transition: stagger() } }} initial="initial" animate="animate">
                         {current.comments.map((c, i) => (
-                          <motion.div key={i} variants={listItemEnter} className="flex items-start gap-1.5 rounded-lg border border-outline-variant/40 bg-surface-container/40 px-2.5 py-1.5 text-[0.75rem]">
+                          <motion.div key={i} variants={listItemEnter} data-type="caption" className="flex items-start gap-1.5 rounded-lg border border-outline-variant/40 bg-surface-container/40 px-2.5 py-1.5">
                             <MessageSquarePlus size={12} className="mt-0.5 shrink-0 text-on-surface-low" />
                             <span className="min-w-0 whitespace-pre-wrap text-on-surface-var">{c.text}</span>
                           </motion.div>
@@ -428,36 +433,39 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                       <textarea value={comment} onChange={(e) => setComment(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!busy && comment.trim()) void sendComment(current) } }}
                         placeholder="Comment to refine this step (⌘↵ to send), or approve as-is…" rows={2}
-                        className="w-full resize-none rounded-lg border border-outline-variant/60 bg-surface px-3 py-2 text-on-surface text-[0.8125rem] outline-none focus:border-primary" />
+                        data-type="body-s"
+                        className="w-full resize-none rounded-lg border border-outline-variant/60 bg-surface px-3 py-2 text-on-surface outline-none focus:border-primary" />
                       <div className="flex items-center gap-2">
                         <button type="button" disabled={busy} onClick={() => requestApprove(current)}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-on-primary text-[0.8125rem] disabled:opacity-50">
+                          data-type="body-s"
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-on-primary disabled:opacity-50">
                           <Check size={14} /> Approve & continue
                         </button>
                         <button type="button" onClick={() => sendComment(current)}
                           {...unavailableWhen(!comment.trim(), 'Write a comment first', { busy })}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/60 px-3 py-1.5 text-on-surface-var text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
+                          data-type="body-s"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/60 px-3 py-1.5 text-on-surface-var disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
                           <MessageSquarePlus size={14} /> Send comment & redraft
                         </button>
                       </div>
                       {err && (
-                        <p role="alert" className="text-[0.8125rem]" style={{ color: 'var(--color-danger)' }}>{err}</p>
+                        <p role="alert" data-type="body-s" style={{ color: 'var(--color-danger)' }}>{err}</p>
                       )}
                     </div>}
                   </>
                 ) : stalled ? (
-                  <div className="flex flex-col items-start gap-1.5 text-[0.8125rem]">
+                  <div data-type="body-s" className="flex flex-col items-start gap-1.5">
                     <p className="text-on-surface-low">This step has been quiet for a while — the planner may still be working, or it may have errored / the model is unavailable. Retry only if it seems stuck.</p>
                     <button type="button" disabled={busy} onClick={retry}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/60 px-3 py-1.5 text-on-surface-var disabled:opacity-50">
                       <RefreshCw size={13} /> Retry this step
                     </button>
                     {err && (
-                      <p role="alert" className="text-[0.8125rem]" style={{ color: 'var(--color-danger)' }}>{err}</p>
+                      <p role="alert" data-type="body-s" style={{ color: 'var(--color-danger)' }}>{err}</p>
                     )}
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]">
+                  <div data-type="body-s" className="flex items-center gap-2 text-on-surface-low">
                     <Loader2 size={14} className="animate-spin text-primary" />
                     {current.comments?.length ? 'Re-drafting with your feedback…' : 'Drafting this step…'}
                   </div>
@@ -470,7 +478,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
           {/* SIDE RAIL: the planner's live activity — secondary, full-height, scrolls
               on its own. On narrow screens it drops below the plan, height-bounded. */}
           <aside className="flex min-h-0 shrink-0 flex-col rounded-xl border border-outline-variant/50 bg-surface-container/60 lg:w-[340px] max-lg:max-h-[34vh]">
-            <div className="flex items-center gap-1.5 border-b border-outline-variant/40 px-3.5 py-2.5 text-on-surface-var text-[0.8125rem]" style={fvs(550)}>
+            <div data-type="label-s" className="flex items-center gap-1.5 border-b border-outline-variant/40 px-3.5 py-2.5 text-on-surface-var" style={fvs(550)}>
               <FileSearch size={14} className="text-primary" /> {cfg.copy.activityLabel}
             </div>
             {/* Tool calls — the concrete steps — followed INLINE by the live message
@@ -491,14 +499,14 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
                       className="flex min-w-0 items-start gap-1.5">
                       <Wrench size={12} className="mt-0.5 shrink-0 text-on-surface-low" />
                       <span className="min-w-0 flex-1 break-words text-on-surface-low">
-                        <b className="text-on-surface-var">{l.label}</b>{l.detail ? <> · <code className="break-all text-on-surface-low/90 text-[0.75rem]">{l.detail}</code></> : ''}
+                        <b className="text-on-surface-var">{l.label}</b>{l.detail ? <> · <code data-type="caption" className="break-all text-on-surface-low/90">{l.detail}</code></> : ''}
                       </span>
                     </motion.div>
                   ))}
                   {ticker && (
                     <div className="flex min-w-0 items-start gap-1.5">
                       <Loader2 size={12} className="mt-0.5 shrink-0 animate-spin text-primary" />
-                      <span key={ticker} className="text-shimmer min-w-0 flex-1 truncate text-[0.8125rem]" title={ticker}>{ticker}</span>
+                      <span key={ticker} data-type="body-s" className="text-shimmer min-w-0 flex-1 truncate" title={ticker}>{ticker}</span>
                     </div>
                   )}
                 </>
@@ -516,7 +524,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack }: {
 export function ArtifactSection({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5 text-on-surface-var text-[0.75rem]" style={fvs(600)}>{icon} {label}</div>
+      <div data-type="caption" className="flex items-center gap-1.5 text-on-surface-var" style={fvs(600)}>{icon} {label}</div>
       {children}
     </div>
   )

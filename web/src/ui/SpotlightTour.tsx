@@ -213,13 +213,13 @@ export function SpotlightTour({ steps, index, label, onIndex, onExit }: {
           </span>
           <div className="min-w-0 flex-1">
             <p id={titleId} data-type="title-s" className="text-on-surface">{step.title}</p>
-            <p id={bodyId} className="mt-1 text-on-surface-low text-[0.8125rem]">{step.body}</p>
+            <p id={bodyId} data-type="body-s" className="mt-1 text-on-surface-low">{step.body}</p>
           </div>
           <IconButton icon={X} label="End the tour" onClick={onExit} size={30} iconSize={15}
             className="shrink-0 text-on-surface-low" />
         </div>
         <div className="flex items-center justify-between gap-s">
-          <span className="text-on-surface-low text-[0.75rem] tabular-nums">
+          <span data-type="caption" className="text-on-surface-low tabular-nums">
             Step {index + 1} of {steps.length}
           </span>
           <div className="flex shrink-0 items-center gap-1.5">

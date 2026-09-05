@@ -11,7 +11,7 @@ import { InlineError } from '../../ui/InlineError'
 import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
-import { confirm } from '../../ui/dialog'
+import { confirmDelete } from '../../ui/dialog'
 import { WorkspacePicker } from './WorkspacePicker'
 import { api, sdlcStageLabel, type Loop, type LoopPhase } from '../../lib/api'
 import { loopStatusLabel, effectiveLoopStatus, loopStatusTone, ACTIVE_LOOP_STATUSES } from '../../lib/loopStatus'
@@ -254,7 +254,10 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
       : `"${p.name}" and its plan will be removed. `}${p.workspace_dir
       ? 'Your workspace folder and its files are left untouched.'
       : 'This project keeps its files in its own managed folder — deleting it also removes those files. Move anything you want to keep out first.'}`
-    if (!(await confirm({ title: `Delete project "${p.name}"?`, body, danger: true, confirmLabel: 'Delete' }))) return
+    // Through the shared delete ritual (AUD-A11): confirmDelete composes the identical
+    // title/danger/label, so hand-rolling confirm() here was drift, not a design choice.
+    // The custom body stays — it carries the file-destruction warning above.
+    if (!(await confirmDelete('project', p.name, { body }))) return
     try { await api.deleteULoop(p.id) }
     catch (e) { setActionErr(`Couldn't delete that project: ${(e as Error).message || 'unknown error'}`) }
     load()

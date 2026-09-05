@@ -366,7 +366,7 @@ export function EventTriggerSummary({ t, onDeleted }: { t: Trigger; onDeleted: (
       {rows.map(([label, value]) => (
         <div key={label}>
           <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</div>
-          <div className="text-on-surface text-[0.875rem] break-words">{value}</div>
+          <div data-type="body-m" className="text-on-surface break-words">{value}</div>
         </div>
       ))}
       <p className="text-on-surface-low text-[0.8125rem]">

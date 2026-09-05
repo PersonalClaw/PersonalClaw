@@ -6,7 +6,9 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle } from '../../ui/Toggle'
 import { SavedToast } from './settingsUI'
 
-export const inputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
+/** Metrics + chrome only — the type size rides `data-type="body-s"` on each consumer,
+ *  since a class string has no element to carry the attribute. */
+export const inputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
 
 /** Seed {key: default} from a schema's properties so a created instance submits
  *  the same defaults the form shows (else a field with a `default` renders but
@@ -38,7 +40,7 @@ export function ProviderConfigForm({ name }: { name: string }) {
     return () => { live = false }
   }, [name])
 
-  if (!schema) return <div className="py-2 text-on-surface-low text-[0.75rem]"><Loader2 size={12} className="inline animate-spin" /> Loading config…</div>
+  if (!schema) return <div data-type="caption" className="py-2 text-on-surface-low"><Loader2 size={12} className="inline animate-spin" /> Loading config…</div>
   const props = Object.entries(schema.properties ?? {})
   if (props.length === 0) return null
 
@@ -60,8 +62,8 @@ export function ProviderConfigForm({ name }: { name: string }) {
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={save} disabled={!dirty || saving} disabledReason={!dirty && !saving ? 'No changes to save' : undefined}>{saving ? 'Saving…' : 'Save'}</Button>
         <SavedToast show={saved} />
-        {dirty && !saved && <span className="text-on-surface-low text-[0.75rem]">Unsaved changes</span>}
-        {err && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+        {dirty && !saved && <span data-type="caption" className="text-on-surface-low">Unsaved changes</span>}
+        {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
       </div>
     </div>
   )
@@ -81,7 +83,7 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
   let control: React.ReactNode
   if (prop.enum && prop.enum.length) {
     control = (
-      <select id={id} value={String(value ?? prop.default ?? '')} onChange={(e) => onChange(e.target.value)} className={inputCls + ' cursor-pointer'}>
+      <select id={id} value={String(value ?? prop.default ?? '')} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={inputCls + ' cursor-pointer'}>
         {prop.enum.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
     )
@@ -92,14 +94,14 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
     control = (
       <input id={id} type="number" value={value == null ? '' : String(value)} min={prop.minimum} max={prop.maximum}
         onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
-        placeholder={meta.placeholder ?? (prop.default != null ? String(prop.default) : '')} className={inputCls} />
+        placeholder={meta.placeholder ?? (prop.default != null ? String(prop.default) : '')} data-type="body-s" className={inputCls} />
     )
   } else if (meta.sensitive) {
     control = (
       <div className="relative">
         <input id={id} type={showSecret ? 'text' : 'password'} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
           minLength={prop.minLength} maxLength={prop.maxLength}
-          placeholder={meta.placeholder ?? '••••••••'} className={inputCls + ' pr-10'} />
+          placeholder={meta.placeholder ?? '••••••••'} data-type="body-s" className={inputCls + ' pr-10'} />
         <span className="absolute right-1.5 top-1/2 -translate-y-1/2">
           <SquareIconButton label={showSecret ? 'Hide' : 'Show'} onClick={() => setShowSecret((s) => !s)}>
             {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -111,7 +113,7 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
     control = (
       <input id={id} type="text" value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
         minLength={prop.minLength} maxLength={prop.maxLength} pattern={prop.pattern}
-        placeholder={meta.placeholder ?? (prop.default != null ? String(prop.default) : '')} className={inputCls} />
+        placeholder={meta.placeholder ?? (prop.default != null ? String(prop.default) : '')} data-type="body-s" className={inputCls} />
     )
   }
 
@@ -121,8 +123,8 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
     return (
       <div className="flex items-center justify-between gap-l">
         <div className="min-w-0">
-          <div className="text-on-surface text-[0.8125rem]">{label}</div>
-          {meta.help && <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{meta.help}</div>}
+          <div data-type="body-s" className="text-on-surface">{label}</div>
+          {meta.help && <div data-type="caption" className="mt-0.5 text-on-surface-low">{meta.help}</div>}
         </div>
         {control}
       </div>
@@ -130,8 +132,8 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
   }
   return (
     <div>
-      <label htmlFor={id} className="mb-1 block text-on-surface text-[0.8125rem]">{label}</label>
-      {meta.help && <div className="mb-1.5 text-on-surface-low text-[0.75rem]">{meta.help}</div>}
+      <label htmlFor={id} data-type="body-s" className="mb-1 block text-on-surface">{label}</label>
+      {meta.help && <div data-type="caption" className="mb-1.5 text-on-surface-low">{meta.help}</div>}
       {control}
     </div>
   )

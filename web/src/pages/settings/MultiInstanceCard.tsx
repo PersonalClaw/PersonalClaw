@@ -50,23 +50,23 @@ export function MultiInstanceCard({ ext, onChanged }: { ext: SettingsProvider; o
         <span className="size-2 shrink-0 rounded-full" style={{ background: ext.enabled ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{ext.displayName || ext.name}</span>
-            {ext.version && <span className="text-on-surface-low text-[0.75rem]">v{ext.version}</span>}
-            <span className="rounded-pill px-1.5 py-0.5 text-[0.75rem]" style={accentChip}>multi-instance</span>
-            {ext.enabled && <span className="text-on-surface-low text-[0.75rem]">{count} {count === 1 ? 'instance' : 'instances'}</span>}
+            <span data-type="title-m" className="truncate text-on-surface" style={fvs(500)}>{ext.displayName || ext.name}</span>
+            {ext.version && <span data-type="caption" className="text-on-surface-low">v{ext.version}</span>}
+            <span data-type="caption" className="rounded-pill px-1.5 py-0.5" style={accentChip}>multi-instance</span>
+            {ext.enabled && <span data-type="caption" className="text-on-surface-low">{count} {count === 1 ? 'instance' : 'instances'}</span>}
           </div>
-          {ext.description && <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{ext.description}</p>}
+          {ext.description && <p data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{ext.description}</p>}
         </div>
         <Toggle on={ext.enabled} onChange={toggle} label={`Toggle ${ext.name}`} />
       </div>
-      {ext.error && <div className="mt-2 flex items-center gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-danger)' }}><AlertTriangle size={12} /> {ext.error}</div>}
+      {ext.error && <div data-type="caption" className="mt-2 flex items-center gap-1.5" style={{ color: 'var(--color-danger)' }}><AlertTriangle size={12} /> {ext.error}</div>}
 
       {ext.enabled && (
         <div className="mt-3 flex flex-col gap-2 border-t border-outline-variant/30 pt-3">
           {instances === undefined ? (
-            <div className="py-1 text-on-surface-low text-[0.75rem]"><Loader2 size={12} className="inline animate-spin" /> Loading instances…</div>
+            <div data-type="caption" className="py-1 text-on-surface-low"><Loader2 size={12} className="inline animate-spin" /> Loading instances…</div>
           ) : instances.length === 0 && !adding ? (
-            <p className="text-on-surface-low text-[0.8125rem]">No instances yet. Add one to start using this provider.</p>
+            <p data-type="body-s" className="text-on-surface-low">No instances yet. Add one to start using this provider.</p>
           ) : (
             instances.map((inst) => <InstanceRow key={inst.id} ext={ext} inst={inst} schema={schema} onChanged={reloadInstances} />)
           )}
@@ -122,7 +122,7 @@ function InstanceRow({ ext, inst, schema, onChanged }: {
     <div className="rounded-md bg-surface-high px-3 py-2" style={{ opacity: busy ? 0.5 : 1 }}>
       <div className="flex items-center gap-2">
         <Plug size={14} className="shrink-0 text-on-surface-low" />
-        <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{inst.display_name || inst.id}</span>
+        <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{inst.display_name || inst.id}</span>
         <div className="flex shrink-0 items-center gap-0.5">
           {/* `loading`, not `disabled` + a hand-rolled glyph swap — the primitive owns the spinner. */}
           <SquareIconButton label="Test" onClick={runTest} loading={testing} iconSize={13}><Wifi size={13} /></SquareIconButton>
@@ -135,7 +135,7 @@ function InstanceRow({ ext, inst, schema, onChanged }: {
         </div>
       </div>
       {test && (
-        <div className="mt-1.5 flex items-center gap-1.5 text-[0.75rem]" style={{ color: test.ok ? 'var(--color-success)' : 'var(--color-danger)' }}>
+        <div data-type="caption" className="mt-1.5 flex items-center gap-1.5" style={{ color: test.ok ? 'var(--color-success)' : 'var(--color-danger)' }}>
           {test.ok ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />} {test.message}
         </div>
       )}
@@ -186,7 +186,7 @@ function AddInstanceForm({ ext, schema, onDone }: {
         <Button size="sm" onClick={submit} disabled={saving || !name.trim()}
           disabledReason={!name.trim() ? 'Enter a name first' : undefined}>{saving ? 'Creating…' : 'Create'}</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
-        {error && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{error}</span>}
+        {error && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{error}</span>}
       </div>
     </div>
   )

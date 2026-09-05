@@ -128,3 +128,59 @@ async def api_computer_use_dispatch(request: web.Request) -> web.Response:
             return _unavailable(exc.error)
         return _refused(exc.error)
     return web.json_response({"result": result})
+
+
+async def api_computer_use_live_view(request: web.Request) -> web.Response:
+    """GET /api/computer-use/live-view — the human-facing live view + overlay data (`DCU-7`).
+
+    A READ of :func:`personalclaw.computer_use.render.live_view` and nothing else: the
+    keystone posture, the mirrored snapshots the model already walked, the cursor-motion
+    trail, and the recent SEL attempt rows. It runs no screen and can run none — there is
+    nothing to decide about a mirror — and it is deliberately NOT in ``internal_paths``:
+    unlike the dispatch above, this is a browser surface for a watching human, and the one
+    fact that matters is that it shares no verb with the route that can act. GET here, POST
+    there, and the census in ``tests/test_computer_use_live_view.py`` pins that split.
+
+    OWNER-ONLY, for the same reason ``GET /api/security/audit`` is (`handlers/security_audit.py`):
+    an app-scoped token reading what the agent is doing on the operator's desktop — window
+    titles, element geometry, the attempt feed — is a cross-tenant read, and the
+    app-permission middleware alone is an allowlist an app could simply declare. The refusal
+    is SEL-logged like that surface's; successful reads are not (this repo audits mutations).
+    """
+    from personalclaw.computer_use import render
+    from personalclaw.sel import sel
+
+    app_name = request.get("app", "")
+    if app_name:
+        try:
+            sel().log_api_access(
+                caller=f"app:{app_name}",
+                operation=f"{request.method} {request.path}",
+                outcome="denied",
+                source="app_permissions",
+                resources=request.path,
+                error="the desktop live view is owner-only",
+            )
+        except Exception:
+            pass
+        return json_error(
+            "computer_use_view_owner_only",
+            message="the desktop live view is readable by the owner only, not by an app",
+            status=403,
+        )
+    # The body is spelled out literally rather than passed through as `render.live_view()`:
+    # the wire-envelope census (`test_wire_error_envelope_census`) can only classify a payload
+    # it can read at the call site, and this is the one place the route's wire shape should be
+    # visible anyway. `test_computer_use_live_view.py` pins that these keys and the renderer's
+    # cannot drift apart.
+    view = render.live_view()
+    return web.json_response(
+        {
+            "enabled": view["enabled"],
+            "allowed_apps": view["allowed_apps"],
+            "ttl_secs": view["ttl_secs"],
+            "snapshots": view["snapshots"],
+            "trail": view["trail"],
+            "feed": view["feed"],
+        }
+    )

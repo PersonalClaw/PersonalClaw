@@ -36,4 +36,15 @@ describe('ProjectKnowledgeList', () => {
     // The project's OWN item carries no source label — it was not shared in from anywhere.
     expect(screen.queryByTitle('Shared from Mine')).toBeNull()
   })
+
+  it('a policy value the wire invents renders humanized, never as "unmapped:" jargon', () => {
+    // AUD-NZ11: wire/UI drift used to print `unmapped: org_wide` at the user. The closed
+    // Record still catches KNOWN-value drift at typecheck; a runtime surprise now renders a
+    // humanized word (the console warning is where the developer-facing signal moved).
+    render(<ProjectKnowledgeList items={[
+      item({ id: 'drifted', title: 'From the future', sharing_policy: 'org_wide' as SharingPolicy }),
+    ]} />)
+    expect(screen.getByText('Org wide')).toBeTruthy()
+    expect(screen.queryByText(/unmapped/)).toBeNull()
+  })
 })

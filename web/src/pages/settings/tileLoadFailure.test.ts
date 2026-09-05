@@ -115,7 +115,7 @@ describe('a hub tile whose data can fail says so instead of shimmering', () => {
     // This is the quiet line the Inbox tile already shipped, three more times.
     const lines = [...code.matchAll(/Couldn&rsquo;t load[^<]*<\/div>/g)]
     expect(lines.length, 'four tiles, four lines').toBeGreaterThanOrEqual(4)
-    const styled = [...code.matchAll(/className="text-on-surface-low text-\[0\.75rem\]">Couldn&rsquo;t load/g)]
+    const styled = [...code.matchAll(/data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load/g)]
     expect(styled.length, 'every one of them uses the same muted type as the original').toBeGreaterThanOrEqual(4)
   })
 })

@@ -90,7 +90,7 @@ export function DesignPanel() {
 
       {/* ── 1. COLOR SCHEME ── */}
       {/* `Section`, not a hand-rolled header: 23 of the 26 settings panels render their section
-          titles through it at `text-[0.9375rem]`, and this panel (with Diagnostics) was the pair
+          titles through it at `title-m` (15px), and this panel (with Diagnostics) was the pair
           still at `text-[1.0625rem]` — a 17px title beside a sibling page's 15px. Converging cost
           `Section` an `icon` and a `right` slot, which is what those two panels had opted out for. */}
       <Section
@@ -108,7 +108,7 @@ export function DesignPanel() {
               return (
                 <button key={m.key} onClick={() => setPreference(m.key)} aria-label={`Mode: ${m.label}`} aria-pressed={on}
                   title={m.key === 'auto' ? "Follow the system's light/dark setting" : undefined}
-                  className="inline-flex items-center gap-1.5 rounded-pill px-m h-8 text-[0.8125rem] transition-colors"
+                  data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-8 transition-colors"
                   style={on ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
                   <m.icon size={14} /> {m.label}
                 </button>
@@ -131,7 +131,7 @@ export function DesignPanel() {
               onDelete={isCustom(s.id) ? () => removeScheme(s) : undefined} />
           ))}
         </div>
-        {themesLoading && <p className="mt-s text-on-surface-low text-[0.75rem]">Loading saved themes…</p>}
+        {themesLoading && <p data-type="caption" className="mt-s text-on-surface-low">Loading saved themes…</p>}
 
         {/* fork → custom (colors only) */}
         <div className="mt-l">
@@ -139,12 +139,12 @@ export function DesignPanel() {
               navigation, so it must NOT become a coral `TextLink` — coral means "primary action / alive"
               in this system, and a quiet expander is neither. Measured 257.05×**19.50**; `py-1 -my-1`
               adds 8px of target and hands all 8 back, so nothing reflows. */}
-          <button onClick={() => setEditingColors((v) => !v)} aria-expanded={editingColors} className="flex items-center gap-s py-1 -my-1 text-on-surface-var text-[0.8125rem]">
+          <button onClick={() => setEditingColors((v) => !v)} aria-expanded={editingColors} data-type="body-s" className="flex items-center gap-s py-1 -my-1 text-on-surface-var">
             <ChevronDown size={16} className={`transition-transform ${editingColors ? 'rotate-180' : ''}`} />
             <Sliders size={15} /> Edit colors &amp; save a custom theme
           </button>
           {activeScheme === 'custom:unsaved' && !editingColors && (
-            <p className="mt-1.5 text-on-surface-low text-[0.8125rem]">You've edited colors — open this to save them as a shareable theme.</p>
+            <p data-type="body-s" className="mt-1.5 text-on-surface-low">You've edited colors — open this to save them as a shareable theme.</p>
           )}
           {editingColors && <ColorEditor onSave={saveCustomScheme} onUpdate={updateCustomScheme} activeTheme={activeSaved} />}
         </div>
@@ -227,7 +227,7 @@ function SchemeTile({ scheme, dark, active, custom, onPick, onDelete }: { scheme
           {emoji && <span aria-hidden>{emoji}</span>}
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-on-surface text-[0.8125rem] truncate" style={fvs(500)}>{scheme.label}</span>
+          <span data-type="label-s" className="text-on-surface truncate" style={fvs(500)}>{scheme.label}</span>
           {active && <Check size={13} className="text-primary shrink-0" />}
           {custom && <Eyebrow as="span" className="ml-auto rounded-pill bg-surface-high px-1.5 shrink-0">saved</Eyebrow>}
         </div>
@@ -253,7 +253,7 @@ function Preview() {
             // 4.47:1 — under AA (axe color-contrast, serious, #ff6b5b on #472d2a). Taking
             // the real treatment fixes the accuracy and the contrast in one move, with no
             // new colour invented.
-            <div key={it} className="flex items-center gap-1.5 rounded-md px-2 h-7 text-[0.75rem]" style={i === 0 ? { background: 'var(--color-surface-low)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
+            <div key={it} data-type="caption" className="flex items-center gap-1.5 rounded-md px-2 h-7" style={i === 0 ? { background: 'var(--color-surface-low)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
               <span className="size-1.5 rounded-pill" style={{ background: i === 0 ? 'var(--color-primary)' : 'var(--color-outline)' }} />{it}
             </div>
           ))}
@@ -265,8 +265,8 @@ function Preview() {
             <div className="h-2 w-32 rounded-pill" style={{ background: 'var(--color-on-surface-low)' }} />
           </div>
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center rounded-pill px-m h-8 text-[0.75rem]" style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>Primary action</span>
-            <span className="inline-flex items-center rounded-pill px-m h-8 text-[0.75rem]" style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>Secondary</span>
+            <span data-type="caption" className="inline-flex items-center rounded-pill px-m h-8" style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>Primary action</span>
+            <span data-type="caption" className="inline-flex items-center rounded-pill px-m h-8" style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>Secondary</span>
             <span className="size-3 rounded-pill" style={{ background: 'var(--color-ok)' }} />
             <span className="size-3 rounded-pill" style={{ background: 'var(--color-warn)' }} />
             <span className="size-3 rounded-pill" style={{ background: 'var(--color-danger)' }} />
@@ -329,6 +329,7 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
       {activeTheme && (
         <Surface tone="container" radius="lg" className="px-l py-m">
           <div className="flex items-center justify-between gap-s">
+            {/* stays raw (ratchet): a role's inherited wght would flatten the <strong> theme name */}
             <p className="text-on-surface-var text-[0.8125rem]">
               Editing the saved theme <strong className="text-on-surface">{activeTheme.emoji && !activeTheme.emoji.startsWith('icon:') ? `${activeTheme.emoji} ` : ''}{activeTheme.label}</strong> — save your changes back to it.
             </p>

@@ -213,8 +213,8 @@ export function MenuRow({
     >
       {icon && <span className="shrink-0 text-on-surface-var transition-transform duration-150 group-hover:translate-x-0.5">{icon}</span>}
       <span className="flex-1 min-w-0">
-        <span className="block text-[0.8125rem] truncate" style={fvs(selected ? 500 : 400)}>{label}</span>
-        {hint && <span className="block text-[0.75rem] text-on-surface-low truncate">{hint}</span>}
+        <span data-type="label-s" className="block truncate" style={fvs(selected ? 500 : 400)}>{label}</span>
+        {hint && <span data-type="caption" className="block text-on-surface-low truncate">{hint}</span>}
       </span>
       {selected && <span className="size-1.5 shrink-0 rounded-pill bg-primary" />}
     </motion.button>

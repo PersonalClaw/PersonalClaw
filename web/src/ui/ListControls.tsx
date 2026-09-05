@@ -75,21 +75,31 @@ export function ListControls({
  *  🪤 `active` MUST BE THE SURFACE'S OWN DEFINITION OF NARROWED, compared against its own defaults.
  *  A flag like `filter !== 'all'` is true at rest on a surface whose default filter is not `all`,
  *  and the region then announces "39 items" to a user who has done nothing.
+ *
+ *  🪤 THE ANNOUNCED NOUN MUST BE THE VISIBLE NOUN. A surface whose on-screen counter says
+ *  "17 matches" while this region says "17 lines" gives a screen-reader user different vocabulary
+ *  than a sighted user discussing the same screen. When the visible noun breaks the defaults —
+ *  "matches" composes "No matching matches", "1 matche" — override `empty`/`singular` rather than
+ *  announcing a different word.
  */
-export function ResultAnnouncement({ count, noun, active }: {
+export function ResultAnnouncement({ count, noun, active, singular, empty }: {
   /** How many rows the current search/filter leaves. */
   count: number
   /** Plural noun for the rows ("tasks", "artifacts", "matches") — singularised at count 1. */
   noun: string
   /** True only while the user has actually narrowed the list. */
   active: boolean
+  /** Count-1 form, when stripping the trailing "s" is wrong ("matches" → "match"). */
+  singular?: string
+  /** Zero-count sentence, when `No matching ${noun}` reads badly ("No matching matches"). */
+  empty?: string
 }) {
   return (
     <div role="status" aria-live="polite" className="sr-only">
       {active
         ? (count === 0
-            ? `No matching ${noun}`
-            : `${count} ${count === 1 ? noun.replace(/s$/, '') : noun}`)
+            ? empty ?? `No matching ${noun}`
+            : `${count} ${count === 1 ? singular ?? noun.replace(/s$/, '') : noun}`)
         : ''}
     </div>
   )

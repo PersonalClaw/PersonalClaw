@@ -135,7 +135,7 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
   const endDrag = () => { drag.current = null }
 
   if (!graph) return <div ref={boxRef} className="grid place-items-center text-on-surface-low" style={{ height: boxH }}><Loader2 size={20} className="animate-spin" /></div>
-  if (graph.nodes.length === 0) return <div ref={boxRef} className="grid place-items-center px-6 text-center text-on-surface-low text-[0.8125rem]" style={{ height: boxH }}>{emptyHint ?? `No memory graph yet — ${plural} and their links appear here as memory grows.`}</div>
+  if (graph.nodes.length === 0) return <div ref={boxRef} data-type="body-s" className="grid place-items-center px-6 text-center text-on-surface-low" style={{ height: boxH }}>{emptyHint ?? `No memory graph yet — ${plural} and their links appear here as memory grows.`}</div>
 
   const degree = new Map<string, number>()
   for (const e of graph.edges) { degree.set(e.from, (degree.get(e.from) ?? 0) + 1); degree.set(e.to, (degree.get(e.to) ?? 0) + 1) }
@@ -187,7 +187,7 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
       {groups.length > 0 && (
         <div className="absolute left-3 top-3 flex max-w-[45%] flex-wrap gap-1.5 rounded-lg bg-surface-high/80 p-1.5 backdrop-blur">
           {groups.slice(0, 8).map((g) => (
-            <span key={g} className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]">
+            <span key={g} data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low">
               <span className="size-2 rounded-pill" style={{ background: groupColor(g) }} />{g}
             </span>
           ))}
@@ -195,7 +195,7 @@ export function MemoryGraph({ data, focusRef, hopDepth = 1, onSelectRef, boxHeig
       )}
 
       <GraphZoomControls onZoomIn={() => zoomBy(1.25)} onZoomOut={() => zoomBy(1 / 1.25)} onReset={reset} />
-      <div className="absolute bottom-3 left-3 rounded-pill bg-surface-high/80 px-2 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums backdrop-blur">
+      <div data-type="caption" className="absolute bottom-3 left-3 rounded-pill bg-surface-high/80 px-2 py-0.5 text-on-surface-low tabular-nums backdrop-blur">
         {graph.nodes.length} {graph.nodes.length === 1 ? nodeNoun : plural} · {graph.edges.length} link{graph.edges.length === 1 ? '' : 's'} · {Math.round(view.scale * 100)}%
       </div>
     </div>

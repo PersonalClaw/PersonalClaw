@@ -41,10 +41,18 @@ const variants: Record<Variant, string> = {
 const sizes: Record<Size, string> = {
   // xs: dense in-panel chrome (cockpit banners, error retries, inline strips) —
   // the tier whose absence made pages hand-roll <button>s.
-  xs: 'h-7 px-m text-[0.8125rem]',
-  sm: 'h-8 px-l text-[0.8125rem]',
-  md: 'h-10 px-xl text-[0.9375rem]',
-  lg: 'h-12 px-2xl text-[1.0625rem]',
+  xs: 'h-7 px-m',
+  sm: 'h-8 px-l',
+  md: 'h-10 px-xl',
+  lg: 'h-12 px-2xl',
+}
+// The label's type role per size — the label-* tier (wght 470, which the inline
+// fvs(470) below already pinned; the role now carries size + line-height too).
+const sizeRole: Record<Size, string> = {
+  xs: 'label-s',
+  sm: 'label-s',
+  md: 'label-m',
+  lg: 'label-l',
 }
 
 /** The one shared button. Redesign-v2: bold, physical, expressiveness-scaled.
@@ -165,6 +173,7 @@ export function Button({
       onPointerLeave={onLeave}
       whileTap={off ? undefined : { scale: pressScale, transition: physics.snappy }}
       whileHover={off ? undefined : { scale: hoverScale, transition: physics.snappy }}
+      data-type={sizeRole[size]}
       style={fvs(470)}
       className={cx(
         // whitespace-nowrap + shrink-0: a labelled pill must never wrap its text

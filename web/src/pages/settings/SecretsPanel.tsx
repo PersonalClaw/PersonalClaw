@@ -111,7 +111,7 @@ export function SecretsPanel() {
             >
               {[...byProject.entries()].map(([pid, rows]) => (
                 <div key={pid} className="mb-l last:mb-0">
-                  <div className="mb-1 text-on-surface-low text-[0.75rem]">{pid}</div>
+                  <div data-type="caption" className="mb-1 text-on-surface-low">{pid}</div>
                   <RowGroup>
                     {rows.map((s, i) => <SecretRow key={s.name} s={s} index={i} onChanged={refresh} />)}
                   </RowGroup>
@@ -178,7 +178,7 @@ function SecretRow({ s, index, onChanged }: {
           <div className="flex items-center gap-2">
             {hostRow ? <Globe size={14} className="text-on-surface-low" aria-hidden />
               : <KeyRound size={14} className="text-primary" aria-hidden />}
-            <span className="truncate font-mono text-on-surface text-[0.8125rem]">{s.name}</span>
+            <span data-type="body-s" className="truncate font-mono text-on-surface">{s.name}</span>
             {/* `present` is the whole payload of a vault row, so it is stated rather than
                 implied by the row existing — the user is reading a presence list, not a
                 value list whose values happen to be missing. */}
@@ -188,7 +188,7 @@ function SecretRow({ s, index, onChanged }: {
             {s.scope === 'project' && <StatusPill label="project" tone="primary" />}
           </div>
           {s.consumers.length > 0 ? (
-            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-on-surface-low">
               <span>Used by</span>
               {s.consumers.map((c) => (
                 <span key={`${c.kind}:${c.id}`} className="inline-flex items-center gap-1">
@@ -200,11 +200,11 @@ function SecretRow({ s, index, onChanged }: {
           ) : (
             // Said explicitly rather than left blank. A blank "used by" line is ambiguous
             // between "nothing references this" (safe to delete) and "we didn't check".
-            <div className="mt-1 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="mt-1 text-on-surface-low">
               Not referenced by any workflow or automation.
             </div>
           )}
-          {err && <div role="alert" className="mt-1 text-danger text-[0.75rem]">{err}</div>}
+          {err && <div role="alert" data-type="caption" className="mt-1 text-danger">{err}</div>}
         </div>
         {/* `Button`'s own soft-off carrier rather than a spread of `unavailableWhen`: this
             component does not forward arbitrary DOM props, and `disabledReason` is the
@@ -265,7 +265,7 @@ function AddSecret({ onSaved }: { onSaved: () => void }) {
         </Row>
         <Row label="">
           <div className="flex items-center gap-l">
-            {note && <span role="status" className="text-success text-[0.75rem]">{note}</span>}
+            {note && <span role="status" data-type="caption" className="text-success">{note}</span>}
             <Button
               size="sm"
               onClick={save}
@@ -278,7 +278,7 @@ function AddSecret({ onSaved }: { onSaved: () => void }) {
           </div>
         </Row>
       </RowGroup>
-      {err && <div role="alert" className="mt-2 text-danger text-[0.8125rem]">{err}</div>}
+      {err && <div role="alert" data-type="body-s" className="mt-2 text-danger">{err}</div>}
     </Section>
   )
 }

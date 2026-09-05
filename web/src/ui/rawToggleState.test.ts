@@ -54,7 +54,7 @@ const DISCLOSURES: [string, string, string][] = [
   ['loops/CockpitPromptBar.tsx', 'open', 'aria-expanded={open} className="flex w-full items-center gap-s text-left min-w-0"'],
   ['loops/LoopCockpitPage.tsx', 'promptOpen', 'setPromptOpen(!promptOpen)} aria-expanded={promptOpen}'],
   ['loops/LoopCockpitPage.tsx', 'open', 'aria-expanded={open} className="w-full flex items-center gap-s px-m py-2 text-left"'],
-  ['settings/AuditPanel.tsx', 'open', 'aria-expanded={open} className="flex w-full items-center gap-2 text-left'],
+  ['settings/AuditPanel.tsx', 'open', 'aria-expanded={open} data-type="caption" className="flex w-full items-center gap-2 text-left'],
   ['settings/MemoryPanel.tsx', 'open', 'aria-expanded={open} className="w-full text-left"'],
   ['settings/ModelsPanel.tsx', 'open', 'aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left'],
   ['settings/SearchPanel.tsx', 'open', 'aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left'],

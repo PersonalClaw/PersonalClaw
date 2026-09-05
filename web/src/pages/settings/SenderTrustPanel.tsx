@@ -149,7 +149,7 @@ function ProviderSection({ p, revoking, onRevoke }: {
     >
       <div className="space-y-3">
         {p.pairing_active && (
-          <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="flex items-center gap-2 text-on-surface-low">
             <KeyRound size={16} className="shrink-0" aria-hidden="true" />
             <span>
               A pairing code is outstanding for {label}
@@ -181,14 +181,14 @@ function ProviderSection({ p, revoking, onRevoke }: {
                   <div className="flex min-w-0 items-start gap-3">
                     <UserCheck size={18} className="mt-0.5 shrink-0 text-on-surface-low" aria-hidden="true" />
                     <div className="min-w-0">
-                      <div className="truncate text-on-surface text-[0.8125rem]">{who}</div>
+                      <div data-type="body-s" className="truncate text-on-surface">{who}</div>
                       {/* The id is shown even when a display name exists: on most channels the
                           name is chosen by the sender, so the id is the part that identifies
                           who you are actually revoking. */}
                       {s.name ? (
-                        <div className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{s.sender_id}</div>
+                        <div data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{s.sender_id}</div>
                       ) : null}
-                      <div className="mt-0.5 text-on-surface-low/80 text-[0.75rem]">
+                      <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
                         {viaLabel(s.via)} · added {addedLabel(s.added_at)}
                       </div>
                     </div>

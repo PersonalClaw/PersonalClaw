@@ -154,4 +154,21 @@ describe('a user-initiated write that fails tells the user', () => {
     expect(around, 'the optimistic set stays').toContain('setTitle(v)')
     expect(around, 'and no revert was added').not.toMatch(/setTitle\(title\)|setTitle\(prev/)
   })
+
+  it('a failed rewind reports as an error, not as something the assistant said', () => {
+    // AUD-A9, and a singleton here because the FIXED ratchet's window cannot reach it: the two
+    // rewind api calls share one try/catch whose catch sits past the scan window. The catch used
+    // to append `Rewind failed: ${String(e)}` as an ASSISTANT TURN — "ApiError: <raw message>"
+    // in the assistant's voice, permanently in the transcript. A failure is unrequested bad news,
+    // not a reply; only the success preview/result is. The catch now routes through
+    // reportActionFailure, whose message is the backend's sentence with no exception-class prefix.
+    const chat = strip(F('pages/ChatPage.tsx'))
+    const fn = chat.slice(chat.indexOf('async function rewindToTurn('), chat.indexOf('async function transcribe('))
+    expect(fn, 'the failure names its subject through the shared reporter')
+      .toMatch(/reportActionFailure\(`rewind to turn/)
+    expect(fn, 'the transcript no longer carries the failure').not.toContain('Rewind failed')
+    expect(fn, 'no catch appends an assistant turn').not.toMatch(/catch[\s\S]{0,200}assistantTurn\(/)
+    // The success notices stay assistant turns on purpose — the preview/result IS the reply.
+    expect(fn.split('assistantTurn(').length - 1, 'both success notices remain').toBe(2)
+  })
 })

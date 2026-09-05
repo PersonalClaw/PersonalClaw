@@ -269,7 +269,7 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
       style={!expanded ? computeWidgetLayout(naturalW, hostW) : undefined}>
       {expanded && (
         <div className="flex items-center gap-2 border-b border-outline-variant/40 bg-surface-container px-3 py-1.5">
-          <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{title}</span>
+          <span data-type="label-s" className="truncate text-on-surface" style={fvs(500)}>{title}</span>
           {!streaming && <div className="ml-auto flex items-center gap-0.5">{actionCluster}</div>}
         </div>
       )}

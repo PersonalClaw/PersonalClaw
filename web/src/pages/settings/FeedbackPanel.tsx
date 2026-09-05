@@ -42,7 +42,7 @@ export function FeedbackPanel() {
       <Section title="Judgment sources"
         hint={data ? `Rolling ${data.window_days}-day window · accuracy shown after ${data.min_n} verdicts. History restarts when you rebind a prompt (a new prompt is a new source).` : undefined}>
         {rows.length === 0 ? (
-          <div className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-3 text-on-surface-low">
             No feedback yet — 👍/👎 appear on inbox classifications, drafted replies, digests, and loop findings. Verdicts collect here per judgment source.
           </div>
         ) : (
@@ -78,8 +78,8 @@ function ProducerRow({ row, busy, act }: {
     //    siblings that cannot shrink. Fix is the same — let the row wrap, and give the block a floor.
     <div className="flex flex-wrap items-center gap-3 rounded-lg bg-surface-container px-3 py-2.5">
       <div className="min-w-40 flex-1">
-        <div className="truncate font-mono text-on-surface text-[0.8125rem]">{row.producer_id}</div>
-        <div className="mt-0.5 flex items-center gap-2 text-on-surface-low text-[0.75rem]">
+        <div data-type="body-s" className="truncate font-mono text-on-surface">{row.producer_id}</div>
+        <div data-type="caption" className="mt-0.5 flex items-center gap-2 text-on-surface-low">
           <span>{row.producer_kind}</span>
           {/* 🔴 A 10px GLYPH WAS THE ONLY THING SAYING WHICH COUNT IS WHICH. Measured on the live
               row: the accessible text was "task-inbox-classify prompt 3 6 33% suppressed" — two bare
@@ -98,9 +98,9 @@ function ProducerRow({ row, busy, act }: {
         </div>
       </div>
       {row.collecting ? (
-        <span className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.75rem]">collecting · {row.n} of few</span>
+        <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low">collecting · {row.n} of few</span>
       ) : (
-        <span className="shrink-0 rounded-pill px-2 py-0.5 text-[0.75rem] tabular-nums"
+        <span data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5 tabular-nums"
           style={(row.accuracy ?? 0) >= 0.7
             ? { background: 'color-mix(in srgb, var(--color-ok) 14%, transparent)', color: 'var(--color-ok)' }
             : (row.accuracy ?? 0) >= 0.4
@@ -110,7 +110,7 @@ function ProducerRow({ row, busy, act }: {
         </span>
       )}
       {row.suppressed && (
-        <span className="shrink-0 rounded-pill px-2 py-0.5 text-[0.75rem]"
+        <span data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5"
           style={{ background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)', color: 'var(--color-danger)' }}
           title="Stopped surfacing — accuracy fell below the retire threshold.">suppressed</span>
       )}
@@ -119,7 +119,7 @@ function ProducerRow({ row, busy, act }: {
           "suppressed" pill above, titled "Stopped surfacing", for exactly these producers: five of
           the six kinds. Saying "retire proposed" is both true and the actionable half. */}
       {row.proposal_only && (
-        <span className="shrink-0 rounded-pill px-2 py-0.5 text-[0.75rem]"
+        <span data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5"
           style={{ background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)', color: 'var(--color-warning)' }}
           title="Below the retire threshold. This kind of source has no surfacing gate, so it still runs — you get a retire proposal to act on.">retire proposed</span>
       )}

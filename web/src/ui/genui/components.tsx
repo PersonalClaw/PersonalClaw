@@ -66,11 +66,11 @@ function StatTile({ args }: GenUiRenderProps) {
   const deltaClass = delta === undefined ? '' : delta >= 0 ? 'text-primary' : 'text-danger'
   return (
     <Surface tone="high" radius="lg" className="px-l py-m">
-      <div className="text-on-surface-low text-[0.8125rem]">{s(args.label)}</div>
+      <div data-type="body-s" className="text-on-surface-low">{s(args.label)}</div>
       <div className="mt-0.5 flex items-baseline gap-s">
         <span className="text-on-surface text-[1.375rem]" style={fvs(600)}>{s(args.value)}</span>
         {delta !== undefined && (
-          <span className={cx('text-[0.8125rem]', deltaClass)} style={fvs(500)}>
+          <span data-type="label-s" className={deltaClass} style={fvs(500)}>
             {delta >= 0 ? '+' : ''}{delta}%
           </span>
         )}
@@ -85,7 +85,7 @@ function Table({ args }: GenUiRenderProps) {
   const rows = arr(args.rows).map((r) => arr(r))
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-[0.8125rem]">
+      <table data-type="body-s" className="w-full border-collapse">
         {columns.length > 0 && (
           <thead>
             <tr>
@@ -115,7 +115,7 @@ function List({ args }: GenUiRenderProps) {
   return (
     <ul className="my-1 list-disc space-y-1 pl-7 marker:text-on-surface-low">
       {items.map((it, i) => (
-        <li key={i} className="text-on-surface text-[0.9375rem] leading-relaxed">{it}</li>
+        <li key={i} data-type="body-m" className="text-on-surface leading-relaxed">{it}</li>
       ))}
     </ul>
   )
@@ -137,7 +137,7 @@ function Bar({ args }: GenUiRenderProps) {
           <div className="flex w-full flex-1 items-end">
             <div className="w-full rounded-t bg-primary" style={{ height: `${Math.max(2, (n / max) * 100)}%` }} title={String(n)} />
           </div>
-          {labels[i] != null && <span className="truncate text-on-surface-low text-[0.75rem]">{labels[i]}</span>}
+          {labels[i] != null && <span data-type="caption" className="truncate text-on-surface-low">{labels[i]}</span>}
         </div>
       ))}
     </div>
@@ -149,7 +149,7 @@ function Bar({ args }: GenUiRenderProps) {
 /** A tinted callout band. `tone: info|ok|warn|danger|neutral`, `text`. */
 function Callout({ args }: GenUiRenderProps) {
   return (
-    <div className={cx('rounded-lg px-3 py-2 text-[0.8125rem]', toneClass(args.tone))}>
+    <div data-type="body-s" className={cx('rounded-lg px-3 py-2', toneClass(args.tone))}>
       {s(args.text)}
     </div>
   )
@@ -158,7 +158,7 @@ function Callout({ args }: GenUiRenderProps) {
 /** A small status chip. `text`, optional `tone`. */
 function Badge({ args }: GenUiRenderProps) {
   return (
-    <span className={cx('inline-flex w-fit items-center rounded-pill px-2.5 py-0.5 text-[0.75rem]', toneClass(args.tone))} style={fvs(500)}>
+    <span data-type="caption" className={cx('inline-flex w-fit items-center rounded-pill px-2.5 py-0.5', toneClass(args.tone))} style={fvs(500)}>
       {s(args.text)}
     </span>
   )
@@ -170,7 +170,7 @@ function ProgressBar({ args }: GenUiRenderProps) {
   const pct = Math.min(100, Math.max(0, raw))
   return (
     <div className="flex flex-col gap-1">
-      {args.label != null && <span className="text-on-surface-low text-[0.75rem]">{s(args.label)}</span>}
+      {args.label != null && <span data-type="caption" className="text-on-surface-low">{s(args.label)}</span>}
       <div className="h-2 w-full overflow-hidden rounded-pill bg-surface-high">
         <div className="h-full rounded-pill bg-primary" style={{ width: `${pct}%` }} />
       </div>
@@ -239,17 +239,18 @@ function GenUiForm({ args }: GenUiRenderProps) {
   return (
     <form className="flex flex-col gap-s" onSubmit={onSubmit}>
       {args.title != null && (
-        <span className="text-on-surface text-[0.8125rem]" style={fvs(500)}>{s(args.title)}</span>
+        <span data-type="label-s" className="text-on-surface" style={fvs(500)}>{s(args.title)}</span>
       )}
       {fields.map((f) => (
         <label key={f} className="flex flex-col gap-1">
-          <span className="text-on-surface-low text-[0.75rem]">{fieldLabel(f)}</span>
+          <span data-type="caption" className="text-on-surface-low">{fieldLabel(f)}</span>
           <input
             type="text"
             name={f}
             value={values[f] ?? ''}
             onChange={(e) => setValues((prev) => ({ ...prev, [f]: e.target.value }))}
-            className="rounded-lg border border-outline-variant bg-surface px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus-visible:border-primary"
+            data-type="body-s"
+            className="rounded-lg border border-outline-variant bg-surface px-2.5 py-1.5 text-on-surface outline-none focus-visible:border-primary"
           />
         </label>
       ))}

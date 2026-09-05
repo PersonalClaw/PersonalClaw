@@ -160,7 +160,7 @@ function Stat({ label, value, sub }: { label: string; value: number; sub?: strin
   return (
     <div className="rounded-lg bg-surface-container px-3 py-2.5">
       <div className="text-on-surface text-[1.25rem] tabular-nums" style={fvs(600)}>{value}</div>
-      <div className="text-on-surface-low text-[0.75rem]">{label}{sub ? ` · ${sub}` : ''}</div>
+      <div data-type="caption" className="text-on-surface-low">{label}{sub ? ` · ${sub}` : ''}</div>
     </div>
   )
 }
@@ -454,7 +454,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
               const meta = k === 'all' ? null : STUDIO_KIND_META[k]
               return (
                 <button key={k} type="button" aria-pressed={on} onClick={() => setKindFilter(k)}
-                  className="inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] transition-colors"
+                  data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-6 transition-colors"
                   style={on ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
                   {meta && <meta.icon size={11} />}{k === 'all' ? 'All' : meta!.label}<span className="tabular-nums">{counts[k]}</span>
                 </button>
@@ -492,8 +492,8 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
                 style={on ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' } : undefined}>
                 <Icon size={13} className="mt-0.5 shrink-0" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-[0.75rem]" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface)' }}>{it.title}</span>
-                  <span className="block truncate text-on-surface-low text-[0.75rem]">{it.preview}</span>
+                  <span data-type="caption" className="block truncate font-mono" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface)' }}>{it.title}</span>
+                  <span data-type="caption" className="block truncate text-on-surface-low">{it.preview}</span>
                 </span>
               </button>
             )
@@ -552,7 +552,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
                 <Select value={edgeFilters.provenance} onChange={(v) => setEdgeFilters((f) => ({ ...f, provenance: v }))}
                   options={provenanceOptions} ariaLabel="Filter links by provenance" />
               </div>
-              <label className="flex shrink-0 items-center gap-1.5 rounded-pill bg-surface-high/90 px-2.5 py-1 text-on-surface-low text-[0.75rem] backdrop-blur">
+              <label data-type="caption" className="flex shrink-0 items-center gap-1.5 rounded-pill bg-surface-high/90 px-2.5 py-1 text-on-surface-low backdrop-blur">
                 min conf
                 <input type="range" min={0} max={1} step={0.05} value={edgeFilters.minConfidence}
                   onChange={(e) => setEdgeFilters((f) => ({ ...f, minConfidence: Number(e.target.value) }))}
@@ -563,7 +563,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
           )}
         </div>
         {focusRef && (
-          <div className="absolute right-3 top-3 flex items-center gap-2 rounded-pill bg-surface-high/90 px-2 py-1 text-[0.75rem] backdrop-blur">
+          <div data-type="caption" className="absolute right-3 top-3 flex items-center gap-2 rounded-pill bg-surface-high/90 px-2 py-1 backdrop-blur">
             <span className="text-on-surface-low">Focus · hops</span>
             {[1, 2, 3].map((d) => (
               <button key={d} type="button" onClick={() => setHopDepth(d)}
@@ -581,7 +581,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
           <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
             <div className="flex items-center justify-between">
               <span data-type="label-s" className="text-on-surface">{ADD_MODE_TITLE[addMode]}</span>
-              <button type="button" onClick={() => setAddMode(null)} className="text-on-surface-low text-[0.75rem] hover:text-on-surface">Cancel</button>
+              <button type="button" onClick={() => setAddMode(null)} data-type="caption" className="text-on-surface-low hover:text-on-surface">Cancel</button>
             </div>
             {addMode === 'fact' && <AddSemanticForm onDone={(created) => { setAddMode(null); if (created) reloadAll() }} />}
             {addMode === 'lesson' && <AddLessonForm onDone={(created) => { setAddMode(null); if (created) reloadAll() }} />}
@@ -595,7 +595,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
             <div className="text-on-surface-low">
               <Eye size={22} className="mx-auto mb-2 opacity-50" />
               <p data-type="body-s">Select a memory to inspect it.</p>
-              <p className="mt-1 text-[0.75rem]">Facts &amp; lessons light up their neighbourhood in the graph.</p>
+              <p data-type="caption" className="mt-1">Facts &amp; lessons light up their neighbourhood in the graph.</p>
             </div>
           </div>
         )}
@@ -643,7 +643,7 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged }: {
           <div data-type="body-s" className="flex flex-col gap-3">
             <div>
               <Eyebrow className="mb-1">Value</Eyebrow>
-              <pre className="whitespace-pre-wrap rounded-lg bg-surface-high px-3 py-2 text-on-surface text-[0.75rem]">{readValue(item.fact.value_json)}</pre>
+              <pre data-type="caption" className="whitespace-pre-wrap rounded-lg bg-surface-high px-3 py-2 text-on-surface">{readValue(item.fact.value_json)}</pre>
             </div>
             <StudioMeta pairs={[
               ['Scope', (item.fact.scope || 'global') + (item.fact.scope_ref ? ` · ${item.fact.scope_ref}` : '')],
@@ -744,15 +744,15 @@ function RecordLinks({ item }: { item: StudioItem }) {
   )
   if (error) {
     return (
-      <p className="mt-3 border-t border-outline-variant/30 pt-3 text-on-surface-low text-[0.75rem]">
+      <p data-type="caption" className="mt-3 border-t border-outline-variant/30 pt-3 text-on-surface-low">
         Couldn't load this memory's links.
       </p>
     )
   }
-  if (!data) return <p className="mt-3 text-on-surface-low text-[0.75rem]">Loading links…</p>
+  if (!data) return <p data-type="caption" className="mt-3 text-on-surface-low">Loading links…</p>
   if (data.links.length === 0) {
     return (
-      <p className="mt-3 border-t border-outline-variant/30 pt-3 text-on-surface-low text-[0.75rem]">
+      <p data-type="caption" className="mt-3 border-t border-outline-variant/30 pt-3 text-on-surface-low">
         No entity links — nothing in this memory named a person, project or tool the graph knows.
       </p>
     )
@@ -761,7 +761,7 @@ function RecordLinks({ item }: { item: StudioItem }) {
     <div className="mt-3 flex flex-col gap-1.5 border-t border-outline-variant/30 pt-3">
       <Eyebrow>Entity links &amp; evidence</Eyebrow>
       {data.links.map((l) => (
-        <div key={l.id} className="rounded-lg bg-surface-high px-2.5 py-1.5 text-[0.75rem]">
+        <div key={l.id} data-type="caption" className="rounded-lg bg-surface-high px-2.5 py-1.5">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-on-surface">{l.entity_name || l.to_entity || '—'}</span>
             <Eyebrow as="span" className="rounded-pill bg-surface-container px-1.5 py-0.5">{l.link_type.replace(/_/g, ' ')}</Eyebrow>
@@ -777,7 +777,7 @@ function RecordLinks({ item }: { item: StudioItem }) {
 
 function StudioMeta({ pairs }: { pairs: [string, string][] }) {
   return (
-    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[0.75rem]">
+    <dl data-type="caption" className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
       {pairs.map(([k, v]) => (
         <div key={k} className="contents">
           <dt className="text-on-surface-low">{k}</dt>
@@ -816,13 +816,13 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
   return (
     <div className="flex flex-col gap-2">
       <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={16} spellCheck={false}
-        className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-[0.75rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
+        data-type="caption" className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
         style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }} />
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={save} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Save size={14} /> {busy ? 'Saving…' : 'Save'}</Button>
-        {dirty && <span className="text-on-surface-low text-[0.75rem]">Unsaved changes</span>}
-        {saved && <span className="text-ok text-[0.75rem]">Saved ✓</span>}
-        {err && <span role="alert" className="text-danger text-[0.75rem]">{err}</span>}
+        {dirty && <span data-type="caption" className="text-on-surface-low">Unsaved changes</span>}
+        {saved && <span data-type="caption" className="text-ok">Saved ✓</span>}
+        {err && <span role="alert" data-type="caption" className="text-danger">{err}</span>}
       </div>
     </div>
   )
@@ -848,13 +848,13 @@ function AddLessonForm({ onDone }: { onDone: (created: boolean) => void }) {
       <textarea value={rule} onChange={(e) => setRule(e.target.value)} rows={4} autoFocus
         aria-label="Lesson rule"
         placeholder="e.g. Always run the test suite before saying a fix works."
-        className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        data-type="body-s" className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={submit} disabled={!rule.trim() || saving}
           disabledReason={!rule.trim() ? 'Write the lesson first' : undefined}>{saving ? 'Saving…' : 'Save lesson'}</Button>
-        {err && <span role="alert" className="text-danger text-[0.75rem]">{err}</span>}
+        {err && <span role="alert" data-type="caption" className="text-danger">{err}</span>}
       </div>
-      <p className="text-on-surface-low text-[0.75rem]">Injected into future prompts. Prune anything wrong from the list.</p>
+      <p data-type="caption" className="text-on-surface-low">Injected into future prompts. Prune anything wrong from the list.</p>
     </div>
   )
 }
@@ -882,15 +882,15 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
           need DISTINCT names — "key" and "value" are meaningless apart from each other. */}
       <input value={key} onChange={(e) => setKey(e.target.value)} aria-label="Fact key"
         placeholder="key (e.g. pref.theme, user.timezone)"
-        className="mb-2 h-9 w-full rounded-md bg-surface-high px-3 font-mono text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        data-type="body-s" className="mb-2 h-9 w-full rounded-md bg-surface-high px-3 font-mono text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       <textarea value={value} onChange={(e) => setValue(e.target.value)} aria-label="Fact value"
         placeholder="value" rows={2}
-        className="mb-2 w-full rounded-md bg-surface-high px-3 py-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+        data-type="body-s" className="mb-2 w-full rounded-md bg-surface-high px-3 py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={submit} disabled={saving || !key || !value.trim()}
           disabledReason={!key ? 'Choose a key first' : !value.trim() ? 'Enter a value first' : undefined}>{saving ? 'Saving…' : 'Save'}</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
-        {err && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+        {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
       </div>
     </div>
   )
@@ -954,15 +954,15 @@ function AuditRow({ ev, onUndone }: { ev: MemoryEvent; onUndone: () => void }) {
     try { await api.undoMemoryEvent(ev.id); onUndone() } finally { setBusy(false) }
   }
   return (
-    <div className="flex items-center gap-2 rounded-md bg-surface-container px-3 py-1.5 text-[0.75rem]">
-      <span className="w-16 shrink-0 font-mono text-[0.75rem]" style={{ color: EVENT_TONE[ev.event_type] ?? 'var(--color-on-surface-low)' }}>{ev.event_type}</span>
-      <span className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{ev.memory_type}</span>
-      <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.75rem]">{ev.memory_key || '—'}</span>
-      {ev.undone_at && <span className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">undone</span>}
-      {ev.created_at && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{fmtDate(ev.created_at)}</span>}
+    <div data-type="caption" className="flex items-center gap-2 rounded-md bg-surface-container px-3 py-1.5">
+      <span data-type="caption" className="w-16 shrink-0 font-mono" style={{ color: EVENT_TONE[ev.event_type] ?? 'var(--color-on-surface-low)' }}>{ev.event_type}</span>
+      <span data-type="caption" className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low">{ev.memory_type}</span>
+      <span data-type="caption" className="min-w-0 flex-1 truncate font-mono text-on-surface">{ev.memory_key || '—'}</span>
+      {ev.undone_at && <span data-type="caption" className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low">undone</span>}
+      {ev.created_at && <span data-type="caption" className="shrink-0 text-on-surface-low">{fmtDate(ev.created_at)}</span>}
       {canUndo && (
         <button onClick={undo} disabled={busy} title="Undo this memory change"
-          className="shrink-0 rounded px-1.5 py-0.5 text-[0.75rem] text-on-surface-low hover:text-primary disabled:opacity-50">
+          data-type="caption" className="shrink-0 rounded px-1.5 py-0.5 text-on-surface-low hover:text-primary disabled:opacity-50">
           {busy ? '…' : 'undo'}
         </button>
       )}
@@ -1005,9 +1005,9 @@ function InspectBlock({ title, body }: { title: string; body: string }) {
     <div>
       <Eyebrow className="mb-1">{title}</Eyebrow>
       {body ? (
-        <pre className="overflow-x-auto rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.75rem] whitespace-pre-wrap">{body}</pre>
+        <pre data-type="caption" className="overflow-x-auto rounded-lg bg-surface-container px-3 py-2 text-on-surface whitespace-pre-wrap">{body}</pre>
       ) : (
-        <p className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low text-[0.75rem] italic">Nothing would be injected.</p>
+        <p data-type="caption" className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low italic">Nothing would be injected.</p>
       )}
     </div>
   )
@@ -1040,8 +1040,8 @@ function RecallTab() {
           disabledReason={!q.trim() ? 'Type a question first' : undefined}>{busy ? <Loader2 size={15} className="animate-spin" /> : 'Recall'}</Button>
       </div>
       {result !== null && (result
-        ? <pre className="overflow-x-auto rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.75rem] whitespace-pre-wrap">{result}</pre>
-        : <p className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low text-[0.75rem] italic">Nothing recalled for that query.</p>)}
+        ? <pre data-type="caption" className="overflow-x-auto rounded-lg bg-surface-container px-3 py-2 text-on-surface whitespace-pre-wrap">{result}</pre>
+        : <p data-type="caption" className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low italic">Nothing recalled for that query.</p>)}
     </div>
   )
 }
@@ -1080,8 +1080,8 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={promote} disabled={promoting}>{promoting ? <><Loader2 size={14} className="animate-spin" /> Dreaming…</> : <><Moon size={14} /> Dream now</>}</Button>
           {dreamResult
-            ? <span className="text-ok text-[0.75rem]">{dreamResult}</span>
-            : <span className="text-on-surface-low text-[0.75rem]">Consolidate episodic memories → semantic facts</span>}
+            ? <span data-type="caption" className="text-ok">{dreamResult}</span>
+            : <span data-type="caption" className="text-on-surface-low">Consolidate episodic memories → semantic facts</span>}
         </div>
       </Section>
 
@@ -1091,7 +1091,7 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
           <Button size="sm" variant="ghost" onClick={reload}><RefreshCw size={14} /> Re-scan</Button>
         </div>
         {autoFixed.length > 0 && (
-          <p className="mt-2 text-ok text-[0.75rem]">Auto-purged: {autoFixed.map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ')}.</p>
+          <p data-type="caption" className="mt-2 text-ok">Auto-purged: {autoFixed.map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ')}.</p>
         )}
         <div className="mt-3 flex flex-col gap-1.5">
           {!lint || lint.flags.length === 0 ? (
@@ -1101,7 +1101,7 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
               <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn" />
               <div className="min-w-0">
                 <div data-type="body-s" className="text-on-surface"><Eyebrow as="span" className="rounded bg-surface-high px-1.5 py-0.5">{f.check.replace(/_/g, ' ')}</Eyebrow> <span className="font-mono">{f.key}</span></div>
-                <div className="text-on-surface-low text-[0.75rem]">{f.detail}</div>
+                <div data-type="caption" className="text-on-surface-low">{f.detail}</div>
               </div>
             </div>
           ))}
@@ -1119,7 +1119,7 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
             {Object.entries(obs.stats).map(([k, v]) => (
               <div key={k} className="rounded-lg bg-surface-container px-3 py-2">
                 <div className="text-on-surface text-[1.0625rem] tabular-nums" style={fvs(600)}>{v}</div>
-                <div className="text-on-surface-low text-[0.75rem]">{k.replace(/_/g, ' ')}</div>
+                <div data-type="caption" className="text-on-surface-low">{k.replace(/_/g, ' ')}</div>
               </div>
             ))}
           </div>
@@ -1127,12 +1127,14 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
             <div className="mt-3">
               <Eyebrow className="mb-1">Write rejections</Eyebrow>
               <div className="flex flex-wrap gap-1.5">
+                {/* spans stay raw (ratchet): a role's inherited wght would flatten the <strong> count */}
                 {Object.entries(obs.rejections).map(([reason, n]) => (
                   <span key={reason} className="rounded-pill bg-surface-high px-2.5 py-1 text-[0.75rem] text-on-surface-var">{reason.replace(/_/g, ' ')}: <strong>{n}</strong></span>
                 ))}
               </div>
             </div>
           )}
+          {/* stays raw (ratchet): a role's inherited wght would flatten the <strong> figures */}
           <div className="mt-3 text-on-surface-low text-[0.75rem]">
             Injected-context budget: <strong className="text-on-surface-var">{obs.context_preview.total_chars.toLocaleString()} chars</strong>
             {' '}(semantic {obs.context_preview.semantic_chars.toLocaleString()} · episodic {obs.context_preview.episodic_chars.toLocaleString()} · lessons {obs.context_preview.lessons_chars.toLocaleString()})
@@ -1179,21 +1181,21 @@ function VolunteerPrecisionSection() {
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             <div className="rounded-lg bg-surface-container px-3 py-2">
               <div className="text-on-surface text-[1.0625rem] tabular-nums" style={fvs(600)}>{data.overall.n}</div>
-              <div className="text-on-surface-low text-[0.75rem]">volunteered</div>
+              <div data-type="caption" className="text-on-surface-low">volunteered</div>
             </div>
             <div className="rounded-lg bg-surface-container px-3 py-2">
               <div className="text-on-surface text-[1.0625rem] tabular-nums" style={fvs(600)}>{data.overall.used}</div>
-              <div className="text-on-surface-low text-[0.75rem]">used after</div>
+              <div data-type="caption" className="text-on-surface-low">used after</div>
             </div>
             <div className="rounded-lg bg-surface-container px-3 py-2">
               <div className="text-on-surface text-[1.0625rem] tabular-nums" style={fvs(600)}>
                 {data.overall.n >= VOLUNTEER_MIN_N ? pct(data.overall.precision) : '—'}
               </div>
-              <div className="text-on-surface-low text-[0.75rem]">precision</div>
+              <div data-type="caption" className="text-on-surface-low">precision</div>
             </div>
           </div>
           {data.overall.n < VOLUNTEER_MIN_N && (
-            <p className="mt-2 text-on-surface-low text-[0.75rem]">
+            <p data-type="caption" className="mt-2 text-on-surface-low">
               Precision needs at least {VOLUNTEER_MIN_N} volunteers before it means anything — {data.overall.n} so far.
             </p>
           )}
@@ -1201,6 +1203,7 @@ function VolunteerPrecisionSection() {
             <div className="mt-3">
               <Eyebrow className="mb-1">By match type</Eyebrow>
               <div className="flex flex-wrap gap-1.5">
+                {/* spans stay raw (ratchet): a role's inherited wght would flatten the <strong> tally */}
                 {arms.map(([arm, stat]) => (
                   <span key={arm} className="rounded-pill bg-surface-high px-2.5 py-1 text-[0.75rem] text-on-surface-var">
                     {arm.replace(/_/g, ' ')}: <strong>{stat.used}/{stat.n}</strong>
@@ -1210,6 +1213,7 @@ function VolunteerPrecisionSection() {
               </div>
             </div>
           )}
+          {/* stays raw (ratchet): a role's inherited wght would flatten the <strong> gate value */}
           <p className="mt-3 text-on-surface-low text-[0.75rem]">
             Current confidence gate: <strong className="text-on-surface-var">{data.min_confidence.toFixed(2)}</strong>. Raise it in Settings if too much of what's offered goes unused.
           </p>
@@ -1305,12 +1309,12 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
           {busy === 'export' ? <><Loader2 size={14} className="animate-spin" /> Rendering…</> : <><Download size={14} /> Export as HTML</>}
         </Button>
       </div>
-      <p className="mt-2 text-on-surface-low text-[0.75rem]">
+      <p data-type="caption" className="mt-2 text-on-surface-low">
         {summary.entities ?? 0} entit{(summary.entities ?? 0) === 1 ? 'y' : 'ies'} · {summary.links ?? 0} link{(summary.links ?? 0) === 1 ? '' : 's'} · {summary.linked_records ?? 0} linked record{(summary.linked_records ?? 0) === 1 ? '' : 's'}
         {'. '}
         Browse and edit them in <span className="text-on-surface-var">Studio</span> — filter to Entities.
       </p>
-      {msg && <p className="mt-2 text-ok text-[0.75rem]">{msg}</p>}
+      {msg && <p data-type="caption" className="mt-2 text-ok">{msg}</p>}
     </Section>
   )
 }
@@ -1324,10 +1328,10 @@ function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
       .catch(() => { if (live) setLinks([]) })
     return () => { live = false }
   }, [entity.id])
-  if (links === null) return <div className="mt-2 text-on-surface-low text-[0.75rem]">Loading…</div>
+  if (links === null) return <div data-type="caption" className="mt-2 text-on-surface-low">Loading…</div>
   if (links.length === 0) {
     return (
-      <div className="mt-2 text-on-surface-low text-[0.75rem] italic">
+      <div data-type="caption" className="mt-2 text-on-surface-low italic">
         Nothing links here yet — rebuild links, or this entity may be worth removing.
       </div>
     )
@@ -1335,7 +1339,7 @@ function EntityBacklinks({ entity }: { entity: MemoryEntity }) {
   return (
     <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
       {links.map((l) => (
-        <div key={l.id} className="text-[0.75rem]">
+        <div key={l.id} data-type="caption">
           {/* Same wrapping shape as `RecordLinks` above, which solves the identical problem —
               chips plus a ref on one line inside a narrow drawer. Inline spans got it wrong in
               two measurable ways: `same_project` broke mid-label ("SAME" / "PROJECT") with the
@@ -1397,7 +1401,7 @@ function SlotEditor({ slot, onChanged }: { slot: MemorySlot; onChanged: () => vo
 
   return (
     <div data-type="body-s" className="flex flex-col gap-3">
-      <p className="text-on-surface-low text-[0.75rem]">{slot.description || 'A register injected every session.'}</p>
+      <p data-type="caption" className="text-on-surface-low">{slot.description || 'A register injected every session.'}</p>
       <StudioMeta pairs={[
         ['Budget', `${slot.live_chars} / ${slot.cap_chars} characters`],
         ['Scope', slot.scope === 'workspace' ? 'this workspace only' : 'every session'],
@@ -1406,12 +1410,12 @@ function SlotEditor({ slot, onChanged }: { slot: MemorySlot; onChanged: () => vo
 
       <div className="flex flex-col gap-1.5">
         {live.length === 0 ? (
-          <p className="text-on-surface-low text-[0.75rem] italic">No lines yet — what you add here is read at the start of every session.</p>
+          <p data-type="caption" className="text-on-surface-low italic">No lines yet — what you add here is read at the start of every session.</p>
         ) : live.map((l) => (
           <div key={l.text} className="flex items-start gap-2 rounded-lg bg-surface-high px-2.5 py-1.5">
-            <span className="min-w-0 flex-1 text-on-surface text-[0.75rem]">{l.text}</span>
+            <span data-type="caption" className="min-w-0 flex-1 text-on-surface">{l.text}</span>
             {l.reinforcements > 1 && (
-              <span className="shrink-0 rounded-pill bg-surface-container px-1.5 py-0.5 text-on-surface-low text-[0.6875rem] tabular-nums"
+              <span data-type="caption" className="shrink-0 rounded-pill bg-surface-container px-1.5 py-0.5 text-on-surface-low tabular-nums"
                 title={`Re-observed ${l.reinforcements} times`}>×{l.reinforcements}</span>
             )}
             <SquareIconButton icon={X} iconSize={12} label={`Retire "${l.text.slice(0, 40)}"`} onClick={() => retire(l.text)} className="shrink-0" />
@@ -1431,7 +1435,7 @@ function SlotEditor({ slot, onChanged }: { slot: MemorySlot; onChanged: () => vo
       </div>
 
       {proposal && (
-        <div role="alert" className="rounded-lg border border-danger/40 bg-surface-high px-2.5 py-2 text-[0.75rem]">
+        <div role="alert" data-type="caption" className="rounded-lg border border-danger/40 bg-surface-high px-2.5 py-2">
           <p className="text-on-surface">
             Nothing was written — this slot is at {proposal.current_chars}/{proposal.cap_chars} characters
             and that line adds {proposal.incoming_chars}, {proposal.over_by} over.
@@ -1447,9 +1451,9 @@ function SlotEditor({ slot, onChanged }: { slot: MemorySlot; onChanged: () => vo
           </ul>
         </div>
       )}
-      {msg && <p className="text-ok text-[0.75rem]">{msg}</p>}
+      {msg && <p data-type="caption" className="text-ok">{msg}</p>}
       {retired.length > 0 && (
-        <details className="text-[0.75rem]">
+        <details data-type="caption">
           <summary className="cursor-pointer text-on-surface-low">{retired.length} retired line{retired.length === 1 ? '' : 's'}</summary>
           <ul className="mt-1 flex flex-col gap-0.5">
             {retired.map((l) => (
@@ -1483,7 +1487,7 @@ function AddEntityForm({ onDone }: { onDone: (created: boolean) => void }) {
   }
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-on-surface-low text-[0.75rem]">
+      <p data-type="caption" className="text-on-surface-low">
         Adding an entity links the memories that already mention it, not just future ones.
       </p>
       <TextInput value={name} onChange={setName} placeholder="Name" size="sm" ariaLabel="Entity name" />
@@ -1516,11 +1520,11 @@ function ProposalQueue({ proposals, onDecided }: { proposals: MemoryEntityPropos
     setBusy('')
   }
   if (proposals.length === 0) {
-    return <p className="text-on-surface-low text-[0.75rem]">Nothing to decide on right now.</p>
+    return <p data-type="caption" className="text-on-surface-low">Nothing to decide on right now.</p>
   }
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-on-surface-low text-[0.75rem]">
+      <p data-type="caption" className="text-on-surface-low">
         These names keep coming up but aren't entities yet. Nothing was created automatically —
         a junk entity degrades recall for everything.
       </p>
@@ -1528,7 +1532,7 @@ function ProposalQueue({ proposals, onDecided }: { proposals: MemoryEntityPropos
         <div key={p.name} className="flex flex-col gap-1.5 rounded-lg bg-surface-high px-2.5 py-2">
           <div className="flex items-baseline gap-2">
             <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{p.name}</span>
-            <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{p.mention_count}×</span>
+            <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">{p.mention_count}×</span>
           </div>
           <Select value={types[p.name] ?? 'person'} onChange={(v) => setTypes((t) => ({ ...t, [p.name]: v as MemoryEntityType }))}
             options={ENTITY_TYPE_OPTIONS} ariaLabel={`What kind of thing is ${p.name}?`} />
@@ -1542,7 +1546,7 @@ function ProposalQueue({ proposals, onDecided }: { proposals: MemoryEntityPropos
           </div>
         </div>
       ))}
-      {msg && <p className="text-ok text-[0.75rem]">{msg}</p>}
+      {msg && <p data-type="caption" className="text-ok">{msg}</p>}
     </div>
   )
 }
@@ -1584,7 +1588,7 @@ function MemoryMaintenance({ stats, onChanged }: { stats: MemoryStats | null | u
           {busy === 'import' ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14} />} Import from JSON
         </Button>
       </div>
-      {stats && !stats.has_legacy_memory && <p className="mt-1.5 text-on-surface-low text-[0.75rem]">No legacy markdown memory to migrate.</p>}
+      {stats && !stats.has_legacy_memory && <p data-type="caption" className="mt-1.5 text-on-surface-low">No legacy markdown memory to migrate.</p>}
       {msg && <p data-type="body-s" className="mt-2 text-on-surface-var">{msg}</p>}
     </Section>
   )
@@ -1757,9 +1761,9 @@ function DigestRow({ digest }: { digest: DailyDigest }) {
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="w-full text-left">
         <div className="flex items-center gap-2">
           <span data-type="body-s" className="font-mono text-on-surface">{digest.day}</span>
-          <span className="text-on-surface-low text-[0.75rem]">daily digest</span>
+          <span data-type="caption" className="text-on-surface-low">daily digest</span>
         </div>
-        <div className={`mt-0.5 text-on-surface-low text-[0.75rem] ${open ? 'whitespace-pre-wrap' : 'truncate'}`}>{digest.text}</div>
+        <div data-type="caption" className={`mt-0.5 text-on-surface-low ${open ? 'whitespace-pre-wrap' : 'truncate'}`}>{digest.text}</div>
       </button>
     </div>
   )
@@ -1837,7 +1841,7 @@ function VaultSection({ settings, onMode, onPath, saved }: {
         </div>
       </Field>
       {status?.path && (
-        <p className="mt-1 mb-2 font-mono text-on-surface-low text-[0.75rem] break-all">
+        <p data-type="caption" className="mt-1 mb-2 font-mono text-on-surface-low break-all">
           {status.path}{status.exists ? ` · ${status.files} file${status.files === 1 ? '' : 's'}` : ' · not yet generated'}
         </p>
       )}

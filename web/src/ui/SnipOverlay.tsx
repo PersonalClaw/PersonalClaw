@@ -185,7 +185,7 @@ export function SnipOverlay({ frame, width, height, onCancel, onConfirm }: {
               <img src={frame} alt="" draggable={false} className="block" style={view.image} />
             </div>
           </div>
-          <p className="mt-m text-[0.75rem] text-on-surface-low">
+          <p data-type="caption" className="mt-m text-on-surface-low">
             Drag on the capture to select a region, or use the arrow keys (hold Alt to resize).
             {' '}Selection: {Math.round(rect.width)}×{Math.round(rect.height)} px.
           </p>

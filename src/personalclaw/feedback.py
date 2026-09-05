@@ -289,6 +289,31 @@ def producer_stats(*, window_days: int | None = None) -> dict[tuple[str, str], d
     return out
 
 
+def producer_verdict_series(
+    *, window_days: int | None = None
+) -> dict[tuple[str, str], list[tuple[float, str]]]:
+    """Time-ordered CURRENT verdicts per producer — Loop 3's field series (ES-9).
+
+    Same records, same window and same supersede rule as :func:`producer_stats`; kept
+    per-record rather than aggregated because a trend needs the ORDER, which a count
+    cannot carry. ``{(producer_kind, producer_id): [(created_at, "up"|"down"), ...]}``,
+    oldest first. Query-computed, stored nowhere — the E3 discipline.
+    """
+    if window_days is None:
+        window_days = _config().window_days
+    cutoff = time.time() - window_days * 86_400
+    out: dict[tuple[str, str], list[tuple[float, str]]] = {}
+    for rec in _load_index().values():
+        if rec.created_at < cutoff or not rec.producer_kind or not rec.producer_id:
+            continue
+        out.setdefault((rec.producer_kind, rec.producer_id), []).append(
+            (rec.created_at, rec.verdict)
+        )
+    for series in out.values():
+        series.sort()
+    return out
+
+
 # ── Layer 3 (deterministic arm): thresholds + retire proposals ───────────────
 
 

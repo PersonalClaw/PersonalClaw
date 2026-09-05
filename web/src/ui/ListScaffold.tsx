@@ -64,7 +64,7 @@ export function LoadError({ what, error, onRetry }: {
       <AlertTriangle size={32} className="text-danger opacity-70" aria-hidden />
       <div>
         <h2 data-type="headline-s" className="text-on-surface">Couldn't load your {what}</h2>
-        <p className="mt-1 max-w-[420px] text-on-surface-low text-[0.9375rem]">
+        <p data-type="body-m" className="mt-1 max-w-[420px] text-on-surface-low">
           {/* The fallback used to read "Your ${what} are safe", which is ungrammatical for the many
               singular nouns callers pass ("Your project are safe"). Nothing on this component reads
               the count, so the noun cannot be pluralized reliably — the reassurance is stated once,
@@ -92,7 +92,7 @@ export function EmptyState({ icon: Icon, title, hint, action }: {
       {Icon ? <span className="inline-flex size-12 items-center justify-center rounded-xl" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}><Icon size={26} className="text-primary" /></span> : <Spark size={36} />}
       <div>
         <h2 data-type="headline-s" className="text-on-surface">{title}</h2>
-        {hint && <p className="mt-1 max-w-[420px] text-on-surface-low text-[0.9375rem]">{hint}</p>}
+        {hint && <p data-type="body-m" className="mt-1 max-w-[420px] text-on-surface-low">{hint}</p>}
       </div>
       {action && (
         <Button onClick={action.onClick}>{action.icon && <action.icon size={16} />} {action.label}</Button>
@@ -211,7 +211,7 @@ export function Loading({ what }: {
   what?: string
 }) {
   return (
-    <div role="status" aria-busy="true" className="text-on-surface-low text-[0.8125rem]">
+    <div role="status" aria-busy="true" data-type="body-s" className="text-on-surface-low">
       {what ? `Loading ${what}…` : 'Loading…'}
     </div>
   )

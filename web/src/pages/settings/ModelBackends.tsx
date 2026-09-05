@@ -85,7 +85,7 @@ export function RemoteModelProviders() {
   return (
     <div>
       {providers.length === 0 ? (
-        <p className="mb-3 text-on-surface-low text-[0.8125rem]">No remote model providers yet. Add an instance to contribute models to the pool.</p>
+        <p data-type="body-s" className="mb-3 text-on-surface-low">No remote model providers yet. Add an instance to contribute models to the pool.</p>
       ) : (
         <div className="mb-3 flex flex-col gap-2">
           {providers.map((p) => (
@@ -109,7 +109,7 @@ function CredBadge({ status }: { status: string }) {
   // connectivity probe) — "ok" must not claim "Connected"; the Test button is
   // the connectivity check. Say what we know: the instance is configured.
   return (
-    <span className="inline-flex shrink-0 items-center gap-1 text-[0.75rem]" style={{ color }}>
+    <span data-type="caption" className="inline-flex shrink-0 items-center gap-1" style={{ color }}>
       {ok ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />} {ok ? 'Configured' : missing ? 'Missing key' : 'Unconfigured'}
     </span>
   )
@@ -163,11 +163,11 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
         <Cpu size={17} className="shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{provider.name}</span>
-            <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{typeLabel(provider.type)}</span>
+            <span data-type="title-m" className="truncate text-on-surface" style={fvs(500)}>{provider.name}</span>
+            <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{typeLabel(provider.type)}</span>
           </div>
           {provider.capabilities.length > 0 && (
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-x-2 text-on-surface-low">
               {provider.capabilities.map((c) => <span key={c}>{c}</span>)}
             </div>
           )}
@@ -189,7 +189,7 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
       </div>
 
       {test && (
-        <div className="mt-2 flex items-center gap-1.5 text-[0.75rem]" style={{ color: test.ok ? 'var(--color-success)' : 'var(--color-danger)' }}>
+        <div data-type="caption" className="mt-2 flex items-center gap-1.5" style={{ color: test.ok ? 'var(--color-success)' : 'var(--color-danger)' }}>
           {test.ok ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />} {test.message}
         </div>
       )}
@@ -201,12 +201,12 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
         ) : (
           <div className="mt-3 border-t border-outline-variant/30 pt-3">
             {models.length === 0 ? (
-              <p className="text-on-surface-low text-[0.75rem] italic">No models discovered — test the connection or check the endpoint.</p>
+              <p data-type="caption" className="text-on-surface-low italic">No models discovered — test the connection or check the endpoint.</p>
             ) : (
               <>
-                <div className="mb-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Available models ({models.length})</div>
+                <div data-type="caption" className="mb-1.5 text-on-surface-low uppercase tracking-wide">Available models ({models.length})</div>
                 <div className="flex flex-wrap gap-1">
-                  {models.slice(0, 24).map((m) => <span key={m.id} className="rounded-md bg-surface-high px-1.5 py-0.5 text-on-surface text-[0.75rem] font-mono">{m.name}</span>)}
+                  {models.slice(0, 24).map((m) => <span key={m.id} data-type="caption" className="rounded-md bg-surface-high px-1.5 py-0.5 text-on-surface font-mono">{m.name}</span>)}
                   <MoreRow total={models.length} shown={24} className="px-1" />
                 </div>
               </>
@@ -220,7 +220,9 @@ function InstanceCard({ provider, models, onChanged }: { provider: ModelProvider
   )
 }
 
-const inputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
+/** Metrics + chrome only — the type size rides `data-type="body-s"` on each consumer,
+ *  since a class string has no element to carry the attribute. */
+const inputCls = 'h-9 w-full rounded-md bg-surface-high px-3 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
 
 /** A single schema-driven field: enum → select, sensitive → password, else text.
  *  Exported so the onboarding essential-apps step renders a provider's key/config
@@ -237,22 +239,22 @@ export function SchemaField({ field, name, value, onChange }: {
   if (Array.isArray(enumVals) && enumVals.length > 0) {
     return (
       <label className="flex flex-col gap-1">
-        <span className="text-on-surface-low text-[0.75rem]">{label}</span>
-        <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} className={inputCls + ' cursor-pointer'}>
+        <span data-type="caption" className="text-on-surface-low">{label}</span>
+        <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={inputCls + ' cursor-pointer'}>
           {enumVals.map((v) => <option key={v} value={v}>{v}</option>)}
         </select>
-        {meta.help && <span className="text-on-surface-low text-[0.75rem]">{meta.help}</span>}
+        {meta.help && <span data-type="caption" className="text-on-surface-low">{meta.help}</span>}
       </label>
     )
   }
   const sensitive = !!meta.sensitive
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-on-surface-low text-[0.75rem]">{label}</span>
+      <span data-type="caption" className="text-on-surface-low">{label}</span>
       <div className="relative">
         <input aria-label={label} type={sensitive && !show ? 'password' : 'text'} value={value}
           onChange={(e) => onChange(e.target.value)} placeholder={meta.help || label}
-          className={inputCls + (sensitive ? ' pr-10' : '')} />
+          data-type="body-s" className={inputCls + (sensitive ? ' pr-10' : '')} />
         {sensitive && (
           <span className="absolute right-1.5 top-1/2 -translate-y-1/2">
             <SquareIconButton label={show ? 'Hide' : 'Show'} onClick={() => setShow((s) => !s)}>
@@ -261,7 +263,7 @@ export function SchemaField({ field, name, value, onChange }: {
           </span>
         )}
       </div>
-      {meta.help && !sensitive && <span className="text-on-surface-low text-[0.75rem]">{meta.help}</span>}
+      {meta.help && !sensitive && <span data-type="caption" className="text-on-surface-low">{meta.help}</span>}
     </label>
   )
 }
@@ -290,11 +292,11 @@ function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
   }
 
   if (!types) {
-    return <div className="rounded-lg border border-outline-variant/40 bg-surface p-4 text-on-surface-low text-[0.8125rem]">Loading provider types…</div>
+    return <div data-type="body-s" className="rounded-lg border border-outline-variant/40 bg-surface p-4 text-on-surface-low">Loading provider types…</div>
   }
   if (types.length === 0) {
     return (
-      <div className="rounded-lg border border-outline-variant/40 bg-surface p-4 text-on-surface-low text-[0.8125rem]">
+      <div data-type="body-s" className="rounded-lg border border-outline-variant/40 bg-surface p-4 text-on-surface-low">
         No model-provider apps installed. Install one from the Store (e.g. OpenAI, Anthropic, Amazon Bedrock) to add an instance.
       </div>
     )
@@ -324,11 +326,11 @@ function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
 
   return (
     <div className="rounded-lg border border-outline-variant/40 bg-surface p-4">
-      <div className="mb-3 text-on-surface text-[0.8125rem]" style={fvs(600)}>Add model provider instance</div>
+      <div data-type="label-s" className="mb-3 text-on-surface" style={fvs(600)}>Add model provider instance</div>
       <div className="grid grid-cols-2 gap-2">
         <select aria-label="Provider type" value={typeIdx}
           onChange={(e) => { const i = Number(e.target.value); setTypeIdx(i); setValues(seedFor(types[i])); setError('') }}
-          className={inputCls + ' cursor-pointer'}>
+          data-type="body-s" className={inputCls + ' cursor-pointer'}>
           {types.map((t, i) => <option key={t.type} value={i}>{t.label}</option>)}
         </select>
         <TextInput ariaLabel="Instance name" value={name} onChange={setName} placeholder="Instance name (e.g. my-bedrock)" size="md" surface="high" />
@@ -343,7 +345,7 @@ function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
       <div className="mt-3 flex items-center gap-2">
         <Button size="sm" onClick={submit} disabled={saving}>{saving ? 'Adding…' : 'Add instance'}</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
-        {error && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{error}</span>}
+        {error && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{error}</span>}
       </div>
     </div>
   )
@@ -389,7 +391,7 @@ function EditInstanceForm({ provider, onDone }: { provider: ModelProvider; onDon
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
-        {error && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{error}</span>}
+        {error && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{error}</span>}
       </div>
     </div>
   )

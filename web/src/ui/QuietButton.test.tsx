@@ -24,10 +24,12 @@ describe('QuietButton', () => {
     // `--space-scale` slider and cli density (system.md trap 3). Both are 4px/8px at
     // comfortable density, so the swap moves no pixels there and every pixel at dense/cli.
     for (const t of ['inline-flex', 'items-center', 'gap-xs', 'rounded-md',
-      'px-s', 'h-7', 'text-[0.75rem]', 'text-on-surface-low',
+      'px-s', 'h-7', 'text-on-surface-low',
       'hover:bg-surface-high', 'hover:text-on-surface']) {
       expect(have, `missing "${t}"`).toContain(t)
     }
+    // The type size rides the caption role (the 0.75rem tier), not a raw utility.
+    expect(getByRole('button').getAttribute('data-type')).toBe('caption')
   })
 
   it('renders its children (the caller-owned leading glyph + label)', () => {

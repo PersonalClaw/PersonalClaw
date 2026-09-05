@@ -45,7 +45,8 @@ export function MicCaptureChip({ onStop }: { onStop: () => void }) {
       onClick={onStop}
       aria-label="Listening to your microphone — stop recording"
       title="PersonalClaw is listening. Click to stop."
-      className="inline-flex min-h-6 -my-px shrink-0 items-center gap-1.5 rounded-pill px-2 py-0.5 text-[0.75rem] transition-colors hover:brightness-110"
+      data-type="caption"
+      className="inline-flex min-h-6 -my-px shrink-0 items-center gap-1.5 rounded-pill px-2 py-0.5 transition-colors hover:brightness-110"
       style={{
         background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)',
         color: 'var(--color-warn)',

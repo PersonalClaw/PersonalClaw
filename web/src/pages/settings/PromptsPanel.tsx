@@ -76,15 +76,15 @@ function BindingRow({ binding, available, saving, onPick }: {
   return (
     <div className="flex items-center gap-3 rounded-lg bg-surface-container px-4 py-3">
       <div className="min-w-0 flex-1">
-        <div className="text-on-surface text-[0.8125rem]">{binding.label}</div>
-        {binding.hint && <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{binding.hint}</div>}
+        <div data-type="body-s" className="text-on-surface">{binding.label}</div>
+        {binding.hint && <div data-type="body-s" className="mt-0.5 text-on-surface-low">{binding.hint}</div>}
       </div>
       <select
         value={binding.ref}
         disabled={saving}
         onChange={(e) => onPick(binding.use_case, e.target.value)}
         aria-label={`Prompt for ${binding.label}`}
-        className="shrink-0 max-w-[55%] rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
+        data-type="body-s" className="shrink-0 max-w-[55%] rounded-md bg-surface-high px-2 py-1.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
       >
         <option value="">Default ({defName})</option>
         {/* Only system-kind prompts are bindable to a use-case — a user

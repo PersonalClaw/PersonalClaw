@@ -78,7 +78,7 @@ export function NotificationsPanel() {
           <Row label="Window" hint="Start and end (24-hour, server time).">
             <div className="flex items-center gap-2">
               <TimeInput value={s.quiet_hours_start} onChange={(v) => patch({ quiet_hours_start: v })} />
-              <span className="text-on-surface-low text-[0.8125rem]">to</span>
+              <span data-type="body-s" className="text-on-surface-low">to</span>
               <TimeInput value={s.quiet_hours_end} onChange={(v) => patch({ quiet_hours_end: v })} />
             </div>
           </Row>
@@ -100,6 +100,6 @@ function TimeInput({ value, onChange }: { value: string; onChange: (v: string) =
   // delivery gate). The controlled value snaps back, so a clear is a no-op.
   return (
     <input type="time" value={value} onChange={(e) => { if (e.target.value) onChange(e.target.value) }}
-      className="h-9 rounded-md bg-surface-container px-2.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+      data-type="body-s" className="h-9 rounded-md bg-surface-container px-2.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
   )
 }

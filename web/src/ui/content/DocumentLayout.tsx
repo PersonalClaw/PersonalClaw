@@ -51,7 +51,7 @@ export function PageGeometryPreview({ page }: { page: DocumentPageSetup }) {
   })
   if (!geometry) {
     return (
-      <p className="text-[0.75rem] text-on-surface-low">
+      <p data-type="caption" className="text-on-surface-low">
         Choose a page size to preview the page geometry.
       </p>
     )
@@ -82,7 +82,7 @@ export function PageGeometryPreview({ page }: { page: DocumentPageSetup }) {
       </div>
       {/* The label is part of the control, not a tooltip: it has to be readable at the
           same moment the shape is, or the shape reads as a rendering. */}
-      <p className="mt-2 text-center text-[0.75rem] text-on-surface-low">
+      <p data-type="caption" className="mt-2 text-center text-on-surface-low">
         Approximate page geometry — proportions and margins only, not a preview of how the
         text will lay out or where pages will break.
       </p>
@@ -99,7 +99,7 @@ export function PageGeometryPreview({ page }: { page: DocumentPageSetup }) {
  */
 function LayoutUnavailable({ reason }: { reason: string }) {
   return (
-    <p className="text-[0.8125rem] text-on-surface-var">
+    <p data-type="body-s" className="text-on-surface-var">
       {reason || 'This version is read-only — open the current version to change its layout.'}
     </p>
   )
@@ -151,7 +151,7 @@ export function PageSetupControls({
       <Field label="Margins (cm)" hint="0 keeps the template's own margin for that edge.">
         <div className="flex flex-wrap gap-3">
           {EDGES.map((edge) => (
-            <label key={edge} className="flex items-center gap-1.5 text-[0.8125rem] text-on-surface-var">
+            <label key={edge} data-type="body-s" className="flex items-center gap-1.5 text-on-surface-var">
               <span className="capitalize">{edge}</span>
               <NumberField
                 value={ptToCm(margin(edge))}
@@ -192,7 +192,7 @@ export function PageSetupControls({
           size="sm"
           label="Number the pages"
         />
-        <span className="text-[0.8125rem] text-on-surface-var">
+        <span data-type="body-s" className="text-on-surface-var">
           Number the pages
           <span className="ml-1 text-on-surface-low">— a field in the footer, so it counts per page.</span>
         </span>

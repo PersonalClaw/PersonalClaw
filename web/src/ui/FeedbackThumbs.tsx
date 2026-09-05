@@ -79,8 +79,11 @@ export function FeedbackThumbs({ targetKind, targetId, producer, snapshot, class
                 if (e.key === 'Enter') record('down', why)
                 if (e.key === 'Escape') { setWhyOpen(false); setWhy('') }
               }}
-              className="h-8 w-full rounded-md bg-surface px-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
-            <div className="mt-1 text-on-surface-low text-[0.6875rem]">Enter to send · Esc to cancel · click away to skip</div>
+              data-type="body-s"
+              className="h-8 w-full rounded-md bg-surface px-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+            {/* 0.6875rem sat under the caption floor tokens.css documents; caption is
+                that sub-tier drift's designated on-ramp home. */}
+            <div data-type="caption" className="mt-1 text-on-surface-low">Enter to send · Esc to cancel · click away to skip</div>
           </div>
         </>
       )}

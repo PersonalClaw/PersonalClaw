@@ -675,7 +675,7 @@ class RunController:
         would be strictly worse than one that runs in the project workspace and says so.
         """
         from personalclaw.config.loader import AppConfig
-        from personalclaw.workflows import provisioning
+        from personalclaw.workflows import containers, provisioning
 
         if not provisioning.declares_workspace(self.spec):
             # No `workspace:` block, no managed workspace. The default mode fills in a block that
@@ -727,6 +727,12 @@ class RunController:
                     (getattr(self.run, "forked_from", None) or {}).get("workspace_snapshot", "")
                     or ""
                 ),
+                # EI-6 §5.1 SPAWN half: the run's durable worker name — the SAME derivation the
+                # boot sweep recomputes (`watchdog._durable_substrate`), so a session opened
+                # under it is exactly the session a restarted gateway reattaches to. Passed
+                # unconditionally (a cheap string); whether it is USED is `run_step`'s
+                # flag+binary gate, kept next to the spawn it gates.
+                durable_session=containers.durable_worker_name(self.run),
             )
         except Exception:
             logger.warning("run %s: workspace provisioning failed", self.run.id, exc_info=True)
