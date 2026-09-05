@@ -980,17 +980,23 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
   onOpenItem: (id: string) => void
 }) {
   const [outcomes, setOutcomes] = useState<IntentOutcome[] | null>(null)
+  const [outcomesErr, setOutcomesErr] = useState<unknown>(null)
   const [running, setRunning] = useState(false)
   const [genning, setGenning] = useState(false)
   const [note, setNote] = useState('')
-  const load = () => api.knowledgeIntentOutcomes(intent.id).then((r) => setOutcomes(r.outcomes)).catch(() => setOutcomes([]))
+  // The error is kept, not folded into `[]`: a failed read rendered as "Nothing gathered yet"
+  // told an intent with matches that it had none — the same false-empty the intents list
+  // above already answers with LoadError.
+  const load = () => api.knowledgeIntentOutcomes(intent.id)
+    .then((r) => { setOutcomesErr(null); setOutcomes(r.outcomes) })
+    .catch((e) => { setOutcomesErr(e); setOutcomes(null) })
   useEffect(() => { load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [intent.id])
 
   const run = async () => {
     setRunning(true); setNote('')
     try {
       const r = await api.runKnowledgeIntent(intent.id)
-      setOutcomes(r.outcomes)
+      setOutcomesErr(null); setOutcomes(r.outcomes)
       // Report new-vs-already-matched honestly: a re-run that re-confirms existing
       // matches shouldn't claim them as "new". When the model couldn't evaluate some
       // items (e.g. a cold pool), say so rather than implying nothing matched.
@@ -1040,7 +1046,8 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
       </div>
       {note && <p className="text-on-surface-low text-[0.8125rem]">{note}</p>}
       <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Gathered ({outcomes?.length ?? 0})</div>
-      {outcomes === null ? <ListSkeleton rows={3} />
+      {outcomesErr ? <LoadError what="gathered matches" error={outcomesErr} onRetry={load} />
+        : outcomes === null ? <ListSkeleton rows={3} what="gathered matches" />
         : outcomes.length === 0 ? <p className="text-on-surface-low text-[0.8125rem]">Nothing gathered yet. Save items relevant to this intent, or run it on what you already have.</p>
         : <div className="flex flex-col gap-s">{outcomes.map((o) => <OutcomeCard key={o.id} o={o} onOpenItem={onOpenItem} />)}</div>}
     </div>
@@ -1049,7 +1056,7 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
 
 /** Graph-tab sidebar: an entity + the knowledge items that mention it (clickable). */
 function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOpenItem: (id: string) => void; onSelectEntity?: (name: string) => void }) {
-  const { data: items, loading } = useQuery(`knowledge:entity-items:${name}`, () => api.knowledgeEntityItems(name))
+  const { data: items, loading, error: itemsErr, refresh: refreshItems } = useQuery(`knowledge:entity-items:${name}`, () => api.knowledgeEntityItems(name))
   const { data: related } = useQuery(`knowledge:entity-related:${name}`, () => api.knowledgeEntityRelated(name).then((r) => r.related))
   return (
     <div className="flex flex-col gap-l p-l">
@@ -1070,7 +1077,9 @@ function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOp
       )}
       <div className="flex flex-col gap-s">
         <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Mentioned in</div>
-        {items === undefined ? (loading ? <ListSkeleton rows={3} /> : null)
+        {/* Error first: a failed read used to render null here — the section simply vanished. */}
+        {items === undefined && itemsErr ? <LoadError what="mentioned items" error={itemsErr} onRetry={refreshItems} />
+          : items === undefined ? (loading ? <ListSkeleton rows={3} what="mentioned items" /> : null)
           : items.length === 0 ? <p className="text-on-surface-low text-[0.8125rem]">No items reference this entity.</p>
           : items.map((it, i) => {
               const tm = resolveType(it)
