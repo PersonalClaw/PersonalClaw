@@ -324,14 +324,26 @@ def _project_one(
     # of the Triggers page, where a live maintenance automation plotting nothing is the same
     # invisible-but-firing defect the interval comment above records. It steps cleanly, because
     # `cadence_next_fire` for an adaptive clock is `after + <the live cadence>`.
-    if (kind == "cron" and spec.get("expr")) or kind == "adaptive":
+    #
+    # 🔴 `at` RIDES IT TOO (issue 561). This branch used to end at a guard reading "`at` is a single
+    # fire, and an elapsed one is not a forecast. Nothing to plot." — but the `return` was
+    # unconditional, so a one-shot armed for THURSDAY plotted nothing either, and the user saw an
+    # empty Thursday with no sign their trigger existed. Measured: cron 7 occurrences, interval 167,
+    # every `at` 0, including one two days inside the window.
+    #
+    # It needs no machinery of its own, because `cadence_next_fire` already IS the one-shot stepper:
+    # for kind `at` it answers `at if at > now else 0.0`. Fed to `project_occurrences` that produces
+    # exactly the right three behaviours with no special case — the entry call returns 0 for an
+    # elapsed one-shot (nothing plotted, which is what the old comment was right about), the window
+    # bound drops one beyond the week, and the step after the single fire returns 0 so the loop ends
+    # after one occurrence.
+    if (kind == "cron" and spec.get("expr")) or kind in ("adaptive", "at"):
         return project_occurrences(
             interval_secs=0,
             first_fire_at=0,
             next_after=lambda after: raw_next_fire(trigger, now=after),
             **common,
         )
-    # `at` is a single fire, and an elapsed one is not a forecast. Nothing to plot.
     return [], False
 
 
