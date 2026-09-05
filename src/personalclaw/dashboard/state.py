@@ -816,12 +816,10 @@ class DashboardState:
         self.context_builder = context_builder
         self.conversation_log = conversation_log
         self.consolidator = consolidator
-        # The active channel's ChannelDelivery (set by the channel transport at
-        # start_inbound), or None when no messaging channel is configured. This is
-        # the ONLY outbound-channel handle core holds — all channel delivery
-        # (text/attachments/streaming/identity lookups) goes through this
-        # provider-agnostic seam; core never touches a vendor client (no vendor import).
-        self.channel_delivery: Any = None
+        # `channel_delivery` is a PROPERTY over `channel_delivery`'s per-provider registry (see
+        # below), not a slot. It was a slot here AND a second one on the gateway orchestrator —
+        # two holders for one fact, and every shipped transport wrote both, so one overwrite took
+        # out delivery on two unrelated paths at once (#959).
         self.owner_id = owner_id
         self._owner_hash: str | None = None
         # Per-resource SSE: one hub per goal loop (key ``loop:<id>``). The loop
@@ -944,6 +942,65 @@ class DashboardState:
         # microphone. Bounded and in-memory only: this is echo-suppression
         # scratch, never history, and must not survive a restart.
         self._last_spoken: dict[str, str] = {}
+
+    # ── the outbound channel seam ────────────────────────────────────────────────────────
+    #
+    # A property pair over `channel_delivery`'s per-provider registry, so this state and the
+    # gateway orchestrator resolve ONE set of handles instead of holding two slots that drifted.
+    #
+    # The SETTER is what keeps the shipped channel apps working unchanged: every transport does
+    # `services.dashboard_state.channel_delivery = delivery` (alongside its
+    # `register_channel_delivery` call), so that assignment is now a registration keyed by the
+    # handle's own provider rather than an overwrite of a shared slot. Assigning None clears
+    # every handle, which is what it always meant here.
+
+    @property
+    def channel_delivery(self) -> Any:
+        """A connected channel that can reach the owner, or None.
+
+        Deliberately the OWNER-REACHABLE pick, matching what the readers of this attribute ask:
+        "is any channel connected, and can it take a DM / list its reply targets". A REPLY to an
+        incoming message must not resolve here — it carries the origin channel's id and is
+        answerable by exactly one provider, which is :meth:`delivery_for`. That distinction is
+        the whole of #959: this attribute returning "whatever registered last" is how a Discord
+        answer was handed to Telegram with a Discord channel id.
+        """
+        from personalclaw.channel_delivery import owner_reachable
+
+        return owner_reachable()
+
+    @channel_delivery.setter
+    def channel_delivery(self, delivery: Any) -> None:
+        from personalclaw.channel_delivery import register
+
+        register(delivery)
+
+    def delivery_for(self, provider: str) -> Any:
+        """The handle for one provider, or None when that channel is not connected.
+
+        The resolver for a reply: None means DO NOT SEND. Falling back to another provider is
+        not a degraded delivery, it is a message posted to the wrong place.
+        """
+        from personalclaw.channel_delivery import delivery_for
+
+        return delivery_for(provider)
+
+    def channel_provider_for(self, session_key: str) -> str:
+        """Which channel a session's messages came FROM, or "" for a dashboard session.
+
+        Stamped at session creation by the one inbound door
+        (`channel_inbound._route_to_session` → `get_or_create_session(app=provider)`), which is
+        also the code that already knows the provider — it just had nowhere to put it that the
+        outbound side could read.
+        """
+        # Local import, as every other `_history_key_for` use in this module does (it lives in
+        # `dashboard.chat`, which imports this module).
+        from personalclaw.dashboard.chat import _history_key_for
+
+        session = self._sessions.get(session_key) or self._sessions.get(
+            _history_key_for(session_key)
+        )
+        return str(getattr(session, "_app", "") or "") if session is not None else ""
 
     _LAST_SPOKEN_MAX_SESSIONS = 32
     _LAST_SPOKEN_MAX_CHARS = 4000
