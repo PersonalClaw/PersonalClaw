@@ -1732,7 +1732,7 @@
       "plan": "EVALUATION-SUBSTRATE",
       "code": "ES",
       "status": "in_progress",
-      "summary": "Plan is PROPOSED with no Execution log and no PR refs — entirely unstarted; all 11 atoms are todo. §1/§5/§6 (+§3.2 watchdog) are v2-independent and startable now against the existing eval/ package; §2/§4/§7/§8 and the E3 amendment are gated on WORKFLOWS-V2 (Run Ledger), WORKFLOWS-V2-LEARNING-FLYWHEEL (proposal queue/maturity/manifests), WORKFLOWS-V2-UNIVERSAL-PLANNING (UP-R6 approval gate), AUTONOMY-GUARDRAILS (model_calls.jsonl, SpendMeter), and FEEDBACK-SIGNAL (plan 58). Cuts follow the plan's own §-sections and its ~6-session map; the E1/E2/E3 amendment items are given their own atoms with explicit edges.",
+      "summary": "Of 16 atoms, 14 are done and two remain open: ES-15 (graduation/revocation, unblocked by ES-14) and ES-9 (Loop-3 field metrics, waiting on the ladder leaves ES-15+ES-16). ES-8 was decomposed per owner ruling 2026-08-27 (Q2/11) onto the existing guardrails/autonomy.py rungs — ES-13 (trust record), ES-14 (ladder rungs + rung chips) and ES-16 (attention accounting) have all landed; no second rung vocabulary was minted.",
       "atoms": [
         {
           "id": "ES-1",
@@ -1884,12 +1884,13 @@
         {
           "id": "ES-14",
           "title": "Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips",
-          "status": "todo",
+          "status": "done",
           "scope": "§4.3 ladder rungs (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size S",
           "done_when": "trust thresholds map onto autonomy rungs through the existing grant_rung/resolve_rung (rung_rank orders them); crossing a threshold grants the mapped rung; rung chips (rung_state) render on template rows and the approval dialog; no parallel rung ladder is introduced",
           "deps": [
             "ES-13"
-          ]
+          ],
+          "evidence": "Core PR #2445 (feat(web): rung chip in the approval dialog (ES-14), MERGED 2026-09-04, merge commit f2f8ed7c9). Trust thresholds map onto autonomy rungs through the EXISTING grant_rung/resolve_rung (rung_rank orders them): crossing a threshold grants the mapped rung, and no parallel rung ladder is minted. Rung chips render from rung_state on template rows and in the approval dialog, so the human answering a gate sees the scope's earned rung at the decision point. ES-15 (graduation/revocation) unblocks."
         },
         {
           "id": "ES-15",
@@ -2777,7 +2778,7 @@
         {
           "id": "LMMV-7",
           "title": "Session 5b — Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation",
-          "status": "todo",
+          "status": "blocked",
           "scope": "§2.2 per-model context-budget helper; §11 Disposition invariants; §12 risk regressions; Success Criteria 9 & 10; Session 5 as-a-user validation sweep",
           "done_when": "A budget-derivation helper in local_models/ is consumed by the reasoning-axis one_shot_completion path, deriving budgets from catalog context_tokens/output_tokens instead of hardcoded constants (no compaction logic rewritten); regression tests lock: (a) refresh_providers() leaves every bundled/sidecar provider registered — the two-population invariant (Success Criterion 9), (b) a sidecar proxy registered through ModelTypeHandler keeps the APP-name key + is_local_model_provider duck-type + refresh survival (registry-drift), (c) a suite-level fixture asserts no fs-touching test can reach a real model dir / cache root — only tmp_path (Success Criterion 10, the bound-model-deletion incident unreproducible by construction); the full download/delete/bind/RUN matrix across all 6 providers is validated as a user through the new surfaces.",
           "deps": [
@@ -2787,7 +2788,7 @@
             "LMMV-5",
             "LMMV-6"
           ],
-          "blocked_reason": "PARTIAL, ENVIRONMENT-GATED (2026-08-25, fifth pass). Every CODE clause is met on main: the derived output budget reaches the reasoning axis via _entry_kw (llm_helpers.py:498) on all four resolution paths (the fourth, last-resort, was fixed 2026-08-25); the two-population and registry-drift regressions live in tests/test_local_model_refresh_invariants.py:62-198 and :217-314; the suite-level fs fixture is the autouse _forbid_real_model_roots in tests/conftest.py:307-355. The ONLY unmet clause is the full download/delete/bind/RUN matrix across all six providers 'as a user', which needs real model weights per provider and cannot be satisfied from a code change. Two standing environment gaps: G172 diarization has no run route at all, and G173 PERSONALCLAW_HOME does not isolate weights for faster-whisper / diarization-onnx (they root at XDG_CACHE_HOME) -- and G173 is NOT fixable from core, since stt/registry.py:45 ships that backend as an app, so it is a PersonalClawApps deliverable. Clears when the owner runs the matrix on a machine with the weights, or descopes clause 4. FIVE passes have now re-derived this -- do not spend another slot re-verifying the code clauses."
+          "blocked_reason": "PARTIAL, ENVIRONMENT-GATED (2026-08-25, fifth pass). Every CODE clause is met on main: the derived output budget reaches the reasoning axis via _entry_kw (llm_helpers.py:498) on all four resolution paths (the fourth, last-resort, was fixed 2026-08-25); the two-population and registry-drift regressions live in tests/test_local_model_refresh_invariants.py:62-198 and :217-314; the suite-level fs fixture is the autouse _forbid_real_model_roots in tests/conftest.py:307-355. The ONLY unmet clause is the full download/delete/bind/RUN matrix across all six providers 'as a user', which needs real model weights per provider and cannot be satisfied from a code change. Two standing environment gaps: G172 diarization has no run route at all, and G173 PERSONALCLAW_HOME does not isolate weights for faster-whisper / diarization-onnx (they root at XDG_CACHE_HOME) -- and G173 is NOT fixable from core, since stt/registry.py:45 ships that backend as an app, so it is a PersonalClawApps deliverable. Clears when the owner runs the matrix on a machine with the weights, or descopes clause 4. FIVE passes have now re-derived this -- do not spend another slot re-verifying the code clauses. Status flipped todo->blocked 2026-09-04 so the ready frontier stops offering an atom no tick can finish: every code clause is done on main and the sole open clause is the owner-run real-weights matrix (or an owner descope of that clause)."
         },
         {
           "id": "LMMV-8",
@@ -3656,8 +3657,8 @@
     {
       "plan": "MULTIMODAL-IO",
       "code": "MI",
-      "status": "in_progress",
-      "summary": "5 atoms along the plan's own session seams. MI-1 (entity+resolver), MI-3 (duplex), MI-4 (screen-context) are independent and buildable now. MI-2 (cloning engine) carries the sole cross-plan edge on LOCAL-MODEL-MANAGER-V2. MI-5 is the UI + full-matrix validation capstone depending on MI-1..MI-4. Nothing done; all TODO.",
+      "status": "done",
+      "summary": "MULTIMODAL-IO is complete: all 6 atoms done — MI-5 (voice bindings + profile-manager UI, one-click migration, full-matrix as-a-user validation; merged 2026-09-04 via core PRs #2386 + #2446) closed the plan. Shipped: the voice_profiles entity store + resolver (MI-1), the cloning-capable sidecar TTS engine + capability flags (MI-2, with the MI-6 OmniVoice spike), duplex-loop hardening (MI-3), the opt-in ephemeral screen-context channel (MI-4), and the Settings Voice surface (MI-5).",
       "atoms": [
         {
           "id": "MI-1",
@@ -3700,7 +3701,7 @@
         {
           "id": "MI-5",
           "title": "Voice bindings + profile-manager UI, one-click migration, and full-matrix as-a-user validation sweep",
-          "status": "todo",
+          "status": "done",
           "scope": "Implementation Effort Session 5 (Settings → Voice bindings table [surface × profile picker] + profile manager UI for create/clone/design/lock/consent flows; §6 one-click 'create a profile from my current voice' migration, never automatic; deep-mutation full-matrix validation); Success Criterion 10 provider-family byte-identical assertion",
           "done_when": "Settings → Voice shows a bindings table and profile manager driving MI-1 CRUD + MI-2 engine end-to-end from the UI; one-click migration synthesizes a design-kind profile from the active tts binding and sets it default (only on explicit action); full-matrix as-a-user validation passes across profile CRUD × lock × both engines × per-surface bindings × duplex behaviors × screen share on vision and non-vision models; ALLOWED_HOOK_PROVIDERS, PROVIDER_TYPES, and the type-handler set assert byte-identical before/after",
           "deps": [
@@ -3708,7 +3709,8 @@
             "MI-2",
             "MI-3",
             "MI-4"
-          ]
+          ],
+          "evidence": "Core PR #2386 (feat(voice): MI-5 voice profile manager, one-click migration & full-matrix validation, MERGED 2026-09-04, merge commit 283a5b433) + core PR #2446 (feat(voice): MI-5 voice profile manager and per-surface bindings in Settings, MERGED 2026-09-04, merge commit 9862ed905). Backend (#2386): profile-manager create/clone/design/lock/consent flows drive MI-1 CRUD + the MI-2 engine end-to-end; the one-click 'create a profile from my current voice' migration synthesizes a design-kind profile from the active tts binding and sets it default only on explicit action; the deep-mutation full-matrix validation sweep covers profile CRUD x lock x both engines x per-surface bindings x duplex behaviors x screen share on vision and non-vision models. FE (#2446): Settings -> Voice ships the bindings table (surface x profile picker) and the profile-manager UI with per-row binding warnings. ALLOWED_HOOK_PROVIDERS, PROVIDER_TYPES and the type-handler set assert byte-identical before/after (Success Criterion 10). Last open MI atom — the plan completes."
         },
         {
           "id": "MI-6",
@@ -5098,8 +5100,8 @@
     {
       "plan": "SELF-VERIFICATION",
       "code": "SV",
-      "status": "in_progress",
-      "summary": "SELF-VERIFICATION: 7 of 11 atoms done (spec harness + scanner + replay substrate + loop resume-audit/MCP + WF2 replay scenarios + per-slice WF2 exemplars; dag SV-6/SV-7 flags trail their landed code). Remaining: the two-session Self-QA Companion. WF2 engine now exists so the prior blocker cleared.",
+      "status": "done",
+      "summary": "SELF-VERIFICATION is complete: all 11 atoms done — SV-11 (the interim commit-watcher cron script retires onto AUTOMATION-SUBSTRATE's vcs trigger preset, merged 2026-09-04 via core PR #2440) closed the plan. Shipped: spec harness + scanner + replay substrate + loop/workflow resume-audit + MCP record/replay + WF2 replay scenarios + per-slice exemplars + CI gate + the two-session Self-QA Companion with evidence bundles and the optional fix-branch stage.",
       "atoms": [
         {
           "id": "SV-1",
@@ -5210,14 +5212,15 @@
         {
           "id": "SV-11",
           "title": "Retire the interim commit-watcher cron script when the AUTO-R12 vcs trigger lands",
-          "status": "todo",
+          "status": "done",
           "scope": "§6 (explicit AUTO-R12 retirement row), Risk table (rule spec asserting the cron script is absent once the vcs trigger kind exists)",
           "done_when": "the self-qa template rebinds to AUTOMATION-SUBSTRATE's vcs trigger preset, the bundled selfqa_commit_watch.py cron script is deleted, and a rule spec asserts its absence once the vcs trigger kind exists",
           "deps": [
             "SV-9",
             "EXT:AUTOMATION-SUBSTRATE:AUTO-R12 vcs trigger preset (file kind watching .git/refs/heads/*)"
           ],
-          "blocked_reason": "OWNER RULING 2026-08-27 (question 4 of 11). Q: file a vcs-preset atom under AUTOMATION-SUBSTRATE (no atom owns AUTO-R12 today) or descope SV-11 to its vacuously-passing conditional rule? RULED: FILE THE VCS-PRESET ATOM under AUTOMATION-SUBSTRATE; SV-11 stays open pointing at it. Reasoning: a conditional rule that passes vacuously IS an inert control -- a declared mechanism with no reachable trigger -- and this session has spent most of its time closing exactly that shape (capture_store.prune with no caller, UsageStore.record with no writer, surfacing_events with no table). Descoping SV-11 to the vacuous rule would ship a fifth one deliberately. The retirement this atom describes is real work that belongs to whoever owns AUTO-R12, so it gets an atom."
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 4 of 11). Q: file a vcs-preset atom under AUTOMATION-SUBSTRATE (no atom owns AUTO-R12 today) or descope SV-11 to its vacuously-passing conditional rule? RULED: FILE THE VCS-PRESET ATOM under AUTOMATION-SUBSTRATE; SV-11 stays open pointing at it. Reasoning: a conditional rule that passes vacuously IS an inert control -- a declared mechanism with no reachable trigger -- and this session has spent most of its time closing exactly that shape (capture_store.prune with no caller, UsageStore.record with no writer, surfacing_events with no table). Descoping SV-11 to the vacuous rule would ship a fifth one deliberately. The retirement this atom describes is real work that belongs to whoever owns AUTO-R12, so it gets an atom.",
+          "evidence": "Core PR #2440 (feat(selfqa): SV-11 — commit watch rebinds to the vcs trigger, interim cron script retires, MERGED 2026-09-04, merge commit aa9a2cb81). The bundled self-qa template rebinds its trigger to AUTOMATION-SUBSTRATE's vcs preset (file kind watching .git/refs/heads/*), the interim selfqa/scripts/selfqa_commit_watch.py cron script is deleted, and a rule spec asserts the script stays absent now that the vcs trigger kind exists. Two design rails pass honestly rather than by baseline bump: the selfqa state home is declared as a first-class StateEntry in the state inventory, and the action-provider chokepoints suite carries a documented-exemption test proving the provider earns its exemption properties. Last open SV atom — the plan completes."
         }
       ]
     },
@@ -7815,24 +7818,14 @@
         "plan": "EA"
       },
       {
-        "id": "ES-14",
-        "title": "Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips",
+        "id": "ES-15",
+        "title": "Graduation/revocation: promote on sustained success, demote on failure/kill events",
         "plan": "ES"
-      },
-      {
-        "id": "LMMV-7",
-        "title": "Session 5b — Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation",
-        "plan": "LMMV"
       },
       {
         "id": "MC-9",
         "title": "S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring",
         "plan": "MC"
-      },
-      {
-        "id": "MI-5",
-        "title": "Voice bindings + profile-manager UI, one-click migration, and full-matrix as-a-user validation sweep",
-        "plan": "MI"
       },
       {
         "id": "OU-11",
@@ -7993,14 +7986,6 @@
         "plan": "SH",
         "gate": [
           "owner"
-        ]
-      },
-      {
-        "id": "SV-11",
-        "title": "Retire the interim commit-watcher cron script when the AUTO-R12 vcs trigger lands",
-        "plan": "SV",
-        "gate": [
-          "ext"
         ]
       }
     ],
@@ -9579,9 +9564,9 @@
         "code": "ES",
         "plan": "EVALUATION-SUBSTRATE",
         "total_atoms": 16,
-        "done": 13,
+        "done": 14,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -9644,8 +9629,8 @@
         "total_atoms": 8,
         "done": 7,
         "in_progress": 0,
-        "todo": 1,
-        "blocked": 0
+        "todo": 0,
+        "blocked": 1
       },
       {
         "code": "SM",
@@ -9723,9 +9708,9 @@
         "code": "MI",
         "plan": "MULTIMODAL-IO",
         "total_atoms": 6,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
@@ -9858,9 +9843,9 @@
         "code": "SV",
         "plan": "SELF-VERIFICATION",
         "total_atoms": 11,
-        "done": 10,
+        "done": 11,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {

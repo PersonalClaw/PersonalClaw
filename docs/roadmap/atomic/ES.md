@@ -4,8 +4,8 @@
 **Code:** `ES`  
 **Source status:** proposed
 
-Of 16 atoms, 11 are `done` and five remain open (ES-9 plus the four ES-13..16 trust-ladder
-sub-atoms). ES-8 (the trust-graduation ladder) was decomposed per owner ruling 2026-08-27
+Of 16 atoms, 14 are `done` and two remain open: ES-15 (graduation/revocation, unblocked by
+ES-14) and ES-9 (Loop-3 field metrics, waiting on the ladder leaves ES-15+ES-16). ES-8 (the trust-graduation ladder) was decomposed per owner ruling 2026-08-27
 (question 2 of 11): done-by-decomposition, re-scoped onto the EXISTING `guardrails/autonomy.py`
 rungs (no second maturity/L3 vocabulary) and split into ES-13 (§4.2 trust record), ES-14 (§4.3
 ladder rungs), ES-15 (§4.4 graduation/revocation) and ES-16 (§4.4 attention accounting); ES-9 now
@@ -31,7 +31,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `ES-11` | ✅ | Bundled optimize-harness template (budgeted search over PClaw's own artifacts) | `ES-1`, `EXT:WORKFLOWS-V2:v2 node taxonomy (loop node) + allowed_write_paths write-scope + breaker/budget machinery`, `EXT:WORKFLOWS-V2-LEARNING-FLYWHEEL:LEARN-R16 change manifests + LEARN-R3 sidecar overlays + refiner tool-scoping`, `EXT:AUTONOMY-GUARDRAILS:SpendMeter` | a starter template in workflows/bundled/ completes a budgeted loop-node search over one PClaw skill/template: candidates are scope-checked by diff (frozen-region touch → scope_violation), scored against the dual gate (harvested-suite threshold AND monotonic best-ever from results.tsv), and halted by hypothesis_abandon_after/no_improvement_halt/budget_usd; the winner arrives as a proposal (template version diff or LEARN-R3 sidecar overlay) the human installs, and nothing live mutates during the search |
 | `ES-12` | ✅ | Judge verdict integrity: verdicts must be answerable from the evidence shown (T04) | — | Judge prompt/schema constrains verdicts to an answerable set given the evidence slice; an answerability check rejects/flags verdicts referencing evidence not shown; regression fixture from the draft reproduces then passes; verdict records carry the evidence hash they judged. |
 | `ES-13` | ✅ | Trust record: per-scope trust ledger feeding autonomy.py rung decisions | `ES-1`, `ES-5`, `ES-7` | a per-scope trust record is persisted (one per template/scope) capturing the inputs `guardrails/autonomy.py`'s `resolve_rung` already consumes; `resolve_rung` reads it when deciding a scope's rung; NO second maturity/L3 rung vocabulary is minted (a rail asserts autonomy.py is the only rung dialect); the record round-trips to disk and survives restart. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
-| `ES-14` | ⬜ | Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips | `ES-13` | trust thresholds map onto autonomy rungs via the existing `grant_rung`/`resolve_rung` (`rung_rank` orders them); crossing a threshold grants the mapped rung; rung chips (`rung_state`) render on template rows and the approval dialog; no parallel rung ladder is introduced. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size S. |
+| `ES-14` | ✅ | Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips | `ES-13` | trust thresholds map onto autonomy rungs via the existing `grant_rung`/`resolve_rung` (`rung_rank` orders them); crossing a threshold grants the mapped rung; rung chips (`rung_state`) render on template rows and the approval dialog; no parallel rung ladder is introduced. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size S. |
 | `ES-15` | ⬜ | Graduation/revocation: promote on sustained success, demote on failure/kill events | `ES-14` | sustained success promotes a scope's rung, and a HARMFUL LEARN-R16 verdict, failed §2 study, nodding-loop flag or watchdog fingerprint expiry mechanically demotes/revokes it through `grant_rung`/`resolve_rung` so the next run falls back to per-stage; every transition is SEL-audited. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
 | `ES-16` | ✅ | Human-attention accounting: per-scope pending-attention debt with decay + demotion signal | `ES-13` | per-scope pending-attention debt is computed with decay and trends on the Learning page (attention_events_per_run plus a resolved_after_secs ledger addition); graduation proposals cite the trend and a post-grant attention rise files a demotion signal into the rung machinery. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
 
@@ -216,7 +216,7 @@ Amendment 2026-07-26 E3 — Loop 3 live quality rendering + divergence flag feed
 
 ### `ES-10` — Model bake-off from production-sampled inputs → per-use-case recommendation
 
-**Status:** todo
+**Status:** done
 
 §7 (production sampling, privacy floor, matrix run, per-use-case recommendation)
 
@@ -244,7 +244,7 @@ the owner's `dag.json` flip.
 
 ### `ES-14` — Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips
 
-**Status:** todo
+**Status:** done — merged via core PR #2445 (commit f2f8ed7c9).
 
 §4.3 ladder rungs (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size S
 
