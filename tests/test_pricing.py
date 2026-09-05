@@ -36,6 +36,38 @@ def test_prefix_match_handles_suffix():
     assert suffixed == base == 3.0
 
 
+def test_bedrock_inference_profile_ids_resolve():
+    """Every Bedrock inference-profile shape prices to its family row (SM-10 seam,
+    PCS-9 audit fixes). This is what makes a real Bedrock run report 'saved $X'
+    instead of 'saved unpriced' — the exact clause PCS-9's telemetry verification
+    needs. Region prefixes are a pattern, not a list, because Bedrock mints new
+    ones (apac. arrived after the original us/global/eu triple was hardcoded);
+    and the version pair must re-dot BEFORE a trailing date stamp, not at $ —
+    ``…-4-8-20260101-v1:0`` anchored at the end re-dotted the wrong pair."""
+    base = estimate_cost("claude-opus-4.8", input_tokens=1_000_000)
+    assert base > 0.0
+    for live_id in (
+        "global.anthropic.claude-opus-4-8",
+        "us.anthropic.claude-opus-4-8",
+        "eu.anthropic.claude-opus-4-8",
+        "apac.anthropic.claude-opus-4-8",
+        "anthropic.claude-opus-4-8",
+        "us.anthropic.claude-opus-4-8-v1:0",
+        "us.anthropic.claude-opus-4-8-20260101-v1:0",
+    ):
+        assert estimate_cost(live_id, input_tokens=1_000_000) == base, live_id
+        assert has_pricing(live_id), live_id
+
+
+def test_unknown_stays_unpriced_through_canonicalization():
+    """The vacuity partner: canonicalization must never conjure a price. A
+    prefixed id whose family has no row, and a non-Anthropic id that merely
+    looks region-prefixed, both stay an honest 0.0."""
+    assert estimate_cost("us.anthropic.claude-nonexistent-9-9", input_tokens=1_000_000) == 0.0
+    assert estimate_cost("us.meta.llama-4-8", input_tokens=1_000_000) == 0.0
+    assert not has_pricing("us.anthropic.claude-nonexistent-9-9")
+
+
 def test_cache_rates_applied():
     # sonnet-4.5: cache_read 0.3, cache_write 3.75 per 1M
     cost = estimate_cost(
