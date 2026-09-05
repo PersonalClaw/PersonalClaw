@@ -5,7 +5,8 @@ import { join } from 'node:path'
 // ── The last of the swallowed-write census: a USER-INITIATED action that failed silently ───────────
 //
 // Eight contracts in, the family is down to singletons that share no page and no helper — only the
-// property that a person clicked something and was told nothing. Seven fixed here; **two deliberately
+// property that a person clicked something and was told nothing. Seven fixed here, three more added
+// by the 2026-09-05 product-surface audit; **two deliberately
 // left alone**, which is the half of this cycle worth reading.
 //
 // FIXED — someone clicked, so a failure is theirs to know about:
@@ -50,10 +51,16 @@ const FIXED: Array<[string, string, string]> = [
   ['pages/agents/AgentsListPage.tsx', 'setDefaultAgent', 'the default agent'],
   ['pages/tools/ToolsPage.tsx', 'probeMcp', 're-probe the MCP servers'],
   ['pages/dashboard/PinnedTiles.tsx', 'refreshTile', 'refresh this tile'],
+  // Three header actions the census missed, caught by the 2026-09-05 product-surface audit —
+  // all predate `reportingWrite`. Restart and sync also answer with an {ok,…} envelope instead
+  // of throwing, so their wrappers throw on `!ok` to route BOTH failure shapes through the report.
+  ['pages/inbox/InboxPage.tsx', 'restartInbox', 'restart the inbox sources'],
+  ['pages/inbox/InboxPage.tsx', 'digestInboxChannel', 'generate the digest'],
+  ['pages/agents/AgentsListPage.tsx', 'syncAgents', 'sync the agents'],
 ]
 
 describe('a user-initiated write that fails tells the user', () => {
-  it('none of the seven swallows — the ratchet, keyed on the WRITES', () => {
+  it('none of the ten swallows — the ratchet, keyed on the WRITES', () => {
     const offenders: string[] = []
     for (const [rel, call] of FIXED) {
       const scan = strip(F(rel)).replace(/=>/g, '⇒')

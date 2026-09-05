@@ -105,10 +105,17 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
     reload()
   }
   const [syncing, setSyncing] = useState(false)
+  // A header click, not a poll — the person who asked is owed the failure. The reload is gated
+  // (probeMcp's precedent): after a failed sync it would re-render the same unchanged list.
   async function syncAgents() {
     setSyncing(true)
-    try { await api.syncAgents() } catch { /* best-effort */ }
-    setSyncing(false); reload()
+    try {
+      if (!(await reportingWrite('sync the agents', async () => {
+        const r = await api.syncAgents()
+        if (!r?.ok) throw new Error('the gateway declined the sync')
+      }))) return
+      reload()
+    } finally { setSyncing(false) }
   }
 
   // Filesystem-as-truth (#44): an agent profile edited on disk / by an agent
