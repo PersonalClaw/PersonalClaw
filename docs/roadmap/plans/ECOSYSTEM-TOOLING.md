@@ -109,6 +109,17 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
 
 ## Execution log
 
+- **2026-09-05 — `ET-10` DONE (superseded by shipped reality) + `ET-4` blocked_reason refreshed
+  (inventory audit).** ET-10 asked the owner to provision GHCR publish credentials; the audit found
+  `.github/workflows/release.yml:127` has published multi-arch GHCR images authenticated with the
+  workflow's own `GITHUB_TOKEN` (permissions `packages:write`, "no extra secret" per the workflow's
+  own comment) since tag v0.1.3 — there are no credentials to provision. The residual owner action
+  (confirm/make the packages public; the anonymous package page 404s) is covered verbatim by CRE-7's
+  done_when, and ET-10's claimed gating of ET-8 was a premise error: ET-8's registry surface reads
+  `registry.json` and references GHCR nowhere. ET-4's blocked_reason still cited the empty
+  `{"apps": []}` index; ET-6 populated it with 4 exemplar apps on 2026-09-02, so ET-9 (the
+  registry repo creation, owner-only, live-verified 404) is ET-4's single remaining blocker.
+
 - **2026-08-17 — ET-2 (T1.4) DONE.** Template repo content + the guide quickstart + `app new
   --from-template`. Template content staged at `scratch/app-template/` (the `--type tool`
   output at the repo root, a hand-written clone-to-installed `README.md`, a root-level variant

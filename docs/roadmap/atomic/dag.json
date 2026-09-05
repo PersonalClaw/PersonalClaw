@@ -3925,7 +3925,7 @@
             "WF2AUT-3",
             "EXT:LOOPS-EVOLUTION:Phase 4 loop-ticker before autonudge deletion"
           ],
-          "blocked_reason": "OWNER RULING 2026-08-27 (question 7 of 11). Q: the atom as scoped deletes a 358-line module, but autonudge.py is still the LIVE loop tick engine -- so deleting it breaks rather than retires. RULED: RE-SCOPE to 'port the driver, THEN delete', and file the port under LOOPS-EVOLUTION Phase 4, which owns the loop cycle driver. Reasoning: a retirement atom whose named thing is still load-bearing is mis-labelled work, not ready work -- the same shape the landed-atom census flags when a RETIREMENT atom's target still exists on the ref (that is evidence AGAINST completion, not for it). The deletion stays in this atom and becomes trivially true once the port lands."
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 7 of 11). Q: the atom as scoped deletes a 358-line module, but autonudge.py is still the LIVE loop tick engine -- so deleting it breaks rather than retires. RULED: RE-SCOPE to 'port the driver, THEN delete', and file the port under LOOPS-EVOLUTION Phase 4, which owns the loop cycle driver. Reasoning: a retirement atom whose named thing is still load-bearing is mis-labelled work, not ready work -- the same shape the landed-atom census flags when a RETIREMENT atom's target still exists on the ref (that is evidence AGAINST completion, not for it). The deletion stays in this atom and becomes trivially true once the port lands. AUDIT ADDENDUM 2026-09-05: the ruling filed the port under LOOPS-EVOLUTION Phase 4, but that plan has since CLOSED (all WF2LOO atoms done) without the port — autonudge.py is still the live loop tick engine with production importers (gateway.py, triggers/idle_poll.py, tasks/hierarchy_handlers.py). Same defect class as AR-1's dead gate. The port therefore re-homes to THIS atom's first half: port the driver onto kind:idle, THEN delete autonudge.py. Real implementation work (M/L), sequenced after the PP-16 loop-drain seams it rides."
         },
         {
           "id": "WF2AUT-12",
@@ -6297,7 +6297,8 @@
           "done_when": "the 14 learnings topics from core docs/research/learnings/ render on the site via a sync-script extension with intact cross-links, behind a preface owning the built-agentically story; preface approved by owner",
           "deps": [
             "DL-1"
-          ]
+          ],
+          "blocked_reason": "OWNER-RESIDUAL (audit 2026-09-05): the engineering is MERGED on the site repo's main (commit dec8113 — /docs/research pages, scripts/sync-docs.mjs sourcing research/learnings, known-docs registry; core holds the 14-topic corpus). The ONLY open clause is the owner approving src/prose/research-preface.md (its own header says 'OWNER-EDITABLE PROSE — DRAFT, NOT YET APPROVED', naming the two owner calls including publish-before-1.0). No agent implementation slot; belongs with the DL-11 sign-off batch, not the ready frontier."
         },
         {
           "id": "DL-10",
@@ -6429,7 +6430,8 @@
           "deps": [
             "EXT:LOOPS-EVOLUTION:council fan-out/fan-in workflow template ships first; demand re-confirmation gate",
             "EXT:WORKFLOWS-V2:core slices own pipeline-shaped multi-agent orchestration; rooms are only the deliberative remainder"
-          ]
+          ],
+          "blocked_reason": "AUDIT FINDING 2026-09-05: the ext gate names a council-template precursor owned by WORKFLOWS-V2-LOOPS-EVOLUTION, but that plan closed (all atoms done) WITHOUT shipping any council template (zero non-doc hits for 'council' on main; 28 bundled templates, none council) — so the gate can never mechanically clear, while the plan header's original deferral conditions (WV core slices + ACP-AGENT-PARITY) are now all satisfied. OWNER RULING REQUESTED: either mint the council-template precursor as a first-class atom somewhere, or waive the precursor and rule on un-deferral; AR-2..8 (the whole plan) wait behind this."
         },
         {
           "id": "AR-2",
@@ -6554,7 +6556,7 @@
           "deps": [
             "ET-3"
           ],
-          "blocked_reason": "PARTIAL, OWNER-GATED (updated 2026-08-27 after ET-4a). Three of five clauses are met on main and railed: seeding (catalog.py seed_default_git_sources, startup wire, flag) with the CALL SITE railed by tests/test_gateway_boot_app_source_seed.py; the removable-default UI; and removal surviving restart. BLOCKER 3 OF 3 IS NOW CLOSED: the FILENAME MISMATCH is fixed by ET-4a -- scratch/registry/registry.json is renamed to app-registry.json and registry.schema.json to app-registry.schema.json, both via git mv, with the $id updated in lockstep in the committed mirror AND validate_registry.py's build_schema() literal (a byte-compare rail pins the two). Measured, correcting this field's earlier '42 refs across 14 files': 25 refs across 11 files for the data file plus 29 refs across 11 files for the schema. ET-4a also added tests/test_registry_validation.py::test_the_ci_workflows_name_the_index_core_actually_reads, because a falsification proved the workflows' filename refs were NOT load-bearing in core's suite -- reverting all four went 98-passed-nothing-red, so a miss would have surfaced on the first contributor PR in the public repo. That rail must live in CORE, not the published repo's CI: the name sits in a paths: filter, so the failure mode is the workflow NOT FIRING, and no CI can self-detect its own non-execution. TWO CLAUSES REMAIN, both OWNER-ONLY and neither an engineering gap: (1) github.com/PersonalClaw/registry does not exist -- git ls-remote still returns 'Repository not found' -- and it MUST be created only AFTER ET-4a merges, or the rename becomes a breaking change plus a dead public schema URL on a public repo; (2) scratch/registry/app-registry.json is {\"apps\": []} until ET-6 builds the exemplar apps. NOTE the validator passes VACUOUSLY over the empty index ('0 existing listing(s) left untouched'), which is why its anti-vacuity leg over fixtures/registries/malformed-row.json is the one that proves anything. Also: scratch/registry/README.md's staging comment block is an HTML comment that must be deleted at publication -- ET-4a made that step unambiguous and renumbered the runbook."
+          "blocked_reason": "AUDIT REFRESH 2026-09-05: the sole live blocker is ET-9 (the github.com/PersonalClaw/registry repo does not exist — owner-only creation; live-verified 404). The previous clause citing an empty {\"apps\": []} index is STALE: ET-6 populated scratch/registry/app-registry.json with 4 exemplar apps on 2026-09-02, so the repo seeds non-vacuously the moment it exists. Code half is shipped and railed (catalog.py seed_default_git_sources, server.py startup wire, loader.py config flag, tests/test_gateway_boot_app_source_seed.py); the remainder is a small verify-on-fresh-home session once ET-9 lands."
         },
         {
           "id": "ET-5",
@@ -6616,13 +6618,14 @@
         {
           "id": "ET-10",
           "title": "Owner: provision GHCR (GitHub Container Registry) publish credentials (gates ET-8 registry-surface publication)",
-          "status": "todo",
+          "status": "done",
           "scope": "Owner provisioning for the container/registry publication path ET-8's personalclaw.dev registry surface depends on. Minted as an explicit owner atom so the gate is legible.",
           "done_when": "GHCR publish credentials are provisioned in the CI environment so the artifacts ET-8's registry surface references can be published; ET-8's site-sync consumes them",
           "deps": [
             "ET-3"
           ],
-          "blocked_reason": "OWNER-ONLY (2026-09-03): provisioning GHCR credentials is an owner action. Gates ET-8. Belongs on gated_frontier, never ready_frontier."
+          "blocked_reason": "OWNER-ONLY (2026-09-03): provisioning GHCR credentials is an owner action. Gates ET-8. Belongs on gated_frontier, never ready_frontier.",
+          "evidence": "done 2026-09-05 (validated during the inventory audit — SUPERSEDED BY SHIPPED REALITY, no code change): .github/workflows/release.yml:127 already builds and pushes multi-arch GHCR images (amd64+arm64) authenticated with the workflow's own GITHUB_TOKEN under permissions packages:write — 'no extra secret' by the workflow's own comment — and this job existed at tag v0.1.3, whose release the runbook records as walked end to end. There are no publish credentials to provision, which was this atom's entire done_when. The one residual is package VISIBILITY (the public package page 404s anonymously), which is an owner console action already covered verbatim by CRE-7's done_when ('GHCR packages confirmed public after first image push'). This atom's claimed gating of ET-8 was a premise error: ET-8's registry surface reads registry.json and neither its node nor its blocked_reason mentions GHCR."
         }
       ]
     },
@@ -7023,7 +7026,7 @@
             "EI-5",
             "EXT:WORK-CONTAINERS:WORK-R8 lease convention (flock under locks/) + WORK-R7 suspended-liveness path"
           ],
-          "blocked_reason": "PARTIAL. Runner lifecycle landed WHOLE (pool.claim -> _record_lease -> claim_runner -> a flock lease under config_dir()/locks/leases, swept in the live _health_loop, read back by runners.lease_for and rendered as 'held by {holder}'; both config fields pass all round-trip points with a [60,86400] clamp). The DURABLE-SESSION clause is a LIVE READER OF AN UNWRITTEN KEY: _durable_substrate is called first from _substrate_for, tmux is in Substrate.isolated, sweep_decision yields SUSPENDED and the journal 'resumed' kind pre-exists - but NOTHING IN CORE SPAWNS A DURABLE WORKER. durable_session_name, the only producer of the pclaw-<project>-<run>-<session> shape, has exactly ONE production caller: the READER. Core's sole tmux spawn uses a DIFFERENT name shape. NOTE FOR THE NEXT AUDITOR: a later EXT-dep audit reported this atom 'SATISFIED and LANDED' - it was answering the narrower question 'is the WORK-CONTAINERS dep met?', not 'is the atom done'. The clause-by-clause reading wins. UPSTREAM-BLOCKED on EI-2's container provider (ACP runners are stdio-bound and the sandbox-interior shell is EI-2's); do NOT schedule standalone."
+          "blocked_reason": "PARTIAL. Runner lifecycle landed WHOLE (pool.claim -> _record_lease -> claim_runner -> a flock lease under config_dir()/locks/leases, swept in the live _health_loop, read back by runners.lease_for and rendered as 'held by {holder}'; both config fields pass all round-trip points with a [60,86400] clamp). The DURABLE-SESSION clause is a LIVE READER OF AN UNWRITTEN KEY: _durable_substrate is called first from _substrate_for, tmux is in Substrate.isolated, sweep_decision yields SUSPENDED and the journal 'resumed' kind pre-exists - but NOTHING IN CORE SPAWNS A DURABLE WORKER. durable_session_name, the only producer of the pclaw-<project>-<run>-<session> shape, has exactly ONE production caller: the READER. Core's sole tmux spawn uses a DIFFERENT name shape. NOTE FOR THE NEXT AUDITOR: a later EXT-dep audit reported this atom 'SATISFIED and LANDED' - it was answering the narrower question 'is the WORK-CONTAINERS dep met?', not 'is the atom done'. The clause-by-clause reading wins. UPSTREAM-BLOCKED on EI-2's container provider (ACP runners are stdio-bound and the sandbox-interior shell is EI-2's); do NOT schedule standalone. AUDIT REFRESH 2026-09-05: the 'unwritten key' clause is now PARTIALLY STALE — config/loader.py:589 declares agent.durable_sessions and :3357 parses it. Remaining work re-measured: verify the value actually reaches watchdog._durable_substrate's run (the reader at workflows/watchdog.py:426-449), wire whatever link is missing, and run the SC5 kill-mid-run validation. Agent-buildable (M), measure-first."
         },
         {
           "id": "EI-7",
@@ -7599,13 +7602,84 @@
         {
           "id": "PEP-11",
           "title": "First-party product-app suite program",
-          "status": "todo",
+          "status": "done",
           "scope": "Build a first-party product-app suite in PersonalClawApps as a phased program, one independently-shippable PR per app, in build-order by leverage: Code Review (each changed file in its own isolated subagent, weighted by blast radius, findings kept locally) -> Research Lab (multi-cycle unattended research: question -> sub-question tree -> agents -> synthesis) -> Design Critique (screenshot/flow/URL heuristic + a11y review via the vision + headless-render path) -> Docs/Slides (app fronts over the shipped document-handling seam, not new backends) -> Notes (git-backed markdown notebook editor, scoped as an editor not a second knowledge store) -> Issue Radar (GitHub/GitLab issue triage with suggested labels + local per-issue notes) -> Spec Builder (app front over the workflow engine, not a parallel planner) -> Ops (on-call responder; gated on autonomy guardrails + confirm-gated fixes; largest, later) -> Companion (opt-in desktop companion surface). Extend the existing minutes app rather than rebuilding a meetings app. Each app is built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE) and validated by adding it as a local Store source and driving it in the real UI. Each app finishes and ships before the next; do not batch.",
           "done_when": "Each app ships as its own validated PR, is listed in the Store, and is recorded as a platform exemplar; the suite is delivered app-by-app in leverage order with reuse (docs ride document-handling, spec builder rides the workflow engine, meetings extends minutes) rather than rebuilt backends.",
-          "deps": [
-            "EXT:ECOSYSTEM-TOOLING:exemplar-scaffold"
-          ],
-          "blocked_reason": "OWNER RULING 2026-08-27 (question 10 of 11). Q: file PEP-11a..i, one app per PR? RULED: YES -- one app, one atom, one PR, per this plan's own scope text ('each app finishes and ships before the next; do not batch'). An independent audit measured the atom at ~12 sessions for nine apps. An atom that cannot finish in one session is not an atom; it is a programme wearing an atom's label, and it reads as permanently in-flight. The nine ids are to be authored so each has its own done_when and can flip independently."
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 10 of 11). Q: file PEP-12..PEP-20 (the ruling's 'PEP-11a..i', renamed to the catalog's numeric id grammar — the ES-8 -> ES-13..16 precedent), one app per PR? RULED: YES -- one app, one atom, one PR, per this plan's own scope text ('each app finishes and ships before the next; do not batch'). An independent audit measured the atom at ~12 sessions for nine apps. An atom that cannot finish in one session is not an atom; it is a programme wearing an atom's label, and it reads as permanently in-flight. The nine ids are to be authored so each has its own done_when and can flip independently.",
+          "status_note": "DONE-BY-DECOMPOSITION per owner ruling 2026-08-27 (question 10 of 11). The ruling directed filing PEP-12..PEP-20 (the ruling's 'PEP-11a..i', renamed to the catalog's numeric id grammar — the ES-8 -> ES-13..16 precedent) — one app, one atom, one PR, per this plan's own 'do not batch' scope text — after an independent audit measured the atom at ~12 sessions for nine apps: a programme wearing an atom's label. The nine sub-atoms are first-class atoms (the ES-8 -> ES-13..16 precedent), authored 2026-09-05 during the inventory audit, in build order by leverage (Code Review -> Research Lab -> Design Critique -> Docs/Slides -> Notes -> Issue Radar -> Spec Builder -> Ops -> Companion). PEP-11 carries no code of its own; its work is tracked entirely by PEP-12..PEP-20 (the ruling's 'PEP-11a..i', renamed to the catalog's numeric id grammar — the ES-8 -> ES-13..16 precedent). The EXT scaffold dep is satisfied: ECOSYSTEM-TOOLING's exemplar scaffold shipped (cli_app_new.py + build-a-channel-app guide).",
+          "deps": []
+        },
+        {
+          "id": "PEP-12",
+          "title": "Code Review app (suite 1/9)",
+          "status": "todo",
+          "scope": "Deep-review a GitHub PR: each changed file in its own isolated subagent, weighted by blast radius; findings kept locally. Uses git/gh. Highest leverage — dogfoods subagents + the SDK. Skeleton from ECOSYSTEM-TOOLING's shipped scaffold (cli_app_new.py).",
+          "done_when": "The code-review app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a real PR is reviewed end to end with per-file subagents and locally persisted findings.",
+          "deps": []
+        },
+        {
+          "id": "PEP-13",
+          "title": "Research Lab app (suite 2/9)",
+          "status": "todo",
+          "scope": "Multi-cycle autonomous research campaigns that keep working unattended: question -> sub-question tree -> agents -> synthesis. Dogfoods triggers + subagents; the flagship walk-away demo.",
+          "done_when": "The research-lab app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; one campaign runs multiple unattended cycles producing a synthesized report.",
+          "deps": []
+        },
+        {
+          "id": "PEP-14",
+          "title": "Design Critique app (suite 3/9)",
+          "status": "todo",
+          "scope": "Pre-colleague design review from a screenshot / flow / URL: heuristic + a11y findings. Small, high-signal; uses the vision path + headless render.",
+          "done_when": "The design-critique app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a screenshot and a URL each yield structured heuristic + a11y findings.",
+          "deps": []
+        },
+        {
+          "id": "PEP-15",
+          "title": "Docs/Slides app (suite 4/9)",
+          "status": "todo",
+          "scope": "Generate real .pptx and LaTeX/markdown documents from a brief. App front over the shipped DOCUMENT-HANDLING-TOOLS seam — reuse, don't rebuild backends.",
+          "done_when": "The docs/slides app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a brief produces an openable .pptx and a compiled document through the existing doc-writer seam.",
+          "deps": []
+        },
+        {
+          "id": "PEP-16",
+          "title": "Notes app (suite 5/9)",
+          "status": "todo",
+          "scope": "A git-backed markdown notebook (versioned, portable). Scoped as a NOTEBOOK EDITOR app, not a second knowledge store — coordinates with Knowledge.",
+          "done_when": "The notes app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; notes are versioned in git and survive app reinstall; no parallel knowledge store is created.",
+          "deps": []
+        },
+        {
+          "id": "PEP-17",
+          "title": "Issue Radar app (suite 6/9)",
+          "status": "todo",
+          "scope": "GitHub/GitLab issue triage with AI-suggested labels + per-issue investigation notes kept locally. Pairs with Code Review; open-source-maintainer value.",
+          "done_when": "The issue-radar app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a real repo's issues are triaged with suggested labels and locally persisted investigation notes.",
+          "deps": []
+        },
+        {
+          "id": "PEP-18",
+          "title": "Spec Builder app (suite 7/9)",
+          "status": "todo",
+          "scope": "Idea -> Requirements -> Design -> Tasks, then hand to an autonomous run. App front over the WORKFLOWS-V2 engine — not a parallel planner.",
+          "done_when": "The spec-builder app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; an idea walks to a task list that hands off to a real workflow run through the engine's own seams.",
+          "deps": []
+        },
+        {
+          "id": "PEP-19",
+          "title": "Ops app (suite 8/9)",
+          "status": "todo",
+          "scope": "On-call first responder: watch alarms/pages, claim, investigate, propose fixes. Largest and most heavily gated: every fix is confirm-gated and rides AUTONOMY-GUARDRAILS (shipped). Build last among 8/9.",
+          "done_when": "The ops app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a simulated alarm is claimed, investigated, and a fix PROPOSED behind an explicit confirm gate — no ungated mutation path exists.",
+          "deps": []
+        },
+        {
+          "id": "PEP-20",
+          "title": "Companion app (suite 9/9)",
+          "status": "todo",
+          "scope": "An optional desktop companion surface (watchlist, reminders, day-planning). Charm/retention; strictly opt-in; coordinates with COMPANION-APPS/DESKTOP surfaces.",
+          "done_when": "The companion app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; every surface is opt-in and disabling it removes all its triggers.",
+          "deps": []
         }
       ]
     },
@@ -7836,6 +7910,51 @@
         "plan": "PCS"
       },
       {
+        "id": "PEP-12",
+        "title": "Code Review app (suite 1/9)",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-13",
+        "title": "Research Lab app (suite 2/9)",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-14",
+        "title": "Design Critique app (suite 3/9)",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-15",
+        "title": "Docs/Slides app (suite 4/9)",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-16",
+        "title": "Notes app (suite 5/9)",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-17",
+        "title": "Issue Radar app (suite 6/9)",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-18",
+        "title": "Spec Builder app (suite 7/9)",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-19",
+        "title": "Ops app (suite 8/9)",
+        "plan": "PEP"
+      },
+      {
+        "id": "PEP-20",
+        "title": "Companion app (suite 9/9)",
+        "plan": "PEP"
+      },
+      {
         "id": "PP-16",
         "title": "A Loop becomes a WorkflowRun (retire the second work-unit noun)",
         "plan": "PP"
@@ -7939,25 +8058,9 @@
         ]
       },
       {
-        "id": "ET-10",
-        "title": "Owner: provision GHCR (GitHub Container Registry) publish credentials (gates ET-8 registry-surface publication)",
-        "plan": "ET",
-        "gate": [
-          "owner"
-        ]
-      },
-      {
         "id": "LV-7",
         "title": "S4 benchmark implementation as an eval-substrate study + publish",
         "plan": "LV",
-        "gate": [
-          "ext"
-        ]
-      },
-      {
-        "id": "PEP-11",
-        "title": "First-party product-app suite program",
-        "plan": "PEP",
         "gate": [
           "ext"
         ]
@@ -8415,6 +8518,15 @@
       "PEP-9",
       "PEP-10",
       "PEP-11",
+      "PEP-12",
+      "PEP-13",
+      "PEP-14",
+      "PEP-15",
+      "PEP-16",
+      "PEP-17",
+      "PEP-18",
+      "PEP-19",
+      "PEP-20",
       "PHF-1",
       "PHF-2",
       "PHF-3",
@@ -9415,11 +9527,6 @@
         "atom": "PEP-9",
         "ext_ref": "EXT:EXECUTION-ISOLATION:resource-limited-build-spawn",
         "to_atom": "EI-3"
-      },
-      {
-        "atom": "PEP-11",
-        "ext_ref": "EXT:ECOSYSTEM-TOOLING:exemplar-scaffold",
-        "to_atom": "ET-6"
       }
     ],
     "plan_counts": [
@@ -9967,9 +10074,9 @@
         "code": "ET",
         "plan": "ECOSYSTEM-TOOLING",
         "total_atoms": 10,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 6,
+        "todo": 5,
         "blocked": 0
       },
       {
@@ -10038,10 +10145,10 @@
       {
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
-        "total_atoms": 11,
-        "done": 10,
+        "total_atoms": 20,
+        "done": 11,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 9,
         "blocked": 0
       },
       {
@@ -10054,6 +10161,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 847
+    "edge_count": 846
   }
 }

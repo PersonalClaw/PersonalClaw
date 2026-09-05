@@ -19,7 +19,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `ET-7` | ⬜ | Bounty board: labeled `bounty` issues for wanted apps, linking scaffold/guide/conformance | `ET-1`, `ET-2`, `EXT:CHANNEL-EXPANSION:channel wants-list (T7.3) + channel scaffold template the channel bounties reference` | ≥6 `bounty` GitHub issues live (channels + providers + sources from the wants-list), each linking the scaffold, guide, and conformance kit; showcase thread seeded in the community surface. Channel bounties draw from CHANNEL-EXPANSION's wants-list (T7.3) and its channel scaffold template |
 | `ET-8` | ⬜ | Registry surface on personalclaw.dev generated from `registry.json` | `ET-3`, `EXT:DISCOVERABILITY-LAUNCH:the site sync pipeline this registry surface extends` | static registry pages generated on personalclaw.dev from registry.json (cards: name/types/permissions/verdict/maintainer; per-app page with README fetch); declared permissions + last scan verdict visible pre-install; a rebuild picks up registry changes; V4: a merged registry PR appears on the site after rebuild and card data matches the Store consent surface |
 | `ET-9` | ⬜ | Owner: create the github.com/PersonalClaw/registry public repo (gates ET-4) | `ET-3` | github.com/PersonalClaw/registry exists as a public repo seeded from scratch/registry/ (post-ET-4a rename) with the ET-3 PR-validation workflow wired; ET-4's default-source seeding then resolves real registry apps — OWNER-ONLY, belongs on gated_frontier |
-| `ET-10` | ⬜ | Owner: provision GHCR (GitHub Container Registry) publish credentials (gates ET-8) | `ET-3` | GHCR publish credentials are provisioned in the CI environment so the artifacts ET-8's registry surface references can be published; ET-8's site-sync consumes them — OWNER-ONLY, belongs on gated_frontier |
+| `ET-10` | ✅ | Owner: provision GHCR (GitHub Container Registry) publish credentials (gates ET-8) | `ET-3` | Done (superseded by shipped reality, audit 2026-09-05): release.yml already publishes multi-arch GHCR images with the workflow's own GITHUB_TOKEN (permissions packages:write, 'no extra secret') since tag v0.1.3 — there are no credentials to provision. Residual owner action (confirm/make packages public) is covered by CRE-7; the claimed ET-8 gating was a premise error (ET-8 reads registry.json and never references GHCR). |
 
 ## Atom scopes
 
@@ -106,7 +106,12 @@ ECOSYSTEM-TOOLING owner task 1, minted as an explicit atom so its gate is legibl
 
 ### `ET-10` — Owner: provision GHCR (GitHub Container Registry) publish credentials (gates ET-8)
 
-**Status:** todo — OWNER-ONLY (belongs on gated_frontier, never ready_frontier)
+**Status:** ✅ done — superseded by shipped reality (inventory audit 2026-09-05). `.github/workflows/release.yml:127`
+has published multi-arch GHCR images authenticated with the workflow's own `GITHUB_TOKEN` since v0.1.3; there are
+no publish credentials to provision, which was this atom's whole done_when. The residual (make/confirm the packages
+public — the anonymous package page 404s) is an owner console action already covered verbatim by CRE-7's done_when,
+and the claimed gating of ET-8 was a premise error: ET-8's registry surface reads `registry.json` and references
+GHCR nowhere.
 
 Owner provisioning for the container/registry publication path ET-8's personalclaw.dev registry surface depends on. Minted as an explicit owner atom so the gate is legible.
 
