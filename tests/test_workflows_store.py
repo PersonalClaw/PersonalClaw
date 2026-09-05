@@ -118,6 +118,43 @@ class TestRunCrud:
         assert st.get("ex000001").extra == {"future_field": 7}
 
 
+class TestPolicyOverridesLegacySchema:
+    """PP-16 seam 4d adds `runs.policy_overrides` ADDITIVELY, and this measures the upgrade.
+
+    Unlike 4c's retirement (no DROP path; a stale column stays inert), an ADDED column must
+    exist before the column-named INSERT runs, so `_connect` carries `_ensure_columns` — the
+    ALTER-TABLE-ADD ladder `loop/store.py` established — with the SAME default the fresh DDL
+    declares, so a migrated row behaves exactly like a fresh one.
+    """
+
+    def test_a_pre_change_home_gains_the_column_and_keeps_its_rows(self) -> None:
+        """Simulate the legacy home by dropping the column from a fresh DB (SQLite ALTER
+        DROP), then prove the next `_connect` re-adds it, the old row reads back with an
+        empty overlay (the declared default), and new rows write fine."""
+        import sqlite3
+
+        legacy = st.create(_run(intent="made before the column existed"))
+
+        conn = sqlite3.connect(str(st._db_path()))
+        try:
+            conn.execute("ALTER TABLE runs DROP COLUMN policy_overrides")
+            conn.commit()
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(runs)")]
+            assert "policy_overrides" not in cols, "the drop did not land — this proves nothing"
+        finally:
+            conn.close()
+
+        # The next store call goes through `_connect`, which must heal the schema.
+        got = st.get(legacy.id)
+        assert got is not None and got.intent == "made before the column existed"
+        assert got.policy_overrides == {}
+
+        made = st.create(_run(id="cafe4d01", intent="post-upgrade write"))
+        st.set_policy_overrides(made.id, {"max_cycles": 3})
+        assert st.get(made.id).policy_overrides == {"max_cycles": 3}
+        assert st.list_runs()[1] == 2
+
+
 class TestRetiredTaskListId:
     """PP-16 seam 4c: `runs.task_list_id` is retired with NO migration, by decision.
 
