@@ -65,15 +65,23 @@ class TestDefaults:
         assert personals[0].id == personal.id
         assert store.get_project_by_name("Renamed") is None
 
-    def test_default_project_non_name_update_still_works(self, store):
+    def test_default_project_non_name_update_still_works(self, store, tmp_path):
         # Only the name is frozen on a default — brief/workspace_dir/status still update.
+        #
+        # `workspace_dir` is a REAL directory from `tmp_path`, not a hardcoded `/tmp/x`.
+        # `update_project` validates the path and refuses one that exists as a FILE, so the
+        # literal made this test depend on whether the host happened to have `/tmp/x` — it
+        # passed on a machine where nothing had created it and failed with
+        # "Workspace directory path is a file, not a directory" on one where something had.
         store.ensure_defaults()
         personal = store.get_project_by_name("Personal")
+        ws = tmp_path / "workspace"
+        ws.mkdir()
         u = store.update_project(
-            personal.id, brief="Catch-all", workspace_dir="/tmp/x", status="archived"
+            personal.id, brief="Catch-all", workspace_dir=str(ws), status="archived"
         )
         assert u.name == "Personal"
-        assert u.brief == "Catch-all" and u.workspace_dir == "/tmp/x" and u.status == "archived"
+        assert u.brief == "Catch-all" and u.workspace_dir == str(ws) and u.status == "archived"
         # A no-op name (same value) must not trip the rename guard either.
         assert store.update_project(personal.id, name="Personal").name == "Personal"
 
@@ -146,16 +154,26 @@ class TestProjectEntity:
         p = store.create_project("Layout")
         assert (tmp_path / "projects" / p.id / "project.json").is_file()
 
-    def test_create_with_workspace_dir(self, store):
-        p = store.create_project("Bound", workspace_dir="/tmp/repo")
-        assert p.workspace_dir == "/tmp/repo"
-        assert store.get_project(p.id).workspace_dir == "/tmp/repo"
+    def test_create_with_workspace_dir(self, store, tmp_path):
+        # Also `tmp_path` rather than a `/tmp/...` literal: this one happens to pass today only
+        # because nothing has created that path on this host. Same latent host dependency as the
+        # two `/tmp/x` uses that did fail — fixed here rather than left to bite later.
+        ws = tmp_path / "repo-bind"
+        ws.mkdir()
+        p = store.create_project("Bound", workspace_dir=str(ws))
+        assert p.workspace_dir == str(ws)
+        assert store.get_project(p.id).workspace_dir == str(ws)
         assert store.create_project("Free").workspace_dir == ""
 
-    def test_update_workspace_and_status_and_lock(self, store):
+    def test_update_workspace_and_status_and_lock(self, store, tmp_path):
+        # Real directory, for the reason spelled out on the default-project update above: the
+        # validator refuses a workspace path that exists as a file, so a hardcoded `/tmp/x`
+        # made the result depend on the host rather than on the code under test.
         p = store.create_project("W")
-        u = store.update_project(p.id, workspace_dir="/tmp/x", status="archived", name_locked=True)
-        assert u.workspace_dir == "/tmp/x" and u.status == "archived" and u.name_locked is True
+        ws = tmp_path / "bound-workspace"
+        ws.mkdir()
+        u = store.update_project(p.id, workspace_dir=str(ws), status="archived", name_locked=True)
+        assert u.workspace_dir == str(ws) and u.status == "archived" and u.name_locked is True
         re = store.get_project(p.id)
         assert re.status == "archived" and re.name_locked is True
 
@@ -359,6 +377,23 @@ class TestWorkspaceBindGuard:
         with pytest.raises(ValueError):
             store.update_project(p.id, workspace_dir=bad)
         # the previous (empty) binding survived the refusal.
+        assert store.get_project(p.id).workspace_dir == ""
+
+    def test_a_workspace_path_that_is_a_file_is_refused(self, store, tmp_path):
+        # The one unsafe shape `_UNSAFE` cannot express as a literal, because it depends on what
+        # is ON DISK rather than on the string. It was covered only BY ACCIDENT until now: two
+        # tests elsewhere in this file passed a hardcoded `/tmp/x` and exercised this branch on
+        # any host where something had created that file — which is also why they failed there.
+        # Fixing them to use `tmp_path` would have deleted the coverage, so it is stated here.
+        f = tmp_path / "not-a-dir"
+        f.write_text("", encoding="utf-8")
+        with pytest.raises(ValueError, match="file, not a directory"):
+            store.create_project("Bound", workspace_dir=str(f))
+        assert store.get_project_by_name("Bound") is None
+
+        p = store.create_project("Bound2")
+        with pytest.raises(ValueError, match="file, not a directory"):
+            store.update_project(p.id, workspace_dir=str(f))
         assert store.get_project(p.id).workspace_dir == ""
 
     def test_safe_absolute_workspace_still_binds(self, store, tmp_path):
