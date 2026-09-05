@@ -289,6 +289,22 @@ def is_sensitive_path(path_str: str) -> bool:
     Works for both absolute paths and ~/relative paths.
     Used by hooks to block fs_read/ReadFile of credential files.
     """
+    # 🔴 A path the OS cannot even name is SENSITIVE, not safe (issue 352). A NUL byte makes
+    # every `os.path`/`pathlib` call raise `ValueError: embedded null character`, and the
+    # `except` below deliberately continues with the UNRESOLVED string — which then matches no
+    # sensitive prefix, so this answered False for `/tmp/a\x00b`. Measured.
+    #
+    # That answer is the dangerous half of this issue. The visible symptom was a 500 out of
+    # `validate_file_path`, and the tempting fix there is to catch the exception and carry on —
+    # which would hand this function a path it cannot classify and take False for an answer. So
+    # the refusal belongs HERE as well, ahead of every caller.
+    #
+    # Fail CLOSED, the direction this function already argues for below: casefolding "can only
+    # over-block ... the safe direction for a credential guard and the error a user can see and
+    # report". A NUL is never part of a legitimate filename — POSIX and Windows both forbid it
+    # in a path component — so over-blocking costs nothing real.
+    if "\x00" in path_str:
+        return True
     # Expand ~ and $HOME
     expanded = os.path.expanduser(os.path.expandvars(path_str))
     try:
