@@ -41,23 +41,25 @@ _PER = 1_000_000.0
 # (catalog/Bedrock ids use hyphenated version parts — ``claude-opus-4-8``,
 # ``global.anthropic.claude-opus-4-8`` — while this table keys on the dotted
 # family form ``claude-opus-4.8``). Canonicalize at THIS single seam only:
-# strip a provider/region prefix (``us.anthropic.`` / ``global.anthropic.`` /
-# ``anthropic.``) and re-dot a hyphenated version tail so both forms resolve
-# to one row. The raw id always wins first — a table key that IS hyphenated
-# (e.g. ``claude-sonnet-4-20250514``) keeps resolving exactly as before.
-_PROVIDER_PREFIXES = ("us.anthropic.", "global.anthropic.", "eu.anthropic.", "anthropic.")
-_VERSION_TAIL = re.compile(r"-(\d+)-(\d+)$")
+# strip a provider/region prefix (any ``<region>.anthropic.`` inference-profile
+# form — us/global/eu/apac and whatever region Bedrock mints next — plus the
+# bare ``anthropic.``) and re-dot a hyphenated version tail so both forms
+# resolve to one row. The raw id always wins first — a table key that IS
+# hyphenated (e.g. ``claude-sonnet-4-20250514``) keeps resolving exactly as
+# before. PCS-9 audit: the version tail must be found BEFORE a trailing date
+# stamp, not at the end of the string — a live Bedrock id like
+# ``us.anthropic.claude-opus-4-8-20260101-v1:0`` carries ``-<date>`` after the
+# version pair, and anchoring at ``$`` re-dotted the wrong pair
+# (``…4-8.20260101``), leaving the id unpriced.
+_PROVIDER_PREFIX = re.compile(r"^(?:[a-z]{2,6}\.)?anthropic\.")
+_VERSION_TAIL = re.compile(r"-(\d+)-(\d+)(?=-\d{8}|$)")
 
 
 def _canonical(model: str) -> str:
     """Best-effort canonical (dotted-family) form of a catalog/provider id."""
-    m = model
-    for prefix in _PROVIDER_PREFIXES:
-        if m.startswith(prefix):
-            m = m[len(prefix) :]
-            break
+    m = _PROVIDER_PREFIX.sub("", model)
     m = m.removesuffix("-v1:0")
-    return _VERSION_TAIL.sub(r"-\1.\2", m)
+    return _VERSION_TAIL.sub(r"-\1.\2", m, count=1)
 
 
 def _rates(model: str) -> dict[str, float] | None:
