@@ -1855,7 +1855,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       ]
       setTurns((prev) => [...prev, assistantTurn(lines.join('\n'))])
     } catch (e) {
-      setTurns((prev) => [...prev, assistantTurn(`Rewind failed: ${String(e)}`)])
+      // A failure is unrequested bad news, not something the assistant said: appending it as an
+      // assistant turn put `String(e)` — "ApiError: <raw message>" — into the transcript in the
+      // assistant's voice (AUD-A9). The success notices above stay as assistant turns on purpose
+      // (the preview/result IS the reply); only the failure routes to the error funnel, whose
+      // message is already the backend's sentence with no exception-class prefix.
+      reportActionFailure(`rewind to turn ${turn}`)(e)
     }
   }
   async function transcribe(blob: Blob, opts?: { duplex?: boolean }): Promise<string> {
