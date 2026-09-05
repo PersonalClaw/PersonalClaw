@@ -317,3 +317,45 @@ def test_accountability_now_has_a_production_importer():
     assert "accountability" in src
     hist = inspect.getsource(__import__("personalclaw.history", fromlist=["_x"]))
     assert "attribution.grade_accepted_changes" in hist
+
+
+def test_a_harmful_verdict_also_revokes_standing_autonomy_grants(home, monkeypatch):
+    """§4.4 (ES-15): the revert proposal retires the CHANGE; the revocation retires the
+    AUTONOMY. Same drive as the revert test — the revoker is spied, its own semantics
+    live in test_guardrails_revocation.py."""
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "personalclaw.guardrails.ladder.revoke_granted_scopes",
+        lambda **kw: calls.append(kw) or [],
+    )
+    b1 = _run("nightly", status=RunStatus.FAILED)
+    _fail(b1, "load", _SCHEMA)
+    _accept_a_change("nightly", ["schema_violation"])
+    for _ in range(3):
+        r = _run("nightly", status=RunStatus.FAILED)
+        _fail(r, "load", _SCHEMA)
+        _fail(r, "transform", _CODE)
+
+    report = A.grade_accepted_changes()
+
+    assert report["harmful"] == 1
+    assert len(calls) == 1, "one HARMFUL verdict, one revocation pass"
+    assert "nightly" in calls[0]["cause"], "the cause names the change that did damage"
+    assert calls[0]["evidence_id"].startswith("attribution:")
+
+
+def test_an_effective_verdict_revokes_nothing(home, monkeypatch):
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "personalclaw.guardrails.ladder.revoke_granted_scopes",
+        lambda **kw: calls.append(kw) or [],
+    )
+    b1 = _run("nightly", status=RunStatus.FAILED)
+    _fail(b1, "load", _SCHEMA)
+    _accept_a_change("nightly", ["schema_violation"])
+    for _ in range(3):
+        _run("nightly", status=RunStatus.COMPLETE)
+
+    report = A.grade_accepted_changes()
+
+    assert report["effective"] == 1 and calls == []

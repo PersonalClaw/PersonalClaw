@@ -302,3 +302,48 @@ def test_the_digest_reports_the_previous_fingerprints_baseline_count(watch_home)
     result = watchdog.check(now=NOW, notifier=notifier)
     assert result.baseline_scenarios == 1
     assert "1 scenario baseline(s)" in notifier.calls[0][2]
+
+
+# ── §4.4 mechanical revocation (ES-15): a rebind voids standing grants ─────────
+
+
+def test_a_rebind_revokes_standing_autonomy_grants(watch_home, monkeypatch):
+    """The evidence behind every grant was measured under the OLD bindings, so the
+    rebind branch calls the shared revoker — with the fingerprint as the evidence id,
+    so the notice names exactly which model change voided the trust."""
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "personalclaw.guardrails.ladder.revoke_granted_scopes",
+        lambda **kw: calls.append(kw) or [],
+    )
+    _bind(watch_home, {"chat": ["A:1"]})
+    watchdog.check(now=NOW, notifier=None)  # baseline — must NOT revoke
+    assert calls == [], "a fresh install's first observation is a baseline, not a rebind"
+
+    _bind(watch_home, {"chat": ["B:1"]})
+    result = watchdog.check(now=NOW, notifier=None)
+
+    assert result.changed is True
+    assert len(calls) == 1, "one rebind, one revocation pass"
+    assert calls[0]["evidence_id"] == f"model_fp:{result.model_fp}"
+    assert "chat" in calls[0]["cause"], "the cause names the binding that moved"
+
+    # And a quiet tick revokes nothing.
+    watchdog.check(now=NOW, notifier=None)
+    assert len(calls) == 1
+
+
+def test_a_revocation_failure_does_not_lose_the_queue_or_digest(watch_home, monkeypatch):
+    def boom(**kw):
+        raise RuntimeError("rung store unwritable")
+
+    monkeypatch.setattr("personalclaw.guardrails.ladder.revoke_granted_scopes", boom)
+    _bind(watch_home, {"chat": ["A:1"]})
+    watchdog.check(now=NOW, notifier=None)
+    _bind(watch_home, {"chat": ["B:1"]})
+    notifier = _Notifier()
+
+    result = watchdog.check(now=NOW, notifier=notifier)
+
+    assert result.changed is True and len(result.queued) >= 1
+    assert len(notifier.calls) == 1, "the digest still goes out"

@@ -421,6 +421,25 @@ def check(
             changes=[c.to_dict() for c in changes],
         )
 
+    # §4.4 mechanical revocation: every standing autonomy grant's evidence window was
+    # measured under the OLD bindings, so a trust-invalidating rebind voids it. The
+    # re-benchmarks queued below are how trust gets re-EARNED. A failed revocation is
+    # logged loudly but must not lose the queue or the digest.
+    try:
+        from personalclaw.guardrails.ladder import revoke_granted_scopes
+
+        revoke_granted_scopes(
+            cause=(
+                "The model bindings changed ("
+                + ", ".join(f"{c.use_case}: {c.before or 'unset'} → {c.after}" for c in changes)
+                + "), which invalidates the evidence behind every standing autonomy grant."
+            ),
+            evidence_id=f"model_fp:{model_fp}",
+            source="model_watchdog",
+        )
+    except Exception:  # noqa: BLE001 - the queue and digest must survive a revocation failure
+        logger.warning("watchdog: autonomy revocation failed", exc_info=True)
+
     entries = build_queue_entries(model_fp=model_fp, changes=changes, top_n=top_n, now=moment)
     save_queue(load_queue() + entries)
     baselines = baselines_by_fingerprint()

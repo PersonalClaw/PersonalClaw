@@ -398,6 +398,53 @@ def promotion_attention_note(_key: str = "") -> str:
     return note
 
 
+def nodding_revocation_cause(*, max_runs: int = 120) -> str:
+    """The §4.4 nodding-loop revocation cause, or ``""`` when every gate really judges.
+
+    Walks the same bounded recent-run window as :func:`_attention_scopes`, groups the
+    journal's judge verdicts by template, and asks the nodding-loop detector. A gate
+    that has NEVER rejected over enough real runs is statistical proof of a check that
+    does not check — which voids the "the system behaves well" evidence every standing
+    autonomy grant rests on.
+
+    Lives here rather than in ``guardrails`` for the same reason
+    :func:`promotion_attention_note` does: guardrails must not import the workflows
+    layer, so the gateway sweep carries this verdict ACROSS the boundary. Best-effort
+    by the same contract — a failed read returns ``""`` and revokes nothing, because a
+    revocation must rest on a measured nodding gate, never on an exception.
+    """
+    try:
+        from personalclaw.workflows import journal as journal_mod
+        from personalclaw.workflows import judge_calibration
+
+        runs, _ = store.list_runs(limit=max_runs)
+        by_template: dict[str, list[Any]] = {}
+        for run in runs:
+            run_id = getattr(run, "id", "")
+            name = getattr(run, "workflow_name", "") or ""
+            if not run_id or not name:
+                continue
+            entries = journal_mod.ledger(run_id, kinds={journal_mod.JUDGE_VERDICT})
+            if entries:
+                by_template.setdefault(name, []).extend(
+                    judge_calibration.verdicts_from_journal(entries)
+                )
+        nodding: list[str] = []
+        for name, records in sorted(by_template.items()):
+            allowed, reason = judge_calibration.may_become_default(records, template=name)
+            if not allowed:
+                nodding.append(f"{name} ({reason})")
+        if not nodding:
+            return ""
+        return (
+            "A nodding-loop gate was measured — a judge gate that has never rejected "
+            "across enough real runs is a check that does not check: " + "; ".join(nodding) + "."
+        )
+    except Exception:  # noqa: BLE001 — a failed read must revoke nothing
+        logger.debug("nodding revocation sweep failed", exc_info=True)
+        return ""
+
+
 async def api_attention(request: web.Request) -> web.Response:
     """GET /api/workflows/attention — per-template §4.4 attention summaries."""
     _audit(request, "workflow_attention", "success", "")

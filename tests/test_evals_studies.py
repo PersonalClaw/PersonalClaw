@@ -1282,3 +1282,57 @@ def test_a_zero_agreement_floor_ROUND_TRIPS_or_the_seal_calls_an_honest_study_ta
     restored = studies.registration_from_dict(store.read_study_registration(reg.study_id))
     assert restored.agreement_floor == 0.0, "a zero floor must survive the read"
     assert studies.seal_status(restored) == (studies.SEAL_OK, "")
+
+
+# ── §4.4 mechanical revocation (ES-15): a failed study voids standing grants ──
+
+
+def test_a_study_loss_revokes_standing_autonomy_grants(monkeypatch):
+    """The retirement proposal reverts the CHANGE; the revocation retires the AUTONOMY
+    that would keep shipping changes like it unattended. Spied here — the revoker's own
+    semantics live in test_guardrails_revocation.py."""
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "personalclaw.guardrails.ladder.revoke_granted_scopes",
+        lambda **kw: calls.append(kw) or [],
+    )
+    filed: list[dict] = []
+    monkeypatch.setattr(
+        "personalclaw.learning.proposals.enqueue",
+        lambda **kw: (filed.append(kw), (None, None))[1],
+    )
+    reg = studies.StudyRegistration(
+        study_id="st-loss",
+        subject={"template_id": "nightly-digest"},
+        hypothesis="the candidate is better",
+        inputs=(),
+        k=3,
+        rubric_sha256="r" * 64,
+    )
+    loss = studies.StudyResult(
+        study_id="st-loss",
+        kind=studies.KIND_TEMPLATE_AB,
+        verdict=studies.VERDICT_LOSS,
+        wins=0,
+        losses=3,
+        k=3,
+        detail="lost 3 of 3 decided cases",
+    )
+
+    studies.file_demotion_proposal(reg, loss)
+
+    assert len(filed) == 1, "the retirement proposal still files"
+    assert len(calls) == 1, "one LOSS, one revocation pass"
+    assert calls[0]["evidence_id"] == "study:st-loss"
+    assert "nightly-digest" in calls[0]["cause"]
+
+    # A WIN files nothing and revokes nothing.
+    win = studies.StudyResult(
+        study_id="st-win",
+        kind=studies.KIND_TEMPLATE_AB,
+        verdict=studies.VERDICT_WIN,
+        wins=3,
+        k=3,
+    )
+    studies.file_demotion_proposal(reg, win)
+    assert len(filed) == 1 and len(calls) == 1

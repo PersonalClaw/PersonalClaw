@@ -48,6 +48,11 @@ export const NOTIFICATION_SOURCE_ROUTES: Record<string, string> = {
   approval: 'chat',
   apps: 'apps',
   cron: 'triggers',
+  // ES-15 revocation. `notifications`, NOT a Settings → Guardrails deep link, even though that
+  // is where the user re-grants: `settings` is in neither NAV nor ROUTABLE, so naming it would
+  // red the sibling rail below and make every tap a dead link. The feed is the surface that
+  // actually carries the revoked keys and the evidence id, same as `system`.
+  guardrails: 'notifications',
   heartbeat: 'notifications',
   hook: 'notifications',
   inbox: 'inbox',
