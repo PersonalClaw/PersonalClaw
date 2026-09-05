@@ -6801,8 +6801,10 @@ export const api = {
   draftInboxReply: (id: string) => post<InboxItem>(`/api/inbox/${encodeURIComponent(id)}/draft`),
   // Generate a catch-up digest of a channel's recent messages — lands as a new
   // inbox item (source="digest"), which arrives live over the WS.
+  // POST, not GET: it creates that item and spends a model call, so a prefetch or a
+  // retry of a GET manufactured duplicates (#337).
   digestInboxChannel: (channelId: string, hours = 4) =>
-    get<InboxItem>(`/api/inbox/digest?channel_id=${encodeURIComponent(channelId)}&hours=${hours}`),
+    post<InboxItem>(`/api/inbox/digest?channel_id=${encodeURIComponent(channelId)}&hours=${hours}`),
   sendInboxReply: (id: string, text: string) => post<{ ok: boolean; delivered_to_session?: boolean }>('/api/inbox/send', { id, text }),
   // P11 engagement signals — recorded only when inbox.engagement_ranking_enabled is on
   // (backend gates it); open is best-effort fire-and-forget, favorite persists the star.
