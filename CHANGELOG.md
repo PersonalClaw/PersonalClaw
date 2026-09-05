@@ -9,6 +9,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ## [Unreleased]
 
 ### Changed
+- `run_chat` is no longer exported from `personalclaw.sdk.channel` (EA-7 step 3). It was an ungated second route past the channel sender-trust gate; a channel app now reaches a turn only through `services.deliver_channel_inbound`, which applies `guard_inbound` unconditionally. All four bundled channel apps (discord, telegram, email, slack) already migrated — update installed apps alongside this core upgrade; an app version still importing `run_chat` fails at import time. The function itself is unchanged at `personalclaw.dashboard.chat.run_chat` for the owner's own surfaces.
 - The `runs` table no longer declares a `task_list_id` column and `WorkflowRun` no longer carries the field (PP-16 seam 4c). The column was never populated or read — per-phase task lists are projected from run state instead. Clean break under the pre-1.0 banner: no migration; an existing home keeps the inert column, which new code neither reads nor writes. `personalclaw snapshot` before upgrading is advised as usual.
 
 ### Fixed
