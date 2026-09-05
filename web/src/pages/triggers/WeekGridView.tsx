@@ -179,7 +179,8 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
                               }
                             : undefined
                         }
-                        className="h-6 rounded text-center text-[0.6875rem] tabular-nums transition-colors"
+                        data-type="caption"
+                        className="h-6 rounded text-center tabular-nums transition-colors"
                         style={{
                           background: tone.bg,
                           color: tone.fg,

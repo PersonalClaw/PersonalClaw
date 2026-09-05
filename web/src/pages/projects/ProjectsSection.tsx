@@ -369,6 +369,17 @@ export const SHARING_POLICY_LABEL: Record<SharingPolicy, string> = {
   shared: 'Shared',
 }
 
+/** Label for a policy value, surviving wire/UI drift without jargon. The closed Record above
+ *  makes a new KNOWN value a typecheck failure; a value the wire invents anyway used to render
+ *  "unmapped: <raw>" — developer vocabulary on a user surface (AUD-NZ11). Drift stays visible
+ *  where a developer looks (the console); the user reads a humanized word. */
+function sharingPolicyLabel(policy: SharingPolicy): string {
+  const known = SHARING_POLICY_LABEL[policy]
+  if (known) return known
+  console.warn(`unmapped sharing_policy from the wire: ${policy}`)
+  return String(policy).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
+}
+
 /** A project's run-written knowledge (WORK-CONTAINERS §1.6).
  *
  *  Each row shows its sharing policy, and a row the backend surfaced from ANOTHER project
@@ -386,9 +397,9 @@ export function ProjectKnowledgeList({ items }: { items: ProjectKnowledgeItem[] 
               <Users size={11} className="shrink-0" />{k.source_project}
             </span>
           )}
-          {/* No silent default: an unmapped policy is ANNOUNCED with its raw value rather
-              than rendering blank, so a wire/UI drift is visible instead of invisible. */}
-          <span className="shrink-0 text-on-surface-low text-[0.75rem]">{SHARING_POLICY_LABEL[k.sharing_policy] || `unmapped: ${k.sharing_policy}`}</span>
+          {/* No silent default: an unmapped policy still renders (humanized) and warns in the
+              console, so a wire/UI drift is visible without printing jargon at the user. */}
+          <span className="shrink-0 text-on-surface-low text-[0.75rem]">{sharingPolicyLabel(k.sharing_policy)}</span>
         </div>
       ))}
     </div>

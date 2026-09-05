@@ -225,7 +225,7 @@ function Advanced({ draft, set, triggerOnly }: { draft: ScheduleDraft; set: <K e
                 whatever the switch said. A switch that cannot hold its value is worse than an
                 absent one: it reports a setting the run will not honor (issue 268). */}
             {!triggerOnly && draft.mode === 'agent' && (
-              <CheckRow label="Auto-approve tools" hint="Run tools without approval prompts (approval_mode=auto)." checked={draft.approval_mode === 'auto'} onChange={(v) => set('approval_mode', v ? 'auto' : '')} />
+              <CheckRow label="Auto-approve tools" hint="Run tools without asking for approval each time." checked={draft.approval_mode === 'auto'} onChange={(v) => set('approval_mode', v ? 'auto' : '')} />
             )}
           </div>
         </div>
