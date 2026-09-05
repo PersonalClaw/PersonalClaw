@@ -1,5 +1,6 @@
 import type { DialogField } from '../../ui/dialog'
 import type { WorkflowInputParam } from '../../lib/api'
+import { BOOL_FALSE_WORDS, BOOL_TRUE_WORDS } from '../tools/schema'
 
 /** Turning a template's declared inputs into a run dialog (WF2 Slice 9b).
  *
@@ -38,6 +39,13 @@ export function inputFields(inputs: Record<string, WorkflowInputParam> | undefin
       // `boolean` has no checkbox in this dialog primitive, so it renders as text the backend
       // coerces. Deliberate over adding a control here: one shared dialog beats a bespoke form
       // per entity, and a boolean input is rare in a template.
+      //
+      // 🪤 "the backend coerces" was ASPIRATIONAL when this was written: nothing enforced a
+      // declared type, so `apply: banana` reached the run record verbatim (#327). It is true now —
+      // `service.start_run` types every declared input at the door — which is what makes the text
+      // field acceptable here. The full-page form (`WorkflowDefDetail`) renders real controls
+      // through `SchemaField`; this dialog trades that for one shared primitive, and the door is
+      // what keeps the trade safe.
       type: (param.help?.length ?? 0) > 90 ? ('textarea' as const) : ('text' as const),
       required: !!param.required,
     }))
@@ -68,15 +76,30 @@ export function coerceInputs(
     const param = (inputs ?? {})[name]
     const text = (raw ?? '').trim()
     if (!text && !param?.required) continue
+    // A blank REQUIRED answer is passed through as "" rather than coerced. `Number("")` is `0`,
+    // and `Number.isFinite(0)` is true — so a required `number` left empty used to post a
+    // confident `0` the user never typed. Blankness is the required check's question, on both
+    // sides of the wire (`contracts.coerce_declared_inputs` treats "" as declared-but-unset).
+    if (!text) {
+      out[name] = text
+      continue
+    }
     switch (param?.type) {
       case 'number': {
         const n = Number(text)
         out[name] = Number.isFinite(n) ? n : text
         break
       }
-      case 'boolean':
-        out[name] = /^(true|yes|1|on)$/i.test(text)
+      case 'boolean': {
+        // Verbatim on an unrecognised word, exactly as the number branch above does and for the
+        // same reason: `banana` used to become a silent `false`, so a user who typed something
+        // meaning "on" got "off" with nothing said. The door refuses it and names the field.
+        const word = text.toLowerCase()
+        if (BOOL_TRUE_WORDS.includes(word)) out[name] = true
+        else if (BOOL_FALSE_WORDS.includes(word)) out[name] = false
+        else out[name] = text
         break
+      }
       default:
         out[name] = text
     }
