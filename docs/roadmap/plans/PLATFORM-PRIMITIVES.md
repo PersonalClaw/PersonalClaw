@@ -204,6 +204,42 @@ rather than deferring them past it.
 
 ## Execution log
 
+- **2026-09-05 — `PP-16` sub-seam 4c DONE: `WorkflowRun.task_list_id` retired under OWNER
+  RULING 1 (core PR #2462, merged; commit 7f33b5082). Atom stays `todo`.** The change the 2026-08-22 entry built, verified and
+  reverted pending the ruling, now re-applied under it: the dataclass field, its `_KNOWN` entry, the
+  `to_dict`/`from_dict` lines, the fresh-DDL column and the `_COLUMNS` entry are gone, and the field
+  map's `task_list_ids` row re-homes to `PROJECTION` — a per-phase TaskList map derives from run
+  state, the direction `materialize.py` already proves — so the homeless set is UNCHANGED and the
+  shrink-only ratchet still passes. No migration and no DROP path, the 4a posture verbatim: a
+  pre-change home keeps the column (`NOT NULL DEFAULT ''`), the column-named INSERT/UPDATE leave it
+  at its default, and `_row_to_run` materializes only `_COLUMNS`, so a stale column is inert rather
+  than a second source of truth — and rewriting the table to drop it would make pre-change
+  snapshots' `runs` rows unrestorable in both directions (`snapshot._merge_sqlite_attach` skips a
+  table whose column set differs). `TestRetiredTaskListId` measures all three legs on a simulated
+  legacy schema (ALTER TABLE adds the column back exactly as the old DDL declared it; a raw-SQL
+  plant with its own vacuity guard): the legacy row reads with nothing spilling into `extra`, a new
+  row writes against the legacy shape, and an UPDATE round-trips through the column-named writer.
+  CHANGELOG carries the class-S entry. 47 tests green (field-map rail + workflows store), runtime
+  import sweep clean. This closes the slot RULING 1 named — a singular field a later migration could
+  have filled with the wrong shape — and unblocks 4e.
+
+- **2026-09-05 — `PP-16` sub-seam 4b DONE: the two stores sharing `loop/store.py` are SPLIT (core
+  PR #2458, merged). Atom stays `todo`.** The 2026-08-27 measurement said `loop/store.py` was two
+  stores sharing a file — ~31 functions of SQLite row vs ~48 of per-loop filesystem store — and the
+  split lands exactly on that seam: `loop/files.py` now owns the file half (loop-dir paths, the
+  `events.jsonl` ledger protocol `append_jsonl`/`read_jsonl`, `write_output`/`write_artifact`,
+  redaction primitives, the worker interface, the plan session, and `reap_orphan_dirs`), while
+  `store.py` keeps the row, its views, the `kind_config` runtime trails and `_db_path`. The three
+  recorded couplings drove the split's two deliberate asymmetries: `reap_orphan_dirs` keeps its
+  GC oracle by importing the row store's `list_all` LAZILY inside the function (files→store at
+  call time, never at import — the import-direction gate stays clean), and `_db_path` resolves
+  through `files._loops_root` so the durability artifact `loops.db` keeps ONE root. `LoopJournal`'s
+  `_store` seam repoints to `loop_files`; ~17 src consumers, `harness/resume_audit.py` and ~25 test
+  files repointed; the test isolation seam is `personalclaw.loop.files.config_dir`; the ledger-writer
+  census rail (`_LEDGER_WRITERS`) names `loop/files.py` as the one writer. Full loop-side suite
+  green post-repoint. **Seam-4 state, restated once:** 4a done (2026-08-27), 4b done (this entry),
+  4c done (#2462, entry above), 4d–4f next under the two recorded rulings, 4g/4h last.
+
 - **2026-08-27 — `PP-16` sub-seam 4a DONE: `loops.total_cycles` retired. Atom stays `todo`
   (PARTIAL).** Seam 4 ("retire `loop/store.py`'s parallel row") is not a table move — `loops` has
   **39** columns against `WorkflowRun`'s **26**, and 31 of the 39 have no `runs` column at all, with
