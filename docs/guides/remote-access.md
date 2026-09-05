@@ -215,13 +215,36 @@ a blocked run waits for a decision.
 tool name, not its arguments, not the session, not a title. Your phone wakes up, and then it fetches
 the decision from *your* gateway over the link you set up above. A push service — Google's, Apple's,
 Mozilla's, or your own ntfy host — never sees what is being approved. That is not a nicety: it is the
-only claim that holds for both transports below, since one of them is not encrypted at all.
+only claim that holds for every transport below, since not all of them are encrypted.
 
-Pick a transport in **Settings → Companion apps → Phone push**.
+Pick a transport in **Settings → Companion apps → Phone push**. The guide leads with ntfy
+because it is the documented default recommendation: fully self-hosted, no keys, no third
+party. Web push is what a browser or installed PWA uses; the relay is only for the store app.
 
-### Web push (the default)
+### ntfy / UnifiedPush (recommended — fully self-hosted)
 
-Uses your browser's own push subscription. One-time setup on the gateway:
+The documented default: no third party is involved at all. Run [ntfy](https://ntfy.sh/docs/install/)
+and point the gateway at a topic:
+
+1. Settings → Companion apps → **Push backend → ntfy**.
+2. Paste your topic's full **https** URL, e.g. `https://ntfy.example/personalclaw`. Plain `http` is
+   refused at both the settings field and the sender — an unencrypted ping would put the item id on
+   the wire in the clear.
+3. Subscribe to the same topic in the ntfy app on your phone.
+
+Nothing else to set up: no VAPID keys, no per-device subscription. The tradeoff is cosmetic and
+deliberate — the ntfy app shows the raw `{"kind":…,"item_id":…}` body, because the alternative is
+composing a human sentence and a sentence is content. A pretty notification is not worth putting
+the tool's arguments through someone else's server.
+
+Pick a topic name nobody can guess. An ntfy topic URL is a capability: anyone who knows it can
+publish to it, so a guessable topic means anyone can make your phone buzz. It still cannot approve
+anything — approving happens on your gateway, behind your session.
+
+### Web push (browsers and the installed PWA)
+
+What `mobile.push_backend` defaults to, and the right transport when your phone runs
+the dashboard as a PWA or browser tab. Uses your browser's own push subscription. One-time setup on the gateway:
 
 ```
 personalclaw push init          # generates a VAPID keypair into the credential store
@@ -244,25 +267,26 @@ Rotating the keypair (`personalclaw push init --force`) invalidates every existi
 because each browser bound its subscription to the old public key. Only do it if a key leaked, and
 re-subscribe each device afterwards.
 
-### ntfy / UnifiedPush (fully self-hosted)
+### The store app (APNs/FCM via a push relay)
 
-If you would rather no third party were involved at all, run [ntfy](https://ntfy.sh/docs/install/)
-and point the gateway at a topic:
+The iOS/Android store app cannot hold a web-push subscription — Apple and Google only
+deliver to it through their own push services, and only whoever holds the app's signing
+credentials can send there. Relay users route the same ids-only ping through a
+**stateless, open-source relay** ([`personalclaw-push-relay`](https://github.com/keyurgolani/personalclaw-push-relay))
+that forwards it to APNs/FCM. Deploy it yourself with your own credentials, or use the
+hosted convenience instance — the relay stores nothing, retries nothing, and refuses any
+body that is not exactly the two ids, so it is a dumb pipe by construction, not a cloud
+middle tier.
 
-1. Settings → Companion apps → **Push backend → ntfy**.
-2. Paste your topic's full **https** URL, e.g. `https://ntfy.example/personalclaw`. Plain `http` is
-   refused at both the settings field and the sender — an unencrypted ping would put the item id on
-   the wire in the clear.
-3. Subscribe to the same topic in the ntfy app on your phone.
+1. Settings → Companion apps → **Push backend → relay**, and paste the relay's **https**
+   URL (plain `http` is refused at the sender, same as ntfy).
+2. In the store app, open the companion screen and tap **Turn on push** — the app
+   registers its device token with *your gateway*, which holds it; the relay sees a token
+   only in transit, per ping.
 
-Nothing else to set up: no VAPID keys, no per-device subscription. The tradeoff is cosmetic and
-deliberate — the ntfy app shows the raw `{"kind":…,"item_id":…}` body, because the alternative is
-composing a human sentence and a sentence is content. A pretty notification is not worth putting
-the tool's arguments through someone else's server.
-
-Pick a topic name nobody can guess. An ntfy topic URL is a capability: anyone who knows it can
-publish to it, so a guessable topic means anyone can make your phone buzz. It still cannot approve
-anything — approving happens on your gateway, behind your session.
+The visible notification is a static "PersonalClaw — Attention needed": any text worth
+varying would have to be composed from the item, i.e. content the relay must never see.
+Tapping it opens the exact approval card, fetched from your own gateway.
 
 ### Checking it without a phone in your hand
 

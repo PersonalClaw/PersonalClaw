@@ -767,7 +767,7 @@ class CompanionConfig:
 
 #: Push transports (MOBILE-COMPANION §C3). Kept beside the dataclass so the enum and the
 #: field that validates against it cannot drift.
-PUSH_BACKENDS: tuple[str, ...] = ("webpush", "ntfy", "none")
+PUSH_BACKENDS: tuple[str, ...] = ("webpush", "ntfy", "relay", "none")
 
 
 @dataclass
@@ -790,7 +790,8 @@ class MobileConfig:
             "Push backend",
             "How a push reaches your phone. 'webpush' uses the browser's own "
             "subscription (needs `personalclaw push init`); 'ntfy' publishes to a "
-            "self-hosted ntfy topic; 'none' sends nothing.",
+            "self-hosted ntfy topic; 'relay' sends ids-only pings through a "
+            "stateless push-relay to the store app; 'none' sends nothing.",
             enum=list(PUSH_BACKENDS),
         ),
     )
@@ -800,6 +801,16 @@ class MobileConfig:
             "ntfy topic URL",
             "Full https URL of your ntfy topic (e.g. https://ntfy.example/personalclaw). "
             "Only used when the backend is 'ntfy'. Pings carry ids only, never content.",
+        ),
+    )
+    relay_url: str = field(
+        default="",
+        metadata=_meta(
+            "Push relay URL",
+            "Full https URL of a push-relay instance (self-deployed, or the hosted "
+            "convenience). Only used when the backend is 'relay'. The relay is "
+            "stateless and forwards ids-only pings to the vendor push services — it never sees "
+            "content.",
         ),
     )
 
@@ -3521,6 +3532,9 @@ class AppConfig:
                 # write path) and where it matters (`push.send_ntfy` refuses a non-https
                 # destination) rather than silently blanked here.
                 ntfy_topic_url=str(mobile_data.get("ntfy_topic_url", "") or "").strip(),
+                # Same treatment as ntfy_topic_url directly above: kept verbatim, and
+                # `push.send_relay` is the fail-closed non-https refusal point.
+                relay_url=str(mobile_data.get("relay_url", "") or "").strip(),
             ),
             local_models=LocalModelsConfig(
                 # Clamped to a real percentage: a threshold of 0 would warn permanently

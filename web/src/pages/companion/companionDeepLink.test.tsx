@@ -44,7 +44,8 @@ const AP = (id: string, tool: string): PendingApproval => ({
 
 const OFF: PushStatus = {
   backend: 'none', vapid_public_key: '', vapid_ready: false,
-  ntfy_configured: false, approval_targeted: true, devices: [], subscribed: 0,
+  ntfy_configured: false, relay_configured: false, relay_devices: [],
+  approval_targeted: true, devices: [], subscribed: 0,
 }
 
 const routeWith = (query: Record<string, string>) => ({

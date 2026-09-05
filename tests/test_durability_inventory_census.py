@@ -108,6 +108,12 @@ _UNDECLARED_DEBT = frozenset(
         # endpoints on a different one. Pinned rather than guessed, and raised on the debt issue
         # for the atom's owner.
         "push_subscriptions.json",
+        # MC-9's native-push sibling of the entry above, pinned on the same argument: a relay
+        # token identifies one physical handset, so whether a restore should carry it is the
+        # SAME real kind/domain/merge question — keeping it means native pings survive a
+        # same-machine restore, and means a stale token pointed at a different machine's app
+        # install on any other. Raised on the same debt issue as push_subscriptions.json.
+        "push_relay_tokens.json",
         "recent_projects.json",
         "research_reports.json",
         "runners",

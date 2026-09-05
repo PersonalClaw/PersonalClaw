@@ -3,6 +3,7 @@ import { AnimatePresence } from 'framer-motion'
 import { Check, Ban, BellRing, LayoutDashboard, RefreshCw, ShieldCheck, CheckCheck, Smartphone } from 'lucide-react'
 import { api, type PendingApproval, type PushStatus } from '../../lib/api'
 import { disablePush, enablePush, pushDeviceId, pushSupported } from '../../app/pushClient'
+import { disableNativePush, enableNativePush, nativeBridge, watchNativePushTaps } from '../../app/nativePush'
 import { useQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
@@ -38,6 +39,14 @@ export function CompanionPage({ navigate, query }: RouteProps) {
   // worker builds this URL from the ping's `item_id`; nothing else in the payload could
   // have told it which card to open.
   const focusId = qget(query, 'approval')
+  // MC-9: inside the mobile shell, a native notification tap arrives through the Capacitor
+  // bridge instead of the service worker. Same destination as the webpush tap: the ids-only
+  // ping names the approval, and the URL is composed from ids alone.
+  useEffect(() => {
+    watchNativePushTaps((kind, itemId) => {
+      if (kind === 'approval') navigate(`companion?approval=${encodeURIComponent(itemId)}`)
+    })
+  }, [navigate])
   // Live data, never persisted to sessionStorage: a stale approval is a dangerous thing to
   // paint. The queue re-reads on every WS approval event and on manual refresh.
   const { data, loading, error, refresh } = useQuery<PendingApproval[]>(
@@ -266,6 +275,48 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
       : data.approval_targeted
         ? 'Pings go to your ntfy topic. Nothing to set up on this device.'
         : 'Pings go to your ntfy topic, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications.'
+  } else if (data.backend === 'relay') {
+    // MC-9. Registration needs the store app's native bridge — a browser tab cannot hold an
+    // vendor push token, and saying so beats a button that cannot work. Every state named, as
+    // above; the on-state keeps the same routed/unrouted honesty split the other backends have.
+    const registered = data.relay_devices.includes(pushDeviceId())
+    if (!data.relay_configured) {
+      line = 'The backend is relay but no relay URL is configured.'
+      action = <Button variant="secondary" size="sm" onClick={() => navigate('settings/companion')}>Settings</Button>
+    } else if (registered) {
+      line = data.approval_targeted
+        ? 'Push is on for this device.'
+        : 'Push is on for this device, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications.'
+      action = (
+        <Button variant="ghost" size="sm" disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            const ok = await disableNativePush()
+            setBusy(false)
+            setNote(ok ? '' : 'Could not unregister — the gateway did not respond.')
+            refresh()
+          }}>Turn off</Button>
+      )
+    } else if (!nativeBridge()) {
+      line = 'Pings go through the push relay to the store app. Open this page in the PersonalClaw app to register this device.'
+    } else {
+      line = 'Get woken up when a run needs your approval.'
+      action = (
+        <Button variant="primary" size="sm" disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            setNote('')
+            const result = await enableNativePush()
+            setBusy(false)
+            if (result.ok) { refresh(); return }
+            setNote(
+              result.reason === 'denied'
+                ? 'The OS refused notification permission. Allow notifications for PersonalClaw, then try again.'
+                : `Could not register${result.detail ? ` — ${result.detail}` : ''}.`,
+            )
+          }}><BellRing size={15} /> Turn on push</Button>
+      )
+    }
   } else if (!data.vapid_ready) {
     line = 'No push keypair yet. Run `personalclaw push init` on the gateway.'
   } else if (on) {
