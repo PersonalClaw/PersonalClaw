@@ -29,6 +29,12 @@ a hope, not a property, and every shipping channel duly forgot it (#950).
 
 **Audit.** Three security events are emitted through the SEL: ``pairing_code_created``
 (never carrying the code), ``sender_paired``, ``sender_denied``.
+
+**Observability.** A fail-closed gate that is also silent is indistinguishable from a dead
+socket, so every verdict :func:`guard_inbound` reaches passes through
+:func:`report_inbound_verdict` — the single owner of "say what happened to this message",
+whose level is derived from the verdict rather than from a table of reasons. See that
+function for the derivation and why the routine cases stay at DEBUG.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ import hashlib
 import hmac
 import logging
 import secrets
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -444,6 +451,157 @@ class TrustVerdict:
     meta: dict[str, Any] = field(default_factory=dict)
 
 
+# ── the observability half of a verdict ───────────────────────────────────────
+
+#: How many recent ``(provider, subject, reason)`` dispositions to remember for the
+#: visible-line window. Bounded so a bot sitting in a hundred untracked channels cannot
+#: grow this without limit; FIFO eviction, and an evicted subject simply re-announces —
+#: the safe direction for a mechanism whose failure mode is silence.
+_REPORT_WINDOW_MAX = 512
+
+#: subject key → when its last operator-visible line was emitted.
+_REPORTED: "OrderedDict[str, datetime]" = OrderedDict()
+
+
+def reset_inbound_reports() -> None:
+    """Forget every remembered disposition, so the next drop announces again. For tests."""
+    _REPORTED.clear()
+
+
+def _visible_line_is_deduped(key: str) -> bool:
+    """Whether ``key`` already had an operator-visible line inside the renotify window.
+
+    Asking is what *claims* the window: a miss records the stamp before returning. So this
+    may only be called for a line the caller is about to emit, which keeps the "one visible
+    line per subject per window" invariant in one place instead of splitting it across a
+    check and a later record that a future edit could separate."""
+    now = _now()
+    last = _REPORTED.get(key)
+    if last is not None and (now - last).total_seconds() < UNKNOWN_SENDER_RENOTIFY_SECS:
+        return True
+    _REPORTED[key] = now
+    _REPORTED.move_to_end(key)
+    while len(_REPORTED) > _REPORT_WINDOW_MAX:
+        _REPORTED.popitem(last=False)
+    return False
+
+
+def report_inbound_verdict(
+    provider: str,
+    verdict: TrustVerdict,
+    *,
+    sender_id: str = "",
+    channel_id: str = "",
+    is_dm: bool = True,
+    policy: str = "",
+) -> TrustVerdict:
+    """Say what happened to one inbound message, then hand the verdict straight back.
+
+    Every branch of :func:`guard_inbound` used to be a bare ``return``, so a *correct*
+    fail-closed decision and a dead socket produced the identical observation: nothing, at
+    no level, not even DEBUG. Proving that an @-mention in an untracked group channel had
+    ever been sent meant reading the channel history back out of the vendor's REST API.
+    This function is the one owner of that reporting, and it returns its argument so every
+    mint site reads ``return report_inbound_verdict(...)`` — which is what makes "one owner"
+    structurally checkable rather than a convention that the next branch forgets.
+
+    **The level is DERIVED from the verdict, never from a table of reasons.** A
+    reason→level map needs a new row for every future policy, and the row gets forgotten
+    exactly when a new silent drop is introduced. But the verdict already records who was
+    told: ``canned_reply`` is text the *sender* receives, ``fired_notification`` is the
+    *owner* notification this call raised. So:
+
+    * ``allowed`` → DEBUG. The message becomes a turn, and the session transcript plus the
+      dashboard broadcast are the evidence. A per-message INFO line on the happy path is
+      the noise that teaches an operator to stop reading the log — but the line exists,
+      because "traffic is arriving and being admitted" is the one observation that separates
+      a healthy socket from a dead one.
+    * denied, and somebody was told → INFO. The loop is closed in-channel (a pairing nudge)
+      or in the notification centre, so this line corroborates rather than being the only
+      trace. It is still INFO and not DEBUG: a denied sender is a decision, not a detail.
+    * denied, and NOBODY was told → WARNING. This is the reported defect's exact shape. An
+      untracked group channel deliberately returns no ``canned_reply`` (no owner spam) and
+      raises no notification, so absent this line the message leaves no trace anywhere. The
+      derivation also catches a case the report missed: an ``owner_only`` DM inside the 24h
+      renotify window, where silence toward the sender is by policy and the notification is
+      deduped, leaving the drop invisible on every axis at once.
+
+    **Flood control reuses the store's existing rule instead of inventing one.** A bot
+    holding MESSAGE_CONTENT sees every message in every visible channel, so one WARNING per
+    message in an untracked ``#general`` is itself a flood. The first visible line per
+    subject per :data:`UNKNOWN_SENDER_RENOTIFY_SECS` is emitted at its derived level and
+    later repeats fall to DEBUG — the same "one alert per subject per window, never one per
+    message" rule :func:`note_unknown_sender` already applies to the owner notification.
+    Nothing ever becomes silent: a suppressed line is demoted, not dropped.
+
+    That window lives in memory rather than in the store because the drop being reported
+    happens on *every* inbound message of a busy untracked channel, and a persisted stamp
+    would mean a disk write per message — the flood merely moves from the log to the
+    filesystem. A restart therefore re-announces once, which is the right bias: the operator
+    who restarted to diagnose this is exactly who needs to see it.
+
+    **Subject** is whatever the operator would have to change to unblock the message — the
+    channel for a group denial, the sender for a DM one. That is the ``is_dm`` split the gate
+    already makes, so it is not a third axis to keep in sync. ``reason`` is part of the key,
+    so a channel that goes from ``untracked_channel`` to ``group_policy_off`` announces
+    again rather than hiding behind the earlier line.
+
+    The line carries sender and channel identifiers but never message text. The identifiers
+    are already persisted in the trust store and already carried by the ``sender_denied``
+    SEL row's ``caller_identity``, so this adds no exposure that did not exist; the body is
+    untrusted third-party content and has no business in an operator's log.
+
+    ``policy`` is empty when the disposition was reached without consulting one (the pairing
+    short-circuit in :mod:`personalclaw.channel_inbound`) and renders as ``-``, because
+    naming a policy that was never read would put a value outside :data:`DM_POLICIES` into
+    the operator's vocabulary. It doubles as the signal for whether a remedy hint applies —
+    see the comment on ``remedy`` below.
+    """
+    scope = "dm" if is_dm else "group"
+    subject = sender_id if is_dm else channel_id
+    # Two branches on the gate's own axis, not a per-reason remedy table: whatever the
+    # reason, a DM denial clears by trusting the sender and a group denial by tracking the
+    # channel (or changing the policy that refused it). Carried only on a POLICY denial —
+    # a verdict reported without a policy was not a policy decision, so there is nothing
+    # for the operator to change, and telling them to "pair this sender" on the very
+    # message that just paired them would be worse than saying nothing.
+    remedy = ""
+    if policy and not verdict.allowed:
+        remedy = (
+            " — pair or allow this sender"
+            if is_dm
+            else " — track this channel or change the policy"
+        )
+
+    if verdict.allowed:
+        level = logging.DEBUG
+    elif verdict.canned_reply or verdict.fired_notification:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+
+    deduped = False
+    if level > logging.DEBUG:
+        deduped = _visible_line_is_deduped(f"{provider}|{scope}|{subject}|{verdict.reason}")
+        if deduped:
+            level = logging.DEBUG
+
+    logger.log(
+        level,
+        "channel inbound %s: provider=%s scope=%s reason=%s policy=%s sender=%s channel=%s%s%s",
+        "admitted" if verdict.allowed else "discarded",
+        provider,
+        scope,
+        verdict.reason or "-",
+        policy or "-",
+        sender_id or "-",
+        channel_id or "-",
+        remedy,
+        " (repeat inside the renotify window)" if deduped else "",
+    )
+    return verdict
+
+
 def note_unknown_sender(
     state: Any, provider: str, sender_id: str, sender_name: str = "", *, silent: bool = False
 ) -> bool:
@@ -549,8 +707,21 @@ def guard_inbound(
       ``personalclaw pair`` minted codes that nothing could spend (#950). Policy
       ``owner_only`` deliberately does NOT redeem: there, the owner's Allow is the only
       door, and honouring a code would make ``owner_only`` no stronger than ``pairing``.
-    * **group/room**, policy ``off`` → denied silently. Policy ``tracked_only`` → allowed
-      only for a tracked channel; an untracked group is silently ignored (no owner spam).
+    * **group/room**, policy ``off`` → denied (``group_policy_off``). Policy
+      ``tracked_only`` → allowed only for a tracked channel; an untracked group is denied
+      (``untracked_channel``) without any in-channel reply, so a stranger's room cannot spam
+      the owner.
+
+    Those two group denials used to share the single reason ``untracked_channel``, which was
+    a lie for half of them: an operator reading it could not tell "you switched groups off"
+    from "you never tracked this room", and the second is one :func:`track` call away from
+    working. The reason now names the policy value that refused the message
+    (:data:`GROUP_POLICIES`), so the vocabulary is derived rather than invented.
+
+    Denied is not the same as unobservable. Every verdict below leaves through
+    :func:`report_inbound_verdict`, which decides — from the verdict itself — whether the
+    operator sees a line or only DEBUG does. Silence toward the *sender* is a policy choice;
+    silence toward the *owner* was a defect.
 
     When allowed non-owner group content is present, ``fenced_text`` carries the
     :func:`fence_channel_content` wrapping the transport must use before the text enters a
@@ -558,52 +729,81 @@ def guard_inbound(
     if is_dm:
         policy = trust_policies(provider).get("dm", DEFAULT_DM_POLICY)
         if policy == "open" or is_allowed_sender(provider, sender_id):
-            return TrustVerdict(allowed=True, reason="allowed")
-        # Redemption happens HERE, for the same reason the fence does: this is the one
-        # function every transport already crosses, so no channel can forget it. Only
-        # under policy ``pairing`` — that policy's canned reply is literally an
-        # instruction to send a code, whereas ``owner_only`` means the owner's Allow is
-        # the ONLY way in and a code must not be a second door.
-        candidate = (text or "").strip()
-        if (
-            policy == "pairing"
-            and _looks_like_a_pairing_code(candidate)
-            and _pairing_code_outstanding(provider)
-            and redeem_pairing_code(provider, sender_id, candidate)
-        ):
-            # Not a turn for the agent: the sender is trusted from their NEXT message on,
-            # and this one is spent on pairing. ``allowed=False`` keeps the code out of
-            # the session transcript as a side benefit.
-            return TrustVerdict(
-                allowed=False,
-                reason="paired",
-                canned_reply=CANNED_PAIRED_REPLY,
-                meta={"paired": True},
+            verdict = TrustVerdict(allowed=True, reason="allowed")
+        else:
+            # Redemption happens HERE, for the same reason the fence does: this is the one
+            # function every transport already crosses, so no channel can forget it. Only
+            # under policy ``pairing`` — that policy's canned reply is literally an
+            # instruction to send a code, whereas ``owner_only`` means the owner's Allow is
+            # the ONLY way in and a code must not be a second door.
+            candidate = (text or "").strip()
+            if (
+                policy == "pairing"
+                and _looks_like_a_pairing_code(candidate)
+                and _pairing_code_outstanding(provider)
+                and redeem_pairing_code(provider, sender_id, candidate)
+            ):
+                # Not a turn for the agent: the sender is trusted from their NEXT message on,
+                # and this one is spent on pairing. ``allowed=False`` keeps the code out of
+                # the session transcript as a side benefit. Reported WITHOUT a ``policy`` so
+                # it carries no remedy hint: telling a sender to "pair" on the very message
+                # that just paired them is worse than silence (see report_inbound_verdict).
+                return report_inbound_verdict(
+                    provider,
+                    TrustVerdict(
+                        allowed=False,
+                        reason="paired",
+                        canned_reply=CANNED_PAIRED_REPLY,
+                        meta={"paired": True},
+                    ),
+                    sender_id=sender_id,
+                    channel_id=channel_id,
+                    is_dm=True,
+                )
+            fired = note_unknown_sender(
+                state, provider, sender_id, sender_name, silent=(policy == "owner_only")
             )
-        fired = note_unknown_sender(
-            state, provider, sender_id, sender_name, silent=(policy == "owner_only")
-        )
-        return TrustVerdict(
-            allowed=False,
-            reason="unknown_sender",
-            canned_reply="" if policy == "owner_only" else CANNED_PAIRING_REPLY,
-            fired_notification=fired,
+            verdict = TrustVerdict(
+                allowed=False,
+                reason="unknown_sender",
+                canned_reply="" if policy == "owner_only" else CANNED_PAIRING_REPLY,
+                fired_notification=fired,
+            )
+        return report_inbound_verdict(
+            provider,
+            verdict,
+            sender_id=sender_id,
+            channel_id=channel_id,
+            is_dm=True,
+            policy=policy,
         )
 
-    # Group / room.
+    # Group / room. ``off`` is checked first so the store is not read a second time for a
+    # channel the policy already refuses.
     gpolicy = trust_policies(provider).get("group", DEFAULT_GROUP_POLICY)
-    if gpolicy == "off" or not is_tracked_channel(provider, channel_id):
-        return TrustVerdict(allowed=False, reason="untracked_channel")
-    # Tracked group: non-owner content is data — fence it before it enters a session.
-    # An ALLOWED sender is exempt: the docstring above has always promised the fence for
-    # non-owner content, and fencing the owner's own message would make an agent read the
-    # owner's instruction in a linked group thread as untrusted data it must not act on.
-    return TrustVerdict(
-        allowed=True,
-        reason="tracked_channel",
-        fenced_text=(
-            fence_channel_content(text, provider, sender_id)
-            if text and not is_allowed_sender(provider, sender_id)
-            else ""
-        ),
+    if gpolicy == "off":
+        verdict = TrustVerdict(allowed=False, reason="group_policy_off")
+    elif not is_tracked_channel(provider, channel_id):
+        verdict = TrustVerdict(allowed=False, reason="untracked_channel")
+    else:
+        # Tracked group: non-owner content is data — fence it before it enters a session.
+        # An ALLOWED sender is exempt: the docstring above has always promised the fence for
+        # non-owner content, and fencing the owner's own message would make an agent read the
+        # owner's instruction in a linked group thread as untrusted data it must not act on.
+        verdict = TrustVerdict(
+            allowed=True,
+            reason="tracked_channel",
+            fenced_text=(
+                fence_channel_content(text, provider, sender_id)
+                if text and not is_allowed_sender(provider, sender_id)
+                else ""
+            ),
+        )
+    return report_inbound_verdict(
+        provider,
+        verdict,
+        sender_id=sender_id,
+        channel_id=channel_id,
+        is_dm=False,
+        policy=gpolicy,
     )
