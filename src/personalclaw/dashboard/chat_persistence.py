@@ -290,6 +290,18 @@ def _restore_runtime_binding(state: DashboardState, session: _ChatSession, meta:
             session.acp_provider_agent = _acp_pa if isinstance(_acp_pa, str) else ""
     if meta.get("workspace_dir"):
         session.workspace_dir = meta["workspace_dir"]
+    # The project this chat belongs to (issue 314). Restored HERE rather than in either caller,
+    # for the reason this helper exists at all: the two restore paths had already drifted once over
+    # `acp_provider`, and a gateway restart goes through the BULK path — which is precisely the
+    # path a project↔chat binding has to survive.
+    #
+    # A string check, not just truthiness: this is read back from a file a user can hand-edit, and
+    # `/api/projects/<id>/linked` compares it with `!=` against a project id. A non-string here
+    # would make every comparison false and empty the Chats list in a way that looks like the bug
+    # this fixes.
+    _pid = meta.get("project_id")
+    if isinstance(_pid, str) and _pid:
+        session.project_id = _pid
     if meta.get("mode"):
         session.mode = meta["mode"]
     # Re-normalized against the closed set on read, so a hand-edited meta line can
@@ -748,6 +760,21 @@ def save_session_to_history(
             meta_line["mode"] = session.mode
         if session.workspace_dir:
             meta_line["workspace_dir"] = session.workspace_dir
+        # The project this chat belongs to (issue 314). Omitted here, it was in-memory only, so
+        # every project↔chat binding died on restart: `/api/projects/<id>/linked` scans
+        # `state._sessions` rather than storage (`tasks/hierarchy_handlers.py`), so the project's
+        # Chats list came back EMPTY — and a restored project chat also lost the context-dir access
+        # the binding grants.
+        #
+        # Written beside `workspace_dir` deliberately: they are the same kind of fact (what this
+        # session is scoped to), and the neighbour being persisted while this one was not is what
+        # made the omission read as an oversight rather than a decision.
+        #
+        # The comment below applies with full force here — this function REBUILDS the whole meta
+        # line from the in-memory session on every turn, so a field missing from this list is not
+        # merely unsaved: it CLOBBERS any out-of-band write at the end of the next turn.
+        if session.project_id:
+            meta_line["project_id"] = session.project_id
         # Runtime binding (G5). The chat picker's bind endpoint already persists the
         # ephemeral ACP override with ``update_metadata`` — but this function REBUILDS
         # the whole meta line from the in-memory session on every turn, so omitting the
