@@ -7,6 +7,7 @@ import { accentChip } from '../../design/accent'
 import { fvs } from '../../design/fontWeight'
 import { Meter } from '../../ui/Meter'
 import { Button } from '../../ui/Button'
+import { attentionLine, readAttention } from '../workflows/attentionMeta'
 import { foldEvent, foldSnapshot, type WorkflowViewModel } from '../workflows/workflowFold'
 import { useWorkflowStream } from '../workflows/useWorkflowStream'
 import { fmtElapsed, isTerminal, nodeLook, runLook } from '../workflows/workflowMeta'
@@ -103,6 +104,11 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
   }
 
   const look = vm ? runLook(vm.status) : null
+  // The escalation, if the run gave up. Reachable here only because the fold now KEEPS the
+  // record through a terminal status (#565) — it used to be nulled on the very event that
+  // carries the failure.
+  const attention = readAttention(vm?.attention)
+  const escalation = attention?.kind === 'escalation' ? attention : null
   const StatusIcon = look?.icon
   const pct = vm ? Math.round(vm.progress * 100) : 0
 
@@ -154,11 +160,21 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
       )}
 
       {/* The ask, inline: a run waiting on a human is the whole reason to look at this card,
-          and making the user open the run page to discover WHY defeats it. */}
+          and making the user open the run page to discover WHY defeats it.
+
+          Read through `attentionLine` rather than reaching for `attention.prompt` (issue 565): that
+          field belongs to a gate ask, and the record is polymorphic — an escalation carries a
+          `reason` instead, so guessing `prompt` printed the generic fallback for it. */}
       {vm?.needsInput && (
-        <p data-type="caption" className="text-warning">
-          {typeof vm.attention?.prompt === 'string' ? String(vm.attention.prompt) : 'Waiting on you'}
-        </p>
+        <p data-type="caption" className="text-warning">{attentionLine(vm.attention)}</p>
+      )}
+
+      {/* A run that gave up says SO, in one line, right where the user is reading (issue 565). The
+          engine writes its escalation as the run goes terminal, and on the retries-exhausted
+          path `run.error` is empty — so without this the card showed "Failed" and nothing else.
+          The depth (per-attempt evidence, the suggested fix) is on the run page behind Open. */}
+      {escalation && (
+        <p data-type="caption" className="text-danger">Stopped: {escalation.headline}</p>
       )}
 
       {vm?.error && <p role="alert" data-type="caption" className="text-danger">{vm.error}</p>}
