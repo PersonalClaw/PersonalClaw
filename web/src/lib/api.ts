@@ -5705,7 +5705,10 @@ export const api = {
     }>(`/api/triggers/history?limit=${limit}&offset=${offset}`),
   unackNotification: (ts: string) => post('/api/notifications/unack', { ts }),
   ackAllNotifications: () => post('/api/notifications/ack-all'),
-  deleteNotification: (ts: string) => fetch('/api/notifications', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ ts }) }).then((r) => { if (!r.ok) throw new Error('delete failed') }),
+  // DELETE with a body, so it can't use del(); the failure still funnels through apiError like
+  // every other thrower — the literal 'delete failed' it threw before surfaced VERBATIM in the
+  // page's failure toast ("Couldn't delete …: delete failed"), hiding the server's actual reason.
+  deleteNotification: (ts: string) => fetch('/api/notifications', { method: 'DELETE', headers: { 'Content-Type': 'application/json', ...SK }, body: JSON.stringify({ ts }) }).then(async (r) => { if (!r.ok) throw await apiError(r) }),
   clearNotifications: () => post('/api/notifications/clear'),
 
   // Triggers — the unified surface (schedule + lifecycle). The schedule helpers
