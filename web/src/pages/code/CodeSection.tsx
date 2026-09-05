@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Code2, Plus, Loader2, Trash2, FolderOpen } from 'lucide-react'
+import { Code2, Plus, Loader2, Trash2, FolderOpen, Search, Filter } from 'lucide-react'
 import type { CodeDraft } from './codeDraft'
 import { CodePlanReview } from './CodePlanReview'
 import { CodePlanningView } from './CodePlanningView'
@@ -334,10 +334,26 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
               action={{ label: 'Start a project', onClick: onCreate, icon: Plus }}
             />
           ) : (() => {
+            // The canonical no-match shape (emptyStateNoMatch's rule) instead of the bare
+            // centered sentence this list kept after its siblings were swept: shared icon/
+            // title/hint rhythm, and an escape that names the control that narrowed —
+            // clearing the SEARCH when the search did it, widening the FILTER otherwise.
             if (shown.length === 0) return (
-              <div className="py-16 text-center text-on-surface-low text-[0.8125rem]">
-                {needle ? `No projects match “${q.trim()}”.` : 'No projects in this view.'}
-              </div>
+              needle ? (
+                <EmptyState
+                  icon={Search}
+                  title={`No projects match “${q.trim()}”`}
+                  hint={`You have ${(projects ?? []).length} project${(projects ?? []).length === 1 ? '' : 's'} — just none matching the search.`}
+                  action={{ label: 'Clear search', onClick: () => setQ('') }}
+                />
+              ) : (
+                <EmptyState
+                  icon={Filter}
+                  title="No projects in this view"
+                  hint={`You have ${(projects ?? []).length} project${(projects ?? []).length === 1 ? '' : 's'} — just none in this view.`}
+                  action={{ label: 'View all projects', onClick: () => setFilter('all') }}
+                />
+              )
             )
             return (
             <div className="flex flex-col gap-2">
