@@ -70,7 +70,14 @@ export function TerminalPage({ query, setQuery }: Pick<RouteProps, 'query' | 'se
   const togglePersist = () => {
     const next = !persist
     setPersist(next)  // optimistic
-    api.patchConfig('dashboard.terminal.persist', next).catch(() => setPersist(!next))
+    setError('')
+    // The bare revert was a silent flip-back: a user who enabled persistence and looked away
+    // believed their sessions were tmux-backed. The revert stays (honest state) — the failure
+    // now speaks through the page's own error surface, same as a refused create.
+    api.patchConfig('dashboard.terminal.persist', next).catch((e) => {
+      setPersist(!next)
+      setError(`Couldn't ${next ? 'enable' : 'disable'} persistent sessions: ${e instanceof Error ? e.message : String(e)}`)
+    })
   }
 
   // Restore live sessions on mount (survives page reload — the PTYs persist

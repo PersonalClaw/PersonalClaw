@@ -57,10 +57,15 @@ const FIXED: Array<[string, string, string]> = [
   ['pages/inbox/InboxPage.tsx', 'restartInbox', 'restart the inbox sources'],
   ['pages/inbox/InboxPage.tsx', 'digestInboxChannel', 'generate the digest'],
   ['pages/agents/AgentsListPage.tsx', 'syncAgents', 'sync the agents'],
+  // Same audit, batch 2: two confirmed destructive deletes whose failure said nothing.
+  // The notification delete also closed the open panel and reloaded on failure — gated now.
+  // deleteKnowledgeIntent has TWO covered call sites (row button + detail panel), both wrapped.
+  ['pages/notifications/NotificationsPage.tsx', 'deleteNotification', 'delete this notification'],
+  ['pages/knowledge/KnowledgeListPage.tsx', 'deleteKnowledgeIntent', 'delete this intent'],
 ]
 
 describe('a user-initiated write that fails tells the user', () => {
-  it('none of the ten swallows — the ratchet, keyed on the WRITES', () => {
+  it('none of the twelve swallows — the ratchet, keyed on the WRITES', () => {
     const offenders: string[] = []
     for (const [rel, call] of FIXED) {
       const scan = strip(F(rel)).replace(/=>/g, '⇒')

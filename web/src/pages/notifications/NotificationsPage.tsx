@@ -28,6 +28,7 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { PageTitle } from '../../ui/PageTitle'
 import { accentChip, toneChipSkin } from '../../design/accent'
 import { notify } from '../../app/appSdk'
+import { reportingWrite } from '../../app/reportingWrite'
 
 /** Notifications = a triage feed of agent/schedule/trigger/task events. Items are
  *  keyed by `ts`; the backend supports ack / unack / ack-all / delete / clear
@@ -113,7 +114,10 @@ export function NotificationsPage({ query, setQuery, navigate }: Pick<RouteProps
     // delete in the app gates on confirmDelete; this was the one that did not.
     // The subject line names WHICH notification, since rows can look alike.
     if (!(await confirmDelete('notification', n.title || undefined))) return
-    await api.deleteNotification(n.ts).catch((e) => notify(`Couldn't delete this notification: ${String((e as Error)?.message || e)}`, 'error'))
+    // Through the shared sentence owner (was a hand-rolled copy of its wording), and the tail is
+    // gated: a failed delete used to close the open panel and reload anyway — the row survived,
+    // but the panel the user was reading vanished as if the delete had worked.
+    if (!(await reportingWrite('delete this notification', () => api.deleteNotification(n.ts)))) return
     if (openTs === n.ts) setOpenTs("")
     load()
   }

@@ -938,7 +938,7 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
             <Button size="sm" variant="ghost" ariaLabel={`Delete intent: ${rowSubject([it.goal || it.id], 40)}`}
               onClick={async () => {
                 if (!(await confirmIntentDelete(it.goal || it.id, it.outcome_count ?? 0))) return
-                await api.deleteKnowledgeIntent(it.id)
+                if (!(await reportingWrite('delete this intent', () => api.deleteKnowledgeIntent(it.id)))) return
                 load()
               }}><Trash2 size={14} /></Button>
           </span>
@@ -1039,7 +1039,7 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
         <span onClick={(e) => e.stopPropagation()}>
           <Button size="sm" variant="ghost" onClick={async () => {
             if (!(await confirmIntentDelete(intent.goal || intent.id, outcomes?.length ?? 0))) return
-            await api.deleteKnowledgeIntent(intent.id)
+            if (!(await reportingWrite('delete this intent', () => api.deleteKnowledgeIntent(intent.id)))) return
             onChanged(); onClose()
           }}><Trash2 size={14} /> Delete</Button>
         </span>
