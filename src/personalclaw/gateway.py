@@ -1782,6 +1782,39 @@ class GatewayOrchestrator:
                 )
         except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
             logger.warning("autonomy promotion scan failed", exc_info=True)
+        # §4.4 mechanical revocation, nodding leg. The other three triggers fire at
+        # their own conclusion events; a nodding gate is a STANDING condition with no
+        # event, so this sweep carries it — gateway-side, because guardrails must not
+        # import the workflows layer (the same inversion as `note_for` above). The
+        # journal walk is priced only when something is actually at stake: with no
+        # standing grant there is nothing to revoke, and revocation's natural
+        # idempotence (a revoked scope holds no grant) keeps a persistent nodding gate
+        # from re-firing every sweep.
+        try:
+            from personalclaw.guardrails.autonomy import registered_action_types, rung_state
+            from personalclaw.guardrails.ladder import revoke_granted_scopes
+            from personalclaw.workflows.handlers import nodding_revocation_cause
+
+            any_granted = any(
+                (state := rung_state(spec.key)) is not None and state.granted_at
+                for spec in registered_action_types()
+            )
+            if any_granted:
+                cause = nodding_revocation_cause()
+                if cause:
+                    revoked = revoke_granted_scopes(
+                        cause=cause,
+                        evidence_id="nodding_gate",
+                        source="nodding_loop",
+                    )
+                    if revoked:
+                        logger.warning(
+                            "autonomy: nodding gate revoked %d grant(s): %s",
+                            len(revoked),
+                            ", ".join(revoked),
+                        )
+        except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
+            logger.warning("autonomy nodding revocation sweep failed", exc_info=True)
 
     def _scan_scratchpad(self) -> None:
         """Scan the configured scratchpad and raise proposals for its new actionable lines.

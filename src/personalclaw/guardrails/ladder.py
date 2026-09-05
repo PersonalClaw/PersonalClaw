@@ -663,3 +663,75 @@ def _file_proposal(key: str, next_rung: str, record: str) -> bool:
     except Exception:  # noqa: BLE001
         logger.warning("autonomy: could not file a promotion proposal for %s", key, exc_info=True)
         return False
+
+
+# ── §4.4 mechanical revocation (ES-15) ───────────────────────────────────────────────
+
+
+def revoke_granted_scopes(*, cause: str, evidence_id: str, source: str) -> list[str]:
+    """Revoke every standing grant NOW, because ``evidence_id`` invalidated the trust.
+
+    The plan gives all four revocation triggers — a HARMFUL attribution verdict, a
+    failed pre-registered study, a nodding-loop flag, a watchdog rebind — the same
+    consequence sentence: the record flips to ``revoked`` with the triggering evidence
+    id, a notification is filed, and the next run falls back to per-stage. Uniform on
+    purpose: every grant's evidence was collected under the conditions the trigger just
+    invalidated, and the fail-safe direction is the plan's explicit ruling. Revocation
+    needs no human; the cost of over-revoking is a re-grant click, the cost of
+    under-revoking is autonomy running on void evidence.
+
+    A "standing grant" is a store entry with a ``granted_at`` — a demotion floor entry
+    carries none, so an already-revoked scope is not re-demoted, which is also what
+    makes a STANDING trigger condition (a nodding gate the user has not fixed yet)
+    naturally idempotent: after the first sweep nothing is granted, so the next sweep
+    returns ``[]`` and files nothing.
+
+    Each demotion goes through :func:`~personalclaw.guardrails.autonomy.demote`, which
+    owns the floor drop, the cooldown, the trust-record ``revoked`` flag, and the SEL
+    audit. ONE notification covers the batch — per-scope rows for a single event would
+    bury the cause under its own consequences.
+    """
+    revoked: list[str] = []
+    for spec in registered_action_types():
+        state = rung_state(spec.key)
+        if state is None or not state.granted_at:
+            continue
+        try:
+            demote(spec.key, cause)
+        except Exception:  # noqa: BLE001 — one unwritable record must not stop the rest
+            logger.warning("autonomy: revocation failed for %s", spec.key, exc_info=True)
+            continue
+        revoked.append(spec.key)
+    if not revoked:
+        return []
+    _file_revocation_notice(revoked, cause=cause, evidence_id=evidence_id, source=source)
+    return revoked
+
+
+def _file_revocation_notice(keys: list[str], *, cause: str, evidence_id: str, source: str) -> None:
+    """One inbox row naming what was revoked and the evidence that triggered it."""
+    try:
+        from personalclaw.inbox import emit_attention_item
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        try:
+            state = get_dashboard_state()
+        except Exception:  # noqa: BLE001 — headless: the row still persists
+            state = None
+        count = len(keys)
+        emit_attention_item(
+            state,
+            source="guardrails",
+            kind="autonomy_revocation",
+            item_kind="autonomy_revocation",
+            title=f"Earned autonomy revoked for {count} action type(s)",
+            body=(
+                f"{cause} Revoked: {', '.join(keys)}. Evidence: {evidence_id}. "
+                "Nothing runs above its floor until you re-grant it in "
+                "Settings → Guardrails — revocation is automatic, re-granting never is."
+            ),
+            refs={"evidence_id": evidence_id, "trigger": source, "action_types": keys},
+            dedup_key=f"autonomy_revocation:{evidence_id}",
+        )
+    except Exception:  # noqa: BLE001 — the demotions already happened; the notice is best-effort
+        logger.warning("autonomy: could not file the revocation notice", exc_info=True)

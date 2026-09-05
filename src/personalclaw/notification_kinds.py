@@ -239,6 +239,23 @@ _KINDS: tuple[NotificationKind, ...] = (
         attention=True,
         verifiable=True,
     ),
+    # Mechanical revocation (ES-15) tells the user that earned autonomy was taken back and
+    # that re-granting is theirs to do. WARNING, not INFO: the floor has already dropped
+    # and nothing runs above it until they act, which is the same "you must decide" shape
+    # as `loop/needs_input` and `system/agent_request` rather than a passing notice.
+    #
+    # `guardrails/autonomy_revocation`, NOT `skills/notification`: the wire string is what the
+    # digest groups by and what the SPA's display map keys on, so a kind literally named
+    # "notification" would have collected every future unnamed emitter into one undifferentiated
+    # row. Its bare kind IS its wire string, so it needs no `_ATTENTION_FLAT` entry.
+    NotificationKind(
+        "guardrails",
+        "autonomy_revocation",
+        "Earned autonomy revoked",
+        "immediate",
+        SEV_WARNING,
+        attention=True,
+    ),
     # 🪤 REGISTERED LATE, AND THE COST WAS VISIBLE. `learning/proposals.py` and
     # `planning/scratchpad.py` both emit `kind="proposal"` and neither was registered, so
     # `resolve_kind` fell open to system/generic on every emission: they carried GENERIC's

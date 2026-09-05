@@ -344,6 +344,23 @@ def grade_accepted_changes(
                 if pid:
                     rec.revert_proposal_id = pid
                     report["reverts"] += 1
+                # §4.4 mechanical revocation: a HARMFUL verdict means an unattended
+                # self-modification did damage nobody predicted — the trust every
+                # standing grant rests on is void until a human re-grants it. The
+                # revert proposal above retires the CHANGE; this retires the AUTONOMY.
+                try:
+                    from personalclaw.guardrails.ladder import revoke_granted_scopes
+
+                    revoke_granted_scopes(
+                        cause=(
+                            f"A HARMFUL verdict landed on the accepted change to "
+                            f"{rec.target}: {attr.reason}"
+                        ),
+                        evidence_id=f"attribution:{rec.id}",
+                        source="attribution",
+                    )
+                except Exception:  # noqa: BLE001 - grading must survive a revocation failure
+                    logger.warning("attribution: autonomy revocation failed", exc_info=True)
             _save(rec)
             report["graded"] += 1
             tally = _TALLY.get(attr.verdict)
