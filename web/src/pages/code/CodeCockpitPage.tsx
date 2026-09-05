@@ -24,7 +24,13 @@ import { useQuery } from '../../lib/data'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
 import { cleanSay, toolDetail } from '../../lib/agentFeed'
-import { ACTIVE_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
+import {
+  ACTIVE_LOOP_STATUSES,
+  LOOP_ACTION_SOURCE_STATUSES,
+  effectiveLoopStatus,
+  loopStatusLabel,
+  loopStatusTone,
+} from '../../lib/loopStatus'
 import { useRunStream } from '../loops/useRunStream'
 import { belongsToLoop } from '../workflows/containerKey'
 import { foldReducer, emptyRunFlags, type RunFlags } from '../loops/runFold'
@@ -858,7 +864,11 @@ function StageTrail({ project }: { project: CodeProject }) {
 /** A compact meta strip under the header: workspace path · cycles run · elapsed.
  *  At-a-glance "where / how much work / how long" for the build the user watches.
  *  Renders only what it has; hidden entirely for a bare draft with none of it. */
-function CockpitMeta({ project: p, onOpenProject }: { project: CodeProject; onOpenProject?: (projectId: string) => void }) {
+/** The cockpit's status strip. Exported for `cockpitNamesItsStatus.test.tsx`: what broke in #671
+ *  is which facts this strip states, and asserting that on the rendered component beats asserting
+ *  it on the 3400-line page's source — mounting the whole cockpit would need the chat socket, the
+ *  run stream and a dozen endpoints, and would test the mocks. */
+export function CockpitMeta({ project: p, onOpenProject }: { project: CodeProject; onOpenProject?: (projectId: string) => void }) {
   // The Folder chip represents the BOUND workspace only — NOT the engine files dir.
   // A no-workspace project's files_dir is internal bookkeeping (~/.personalclaw/loop/
   // <id>), so falling back to it rendered a folder chip labeled with the loop-id hash
@@ -905,14 +915,30 @@ function CockpitMeta({ project: p, onOpenProject }: { project: CodeProject; onOp
   // The project chip is interactive (deep-links to the Project), so it's rendered
   // separately from the plain info items. Show it whenever the work is bound.
   const showProj = !!(projId && projName)
-  // Nothing to show → hide the strip entirely. (The prompt lives in its own bar below,
-  // so it no longer keeps this strip alive.) StageTrail renders inside, but for a bare
-  // pre-run draft with no stages/workspace/cycles/project there's nothing worth a bar.
-  if (!wsBase && !showProj && !cyclesText && !elapsedText) return null
+  // The LIFECYCLE STATUS, in the project's own words from the one registry (#671). This strip
+  // calls itself "the single place to read where the run is" and named everything except that:
+  // elapsed, stage, workspace, project, cycles. On a loop the API reported as `blocked`, the word
+  // "blocked" appeared NOWHERE on the page — the Code list shows a status pill (`CodeSection`'s
+  // `statusPill`), so the state was legible until you opened the thing it described.
+  //
+  // Always rendered, including while running: the stage trail says which stage, the streaming dot
+  // says whether the feed is live, and neither says whether the run is running, paused, blocked or
+  // finished. It also means this strip now always has content, which is why it no longer returns
+  // null — a bare pre-run draft reading "Ready" is exactly what the guard's "nothing worth a bar"
+  // was mis-deciding.
+  //
+  // `effectiveLoopStatus` for the same reason every other surface uses it: a `complete` project
+  // carrying an `error_message` finished non-genuinely, and must not read as a green "Completed".
+  const dispStatus = effectiveLoopStatus(p.status, p.error_message)
   return (
     <div data-type="caption" className="flex shrink-0 items-center gap-3 border-b border-outline-variant/40 bg-surface-low/30 px-l py-1 text-on-surface-low">
-      {/* Elapsed leads at the far LEFT — "how long has this been running" is the first
-          thing to read on the strip. */}
+      {/* Status leads: it is the one line always true about a run, and the answer to the question
+          the rest of the strip qualifies. */}
+      <span className="shrink-0 rounded-pill px-2 py-0.5" style={loopStatusTone(dispStatus)}>
+        {loopStatusLabel(dispStatus)}
+      </span>
+      {/* Elapsed next — "how long has this been running" is the first thing to read after the
+          state itself. */}
       {elapsedText && (
         <span className="inline-flex shrink-0 items-center gap-1" title="Elapsed run time">
           <Clock size={11} className="shrink-0 opacity-70" />
@@ -3310,11 +3336,21 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
             The transient `stalled` SSE banner below only shows while running; once the
             supervisor flips the project to blocked, this is what tells the user what
             happened + that a steer/Resume gets it going again. */}
+        {/* `role="status"`, not `alert`: this banner is PERSISTED and reload-safe, so an
+            assertive role would re-interrupt a screen-reader user on every visit to a state they
+            already know about. Its sibling below (`gateFail`) is `alert` correctly — that one
+            fires while the run is live. The two sat adjacent with only one announced at all,
+            which is the half of issue 671 that made the explanation unreachable rather than
+            just quiet. (Issue numbers in this block are spelled bare:
+            `design/tokenLint` skips only lines that OPEN with a comment marker, so a hash
+            followed by three digits on a continuation line reads as a raw hex colour.) The heading says "Blocked" (the registry's word for this status) instead of
+            "Paused": `paused` is a DIFFERENT status the user chose, and calling this one by its
+            name is what makes the state searchable on the page. */}
         {project.status === 'blocked' && project.error_message && (
-          <div data-type="body-s" className="mb-2 rounded-lg p-2.5"
+          <div role="status" data-type="body-s" className="mb-2 rounded-lg p-2.5"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
-              <AlertTriangle size={14} /> Paused — needs you
+              <AlertTriangle size={14} /> {loopStatusLabel('blocked')} — needs you
             </div>
             <p className="whitespace-pre-wrap text-on-surface-var">{project.error_message}</p>
             <p data-type="caption" className="mt-1 text-on-surface-low">Steer it below (or relax a stage criterion), then Resume.</p>
