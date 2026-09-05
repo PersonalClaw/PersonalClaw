@@ -5319,6 +5319,93 @@ export interface RewindApplyWire {
   preview: RewindPreviewWire
 }
 
+// ── tasks: one window vs the whole set ───────────────────────────────────────────────────────
+//
+// Two different reads, and confusing them is what made the Tasks page quietly wrong. A WINDOW
+// is right for a preview ("the 20 newest open tasks"). Anything that derives a dependency fact
+// — the DAG's edges, the prerequisite picker's candidates, "what depends on this" — needs the
+// COLLECTION, because each of those resolves a prerequisite id against the rows it happens to
+// hold and reads one it cannot find as absent. Asking for no `limit` at all got the server's
+// default of 50 and looked exactly like everything (#485).
+
+export type TaskQuery = {
+  project?: string
+  task_list?: string
+  status?: string
+  limit?: number
+  offset?: number
+  mine?: boolean
+}
+
+export type TaskPage = {
+  tasks: TaskItem[]
+  /** Rows matching the filters — the whole set, not this window. */
+  total: number
+  /** Whether `total` is the whole truth: false when the gateway's own per-provider bound cut
+   *  the match short, which a paging client cannot otherwise tell from exhaustion. */
+  complete: boolean
+  limit: number
+  offset: number
+  owner?: string
+}
+
+export type TaskCollection = {
+  tasks: TaskItem[]
+  total: number
+  /** False when `tasks` is a window after all: either the gateway truncated, or this walk hit
+   *  its own page bound. A caller that renders derived structure owes its reader this. */
+  complete: boolean
+  owner: string
+}
+
+/** Rows one request asks for while collecting. A request-size knob, not a cap. */
+const TASK_PAGE = 500
+/** Pages one collection will walk — 10,000 rows, matching the gateway's own per-provider
+ *  bound. Also the termination guarantee against a server whose `total` it will not serve. */
+const TASK_MAX_PAGES = 20
+
+/** The `/api/tasks` query string. Shared by both reads, so a new filter cannot reach one and
+ *  silently miss the other. */
+function _taskQuery(opts: TaskQuery): string {
+  const qs = new URLSearchParams()
+  if (opts.project) qs.set('project', opts.project)
+  if (opts.task_list) qs.set('task_list', opts.task_list)
+  if (opts.status) qs.set('status', opts.status)
+  // `!= null`, not truthiness: `offset=0` is a real first page, and dropping it would restart
+  // the walk on every iteration.
+  if (opts.limit != null) qs.set('limit', String(opts.limit))
+  if (opts.offset != null) qs.set('offset', String(opts.offset))
+  if (opts.mine) qs.set('mine', '1')
+  const s = qs.toString()
+  return s ? `?${s}` : ''
+}
+
+/** EVERY task matching the filters, by paging until the server says there is no more. */
+async function _collectTasks(
+  opts: Omit<TaskQuery, 'limit' | 'offset'> = {}
+): Promise<TaskCollection> {
+  const tasks: TaskItem[] = []
+  let total = 0
+  let owner = ''
+  for (let page = 0; ; page++) {
+    const res = await get<TaskPage>(
+      `/api/tasks${_taskQuery({ ...opts, limit: TASK_PAGE, offset: tasks.length })}`
+    )
+    total = res.total
+    owner = res.owner ?? owner
+    tasks.push(...res.tasks)
+    // The gateway stopped short of its own match; pass that on rather than presenting a window
+    // as everything.
+    if (!res.complete) return { tasks, total, complete: false, owner }
+    // Exhausted. The empty-page half is not redundant: it terminates against a server whose
+    // `total` exceeds what it will actually serve.
+    if (res.tasks.length === 0 || tasks.length >= total) {
+      return { tasks, total, complete: true, owner }
+    }
+    if (page + 1 >= TASK_MAX_PAGES) return { tasks, total, complete: false, owner }
+  }
+}
+
 export const api = {
   // agents & providers
   agentsInstalled: () => get<AgentDef[]>('/api/agents/installed'),
@@ -6464,16 +6551,12 @@ export const api = {
   // `mine` narrows to the owner's work (assigned to them, or authored by them and
   // unassigned) — resolved server-side from the configured username. `owner` comes
   // back on every response so rows can be labelled mine vs someone else's.
-  tasks: (opts: { project?: string; task_list?: string; status?: string; limit?: number; mine?: boolean } = {}) => {
-    const qs = new URLSearchParams()
-    if (opts.project) qs.set('project', opts.project)
-    if (opts.task_list) qs.set('task_list', opts.task_list)
-    if (opts.status) qs.set('status', opts.status)
-    if (opts.limit) qs.set('limit', String(opts.limit))
-    if (opts.mine) qs.set('mine', '1')
-    const s = qs.toString()
-    return get<{ tasks: TaskItem[]; total: number; owner?: string }>(`/api/tasks${s ? `?${s}` : ''}`)
-  },
+  // ONE WINDOW. `total` says how many matched, `complete` whether that total is the whole
+  // truth — so a caller that only wants a preview can still tell what it is not showing.
+  tasks: (opts: TaskQuery = {}) => get<TaskPage>(`/api/tasks${_taskQuery(opts)}`),
+  // THE WHOLE SET, paged. What every dependency-derived surface needs: an edge, a block
+  // reason and a dependents list are all computed by looking an id up in the rows at hand.
+  allTasks: _collectTasks,
   task: (id: string, provider?: string) => get<TaskItem>(`/api/tasks/${encodeURIComponent(id)}${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   taskGraph: (provider?: string) => get<TaskGraphData>(`/api/tasks/graph${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
   createTask: (body: Record<string, unknown>) => post<TaskItem>('/api/tasks', body),

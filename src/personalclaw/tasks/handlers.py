@@ -71,32 +71,39 @@ async def api_tasks_list(request: web.Request) -> web.Response:
     # which the `assignee` filter alone cannot express.
     mine = str(request.query.get("mine", "")).strip().lower() in ("1", "true", "yes")
 
+    owner = ""
+    if mine:
+        from personalclaw.identity import current_username
+
+        owner = current_username()
+
+    # The WHOLE matching set, then one window of it — deliberately in that order.
+    # `block_reason` resolves each prerequisite id against the set it is handed, and a
+    # prerequisite that is merely absent counts as satisfied, so deriving it from the page
+    # would answer `is_blocked: false` for a task whose blocker sits on another page. The
+    # window is a presentation concern; blocked-ness is not.
     try:
-        tasks, total = await registry.list_all_tasks(
+        matched, truncated = await registry.collect_tasks(
             status=status,
             assignee=assignee,
             project=project,
             task_list_id=task_list,
             provider_filter=provider,
-            limit=limit,
-            offset=offset,
+            owner=owner,
         )
     except registry.UnknownTaskProvider as e:
+        # An unrecognized `?provider=` is a client error, not "every provider" (#2983).
         return _unknown_provider(e)
-    if mine:
-        from personalclaw.identity import current_username
-
-        owner = current_username()
-        if owner:
-            tasks = [t for t in tasks if t.belongs_to(owner)]
-            # `total` describes the filtered set now; reporting the provider's count
-            # would make the UI show "12 of 40" for a list holding 12.
-            total = len(tasks)
-    task_map = {t.id: t for t in tasks}
+    task_map = {t.id: t for t in matched}
+    page = matched[offset : offset + limit]
     return web.json_response(
         {
-            "tasks": [_with_block_reason(t, task_map) for t in tasks],
-            "total": total,
+            "tasks": [_with_block_reason(t, task_map) for t in page],
+            "total": len(matched),
+            # Whether `total` is the whole truth. A client that needs every task (the DAG,
+            # the prerequisite picker) pages until it has `total` rows; without this flag a
+            # provider-side bound would end that loop looking like completion.
+            "complete": not truncated,
             "limit": limit,
             "offset": offset,
             "owner": _owner_username(),

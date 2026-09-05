@@ -120,6 +120,112 @@ def _page(limit: int, offset: int) -> tuple[int, int]:
     return max(1, int(limit)), max(0, int(offset))
 
 
+#: How many rows one provider request asks for while a collection is being assembled.
+#: Providers are paged until exhausted, so this is a request-size knob — not a ceiling on
+#: what comes back.
+_PROVIDER_PAGE = 500
+
+#: Ceiling on how many rows ONE provider may contribute to a collection. It does two jobs:
+#: it bounds memory against a provider with an enormous backlog, and it is the TERMINATION
+#: guarantee for the paging loop — a provider that ignored ``offset`` would otherwise
+#: re-serve its first page forever. Hitting it is REPORTED (``truncated``), never absorbed:
+#: a window presented as the whole truth is the defect this seam exists to prevent.
+MAX_ROWS_PER_PROVIDER = 10_000
+
+
+async def _collect_from(
+    prov: TaskProvider,
+    *,
+    status: str | None,
+    assignee: str | None,
+    project: str | None,
+) -> tuple[list[Task], bool]:
+    """Every row one provider will give us for these filters, and whether the bound cut it off."""
+    collected: list[Task] = []
+    while True:
+        # Ask only for what the bound still allows, so `MAX_ROWS_PER_PROVIDER` is an exact row
+        # ceiling rather than a page-granular one — a fixed page size would overshoot it by up
+        # to a page, and could not be enforced at all below one page.
+        want = min(_PROVIDER_PAGE, MAX_ROWS_PER_PROVIDER - len(collected))
+        if want <= 0:
+            logger.warning(
+                "Task provider %s holds more than %d rows; this collection is a window, not the "
+                "whole set",
+                prov.name,
+                MAX_ROWS_PER_PROVIDER,
+            )
+            return collected, True
+        page, provider_total = await prov.list_tasks(
+            status=status,
+            assignee=assignee,
+            project=project,
+            limit=want,
+            offset=len(collected),
+        )
+        if not page:
+            # Nothing more is served, whatever the count claimed. Truncated only when the
+            # provider's own `total` says rows exist that it will not hand over.
+            return collected, len(collected) < provider_total
+        collected.extend(page)
+        # Exhausted, per the provider's own count — which is the ONLY sound stop condition. A
+        # SHORT page is not one: a provider is free to clamp `limit` to its own maximum page size,
+        # and reading that as "out of rows" is exactly the silent truncation this seam exists to
+        # remove. Checked before looping, so a provider holding exactly `MAX_ROWS_PER_PROVIDER`
+        # rows is complete rather than reported as truncated.
+        if len(collected) >= provider_total:
+            return collected, False
+
+
+async def collect_tasks(
+    status: str | None = None,
+    assignee: str | None = None,
+    project: str | None = None,
+    task_list_id: str | None = None,
+    provider_filter: str | None = None,
+    owner: str = "",
+) -> tuple[list[Task], bool]:
+    """EVERY task matching the filters, from every provider, newest-updated first.
+
+    Returns ``(tasks, truncated)``. ``truncated`` is True when a provider held more rows
+    than :data:`MAX_ROWS_PER_PROVIDER`, i.e. the result is a window rather than the whole
+    match, and the caller owes its reader that fact.
+
+    This primitive exists because the aggregate has to be COMPLETE to be *correct*, not
+    merely long. Dependency edges, ``block_reason`` and "what depends on this" are all
+    derived by looking a prerequisite up in the set at hand, so a task whose prerequisite
+    fell outside the window reads as having **no prerequisite at all** — a clean unblocked
+    node rather than a missing one. Callers used to spell this ``limit=10_000``, which is
+    the same window wearing a number that looks like a promise.
+    """
+    _ensure_native()
+    all_tasks: list[Task] = []
+    truncated = False
+    # `_resolve`, not an `in _providers` test: an UNRECOGNIZED provider name must raise
+    # rather than degrade to "every provider" (#2983), and that refusal is the one this
+    # module already makes at its seven other doors.
+    named = _resolve(provider_filter)
+    sources = [named] if named is not None else list(_providers.values())
+    for prov in sources:
+        try:
+            tasks, cut = await _collect_from(
+                prov, status=status, assignee=assignee, project=project
+            )
+            all_tasks.extend(tasks)
+            truncated = truncated or cut
+        except Exception:
+            logger.warning("Task provider %s failed to list", prov.name, exc_info=True)
+
+    if task_list_id:
+        all_tasks = [t for t in all_tasks if t.task_list_id == task_list_id]
+    if owner:
+        # The `mine=1` lens. Applied HERE, beside the other post-aggregation filters, so it
+        # composes with paging: filtering a window instead would shrink pages after the slice
+        # and make `total` describe one page.
+        all_tasks = [t for t in all_tasks if t.belongs_to(owner)]
+    all_tasks.sort(key=lambda t: t.updated_at or t.created_at, reverse=True)
+    return all_tasks, truncated
+
+
 async def list_all_tasks(
     status: str | None = None,
     assignee: str | None = None,
@@ -129,25 +235,23 @@ async def list_all_tasks(
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[Task], int]:
-    """Aggregate tasks from all providers (or a specific one)."""
-    limit, offset = _page(limit, offset)
-    named = _resolve(provider_filter)
-    sources = [named] if named is not None else list(_providers.values())
-    all_tasks: list[Task] = []
-    for prov in sources:
-        try:
-            tasks, _ = await prov.list_tasks(
-                status=status, assignee=assignee, project=project, limit=MAX_TASK_PAGE, offset=0
-            )
-            all_tasks.extend(tasks)
-        except Exception:
-            logger.warning("Task provider %s failed to list", prov.name, exc_info=True)
+    """One WINDOW of :func:`collect_tasks`, plus the size of the whole matching set.
 
-    if task_list_id:
-        all_tasks = [t for t in all_tasks if t.task_list_id == task_list_id]
-    all_tasks.sort(key=lambda t: t.updated_at or t.created_at, reverse=True)
-    total = len(all_tasks)
-    return all_tasks[offset : offset + limit], total
+    For callers that genuinely serve a window (an agent tool's ``limit``). Anything that
+    derives a dependency fact — an edge, a block reason, a dependents list — wants
+    ``collect_tasks`` instead; see its docstring for why a window gets those wrong.
+    """
+    # Clamped before slicing: `[offset : offset + limit]` with `limit=-1` is `[0:-1]`, a
+    # silently SHORT page served 200 beside a `total` computed before the slice (#2984).
+    limit, offset = _page(limit, offset)
+    tasks, _ = await collect_tasks(
+        status=status,
+        assignee=assignee,
+        project=project,
+        task_list_id=task_list_id,
+        provider_filter=provider_filter,
+    )
+    return tasks[offset : offset + limit], len(tasks)
 
 
 async def get_task(task_id: str, provider_name: str | None = None) -> Task | None:
@@ -317,7 +421,7 @@ async def ready_tasks(
     deliberate: an excluded colleague's task must not consume a position, and its dependents are
     still counted because readiness and value are different questions.
     """
-    tasks, _ = await list_all_tasks(project=project, task_list_id=task_list_id, limit=10_000)
+    tasks, _ = await collect_tasks(project=project, task_list_id=task_list_id)
     task_map = {t.id: t for t in tasks}
     ready_ids = set(reconcile.ready_task_ids(task_map))
     ready = [t for t in tasks if t.id in ready_ids]
@@ -348,7 +452,7 @@ async def search_tasks(
     # The same slice, so the same window (#2984) — this door reached it through its own
     # `int(body.get("limit", 50))` with no clamp at all.
     limit, offset = _page(limit, offset)
-    tasks, _ = await list_all_tasks(project=project, task_list_id=task_list_id, limit=10_000)
+    tasks, _ = await collect_tasks(project=project, task_list_id=task_list_id)
     q = (query or "").strip().lower()
     status_set = {s for s in (statuses or []) if s}
     prio_set = {p for p in (priorities or []) if p}

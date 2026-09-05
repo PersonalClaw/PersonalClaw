@@ -211,7 +211,7 @@ async def resolved_stage_task_count(loop: Loop, phase_key: str) -> int:
             return 0
         from personalclaw.tasks import registry
 
-        tasks, _ = await registry.list_all_tasks(task_list_id=list_id, limit=500)
+        tasks, _ = await registry.collect_tasks(task_list_id=list_id)
         return sum(1 for t in tasks if _is_resolved(t.status))
     except Exception:
         logger.debug(
@@ -229,7 +229,7 @@ async def ready_queued_tasks(loop: Loop, phase_key: str) -> list:
             return []
         from personalclaw.tasks import registry
 
-        tasks, _ = await registry.list_all_tasks(task_list_id=list_id, limit=500)
+        tasks, _ = await registry.collect_tasks(task_list_id=list_id)
         by_id = {t.id: t for t in tasks}
         resolved_ids = {t.id for t in tasks if _is_resolved(t.status)}
         queued = set((loop.kind_config or {}).get("queued_task_ids", []) or [])
@@ -374,7 +374,7 @@ async def reconcile_phase_done(loop_id: str, phase_key: str) -> int:
             return 0
         from personalclaw.tasks import registry
 
-        tasks, _ = await registry.list_all_tasks(task_list_id=list_id, limit=500)
+        tasks, _ = await registry.collect_tasks(task_list_id=list_id)
         closed = 0
         for t in tasks:
             if getattr(t.status, "value", t.status) in ("done", "completed"):
@@ -418,7 +418,7 @@ async def teardown_tasks(loop_id: str) -> int:
         for list_id in (loop.task_list_ids or {}).values():
             if not list_id:
                 continue
-            tasks, _ = await registry.list_all_tasks(task_list_id=str(list_id), limit=500)
+            tasks, _ = await registry.collect_tasks(task_list_id=str(list_id))
             for t in tasks:
                 if await registry.delete_task(t.id):
                     removed += 1

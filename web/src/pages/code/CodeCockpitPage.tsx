@@ -1286,7 +1286,7 @@ function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, ga
     if (!lists.length) { setLoading(false); return }
     const seq = ++refreshSeq.current
     let anyFailed = false
-    Promise.all(lists.map((lid) => api.tasks({ task_list: lid, limit: 200 }).then((r) => [lid, r.tasks] as const)
+    Promise.all(lists.map((lid) => api.allTasks({ task_list: lid }).then((r) => [lid, r.tasks] as const)
       .catch(() => { anyFailed = true; return [lid, null] as const })))
       // A failed list yields null (NOT []): keep its PRIOR tasks shown (merge over the
       // previous map) rather than blanking the stage to a misleading "no tasks". Only

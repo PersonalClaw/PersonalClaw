@@ -485,7 +485,7 @@ async def api_projects_work(request: web.Request) -> web.Response:
     try:
         from personalclaw.tasks import registry as task_registry
 
-        tasks, _ = await task_registry.list_all_tasks(project=project.name, limit=10_000)
+        tasks, _ = await task_registry.collect_tasks(project=project.name)
     except Exception as exc:  # noqa: BLE001 — recorded as the tasks section's failure
         task_error = exc
 
@@ -722,7 +722,7 @@ async def api_projects_delete(request: web.Request) -> web.Response:
         try:
             from personalclaw.tasks import registry as task_registry
 
-            doomed, _ = await task_registry.list_all_tasks(project=_proj.name, limit=10_000)
+            doomed, _ = await task_registry.collect_tasks(project=_proj.name)
             await _cascade_delete_tasks([t.id for t in doomed])
         except Exception:
             logger.debug("delete-project: task cascade sweep failed for %s", pid, exc_info=True)
@@ -815,7 +815,7 @@ async def _tasks_in_list(list_id: str) -> list[str]:
     try:
         from personalclaw.tasks import registry as task_registry
 
-        tasks, _ = await task_registry.list_all_tasks(task_list_id=list_id, limit=10_000)
+        tasks, _ = await task_registry.collect_tasks(task_list_id=list_id)
         return [t.id for t in tasks]
     except Exception:
         logger.debug("delete-task-list: task sweep failed for %s", list_id, exc_info=True)
@@ -877,7 +877,7 @@ async def api_task_lists_reset(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "only task lists under the Repeatable project can be reset"}, status=400
         )
-    tasks, _ = await registry.list_all_tasks(task_list_id=list_id, limit=10_000)
+    tasks, _ = await registry.collect_tasks(task_list_id=list_id)
     non_terminal = [t for t in tasks if t.status not in (TaskStatus.DONE, TaskStatus.CANCELLED)]
     if non_terminal:
         return web.json_response(

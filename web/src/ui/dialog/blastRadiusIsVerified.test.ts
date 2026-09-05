@@ -301,7 +301,11 @@ describe('the project delete, and the two workflow bodies', () => {
     const handler = py('tasks/hierarchy_handlers.py')
     const del = handler.match(/async def api_projects_delete[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
     expect(del, 'found the delete handler').not.toBe('')
-    expect(del, 'it resolves every task in the project').toMatch(/list_all_tasks\(project=/)
+    // `collect_tasks`, not `list_all_tasks(..., limit=10_000)`: the copy promises EVERY task in the
+    // project, and the old call was a 10,000-row window wearing a number that looked like a promise
+    // (#485). A window here would under-delete silently while the dialog claimed completeness.
+    expect(del, 'it resolves every task in the project').toMatch(/collect_tasks\(project=/)
+    expect(del, 'and not through a windowed read').not.toMatch(/list_all_tasks\(/)
     // The deletion loop is now shared with the task-list door as `_cascade_delete_tasks`, so the
     // caller-not-callee rule above is satisfied by pinning the HANDOFF as well as the loop: the
     // handler passes every doomed task in this project, and the helper deletes each id. One hop, both

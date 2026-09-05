@@ -145,7 +145,10 @@ async def test_a_failing_source_degrades_only_its_section(tmp_path):
         async def boom(*a, **k):
             raise RuntimeError("task provider down")
 
-        with patch("personalclaw.tasks.registry.list_all_tasks", boom):
+        # The route reads the whole set (`collect_tasks`) rather than one window: its tasks
+        # section derives dependency state, and a page cannot answer that. Patched where the
+        # route actually reads.
+        with patch("personalclaw.tasks.registry.collect_tasks", boom):
             r = await client.get(f"/api/projects/{pid}/work")
         body = await r.json()
         assert body["completeness"] == "partial"
