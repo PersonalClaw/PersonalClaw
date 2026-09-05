@@ -152,7 +152,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
       const res = await api.startWorkflowRun({ name, inputs: payload })
       onStarted(res.run_id)
     } catch (e) {
-      notify(e instanceof Error ? e.message : 'Could not start the workflow')
+      notify(e instanceof Error ? e.message : 'Could not start the workflow', 'error')
     } finally {
       setStarting(false)
     }
@@ -168,7 +168,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
       if (res.run_id) onStarted(res.run_id)
       else notify('Refiner started')
     } catch (e) {
-      notify(e instanceof Error ? e.message : 'Could not start the refiner')
+      notify(e instanceof Error ? e.message : 'Could not start the refiner', 'error')
     } finally {
       setRefining(false)
     }
@@ -189,7 +189,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
       setDef((d) => (d ? { ...d, metadata: { ...(d.metadata ?? {}), a2a_published: res.a2a_published } } : d))
     } catch (e) {
       setDef((d) => (d ? { ...d, metadata: { ...(d.metadata ?? {}), a2a_published: previous } } : d))
-      notify(e instanceof Error ? e.message : 'Could not change A2A publication')
+      notify(e instanceof Error ? e.message : 'Could not change A2A publication', 'error')
     } finally {
       setPublishSaving(false)
     }
@@ -200,7 +200,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
       await api.repinWorkflowVersion(name, version)
       loadVersions()
     } catch (e) {
-      notify(e instanceof Error ? e.message : 'Could not roll back')
+      notify(e instanceof Error ? e.message : 'Could not roll back', 'error')
     }
   }, [name, loadVersions])
 

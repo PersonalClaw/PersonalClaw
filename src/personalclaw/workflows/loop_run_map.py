@@ -32,10 +32,12 @@ that established it has no home.
 2. **The status vocabularies are not a superset relationship.** `LoopStatus` has twelve members and
    `RunStatus` eight, and each has members the other cannot express — see `STATUS_VOCABULARY_DELTA`.
    "One status vocabulary" therefore costs a decision per orphan, not a rename.
-3. **`WorkflowRun.task_list_id` is declared and inert.** It has no writer and no reader outside
-   `models.py`; and it is singular, where a loop keeps one TaskList PER PHASE
-   (`Loop.task_list_ids: {phase_key: task_list_id}`). So the projection to tasks is one field short
-   of the loop's shape before any code moves.
+3. **`WorkflowRun.task_list_id` was declared and inert — RETIRED.** It had no
+   writer and no reader outside `models.py`, and it was singular where a loop keeps one TaskList
+   PER PHASE (`Loop.task_list_ids: {phase_key: task_list_id}`). The owner ruling re-homed the
+   loop field to `PROJECTION` (per-phase TaskLists derive from run state, the direction
+   `materialize.py` already proves) and deleted the singular slot, so a later migration cannot
+   fill it with the wrong shape.
 """
 
 from __future__ import annotations
@@ -249,34 +251,39 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         POLICY,
         "SupervisorPolicy.hitl_posture",
         "Already mapped by `supervisor_policy.POLICY_KNOB_MAP` (knob 11) — one of the three knobs "
-        "that collapse onto this field.",
+        "that collapse onto this field. Persisted per run since seam 4d: "
+        "`WorkflowRun.policy_overrides[attended]` (OWNER RULING 2, sparse overlay).",
     ),
     FieldHome(
         "autopilot",
         POLICY,
         "SupervisorPolicy.autonomy.approval",
         "system-drives-phases vs user-queues is an approval posture, which is what the "
-        "`SafetyProfile` half of the policy (AG-13 knob 4/14) already expresses.",
+        "`SafetyProfile` half of the policy (AG-13 knob 4/14) already expresses. Persisted per "
+        "run since seam 4d: `WorkflowRun.policy_overrides[autopilot]`.",
     ),
     FieldHome(
         "max_cycles",
         POLICY,
         "SupervisorPolicy.budget_max_cycles",
         "Already mapped by `POLICY_KNOB_MAP` (knob 12), same `0 = uncapped` semantics. "
-        "deep-research additionally exposes it as its `rounds` input.",
+        "deep-research additionally exposes it as its `rounds` input. Persisted per run since "
+        "seam 4d: `WorkflowRun.policy_overrides[max_cycles]`.",
     ),
     FieldHome(
         "idle_secs",
         POLICY,
         "SupervisorPolicy.idle_secs",
-        "Already mapped by `POLICY_KNOB_MAP` (knob 13) — the idle-stall cutoff for one cycle.",
+        "Already mapped by `POLICY_KNOB_MAP` (knob 13) — the idle-stall cutoff for one cycle. "
+        "Persisted per run since seam 4d: `WorkflowRun.policy_overrides[idle_secs]`.",
     ),
     FieldHome(
         "success_criteria",
         POLICY,
         "SupervisorPolicy.rubric",
         "The machine-checkable form of the same statement; goal-pursuit-open-ended also declares "
-        "`success_criteria` as a template input, which is the human-authored half.",
+        "`success_criteria` as a template input, which is the human-authored half. Persisted "
+        "per run since seam 4d: `WorkflowRun.policy_overrides[success_criteria]`.",
     ),
     FieldHome(
         "kind_config",
@@ -369,13 +376,21 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "Tasks Project — and a run has only one `project_id`. Either they unify (a decision about "
         "whether a run's project and its task project are the same thing) or a field is needed.",
     ),
+    # Re-homed to PROJECTION (option b of the 2026-08-22 entry):
+    # a per-phase TaskList map is a projection of run state — `materialize.py` already projects
+    # tasks per phase — and the inert singular `WorkflowRun.task_list_id` slot is retired in the
+    # same change, so a later migration cannot fill it with the wrong shape (singular where the
+    # loop keeps `{phase_key: id}`). Seam 4e shipped the constructive half: the projection
+    # function below is the row's destination.
     FieldHome(
         "task_list_ids",
-        RUN,
-        "WorkflowRun.task_list_id",
-        "SHAPE MISMATCH, recorded: singular on the run, `{phase_key: id}` on the loop — and "
-        "`WorkflowRun.task_list_id` has no writer or reader outside `models.py`, so the "
-        "destination is declared but inert.",
+        PROJECTION,
+        "",
+        "SHIPPED (PP-16 seam 4e): `materialize.task_list_ids_for_run` derives the PLURAL "
+        "`{node_id: task_list_id}` map from the persisted bindings — a node id is the "
+        "run-side phase_key (the graph IS the plan, per this map's own `plan` row). The "
+        "singular run slot was retired in seam 4c, so the derived read is the ONLY "
+        "destination; nothing is stored.",
     ),
     FieldHome(
         "linked_task_ids",

@@ -1642,11 +1642,14 @@ async def run_chat(
 ) -> None:
     """Stream LLM response into *session*.  Survives browser disconnect.
 
-    Public because it is the core↔channel seam every channel app drives: an inbound
-    message becomes a turn here, and core mirrors the reply back out through the app's
-    registered delivery. Re-exported as `personalclaw.sdk.channel.run_chat`, so the
-    signature above (positional `state, session, message`) is a published contract —
-    `_prompt_depth` stays private because it is this function's own recursion counter.
+    Public because it is the turn engine for the owner's own surfaces — dashboard,
+    cron, heartbeat, the CLI — and the `turn_runner` the composition root injects into
+    the guarded inbound door (`channel_inbound.deliver_inbound`). It is deliberately
+    NOT on the `personalclaw.sdk.channel` facade any more (EA-7 step 3): a channel app
+    reaches a turn only through `services.deliver_channel_inbound`, so the sender-trust
+    gate cannot be routed around. The positional `state, session, message` signature is
+    still a contract — the door's injected `turn_runner` calls it by that shape —
+    while `_prompt_depth` stays private as this function's own recursion counter.
     """
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored = False

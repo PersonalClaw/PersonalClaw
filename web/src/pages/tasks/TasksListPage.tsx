@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2, Users, UserRound } from 'lucide-react'
+import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban, X, RotateCcw, ListChecks, Target, Code2, Check, CheckCircle2, Trash2, Users, UserRound, Search, Filter } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
@@ -475,7 +475,25 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
                 ? <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
                 : <TaskGraph tasks={scopedTasks} onOpen={(id) => setOpenId(id)} />
             ) : filtered.length === 0 ? (
-              <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this filter." />
+              // This branch is reachable through FOUR narrowing controls (search, status filter,
+              // list bar, Assigned), and it blamed "this filter" for all of them — a hint that
+              // told a user who typed a search to check a dropdown they never touched. Same
+              // split as the code list (emptyStateNoMatch): name the control that actually
+              // narrowed, offer the escape that undoes it, and count what is really there so
+              // the state cannot read as "you have no tasks". Scope-only narrowing keeps the
+              // neutral scope sentence — scope is chosen by navigation, and a "View all" that
+              // could not escape it would be an affordance that lies about what it does.
+              q ? (
+                <EmptyState icon={Search} title={`No tasks match “${q}”`}
+                  hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none matching the search.`}
+                  action={{ label: 'Clear search', onClick: () => setQ('') }} />
+              ) : filter !== 'all' || listFilter || (owner && assigned === ASSIGNED_MINE) ? (
+                <EmptyState icon={Filter} title="No tasks in this view"
+                  hint={`You have ${tasks?.length ?? 0} task${(tasks?.length ?? 0) === 1 ? '' : 's'} — just none in this view.`}
+                  action={{ label: 'View all tasks', onClick: () => { setFilter('all'); setListFilter(null); setAssigned(ASSIGNED_EVERYONE) } }} />
+              ) : (
+                <EmptyState icon={ListChecksLike} title="Nothing here" hint="No tasks match this scope." />
+              )
             ) : view === 'list' ? (
               <div className="flex flex-col gap-s pb-16">
                 {filtered.map((t, i) => (

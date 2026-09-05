@@ -101,7 +101,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
       await fn()
       await refetch()
     } catch (e) {
-      notify(e instanceof Error ? e.message : `${label} failed`)
+      notify(e instanceof Error ? e.message : `${label} failed`, 'error')
     } finally {
       setBusy(false)
     }
@@ -154,7 +154,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
       // A rejected batch reports typed issues; surface the first rather than a silent no-op so
       // the user knows the edit did not land (and why).
       if (res.ok === false || (res.issues?.length ?? 0) > 0) {
-        notify(res.issues?.[0]?.message ?? 'The edit was rejected.')
+        notify(res.issues?.[0]?.message ?? 'The edit was rejected.', 'error')
         return
       }
       notify(revalidateSummary(res.preview))
@@ -230,7 +230,8 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
           verb: approved ? 'approve' : 'reject',
           resume_token: token,
         })
-        notify(res.ok === false ? (res.message ?? 'Could not resolve the gate.') : `Gate ${res.verb}d.`)
+        if (res.ok === false) notify(res.message ?? 'Could not resolve the gate.', 'error')
+        else notify(`Gate ${res.verb}d.`)
       })
     },
     [act, conts, runId],

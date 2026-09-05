@@ -94,7 +94,7 @@ export function ReviewTriagePanel({ runId, onDispatched }: { runId: string; onDi
       onDispatched?.()
       await load()
     } catch (e) {
-      notify(e instanceof Error ? e.message : 'Could not submit the triage.')
+      notify(e instanceof Error ? e.message : 'Could not submit the triage.', 'error')
     } finally {
       setBusy(false)
     }

@@ -753,6 +753,8 @@ async def _drive_routes(client) -> None:  # noqa: ANN001
         "vapid_public_key",
         "vapid_ready",
         "ntfy_configured",
+        "relay_configured",
+        "relay_devices",
         "approval_targeted",
         "devices",
         "subscribed",

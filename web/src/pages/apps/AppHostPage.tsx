@@ -1,8 +1,8 @@
 import { Loader2, Blocks } from 'lucide-react'
-import { useQuery } from '../../lib/data'
-import { api } from '../../lib/api'
+import { useQuery, invalidateKeys } from '../../lib/data'
+import { api, ApiError } from '../../lib/api'
 import type { RouteProps } from '../../app/useQueryState'
-import { LoadingStatus } from '../../ui/ListScaffold'
+import { EmptyState, LoadError, LoadingStatus } from '../../ui/ListScaffold'
 import { AppFrame } from './AppFrame'
 import type { AppContext, AppPermissions } from '../../app/appSdk'
 
@@ -12,12 +12,33 @@ interface UIPageDecl { route?: string; label?: string; entryPoint?: string; moun
  *  it (A7). Reads the manifest for the ui.pages[].entryPoint + permission scope,
  *  serves the bundle from /apps/<name>/ui/..., and hands both to ContributedPage
  *  via the SDK host. */
-export function AppHostPage({ sub }: Pick<RouteProps, 'sub'>) {
+export function AppHostPage({ sub, navigate }: Pick<RouteProps, 'sub' | 'navigate'>) {
   const name = sub.split('/')[0]
-  const { data, error } = useQuery(`app-host:${name}`, () => api.app(name), { persist: false })
+  const { data, error, refresh } = useQuery(`app-host:${name}`, () => api.app(name), { persist: false })
 
   if (!name) return <Center>No app specified</Center>
-  if (error) return <Center>App “{name}” is not available</Center>
+  if (error) {
+    // "Not installed" and "couldn't load" are different facts, and the old single branch
+    // ("App “x” is not available") told the user neither. A 404 on /api/apps/{name} has
+    // exactly one meaning — the app is not installed (the route has no other 404 path) —
+    // an EXPECTED state whose fix is installing it, so it renders EmptyState with the
+    // Store as the action. Anything else is a genuine load failure (gateway hiccup, 500),
+    // which gets the retryable LoadError instead of a sentence that blames the app.
+    if (error instanceof ApiError && error.status === 404) {
+      return (
+        <div className="flex h-full items-center justify-center">
+          <EmptyState icon={Blocks} title={`“${name}” isn’t installed`}
+            hint="Install it from the Store to open it here."
+            action={{ label: 'Open the Store', onClick: () => navigate('apps?view=store') }} />
+        </div>
+      )
+    }
+    return (
+      <div className="flex h-full items-center justify-center">
+        <LoadError what="app" error={error} onRetry={() => { invalidateKeys(`app-host:${name}`); refresh() }} />
+      </div>
+    )
+  }
   if (data === undefined) return <Center spinner />
 
   const manifest = (data.manifest ?? {}) as Record<string, unknown>

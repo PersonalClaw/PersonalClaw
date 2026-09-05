@@ -372,6 +372,10 @@ export function eventToTrigger(t: WireTrigger): Trigger {
     runCount: t.fire_count ?? null, usedBy: [],
     // Carried so the inspector can show the pattern + matcher without refetching.
     eventPattern: t.pattern, eventMatcher: eventMatcherValue(t, pm.matcher), event: t,
+    // Uniform with scheduleToTrigger/storeToTrigger: the server's verdict, passed through.
+    // Inert until `_serialize_event` sends attribution, but the mapper should not be the
+    // reason a foreign event row renders an action row its siblings would hide.
+    author: t.author, readOnly: t.read_only === true,
   }
 }
 

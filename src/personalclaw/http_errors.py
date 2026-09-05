@@ -127,6 +127,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # ── push subscriptions (handlers/push.py) ──
     "push_subscription_invalid": "The push subscription is missing an https endpoint or its keys.",
     "push_not_subscribed": "That device has no push subscription.",
+    "push_relay_registration_invalid": "The relay registration lacks a device id or token.",
+    "push_relay_not_registered": "That device has no relay token registered.",
     # ── chat rewind (dashboard/chat_file_rewind.py) ──
     "invalid_turn": "The addressed turn does not exist or is not rewindable.",
     "turn_running": "The turn is still executing; it cannot be rewound yet.",

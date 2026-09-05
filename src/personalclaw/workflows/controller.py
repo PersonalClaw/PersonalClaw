@@ -3362,8 +3362,15 @@ class RunController:
         `evaluate` reads come from the TEMPLATE's `supervisor:` block, not from constants
         buried in the engine. A node that declares none gets the default policy, whose
         values reproduce what the engine did before it was consulted.
+
+        The run's sparse overlay composes ON TOP (PP-16 seam 4d, OWNER RULING 2): the
+        template stays the shared default source — it structurally cannot hold a
+        per-instance setting — and `run.policy_overrides` carries only the knobs THIS run
+        overrode. A run with an empty overlay gets the template's policy object unchanged,
+        so the sparse common case costs nothing.
         """
-        return supervisor_policy.parse_supervisor_policy((node.config or {}).get("supervisor"))
+        declared = supervisor_policy.parse_supervisor_policy((node.config or {}).get("supervisor"))
+        return supervisor_policy.apply_policy_overrides(declared, self.run.policy_overrides)
 
     def _convergence_ledger(self, parent_path: str) -> dict[str, Any]:
         """This loop's persisted convergence position, on the run row.

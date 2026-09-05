@@ -913,7 +913,6 @@ class WorkflowRun:
     branch_key: str | None = None
     forked_from: dict[str, Any] | None = None
     project_id: str = ""
-    task_list_id: str = ""
     mode: str = "background"  # blocking | background
     budget: RunBudget = field(default_factory=RunBudget)
     pinned: bool = False
@@ -925,6 +924,14 @@ class WorkflowRun:
     agent_count: int = 0
     error_message: str = ""
     attention: dict[str, Any] | None = None
+    #: PP-16 seam 4d: the run's SPARSE `SupervisorPolicy` overlay. A template
+    #: is SHARED across runs, so it structurally cannot hold a per-instance user setting —
+    #: the declared defaults stay where they are (`supervisor_policy.KIND_CONVERGENCE`, a
+    #: template's `supervisor:` block) and this dict holds ONLY the knobs this run overrode
+    #: (`supervisor_policy.OVERRIDABLE_POLICY_KEYS`). A run that overrides nothing carries `{}`
+    #: and persists no state. The write seam (`store.set_policy_overrides`) is strict about
+    #: keys; this reader is tolerant — see `from_dict` below.
+    policy_overrides: dict[str, Any] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -952,7 +959,6 @@ class WorkflowRun:
             "branch_key",
             "forked_from",
             "project_id",
-            "task_list_id",
             "mode",
             "budget",
             "pinned",
@@ -964,6 +970,7 @@ class WorkflowRun:
             "agent_count",
             "error_message",
             "attention",
+            "policy_overrides",
         }
     )
 
@@ -982,7 +989,6 @@ class WorkflowRun:
             "branch_key": self.branch_key,
             "forked_from": self.forked_from,
             "project_id": self.project_id,
-            "task_list_id": self.task_list_id,
             "mode": self.mode,
             "budget": self.budget.to_dict(),
             "pinned": self.pinned,
@@ -994,6 +1000,7 @@ class WorkflowRun:
             "agent_count": self.agent_count,
             "error_message": self.error_message,
             "attention": self.attention,
+            "policy_overrides": dict(self.policy_overrides),
         }
         d.update(self.extra)
         return d
@@ -1019,7 +1026,6 @@ class WorkflowRun:
             branch_key=d.get("branch_key"),
             forked_from=d.get("forked_from"),
             project_id=str(d.get("project_id", "") or ""),
-            task_list_id=str(d.get("task_list_id", "") or ""),
             mode=str(d.get("mode", "background") or "background"),
             budget=RunBudget.from_dict(d.get("budget") or {}),
             pinned=bool(d.get("pinned", False)),
@@ -1031,6 +1037,13 @@ class WorkflowRun:
             agent_count=int(d.get("agent_count", 0) or 0),
             error_message=str(d.get("error_message", "") or ""),
             attention=d.get("attention"),
+            # Tolerant on the overlay's CONTENTS, deliberately: a key this engine does not
+            # recognize (written by a newer core) is preserved so a downgrade round-trips it
+            # instead of dropping it on the next save; `apply_policy_overrides` is where an
+            # unrecognized key is ignored at resolution time. Strictness lives at the WRITE
+            # seam (`store.set_policy_overrides`), the one place a bad key can be refused
+            # before it is persisted.
+            policy_overrides=dict(d.get("policy_overrides") or {}),
             extra={k: v for k, v in d.items() if k not in cls._KNOWN},
         )
 

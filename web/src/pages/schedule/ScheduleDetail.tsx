@@ -133,8 +133,13 @@ export function ScheduleDetail({ job, onSaved, onDeleted, onChanged, editing, on
       setErr(/already running/i.test(msg) ? 'This schedule is already running.' : msg)
     } finally { setBusy(false) }
   }
+  // The one sibling without a catch: a failed enable/disable moved nothing and said nothing,
+  // so a disabled-looking schedule could still be armed. Reports through setErr like runNow/openChat.
   async function toggle() {
-    setBusy(true); try { await api.enableSchedule(job.id, !job.enabled); onChanged() } finally { setBusy(false) }
+    setBusy(true)
+    try { await api.enableSchedule(job.id, !job.enabled); onChanged() }
+    catch (e) { setErr(e instanceof Error ? e.message : (job.enabled ? 'Disable failed' : 'Enable failed')) }
+    finally { setBusy(false) }
   }
   async function openChat() {
     setBusy(true); setNote('')
