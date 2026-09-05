@@ -21,6 +21,7 @@ from personalclaw.config.schema import SCHEMA_REGISTRY, config_entry_to_dict
 from personalclaw.dashboard.chat_utils import _SLASH_COMMAND_HINTS
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
+from personalclaw.providers.failure_copy import relayed_failure_copy
 
 logger = logging.getLogger(__name__)
 
@@ -397,7 +398,9 @@ async def api_agent_config(request: web.Request) -> web.Response:
             await _h._reset_all_sessions(request)
             return web.json_response({"ok": True, "applied": True})
         except Exception as exc:
-            return web.json_response({"error": str(exc)}, status=500)
+            # Raw text is diagnostics for the log; the wire speaks guidance (failure_copy).
+            logger.exception("agent config apply failed")
+            return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
     # GET
     try:
         data = json.loads(agent_config_path.read_text(encoding="utf-8"))

@@ -13,6 +13,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -695,7 +696,9 @@ async def api_mcp_toggle(request: web.Request) -> web.Response:
         try:
             _write_mcp_json(data)
         except Exception as exc:
-            return web.json_response({"error": str(exc)}, status=500)
+            # Raw text is diagnostics for the log; the wire speaks guidance (failure_copy).
+            logger.warning("mcp: failed to write global mcp.json", exc_info=True)
+            return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
         # 2. Sync to personalclaw.json tools/allowedTools (lock prevents lost updates vs agents.py)
         from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811
@@ -768,7 +771,9 @@ async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
         try:
             _write_mcp_json(data)
         except Exception as exc:
-            return web.json_response({"error": str(exc)}, status=500)
+            # Raw text is diagnostics for the log; the wire speaks guidance (failure_copy).
+            logger.warning("mcp: failed to write global mcp.json", exc_info=True)
+            return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
     return web.json_response({"ok": True, "server": server, "tool": tool, "enabled": enabled})
 
 
@@ -804,7 +809,9 @@ async def api_mcp_toggle_all(request: web.Request) -> web.Response:
         try:
             _write_mcp_json(data)
         except Exception as exc:
-            return web.json_response({"error": str(exc)}, status=500)
+            # Raw text is diagnostics for the log; the wire speaks guidance (failure_copy).
+            logger.warning("mcp: failed to write global mcp.json", exc_info=True)
+            return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
         # Batch sync: single read-modify-write of personalclaw.json
         from personalclaw.dashboard.handlers.agents import _get_config_lock  # noqa: F811

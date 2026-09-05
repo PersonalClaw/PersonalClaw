@@ -17,6 +17,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.skills.marketplace import DEFAULT_SKILLS_INSTALL_PATH
 
 logger = logging.getLogger(__name__)
@@ -292,7 +293,7 @@ async def api_skills_search(request: web.Request) -> web.Response:
             )
         except Exception as exc:
             logger.warning("skills search failed for %s: %s", marketplace_name, exc)
-            return web.json_response({"error": str(exc)[:500]}, status=500)
+            return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
     results, counts = search_marketplaces_counted(query, limit=limit)
     # 🔴 `installable_sources` is what tells zero MATCHES apart from nothing to install FROM.
@@ -396,7 +397,7 @@ async def api_skills_marketplace_detail(request: web.Request) -> web.Response:
         return json_error("not_found", message=str(exc), status=404)
     except Exception as exc:
         logger.warning("skills detail fetch failed for %s/%s: %s", marketplace_name, skill_id, exc)
-        return web.json_response({"error": str(exc)[:500]}, status=500)
+        return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
     skill_md = detail.skill_md() or ""
     # Parse the SKILL.md frontmatter so the dashboard can render structured fields
@@ -571,7 +572,7 @@ async def api_skills_install(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=400)
     except Exception as exc:
         logger.warning("skills install failed: %s", exc)
-        return web.json_response({"error": str(exc)[:500]}, status=500)
+        return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
 
 async def api_skills_delete(request: web.Request) -> web.Response:
