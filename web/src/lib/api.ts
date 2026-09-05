@@ -7473,8 +7473,10 @@ export const api = {
   workflowRunNodeInspect: (runId: string, nodeId: string) =>
     get<NodeInspect>(
       `/api/workflows/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/inspect`),
+  // `run_status` rides along so a caller can say WHY nothing is answerable: a terminal run and an
+  // already-answered gate both return an empty list, and they are different sentences (#583).
   workflowContinuations: (id: string) =>
-    get<{ continuations: WorkflowContinuation[] }>(`/api/workflows/runs/${encodeURIComponent(id)}/continuations`),
+    get<{ continuations: WorkflowContinuation[]; run_status?: string }>(`/api/workflows/runs/${encodeURIComponent(id)}/continuations`),
   /** The run's workspace review: changed files + the two reintegration verbs (§4.1). A GET
    *  because reintegration is OFFERED, never performed — there is no companion POST, and that
    *  is the plan's ruling rather than a gap. 404s for an unknown run; a run with no managed

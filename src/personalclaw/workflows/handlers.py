@@ -1208,12 +1208,33 @@ async def api_run_continuations(request: web.Request) -> web.Response:
 
     The ask and the handoff ride along so a client can render the whole card from one call
     rather than fetching per token.
+
+    🔴 A TERMINAL RUN HAS NO ANSWERABLE GATE, and this route used to say otherwise. It checked
+    only that the run EXISTS, so a run that failed hours ago still handed out live resume tokens
+    — measured on two of them (#583). The inbox faithfully rendered what the API advertised: a
+    filled **Approve** button beside a "Handled" chip, on a run that could never consume the
+    answer (`service.resume_run` refuses with `WF_RUN_NOT_LIVE`, because `_live()` returns None
+    for a run with no controller). A control that cannot succeed is worse than an absent one:
+    the user spends the click and gets a raw error code.
+
+    The filter is HERE rather than in `list_continuations`, deliberately. That function's own
+    docstring enumerates six consumers — including the controller's per-epoch idempotency check
+    and the rewind drop — which need the pending records regardless of run status. Narrowing it
+    would fix a rendering bug by breaking the engine. What is wrong is the ADVERTISEMENT.
+
+    `run_status` rides along so a client can say WHY nothing is answerable without a second
+    fetch: "this run failed" and "you already answered this" are different sentences, and an
+    empty list alone cannot tell them apart.
     """
     from personalclaw.workflows.human_input import list_continuations
+    from personalclaw.workflows.models import TERMINAL_RUN_STATUSES
 
     run_id = request.match_info.get("run_id", "")
-    if store.get(run_id) is None:
+    run = store.get(run_id)
+    if run is None:
         return _fail({"code": "WF_RUN_NOT_FOUND", "message": f"no run {run_id!r}"})
+    status = getattr(run, "status", "")
+    pending = [] if status in TERMINAL_RUN_STATUSES else list_continuations(run_id)
     return web.json_response(
         {
             "continuations": [
@@ -1226,8 +1247,9 @@ async def api_run_continuations(request: web.Request) -> web.Response:
                     "expires_at": c.expires_at,
                     "expired": c.expired,
                 }
-                for c in list_continuations(run_id)
-            ]
+                for c in pending
+            ],
+            "run_status": str(getattr(status, "value", status) or ""),
         }
     )
 
