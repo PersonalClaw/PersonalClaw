@@ -18,6 +18,7 @@ what should exist, so the rules are testable without a task store on disk.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -386,6 +387,61 @@ def plan_materialization(
             "complete but unreadable is worse than one that says how much it is not showing"
         )
     return plan
+
+
+def task_list_ids_for_run(run_id: str, tasks: Iterable[Any] | None) -> dict[str, str]:
+    """The run-side PLURAL tasks projection (PP-16 seam 4e, OWNER RULING 1): which TaskList
+    holds each of this run's tasks, keyed by node id — ``{node_id: task_list_id}``.
+
+    This is the destination for the loop row's ``task_list_ids`` column, and it is DERIVED,
+    not stored. The ruling's operative sentence is "a run that projects to tasks carries the
+    PLURAL shape, matching the live field": the loop keeps ``{phase_key: task_list_id}``, and
+    a node id is the run-side phase key (the graph IS the plan — `loop_run_map`'s own
+    ``plan``/``phase_status`` rows). Both halves of each entry already persist on the Task
+    rows themselves — the binding carries ``(run_id, node_id)`` and ``Task.task_list_id`` is
+    the structural parent — so a stored run-side column would be a second copy of the truth,
+    which is exactly the shape seam 4c retired.
+
+    Pure over the task iterable, like everything in this module: the registry call is the
+    caller's. Semantics, each measured rather than guessed:
+
+    * A task with no list contributes nothing. Same reading as a phase absent from
+      ``Loop.task_list_ids`` — no list holds that work yet. MEASURED: the engine's own write
+      (`controller._write_projected_task`) passes no ``task_list_id``, so a fresh run
+      projects ``{}`` until its tasks are FILED into lists — a user move the write façade
+      permits, because ``task_list_id`` is deliberately not in `ENGINE_OWNED_FIELDS`.
+    * A managed binding wins over a produced one on the same node. A node can both project
+      its own managed task and attribute produced output to itself; "where does this node's
+      tracking live" is the managed task's list, the same question the loop's dict answers.
+      Within a class, first wins — `plan_materialization`'s set-add idiom, not dict last-wins.
+    * An empty ``run_id`` projects ``{}`` outright, so a malformed binding whose own run id
+      is empty cannot be harvested by an equally empty query.
+
+    No production caller yet, and this docstring says so (plan invariant 9): the consumers-
+    to-be are `Loop.task_list_ids`' readers (`loop.tasks_link.phase_list_id` and friends,
+    `dashboard.handlers.loop_routes._loop_task_ids`, the sdlc/goal briefs, the code cockpit),
+    which move here when the loop row retires — that wiring belongs to the store-retirement /
+    cockpit-contract seams, and wiring a forced consumer now would pre-empt them.
+    """
+    if not run_id:
+        return {}
+    out: dict[str, str] = {}
+    managed_keys: set[str] = set()
+    for task in tasks or ():
+        binding = getattr(task, "workflow_binding", None)
+        if binding is None or str(getattr(binding, "run_id", "") or "") != run_id:
+            continue
+        node_id = str(getattr(binding, "node_id", "") or "").strip()
+        list_id = str(getattr(task, "task_list_id", "") or "").strip()
+        if not node_id or not list_id:
+            continue
+        if getattr(binding, "managed", False):
+            if node_id not in managed_keys:
+                out[node_id] = list_id
+                managed_keys.add(node_id)
+        elif node_id not in out:
+            out[node_id] = list_id
+    return out
 
 
 def managed(task: Any) -> bool:
