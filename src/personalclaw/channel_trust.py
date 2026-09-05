@@ -22,7 +22,10 @@ denied by *policy* (the fail-CLOSED half: absence of data means "not trusted", n
 **Pairing codes** are 8-digit numeric, single active per provider, single-use, TTL 600s,
 and **only the SHA-256 hash is stored** — the plaintext is returned once by
 :func:`create_pairing_code` and never persisted or logged. :func:`redeem_pairing_code`
-compares in constant time and consumes the code on success.
+compares in constant time and consumes the code on success. Redemption is *reached* from
+:func:`guard_inbound` — the one gate every transport already crosses — and not from each
+transport, for the same reason the content fence lives there: a per-transport obligation is
+a hope, not a property, and every shipping channel duly forgot it (#950).
 
 **Audit.** Three security events are emitted through the SEL: ``pairing_code_created``
 (never carrying the code), ``sender_paired``, ``sender_denied``.
@@ -63,6 +66,13 @@ CANNED_PAIRING_REPLY = (
     "I don't recognize you yet. Ask my owner for an 8-digit pairing code "
     "(they can run `personalclaw pair <provider>`), then send it here to start talking."
 )
+
+#: The canned reply for the message that WAS a valid pairing code. The sender is now
+#: allow-listed and their NEXT message is a real turn, but this one is spent on pairing —
+#: so it comes back ``allowed=False, reason="paired"`` and the transport delivers this.
+#: Lives here, beside :data:`CANNED_PAIRING_REPLY`, because both halves of the pairing
+#: conversation are trust vocabulary: every channel must say the same thing.
+CANNED_PAIRED_REPLY = "Paired — you can talk to me now."
 
 
 def _now() -> datetime:
@@ -332,6 +342,33 @@ def create_pairing_code(provider: str) -> str:
     return code
 
 
+def _pairing_code_outstanding(provider: str) -> bool:
+    """Whether ``provider`` has a pairing code on record at all (says nothing about it).
+
+    Reads only the presence of ``code_hash`` — never its value, never whether a candidate
+    matches, and deliberately NOT whether it has expired: an expired code must still reach
+    :func:`redeem_pairing_code` so that function can clear the dead record and emit its
+    ``expired_code`` denial. This exists so :func:`guard_inbound` can skip the redemption
+    attempt entirely when no code was ever minted, which keeps an unpaired stranger who
+    spams digit strings from driving an unbounded stream of ``no_active_code`` audit rows —
+    the same flood the :data:`UNKNOWN_SENDER_RENOTIFY_SECS` window exists to prevent on the
+    notification side.
+    """
+    pairing = _provider_record(_read_store(), provider).get("pairing") or {}
+    return bool(pairing.get("code_hash"))
+
+
+def _looks_like_a_pairing_code(text: str) -> bool:
+    """Whether ``text`` has the exact shape :func:`create_pairing_code` mints.
+
+    Exactly :data:`PAIRING_CODE_DIGITS` ASCII digits and nothing else. Stricter than a bare
+    ``str.isdigit()`` on purpose: that accepts non-ASCII digit forms (Arabic-Indic, fullwidth
+    …) which can never match an ASCII code hash, and accepts any length, so both would burn a
+    redemption attempt — and an audit row — on text that could not possibly be a code.
+    """
+    return len(text) == PAIRING_CODE_DIGITS and text.isascii() and text.isdigit()
+
+
 def redeem_pairing_code(provider: str, sender_id: str, code: str) -> bool:
     """Redeem ``code`` for ``sender_id`` on ``provider``.
 
@@ -501,6 +538,17 @@ def guard_inbound(
       (:func:`note_unknown_sender`) and the message is denied. ``pairing`` returns the
       canned pairing-needed reply; ``owner_only`` stays silent (open question resolved:
       no in-channel reply).
+    * **DM**, policy ``pairing``, and the message is exactly an outstanding 8-digit code →
+      :func:`redeem_pairing_code` consumes it and the sender joins the allowlist
+      (``via="pairing"``). The verdict is ``allowed=False, reason="paired"`` carrying
+      :data:`CANNED_PAIRED_REPLY`: the sender is trusted from their NEXT message on, but a
+      pairing code is not something the agent should be asked to answer. Redemption is
+      applied HERE for exactly the reason the fence is — see below — because a transport
+      that had to remember it forgot: before this, ``redeem_pairing_code`` was reachable
+      only through the platform's inbound door, which no shipping channel crossed, so
+      ``personalclaw pair`` minted codes that nothing could spend (#950). Policy
+      ``owner_only`` deliberately does NOT redeem: there, the owner's Allow is the only
+      door, and honouring a code would make ``owner_only`` no stronger than ``pairing``.
     * **group/room**, policy ``off`` → denied silently. Policy ``tracked_only`` → allowed
       only for a tracked channel; an untracked group is silently ignored (no owner spam).
 
@@ -511,6 +559,27 @@ def guard_inbound(
         policy = trust_policies(provider).get("dm", DEFAULT_DM_POLICY)
         if policy == "open" or is_allowed_sender(provider, sender_id):
             return TrustVerdict(allowed=True, reason="allowed")
+        # Redemption happens HERE, for the same reason the fence does: this is the one
+        # function every transport already crosses, so no channel can forget it. Only
+        # under policy ``pairing`` — that policy's canned reply is literally an
+        # instruction to send a code, whereas ``owner_only`` means the owner's Allow is
+        # the ONLY way in and a code must not be a second door.
+        candidate = (text or "").strip()
+        if (
+            policy == "pairing"
+            and _looks_like_a_pairing_code(candidate)
+            and _pairing_code_outstanding(provider)
+            and redeem_pairing_code(provider, sender_id, candidate)
+        ):
+            # Not a turn for the agent: the sender is trusted from their NEXT message on,
+            # and this one is spent on pairing. ``allowed=False`` keeps the code out of
+            # the session transcript as a side benefit.
+            return TrustVerdict(
+                allowed=False,
+                reason="paired",
+                canned_reply=CANNED_PAIRED_REPLY,
+                meta={"paired": True},
+            )
         fired = note_unknown_sender(
             state, provider, sender_id, sender_name, silent=(policy == "owner_only")
         )
