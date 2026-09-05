@@ -1,12 +1,16 @@
 {
-  "name": "personalclaw-electron-mac",
+  "name": "personalclaw-desktop",
   "version": "0.1.0",
   "description": "PersonalClaw \u2014 AI agent desktop app",
+  "homepage": "https://personalclaw.dev",
+  "license": "MIT",
+  "desktopName": "personalclaw-desktop",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "dist": "electron-builder --mac --config.electronVersion=$(node -p \"require('electron/package.json').version\")"
+    "dist": "electron-builder --mac --config.electronVersion=$(node -p \"require('electron/package.json').version\")",
+    "dist:linux": "electron-builder --linux --config.electronVersion=$(node -p \"require('electron/package.json').version\")"
   },
   "devDependencies": {
     "electron": "^44.0.0",
@@ -24,6 +28,17 @@
     },
     "dmg": {
       "writeUpdateInfo": false
+    },
+    "linux": {
+      "category": "Development",
+      "icon": "icon.png",
+      "maintainer": "PersonalClaw contributors <noreply@personalclaw.dev>",
+      "synopsis": "PersonalClaw — AI agent desktop app",
+      "syncDesktopName": true,
+      "target": [
+        "AppImage",
+        "deb"
+      ]
     },
     "files": [
       "main.js",

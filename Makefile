@@ -31,7 +31,7 @@ PYI_BUNDLE_DIR  := dist/personalclaw-backend
 .PHONY: help format lint test test-e2e test-visual build clean harness-validate gates \
         serve serve-fresh serve-web \
         web-build backend-build pyinstaller \
-        desktop desktop-dist \
+        desktop desktop-dist desktop-dist-linux \
         docker-build docker-up docker-down docker-logs docker-deploy \
         dev-up dev-down
 
@@ -200,6 +200,13 @@ desktop: pyinstaller
 ## desktop-dist: build a signed .dmg in desktop/dist/
 desktop-dist: desktop
 	cd $(DESKTOP_DIR) && npm run dist
+
+## desktop-dist-linux: build the UNSIGNED Linux AppImage + .deb in desktop/dist/ (DC-6).
+## Run on a Linux host — release.yml's `desktop-linux` job is the canonical caller.
+## No signing step by design: Linux has no OS-level code-signing gate (nothing
+## analogous to Gatekeeper consumes a signature) — see docs/guides/desktop.md.
+desktop-dist-linux: desktop
+	cd $(DESKTOP_DIR) && npm run dist:linux
 
 # ── Container stack (runtime auto-detected; override e.g. COMPOSE="podman-compose") ──
 

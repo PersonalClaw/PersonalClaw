@@ -159,6 +159,63 @@ Settings → Notifications → PersonalClaw** is the only control. If you have t
 there, ticking Desktop in a rule will silently do nothing — that is macOS's answer, not a
 bug in the rule.
 
+## Platforms
+
+The shell ships for **macOS** and **Linux x86-64**. There is no Windows build — see
+below for exactly why and what would change that.
+
+### Linux — AppImage and .deb, unsigned
+
+Every release attaches two Linux artifacts, built by CI from the same tree as the
+release tag:
+
+- `PersonalClaw-<version>.AppImage` — self-contained: `chmod +x` it and run it.
+- `personalclaw-desktop_<version>_amd64.deb` — install with
+  `sudo apt install ./personalclaw-desktop_<version>_amd64.deb`.
+
+**Neither artifact is code-signed, and that is deliberate, not a gap.** Linux has no
+OS-level signing gate — nothing analogous to macOS Gatekeeper consumes a signature on
+an AppImage or a .deb — so a signature would change nothing your system checks. What
+you will actually see:
+
+- The AppImage runs after `chmod +x` with **no provenance prompt at all**, which is
+  exactly why *where you downloaded it* is the whole integrity story. Get it from the
+  GitHub Release page only.
+- `apt` will not warn about the .deb either: repository GPG signing applies to
+  packages served *from an apt repository*, and this file installs directly. Same
+  rule — download from the release page.
+
+(App *bundles* installed inside PersonalClaw are a separate, signed story — see
+[artifact signing](../security/signing.md).)
+
+One Linux-specific behavior worth knowing: the menu-bar presence above depends on
+your desktop environment offering a tray. On one that does not, the shell notices —
+closing the window then quits for real instead of hiding, exactly as described under
+"Closing the window is not quitting", so you can never strand a running app you
+cannot reach.
+
+### macOS — built from a checkout, for now
+
+The dmg is not attached to releases yet: that step waits on Apple Developer
+signing + notarization credentials that do not exist in CI today. Until they do,
+build from a checkout with `make desktop-dist`. A locally-built, unsigned app gets
+macOS's normal Gatekeeper treatment on first launch.
+
+### Windows — deferred (2026-09-05)
+
+There is no Windows shell, and none is planned until **both** of these change:
+
+1. The [native-Windows audit](../roadmap/research/windows-native-audit.md) ruled the
+   backend port **no-go** (its "Go / no-go" section): a native port would silently
+   weaken file-permission and sandbox guarantees the rest of the system depends on.
+   That doc's demand-evidence criteria are the flip condition.
+2. Windows code-signing secrets exist. None do — and an unsigned Windows executable
+   is SmartScreen-hostile in a way an unsigned AppImage is not: users would see a
+   scary "unrecognized app" interstitial on every install.
+
+The desktop shell follows platform support, never leads it. Windows users have real,
+tested backend paths today: [WSL2 or Docker Desktop](platforms.md#windows-via-wsl2).
+
 ## Related
 
 - [Platforms](platforms.md) — which OSes the desktop shell targets.
