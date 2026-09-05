@@ -156,9 +156,11 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
           <LoadError what="agents" error={error} onRetry={reload} />
         ) : loading && groups.length === 0 ? <ListSkeleton rows={6} what="agents" /> : (
               <>
-                {/* Native */}
+                {/* Native. The group mixes reserved built-ins (definition fixed, model
+                    swappable — delete answers 403) with user-created agents, so the caption
+                    must not promise blanket editability; the row chips carry the per-agent truth. */}
                 {native && (
-                  <GroupSection title="Native" icon={Users} tone="var(--color-primary)" subtitle="Your PersonalClaw agent definitions — fully editable." count={shownNative.length}>
+                  <GroupSection title="Native" icon={Users} tone="var(--color-primary)" subtitle="Built-ins run the platform — definition fixed, model swappable. Agents you create are fully editable." count={shownNative.length}>
                     {shownNative.length === 0 ? (
                       // The group is filtered by `match(q)` first, so without the `n` branch a
                       // mistyped search reported "No native agents" — and offered to create one —
