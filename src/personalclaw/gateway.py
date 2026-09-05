@@ -345,10 +345,11 @@ class GatewayOrchestrator:
         # in its own runtime; core holds no channel allowlist.
         self._slack_enabled = bool(self._app_token and self._bot_token)
 
-        # Outbound delivery to the active channel (Slack, …) — the channel
-        # transport registers a ChannelDelivery here at start_inbound. None →
-        # deliver to the dashboard only. Core never imports channel code.
-        self._channel_delivery: "ChannelDelivery | None" = None
+        # Outbound delivery lives in `channel_delivery`'s per-provider registry — not on this
+        # object and not on DashboardState, which each held their own slot for the same fact
+        # until #959, both overwritten by whichever transport started last. `_channel_delivery`
+        # below is now a read-only view answering the OWNER-REACHABLE question. Core never
+        # imports channel code; the registry holds handles the apps hand it.
 
         # Services (initialized in start())
         self.sessions: SessionManager | None = None
@@ -389,10 +390,48 @@ class GatewayOrchestrator:
         """Primary owner's channel-user id (``""`` if unset)."""
         return self._owner_id
 
-    def register_channel_delivery(self, delivery: "ChannelDelivery | None") -> None:
-        """Register the active channel's outbound delivery handle (called by the
-        channel transport at ``start_inbound``). ``None`` clears it."""
-        self._channel_delivery = delivery
+    @property
+    def _channel_delivery(self) -> "ChannelDelivery | None":
+        """A connected channel that can reach the owner, or None.
+
+        Every reader of this in the gateway addresses the OWNER — a cron result, a heartbeat
+        summary, an approval prompt, a subagent reply — through `open_dm(owner_id)`, with no
+        origin channel to honour. A reply to an incoming message is a different question and
+        resolves through :func:`channel_delivery.delivery_for`; sending one through here is
+        exactly the misroute #959 reported.
+        """
+        from personalclaw.channel_delivery import owner_reachable
+
+        return owner_reachable()
+
+    @_channel_delivery.setter
+    def _channel_delivery(self, delivery: "ChannelDelivery | None") -> None:
+        """Assigning is registering, exactly as on :class:`DashboardState`.
+
+        Kept as a setter rather than removed because assignment is how this handle has always
+        been installed on both objects — including by 23 gateway tests that hand the orchestrator
+        a fake before driving a delivery path. Those tests are asserting gateway behaviour, not
+        the registry's shape, so the seam absorbs the assignment instead of the assertion moving.
+        """
+        from personalclaw.channel_delivery import register
+
+        register(delivery)
+
+    def register_channel_delivery(
+        self, delivery: "ChannelDelivery | None", provider: str = ""
+    ) -> None:
+        """Register a channel's outbound delivery handle (called by the channel transport at
+        ``start_inbound``). ``None`` clears — every handle, or one provider's when named.
+
+        ``provider`` is the same string the transport already passes to
+        :meth:`deliver_channel_inbound` on the way in, at the same point in its lifecycle. It is
+        optional only so that a core upgrade cannot break an app that has not been updated yet:
+        omitted, the provider is derived from the handle's own module, which still gives three
+        connected apps three distinct keys instead of one shared slot.
+        """
+        from personalclaw.channel_delivery import register
+
+        register(delivery, provider)
 
     async def deliver_channel_inbound(
         self, provider: str, msg: "ChannelMessage", *, is_dm: bool = True

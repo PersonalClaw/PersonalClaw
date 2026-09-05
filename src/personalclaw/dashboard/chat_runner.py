@@ -6,6 +6,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from personalclaw.acp import permission_authority as acp_permission_authority
 from personalclaw.acp.errors import AcpError, AcpProcessDied
@@ -1967,6 +1968,12 @@ async def run_chat(
     _mirror_active_task_title = ""
     _mirror_thread: str | None = ""
     _mirror_task_counter = 0
+    # The delivery for the channel this session CAME FROM — resolved once, below, and used by
+    # all three mirror sites. Not `state.channel_delivery`: that answers "any channel that can
+    # reach the owner", and a mirror carries the origin channel's id, so it is answerable by
+    # exactly one provider. Handing it to another one is #959 — a Discord answer delivered to
+    # Telegram with a Discord channel id, silently lost.
+    _mirror_delivery: Any = None
     try:
         # Resolve agent bindings early so we pass the correct ACP agent
         # name (e.g. "personalclaw") instead of the PersonalClaw session name
@@ -2760,19 +2767,33 @@ async def run_chat(
         )
 
         # ── Bidirectional sync: mirror user message to the linked channel thread ──
-        if state.channel_delivery and not is_slash:
-            _mirror_thread, _mirror_chan = state.sessions.get_channel_link(session_key)
-            if _mirror_thread and _mirror_chan:
+        #
+        # The ORIGIN channel's handle first, from the provider the session was created with —
+        # None when this turn came from the dashboard, or when that channel is not connected. In
+        # both cases nothing is mirrored, which is the correct outcome: the alternative is posting
+        # this thread's id into a DIFFERENT provider, which either fails or lands in somebody
+        # else's channel (#959).
+        #
+        # Resolved BEFORE the link is read, and that order is load-bearing: the link lookup used
+        # to be gated on "any delivery exists", so making it unconditional reached paths that
+        # never called it (156 tests, whose mocked `sessions` return a non-tuple). Gating on the
+        # ORIGIN's handle is strictly narrower than the original gate, and a dashboard session
+        # now skips the lookup entirely.
+        if not is_slash:
+            _mirror_delivery = state.delivery_for(state.channel_provider_for(session_key))
+            if _mirror_delivery:
+                _mirror_thread, _mirror_chan = state.sessions.get_channel_link(session_key)
+            if _mirror_thread and _mirror_chan and _mirror_delivery:
                 try:
                     _mirror_msg = message[:500]
                     _mirror_msg, _ = redact_exfiltration_urls(_mirror_msg)
                     _mirror_msg, _ = redact_credentials(_mirror_msg)
-                    await state.channel_delivery.deliver_text(
+                    await _mirror_delivery.deliver_text(
                         _mirror_chan, f"💬 _{_mirror_msg}_", _mirror_thread
                     )
                     # Start a stream for real-time tool animations
                     _mirror_stream_ts = (
-                        await state.channel_delivery.start_stream(
+                        await _mirror_delivery.start_stream(
                             _mirror_chan, _mirror_thread, initial_text="Thinking…"
                         )
                         or ""
@@ -3002,10 +3023,10 @@ async def run_chat(
                     state._hook_store, event.title, tool_input_to_str(event.tool_input)
                 )
                 # Mirror tool call to linked channel stream
-                if _mirror_stream_ts and state.channel_delivery:
+                if _mirror_stream_ts and _mirror_delivery:
                     try:
                         if _mirror_active_task:
-                            await state.channel_delivery.append_stream_task(
+                            await _mirror_delivery.append_stream_task(
                                 _mirror_chan,
                                 _mirror_stream_ts,
                                 _mirror_active_task,
@@ -3019,7 +3040,7 @@ async def run_chat(
                         _task_title, _ = redact_credentials(_task_title)
                         _task_title = _task_title[:75]
                         _mirror_active_task_title = _task_title
-                        await state.channel_delivery.append_stream_task(
+                        await _mirror_delivery.append_stream_task(
                             _mirror_chan,
                             _mirror_stream_ts,
                             _mirror_active_task,
@@ -4282,9 +4303,9 @@ async def run_chat(
         # ── Bidirectional sync: mirror response to the linked channel thread ──
         # Rendering (mrkdwn, OPTIONS blocks) is the channel's concern — delegate to
         # the active ChannelDelivery so the dashboard imports no channel code.
-        if assistant_text and state.channel_delivery and _mirror_thread and _mirror_chan:
+        if assistant_text and _mirror_delivery and _mirror_thread and _mirror_chan:
             try:
-                await state.channel_delivery.deliver_chat_mirror(
+                await _mirror_delivery.deliver_chat_mirror(
                     _mirror_chan, assistant_text, _mirror_thread
                 )
             except Exception:
@@ -4426,11 +4447,13 @@ async def run_chat(
             _flush_file_changes(session)
         except Exception:
             logger.debug("file-change flush failed", exc_info=True)
-        # Clean up mirror stream on any exit path
-        if _mirror_stream_ts and state.channel_delivery and _mirror_chan:
+        # Clean up mirror stream on any exit path — through the SAME origin handle that opened
+        # it. Tearing a stream down on a different provider's handle would address a stream ts
+        # that provider never issued.
+        if _mirror_stream_ts and _mirror_delivery and _mirror_chan:
             try:
                 if _mirror_active_task:
-                    await state.channel_delivery.append_stream_task(
+                    await _mirror_delivery.append_stream_task(
                         _mirror_chan,
                         _mirror_stream_ts,
                         _mirror_active_task,
@@ -4440,7 +4463,7 @@ async def run_chat(
             except Exception:
                 logger.debug("Task append cleanup failed", exc_info=True)
             try:
-                await state.channel_delivery.stop_stream(_mirror_chan, _mirror_stream_ts)
+                await _mirror_delivery.stop_stream(_mirror_chan, _mirror_stream_ts)
             except Exception:
                 logger.debug("Stream cleanup failed", exc_info=True)
         if _acquired:
