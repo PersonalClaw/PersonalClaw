@@ -478,6 +478,21 @@ No new session; session count stays ~7. Session 2 gains the three sharpenings ab
 
 ## Execution log — `EA-7` (§6 sender-trust substrate)
 
+- [2026-09-05][EA-7] **DONE — the chokepoint is now STRUCTURAL; atom flipped.** The trust seam itself
+  (`channel_trust.py`: `entity_settings/channel_trust.json` store — the done_when's `sender_trust.json`
+  landed under the entity-settings convention — `guard_inbound` → `TrustVerdict`, pairing create/redeem
+  + `personalclaw channel pair`, slack allowlist migration) had shipped earlier under plan 40's
+  ownership, which is exactly the doc/plan drift this atom's NOTE predicted it would resolve by
+  consuming. What closed the atom this window: the guarded door
+  `services.deliver_channel_inbound` → `channel_inbound.deliver_inbound` (admit → `guard_inbound` →
+  `_route_to_session`) plus the executable conformance kit (core #2451); all four bundled channel apps
+  migrated onto the door (PersonalClawApps #72 discord/telegram/email, #73 slack — a separate release
+  artifact, so the export could only drop after both landed); and step 3 (core #2467) removing
+  `run_chat` from the `sdk.channel` facade, with `tests/test_channel_inbound_chokepoint.py` asserting
+  the ABSENCE and the `personalclaw.sdk.*`-only import boundary (`tests/test_apps_import_boundary.py`)
+  holding the door shut structurally rather than conventionally. `ChannelTransportProvider` ABC
+  unchanged: a new transport inherits trust with zero code (Success Criterion 8).
+
 - [2026-08-24][EA-7] **BLOCKED (E6 scope pressure + E3). Two clauses of the `done_when` contradict each
   other, and one whole half is cross-repo. Atom stays `todo`; nothing was built.** Measured against
   `origin/main` = `03729754`.

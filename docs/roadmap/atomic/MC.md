@@ -4,7 +4,7 @@
 **Code:** `MC`  
 **Source status:** proposed
 
-Decomposed MOBILE-COMPANION into 10 todo atoms along the 2026-07-26 Amendment's session placement (push-to-approval is milestone 1). Nothing has shipped (DESIGNED, no execution log). Device sessions/tokens (MC-2) and QR pairing (MC-8) are SUPERSEDED — they consume COMPANION-APPS (plan 54) + REMOTE-USER-AUTH (plan 53) contracts rather than editing token_auth.py. Push atoms (MC-5/6/9) edge on INBOX-NOTIFICATIONS-UNIFICATION (plan 42) push target/rules. The pre-existing docs/guides/remote-access.md is plan 53's artifact, not MC-1 done-work.
+Decomposed MOBILE-COMPANION into 10 atoms along the 2026-07-26 Amendment's session placement (push-to-approval is milestone 1). The companion + push line has since shipped through MC-9 (web push, ntfy, the content-free relay backend, the Capacitor shell, QR pairing); MC-10 (store packaging) remains. Device sessions/tokens (MC-2) and QR pairing (MC-8) are SUPERSEDED — they consume COMPANION-APPS (plan 54) + REMOTE-USER-AUTH (plan 53) contracts rather than editing token_auth.py. Push atoms (MC-5/6/9) edge on INBOX-NOTIFICATIONS-UNIFICATION (plan 42) push target/rules. The pre-existing docs/guides/remote-access.md is plan 53's artifact, not MC-1 done-work.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -18,7 +18,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `MC-6` | ✅ | S3.5 rest of companion: loops/tasks/inbox/notifications sections + SW sound/badge mapping | `MC-3`, `MC-4`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:per-(source,kind) sound/badge rules field + inbox resolve API` | Companion adds Running-loops (pause/nudge/stop via loop_routes), tasks, inbox-resolve, and recent-notifications sections working per the original S2 done-whens; the SW maps a push payload's `kind` to per-kind sound/badge using plan-42's rules field (a distinct sound fires for a kind configured in the rules UI). |
 | `MC-7` | ✅ | S4 Capacitor shell wrapping the served companion route | `MC-3`, `MC-2` | A Capacitor shell (new mobile/ dir; repo-location decision recorded) wraps the served companion URL with config for gateway URL + device session and native safe-areas, no forked UI; builds for iOS+Android and renders the live companion. |
 | `MC-8` | ✅ | S4 QR pairing screen (renders COMPANION-APPS pairing routes) | `MC-7`, `MC-2`, `EXT:COMPANION-APPS:unified pairing routes /api/devices/pair/start|complete` | Settings > Devices > Pair phone renders a QR of {pairing_url, one-time code}; the shell scans and exchanges it for a device session end to end; code single-use (TTL 5min) verified. Pairing routes are consumed from plan 54, not defined here. |
-| `MC-9` | ⬜ | S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring | `MC-7`, `MC-5` | ntfy-app integration works as the documented default; the optional stateless open-source push-relay (org repo) plus APNs/FCM wiring in the shell also delivers; an audit fixture confirms relay logs contain no content (ids-only pings). |
+| `MC-9` | ✅ | S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring | `MC-7`, `MC-5` | Done (PR #2455): `mobile.push_backend` gains `relay` — `send_relay` wraps MC-5's two-id payload in a `{platform, token, payload}` envelope to a user-configured `mobile.relay_url` (stateless, open-source; `assert_content_free` inside the sender); relay-register/unregister routes + per-device `push_relay_tokens.json`; vendor-push shell wiring in `nativePush.ts`; `tests/test_mc9_relay_push.py` proves the content-free envelope, the relay repo's own suite carries the ids-only log audit. ntfy stays the documented default. No real handset driven — the on-device vendor leg waits on MC-10's store builds. |
 | `MC-10` | ⬜ | S4 store packaging + mobile-release docs | `MC-7`, `MC-9` | Icons/splash from brand assets, truthful no-data-collection privacy declarations, and docs/maintainers/mobile-release.md produce installable TestFlight/internal-track builds via the documented steps (owner performs the actual store submissions). |
 
 ## Atom scopes
@@ -198,7 +198,13 @@ Sessions 4-6 — T4.2 QR pairing + C4 (SUPERSEDED — renders plan-54 §C2 /api/
 
 ### `MC-9` — S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring
 
-**Status:** todo
+**Status:** ✅ done — PR #2455 (merge `944615456`, 2026-09-05). The relay half of T4.3: `send_relay`
+wraps MC-5's content-free two-id payload in a `{platform, token, payload}` routing envelope to a
+user-configured stateless open-source relay (`mobile.relay_url`); `assert_content_free` sits inside
+the sender so no caller can compose content past it. Registration routes + `push_relay_tokens.json`
+(durability census debt set), closed `ios|android` vocabulary, Capacitor shell wiring in
+`nativePush.ts`. The environment limit is named in the dag evidence: no real handset was driven —
+the on-device vendor-service leg is exercisable only from MC-10's store builds.
 
 Sessions 4-6 — T4.3 Platform push
 

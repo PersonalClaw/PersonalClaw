@@ -204,6 +204,31 @@ rather than deferring them past it.
 
 ## Execution log
 
+- **2026-09-05 — `PP-16` sub-seams 4d + 4e DONE: the sparse policy overlay (RULING 2) and the
+  run-side plural tasks projection (RULING 1's constructive half). Atom stays `todo` (PARTIAL).**
+  **4d (PR #2471, merge head `720f356e1`):** `WorkflowRun.policy_overrides` — a sparse per-run dict
+  column (additive `_ensure_columns` ALTER-ADD; an existing home upgrades in place). The WRITE seam
+  (`store.set_policy_overrides`) is strict — an unknown key is refused loudly while it still has an
+  author; the READ side (`supervisor_policy.apply_policy_overrides`, `from_dict`) is tolerant, so a
+  downgraded core neither crashes on nor drops a newer core's key. `policy_for_run` composes
+  kind-defaults + overrides; `OVERRIDABLE_POLICY_KEYS` is the closed set of five (`attended`,
+  `autopilot`, `max_cycles`, `idle_secs`, `success_criteria`). A run overriding nothing persists
+  nothing and resolves to the IDENTICAL kind-policy object. NOTE for 4f: the write seam has NO
+  production caller yet — the run-side edit surface is 4f's work, and whether it keeps the loop's
+  pre-launch-only gate or allows mid-run budget edits needs measuring (the knobs are read live at
+  ~12 sites, so a mid-run overlay edit is semantically meaningful).
+  **4e (PR #2477, merge head `50f7e1545`):** `materialize.task_list_ids_for_run` derives the PLURAL
+  `{node_id: task_list_id}` map entirely from persisted state — the binding carries `(run_id,
+  node_id)` and `Task.task_list_id` is the structural parent — so the loop row's `task_list_ids`
+  column has a DERIVED destination, not a second stored copy (the shape 4c retired). A node id is
+  the run-side phase key (the graph IS the plan, per the field map's own `plan` row). Invariant 9
+  holds by docstring: no production caller yet — the consumers-to-be are `Loop.task_list_ids`'
+  readers, which move at store-retirement. DOCTRINE NOTE recorded for that seam: the loop provisions
+  one TaskList PER PHASE and seeds tasks into them, while the run side materializes one task per
+  node into NO list — so loop-parity at retirement needs either a run-side filing step (its own
+  ruling) or acceptance that a run's map is empty until a user files tasks; the projection is honest
+  either way and the choice belongs to the store-retirement seam.
+
 - **2026-09-05 — `PP-16` sub-seam 4c DONE: `WorkflowRun.task_list_id` retired under OWNER
   RULING 1 (core PR #2462, merged; commit 7f33b5082). Atom stays `todo`.** The change the 2026-08-22 entry built, verified and
   reverted pending the ruling, now re-applied under it: the dataclass field, its `_KNOWN` entry, the
