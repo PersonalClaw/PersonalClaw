@@ -18,7 +18,7 @@ def _run(coro):
 
 @pytest.fixture(autouse=True)
 def _tmp_config(monkeypatch, tmp_path):
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     kinds.ensure_loaded()
     return tmp_path
 

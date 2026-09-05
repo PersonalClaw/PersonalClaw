@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import time
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop.kinds import LoopKindStrategy, register
 from personalclaw.loop.loop import Loop, LoopStatus
 
@@ -825,7 +826,9 @@ class CodeKind(LoopKindStrategy):
             return None
         cycle = int((stage_findings[-1] or {}).get("cycle", len(findings)))
         store.record_quality_score(loop.id, verdict.quality_score)
-        store.write_verdict(loop.id, cycle, {"cycle": cycle, "stage": stage, **verdict.to_dict()})
+        loop_files.write_verdict(
+            loop.id, cycle, {"cycle": cycle, "stage": stage, **verdict.to_dict()}
+        )
         ctx.publish(
             loop.id,
             "cycle_verdict",
@@ -1343,13 +1346,13 @@ class CodeKind(LoopKindStrategy):
             task = await self._get_task(tid)
             if task is not None and not tasks_link._is_done(task.status):
                 loop_gone = ctx.svc.get_by_session(skey) is None
-                if loop_gone and store.task_finding_count(loop.id, tid) > 0:
+                if loop_gone and loop_files.task_finding_count(loop.id, tid) > 0:
                     await tasks_link.mark_task_done(tid)
                     task = await self._get_task(tid) or task
                 elif loop_gone:
                     # Worker exhausted its budget with no finding → tear down + pause.
                     await teardown_task_worker(ctx.svc, loop.id, tid)
-                    store.write_question(
+                    loop_files.write_question(
                         loop.id,
                         f'Task "{task.title}" ran out of cycles without producing a result '
                         "— it may be under-specified or blocked. Steer it, or remove it, then resume.",  # noqa: E501
@@ -1451,7 +1454,7 @@ class CodeKind(LoopKindStrategy):
                 "(a git error, not a content conflict). Check the workspace's git state, then resume."  # noqa: E501
             )
             out = "Merge failed (not a content conflict) — check git state, then resume."
-        store.write_question(loop.id, question)
+        loop_files.write_question(loop.id, question)
         store.update_status(loop.id, LoopStatus.NEEDS_INPUT)
         ctx.publish(
             loop.id,

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 
+from personalclaw.loop import files as loop_files
 from personalclaw.tool_providers.base import ToolResult
 
 logger = logging.getLogger(__name__)
@@ -72,7 +73,7 @@ async def _launch(kind: str, lid: str, deep_path: str, label: str) -> ToolResult
     from personalclaw.loop import kinds, manager, store, validation
     from personalclaw.loop.loop import ACTION_SOURCE_STATES, LoopStatus
 
-    if not store.valid_loop_id(lid):
+    if not loop_files.valid_loop_id(lid):
         return ToolResult(success=False, error=f"{label}_id is required + must be a valid id.")
     loop = store.get(lid)
     if loop is None:
@@ -352,7 +353,7 @@ async def goal_loop_start(a: dict) -> ToolResult:
     from personalclaw.loop import store
 
     lid = str(a.get("loop_id", "")).strip()
-    loop = store.get(lid) if store.valid_loop_id(lid) else None
+    loop = store.get(lid) if loop_files.valid_loop_id(lid) else None
     kind = loop.kind if loop else "goal"
     return await _launch(kind, lid, "/#/loops/", _KIND_LABEL.get(kind, "loop").lower())
 
@@ -406,7 +407,7 @@ async def project_start(a: dict) -> ToolResult:
     from personalclaw.loop import store
 
     pid = str(a.get("project_id", "")).strip()
-    loop = store.get(pid) if store.valid_loop_id(pid) else None
+    loop = store.get(pid) if loop_files.valid_loop_id(pid) else None
     kind = loop.kind if loop else "goal"
     deep = "/#/code/" if kind == "code" else "/#/loops/"
     label = "code project" if kind == "code" else _KIND_LABEL.get(kind, "loop").lower()
@@ -462,7 +463,7 @@ async def sdlc_status(a: dict) -> ToolResult:
         return ToolResult(success=False, error="id is required (a loop id).")
     from personalclaw.loop import store
 
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return ToolResult(success=False, error=f"no loop with id {cid!r}.")
     red = store.get_redacted(cid)
     if red is None:

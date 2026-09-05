@@ -47,6 +47,7 @@ from personalclaw.dashboard.state import (
     _mark_permission_resolved,
 )
 from personalclaw.http_errors import json_error
+from personalclaw.loop import files as loop_files
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.validation import _AGENT_NAME_RE
@@ -520,15 +521,13 @@ def _origin_of(name: str, app: str = "") -> tuple[str, str]:
                 if name.startswith(_LOOP_PLAN_PREFIX):
                     return origin, ""
                 rest = name[len(prefix) :]
-                from personalclaw.loop import store as loop_store
-
-                if loop_store.valid_loop_id(rest):
+                if loop_files.valid_loop_id(rest):
                     return origin, rest  # main worker → exact loop id
                 # task-worker loop-<id>-<taskid>: the loop id is the FIRST segment (the
                 # task id itself is hyphenated, e.g. t-abc, so a trailing rsplit is
                 # wrong) — take the leading segment when it's a valid loop id.
                 head = rest.split("-", 1)[0]
-                return origin, (head if loop_store.valid_loop_id(head) else rest)
+                return origin, (head if loop_files.valid_loop_id(head) else rest)
             return origin, name[len(prefix) :]
     if app in ("loop", "code", "campaign"):
         return "loop" if app == "code" else app, ""

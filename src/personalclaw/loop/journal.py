@@ -30,8 +30,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
-# The vocabulary + machinery are re-exported so a reader (and `learning.mining`, passed this module
-# as its `journal=`) can read the loop ledger through the same names the workflow ledger uses.
 from personalclaw.ledger import (  # noqa: F401 — re-exported for this module's importers
     BREAKER_TRIP,
     EVENTS_FILE,
@@ -46,7 +44,10 @@ from personalclaw.ledger import (  # noqa: F401 — re-exported for this module'
     read_events,
     run_totals,
 )
-from personalclaw.loop import store as loop_store
+
+# The vocabulary + machinery are re-exported so a reader (and `learning.mining`, passed this module
+# as its `journal=`) can read the loop ledger through the same names the workflow ledger uses.
+from personalclaw.loop import files as loop_files
 
 #: Ledger meta keys the writer stamps on every record. Stripped when a projection reconstructs the
 #: producer's own payload, so `get_verdicts` returns the verdict dict a kind persisted, not the dict
@@ -80,13 +81,13 @@ class LoopJournal(LedgerWriter):
     """
 
     #: The loop store owns `loop/<id>/`, so it is what this ledger appends through.
-    _store: ClassVar[LedgerStore] = loop_store  # type: ignore[assignment]
+    _store: ClassVar[LedgerStore] = loop_files  # type: ignore[assignment]
 
     @classmethod
     def open(cls, loop_id: str) -> "LoopJournal":
         """Build a journal for `loop_id`, seq recovered from its existing journal."""
         j = cls(run_id=loop_id)
-        for rec in loop_store.read_jsonl(loop_id, JOURNAL_FILE):
+        for rec in loop_files.read_jsonl(loop_id, JOURNAL_FILE):
             j.seq = max(j.seq, int(rec.get("seq", 0) or 0))
         return j
 
@@ -95,7 +96,7 @@ class LoopJournal(LedgerWriter):
     def cycle(self, cycle: int, finding: dict[str, Any]) -> None:
         """One loop cycle — the worker produced a finding. `step_started` + `step_completed`.
 
-        The finding dict is carried whole so `store.get_findings` can PROJECT it back off the
+        The finding dict is carried whole so `files.get_findings` can PROJECT it back off the
         ledger rather than glob a parallel file store. `source_file` keys the ingest idempotently:
         a poll that re-reads a finding already ledgered skips it.
         """
@@ -144,25 +145,25 @@ def ledger(loop_id: str, *, kinds: set[str] | None = None) -> list[dict[str, Any
     its `journal=` and calls exactly this, so a loop run is mined through the same reader a
     workflow run is.
     """
-    return read_events(loop_store, loop_id, kinds=kinds)
+    return read_events(loop_files, loop_id, kinds=kinds)
 
 
 def cycles_completed(loop_id: str) -> int:
     """How many cycles a loop has COMPLETED — the ledger's own `step_completed` count.
 
     The ONE answer (PP-16 seam 4a). `loops.total_cycles` used to cache this number in the SQLite
-    row: both of its writers wrote exactly ``len(store.get_findings(cid))`` and seven readers read
+    row: both of its writers wrote exactly ``len(files.get_findings(cid))`` and seven readers read
     the column back, so a quantity the ledger already derives had a second, stored copy that could
     — and did — disagree with the projection it copied. The column is gone; this is what a reader
     asks instead, and there is nothing left to keep in sync.
 
     Routed through :func:`personalclaw.ledger.reader.run_totals` rather than counting here, so "a
     completed step" keeps ONE meaning across both ledger producers. Equal by construction to
-    ``len(store.get_findings(loop_id))`` — every loop `step_completed` carries a `finding` dict
+    ``len(files.get_findings(loop_id))`` — every loop `step_completed` carries a `finding` dict
     (:meth:`LoopJournal.cycle` writes both together) — and
     ``test_pp16_total_cycles_retired.py`` pins that equality so the two expressions cannot drift.
     """
-    return int(run_totals(loop_store, loop_id)["steps_completed"])
+    return int(run_totals(loop_files, loop_id)["steps_completed"])
 
 
 def strip_meta(record: dict[str, Any]) -> dict[str, Any]:

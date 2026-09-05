@@ -15,6 +15,7 @@ import asyncio
 import pytest
 
 from personalclaw.agents.native import sdlc_tools
+from personalclaw.loop import files as loop_files
 
 
 def _run(coro):
@@ -23,7 +24,7 @@ def _run(coro):
 
 @pytest.fixture(autouse=True)
 def _tmp_config(monkeypatch, tmp_path):
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     return tmp_path
 
 
@@ -297,7 +298,7 @@ def test_sdlc_status_surfaces_pending_question_when_needs_input():
     )
     pid = [p.id for p in store.list_all() if p.kind == "code"][0]
     # park it on the user with a real pending question (questions.json + status)
-    d = store.loop_dir(pid)
+    d = loop_files.loop_dir(pid)
     (d / "questions.json").write_text(
         json.dumps(
             {"question": "Which port should /healthz bind to?", "why": "the brief didn't say"}

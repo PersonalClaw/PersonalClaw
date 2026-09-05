@@ -61,7 +61,7 @@ async def test_project_linked_lists_bound_loops_and_code(tmp_path):
     from personalclaw.loop import store as loop_store
     from personalclaw.loop.loop import Loop
 
-    with patch("personalclaw.loop.store.config_dir", return_value=tmp_path):
+    with patch("personalclaw.loop.files.config_dir", return_value=tmp_path):
         async with _client(tmp_path) as client:
             pid = (await (await client.post("/api/projects", json={"name": "Effort"})).json())["id"]
             loop_store.create(Loop(id="", kind="goal", name="Loopy", task="g" * 30, project_id=pid))
@@ -119,7 +119,7 @@ async def test_project_delete_blocked_by_bound_work_unless_forced(tmp_path):
     from personalclaw.loop import store as loop_store
     from personalclaw.loop.loop import Loop
 
-    with patch("personalclaw.loop.store.config_dir", return_value=tmp_path):
+    with patch("personalclaw.loop.files.config_dir", return_value=tmp_path):
         async with _client(tmp_path) as client:
             pid = (await (await client.post("/api/projects", json={"name": "Busy"})).json())["id"]
             lp = loop_store.create(

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop.loop import Loop
 from personalclaw.workflows.supervisor_policy import (
     DONE_NEVER,
@@ -201,7 +202,7 @@ async def _judge_assessment_signal(
     # workspace-only ground-truth read wrongly reported "no proof it exists"). Give the judge the
     # loop dir as a fallback search location + resolve the policy's canonical deliverable when the
     # loop declared none, so the ground-truth read matches the same file the watchdog graduates.
-    _loop_dir = store.safe_loop_dir(loop.id)
+    _loop_dir = loop_files.safe_loop_dir(loop.id)
     fallback_dirs = [str(_loop_dir)] if _loop_dir is not None else []
     primary = str(cfg.get("primary_deliverable", "") or "").strip()
     canonical = primary or spec.ground_truth_deliverable
@@ -261,7 +262,7 @@ async def _judge_assessment_signal(
     _setting = dial_for(granularity)
     if _setting is not None:
         verdict.band_used = calibrated_band(trail, _setting.threshold)
-    store.write_verdict(loop.id, cycle, {"cycle": cycle, **verdict.to_dict()})
+    loop_files.write_verdict(loop.id, cycle, {"cycle": cycle, **verdict.to_dict()})
     if verdict.done:
         return True
     # P4 variance-aware exhaustion: the per-cycle bar is max(2σ, dial-threshold), so a noisy

@@ -368,7 +368,7 @@ def test_the_loop_detail_view_serves_the_session_key_the_cockpit_reads(monkeypat
     from personalclaw.loop import store as loop_store
     from personalclaw.loop.loop import Loop
 
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     loop_store.create(Loop(id="abc12345", name="n", kind="goal", task="t"))
     # Vacuity floor: BEFORE the writer runs the field is empty, so the assertion below
     # cannot be riding a hardcoded value — and this also pins that the cockpit's honest

@@ -92,21 +92,22 @@ class TestLoopFindingResolver:
         import personalclaw.config.loader as cfg
 
         monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
+        from personalclaw.loop import files as loop_files
         from personalclaw.loop import store as loop_store
         from personalclaw.loop.loop import Loop
 
         # The store binds config_dir at import time — patch ITS binding too, or
         # every test shares one db (UNIQUE-constraint collisions under xdist).
-        monkeypatch.setattr(loop_store, "config_dir", lambda: tmp_path)
+        monkeypatch.setattr(loop_files, "config_dir", lambda: tmp_path)
         loop = Loop(id="aabbccdd", name="Market scan", kind="research", task="Scan the market")
         loop_store.create(loop)
-        d = loop_store.loop_dir("aabbccdd")
+        d = loop_files.loop_dir("aabbccdd")
         assert d is not None
         (d / "findings").mkdir(exist_ok=True)
         (d / "findings" / "cycle_002.json").write_text(
             json.dumps({"cycle": 2, "summary": "Found three competitors", "key_insight": "B2B gap"})
         )
-        loop_store.record_cycle_findings("aabbccdd")  # PP-5: ingest into the ledger
+        loop_files.record_cycle_findings("aabbccdd")  # PP-5: ingest into the ledger
         return loop
 
     @pytest.mark.asyncio
@@ -320,10 +321,11 @@ class TestNotificationResolver:
         import personalclaw.config.loader as cfg
 
         monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
+        from personalclaw.loop import files as loop_files
         from personalclaw.loop import store as loop_store
         from personalclaw.loop.loop import Loop
 
-        monkeypatch.setattr(loop_store, "config_dir", lambda: tmp_path)
+        monkeypatch.setattr(loop_files, "config_dir", lambda: tmp_path)
         loop_store.create(Loop(id="deadbeef", name="Scan", kind="research", task="Scan it"))
         state = self._state(
             {"kind": "error", "title": "Run failed", "body": "x", "ts": "t2", "loop_id": "deadbeef"}
@@ -372,18 +374,19 @@ class TestLoopCycleResolver:
         import personalclaw.config.loader as cfg
 
         monkeypatch.setattr(cfg, "config_dir", lambda: tmp_path)
+        from personalclaw.loop import files as loop_files
         from personalclaw.loop import store as loop_store
         from personalclaw.loop.loop import Loop
 
-        monkeypatch.setattr(loop_store, "config_dir", lambda: tmp_path)
+        monkeypatch.setattr(loop_files, "config_dir", lambda: tmp_path)
         loop_store.create(Loop(id="ccddeeff", name="Build", kind="code", task="Build it"))
-        d = loop_store.loop_dir("ccddeeff")
+        d = loop_files.loop_dir("ccddeeff")
         assert d is not None
         (d / "findings").mkdir(exist_ok=True)
         (d / "findings" / "cycle_001.json").write_text(
             json.dumps({"cycle": 1, "summary": "wired the seam"})
         )
-        loop_store.record_cycle_findings("ccddeeff")  # PP-5: ingest into the ledger
+        loop_files.record_cycle_findings("ccddeeff")  # PP-5: ingest into the ledger
         return "ccddeeff"
 
     @pytest.mark.asyncio

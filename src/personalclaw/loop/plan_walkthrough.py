@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol, runtime_checkable
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import store
 from personalclaw.loop.loop import LoopStatus
 from personalclaw.planning import session as PS
@@ -132,7 +133,7 @@ async def _run_pass(
     """One planner pass via the shared runner, resolving the loop's primitives."""
     from personalclaw.planning import runner
 
-    files_dir = str(store.loop_dir(loop.id) or "")
+    files_dir = str(loop_files.loop_dir(loop.id) or "")
     return await runner.run_planner_pass(
         state,
         svc,
@@ -147,7 +148,7 @@ async def _run_pass(
         provider=getattr(loop, "provider", ""),
         provider_agent=getattr(loop, "provider_agent", ""),
         reasoning_effort=getattr(loop, "reasoning_effort", ""),
-        stop_sentinel_name=store.STOP_SENTINEL,
+        stop_sentinel_name=loop_files.STOP_SENTINEL,
         timeout_secs=timeout_secs,
         # Both walkthrough sentinels are scratch in the cwd regardless of which pass
         # is active — a step pass (step_artifact.json) routinely has the planner
@@ -190,22 +191,22 @@ async def run_design_pass(state, svc, loop_id: str) -> PlanSession | None:
     )
     parsed = wt.parse_steps_sentinel(raw or "")
     if parsed is None:
-        session = store.read_plan_session(loop_id) or PlanSession(
+        session = loop_files.read_plan_session(loop_id) or PlanSession(
             project_id=loop_id, created_at=_time.time()
         )
         session.design_error = (
             "The planner couldn't produce a plan (it timed out or returned no usable "
             "step list). Retry planning, or edit the task to be more concrete."
         )
-        store.write_plan_session(session)
+        loop_files.write_plan_session(session)
         return None
     _summary, steps = parsed
-    session = store.read_plan_session(loop_id) or PlanSession(
+    session = loop_files.read_plan_session(loop_id) or PlanSession(
         project_id=loop_id, created_at=_time.time()
     )
     seed_steps(session, steps)
     session.design_error = ""
-    store.write_plan_session(session)
+    loop_files.write_plan_session(session)
     return session
 
 
@@ -214,7 +215,7 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
     Marks the step running, runs the planner, opens the review gate, persists. Returns
     the updated step, or None if nothing usable was produced. Never raises."""
     loop, wt = _walkthrough_for(loop_id)
-    session = store.read_plan_session(loop_id)
+    session = loop_files.read_plan_session(loop_id)
     if loop is None or wt is None or session is None:
         return None
     step = next((s for s in session.steps if s.id == step_id), None)
@@ -222,7 +223,7 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
         return None
     if step.status == PS.StepStatus.PENDING.value:
         PS.mark_running(session, step_id)
-        store.write_plan_session(session)
+        loop_files.write_plan_session(session)
 
     approved = [s for s in session.steps if s.status == PS.StepStatus.APPROVED.value]
     base_brief = wt.build_step_brief(
@@ -252,16 +253,16 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
     if artifact is None:
         # Still nothing after the retry — revert RUNNING → PENDING so its state stays
         # honest and an explicit advance/retry cleanly re-runs it.
-        session = store.read_plan_session(loop_id) or session
+        session = loop_files.read_plan_session(loop_id) or session
         if PS.mark_pending(session, step_id):
-            store.write_plan_session(session)
+            loop_files.write_plan_session(session)
         return None
-    session = store.read_plan_session(loop_id) or session
+    session = loop_files.read_plan_session(loop_id) or session
     step = next((s for s in session.steps if s.id == step_id), step)
     if step.status != PS.StepStatus.RUNNING.value:
         step.status = PS.StepStatus.RUNNING.value  # ensure submit precondition
     PS.submit_artifact(session, step_id, artifact)
-    store.write_plan_session(session)
+    loop_files.write_plan_session(session)
     return next((s for s in session.steps if s.id == step_id), None)
 
 
@@ -275,7 +276,7 @@ async def finalize_plan(loop_id: str) -> bool:
     ``/decompose`` endpoint). The hook runs BEFORE the REVIEW flip so the launchable
     draft already carries its Task links. Never raises out of the hook."""
     loop, wt = _walkthrough_for(loop_id)
-    session = store.read_plan_session(loop_id)
+    session = loop_files.read_plan_session(loop_id)
     if loop is None or wt is None or session is None:
         return False
     spec = wt.project_to_spec(session)
@@ -300,14 +301,14 @@ def mark_design_error(loop_id: str, message: str = "") -> None:
     import time as _time
 
     try:
-        session = store.read_plan_session(loop_id) or PlanSession(
+        session = loop_files.read_plan_session(loop_id) or PlanSession(
             project_id=loop_id, created_at=_time.time()
         )
         session.design_error = message or (
             "Planning hit an unexpected error. Retry planning, or edit the task to be "
             "more concrete."
         )
-        store.write_plan_session(session)
+        loop_files.write_plan_session(session)
     except Exception:
         logger.debug("mark_design_error failed for %s", loop_id, exc_info=True)
 
@@ -316,10 +317,10 @@ def clear_design_error(loop_id: str) -> None:
     """Clear a recorded design failure so the NEXT advance re-runs the design pass.
     Called only on an EXPLICIT user retry (FE 'Retry planning'), never on a passive
     poll — which is what makes the repeated-pass guard hold."""
-    session = store.read_plan_session(loop_id)
+    session = loop_files.read_plan_session(loop_id)
     if session is not None and session.design_error:
         session.design_error = ""
-        store.write_plan_session(session)
+        loop_files.write_plan_session(session)
 
 
 async def advance_plan(state, svc, loop_id: str) -> str:
@@ -337,7 +338,7 @@ async def advance_plan(state, svc, loop_id: str) -> str:
         loop, wt = _walkthrough_for(loop_id)
         if loop is None or wt is None:
             return "failed"
-        session = store.read_plan_session(loop_id)
+        session = loop_files.read_plan_session(loop_id)
         if wt.step_mode == "dynamic":
             # A persisted design failure (no usable steps) must NOT silently re-run —
             # that's the repeated-pass bug. Stay failed until an explicit retry.
@@ -360,7 +361,7 @@ async def advance_plan(state, svc, loop_id: str) -> str:
                     pass
                 session = PS.PlanSession(project_id=loop_id, created_at=_time.time())
                 seed_steps(session, wt.default_steps())
-                store.write_plan_session(session)
+                loop_files.write_plan_session(session)
         if PS.is_complete(session):
             return "finalized" if await finalize_plan(loop_id) else "failed"
         current = PS.current_step(session)

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop.loop import Loop, effective_dir
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,6 @@ async def reproduce_confirm(loop: Loop) -> bool | None:
     """
     from personalclaw.loop import judge as judge_mod
     from personalclaw.loop import kinds as kinds_mod
-    from personalclaw.loop import store
 
     cfg = loop.kind_config or {}
     verify_command = str(cfg.get("verify_command", "")).strip()
@@ -127,13 +127,13 @@ async def reproduce_confirm(loop: Loop) -> bool | None:
     if not verify_command and not deliverables:
         return None  # no independent anchor to reproduce against
 
-    findings = store.get_findings(loop.id)
+    findings = loop_files.get_findings(loop.id)
     if not findings:
         return None
     finding = findings[-1]
     # The deliverable may live in the loop's own dir (unbound loop) — give the fresh pass the
     # loop dir as a fallback search location, matching the watchdog's deliverable resolution.
-    loop_dir = store.safe_loop_dir(loop.id)
+    loop_dir = loop_files.safe_loop_dir(loop.id)
     fallback_dirs = [str(loop_dir)] if loop_dir is not None else []
     try:
         verdict = await judge_mod.assess_cycle(

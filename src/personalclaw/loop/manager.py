@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 
 from personalclaw.config.loader import AppConfig
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import kinds, store
 from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
 
@@ -96,7 +97,7 @@ def write_brief(loop: Loop) -> None:
     """Render the kind's brief + write it to the loop dir. The strategy builds the
     text (pure); the manager owns the file + the resolved project context dir + the
     shared sibling-loops footer (so the per-project context is symmetric with chats)."""
-    d = store.loop_dir(loop.id)
+    d = loop_files.loop_dir(loop.id)
     if d is None:
         return
     kinds.ensure_loaded()
@@ -111,7 +112,7 @@ def write_brief(loop: Loop) -> None:
     sib = _sibling_loops_block(loop)
     if sib:
         body = f"{body}\n\n{sib}"
-    store.write_brief(loop.id, body)
+    loop_files.write_brief(loop.id, body)
 
 
 async def start(state, svc, loop_id: str) -> Loop:
@@ -150,7 +151,7 @@ async def start(state, svc, loop_id: str) -> Loop:
     write_brief(loop)
     updated = store.update_status(loop_id, LoopStatus.RUNNING)
 
-    d = store.loop_dir(loop_id)
+    d = loop_files.loop_dir(loop_id)
     cfg = AppConfig.load().loops
 
     session = state.get_or_create_session(
@@ -213,7 +214,7 @@ async def start(state, svc, loop_id: str) -> Loop:
         message=msg,
         idle_secs=loop.idle_secs or cfg.default_idle_secs,
         max_cycles=loop.max_cycles,
-        stop_sentinel_path=str(d / store.STOP_SENTINEL) if d else "",
+        stop_sentinel_path=str(d / loop_files.STOP_SENTINEL) if d else "",
     )
     logger.info("loop: started %s (kind=%s) on session %s", loop_id, loop.kind, session.key)
     return updated
@@ -254,7 +255,9 @@ async def rearm_nudge_message(svc, loop_id: str) -> None:
         strat = kinds.get_or_none(loop.kind)
         if strat is None:
             return
-        await svc.update(nl.id, message=_build_nudge_message(strat, loop, store.loop_dir(loop_id)))
+        await svc.update(
+            nl.id, message=_build_nudge_message(strat, loop, loop_files.loop_dir(loop_id))
+        )
     except Exception:
         logger.debug("rearm_nudge_message failed for %s", loop_id, exc_info=True)
 
@@ -278,7 +281,7 @@ async def pause(state, svc, loop_id: str) -> Loop:
 async def stop(state, svc, loop_id: str) -> Loop:
     """Stop (terminal): tear down + drop the STOP sentinel."""
     await _teardown(svc, loop_id)
-    store.write_stop_sentinel(loop_id)
+    loop_files.write_stop_sentinel(loop_id)
     return store.update_status(loop_id, LoopStatus.STOPPED, stop_reason=LoopStopReason.USER)
 
 
@@ -295,28 +298,28 @@ async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop 
         return None
     answering_question = loop.status == LoopStatus.NEEDS_INPUT.value
     if task_id:
-        store.write_task_guidance(loop_id, task_id, text)
+        loop_files.write_task_guidance(loop_id, task_id, text)
         # Sequential main worker reads the shared file; parallel task-workers read
         # only their own. Write the shared file unless we're in parallel mode and not
         # answering a project-level question (avoid leaking a per-task steer).
         if answering_question or not _is_parallel(loop):
-            store.write_guidance(loop_id, text)
+            loop_files.write_guidance(loop_id, text)
     else:
-        store.write_guidance(loop_id, text)
+        loop_files.write_guidance(loop_id, text)
         # A project-level steer in parallel mode: fan out to every LIVE task-worker,
         # since the shared file is read by no one there.
         if _is_parallel(loop):
             for tid in loop.kind_config.get("queued_task_ids", []) or []:
                 try:
                     if svc.get_by_session(task_session_key(loop_id, tid)) is not None:
-                        store.write_task_guidance(loop_id, tid, text)
+                        loop_files.write_task_guidance(loop_id, tid, text)
                 except Exception:
                     logger.debug(
                         "fan-out steer to task %s failed for %s", tid, loop_id, exc_info=True
                     )
     # The cycle this steer was sent at, projected off the ledger (PP-16 seam 4a) rather than read
     # from the retired `loops.total_cycles` column.
-    store.append_nudge(loop_id, text, sent_at_cycle=store.cycles_completed(loop_id))
+    loop_files.append_nudge(loop_id, text, sent_at_cycle=loop_files.cycles_completed(loop_id))
     # A steer on a NEEDS_INPUT (awaiting answer) or BLOCKED (stall-paused, its nudge
     # loop deactivated) loop must RE-ARM the worker so the steer is actually consumed
     # (guidance.txt is read by no one while the loop is stopped).
@@ -333,10 +336,10 @@ async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop 
         blocker = getattr(strat, "launch_blocker", None)
         reason = blocker(loop) if blocker else None
         if reason:
-            store.write_question(loop_id, reason)
+            loop_files.write_question(loop_id, reason)
             store.update_status(loop_id, LoopStatus.NEEDS_INPUT)
             return store.get(loop_id)
-        store.clear_question(loop_id)
+        loop_files.clear_question(loop_id)
         return await start(state, svc, loop_id)
     return loop
 
@@ -407,7 +410,7 @@ def _task_cycle_nudge(loop: Loop, task, worktree_dir: str, loop_dir: str) -> str
         for c in (getattr(task, "exit_criteria", None) or [])
         if c.get("description")
     )
-    pending = store.read_task_guidance(loop.id, task.id)
+    pending = loop_files.read_task_guidance(loop.id, task.id)
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
     rendered = render_use_case_prompt(
@@ -488,7 +491,7 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
         logger.warning(
             "loop: failed to set auto approval_policy for %s", session.key, exc_info=True
         )
-    d = store.loop_dir(loop.id)
+    d = loop_files.loop_dir(loop.id)
     roots = [str(d)] if d is not None else []
     ctx = _context_dir(loop)
     if ctx:
@@ -506,7 +509,7 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
         message=msg,
         idle_secs=loop.idle_secs or cfg.default_idle_secs,
         max_cycles=loop.max_cycles,
-        stop_sentinel_path=str(d / store.STOP_SENTINEL) if d else "",
+        stop_sentinel_path=str(d / loop_files.STOP_SENTINEL) if d else "",
         first_idle_secs=_FIRST_CYCLE_IDLE_SECS,
     )
     try:
@@ -525,7 +528,7 @@ async def teardown_task_worker(svc, loop_id: str, task_id: str) -> None:
     nudge_loop = svc.get_by_session(task_session_key(loop_id, task_id))
     if nudge_loop is not None:
         await svc.remove(nudge_loop.id)
-    store.clear_task_guidance(loop_id, task_id)
+    loop_files.clear_task_guidance(loop_id, task_id)
 
 
 def _is_parallel(loop: Loop) -> bool:
