@@ -111,9 +111,17 @@ describe('a confirmed delete reports its failure', () => {
       const at = src.indexOf(`api.${call}(`)
       expect(at, `${rel} must still perform the delete`).toBeGreaterThan(-1)
       if (/\.catch\(\(\)\s*=>\s*\{\s*\}\)/.test(src.slice(at, at + 160))) swallowing.push(`${rel}:${call}`)
-      expect(src, `${rel} must import the toast it reports through`)
-        .toMatch(/import \{ notify \} from '\.\.\/\.\.\/app\/appSdk'/)
-      expect(src, `${rel} must report the failure`).toMatch(/notify\(`Couldn't delete/)
+      if (rel === join('loops', 'LoopsListPage.tsx')) {
+        // AUD-A11 moved this one delete onto its file's own reportingWrite convention (every
+        // other write there already rode it). The shared reporter IS the report — it owns the
+        // same "Couldn't …" toast — so the pin follows the write to the funnel that carries it.
+        expect(src, `${rel} must report through the shared reporter`)
+          .toMatch(/reportingWrite\('delete this loop', \(\) => api\.deleteULoop\(id\)\)/)
+      } else {
+        expect(src, `${rel} must import the toast it reports through`)
+          .toMatch(/import \{ notify \} from '\.\.\/\.\.\/app\/appSdk'/)
+        expect(src, `${rel} must report the failure`).toMatch(/notify\(`Couldn't delete/)
+      }
     }
     expect(swallowing, 'no second-slice delete may swallow its rejection').toEqual([])
   })
