@@ -21,6 +21,7 @@ from aiohttp.multipart import BodyPartReader
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
+from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.security import (
     is_sensitive_path,
     is_system_path,
@@ -557,7 +558,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
             downstream_service="channel",
             error=f"redaction_failed: {redact_err}",
         )
-        return web.json_response({"error": f"Redaction failed: {redact_err}"}, status=500)
+        # Raw text stays in the SEL record above; the wire speaks guidance (failure_copy).
+        return web.json_response({"error": relayed_failure_copy(redact_err)}, status=500)
     # Resolve channel: use owner DM if no channel specified
     channel = ""
     try:
@@ -617,7 +619,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
             downstream_service="channel",
             error=str(e),
         )
-        return web.json_response({"error": str(e)}, status=500)
+        # Raw text stays in the SEL record above; the wire speaks guidance (failure_copy).
+        return web.json_response({"error": relayed_failure_copy(e)}, status=500)
 
 
 async def api_upload(request: web.Request) -> web.Response:
@@ -2915,7 +2918,9 @@ async def api_create_dir(request: web.Request) -> web.Response:
     try:
         os.mkdir(target)
     except OSError as exc:
-        return web.json_response({"error": str(exc)}, status=500)
+        # Raw OS text (errno + path) is diagnostics; the wire speaks guidance (failure_copy).
+        logger.warning("create_dir failed for %s", target, exc_info=True)
+        return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
     _sel().log_api_access(caller=caller, operation="create_dir", outcome="ok", resources=target)
     return web.json_response({"ok": True, "path": target})
 

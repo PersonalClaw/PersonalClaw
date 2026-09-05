@@ -24,6 +24,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.agents.marketplace import AgentDefinition, get_default_agent_registry
+from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.sel import sel as _sel_fn
 
 logger = logging.getLogger(__name__)
@@ -287,7 +288,7 @@ async def api_agent_marketplace_test(request: web.Request) -> web.Response:
             state.sessions.release(session_key)
     except Exception as exc:
         logger.warning("Agent test failed for %s: %s", name, exc)
-        return web.json_response({"error": str(exc)[:500]}, status=500)
+        return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
     _sel_log("agent_marketplace.test", "ok", f"{name} ({elapsed_ms}ms)", request)
