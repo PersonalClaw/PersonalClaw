@@ -913,7 +913,6 @@ class WorkflowRun:
     branch_key: str | None = None
     forked_from: dict[str, Any] | None = None
     project_id: str = ""
-    task_list_id: str = ""
     mode: str = "background"  # blocking | background
     budget: RunBudget = field(default_factory=RunBudget)
     pinned: bool = False
@@ -952,7 +951,6 @@ class WorkflowRun:
             "branch_key",
             "forked_from",
             "project_id",
-            "task_list_id",
             "mode",
             "budget",
             "pinned",
@@ -982,7 +980,6 @@ class WorkflowRun:
             "branch_key": self.branch_key,
             "forked_from": self.forked_from,
             "project_id": self.project_id,
-            "task_list_id": self.task_list_id,
             "mode": self.mode,
             "budget": self.budget.to_dict(),
             "pinned": self.pinned,
@@ -1019,7 +1016,6 @@ class WorkflowRun:
             branch_key=d.get("branch_key"),
             forked_from=d.get("forked_from"),
             project_id=str(d.get("project_id", "") or ""),
-            task_list_id=str(d.get("task_list_id", "") or ""),
             mode=str(d.get("mode", "background") or "background"),
             budget=RunBudget.from_dict(d.get("budget") or {}),
             pinned=bool(d.get("pinned", False)),

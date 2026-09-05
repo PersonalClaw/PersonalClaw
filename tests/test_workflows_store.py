@@ -118,6 +118,67 @@ class TestRunCrud:
         assert st.get("ex000001").extra == {"future_field": 7}
 
 
+class TestRetiredTaskListId:
+    """PP-16 seam 4c: `runs.task_list_id` is retired with NO migration, by decision.
+
+    The field was declared, persisted, and completely inert — no writer set a real value and no
+    reader consumed it (`loop_run_map`'s finding 3). `_connect` has no DROP path on purpose, the
+    same posture as seam 4a's `total_cycles` in `loop/store.py`: a home created before this change
+    keeps the column, and this rail measures rather than assumes that new code stays correct on
+    such a home.
+    """
+
+    def test_a_legacy_home_with_the_retired_column_still_reads_and_writes(self) -> None:
+        """The one real risk of adding no migration: an EXISTING `runs` table keeps the column.
+
+        We simulate the legacy home by adding the column back exactly as the old DDL declared it
+        (`NOT NULL DEFAULT ''`) and planting a real value via raw SQL. New code must then
+        (a) read that row fine, (b) write NEW rows against the legacy shape — the INSERT and
+        UPDATE name their columns, so the leftover takes its default — and (c) round-trip with
+        `extra` left EMPTY: `_row_to_run` materializes only `_COLUMNS`, so the legacy cell never
+        spills into the tolerant reader.
+        """
+        import sqlite3
+
+        legacy = st.create(_run(project_id="proj-a"))
+
+        conn = sqlite3.connect(str(st._db_path()))
+        try:
+            # Vacuity guards: the FRESH schema really lacks the column (otherwise the ALTER
+            # below simulates nothing) and the INSERT list no longer names it.
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(runs)")]
+            assert cols, "no `runs` columns — did the table stop being created?"
+            assert "task_list_id" not in cols, f"the retired column is back: {cols}"
+            assert "task_list_id" not in st._COLUMNS, "the retired column is back in _COLUMNS"
+            conn.execute("ALTER TABLE runs ADD COLUMN task_list_id TEXT NOT NULL DEFAULT ''")
+            conn.execute("UPDATE runs SET task_list_id = 'tl-legacy' WHERE id = ?", (legacy.id,))
+            conn.commit()
+            # …and the legacy value really is in the row new code is about to read.
+            planted = conn.execute(
+                "SELECT task_list_id FROM runs WHERE id = ?", (legacy.id,)
+            ).fetchone()[0]
+            assert planted == "tl-legacy", "the raw plant did not land — this test proves nothing"
+        finally:
+            conn.close()
+
+        # (a) The legacy row reads fine, and the retired name resurfaces nowhere on the model.
+        got = st.get(legacy.id)
+        assert got is not None and got.project_id == "proj-a"
+        assert not hasattr(got, "task_list_id")
+        # (c) Nothing spilled into the tolerant reader — the column is simply never read.
+        assert got.extra == {}
+
+        # (b) A NEW row still writes against the legacy shape, and round-trips clean.
+        made = st.create(_run(id="cafe0001", intent="post-retirement write"))
+        back = st.get(made.id)
+        assert back is not None and back.intent == "post-retirement write"
+        assert back.extra == {}
+        back.status = RunStatus.COMPLETE
+        st.save(back)  # the column-named UPDATE leg of the writer, on the same legacy schema
+        assert st.get(made.id).status is RunStatus.COMPLETE
+        assert st.list_runs()[1] == 2  # both rows visible through the ordinary list
+
+
 class TestQueries:
     def test_run_tree_is_one_query(self) -> None:
         """`(root_run_id, status)` is indexed so a tree is a query, not a recursive walk."""

@@ -158,7 +158,8 @@ def test_every_declared_destination_resolves():
         elif row.dest_kind in {PROJECTION, NONE}:
             assert not row.dest, f"{row.field}: {row.dest_kind} rows carry no destination path"
     # Vacuity floor: if a refactor turned every row into a PROJECTION this test would pass while
-    # resolving nothing. Nineteen paths resolve today (11 run + 5 policy + 2 def + 1 intent).
+    # resolving nothing. Eighteen paths resolve today (10 run + 5 policy + 2 def + 1 intent —
+    # `task_list_ids` re-homed to PROJECTION in PP-16 seam 4c).
     assert resolved >= 15, f"only {resolved} destination paths resolved — has the map gone inert?"
 
 

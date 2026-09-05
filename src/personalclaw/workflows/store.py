@@ -88,7 +88,6 @@ def _connect() -> sqlite3.Connection:
             branch_key TEXT,
             forked_from TEXT,
             project_id TEXT NOT NULL DEFAULT '',
-            task_list_id TEXT NOT NULL DEFAULT '',
             mode TEXT NOT NULL DEFAULT 'background',
             budget TEXT NOT NULL DEFAULT '{}',
             pinned INTEGER NOT NULL DEFAULT 0,
@@ -102,6 +101,17 @@ def _connect() -> sqlite3.Connection:
             attention TEXT,
             extra TEXT NOT NULL DEFAULT '{}'
         )""")
+    # There is no DROP path, and PP-16 seam 4c's retirement of `task_list_id` deliberately
+    # does not add one (the same posture as seam 4a's `total_cycles` in `loop/store.py`). A
+    # home created before that change keeps the column: the INSERT/UPDATE name their columns
+    # explicitly (so the vestigial one takes its `NOT NULL DEFAULT ''`), reads go through
+    # `_row_to_run`, which materializes only `_COLUMNS`, and nothing writes it any more — so
+    # a stale column is inert rather than a second source of truth. Rewriting the table to
+    # drop it would buy nothing and would make a pre-change snapshot's `runs` rows
+    # unrestorable in BOTH directions (`snapshot._merge_sqlite_attach` does
+    # `INSERT OR IGNORE … SELECT *`, which skips a table whose column set differs); leaving
+    # it converges instead. Pinned by `test_workflows_store.py::TestRetiredTaskListId`.
+    #
     # The run-tree query (WF2-R13). Without it, listing a tree scans the table.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_root_status ON runs(root_run_id, status)")
     conn.execute(
@@ -126,7 +136,6 @@ _COLUMNS = (
     "branch_key",
     "forked_from",
     "project_id",
-    "task_list_id",
     "mode",
     "budget",
     "pinned",
