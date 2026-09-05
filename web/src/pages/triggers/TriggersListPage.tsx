@@ -282,8 +282,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                           {t.kind === 'lifecycle' && t.enforcement === 'not_enforcing'
                             ? <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]"><ShieldOff size={11} /> not enforcing</span>
                             : t.kind === 'lifecycle' && eventIsDormant(catalog, t.hook?.event)
-                              ? <span className="shrink-0 text-on-surface-low text-[0.75rem]">· dormant</span>
-                              : t.kind === 'lifecycle' && t.usedBy.length === 0 && eventIsAgentScoped(catalog, t.hook?.event) && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· no agent references this</span>}
+                              ? <span data-type="caption" className="shrink-0 text-on-surface-low">· dormant</span>
+                              : t.kind === 'lifecycle' && t.usedBy.length === 0 && eventIsAgentScoped(catalog, t.hook?.event) && <span data-type="caption" className="shrink-0 text-on-surface-low">· no agent references this</span>}
                           {t.broken && t.broken.length > 0 && <span className="shrink-0 text-danger text-[0.75rem]">· needs attention</span>}
                           {t.kind === 'store' && t.storeKind && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· {t.storeKind}</span>}
                           {/* The AUTHOR chip §2.2 asks for. Shown only for a foreign row — a chip

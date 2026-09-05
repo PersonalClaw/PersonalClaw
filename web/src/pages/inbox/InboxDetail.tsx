@@ -204,8 +204,8 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
             </Section>
           ) : item.draft ? (
             <Section label="Drafted reply">
-              <div className="rounded-m bg-surface-container px-m py-s text-on-surface-var text-[0.8125rem] whitespace-pre-wrap">{item.draft}</div>
-              <p className="mt-1.5 text-on-surface-low text-[0.75rem]">This item&rsquo;s source doesn&rsquo;t support replies (notifications are read-only), so this saved draft can&rsquo;t be sent.</p>
+              <div data-type="body-s" className="rounded-m bg-surface-container px-m py-s text-on-surface-var whitespace-pre-wrap">{item.draft}</div>
+              <p data-type="caption" className="mt-1.5 text-on-surface-low">This item&rsquo;s source doesn&rsquo;t support replies (notifications are read-only), so this saved draft can&rsquo;t be sent.</p>
             </Section>
           ) : null}
         </>

@@ -229,7 +229,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
                     references it", picking MemoryWrite means "fires on the next write". Info
                     tone, not warn: agent scoping is a design property, not a defect. */}
                 {!dormancyReason && eventIsAgentScoped(catalog, event) && (
-                  <div role="note" className="mt-2 flex items-start gap-2 rounded-lg bg-info/10 px-3 py-2 text-info text-[0.8125rem]">
+                  <div role="note" data-type="body-s" className="mt-2 flex items-start gap-2 rounded-lg bg-info/10 px-3 py-2 text-info">
                     <Info size={14} className="mt-0.5 shrink-0" />
                     <span className="min-w-0 flex-1">
                       <span style={fvs(600)}>{em.label}</span> is agent-scoped: it fires only for agents whose <code>triggers</code> list references this trigger. Until one does, it will not run.
