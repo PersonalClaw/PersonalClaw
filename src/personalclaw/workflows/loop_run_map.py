@@ -251,34 +251,39 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         POLICY,
         "SupervisorPolicy.hitl_posture",
         "Already mapped by `supervisor_policy.POLICY_KNOB_MAP` (knob 11) — one of the three knobs "
-        "that collapse onto this field.",
+        "that collapse onto this field. Persisted per run since seam 4d: "
+        "`WorkflowRun.policy_overrides[attended]` (OWNER RULING 2, sparse overlay).",
     ),
     FieldHome(
         "autopilot",
         POLICY,
         "SupervisorPolicy.autonomy.approval",
         "system-drives-phases vs user-queues is an approval posture, which is what the "
-        "`SafetyProfile` half of the policy (AG-13 knob 4/14) already expresses.",
+        "`SafetyProfile` half of the policy (AG-13 knob 4/14) already expresses. Persisted per "
+        "run since seam 4d: `WorkflowRun.policy_overrides[autopilot]`.",
     ),
     FieldHome(
         "max_cycles",
         POLICY,
         "SupervisorPolicy.budget_max_cycles",
         "Already mapped by `POLICY_KNOB_MAP` (knob 12), same `0 = uncapped` semantics. "
-        "deep-research additionally exposes it as its `rounds` input.",
+        "deep-research additionally exposes it as its `rounds` input. Persisted per run since "
+        "seam 4d: `WorkflowRun.policy_overrides[max_cycles]`.",
     ),
     FieldHome(
         "idle_secs",
         POLICY,
         "SupervisorPolicy.idle_secs",
-        "Already mapped by `POLICY_KNOB_MAP` (knob 13) — the idle-stall cutoff for one cycle.",
+        "Already mapped by `POLICY_KNOB_MAP` (knob 13) — the idle-stall cutoff for one cycle. "
+        "Persisted per run since seam 4d: `WorkflowRun.policy_overrides[idle_secs]`.",
     ),
     FieldHome(
         "success_criteria",
         POLICY,
         "SupervisorPolicy.rubric",
         "The machine-checkable form of the same statement; goal-pursuit-open-ended also declares "
-        "`success_criteria` as a template input, which is the human-authored half.",
+        "`success_criteria` as a template input, which is the human-authored half. Persisted "
+        "per run since seam 4d: `WorkflowRun.policy_overrides[success_criteria]`.",
     ),
     FieldHome(
         "kind_config",

@@ -688,3 +688,113 @@ def policy_for_kind(kind: str, kind_config: Any = None) -> SupervisorPolicy:
     """
     spec = KIND_CONVERGENCE.get(convergence_key(kind, kind_config))
     return SupervisorPolicy() if spec is None else SupervisorPolicy(convergence=spec)
+
+
+# ── PP-16 seam 4d: the sparse per-run overlay (OWNER RULING 2) ──
+#
+# `policy_for_kind` is a pure function of the KIND, and that is correct for the declared
+# defaults — but `attended`, `autopilot`, `max_cycles`, `idle_secs` and `success_criteria`
+# are per-INSTANCE, user-settable knobs (the loop side's `_EDITABLE_SPEC_COLS`, read live at
+# ~12 sites). A template is SHARED across runs, so it structurally cannot hold a per-instance
+# setting: putting `max_cycles` on a template would make one user's edit change every future
+# run of that kind. RULED: the declared table above stays the DEFAULT source, the run persists
+# ONLY its overrides (`WorkflowRun.policy_overrides`), and the policy is computed once, from
+# kind-defaults + run-overrides — "one admission core with N policies" survives the change.
+# The overlay is naturally sparse: a run that overrides nothing persists nothing.
+#
+# Each applier translates ONE override key onto the policy field the field map already names
+# (`loop_run_map`'s five re-homed rows), reusing the value-level translations `consolidate`
+# established rather than minting new ones.
+
+
+def _apply_attended(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
+    # Knob 11: `attended` meaning "a human is in this loop" resolves HITL (see `consolidate`).
+    return replace(policy, hitl_posture=Attention.HITL if value else Attention.AFK)
+
+
+def _apply_autopilot(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
+    # System-drives-phases vs user-queues IS an approval posture, which is what the
+    # `SafetyProfile` half of the policy expresses (AG-13 knob 4/14).
+    posture = "auto" if value else "ask"
+    return replace(policy, autonomy=policy.autonomy.with_overrides(approval=posture))
+
+
+def _apply_max_cycles(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
+    # Same `0 = uncapped` semantics as `loop.loop:Loop.max_cycles` (knob 12).
+    return replace(policy, budget_max_cycles=max(0, int(value)))
+
+
+def _apply_idle_secs(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
+    return replace(policy, idle_secs=max(0, int(value)))
+
+
+def _apply_success_criteria(policy: SupervisorPolicy, value: Any) -> SupervisorPolicy:
+    # The human-authored one-line definition of done becomes the machine-checkable rubric's
+    # single criterion; an emptied override clears the rubric back to "no declared criteria".
+    text = str(value or "").strip()
+    rubric = (RubricCriterion(criterion=text),) if text else ()
+    return replace(policy, rubric=rubric)
+
+
+#: Override key → the function that applies it. The dict IS the closed set: deriving
+#: :data:`OVERRIDABLE_POLICY_KEYS` from it means the contract and the mechanism cannot drift.
+_OVERRIDE_APPLIERS: dict[str, Any] = {
+    "attended": _apply_attended,
+    "autopilot": _apply_autopilot,
+    "max_cycles": _apply_max_cycles,
+    "idle_secs": _apply_idle_secs,
+    "success_criteria": _apply_success_criteria,
+}
+
+#: The five ruled per-instance knobs — the ONLY keys a run's overlay may carry. The write
+#: seam (`workflows.store.set_policy_overrides`) refuses anything else loudly; the read side
+#: below ignores anything else quietly. That asymmetry is the design (see both docstrings).
+OVERRIDABLE_POLICY_KEYS: frozenset[str] = frozenset(_OVERRIDE_APPLIERS)
+
+
+def apply_policy_overrides(
+    policy: SupervisorPolicy, overrides: dict[str, Any] | None
+) -> SupervisorPolicy:
+    """Apply a run's sparse overlay to a resolved policy — the tolerant READ side.
+
+    An unrecognized key is ignored with a debug log, NEVER a crash: a downgraded core
+    reading a run written by a newer one (whose overlay may carry keys this engine has never
+    heard of) must not die on it — the same tolerant-reader rule every persisted shape in
+    `models.py` follows (WF2-R12). A malformed VALUE on a recognized key is skipped the same
+    way, because by the time a row is being read there is nobody left to refuse it to; the
+    strict half of the contract lives at the write seam (`store.set_policy_overrides`).
+
+    An empty (or absent) overlay returns ``policy`` unchanged — the same object, so the
+    sparse common case costs nothing.
+    """
+    if not overrides:
+        return policy
+    for key, value in overrides.items():
+        applier = _OVERRIDE_APPLIERS.get(key)
+        if applier is None:
+            logger.debug("ignoring unrecognized policy override %r (written by a newer core?)", key)
+            continue
+        try:
+            policy = applier(policy, value)
+        except (TypeError, ValueError):
+            logger.debug("ignoring malformed policy override %s=%r", key, value)
+    return policy
+
+
+def policy_for_run(
+    kind: str, kind_config: Any = None, overrides: dict[str, Any] | None = None
+) -> SupervisorPolicy:
+    """The policy ONE run runs under: kind defaults + that run's sparse overrides.
+
+    :func:`policy_for_kind` stays the pure declared-default source (what seam 3 bought);
+    this composes the run's persisted overlay on top, so the policy is still computed once
+    and in one place. A run with an empty overlay resolves to EXACTLY the kind's policy.
+
+    Production-caller status, stated per the WF2LOO-12 convention: the kind-keyed loop path
+    still resolves through `policy_for_kind` (`loop/watchdog.py`, untouched by this seam),
+    so THIS composition has no kind-keyed production caller until the loop-as-run unification
+    (seam 4g) hands runs a kind. The overlay mechanism itself is production-wired today:
+    `RunController._supervisor_policy` applies the same `apply_policy_overrides` to the
+    template-declared policy of every workflow run.
+    """
+    return apply_policy_overrides(policy_for_kind(kind, kind_config), overrides)

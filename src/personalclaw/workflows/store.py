@@ -99,6 +99,7 @@ def _connect() -> sqlite3.Connection:
             agent_count INTEGER NOT NULL DEFAULT 0,
             error_message TEXT NOT NULL DEFAULT '',
             attention TEXT,
+            policy_overrides TEXT NOT NULL DEFAULT '{}',
             extra TEXT NOT NULL DEFAULT '{}'
         )""")
     # There is no DROP path, and PP-16 seam 4c's retirement of `task_list_id` deliberately
@@ -112,6 +113,13 @@ def _connect() -> sqlite3.Connection:
     # `INSERT OR IGNORE … SELECT *`, which skips a table whose column set differs); leaving
     # it converges instead. Pinned by `test_workflows_store.py::TestRetiredTaskListId`.
     #
+    # The ADD direction of the same additive ladder, following `loop/store.py`'s
+    # `_ensure_columns` (the file whose idiom this store's docstring claims): a home created
+    # before a column existed gains it here, with the SAME default the fresh DDL declares, so
+    # a migrated row behaves exactly like a fresh one. Without this, the column-named INSERT
+    # above would fail on every pre-change home. Pinned by
+    # `test_workflows_store.py::TestPolicyOverridesLegacySchema`.
+    _ensure_columns(conn, {"policy_overrides": "TEXT NOT NULL DEFAULT '{}'"})
     # The run-tree query (WF2-R13). Without it, listing a tree scans the table.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_root_status ON runs(root_run_id, status)")
     conn.execute(
@@ -120,6 +128,20 @@ def _connect() -> sqlite3.Connection:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)")
     conn.commit()
     return conn
+
+
+def _ensure_columns(conn: sqlite3.Connection, cols: dict[str, str]) -> None:
+    """ALTER TABLE ADD COLUMN for any missing column (SQLite has no ADD-IF-NOT-EXISTS)."""
+    try:
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    except sqlite3.DatabaseError:
+        return
+    for name, decl in cols.items():
+        if name not in existing:
+            try:
+                conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {decl}")
+            except sqlite3.DatabaseError:
+                logger.debug("could not add column %s", name, exc_info=True)
 
 
 _COLUMNS = (
@@ -147,11 +169,14 @@ _COLUMNS = (
     "agent_count",
     "error_message",
     "attention",
+    "policy_overrides",
     "extra",
 )
 
 #: Columns stored as JSON text. Listed once so the row↔model mapping can't drift.
-_JSON_COLUMNS = frozenset({"inputs", "origin", "forked_from", "budget", "attention", "extra"})
+_JSON_COLUMNS = frozenset(
+    {"inputs", "origin", "forked_from", "budget", "attention", "policy_overrides", "extra"}
+)
 
 
 def _row_to_run(row: sqlite3.Row) -> WorkflowRun:
@@ -320,6 +345,51 @@ def count_for_def(workflow_name: str) -> int:
         )
     finally:
         conn.close()
+
+
+def set_policy_overrides(run_id: str, overrides: dict[str, Any]) -> WorkflowRun | None:
+    """Persist a run's sparse ``SupervisorPolicy`` overlay (PP-16 seam 4d, OWNER RULING 2).
+
+    The caller passes ONLY the knobs the user overrode; the dict REPLACES the stored overlay,
+    so ``{}`` clears every override and the run falls back to its kind/template defaults —
+    the sparse contract: a run that overrides nothing persists nothing.
+
+    THE WRITE SIDE IS STRICT WHERE THE READ SIDE IS TOLERANT, and the asymmetry is the
+    contract, not an accident. An unknown key is refused HERE, loudly, because this is the
+    one seam where a typo still has an author to complain to — persisted silently, it would
+    resolve to nothing forever while the user believes the knob is set. The read side
+    (`models.WorkflowRun.from_dict`, `supervisor_policy.apply_policy_overrides`) must stay
+    tolerant of the same shape, because there the unknown key has a DIFFERENT cause: a core
+    downgraded under a run written by a newer one, which must neither crash nor drop the
+    newer key on re-save. A narrow single-column UPDATE, like `loop/store.py`'s
+    ``update_spec``, so a concurrent engine save of the row's other columns is not clobbered.
+
+    No production caller yet, and this docstring says so (the WF2LOO-12 convention): the
+    per-run policy editor is a later PP-16 seam; until it lands, the seam is exercised by
+    `tests/test_pp16_policy_overlay.py`.
+
+    Returns the updated run, or ``None`` when no such row exists.
+    """
+    # Lazy, mirroring `loop/files.py`'s lazy `list_all`: the store is imported by nearly
+    # everything, and the policy module pulls in the loop/guardrails import chains.
+    from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
+
+    unknown = set(overrides) - OVERRIDABLE_POLICY_KEYS
+    if unknown:
+        raise ValueError(
+            f"unknown policy override key(s) {sorted(unknown)} — "
+            f"the overridable set is {sorted(OVERRIDABLE_POLICY_KEYS)}"
+        )
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "UPDATE runs SET policy_overrides = ? WHERE id = ?",
+            (json.dumps(dict(overrides)), run_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get(run_id) if cur.rowcount else None
 
 
 # ── run directory: spec, state, outputs ──────────────────────────────────────
