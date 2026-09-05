@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { Check, Ban, BellRing, LayoutDashboard, RefreshCw, ShieldCheck, CheckCheck, Smartphone } from 'lucide-react'
 import { api, type PendingApproval, type PushStatus } from '../../lib/api'
@@ -6,6 +6,8 @@ import { disablePush, enablePush, pushDeviceId, pushSupported } from '../../app/
 import { useQuery } from '../../lib/data'
 import { useChatSocket } from '../../lib/useChatSocket'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
+import { RungChip } from '../../ui/RungChip'
+import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
@@ -89,6 +91,11 @@ export function CompanionPage({ navigate, query }: RouteProps) {
   }
 
   const pending = (data ?? []).filter((a) => !resolved.has(a.id))
+  // The rung of the action type behind each ask (AUTONOMY-GUARDRAILS §4.3) — the same
+  // ladder lookup the chat card and the trigger rows use, so a phone decision sees the
+  // same leash the desktop shows. Tools no type governs get no chip.
+  const { ladder } = useAutonomyLadder()
+  const rungByProvider = useMemo(() => providerRungIndex(ladder), [ladder])
   const focusTarget = focusId ? pending.find((a) => a.id === focusId) : undefined
   // The deep link is honest in BOTH directions. Present-and-found: scroll it into view,
   // move focus to it, ring it. Present-and-missing (answered elsewhere, or it timed out
@@ -153,6 +160,11 @@ export function CompanionPage({ navigate, query }: RouteProps) {
                   tool={ap.tool}
                   args={argsText(ap.tool_input)}
                   purpose={ap.tool_purpose}
+                  badge={
+                    rungByProvider.get(ap.tool) ? (
+                      <RungChip type={rungByProvider.get(ap.tool)!} ladder={ladder} />
+                    ) : undefined
+                  }
                   meta={<ApprovalMeta ap={ap} />}
                   choices={[
                     // The accessible name carries the tool, because a queue paints one card

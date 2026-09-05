@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { withWeight } from '../../design/fontWeight'
 import { Check, Ban, ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react'
 import { ApprovalPrompt } from '../../ui/ApprovalPrompt'
+import { RungChip } from '../../ui/RungChip'
 import { Segmented } from '../../ui/Segmented'
+import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { approvalOutcome } from './approvalOutcome'
 import { deriveBlastRadius, establishedFacets } from './approvalMeta'
 import type { ApprovalSegment } from './chatTypes'
@@ -133,6 +135,14 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
   // The narrowest scope is the initial one: a click on Allow with nothing else touched
   // grants once and remembers nothing. Broadening is always a deliberate act.
   const [scope, setScope] = useState<RememberScope>('once')
+  // The earned-autonomy rung of the action type behind this ask, when one governs it
+  // (AUTONOMY-GUARDRAILS §4.3). A permission prompt is the one moment the user weighs
+  // widening an automation's leash, so what it may ALREADY do on its own belongs beside
+  // the risk chip — same lookup as the trigger rows, so the two surfaces cannot disagree.
+  // Chat tools with no governing action type (bash, editors) get no chip: absent is
+  // honest, a guessed rung would claim governance that does not exist.
+  const { ladder } = useAutonomyLadder()
+  const rungType = useMemo(() => providerRungIndex(ladder).get(seg.tool), [ladder, seg.tool])
   if (seg.resolved) {
     // Every outcome the backend persists is mapped EXPLICITLY (approvalOutcome), not
     // inferred from `!== 'approved'`: the trust/YOLO grants are approvals, and testing
@@ -154,7 +164,14 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
       tool={seg.tool}
       args={seg.input}
       purpose={seg.purpose}
-      badge={seg.risk ? <RiskChip risk={seg.risk} /> : undefined}
+      badge={
+        rungType || seg.risk ? (
+          <span className="inline-flex items-center gap-1.5">
+            {rungType && <RungChip type={rungType} ladder={ladder} />}
+            {seg.risk && <RiskChip risk={seg.risk} />}
+          </span>
+        ) : undefined
+      }
       meta={<BlastRadiusChips tool={seg.tool} risk={seg.risk} />}
       scope={
         <div className="mt-2 flex flex-col gap-1">
