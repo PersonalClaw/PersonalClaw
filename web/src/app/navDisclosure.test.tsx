@@ -172,18 +172,21 @@ describe('the rail a fresh install sees', () => {
       expect(n.length).toBeGreaterThan(3)
       return n
     })
-    for (const label of ['Home', 'Chat', 'Inbox', 'Store', 'Settings']) expect(names).toContain(label)
+    for (const label of ['Home', 'Chat', 'Inbox', 'Apps', 'Settings']) expect(names).toContain(label)
     // The vacuity guard for every assertion below: something really is hidden.
     for (const label of ['Learning', 'Tools', 'Terminal', 'Workflows']) expect(names).not.toContain(label)
   })
 
   it('drops the section headers, which have nothing left to group', async () => {
     // Measured on the live starter rail before this: five rows under three headings, with
-    // "PLATFORM" sitting over Inbox alone and "APPS" over Store alone. A heading per item is
-    // chrome, not structure — the starter rail is one curated group by construction.
+    // "PLATFORM" sitting over Inbox alone and "APPS" over the apps entry alone. A heading per
+    // item is chrome, not structure — the starter rail is one curated group by construction.
+    // The apps ITEM is now labeled "Apps" (AUD-X3), the same word as its section, so the
+    // header sweep asserts on the two section names an item label cannot collide with; they
+    // exist in NAV, which keeps the assertion non-vacuous about headers being dropped.
     renderApp()
-    await waitFor(() => expect(railLinks()).toContain('Store'))
-    expect(rail().textContent).not.toMatch(/PLATFORM|CAPABILITIES|APPS/i)
+    await waitFor(() => expect(railLinks()).toContain('Apps'))
+    expect(rail().textContent).not.toMatch(/PLATFORM|CAPABILITIES/i)
   })
 
   it('says how many surfaces it is holding back, in the control\'s own name', async () => {

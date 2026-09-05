@@ -86,9 +86,12 @@ const NAV: NavItem[] = [
   { id: 'learning', label: 'Learning', icon: Brain, section: 'Capabilities' },
   { id: 'prompts', label: 'Prompts', icon: FileText, section: 'Capabilities' },
   { id: 'workflows', label: 'Workflows', icon: Workflow, section: 'Capabilities' },
-  // Apps group: the Store (browse/install) + each installed app's contributed UI
-  // pages are injected here dynamically at render (see appNavItems).
-  { id: 'apps', label: 'Store', icon: Blocks, section: 'Apps' },
+  // Apps group: the Apps page (library + Store view) + each installed app's contributed
+  // UI pages are injected here dynamically at render (see appNavItems).
+  // The label says what the click opens: the route lands on the LIBRARY view, whose h1 is
+  // "Apps" — the Store is its ?view=store sub-view. A nav item reading "Store" over a page
+  // titled "Apps" was the product's most-visible naming drift (AUD-X3; the site says "Apps" too).
+  { id: 'apps', label: 'Apps', icon: Blocks, section: 'Apps' },
   // Settings is pinned to the very bottom of the rail (NavRail honors pinBottom).
   { id: 'settings', label: 'Settings', icon: Settings, pinBottom: true },
 ]
