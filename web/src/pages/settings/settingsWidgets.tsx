@@ -962,9 +962,17 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { data: v, stale: vStale } = useAudit()
       return (
         <BentoCard icon={ScrollText} title="Audit log" query={query} onClick={() => go('audit')} loading={v === undefined} stale={vStale}>
-          {v && (v.ok
-            ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.checked === 'number' && <div data-type="caption" className="mt-1.5 text-on-surface-low">{verifiedScope(v)} verified</div>}</>
-            : <><StatusPill label="Chain broken" tone="warn" />{(v.error || v.tampered) && <div data-type="caption" className="mt-1.5 text-on-surface-low">{v.error || `${v.tampered} altered`}</div>}</>)}
+          {/* Three states, because there are three. `useAudit` swallows a failure to `null`, so
+              `v === null` is "the check did not run" — it used to render an EMPTY tile body under
+              a security title, and the broken branch read `v.error`, a field the handler has never
+              emitted (only `AuditPanel`'s own catch ever filled it, which is the conflation #536
+              flagged). The scope phrase comes from `verifiedScope` so this tile cannot drift from
+              the panel's wording. */}
+          {v === null
+            ? <div data-type="caption" className="text-on-surface-low">Couldn't check the chain — nothing was examined.</div>
+            : v && (v.ok
+              ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.checked === 'number' && <div data-type="caption" className="mt-1.5 text-on-surface-low">{verifiedScope(v)} verified</div>}</>
+              : <><StatusPill label="Chain broken" tone="warn" />{!!v.tampered && <div data-type="caption" className="mt-1.5 text-on-surface-low">{v.tampered} of {verifiedScope(v)} altered</div>}</>)}
         </BentoCard>
       )
     },

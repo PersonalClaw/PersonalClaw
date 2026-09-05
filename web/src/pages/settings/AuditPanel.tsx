@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Search, RefreshCw, ShieldCheck, ShieldAlert, Archive, Download, SlidersHorizontal } from 'lucide-react'
+import { Search, RefreshCw, ShieldCheck, ShieldAlert, ShieldQuestion, Archive, Download, SlidersHorizontal } from 'lucide-react'
 import { api, type AuditFilters, type AuditPage, type SelEvent, type SelVerify } from '../../lib/api'
 import { invalidateKeys } from '../../lib/data'
 import { confirm } from '../../ui/dialog'
@@ -125,6 +125,14 @@ export function AuditPanel() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [verify, setVerify] = useState<SelVerify | null>(null)
+  // WHY THIS IS NOT FOLDED INTO `verify`. It used to be: the catch below built
+  // `{ ok: false, checked: 0, error: 'verify failed' }` and handed it to the same renderer, so a
+  // dead connection printed "Chain broken — ? of all 0 events altered (verify failed)" in the
+  // danger red two genuinely altered records get. That is the SAME defect as the windowed
+  // "Chain intact" this file's scope note describes, pointing the other way — a verdict wider
+  // than its evidence, and here the evidence is nothing at all. "Did not run" is a third state,
+  // so it gets a third variable; a failure can no longer be typed as a result.
+  const [verifyFailed, setVerifyFailed] = useState('')
   // Shipped by the endpoint (`sel.AUDIT_OUTCOME_FAMILIES`). Empty until the first page lands,
   // so the pill row renders "All" alone rather than a stale local guess at the vocabulary.
   const [families, setFamilies] = useState<AuditPage['outcome_families']>([])
@@ -183,7 +191,13 @@ export function AuditPanel() {
 
   const runVerify = async () => {
     setVerify(null)
-    try { setVerify(await api.auditVerify()) } catch { setVerify({ ok: false, checked: 0, error: 'verify failed' }) }
+    setVerifyFailed('')
+    // `api.auditVerify` rejects with `ApiError` on any non-2xx and on a dead connection, so this
+    // branch means "no verdict was obtained" — never "the chain is bad". Carry the real reason:
+    // a 403 from the owner-only refusal and an offline gateway are different problems, and the
+    // old fabricated 'verify failed' erased the difference along with the distinction above.
+    try { setVerify(await api.auditVerify()) }
+    catch (e) { setVerifyFailed(e instanceof Error ? e.message : 'the request failed') }
   }
   // NOT offered as a button on purpose. `verify_integrity(max_entries=None)` is the exhaustive walk the
   // window exists to avoid, and `personalclaw security verify` already performs it — its own comment
@@ -268,6 +282,23 @@ export function AuditPanel() {
         </div>
       )}
 
+      {/* The check did not run. Deliberately NOT the danger red and NOT a shield-with-a-mark:
+          both are claims about the log, and nothing was read. `ShieldQuestion` is the same glyph
+          `DurabilityPanel` uses for its own "we cannot tell" state. */}
+      {verifyFailed && (
+        <div data-type="body-s" className="mb-3 rounded-lg bg-surface-container px-3 py-2">
+          <div className="flex items-center gap-1.5" style={{ color: 'var(--color-warning)' }}>
+            <ShieldQuestion size={14} />
+            {`Couldn't check the chain — ${verifyFailed}.`}
+          </div>
+          <p data-type="caption" className="mt-1 text-on-surface-low">
+            No entries were examined, so this says nothing about whether the log was altered.
+            Retry, or run <code className="font-mono">personalclaw security verify</code> for the
+            offline check.
+          </p>
+        </div>
+      )}
+
       {verify && (
         <div data-type="body-s" className="mb-3 rounded-lg bg-surface-container px-3 py-2">
           <div className="flex items-center gap-1.5"
@@ -275,7 +306,7 @@ export function AuditPanel() {
             {verify.ok ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
             {verify.ok
               ? `Chain intact — ${verifiedScope(verify)} verified.`
-              : `Chain broken — ${verify.tampered ?? '?'} of ${verifiedScope(verify)} altered${verify.error ? ` (${verify.error})` : ''}.`}
+              : `Chain broken — ${verify.tampered ?? '?'} of ${verifiedScope(verify)} altered.`}
           </div>
           {capped(verify) && (
             <p data-type="caption" className="mt-1 text-on-surface-low">
