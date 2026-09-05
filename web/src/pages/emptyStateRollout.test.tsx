@@ -242,6 +242,8 @@ const PEP2_CENSUS: {
   { surface: 'Chat', file: 'pages/ChatPage.tsx', verdict: 'on-ramp', why: '"New chat" — the same route the composer opens.' },
   { surface: 'Code', file: 'pages/code/CodeSection.tsx', verdict: 'on-ramp', why: '"New code project" — the existing clone/open flow.' },
   { surface: 'Apps', file: 'pages/apps/AppsSection.tsx', verdict: 'on-ramp', why: '"Browse the Store" — switches to the Store tab, the install flow.' },
+  { surface: 'App host › not installed', file: 'pages/apps/AppHostPage.tsx', verdict: 'on-ramp',
+    why: 'Not a zero-items state but a 404 on #/app/<name>: the app is not installed, and the fix IS the install flow — "Open the Store" deep-links to #/apps?view=store, the same flow the Apps entry above names. The transient-failure sibling renders LoadError, not this.' },
   { surface: 'Terminal', file: 'pages/terminal/TerminalPage.tsx', verdict: 'on-ramp', why: '"New session" — spawns a shell, the only way one exists.' },
   { surface: 'Watched sources', file: 'pages/knowledge/SourcesPage.tsx', verdict: 'on-ramp', why: '"Add a source" — the existing SourceCreatePage flow.' },
   { surface: 'Scheduled reports', file: 'pages/knowledge/ReportsPage.tsx', verdict: 'on-ramp', why: '"New report" — the inline create form on the same page.' },
