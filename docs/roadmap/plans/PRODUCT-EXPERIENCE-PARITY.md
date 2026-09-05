@@ -499,6 +499,18 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
 
 ## Execution log
 
+- **2026-09-05 — `PEP-11` DONE-BY-DECOMPOSITION executed: `PEP-12`..`PEP-20` authored (inventory
+  audit).** The 2026-08-27 ruling (question 10 of 11) directed filing one atom per app; the nine
+  sub-atoms were never authored, leaving the programme reading as one permanently-in-flight atom.
+  Authored now as first-class atoms in build order by leverage — Code Review, Research Lab, Design
+  Critique, Docs/Slides, Notes, Issue Radar, Spec Builder, Ops, Companion — each carrying the
+  app-creation contract in its done_when (app.json, SDK-only imports, minimum permissions, tests,
+  README, LICENSE; validated as a local Store source driven in the real UI; recorded as an
+  ECOSYSTEM-TOOLING exemplar). The ruling's `PEP-11a..i` naming became `PEP-12..20` because the
+  catalog's id grammar is numeric (`[A-Z0-9]+-\d+` — the same reason ES-8 decomposed to ES-13..16).
+  `PEP-11` flips done with a status_note and carries no code of its own; the plan's open-work truth
+  now lives in nine independently-flippable rows instead of one unbounded one.
+
 <!-- Append only: - [YYYY-MM-DD][T<id>] DEVIATION|DISCOVERY|DONE|BLOCKED: <one line> -->
 
 - [2026-08-05][plan] DISCOVERY: the always-on layer is ~90% already covered — `skills/loader.py:get_always_skills`
