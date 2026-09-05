@@ -515,44 +515,43 @@ def test_no_in_core_transport_starts_a_turn_except_through_the_door():
     )
 
 
-def test_run_chat_is_still_a_declared_second_route():
-    """`run_chat` remains on the facade, and this asserts that gap ON PURPOSE.
+def test_run_chat_is_off_the_facade_for_good():
+    """The second route past the gate is GONE, and this pins the absence (EA-7 step 3).
 
-    It IS a second route past the gate: an app that calls it starts a channel-originated
-    turn without `guard_inbound`. The chokepoint is only structural once this is gone, at
-    which point the `personalclaw.sdk.*`-only import boundary
-    (`tests/test_apps_import_boundary.py`) leaves an app no other way in.
+    Until 2026-09-05 this test asserted the opposite — `run_chat` stayed on the facade as
+    a DECLARED gap, because four shipping channel apps imported it from this exact path
+    and the apps repo is a separate release artifact that cannot land atomically with
+    core. The sequence its docstring named has now completed: (1) core shipped
+    `deliver_channel_inbound`; (2) all four apps migrated onto it and stopped importing
+    `run_chat` (PersonalClawApps #72: discord/email/telegram; #73: slack); (3) core drops
+    the export — this change.
 
-    **It cannot go in the same change that adds the door.** Four shipping channel apps
-    import `run_chat` from this exact path — discord, email and telegram transports plus
-    Slack's handler — along with four of their test modules, which monkeypatch
-    `personalclaw.sdk.channel.run_chat` by name. The apps repo is a separate release
-    artifact, so it cannot land atomically with core; dropping the export first breaks all
-    four the moment core merges. That is the same shape as landing a hook allowlist entry
-    without its provider: it validates, saves, and fails at fire time.
+    From here the chokepoint is structural, not conventional: an app can only start a
+    channel-originated turn through `services.deliver_channel_inbound`, which applies
+    `guard_inbound` unconditionally, and the `personalclaw.sdk.*`-only import boundary
+    (`tests/test_apps_import_boundary.py`) leaves no path around it. Re-adding the export
+    would silently reopen the ungated route — the reason this asserts absence instead of
+    being deleted with the gap it used to declare.
 
-    So the sequence is (1) core ships `deliver_channel_inbound`, (2) the apps migrate onto
-    it, (3) core drops the export. This test is the marker for step 3 — it fails the day
-    someone removes the export, which is exactly when they should also be checking that
-    the apps no longer import it. Asserting a known gap beats leaving it implicit: an
-    undeclared second route reads as an oversight, a declared one reads as a sequence.
-
-    `test_a_transport_that_never_calls_trust_is_still_checked` is what makes the door worth
-    having in the meantime — a transport that goes through it cannot skip the check, even
-    while another route exists.
+    `run_chat` itself still exists at `personalclaw.dashboard.chat.run_chat` for the
+    owner's own surfaces (dashboard turns, cron, heartbeat, the CLI), where there is no
+    channel identity and nothing to deny; off the app facade is the whole change.
     """
     from personalclaw.sdk import channel
 
-    assert "run_chat" in channel.__all__, (
-        "run_chat has been removed from the channel SDK facade. If that is deliberate "
-        "(EA-7 step 3), first confirm the four channel apps no longer import it — "
-        "discord/email/telegram transports and slack_runtime/handler.py — then delete "
-        "this test along with the export. If it is accidental, restore it: removing it "
-        "breaks all four apps at import time."
+    assert "run_chat" not in channel.__all__, (
+        "run_chat is back on the channel SDK facade. That reopens the ungated second "
+        "route past guard_inbound that EA-7 closed — apps must reach a turn only "
+        "through services.deliver_channel_inbound. If an app needs something run_chat "
+        "did, extend the door, not the facade."
     )
-    assert hasattr(channel, "run_chat")
+    assert not hasattr(channel, "run_chat")
     # The underscore alias is gone for good and must not come back (see #1804).
     assert not hasattr(channel, "_run_chat")
+    # Vacuity floor: the module still exports the rest of its surface — an import error
+    # or a gutted __all__ would make the two asserts above pass while proving nothing.
+    assert "save_session_to_history" in channel.__all__
+    assert hasattr(channel, "save_session_to_history")
 
 
 def test_the_door_is_on_the_gateway_services_contract():

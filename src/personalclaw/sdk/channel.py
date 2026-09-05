@@ -87,34 +87,22 @@ from personalclaw.context import (
 # notice". One bundled channel app drives it, so it was a public contract by use; it is
 # now public by name, at its definition site.
 #
-# `run_chat` is STILL HERE, and its removal is a declared, sequenced follow-up (EA-7).
-#
-# It is a SECOND route past the sender-trust gate — the exact defect
-# :mod:`personalclaw.channel_inbound` exists to close — and the chokepoint is only a
-# chokepoint once this is the only route. `run_chat` cannot carry the guard itself: it has
-# no sender to check, and it legitimately serves the owner's own dashboard turns, cron,
-# heartbeat and the CLI, where there is no channel identity and nothing to deny. So the
-# end state is `run_chat` off this facade, at which point the `personalclaw.sdk.*`-only
-# import boundary (`tests/test_apps_import_boundary.py`) makes the door unroutable-around
-# rather than merely conventional.
-#
-# It cannot be removed in THIS change, because four shipping channel apps import it from
-# here and the apps repo is a separate release artifact that cannot land atomically with
-# core: `discord-channel/discord_runtime/transport.py`,
-# `email-channel/email_runtime/transport.py`,
-# `telegram-channel/telegram_runtime/transport.py` and
-# `slack-channel/slack_runtime/handler.py`, plus four of their test modules which
-# monkeypatch `personalclaw.sdk.channel.run_chat` by that path. Dropping the export here
-# first would break all four the moment this merges, which is the same
-# validates-then-fails-at-fire-time shape EA-8's split-across-repos hazard describes.
-#
-# The order is therefore: (1) core ships `deliver_channel_inbound` — this change; (2) the
-# four apps migrate onto it and stop importing `run_chat`; (3) core drops the export and
-# the boundary makes the chokepoint structural. Step 3 is the cleanup half of a clean
-# break, not a dual path kept for its own sake, and
-# `tests/test_channel_inbound_chokepoint.py` asserts this gap DELIBERATELY so it stays
-# visible until then.
-from personalclaw.dashboard.chat import run_chat, save_session_to_history
+# `run_chat` is OFF this facade (EA-7 step 3). It was a SECOND route past the
+# sender-trust gate — the exact defect :mod:`personalclaw.channel_inbound` exists to
+# close — and the chokepoint is only a chokepoint now that the door is the only route:
+# an app starts a channel-originated turn through `services.deliver_channel_inbound`,
+# never by driving the turn itself. `run_chat` could not carry the guard (it has no
+# sender to check; it legitimately serves the owner's own dashboard turns, cron,
+# heartbeat and the CLI, where there is no channel identity and nothing to deny), so
+# removal was the fix. The export could only go once all four bundled channel apps had
+# migrated onto the door and stopped importing it — discord/email/telegram transports
+# and slack's handler, landed as PersonalClawApps #72 and #73 — because the apps repo
+# is a separate release artifact that cannot land atomically with core.
+# `tests/test_channel_inbound_chokepoint.py` now asserts the ABSENCE, so the second
+# route cannot quietly return, and the `personalclaw.sdk.*`-only import boundary
+# (`tests/test_apps_import_boundary.py`) makes the door structural rather than
+# conventional.
+from personalclaw.dashboard.chat import save_session_to_history
 from personalclaw.dashboard.handlers import get_update_info
 from personalclaw.dashboard.origin import (
     dashboard_origin,
@@ -325,7 +313,6 @@ __all__ = [
     "render_use_case_prompt",
     "resolve_bind_host",
     "resolve_dashboard_host",
-    "run_chat",
     "safe_read_file",
     "save_conversation_turn",
     "save_credential",
