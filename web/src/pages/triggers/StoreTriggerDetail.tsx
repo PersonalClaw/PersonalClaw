@@ -161,7 +161,7 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
       )}
 
       <Section label="When it runs">
-        <div className="text-on-surface text-[0.875rem]">{storeKindLabel(trigger.store_kind)}</div>
+        <div data-type="body-m" className="text-on-surface">{storeKindLabel(trigger.store_kind)}</div>
         {paths.length > 0 && (
           <ul className="mt-1 flex flex-col gap-0.5">
             {paths.map((p) => (
@@ -172,7 +172,7 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
       </Section>
 
       <Section label="What it runs">
-        <div className="text-on-surface text-[0.875rem]">{actionLabel(trigger.action?.provider)}</div>
+        <div data-type="body-m" className="text-on-surface">{actionLabel(trigger.action?.provider)}</div>
       </Section>
 
       {/* 🔴 A store trigger's run history, which this panel never showed (S168). The backend has
