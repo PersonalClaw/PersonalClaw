@@ -302,7 +302,7 @@ function Browse({ onBack, query, setQuery }: { onInstalled: () => void; onBack: 
       topBar={
         <TopBar
           keepCornerPadding
-          left={<div className="flex min-w-0 items-center gap-m"><span data-type="title-l" className="text-on-surface shrink-0">Skills</span><ModeToggle mode="browse" onChange={(m) => m === 'installed' && onBack()} /></div>}
+          left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skills</PageTitle><ModeToggle mode="browse" onChange={(m) => m === 'installed' && onBack()} /></div>}
         />
       }
       panel={open && (

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, FileText, Puzzle, Loader2 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
+import { PageTitle } from '../../ui/PageTitle'
 import { api, type PromptItem, type PromptSnippet } from '../../lib/api'
 import { sourceTone } from './promptMeta'
 import { PromptDetail } from './PromptDetail'
@@ -46,7 +47,7 @@ export function PromptViewPage({ kind, name, onBack, navigate, query, setQuery }
       <TopBar left={<div className="flex items-center gap-s">
         <IconButton icon={ArrowLeft} label="Back to prompts" size={40} onClick={onBack} />
         {isSnippet ? <Puzzle size={18} style={{ color: tone }} /> : <FileText size={18} style={{ color: tone }} />}
-        <span data-type="title-l" className="text-on-surface truncate">{name}</span>
+        <PageTitle className="truncate">{name}</PageTitle>
       </div>} />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
