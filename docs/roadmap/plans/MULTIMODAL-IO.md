@@ -439,3 +439,17 @@ inference (not a stub) with a resumable weight download that survives an interru
 #2425 (merge 2ec168d00) closed the loop: the LMM-V2 selftest synthesizes a clone through a
 reference-audio fixture end to end, and a sidecar killed mid-inference leaves the gateway up with
 a typed crash reason. `MI-5` is the plan's last open atom.
+
+### `MI-5` — Voice bindings + profile-manager UI, one-click migration, full-matrix validation — DONE (2026-09-04)
+
+Shipped across two PRs, closing the plan — all 6 atoms done. Core #2386 (merge 283a5b433) landed
+the backend: the profile manager's create/clone/design/lock/consent flows drive MI-1 CRUD + the
+MI-2 engine end-to-end; the one-click "create a profile from my current voice" migration
+synthesizes a design-kind profile from the active tts binding and sets it default only on
+explicit action, never automatically; and the deep-mutation full-matrix validation sweep covers
+profile CRUD × lock × both engines × per-surface bindings × duplex behaviors × screen share on
+vision and non-vision models. Core #2446 (merge 9862ed905) landed Settings → Voice: the bindings
+table (surface × profile picker) and the profile-manager UI, with per-row binding warnings when
+a profile's kind exceeds what its bound provider supports. `ALLOWED_HOOK_PROVIDERS`,
+`PROVIDER_TYPES` and the type-handler set assert byte-identical before/after (Success
+Criterion 10) — the sweep mutated deeply and left the provider surface untouched.

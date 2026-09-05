@@ -4,7 +4,7 @@
 **Code:** `LMMV`  
 **Source status:** in_progress
 
-8 atoms: 7 done, 1 todo. The plan's 5 declared sessions are complete (starting with the §4.4/§4.2 layouts.py probe, PR #120), Session 5 having split into independent subscription-creds (§8, LMMV-6 — closed once its reference app landed in PersonalClawApps) and the LMMV-7 hardening/validation capstone, which remains open. No cross-plan dependencies — this is a Wave-0, v2-independent floor. **Capability-gap amendment (2026-08-19)** adds `LMMV-8`: a hardware-aware fit verdict. Every input already exists — the GPU probe, total memory and free disk are all collected — but none reaches the decision, so nothing tells a user whether a model will run before they download it. The atom insists on ONE budget function and ONE verdict, because two independent budget computations disagree in exactly the case that OOMs (an integrated GPU's VRAM counted on top of the system RAM it is carved from).
+8 atoms: 7 done, 1 blocked (LMMV-7 — code complete on main; the owner-run real-weights validation matrix is the sole open clause). The plan's 5 declared sessions are complete (starting with the §4.4/§4.2 layouts.py probe, PR #120), Session 5 having split into independent subscription-creds (§8, LMMV-6 — closed once its reference app landed in PersonalClawApps) and the LMMV-7 hardening/validation capstone, which remains open. No cross-plan dependencies — this is a Wave-0, v2-independent floor. **Capability-gap amendment (2026-08-19)** adds `LMMV-8`: a hardware-aware fit verdict. Every input already exists — the GPU probe, total memory and free disk are all collected — but none reaches the decision, so nothing tells a user whether a model will run before they download it. The atom insists on ONE budget function and ONE verdict, because two independent budget computations disagree in exactly the case that OOMs (an integrated GPU's VRAM counted on top of the system RAM it is carved from).
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -146,7 +146,7 @@ guard only bites at `warn_pct=0`, which the test now covers.
 
 ### `LMMV-7` — Session 5b — Hardening: per-model context-budget helper, refresh/registry-drift/destructive-test regressions, full-matrix as-a-user validation
 
-**Status:** todo
+**Status:** blocked (every code clause is done on main — budget helper on all four resolution paths, both refresh/registry-drift regressions, the suite-level fs fixture; the sole open clause is the owner-run real-weights download/delete/bind/RUN matrix, or an owner descope of it. Five passes re-derived this; flipped off the ready frontier 2026-09-04.)
 
 §2.2 per-model context-budget helper; §11 Disposition invariants; §12 risk regressions; Success Criteria 9 & 10; Session 5 as-a-user validation sweep
 
