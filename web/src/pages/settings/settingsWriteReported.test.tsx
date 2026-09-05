@@ -50,6 +50,11 @@ describe('a refused speech setting rolls back and says so', () => {
         saveUseCaseSettings: save,
         personalclawConfig: () => Promise.resolve({}),
         voiceLoopConfig: () => Promise.resolve({}),
+        // The Voices section (MI-5) mounts inside this panel. It is not what these
+        // two drives are about, but an unstubbed read throws during render and the
+        // panel comes back blank — which reads as "the toggle broke".
+        voiceProfiles: () => Promise.resolve({ profiles: [], bindings: {} }),
+        voiceResolve: () => Promise.resolve({ surface: '', resolved: true, level: 'built-in' }),
       },
     }))
     const { VoicePanel } = await import('./VoicePanel')
