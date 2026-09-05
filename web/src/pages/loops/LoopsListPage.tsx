@@ -28,7 +28,6 @@ import { rowSubject } from '../../lib/rowSubject'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle, hasDistinctName } from './loopPhases'
 import { loopStatusLabel, loopStatusColor, loopStatusTone, effectiveLoopStatus, ACTIVE_LOOP_STATUSES, PRELAUNCH_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
 import { PageTitle } from '../../ui/PageTitle'
-import { notify } from '../../app/appSdk'
 
 // The status word + accent come from `lib/loopStatus` — the ONE registry every loop
 // surface reads (this page used to carry its own `loopStatusMeta` copy, which had drifted
@@ -93,13 +92,17 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
 
   // Delete a terminal loop from the list — two-step (arm, then confirm) like the
   // cockpit, so a hover misclick can't destroy a finished loop's history.
+  // AUD-A11 ruled on the ritual split: the LOOP family (this list, the loop/design
+  // cockpits, SdlcProgressCard) deliberately arms in place, while the CODE surfaces use
+  // the confirmDelete dialog because their body must carry a file-destruction warning
+  // an armed button has nowhere to put. Same guard strength, different chrome — keep it.
   async function del(e: React.MouseEvent | undefined, id: string) {
     e?.stopPropagation()
     if (confirmDelete !== id) { setConfirmDelete(id); window.setTimeout(() => setConfirmDelete((c) => (c === id ? null : c)), 4000); return }
     setConfirmDelete(null)
-    // Swallowing this made the row vanish and then come back on the refetch, unexplained. Say why.
-    try { await api.deleteULoop(id) }
-    catch (e) { notify(`Couldn't delete this loop: ${String((e as Error)?.message || e)}`, 'error') }
+    // Same write-reporting contract as `act` above — reportingWrite owns the failure
+    // sentence, instead of this one write hand-rolling its own notify().
+    if (!(await reportingWrite('delete this loop', () => api.deleteULoop(id)))) return
     invalidateKeys('loops'); refresh()
   }
 

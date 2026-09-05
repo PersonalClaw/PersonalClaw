@@ -43,7 +43,9 @@ const SECTION = F('loop/LoopSection.tsx')
 /** file → the loop writes it owns. */
 const WRITES: Array<[string, string, string[]]> = [
   ['loops/DesignCockpitPage.tsx', COCKPIT, ['uLoopAction', 'uLoopNudge', 'updateULoop']],
-  ['loops/LoopsListPage.tsx', LIST, ['uLoopAction']],
+  // deleteULoop joined in AUD-A11: the list's delete hand-rolled its own notify() while
+  // every other write in the same file rode reportingWrite.
+  ['loops/LoopsListPage.tsx', LIST, ['uLoopAction', 'deleteULoop']],
   ['loop/LoopSection.tsx', SECTION, ['uLoopAction', 'uLoopPlanStart']],
 ]
 
@@ -79,9 +81,9 @@ describe('a loop action that fails tells the user', () => {
         expect(strip(raw), `${name} should still perform api.${call}`).toContain(`api.${call}(`)
       }
     }
-    // Seven call sites across the three files: 4 cockpit, 1 list, 2 section.
+    // Eight call sites across the three files: 4 cockpit, 2 list (act + delete), 2 section.
     const total = WRITES.reduce((n, [, raw]) => n + [...strip(raw).matchAll(/reportingWrite\(/g)].length, 0)
-    expect(total, 'every write routed through the reporter').toBe(7)
+    expect(total, 'every write routed through the reporter').toBe(8)
   })
 
   it('EVERY write in the two refetching files is gated — not just the ones that already are', () => {

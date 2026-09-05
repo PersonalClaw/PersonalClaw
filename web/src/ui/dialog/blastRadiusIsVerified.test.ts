@@ -564,4 +564,19 @@ describe('three more bodies, checked against their handlers', () => {
     expect(web('pages/tools/ToolsPage.tsx'), 'so the body stays as it is')
       .toContain('Its tools will no longer be available.')
   })
+  it('the two project deletes ride the shared ritual, with their file-destruction body intact', () => {
+    // AUD-A11: both code surfaces hand-rolled `confirm({ title: `Delete project …`, danger })` —
+    // composing exactly what confirmDelete() composes, so the hand-roll was drift, and it kept both
+    // sites outside every ratchet keyed on `confirmDelete(` callers. They ride the helper now. The
+    // custom `body` is the point of these dialogs (it names whether delete destroys the managed
+    // folder's files), so the pin requires it to still be passed, not replaced by the default.
+    for (const rel of ['pages/code/CodeSection.tsx', 'pages/code/CodeCockpitPage.tsx']) {
+      const src = web(rel)
+      expect(src, `${rel} rides the shared ritual`).toMatch(/confirmDelete\('project', p\.name, \{ body \}\)/)
+      expect(src, `${rel} keeps no hand-rolled project-delete dialog`)
+        .not.toMatch(/confirm\(\{ title: `Delete project/)
+      expect(src, `${rel} still warns about the managed folder`)
+        .toContain('deleting it also removes those files')
+    }
+  })
 })
