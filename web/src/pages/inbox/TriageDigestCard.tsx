@@ -333,7 +333,7 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
   // An answered proposal keeps its row and says what was answered. Removing it would make a reply
   // look like it did nothing; re-offering the buttons would invite a second, duplicate answer.
   return (
-    <li className="flex flex-col gap-s rounded-lg bg-surface-high px-m py-s sm:flex-row sm:items-center">
+    <li aria-label={`Proposal ${row.ordinal}: ${row.action_type ? verbFor(row.action_type) + " — " : ""}${row.title || `item ${row.ordinal}`}${row.source ? ", " + row.source : ""}`} className="flex flex-col gap-s rounded-lg bg-surface-high px-m py-s sm:flex-row sm:items-center">
       <div className="min-w-0 flex-1">
         <p className="truncate text-on-surface text-[0.8125rem]">
           <span className="mr-1 text-on-surface-low">#{n}</span>
