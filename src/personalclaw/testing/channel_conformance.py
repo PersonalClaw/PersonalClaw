@@ -751,12 +751,21 @@ def _assert_consumes_fenced_text(provider: ChannelTransportProvider) -> None:
         "app module loaded from disk (which is how the app loader imports one) always "
         "has retrievable source.",
     )
+    # A transport that routes through the platform's guarded door
+    # (`services.deliver_channel_inbound`, EA-7) satisfies this clause BY
+    # CONSTRUCTION: core applies the fence inside `channel_inbound._route_to_session`
+    # after the gate produces it, so there is no `fenced_text` left for the transport
+    # to read — the door call IS the consumer. The regression this clause exists to
+    # catch (a refactor that feeds raw stranger text to the model) cannot happen on
+    # the door path, because the transport never touches the session at all.
     _require(
-        "fenced_text" in source,
+        "fenced_text" in source or "deliver_channel_inbound" in source,
         clause,
-        f"{type(provider).__name__} declares inbound=True but its module never reads "
+        f"{type(provider).__name__} declares inbound=True but its module neither routes "
+        "inbound through `services.deliver_channel_inbound` nor reads "
         "`verdict.fenced_text` — non-owner group content MUST enter the session fenced. "
-        "Use `text_for_session = verdict.fenced_text or <raw>`.",
+        "Route through the door (preferred), or use "
+        "`text_for_session = verdict.fenced_text or <raw>`.",
     )
 
 

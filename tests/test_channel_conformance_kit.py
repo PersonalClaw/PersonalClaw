@@ -396,10 +396,73 @@ def test_inbound_transport_ignoring_fenced_text_fails(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(tmp_path))
     mod = importlib.import_module("conformance_raw_transport")
     try:
-        with pytest.raises(ChannelContractError, match=r"\[fencing\].*never reads"):
+        with pytest.raises(ChannelContractError, match=r"\[fencing\].*neither routes"):
             assert_channel_contract(mod.RawTransport(), inbound_via="_on_message")
     finally:
         sys.modules.pop("conformance_raw_transport", None)
+
+
+def test_inbound_transport_routing_through_the_door_passes_fencing(tmp_path, monkeypatch):
+    """EA-7: a transport that hands inbound to ``services.deliver_channel_inbound``
+    satisfies the fencing clause BY CONSTRUCTION — core applies the fence inside the
+    door, so there is no ``fenced_text`` left for the transport to read. The kit must
+    not fail the migration it exists to encourage."""
+    import importlib
+    import sys
+    import textwrap
+
+    mod_path = tmp_path / "conformance_door_transport.py"
+    mod_path.write_text(
+        textwrap.dedent('''
+            """A transport on the guarded door — the EA-7 target shape."""
+
+            from personalclaw.channel_transports.base import (
+                ChannelCapabilities,
+                ChannelTransportProvider,
+            )
+
+
+            class DoorTransport(ChannelTransportProvider):
+                _services = None
+
+                @property
+                def name(self):
+                    return "conformance-door"
+
+                @property
+                def display_name(self):
+                    return "Conformance Door"
+
+                @property
+                def connected(self):
+                    return True
+
+                async def connect(self):
+                    return True
+
+                async def disconnect(self):
+                    return None
+
+                async def send(self, message):
+                    return True
+
+                def capabilities(self):
+                    return ChannelCapabilities(inbound=True)
+
+                async def start_inbound(self, services):
+                    self._services = services
+
+                async def _on_message(self, cm):
+                    await self._services.deliver_channel_inbound(self.name, cm, is_dm=True)
+            '''),
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    mod = importlib.import_module("conformance_door_transport")
+    try:
+        assert_channel_contract(mod.DoorTransport(), inbound_via="_on_message")
+    finally:
+        sys.modules.pop("conformance_door_transport", None)
 
 
 def test_fencing_clause_is_skipped_for_outbound_only_transports():

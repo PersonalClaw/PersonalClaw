@@ -231,6 +231,22 @@ async def _route_to_session(
     safe, _ = redact_exfiltration_urls(text)
     safe, _ = redact_credentials(safe)
     session.append("user", safe, "msg msg-u")
+    # ``Session.append`` skips the global broadcast for role="user" because the
+    # dashboard frontend adds its OWN sends optimistically — but this user line
+    # originated in a channel, so no frontend has it. Broadcast it explicitly, and
+    # refresh the session list, so a dashboard watching the linked session sees the
+    # channel message arrive live. Slack's pre-door intercept always did this; the
+    # other channels' hand-rolled copies never did — the door gives every channel
+    # the slack behavior.
+    broadcast = getattr(state, "broadcast_ws", None)
+    if broadcast is not None:
+        broadcast(
+            "chat_message",
+            {"session": session.key, "role": "user", "content": safe, "cls": "msg msg-u"},
+        )
+    push = getattr(state, "push_sessions_update", None)
+    if push is not None:
+        push()
 
     if getattr(session, "running", False):
         session.queue_append(text)
