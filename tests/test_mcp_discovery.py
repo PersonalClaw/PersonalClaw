@@ -114,6 +114,10 @@ class TestListServers:
         }
         (agents_dir / "personalclaw.json").write_text(json.dumps(installed))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         monkeypatch.setattr(
             "personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "nope.json",)
         )
@@ -143,6 +147,10 @@ class TestListServers:
             "personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "nope.json",)
         )
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         servers = list_servers()
         assert servers == []
 
@@ -193,6 +201,10 @@ class TestListServers:
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "x",))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         servers = list_servers()
         names = {s.name for s in servers}
         assert "enabled-srv" in names
@@ -202,6 +214,10 @@ class TestListServers:
         """Disabled servers in mcp.json are also excluded."""
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         mcp_json = tmp_path / "mcp.json"
         mcp_json.write_text(
             json.dumps(
@@ -231,6 +247,10 @@ class TestListServers:
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         assert not any(s.name == "srv" for s in list_servers())
 
     def test_disabled_mcp_json_still_carries_disabled_tools(self, tmp_path, monkeypatch) -> None:
@@ -247,6 +267,10 @@ class TestListServers:
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (mcp_json,))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         servers = list_servers()
         assert len(servers) == 1
         assert servers[0].disabled_tools == ["t1"]
@@ -267,6 +291,10 @@ class TestListServers:
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "x",))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         servers = list_servers()
         assert len(servers) == 1
         s = servers[0]
@@ -496,6 +524,10 @@ class TestSyncToAgentConfig:
         config_path = agents_dir / "personalclaw.json"
         config_path.write_text(json.dumps(cfg))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         monkeypatch.setattr("shutil.which", lambda x, **kw: None)
 
         install_called = []
@@ -515,6 +547,10 @@ class TestSyncToAgentConfig:
         agents_dir.mkdir(parents=True)
         config_path = agents_dir / "personalclaw.json"
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         monkeypatch.setattr("shutil.which", lambda x, **kw: None)
 
         install_called = []
@@ -536,6 +572,10 @@ class TestSyncToAgentConfig:
         config_path = agents_dir / "personalclaw.json"
         config_path.write_text(json.dumps(cfg))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         monkeypatch.setattr("shutil.which", lambda x, **kw: None)
 
         install_called = []
@@ -589,6 +629,10 @@ class TestSyncToAgentConfig:
         config_path = agents_dir / "personalclaw.json"
         config_path.write_text(json.dumps(cfg))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         monkeypatch.setattr("shutil.which", lambda x, **kw: None)
 
         install_called = []
@@ -624,6 +668,10 @@ class TestSyncToAgentConfig:
         config_path = agents_dir / "personalclaw.json"
         config_path.write_text(json.dumps(cfg))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         monkeypatch.setattr("shutil.which", lambda x, **kw: None)
 
         install_called = []
@@ -653,6 +701,10 @@ class TestSyncToAgentConfig:
         config_path = agents_dir / "personalclaw.json"
         config_path.write_text(json.dumps(cfg))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         monkeypatch.setattr("shutil.which", lambda x, **kw: None)
 
         # rebuild_agent_config() is called internally — mock it to verify delegation
@@ -685,6 +737,10 @@ class TestSyncToAgentConfig:
         config_path = agents_dir / "personalclaw.json"
         config_path.write_text(json.dumps(cfg))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
         monkeypatch.setattr("shutil.which", lambda x, **kw: None)
 
         install_called = []
@@ -756,6 +812,10 @@ class TestProbeCache:
         monkeypatch.setenv("PERSONALCLAW_PROJECT_DIR", str(tmp_path))
         monkeypatch.setattr("personalclaw.mcp_discovery._mcp_json_paths", lambda: (tmp_path / "x",))
         monkeypatch.setattr("personalclaw.mcp_discovery.Path.home", lambda: tmp_path)
+        # The installed agent config now resolves through config_dir(), so the ACTIVE
+        # home has to be redirected the way the product does it — patching Path.home
+        # alone pinned the hardcode this test was written against (issue 287).
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / ".personalclaw"))
 
         # Before probe: unknown
         servers = list_servers()

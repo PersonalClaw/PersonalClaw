@@ -856,14 +856,18 @@ def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _current_session_thread_ts() -> str | None:
-    """Read the current session's thread_ts from the most recent session_pid file."""
-    from pathlib import Path
+    """Read the current session's thread_ts from the most recent session_pid file.
 
+    Scans the ACTIVE home. This globbed `Path.home() / ".personalclaw"` outright, so a tool
+    call in an isolated-home session picked up the most recent pid file of a DIFFERENT
+    instance and reported that session's thread — silently, since the read succeeds.
+    """
+    from personalclaw.config.loader import config_dir
     from personalclaw.hooks import safe_read_file_bytes
 
     try:
         pid_files = sorted(
-            (Path.home() / ".personalclaw").glob("session_pid_*.txt"),
+            config_dir().glob("session_pid_*.txt"),
             key=lambda f: f.stat().st_mtime,
             reverse=True,
         )
@@ -1113,8 +1117,13 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return "Error: hook_id is required"
         context_summary = str(args.get("context_summary", ""))
         session_key = f"hook:{hook_id}"
-        # Persist hook registration
-        hook_file = Path.home() / ".personalclaw" / "hooks.json"
+        # Persist hook registration in the ACTIVE home. This was
+        # `Path.home() / ".personalclaw" / "hooks.json"` with an unconditional `mkdir` — the
+        # only WRITE among these sites, so an isolated-home session registered its hook into
+        # the operator's real home and the operator's own gateway then ran it.
+        from personalclaw.config.loader import config_dir
+
+        hook_file = config_dir() / "hooks.json"
         hook_file.parent.mkdir(parents=True, exist_ok=True)
         lock_path = hook_file.parent / "hooks.json.lock"
         import fcntl
