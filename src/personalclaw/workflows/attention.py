@@ -162,11 +162,6 @@ def raise_gate_item(
         return ""
 
 
-#: Statuses an attention row can still be closed FROM. A row the user already dismissed or a
-#: draft already sent must not be silently rewritten — the user's own action wins.
-_OPEN_STATUSES = ("pending", "seen")
-
-
 def resolve_gate_item(state: Any, run_id: str, node_id: str = "") -> int:
     """Close the open inbox row(s) for an answered (or expired) gate. Returns the count.
 
@@ -178,37 +173,19 @@ def resolve_gate_item(state: Any, run_id: str, node_id: str = "") -> int:
     answering one must not close the other. With no node it closes every open row for the run,
     which is what a run ENDING means (see :func:`resolve_run_items`).
 
-    Takes the state for `live_store`: writing through a fresh `InboxStore()` closed the row in a
-    detached copy the service then overwrote, so an answered gate's row stayed open in the UI.
-    Found by approving a real gate in a real browser and watching the row survive it.
+    The WORKFLOW ref vocabulary; the resolve itself is `inbox.resolve_attention_items`, beside
+    the emitter. It was a private copy of that loop here, which is why the loop watchdog — the
+    other emitter, and one this module's own docstring names — had no resolver at all: the
+    mechanism was reachable only through a function that hard-coded `refs["workflow"]`, so
+    calling it for a loop closed nothing (measured: exactly 0, #335). One implementation, one
+    open-status vocabulary, and each caller supplies the refs it stamped.
     """
-    try:
-        from personalclaw.inbox import InboxStore, ItemStatus, live_store
+    from personalclaw.inbox import resolve_attention_items
 
-        store = live_store(state)
-        if store is None:
-            store = InboxStore()
-            store.load()
-        closed = 0
-        for item in list(store.items.values()):
-            if item.refs.get("workflow") != run_id:
-                continue
-            if node_id and item.refs.get("workflow_node") != node_id:
-                continue
-            if item.status in _OPEN_STATUSES:
-                # HANDLED, not DISMISSED: the user (or the engine on their behalf) actually
-                # answered it. Dismissed would read as "ignored", which is a different fact and
-                # feeds the engagement signals differently.
-                item.status = ItemStatus.HANDLED.value
-                closed += 1
-        if closed:
-            store.save()
-        return closed
-    except Exception:
-        logger.debug(
-            "workflow %s: could not resolve the gate attention item", run_id, exc_info=True
-        )
-        return 0
+    refs = {"workflow": run_id}
+    if node_id:
+        refs["workflow_node"] = node_id
+    return resolve_attention_items(state, refs)
 
 
 def resolve_run_items(state: Any, run_id: str) -> int:
