@@ -124,6 +124,10 @@ const DESTINATIONS = [
   'pages/workflows/WorkflowRunDetail.tsx',
   'pages/workflows/WorkflowDefDetail.tsx',
   'pages/apps/AppFrame.tsx',
+  // 2026-09-05 audit — the remaining entity-detail holdouts: the prompt/snippet view rendered
+  // its name, and the skills BROWSE branch its static title, as bare title-l spans — heading
+  // navigation landed on nothing (the shape cycle 162 converged for runs/defs/the app frame).
+  'pages/prompts/PromptViewPage.tsx',
   // Cycle 150 — the create destinations.
   'pages/tasks/TaskCreatePage.tsx',
   'pages/triggers/TriggerCreatePage.tsx',
@@ -153,10 +157,10 @@ describe('every converged destination names itself', () => {
   })
 
   it('renders exactly ONE PageTitle per destination (a page has one name)', () => {
-    // Two files render more than one, both in mutually exclusive branches, never both at once:
-    // SkillsPage (proposals view vs installed view) and KnowledgeCreatePage (the type picker step
-    // vs the chosen-type form). Named rather than waved through, so a THIRD one has to justify
-    // itself here.
+    // Files rendering more than one do it in mutually exclusive branches, never both at once:
+    // SkillsPage (proposals view vs installed view vs the browse branch, which joined with the
+    // 2026-09-05 audit) and KnowledgeCreatePage (the type picker step vs the chosen-type form).
+    // Named rather than waved through, so a new branch has to justify itself here.
     // `ProjectsSection` renders three, one per mutually exclusive branch: the LIST page's title, the
     // shared detail shell's default, and the project view's own `titleNode`. 🪤 Converting the shell's
     // default alone left `#/projects/<id>` still h1-less — the project view passes `titleNode`, so the
