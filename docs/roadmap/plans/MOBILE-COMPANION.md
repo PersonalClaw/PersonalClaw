@@ -179,6 +179,22 @@ Plan 42 rules-engine `push` target calls `send_push` with `{kind, item_id}` only
 
 ## Execution log
 
+**2026-09-05 — MC-9 DONE (PR #2455, merge `944615456`).** The relay half of T4.3 platform push.
+`mobile.push_backend` gains `relay`: `send_relay` (src/personalclaw/push.py) wraps MC-5's
+content-free two-id payload in a `{platform, token, payload}` routing envelope and POSTs it to a
+user-configured `mobile.relay_url` — a stateless, open-source relay, where the hosted instance is a
+convenience and never a dependency (the plan's soul guardrail). `assert_content_free` sits INSIDE
+the sender so no caller can compose content past it; non-https is refused at the same fail-closed
+point `send_ntfy` uses. `POST /api/push/relay-register|relay-unregister` (owner-authed; wire codes
+`push_relay_registration_invalid`/`push_relay_not_registered`), relay tokens per device id in
+`push_relay_tokens.json` (pinned in the durability census debt set), closed `ios|android` platform
+vocabulary, Capacitor shell wiring in `web/src/app/nativePush.ts` + CompanionPage.
+`tests/test_mc9_relay_push.py` proves the envelope and registration lifecycle; the relay-side
+ids-only LOG audit fixture lives in the relay repo's own suite. ntfy stays the documented default.
+ENVIRONMENT LIMIT, named the way MC-5's locked-phone leg was: no real handset was driven — on-device
+delivery through Apple's/Google's push services is exercisable only from MC-10's store builds, so
+the vendor leg is verified at the wire/audit level, not on-device. MC-10 is the plan's last atom.
+
 **2026-09-04 — MC-8 validated done (owner-residual device gate).** The QR pairing screen is code-complete on main: the in-repo QR model-2 encoder `web/src/lib/qr.ts` (header names MC-8 as the atom that made the build-vs-install call) is RS-syndrome-verified by `web/src/lib/qr.test.ts`; `PairingQr.tsx` renders the {pairing_url, one-time code} QR inside Settings > Devices (`DevicesPanel.tsx`), covered by `devicesPanel.test.tsx`; pairing routes are consumed from plan 54 (`/api/devices/pair/start|complete`), which owns single-use + TTL. OWNER-RESIDUAL (not code): the physical phone-scan end-to-end pass — the same device-toolchain gate class as MC-7's.
 
 **2026-09-04 — MC-7 validated done (owner-residual toolchain gate).** The S4 Capacitor shell is code-complete on main: `mobile/` ships 14 tracked files wrapping the served `#/companion` route and is the first production consumer of `web/src/lib/endpoints.ts`; `capacitor.config.json` omits `server.url`/`hostname` (the gateway URL is runtime state, rail-asserted), native safe-areas use two documented mechanisms, and `no forked UI` is rail-enforced. OWNER-RESIDUAL (not code): an Xcode + CocoaPods + Android SDK pass on a Mac — `npm ci`, `npm run add:ios`/`add:android`, install to a simulator, enter a gateway address, confirm the live `#/companion` renders; `mobile/ios` and `mobile/android` are gitignored so nothing in-repo builds them.

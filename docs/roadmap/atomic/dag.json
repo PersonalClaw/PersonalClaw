@@ -4416,7 +4416,7 @@
     {
       "plan": "EXTERNAL-ACCESS",
       "code": "EA",
-      "status": "in_progress",
+      "status": "done",
       "atoms": [
         {
           "id": "EA-1",
@@ -4487,10 +4487,11 @@
         {
           "id": "EA-7",
           "title": "Sender-trust substrate — channels' inbound-identity half + DM pairing",
-          "status": "todo",
+          "status": "done",
           "scope": "§6 (Sender-trust substrate): channel_transports/trust.py store + check_sender chokepoint, DM pairing codes, per-sender allowlist Settings, Slack allowlist migration + UI refit. Session 6 (trust half).",
           "done_when": "channel_transports/trust.py with one store sender_trust.json (atomic_write) {transport:{sender_id:{state,display,paired_at,source}}} + check_sender(transport,sender_id)->TrustDecision consulted at the single gateway channel-ingestion chokepoint BEFORE any agent session; DM pairing codes (8-char, 1h, max 3 pending) via `personalclaw channel pair <transport>` + Settings, unknown-no-code senders dropped-and-counted (one SEL line, zero agent tokens); Slack app allowlist.py data migrated in + its Allow/Deny buttons refitted to write this store (behavior preserved, one migration); ChannelTransportProvider ABC unchanged, new transports inherit trust with zero code (Success Criterion 8). NOTE: the trust seam is OWNED by plan 40 (CHANNEL-EXPANSION) and PRECEDES this plan (plan header line 11 + workspace hard rules) — this atom completes/consumes it, resolving the doc/plan drift on who authors channel_trust.py.",
-          "deps": []
+          "deps": [],
+          "evidence": "done 2026-09-05 (multi-PR, validated on main): the trust seam is src/personalclaw/channel_trust.py — one store entity_settings/channel_trust.json (atomic_write; the done_when named sender_trust.json, the store landed under the entity-settings convention instead), guard_inbound -> TrustVerdict, pairing create/redeem (one-time codes) via `personalclaw channel pair <transport>` (cli_commands.py) + Settings, unknown-no-code senders dropped-and-counted, the slack allowlist migrated in. This window made the chokepoint STRUCTURAL: the guarded door services.deliver_channel_inbound -> channel_inbound.deliver_inbound (admit -> guard_inbound -> _route_to_session) + the executable conformance kit (core #2451); all four bundled channel apps migrated onto the door (PersonalClawApps #72 discord/telegram/email, #73 slack); step 3 (core #2467) dropped run_chat from the sdk.channel facade — tests/test_channel_inbound_chokepoint.py asserts the ABSENCE so the second route cannot quietly return, and the personalclaw.sdk.*-only import boundary (tests/test_apps_import_boundary.py) makes the door structural rather than conventional. ChannelTransportProvider ABC unchanged: a new transport inherits trust with zero code."
         },
         {
           "id": "EA-8",
@@ -6173,13 +6174,14 @@
         {
           "id": "MC-9",
           "title": "S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring",
-          "status": "todo",
+          "status": "done",
           "scope": "Sessions 4-6 — T4.3 Platform push",
           "done_when": "ntfy-app integration works as the documented default; the optional stateless open-source push-relay (org repo) plus APNs/FCM wiring in the shell also delivers; an audit fixture confirms relay logs contain no content (ids-only pings).",
           "deps": [
             "MC-7",
             "MC-5"
-          ]
+          ],
+          "evidence": "done 2026-09-05 (PR #2455, merge 944615456): mobile.push_backend gains 'relay' — send_relay (src/personalclaw/push.py) wraps MC-5's two-id payload in a {platform, token, payload} routing envelope and POSTs it to a user-configured mobile.relay_url; the relay is stateless and open-source (the hosted instance is a convenience, never a dependency — the plan's soul guardrail). assert_content_free sits INSIDE the sender so no caller can compose content past it; non-https is refused at the same fail-closed point send_ntfy uses. POST /api/push/relay-register|relay-unregister (owner-authed; wire codes push_relay_registration_invalid / push_relay_not_registered in HTTP_ERROR_CODES); relay tokens held per device id in push_relay_tokens.json (pinned in the durability census debt set), closed ios|android platform vocabulary; vendor-push shell wiring in web/src/app/nativePush.ts + CompanionPage. tests/test_mc9_relay_push.py proves the content-free envelope and registration lifecycle; the relay-side ids-only LOG audit fixture lives in the relay repo's own suite. ntfy stays the documented default backend. ENVIRONMENT LIMIT, named the way MC-5's evidence carries its locked-phone leg: no real handset was driven — on-device delivery through Apple's/Google's push services requires MC-10's store builds, so the vendor leg is verified at the wire/audit level, not on-device."
         },
         {
           "id": "MC-10",
@@ -7814,18 +7816,13 @@
         "plan": "DL"
       },
       {
-        "id": "EA-7",
-        "title": "Sender-trust substrate — channels' inbound-identity half + DM pairing",
-        "plan": "EA"
-      },
-      {
         "id": "ES-9",
         "title": "Loop-3 live field metrics beside lab results + lab_field_divergence (amendment E3)",
         "plan": "ES"
       },
       {
-        "id": "MC-9",
-        "title": "S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring",
+        "id": "MC-10",
+        "title": "S4 store packaging + mobile-release docs",
         "plan": "MC"
       },
       {
@@ -9781,9 +9778,9 @@
         "code": "EA",
         "plan": "EXTERNAL-ACCESS",
         "total_atoms": 9,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
@@ -9934,9 +9931,9 @@
         "code": "MC",
         "plan": "MOBILE-COMPANION",
         "total_atoms": 10,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
