@@ -117,6 +117,13 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // The "Ready" filter pulls startable tasks from the server (dependency-aware)
   // rather than filtering the loaded list, so it's kept in its own slice.
   const [ready, setReady] = useState<TaskItem[] | null>(null)
+  // Errors from the two server-backed slices are kept, not folded into `[]`: a failed read
+  // rendered as "Nothing here — No tasks match this filter", the false-empty the main tasks
+  // load already answers with LoadError. The nonces re-run each fetch from a Retry click.
+  const [readyErr, setReadyErr] = useState<unknown>(null)
+  const [readyNonce, setReadyNonce] = useState(0)
+  const [searchErr, setSearchErr] = useState<unknown>(null)
+  const [searchNonce, setSearchNonce] = useState(0)
   // Server-backed search (/api/tasks/search): a non-empty query takes precedence
   // over the status filter. URL-backed (?q, replace) so it's shareable + survives
   // refresh; one Back exits search rather than rewinding keystrokes.
@@ -200,21 +207,23 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // Refetch ready tasks whenever the Ready filter is active (and on tasks reload).
   useEffect(() => {
     if (filter !== 'ready') return
-    api.readyTasks().then(setReady).catch(() => setReady([]))
-  }, [filter, tasks])
+    setReadyErr(null)
+    api.readyTasks().then(setReady).catch((e) => { setReadyErr(e); setReady(null) })
+  }, [filter, tasks, readyNonce])
 
   // Debounced server-side search; clears results when the query is emptied.
   const q = query.trim()
   useEffect(() => {
-    if (!q) { setResults(null); return }
+    if (!q) { setResults(null); setSearchErr(null); return }
     let alive = true
+    setSearchErr(null)
     const h = window.setTimeout(() => {
       api.searchTasks({ query: q, limit: 100 })
         .then((d) => { if (alive) setResults(d.tasks) })
-        .catch(() => { if (alive) setResults([]) })
+        .catch((e) => { if (alive) { setSearchErr(e); setResults(null) } })
     }, 250)
     return () => { alive = false; clearTimeout(h) }
-  }, [q, tasks])
+  }, [q, tasks, searchNonce])
 
   // Load the project / task-list / code-project catalog once: powers the scope
   // dropdown (every project + which are code-backed) and the list sub-filter.
@@ -426,7 +435,9 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
             {/* Error FIRST: `tasks === null` also satisfies the skeleton and the empty branch, so a
                 later test would be unreachable. Removing the swallow above is only half the fix —
                 without this branch a failed load would hang on the skeleton forever instead. */}
-            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
+            {q && searchErr ? <LoadError what="search results" error={searchErr} onRetry={() => setSearchNonce((n) => n + 1)} />
+              : filter === 'ready' && !q && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
+              : tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
             ) : scopedTasks.length === 0 ? (
@@ -454,7 +465,9 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
                 onPick={(l) => setListFilter(listFilter?.id === l.id ? null : { id: l.id, name: l.name })}
                 onReset={resetList} />
             )}
-            {tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
+            {q && searchErr ? <LoadError what="search results" error={searchErr} onRetry={() => setSearchNonce((n) => n + 1)} />
+              : filter === 'ready' && !q && readyErr ? <LoadError what="ready tasks" error={readyErr} onRetry={() => setReadyNonce((n) => n + 1)} />
+              : tasks === null && loadErr ? <LoadError what="tasks" error={loadErr} onRetry={() => { invalidateKeys('tasks', true); refresh() }} />
               : filtered === null ? <ListSkeleton rows={6} what="tasks" /> : (tasks?.length ?? 0) === 0 ? (
               <EmptyState icon={ListChecksLike} title="No tasks" hint="Break a goal into tracked work. Create a task, or let an agent plan from a chat." action={{ label: 'New task', onClick: onCreate, icon: Plus }} />
             ) : view === 'dag' ? (

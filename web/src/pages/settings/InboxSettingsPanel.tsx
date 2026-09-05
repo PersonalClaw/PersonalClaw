@@ -61,11 +61,19 @@ export function InboxSettingsPanel() {
   }, [])
 
   const patch = (p: Partial<InboxSettings>) => {
-    setS((prev) => prev && { ...prev, ...p })
-    // The optimistic local update above stays put on failure, so silence read as success.
+    // Roll back on refusal (#624): the notify below reports the failure, but the
+    // optimistic merge stayed put — the field showed a value the server had
+    // REFUSED until the next reload. Pre-patch rollback, same as `setTriage`/
+    // `setAutoExec` below and `VoicePanel.saveSettings` (`settingsWriteReported`
+    // doctrine: keeping a refused value is the one unsanctioned shape).
+    const prev = s
+    setS((cur) => cur && { ...cur, ...p })
     api.saveInboxSettings(p)
       .then(() => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) })
-      .catch((e) => notify(`Couldn't save your inbox settings: ${String((e as Error)?.message || e)}`, 'error'))
+      .catch((e) => {
+        setS(prev)
+        notify(`Couldn't save your inbox settings: ${String((e as Error)?.message || e)}`, 'error')
+      })
   }
 
   const flash = () => { setSaved(true); window.setTimeout(() => setSaved(false), 1600) }

@@ -19,7 +19,7 @@ def _run(coro):
 @pytest.fixture(autouse=True)
 def _tmp_config(monkeypatch, tmp_path):
     # Point the loop store + the tasks hierarchy + native task provider at one tmp dir.
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     monkeypatch.setattr("personalclaw.tasks.hierarchy.config_dir", lambda: tmp_path)
     import personalclaw.tasks.native as nat
 

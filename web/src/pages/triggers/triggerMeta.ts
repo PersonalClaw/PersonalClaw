@@ -166,6 +166,15 @@ export function eventDormancyReason(cat: TriggerVariables | null, event?: string
   const found = cat?.lifecycle?.find((e) => e.event === event)
   return found?.dormant ? (found.dormant_reason ?? '') : ''
 }
+/** Whether an event fires ONLY through an agent's own `triggers` list (issue 610). Server-sourced
+ *  like `eventIsDormant` — the two fire paths live in the backend, so the backend says which one
+ *  an event rides. `false` while the catalog loads or on an older backend: the honest default is
+ *  to make NO claim rather than badge from a guess (a wrong "needs an agent" on a hook that fires
+ *  globally is the exact lie this reader exists to end). */
+export function eventIsAgentScoped(cat: TriggerVariables | null, event?: string): boolean {
+  if (!event) return false
+  return Boolean(cat?.lifecycle?.find((e) => e.event === event)?.agent_scoped)
+}
 /** Tool events take a tool-name matcher; others take a context glob. */
 export function eventTakesToolMatcher(event?: string): boolean {
   return event === 'PreToolUse' || event === 'PostToolUse'

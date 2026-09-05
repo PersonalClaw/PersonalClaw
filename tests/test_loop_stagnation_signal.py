@@ -32,6 +32,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import manager, store
 from personalclaw.loop import watchdog as W
 from personalclaw.loop.loop import Loop, LoopStatus
@@ -102,7 +103,7 @@ def cfg_file(tmp_path, monkeypatch):
 
 @pytest.fixture
 def loop_home(tmp_path, monkeypatch):
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     return tmp_path
 
 
@@ -146,8 +147,8 @@ class _Driver:
     async def acycle(self, **finding) -> None:
         """One worker cycle: write the finding, then let the supervisor observe it. Async so
         an already-running loop (the PATCH rail's test client) can drive it too."""
-        n = len(store.get_findings(self.id)) + 1
-        d = store.loop_dir(self.id)
+        n = len(loop_files.get_findings(self.id)) + 1
+        d = loop_files.loop_dir(self.id)
         (d / "findings" / f"cycle_{n:03d}.json").write_text(json.dumps({"cycle": n, **finding}))
         await self.wd._poll_once()
 

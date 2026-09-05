@@ -74,6 +74,7 @@ from personalclaw.llm_helpers import (
     PromptBusyExhaustedError,
     stream_and_collect,
 )
+from personalclaw.loop import files as loop_files
 from personalclaw.memory import MemoryStore
 from personalclaw.schedule_history import ScheduleRunStore
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -1781,6 +1782,39 @@ class GatewayOrchestrator:
                 )
         except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
             logger.warning("autonomy promotion scan failed", exc_info=True)
+        # §4.4 mechanical revocation, nodding leg. The other three triggers fire at
+        # their own conclusion events; a nodding gate is a STANDING condition with no
+        # event, so this sweep carries it — gateway-side, because guardrails must not
+        # import the workflows layer (the same inversion as `note_for` above). The
+        # journal walk is priced only when something is actually at stake: with no
+        # standing grant there is nothing to revoke, and revocation's natural
+        # idempotence (a revoked scope holds no grant) keeps a persistent nodding gate
+        # from re-firing every sweep.
+        try:
+            from personalclaw.guardrails.autonomy import registered_action_types, rung_state
+            from personalclaw.guardrails.ladder import revoke_granted_scopes
+            from personalclaw.workflows.handlers import nodding_revocation_cause
+
+            any_granted = any(
+                (state := rung_state(spec.key)) is not None and state.granted_at
+                for spec in registered_action_types()
+            )
+            if any_granted:
+                cause = nodding_revocation_cause()
+                if cause:
+                    revoked = revoke_granted_scopes(
+                        cause=cause,
+                        evidence_id="nodding_gate",
+                        source="nodding_loop",
+                    )
+                    if revoked:
+                        logger.warning(
+                            "autonomy: nodding gate revoked %d grant(s): %s",
+                            len(revoked),
+                            ", ".join(revoked),
+                        )
+        except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
+            logger.warning("autonomy nodding revocation sweep failed", exc_info=True)
 
     def _scan_scratchpad(self) -> None:
         """Scan the configured scratchpad and raise proposals for its new actionable lines.
@@ -2311,14 +2345,13 @@ class GatewayOrchestrator:
 
             def _finding_count(_key: str) -> int:
                 try:
-                    from personalclaw.loop import store as _lstore
 
                     # loop-<id> (main) or loop-<id>-<taskid> (parallel task-worker);
                     # findings live on the parent loop in both cases.
                     _lid = _key.split("loop-", 1)[-1]
-                    if _lstore.loop_dir(_lid) is None and "-" in _lid:
+                    if loop_files.loop_dir(_lid) is None and "-" in _lid:
                         _lid = _lid.rsplit("-", 1)[0]
-                    return len(_lstore.get_findings(_lid))
+                    return len(loop_files.get_findings(_lid))
                 except Exception:
                     return 0
 

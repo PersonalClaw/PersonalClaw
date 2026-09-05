@@ -28,6 +28,8 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from personalclaw.loop import files as loop_files
+
 logger = logging.getLogger(__name__)
 
 # Snapshot cap: a huge entity must not blow the first turn's budget. Truncation
@@ -144,7 +146,7 @@ def _resolve_loop_finding(entity_id: str, state) -> InvestigateContext | None:
     loop = loop_store.get(loop_id)
     if loop is None:
         return None
-    findings = loop_store.get_findings(loop_id)
+    findings = loop_files.get_findings(loop_id)
     if not findings:
         return None
     finding = None
@@ -167,7 +169,7 @@ def _resolve_loop_finding(entity_id: str, state) -> InvestigateContext | None:
         if val:
             lines.append(f"  {key}: {val}")
     try:
-        verdicts = loop_store.get_verdicts(loop_id)
+        verdicts = loop_files.get_verdicts(loop_id)
         v = next((v for v in verdicts if v.get("cycle") == finding.get("cycle")), None)
         if v:
             lines.append(
@@ -267,7 +269,7 @@ def _resolve_notification(entity_id: str, state) -> InvestigateContext | None:
             if loop is not None:
                 lines.append(f"  Task: {loop.task}")
                 lines.append(f"  Status: {loop.status} (cycle {getattr(loop, 'cycle', '?')})")
-                findings = loop_store.get_findings(loop_id)
+                findings = loop_files.get_findings(loop_id)
                 if findings:
                     last = findings[-1]
                     summary = str(last.get("summary") or "").strip()
@@ -551,7 +553,7 @@ def _resolve_loop_cycle(entity_id: str, state) -> InvestigateContext | None:
         want = int(cycle_s) if cycle_s else None
     except ValueError:
         want = None
-    findings = loop_store.get_findings(loop_id)
+    findings = loop_files.get_findings(loop_id)
     if want is None:
         want = int(findings[-1].get("cycle", 0)) if findings else 0
     lines = [
@@ -570,7 +572,7 @@ def _resolve_loop_cycle(entity_id: str, state) -> InvestigateContext | None:
         lines.append("  (no finding recorded for this cycle)")
     try:
         verdict = next(
-            (v for v in loop_store.get_verdicts(loop_id) if v.get("cycle") == want), None
+            (v for v in loop_files.get_verdicts(loop_id) if v.get("cycle") == want), None
         )
         if verdict:
             lines.append(
@@ -584,7 +586,7 @@ def _resolve_loop_cycle(entity_id: str, state) -> InvestigateContext | None:
     except Exception:  # noqa: BLE001
         logger.debug("loop-cycle verdict enrichment failed", exc_info=True)
     try:
-        for nudge in loop_store.get_nudges(loop_id):
+        for nudge in loop_files.get_nudges(loop_id):
             if int(nudge.get("sent_at_cycle", -1)) == want:
                 lines.append(f"[user nudge] {nudge.get('text') or ''}")
     except Exception:  # noqa: BLE001

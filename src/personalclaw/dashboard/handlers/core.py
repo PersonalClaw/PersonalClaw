@@ -1218,6 +1218,55 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         except Exception:
             logger.warning("Failed to apply log level live after config patch", exc_info=True)
 
+    # YOLO is an authorization control with a live runtime mechanism (trust_mode),
+    # and this config field's only other reader is the startup seed — so this PATCH
+    # used to change the file while the running instance kept its previous posture.
+    # The OFF direction is the security-relevant one: a user revoking the bypass got
+    # a UI reading false while approvals stayed bypassed until restart (#672).
+    if path_key == "agent.yolo":
+        state = request.app.get("state")
+        if state is None:
+            logger.warning("agent.yolo patched with no dashboard state; live apply skipped")
+        elif value:
+            # Mirror the startup path exactly: the grant is SEL-audit-GATED (an
+            # unauditable permission change is refused, config stays saved for the
+            # restart path) and permanent (from_config — the same semantics this
+            # same key produces at boot, deliberately unlike the chat pill's TTL).
+            try:
+                from personalclaw.sel import sel
+
+                sel().log_api_access(
+                    caller="dashboard:config",
+                    operation="mode_change:yolo",
+                    outcome="enabled",
+                    resources="config:agent.yolo",
+                )
+            except Exception:
+                logger.error(
+                    "SEL audit failed; config saved but YOLO NOT enabled live "
+                    "(matches the startup path's refusal)",
+                    exc_info=True,
+                )
+            else:
+                state.enable_yolo(from_config=True)
+        else:
+            # Revocation is deliberately NOT audit-gated: a broken audit sink must
+            # never keep the bypass alive. disable_yolo() runs the trust_mode
+            # on-disable callback, clearing untrusted per-session auto-approve
+            # policies exactly like a TTL expiry would.
+            state.disable_yolo()
+            try:
+                from personalclaw.sel import sel
+
+                sel().log_api_access(
+                    caller="dashboard:config",
+                    operation="mode_change:yolo",
+                    outcome="disabled",
+                    resources="config:agent.yolo",
+                )
+            except Exception:
+                logger.warning("SEL audit failed for YOLO disable via config patch", exc_info=True)
+
     # Orchestrator skill toggle: generate the always-loaded routing skill when
     # enabled, or remove it (incl. the pre-rename conductor/ dir) when disabled —
     # so the single-field toggle actually takes effect (the FE patches via this

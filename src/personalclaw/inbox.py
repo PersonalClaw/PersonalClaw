@@ -150,6 +150,11 @@ class Confidence(str, Enum):
     HIGH = "high"
     NEEDS_REVIEW = "needs_review"
     ESCALATE = "escalate"
+    # A manual reclassification: the verdict is the USER's, so no machine confidence
+    # describes it. Written by the dashboard's Reclassify control alongside the new
+    # classification — the pair travels together so the UI never shows the model's
+    # confidence in a verdict the user has overridden.
+    USER = "user"
 
 
 @dataclass

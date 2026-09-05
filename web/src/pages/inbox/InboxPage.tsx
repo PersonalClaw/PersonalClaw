@@ -16,6 +16,7 @@ import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type InboxItem, type InboxStatus } from '../../lib/api'
 import { rowSubject } from '../../lib/rowSubject'
+import { previewText } from '../../lib/previewText'
 import { Segmented } from '../../ui/Segmented'
 import { classMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, ITEM_KINDS, NON_CHANNEL_ITEM_KINDS, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
@@ -25,7 +26,7 @@ import { ProposalsLens } from './ProposalsLens'
 import { TriageDigestCard } from './TriageDigestCard'
 import { ContextMenu, EntranceGroup, EntranceRegion, type ContextMenuItem } from '../../ui/motion'
 import { PageTitle } from '../../ui/PageTitle'
-import { reportingWrite } from '../../app/reportingWrite'
+import { reportActionFailure, reportingWrite } from '../../app/reportingWrite'
 
 // 'open' means unresolved — pending OR seen. It replaces the old 'pending' key, which
 // compared status === 'pending' exactly: once viewing an item marks it SEEN, that filter
@@ -128,13 +129,33 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
       reload()
     } finally { setBusy(false) }
   }
-  async function restart() { setBusy(true); try { await api.restartInbox(); setTimeout(reload, 800) } finally { setBusy(false) } }
+  // Restart answers with an {ok,error} envelope instead of throwing on a failed relaunch, so both
+  // failure shapes funnel through the one sentence owner. The delayed reload is gated: refetching
+  // after a failure re-renders the same stalled sources as "nothing happened".
+  async function restart() {
+    setBusy(true)
+    try {
+      if (!(await reportingWrite('restart the inbox sources', async () => {
+        const r = await api.restartInbox()
+        if (!r?.ok) throw new Error(r?.error || 'the gateway declined to restart')
+      }))) return
+      setTimeout(reload, 800)
+    } finally { setBusy(false) }
+  }
   // Generate a catch-up digest for a channel → arrives as a new inbox item (also
   // pushed live over the WS); open it so the user lands on the summary.
   async function digest(channelId: string) {
     setBusy(true)
-    try { const it = await api.digestInboxChannel(channelId); reload(); if (it?.id) setOpenId(it.id) }
-    finally { setBusy(false) }
+    try {
+      // The result is needed (the new item is opened), so this takes the `.catch` form of the
+      // shared report rather than `reportingWrite`'s boolean. Reload only on success — after a
+      // failure it would re-render the same list, twice saying nothing.
+      const it = await api.digestInboxChannel(channelId)
+        .catch((e: unknown) => { reportActionFailure('generate the digest')(e); return null })
+      if (!it) return
+      reload()
+      if (it.id) setOpenId(it.id)
+    } finally { setBusy(false) }
   }
   // Digest picker channels: watched channels ∪ channels present in stored items
   // (the backend digests any channel's stored items — gating on watched_channels
@@ -454,7 +475,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                     back in, and ListRow's entrance stagger is keyed on the index — so an
                     index-keyed delay replays the fade on every row, on every scroll. */}
                 <ListRow index={listCtx.windowed ? 0 : i} accent={unread ? accentTone : undefined} onClick={() => setOpenId(it.id)}
-                  label={rowSubject([channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label, (it.message ?? '').replace(/\s+/g, ' ')])}>
+                  label={rowSubject([channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label, previewText(it.message)])}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${accentTone} 16%, transparent)` }}>
                     {channelBacked ? <cm.icon size={18} style={{ color: cm.tone }} /> : <km.icon size={18} style={{ color: km.tone }} />}
                   </span>
@@ -471,7 +492,10 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                           users who need it most. */}
                       {it.favorited && <Star size={12} className="shrink-0 text-primary" style={{ fill: 'currentColor' }} aria-label="Favorited" />}
                     </div>
-                    <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{it.message}</p>
+                    {/* The panel renders this content as real markup; the ROW is a one-line
+                        plain-text preview, so the marks must go — a digest body's `**` and `##`
+                        rendered literally here for every digest row (issue 618). */}
+                    <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{previewText(it.message)}</p>
                   </div>
                   <div className="hidden sm:flex shrink-0 items-center gap-s">
                     {/* Confidence is a TRIAGE judgment; a needs_input row was never triaged,

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.apps.manager import app_dir
+from personalclaw.apps.schema_validate import validate_properties
 from personalclaw.atomic_write import atomic_write
 
 logger = logging.getLogger(__name__)
@@ -59,37 +60,25 @@ class ProviderSettings:
 
     @staticmethod
     def validate(config: dict[str, Any], schema: dict[str, Any]) -> list[str]:
-        """Validate config against a JSON Schema. Returns list of errors."""
+        """Validate config against a declared ``settingsSchema``. Returns list of errors.
+
+        The per-property rules live in :mod:`personalclaw.apps.schema_validate`, shared with
+        the app ``configSchema`` path. This copy used to implement them itself and had drifted:
+        it enforced no bound at all (so ``confidence_threshold`` declaring ``[0.0, 1.0]``
+        accepted ``5``) and accepted ``True`` for an ``integer``, since ``bool`` is an ``int``
+        subclass (#616).
+
+        What stays HERE is this path's own object-level policy, which differs from the app
+        path's on purpose: a provider with no schema is unvalidated, and an unknown key is
+        IGNORED rather than refused — a stored config may carry a key from an older manifest,
+        and refusing it would make the whole config unsavable.
+        """
         if not schema:
             return []
-        errors: list[str] = []
         properties = schema.get("properties", {})
-        required = set(schema.get("required", []))
-
-        for key in required:
-            if key not in config:
-                label = properties.get(key, {}).get("x-meta", {}).get("label", key)
-                errors.append(f"Missing required field: {label}")
-
-        for key, value in config.items():
-            if key not in properties:
-                continue
-            prop_schema = properties[key]
-            prop_type = prop_schema.get("type", "")
-            if prop_type == "string" and not isinstance(value, str):
-                errors.append(f"{key}: expected string")
-            elif prop_type == "number" and not isinstance(value, (int, float)):
-                errors.append(f"{key}: expected number")
-            elif prop_type == "integer" and not isinstance(value, int):
-                errors.append(f"{key}: expected integer")
-            elif prop_type == "boolean" and not isinstance(value, bool):
-                errors.append(f"{key}: expected boolean")
-            elif prop_type == "array" and not isinstance(value, list):
-                errors.append(f"{key}: expected array")
-            elif prop_type == "object" and not isinstance(value, dict):
-                errors.append(f"{key}: expected object")
-
-            if "enum" in prop_schema and value not in prop_schema["enum"]:
-                errors.append(f"{key}: must be one of {prop_schema['enum']}")
-
-        return errors
+        if not isinstance(properties, dict):
+            return []
+        # An undeclared key is simply not checked (the shared module skips whatever the schema
+        # does not describe). The app path layers its own refusal on top of that; this one does
+        # not, deliberately.
+        return validate_properties(config, properties, schema.get("required", []))

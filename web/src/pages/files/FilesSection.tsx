@@ -67,6 +67,14 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
   // Multi-tab open files.
   const fileTabs = useFileTabs()
   const viewerRefs = useRef(new Map<string, FileViewerHandle>())
+  // The host-owned draft cache FileViewer documents (issue 2279): without one, any
+  // remount of a keyed viewer — a rename re-points the tab to a new path, which is a
+  // new key — discarded an unsaved edit silently. Lifecycle matches the Code cockpit:
+  // a confirmed close is a discard (purge), a rename moves the entry with the file.
+  const draftStore = useRef(new Map<string, { draft: string; base: string; warned?: boolean }>()).current
+  const closeTab = useCallback(async (path: string) => {
+    if (await fileTabs.close(path)) draftStore.delete(path)
+  }, [fileTabs, draftStore])
 
   // Content (grep) search — lives in the always-visible header box. URL-backed
   // (?q/?include, replace) so a search is shareable + refresh-stable.
@@ -187,48 +195,28 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
     const dest = parent ? `${parent}/${nextName}` : nextName
     setFileErr(null)
 
-    // 🔴 ASK BEFORE THE IRREVERSIBLE STEP. This used to call `api.fileMove` and then
-    // `fileTabs.close()`, and `close()` is what raised the "Discard unsaved changes?" prompt — so
-    // the prompt appeared AFTER the rename was on disk, asking permission for a consequence of it.
-    // Its Cancel branch cancelled only the tab close, leaving a tab bound to a path that no longer
-    // existed; the next Save 404'd with an unhandled ApiError and nothing on screen (issue 654).
-    //
-    // Dirty tabs are named in the prompt, and a directory rename can carry several, so it counts
-    // them rather than assuming one file.
-    const affected = fileTabs.tabsUnder(entry.path)
-    const dirtyTabs = affected.filter((t) => fileTabs.dirty[t.path])
-    if (dirtyTabs.length) {
-      const what = dirtyTabs.length === 1
-        ? `"${dirtyTabs[0].name}" has unsaved changes.`
-        : `${dirtyTabs.length} open files under "${entry.name}" have unsaved changes.`
-      const ok = await confirm({
-        title: `Rename and discard unsaved changes?`,
-        body: `${what} Renaming will lose ${dirtyTabs.length === 1 ? 'those edits' : 'them'}.`,
-        danger: true,
-        confirmLabel: 'Rename and discard',
-      })
-      // Cancel now means what it says: nothing was renamed, and the edits are still there.
-      if (!ok) return
-      // Consent given, so those drafts are gone — say so BEFORE re-pointing. `renamePath` carries
-      // dirty flags across (correct for a host that owns a draft store and really does keep the
-      // edit), and this page owns none: the viewer remounts on the new path and re-reads disk. A
-      // flag left set would show a dirty dot on a clean editor and arm the beforeunload guard over
-      // nothing.
-      for (const t of dirtyTabs) fileTabs.markDirty(t.path, false)
-    }
+    // With a host-owned draft cache (issue 2279) a rename PRESERVES unsaved edits: the
+    // cache entry moves to the new key before `renamePath` re-points the tab, so the
+    // remounted viewer seeds from the draft instead of disk. The old consent prompt
+    // ("Rename and discard unsaved changes?") existed because this page had no store to
+    // carry the draft — nothing is discarded now, so nothing needs consent. `renamePath`
+    // already carries the dirty flag across; the moved cache entry is what makes that
+    // flag TRUE instead of a dirty dot on a clean editor.
+    const moved = (p: string) => (p === entry.path ? dest : p.startsWith(`${entry.path}/`) ? dest + p.slice(entry.path.length) : p)
 
     try {
       await api.fileMove(entry.path, dest)
-      // The tab FOLLOWS the file. Closing it was the old behaviour and it was never the right one
-      // — a rename is not a reason to stop looking at a file. Any dirty tab was just discarded by
-      // explicit consent above, so re-pointing is safe: the viewer remounts on the new path and
-      // reads it from disk.
+      for (const [key, val] of [...draftStore]) {
+        const next = moved(key)
+        if (next !== key) { draftStore.delete(key); draftStore.set(next, val) }
+      }
+      // The tab FOLLOWS the file — and now, so does the work in it.
       fileTabs.renamePath(entry.path, dest)
       refresh()
     } catch (e) {
       setFileErr(`Rename failed: ${(e as Error).message}`)
     }
-  }, [fileTabs, refresh])
+  }, [fileTabs, refresh, draftStore])
 
   const onDelete = useCallback(async (entry: FsEntry) => {
     const ok = await confirm({
@@ -241,7 +229,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
     setFileErr(null)
     try {
       await api.fileDelete(entry.path)
-      if (fileTabs.tabs.some((t) => t.path === entry.path)) fileTabs.close(entry.path)
+      if (fileTabs.tabs.some((t) => t.path === entry.path)) void closeTab(entry.path)
       refresh()
     } catch (e) { setFileErr(`Delete failed: ${(e as Error).message}`) }
   }, [fileTabs, refresh])
@@ -330,14 +318,14 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                         aria-keyshortcuts="Delete"
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileTabs.setActivePath(t.path); return }
-                          if (e.key === 'Delete') { e.preventDefault(); fileTabs.close(t.path) }
+                          if (e.key === 'Delete') { e.preventDefault(); void closeTab(t.path) }
                         }}
                         className="group/tab inline-flex h-10 shrink-0 cursor-pointer items-center gap-2 rounded-t-lg border border-b-0 pl-3.5 pr-2 text-[0.8125rem] transition-colors"
                         style={on ? { background: 'var(--color-surface-container)', color: 'var(--color-on-surface)', borderColor: 'var(--color-outline)' } : { color: 'var(--color-on-surface-low)', borderColor: 'transparent' }}>
                         <Icon size={14} className="shrink-0 opacity-70" />
                         <span className="max-w-[180px] truncate">{t.name}</span>
                         {fileTabs.dirty[t.path] && <span className="size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} />}
-                        <button type="button" onClick={(e) => { e.stopPropagation(); fileTabs.close(t.path) }}
+                        <button type="button" onClick={(e) => { e.stopPropagation(); void closeTab(t.path) }}
                           aria-label={`Close ${t.name}`} title="Close file"
                           className="grid size-6 -mr-0.5 shrink-0 place-items-center rounded opacity-50 hover:bg-surface-high hover:opacity-100"><X size={13} /></button>
                       </div>
@@ -353,7 +341,8 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                     <div key={t.path} className="absolute inset-0" style={{ display: t.path === fileTabs.activePath ? 'block' : 'none' }}>
                       <FileViewer ref={(h) => { if (h) viewerRefs.current.set(t.path, h); else viewerRefs.current.delete(t.path) }}
                         entry={{ name: t.name, path: t.path, is_dir: false }} onSaved={refresh} onSaveAsArtifact={saveAsArtifact}
-                        onDirtyChange={(d) => fileTabs.markDirty(t.path, d)} onMissing={(p) => fileTabs.closeNow(p)}
+                        onDirtyChange={(d) => fileTabs.markDirty(t.path, d)} onMissing={(p) => { draftStore.delete(p); fileTabs.closeNow(p) }}
+                        draftStore={draftStore}
                         commentTarget={navigate ? newSessionTarget(navigate, { name: `Comments: ${t.name}` }) : undefined} />
                     </div>
                   ))

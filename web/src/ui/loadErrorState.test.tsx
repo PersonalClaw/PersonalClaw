@@ -381,3 +381,27 @@ describe('the migrated surfaces read the error', () => {
     expect(walk(SRC).length, 'the walker must find the tree').toBeGreaterThan(200)
   })
 })
+
+describe('direct fetches keep their rejection too — the 2026-09-05 false-empty family', () => {
+  // These slices fetch with a bare `api.*` call (an effect or a handler), not `useQuery`, so the
+  // structural scan above cannot see them. Each once folded its rejection into an empty collection:
+  // a failed intent-outcomes read said "Nothing gathered yet", a failed marketplace search said
+  // "No results — try a different search term", and a failed task search / ready fetch said
+  // "No tasks match this filter". Positive pins, per this file's own lesson about char windows:
+  // each catch must RECORD the rejection, and the surface must render LoadError for that slice —
+  // reverting either half turns this red.
+  const PINS: Array<[string, RegExp, string]> = [
+    ['pages/knowledge/KnowledgeListPage.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*setOutcomesErr\(e\);\s*setOutcomes\(null\)\s*\}\)/, 'gathered matches'],
+    ['pages/skills/SkillsPage.tsx', /catch\s*\(e\)\s*\{\s*setSearchErr\(e\);\s*setResults\(null\)/, 'skill search results'],
+    ['pages/tasks/TasksListPage.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*setReadyErr\(e\);\s*setReady\(null\)\s*\}\)/, 'ready tasks'],
+    ['pages/tasks/TasksListPage.tsx', /\.catch\(\(e\)\s*=>\s*\{\s*if\s*\(alive\)\s*\{\s*setSearchErr\(e\);\s*setResults\(null\)\s*\}\s*\}\)/, 'search results'],
+  ]
+
+  it('each slice records its rejection and renders LoadError for it', () => {
+    for (const [rel, catchPin, what] of PINS) {
+      const src = codeOf(join(SRC, rel))
+      expect(catchPin.test(src), `${rel}: the catch must record the error, not fold it into an empty value (${catchPin})`).toBe(true)
+      expect(src.includes(`<LoadError what="${what}"`), `${rel}: must render <LoadError what="${what}">`).toBe(true)
+    }
+  })
+})

@@ -139,6 +139,55 @@ def test_a_paired_sender_does_reach_a_session(turns):
     assert [t[1] for t in turns] == ["what's the weather?"]
 
 
+def test_an_allowed_channel_message_is_broadcast_to_a_watching_dashboard(turns):
+    """The user line a channel delivers reaches an open dashboard live.
+
+    ``Session.append`` deliberately skips the global broadcast for role="user" — the
+    dashboard frontend adds its OWN sends optimistically. A channel-origin user line has
+    no frontend that added it, so the door must broadcast it explicitly (and refresh the
+    session list), the way slack's pre-door intercept always did. Asserted on the
+    REDACTED text: the broadcast is a display path, so it must carry the same redacted
+    line the session transcript does, never the raw text.
+    """
+    ct.allow_sender(PROVIDER, "friend", name="Friend")
+
+    class BroadcastRecordingState(CapturingState):
+        def __init__(self):
+            super().__init__()
+            self.broadcasts: list[tuple[str, dict]] = []
+            self.session_list_pushes = 0
+
+        def broadcast_ws(self, event: str, payload: dict) -> None:
+            self.broadcasts.append((event, payload))
+
+        def push_sessions_update(self) -> None:
+            self.session_list_pushes += 1
+
+    state = BroadcastRecordingState()
+    raw = "see https://user:hunter2@evil.example/x"
+
+    async def go():
+        v = await _Services(state).deliver_channel_inbound(
+            PROVIDER, _msg(text=raw, sender="friend"), is_dm=True
+        )
+        await _settle()
+        return v
+
+    verdict = asyncio.run(go())
+
+    assert verdict.allowed is True
+    assert state.session_list_pushes == 1
+    assert len(state.broadcasts) == 1
+    event, payload = state.broadcasts[0]
+    assert event == "chat_message"
+    assert payload["role"] == "user"
+    assert payload["session"] == state.sessions_created[0].key
+    # The broadcast text is the redacted line the transcript holds — not the raw text.
+    appended = [c for role, c in state.sessions_created[0].appended if role == "user"]
+    assert payload["content"] == appended[0]
+    assert "hunter2" not in payload["content"]
+
+
 # ── the chokepoint property: trust does not depend on the transport co-operating ──
 
 
@@ -329,6 +378,35 @@ def test_tracked_group_content_reaches_the_session_fenced(turns):
     assert verdict.allowed is True
     assert "untrusted_content" in verdict.fenced_text
     assert "untrusted_content" in turns[0][1], "the FENCED text is what became the turn"
+
+
+def test_an_allowed_senders_tracked_group_message_is_not_fenced(turns):
+    """The fence is for NON-owner group content — an allowed sender's message enters raw.
+
+    Fencing the owner's own message in a linked group thread would make the agent read
+    the owner's instruction as untrusted data it must not act on, which inverts the
+    control's purpose. The gate's docstring has always scoped the fence to non-owner
+    content; this pins the exemption to the allowed-senders list, the store's only
+    owner-shaped vocabulary.
+    """
+    ct.allow_sender(PROVIDER, "keyur", name="Owner")
+    ct.track(PROVIDER, "grp1")
+    state = CapturingState()
+
+    async def go():
+        v = await _Services(state).deliver_channel_inbound(
+            PROVIDER,
+            _msg(text="deploy the fix please", sender="keyur", channel="grp1"),
+            is_dm=False,
+        )
+        await _settle()
+        return v
+
+    verdict = asyncio.run(go())
+
+    assert verdict.allowed is True
+    assert verdict.fenced_text == ""
+    assert turns[0][1] == "deploy the fix please", "the RAW text is what became the turn"
 
 
 def test_an_untracked_group_never_reaches_a_session(turns):

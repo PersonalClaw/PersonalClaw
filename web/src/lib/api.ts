@@ -1889,7 +1889,7 @@ export interface ActionProvider {
 // `dormant`: the event is declared and configurable but NO code fires it — 7 of the 15 are.
 // Server-sourced for the same reason the vars are: a hard-coded list here would tell a user their
 // working hook is dead the moment the backend wires one.
-export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string }
+export interface LifecycleEventInfo { event: string; label: string; desc: string; vars: string[]; blocking: boolean; dormant?: boolean; dormant_reason?: string; agent_scoped?: boolean }
 // One app-contributed trigger source and the events it declares (AUTO-A4). Read from the LIVE
 // `trigger_sources` registry, so a disabled app's source is absent rather than offered — authoring a
 // trigger against an event that cannot fire is the failure this list exists to prevent.
@@ -1976,6 +1976,10 @@ export interface StagingWeek {
   days: number; buckets: StagingDay[]
   silent_days: string[]; error_days: string[]
   produced_total: number; cost_usd: number
+  /** False only before the FIRST pass EVER — an unbounded check, not the window's rows, because
+   *  an all-silent window is also what ran-then-died looks like. Optional so a stale cached
+   *  payload without the field defaults to showing the warning chip, never to hiding it. */
+  has_ever_run?: boolean
 }
 
 // The flywheel observability panel (GET /api/learning/health — LEARN-R14b).
@@ -2786,7 +2790,7 @@ export interface KnowledgeStats { items: number; entities: number; relations: nu
 // classification + confidence + an optional drafted reply. Shape matches the
 // backend InboxItem dataclass (inbox.py).
 export type InboxClassification = 'needs_reply' | 'fyi' | 'noise'
-export type InboxConfidence = 'high' | 'needs_review' | 'escalate'
+export type InboxConfidence = 'high' | 'needs_review' | 'escalate' | 'user'
 // 'seen' is the read/unread boundary: surfaced to the user but not yet resolved.
 export type InboxItemStatus = 'pending' | 'seen' | 'sent' | 'dismissed' | 'handled' | 'filtered'
 // What kind of attention an item wants. 'message' is the default so every item written
@@ -3619,6 +3623,9 @@ export interface RunnerLease {
 // JSON-Schema (Draft-07 + x-meta) describing one provider's user-config fields.
 export interface ProviderSchemaProp {
   type?: string; default?: unknown; enum?: string[]; minimum?: number; maximum?: number
+  // The string constraints the backend enforces (schema_validate.ENFORCED_KEYWORDS). Carried so
+  // the form can state them natively instead of letting a save be the first feedback (#491).
+  minLength?: number; maxLength?: number; pattern?: string
   'x-meta'?: { label?: string; help?: string; sensitive?: boolean; placeholder?: string; tags?: string[] }
 }
 export interface ProviderSchema { type?: string; properties?: Record<string, ProviderSchemaProp>; required?: string[] }
@@ -5694,10 +5701,13 @@ export const api = {
     ),
   // The week-grid projection (AUTO-A3). `start` is a local ISO datetime; the backend computes every
   // occurrence from the recurrence each trigger already carries — read-only, no store changes.
-  triggersWeek: (start?: string, days = 7) => {
+  triggersWeek: (start?: string, days = 7, until?: string) => {
     const qs = new URLSearchParams()
     if (start) qs.set('start', start)
     qs.set('days', String(days))
+    // The exact end of the drawn week (issue 608): 7 LOCAL days are not 168h across a DST
+    // transition, so the grid names its true bound instead of letting the server derive one.
+    if (until) qs.set('until', until)
     return get<WeekProjection>(`/api/triggers/week?${qs.toString()}`)
   },
   // ── event-kind (data-event) triggers: the parity surface ──

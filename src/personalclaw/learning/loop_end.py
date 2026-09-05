@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
+from personalclaw.loop import files as loop_files
+
 logger = logging.getLogger(__name__)
 
 #: How many mined positive-path traces one terminal loop may file — the same bound run_end uses, and
@@ -90,7 +92,6 @@ def capture(loop: Any, service: Any, *, journal: Any = None, store: Any = None) 
     """
     report = {"mined": 0, "proposed": 0}
     from personalclaw.loop import journal as loop_journal
-    from personalclaw.loop import store as loop_store
 
     journal = journal or loop_journal
     store = store or _LoopRunStore()
@@ -98,7 +99,7 @@ def capture(loop: Any, service: Any, *, journal: Any = None, store: Any = None) 
 
     # Make sure the final cycle is on the ledger before mining reads it back.
     try:
-        loop_store.record_cycle_findings(view.id)
+        loop_files.record_cycle_findings(view.id)
     except Exception:
         logger.debug("loop-end: final ingest failed for %s", view.id, exc_info=True)
 

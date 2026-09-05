@@ -1451,6 +1451,23 @@ def file_demotion_proposal(reg: StudyRegistration, result: StudyResult) -> str:
         occurrences=1,
         min_evidence=1,
     )
+    # §4.4 mechanical revocation: a failed pre-registered study is the strongest
+    # causal evidence this substrate produces that the system's changes make things
+    # worse. The retirement above reverts the CHANGE; this revokes the AUTONOMY that
+    # would keep shipping changes like it unattended.
+    try:
+        from personalclaw.guardrails.ladder import revoke_granted_scopes
+
+        revoke_granted_scopes(
+            cause=(
+                f"Pre-registered study {reg.study_id} FAILED the candidate change to "
+                f"{target or 'its subject'}: {reason}"
+            ),
+            evidence_id=f"study:{reg.study_id}",
+            source="study",
+        )
+    except Exception:  # noqa: BLE001 - the filed proposal must survive a revocation failure
+        logger.warning("studies: autonomy revocation failed", exc_info=True)
     return proposal.id if proposal is not None else ""
 
 

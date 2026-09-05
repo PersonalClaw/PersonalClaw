@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import supervisor
 from personalclaw.loop.gates import run_verify_command
 from personalclaw.loop.loop import Loop as _Loop
@@ -74,7 +75,7 @@ class TestOpenEndedJudgePath:
 
     @pytest.fixture(autouse=True)
     def _tmp(self, monkeypatch, tmp_path):
-        monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+        monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
 
     def _loop(self, **cfg):
         from personalclaw.loop import store
@@ -118,7 +119,7 @@ class TestOpenEndedJudgePath:
             ),
         )
         assert await _signal(loop, [{"cycle": 1, "summary": "x"}]) is True
-        assert store.get_verdicts(loop.id)[0]["done"] is True
+        assert loop_files.get_verdicts(loop.id)[0]["done"] is True
         assert store.get_marginal_scores(loop.id) == [3.0]
 
     @pytest.mark.asyncio
@@ -311,7 +312,7 @@ class TestJudgeIndependence:
         from personalclaw.loop.loop import Loop
         from personalclaw.workflows.judge_contract import JudgeVerdict, verdict_for_cycle
 
-        monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+        monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
         kinds.ensure_loaded()
         loop = store.create(
             Loop(
@@ -351,7 +352,7 @@ class TestJudgeIndependence:
         from personalclaw.loop.loop import Loop
         from personalclaw.workflows.judge_contract import JudgeVerdict, verdict_for_cycle
 
-        monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+        monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
         ctx = tmp_path / "ctx"
         ctx.mkdir()
         monkeypatch.setattr("personalclaw.projects.context_dir", lambda pid: str(ctx))
@@ -405,12 +406,12 @@ class TestJudgeIndependence:
 
         root = tmp_path / "wsroot"
         root.mkdir()
-        loop_files = tmp_path / "loopdir"
-        loop_files.mkdir()
+        loop_dir_path = tmp_path / "loopdir"
+        loop_dir_path.mkdir()
         monkeypatch.setattr("personalclaw.config.loader.workspace_root", lambda: root)
-        monkeypatch.setattr("personalclaw.loop.store.loop_dir", lambda lid: loop_files)
+        monkeypatch.setattr("personalclaw.loop.files.loop_dir", lambda lid: loop_dir_path)
         code = Loop(id="c", name="g", kind="code", task="t", workspace_dir="", project_id="")
-        assert effective_dir(code) == str(loop_files)
+        assert effective_dir(code) == str(loop_dir_path)
         # A goal loop with the same empty binding must NOT be redirected to its loop dir —
         # it keeps only engine files there and writes its deliverable to the workspace root.
         goal = Loop(id="c", name="g", kind="goal", task="t", workspace_dir="", project_id="")

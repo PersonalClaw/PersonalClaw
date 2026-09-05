@@ -136,11 +136,13 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
         <div className="flex flex-col gap-2"><Skeleton className="h-9 w-full" /><Skeleton className="h-9 w-2/3" /></div>
       ) : (
         <div className="flex flex-col gap-m pl-11">
-          <AppConfigFields appName={app.name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} />
+          <AppConfigFields appName={app.name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} required={cfg.required} />
           {cfg.err && <div data-type="body-s" className="text-negative">{cfg.err}</div>}
           <div className="flex items-center justify-end gap-2">
             {justSaved && <span className="flex items-center gap-1 text-ok text-[0.75rem]"><Check size={13} /> Saved</span>}
-            <Button variant="primary" size="sm" disabled={cfg.busy || !cfg.dirty} disabledReason={!cfg.dirty && !cfg.busy ? 'No changes to save' : undefined} onClick={() => cfg.save()}>
+            <Button variant="primary" size="sm" disabled={cfg.busy || !cfg.dirty || cfg.missing.length > 0}
+              disabledReason={cfg.missing.length > 0 ? `Fill in ${cfg.missingLabels.join(', ')}`
+                : !cfg.dirty && !cfg.busy ? 'No changes to save' : undefined} onClick={() => cfg.save()}>
               {cfg.busy ? <Loader2 size={14} className="animate-spin" /> : null} Save
             </Button>
           </div>

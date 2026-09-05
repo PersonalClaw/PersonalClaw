@@ -547,3 +547,74 @@ class TestLogLevelAppliesLive:
             assert saved["agent"]["log_level"] == "DEBUG"
         finally:
             lg.setLevel(prior)
+
+
+# ── agent.yolo applies LIVE in BOTH directions, not only at the next start (#672) ──
+
+
+def _make_app_with_state(state) -> web.Application:
+    app = _make_app()
+    app["state"] = state
+    return app
+
+
+class _FakeState:
+    """Just the two members the yolo seam touches — enable/disable recording."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def enable_yolo(self, *, from_config: bool = False) -> None:
+        self.calls.append(("enable", from_config))
+
+    def disable_yolo(self) -> None:
+        self.calls.append(("disable",))
+
+
+class TestYoloAppliesLive:
+    @pytest.mark.asyncio
+    async def test_turning_yolo_off_revokes_the_bypass_immediately(self, tmp_config) -> None:
+        # The security-relevant direction (#672): revoking must not wait for a
+        # restart, and must go through state.disable_yolo() so the trust_mode
+        # on-disable callback clears untrusted per-session auto-approve policies.
+        state = _FakeState()
+        async with TestClient(TestServer(_make_app_with_state(state))) as c:
+            resp = await _patch(c, "agent.yolo", False)
+            assert resp.status == 200
+        assert ("disable",) in state.calls
+
+    @pytest.mark.asyncio
+    async def test_sel_down_fails_the_whole_patch_closed(self, tmp_config) -> None:
+        # The endpoint's own write-audit is deliberately unguarded, so a dead
+        # audit sink fails the WHOLE patch closed (500) — the yolo seam never
+        # runs in either direction. This pins the ordering: the seam sits AFTER
+        # the write-audit, so a future reorder cannot grant an unaudited bypass.
+        state = _FakeState()
+        with patch("personalclaw.sel.sel", side_effect=RuntimeError("sel down")):
+            async with TestClient(TestServer(_make_app_with_state(state))) as c:
+                resp = await _patch(c, "agent.yolo", True)
+                assert resp.status == 500
+        assert state.calls == []
+
+    @pytest.mark.asyncio
+    async def test_turning_yolo_on_applies_live_with_startup_semantics(self, tmp_config) -> None:
+        # Enable mirrors the boot seed: permanent (from_config=True), so the same
+        # key means the same thing whether it was read at startup or patched live.
+        state = _FakeState()
+        async with TestClient(TestServer(_make_app_with_state(state))) as c:
+            resp = await _patch(c, "agent.yolo", True)
+            assert resp.status == 200
+        assert ("enable", True) in state.calls
+        # …and it still persists for the restart path.
+        saved = json.loads(tmp_config.read_text(encoding="utf-8"))
+        assert saved["agent"]["yolo"] is True
+
+    @pytest.mark.asyncio
+    async def test_no_state_does_not_break_the_config_write(self, tmp_config) -> None:
+        # The seam degrades to persist-only when no dashboard state is attached
+        # (test apps, early startup) — never a 500 on the config write itself.
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "agent.yolo", True)
+            assert resp.status == 200
+        saved = json.loads(tmp_config.read_text(encoding="utf-8"))
+        assert saved["agent"]["yolo"] is True

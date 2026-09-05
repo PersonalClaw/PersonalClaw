@@ -98,6 +98,7 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
     control = (
       <div className="relative">
         <input id={id} type={showSecret ? 'text' : 'password'} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
+          minLength={prop.minLength} maxLength={prop.maxLength}
           placeholder={meta.placeholder ?? '••••••••'} className={inputCls + ' pr-10'} />
         <span className="absolute right-1.5 top-1/2 -translate-y-1/2">
           <SquareIconButton label={showSecret ? 'Hide' : 'Show'} onClick={() => setShowSecret((s) => !s)}>
@@ -109,6 +110,7 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
   } else {
     control = (
       <input id={id} type="text" value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
+        minLength={prop.minLength} maxLength={prop.maxLength} pattern={prop.pattern}
         placeholder={meta.placeholder ?? (prop.default != null ? String(prop.default) : '')} className={inputCls} />
     )
   }

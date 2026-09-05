@@ -7,6 +7,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
+from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
@@ -382,7 +383,8 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             error=str(exc)[:200],
             metadata={"risk": _risk},
         )
-        return web.json_response({"ok": False, "error": str(exc)[:500]}, status=500)
+        # Raw text stays in the SEL record above; the wire speaks guidance (failure_copy).
+        return web.json_response({"ok": False, "error": relayed_failure_copy(exc)}, status=500)
 
     _sel().log_tool_invocation(
         session_key=caller,

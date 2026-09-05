@@ -12,7 +12,7 @@ bugs. Two entities, two halves:
   cycle clock (in-memory watchdog counters are documented as non-resumed):
 
   - **done?**    — ``loop.status`` (a terminal/attention status is a definitive answer).
-  - **verified?**— judge verdicts on disk (``store.get_verdicts``) and/or cycle findings.
+  - **verified?**— judge verdicts on disk (``files.get_verdicts``) and/or cycle findings.
   - **next?**    — for phased kinds, ``plan`` + ``phase_status`` name the next stage; for
     open-ended goals, the marginal-score trail + status; otherwise the next cycle.
   - **how to verify?** — the persisted task/spec text (``loop.task``) + the plan.
@@ -33,6 +33,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import store
 from personalclaw.loop.loop import LoopStatus
 
@@ -108,14 +109,14 @@ def audit_loop(loop_id: str) -> ResumeReport:
     report.detail["terminal_or_attention"] = status in _TERMINAL_OR_ATTENTION
 
     # what's verified? — judge verdicts (open-ended) and/or cycle findings on disk.
-    verdicts = store.get_verdicts(loop_id)
-    findings = store.get_findings(loop_id)
+    verdicts = loop_files.get_verdicts(loop_id)
+    findings = loop_files.get_findings(loop_id)
     report.detail["verdict_count"] = len(verdicts)
     report.detail["finding_count"] = len(findings)
     # A run that has produced ANY finding/verdict has a verifiable record; a run that
     # hasn't started producing yet is verified-answerable by its (empty) count = 0 being a
     # definitive "nothing verified yet" — so this is answerable as long as the dir exists.
-    report.verified_answerable = store.safe_loop_dir(loop_id) is not None
+    report.verified_answerable = loop_files.safe_loop_dir(loop_id) is not None
 
     # what's next? — phased kinds: plan + phase_status; else the next cycle / status.
     plan = loop.plan or []

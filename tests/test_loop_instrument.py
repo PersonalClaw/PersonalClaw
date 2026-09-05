@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import instrument
 from personalclaw.loop.granularity import (
     calibrated_band,
@@ -181,7 +182,7 @@ async def test_reproduce_uses_kind_deliverable_when_cfg_empty(monkeypatch, tmp_p
     from personalclaw.loop import store
     from personalclaw.loop.loop import Loop
 
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     (tmp_path / "REPORT.md").write_text("# Report\nreal deliverable content", encoding="utf-8")
     import json as _json
 
@@ -199,11 +200,11 @@ async def test_reproduce_uses_kind_deliverable_when_cfg_empty(monkeypatch, tmp_p
     # A finding is a cycle_NNN.json file the worker writes; PP-5 ingests it into the ledger, which
     # is what get_findings (and thus reproduce_confirm) now reads. The watchdog ingests each poll
     # before _complete calls reproduce_confirm, so ingest here to mirror that flow.
-    fdir = store.loop_dir(loop.id) / "findings"
+    fdir = loop_files.loop_dir(loop.id) / "findings"
     (fdir / "cycle_001.json").write_text(
         _json.dumps({"cycle": 1, "summary": "wrote REPORT.md"}), encoding="utf-8"
     )
-    store.record_cycle_findings(loop.id)
+    loop_files.record_cycle_findings(loop.id)
     captured = {}
 
     async def spy(goal, sc, finding, prior, **kw):
@@ -223,7 +224,7 @@ async def test_reproduce_none_when_no_anchor_and_no_kind_deliverable(monkeypatch
     from personalclaw.loop import store
     from personalclaw.loop.loop import Loop
 
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     loop = store.create(
         Loop(
             id="",

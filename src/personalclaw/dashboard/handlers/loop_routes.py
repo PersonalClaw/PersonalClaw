@@ -19,6 +19,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw.config.loader import AppConfig
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import kinds, manager, store, validation
 from personalclaw.loop.loop import ACTION_SOURCE_STATES, KINDS, Loop, LoopStatus
 from personalclaw.loop.watchdog import registry_key
@@ -378,7 +379,7 @@ async def api_loop_get(request: web.Request) -> web.Response:
     # loop's 404 — matching every sibling endpoint (report/stream/plan-session/nudge/
     # queue). Without this, get_redacted's internal valid_loop_id guard returned None
     # for a malformed id and this endpoint alone reported it as 404.
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     view = store.get_redacted(cid)
     if view is None:
@@ -399,7 +400,7 @@ async def api_loop_report(request: web.Request) -> web.Response:
     """GET /api/loops/{id}/report — the document deliverable + working log. ``report``
     is the kind's ongoing deliverable doc; ``log`` is the cumulative FINDINGS.md."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     # Existence check before reading the (empty-on-missing) deliverable/log files —
     # without it a nonexistent or deleted loop returned 200 {"report":"","log":""},
@@ -533,7 +534,7 @@ async def api_loop_update(request: web.Request) -> web.Response:
 async def api_loop_action(request: web.Request) -> web.Response:
     """PATCH /api/loops/{id} {action: start|pause|resume|stop}."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     body = await _json_body(request)
     if isinstance(body, web.Response):
@@ -596,7 +597,7 @@ async def _reap_loop_sessions(state, loop_id: str) -> None:
 
 async def api_loop_delete(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     from personalclaw.autonudge import get_instance
 
@@ -659,7 +660,7 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
             status=409,
         )
     task_id = str(body.get("task_id", "")).strip()
-    if task_id and not store.valid_task_guidance_id(task_id):
+    if task_id and not loop_files.valid_task_guidance_id(task_id):
         return web.json_response({"error": "Invalid task_id"}, status=400)
     # A task-scoped steer must target a task that BELONGS to this loop. valid_task_
     # guidance_id only checks the id FORMAT — a well-formed id from another loop (or a
@@ -688,7 +689,7 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
 async def api_loop_stream(request: web.Request) -> web.StreamResponse:
     """GET /api/loops/{id}/stream — per-loop live SSE; replays a snapshot on connect."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     view = store.get_redacted(cid)
     if view is None:
@@ -731,7 +732,7 @@ async def api_loop_queue(request: web.Request) -> web.Response:
     """POST /api/loops/{id}/queue {task_ids, action: queue|unqueue} — queue tasks for
     the parallel scheduler (code kind). Returns the full updated queue."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     loop = store.get(cid)
     if loop is None:
@@ -793,7 +794,7 @@ async def api_loop_autopilot(request: web.Request) -> web.Response:
     """POST /api/loops/{id}/autopilot {on: bool} — toggle the execution drive live.
     ON → the scheduler auto-queues + drives the phased plan; OFF → one-by-one."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     body = await _json_body(request)
     if isinstance(body, web.Response):
@@ -870,21 +871,21 @@ def _kick_plan_advance(request: web.Request, cid: str) -> web.Response:
 async def api_loop_plan_session(request: web.Request) -> web.Response:
     """GET /api/loops/{id}/plan-session — the stepwise planning walkthrough state."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     # 404 a GONE loop, distinct from a live loop with no session yet ({session:null}).
     # Without this the planning walkthrough can't tell "deleted mid-plan" from "session
     # not started" — it polls the dead loop forever instead of exiting.
     if store.get(cid) is None:
         return web.json_response({"error": "Not found"}, status=404)
-    session = store.read_plan_session(cid)
+    session = loop_files.read_plan_session(cid)
     return web.json_response({"session": session.to_dict() if session else None})
 
 
 async def api_loop_plan_start(request: web.Request) -> web.Response:
     """POST /api/loops/{id}/plan/start — begin (or resume) the walkthrough."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     loop = store.get(cid)
     if loop is None:
@@ -900,7 +901,7 @@ async def api_loop_plan_retry(request: web.Request) -> web.Response:
     """POST /api/loops/{id}/plan/retry — clear a recorded design failure + re-run the
     design pass (dynamic kinds only; an explicit user action)."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     if store.get(cid) is None:
         return web.json_response({"error": "Not found"}, status=404)
@@ -913,7 +914,7 @@ async def api_loop_plan_retry(request: web.Request) -> web.Response:
 async def api_loop_plan_approve(request: web.Request) -> web.Response:
     """POST /api/loops/{id}/plan/approve {step_id} — approve a step + advance."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     body = await _json_body(request)
     if isinstance(body, web.Response):
@@ -923,19 +924,19 @@ async def api_loop_plan_approve(request: web.Request) -> web.Response:
         return web.json_response({"error": "step_id required"}, status=400)
     from personalclaw.planning import session as PS
 
-    session = store.read_plan_session(cid)
+    session = loop_files.read_plan_session(cid)
     if session is None:
         return web.json_response({"error": "No planning session"}, status=404)
     if not PS.approve_step(session, step_id):
         return web.json_response({"error": "Step not awaiting review"}, status=409)
-    store.write_plan_session(session)
+    loop_files.write_plan_session(session)
     return _kick_plan_advance(request, cid)
 
 
 async def api_loop_plan_comment(request: web.Request) -> web.Response:
     """POST /api/loops/{id}/plan/comment {step_id, text} — comment + re-draft."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     body = await _json_body(request)
     if isinstance(body, web.Response):
@@ -950,12 +951,12 @@ async def api_loop_plan_comment(request: web.Request) -> web.Response:
 
     from personalclaw.planning import session as PS
 
-    session = store.read_plan_session(cid)
+    session = loop_files.read_plan_session(cid)
     if session is None:
         return web.json_response({"error": "No planning session"}, status=404)
     if not PS.comment_step(session, step_id, text, at=_time.time()):
         return web.json_response({"error": "Step not awaiting review"}, status=409)
-    store.write_plan_session(session)
+    loop_files.write_plan_session(session)
     return _kick_plan_advance(request, cid)
 
 
@@ -963,7 +964,7 @@ async def api_loop_plan_edit(request: web.Request) -> web.Response:
     """POST /api/loops/{id}/plan/edit {step_id, markdown} — the user directly edits a
     step artifact's body (no planner round-trip). Stays awaiting review."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     body = await _json_body(request)
     if isinstance(body, web.Response):
@@ -974,12 +975,12 @@ async def api_loop_plan_edit(request: web.Request) -> web.Response:
     markdown = str(body.get("markdown", ""))
     from personalclaw.planning import session as PS
 
-    session = store.read_plan_session(cid)
+    session = loop_files.read_plan_session(cid)
     if session is None:
         return web.json_response({"error": "No planning session"}, status=404)
     if not PS.edit_artifact(session, step_id, markdown):
         return web.json_response({"error": "Step not awaiting review"}, status=409)
-    store.write_plan_session(session)
+    loop_files.write_plan_session(session)
     return web.json_response({"ok": True, "session": session.to_dict()})
 
 
@@ -1016,7 +1017,7 @@ async def api_loop_design_tokens(request: web.Request) -> web.Response:
     for a design loop (defaults deep-merged with the loop's token_overrides, every
     {ref} resolved) plus a ready-to-inject CSS-variable block for the live canvas."""
     cid = request.match_info["id"]
-    if not store.valid_loop_id(cid):
+    if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     loop = store.get(cid)
     if loop is None:

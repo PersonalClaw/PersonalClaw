@@ -29,6 +29,7 @@ import json
 
 import pytest
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import manager, store, supervisor
 from personalclaw.loop import watchdog as W
 from personalclaw.loop.loop import KINDS, Loop, LoopStatus
@@ -50,12 +51,14 @@ def _run(coro):
 @pytest.fixture(autouse=True)
 def _tmp_config(monkeypatch, tmp_path):
     """Destructive by nature (it creates loop rows + finding files), so the store is redirected at
-    BOTH bindings a caller can reach: `loop.store.config_dir` is the name `store` resolved at
-    import, and `config.loader.config_dir` is the origin. Patching only one leaves an import-bound
-    reader pointed at the real home."""
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    BOTH bindings a caller can reach: `loop.files.config_dir` is the name the file store (and,
+    through it, the row store's db path) resolved at import, and `config.loader.config_dir` is the
+    origin. Patching only one leaves an import-bound reader pointed at the real home."""
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-    assert store.config_dir() == tmp_path, "the store redirect did not take — refusing to run"
+    from personalclaw.loop import files as _loop_files
+
+    assert _loop_files.config_dir() == tmp_path, "the store redirect did not take — refusing to run"
     return tmp_path
 
 
@@ -144,7 +147,7 @@ def _running(**over):
 
 
 def _write_finding(cid, cycle):
-    (store.loop_dir(cid) / "findings" / f"cycle_{cycle:03d}.json").write_text(
+    (loop_files.loop_dir(cid) / "findings" / f"cycle_{cycle:03d}.json").write_text(
         json.dumps({"cycle": cycle, "new_findings_count": 1, "summary": f"cycle {cycle} work"})
     )
 

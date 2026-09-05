@@ -40,6 +40,7 @@ from personalclaw.dashboard.token_auth import (
     validate_token,
 )
 from personalclaw.http_errors import json_error
+from personalclaw.providers.failure_copy import relayed_failure_copy
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +364,10 @@ async def api_auth_set_password(request: web.Request) -> web.Response:
         # The message names the floor, never the submitted value.
         return web.json_response({"error": str(exc)}, status=400)
     except creds.CredentialError as exc:
-        return web.json_response({"error": str(exc)}, status=500)
+        # The store failure's text (paths, OS errno) is diagnostics for the log;
+        # the wire speaks guidance (failure_copy).
+        logger.warning("could not store the credential record", exc_info=True)
+        return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
     _sel().log_api_access(
         caller=request.get("user") or "dashboard",

@@ -38,7 +38,10 @@ export function HealthPanel({ health, error, onRetry }: {
         <span id="flywheel-health-heading" data-type="title-m" className="text-on-surface">
           Flywheel health, last {health.days} days
         </span>
-        {composite.measured < composite.of && (
+        {/* Partial coverage only. `measured === 0` is the payload's own never-ran signal — the
+            number below already says "not measured yet — nothing has run", and an amber chip
+            would restate that zero-state as a warning. */}
+        {composite.measured > 0 && composite.measured < composite.of && (
           <span
             className="inline-flex items-center gap-1.5 rounded-pill px-m h-6 text-[0.75rem]"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 14%, transparent)', color: 'var(--color-warn)' }}

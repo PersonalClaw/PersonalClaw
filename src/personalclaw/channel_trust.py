@@ -526,8 +526,15 @@ def guard_inbound(
     if gpolicy == "off" or not is_tracked_channel(provider, channel_id):
         return TrustVerdict(allowed=False, reason="untracked_channel")
     # Tracked group: non-owner content is data — fence it before it enters a session.
+    # An ALLOWED sender is exempt: the docstring above has always promised the fence for
+    # non-owner content, and fencing the owner's own message would make an agent read the
+    # owner's instruction in a linked group thread as untrusted data it must not act on.
     return TrustVerdict(
         allowed=True,
         reason="tracked_channel",
-        fenced_text=fence_channel_content(text, provider, sender_id) if text else "",
+        fenced_text=(
+            fence_channel_content(text, provider, sender_id)
+            if text and not is_allowed_sender(provider, sender_id)
+            else ""
+        ),
     )

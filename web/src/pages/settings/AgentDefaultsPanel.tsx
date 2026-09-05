@@ -100,7 +100,7 @@ export function AgentDefaultsPanel() {
           <EnumRow label="Sandbox" hint="Sandbox mode for the ACP provider." cfg={cfg} field="sandbox" patch={patch}
             options={[{ key: 'auto', label: 'Auto' }, { key: 'off', label: 'Off' }]} />
           <ToggleRow label="YOLO mode" cfg={cfg} field="yolo" patch={patch}
-            hint="Skip every tool-approval confirmation — overrides approval mode. Only inside a sandbox or for trusted automation." danger />
+            hint="Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation." danger />
         </RowGroup>
       </Section>
 

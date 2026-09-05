@@ -31,7 +31,7 @@ def teardown_scratch(loop_id: str) -> bool:
 
     Called only after the deliverable has been registered as a permanent artifact, so
     the human-facing output is preserved even though the raw scratch is reclaimed."""
-    from personalclaw.loop.store import safe_loop_dir
+    from personalclaw.loop.files import safe_loop_dir
 
     d = safe_loop_dir(loop_id)
     if d is None or not d.exists():

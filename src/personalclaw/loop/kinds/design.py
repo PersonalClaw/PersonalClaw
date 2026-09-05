@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 
+from personalclaw.loop import files as loop_files
 from personalclaw.loop.kinds import LoopKindStrategy, register
 from personalclaw.loop.loop import Loop
 
@@ -232,7 +233,7 @@ class DesignKind(LoopKindStrategy):
         import json
 
         try:
-            d = store.safe_loop_dir(loop.id)
+            d = loop_files.safe_loop_dir(loop.id)
             if d is None:
                 return
             f = d / "token_overrides.json"

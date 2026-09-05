@@ -1,4 +1,4 @@
-import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, ShieldQuestion, RefreshCw, Receipt, UserRound, StickyNote } from 'lucide-react'
+import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, ShieldQuestion, ShieldOff, RefreshCw, Receipt, UserRound, StickyNote } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { NotificationItem } from '../../lib/api'
 
@@ -36,6 +36,9 @@ const KINDS: Record<string, KindMeta> = {
   needs_input: { label: 'Loop needs your input', icon: HelpCircle, tone: 'var(--color-warn)' },
   progress: { label: 'Loop progress', icon: Activity, tone: 'var(--color-info)' },
   proposal: { label: 'Skill proposal', icon: Lightbulb, tone: 'var(--color-primary)' },
+  // guardrails/autonomy_revocation (ES-15 mechanical revocation). Warn tone, like the other
+  // rows the user has to act on: the floor has already dropped and only they can re-grant it.
+  autonomy_revocation: { label: 'Earned autonomy revoked', icon: ShieldOff, tone: 'var(--color-warn)' },
   // Their own rows, because the backend now emits distinct wire strings for them. Without an
   // entry each would fall to `kindMeta`'s default and display the raw wire value.
   learning_proposal: { label: 'Learning proposal', icon: Lightbulb, tone: 'var(--color-primary)' },

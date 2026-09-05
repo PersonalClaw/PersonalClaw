@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+import personalclaw.loop.files as files_mod
 import personalclaw.loop.store as store_mod
 from personalclaw.loop import lifecycle
 from personalclaw.loop.loop import Loop
@@ -51,7 +52,7 @@ def test_should_teardown_reflects_flag():
 
 def test_teardown_removes_scratch_dir(loop_home):
     created = store_mod.create(_mk(True))
-    d = store_mod.loop_dir(created.id)
+    d = files_mod.loop_dir(created.id)
     assert d is not None and d.is_dir()
     (d / "REPORT.md").write_text("the deliverable")
     assert lifecycle.teardown_scratch(created.id) is True
@@ -66,7 +67,7 @@ def test_teardown_is_safe_when_absent(loop_home):
 def test_default_loop_dir_persists(loop_home):
     # A non-scratch loop's dir is NOT auto-removed (should_teardown gates it).
     created = store_mod.create(_mk(False))
-    d = store_mod.loop_dir(created.id)
+    d = files_mod.loop_dir(created.id)
     assert d.is_dir()
     if lifecycle.should_teardown(store_mod.get(created.id)):
         lifecycle.teardown_scratch(created.id)

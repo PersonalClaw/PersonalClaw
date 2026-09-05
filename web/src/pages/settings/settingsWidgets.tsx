@@ -371,14 +371,22 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     render(query, go) {
       const { data: active, stale: activeStale } = useModelsActive()
       const CORE = [['chat', 'Chat'], ['embedding', 'Embed'], ['stt', 'STT'], ['tts', 'TTS']] as const
+      /* All-unbound gets WORDS, not a column of dashes. Every sibling tile on this
+         bento speaks a sentence for its empty state (Routing, Web Search, Prompts…),
+         and on a never-configured instance this is the tile that matters most — four
+         mute '—' rows say nothing about what belongs here or how to get it. A single
+         unbound row beside bound ones keeps the '—' (label carries the meaning there,
+         same contrast rule as the 'Default agent' dash below). Wording echoes the
+         DegradedChip's 'Set up a model' invitation so chrome and tile agree. */
+      const anyBound = active !== undefined && active !== null && CORE.some(([uc]) => (active[uc] ?? []).length > 0)
       return (
         <BentoCard icon={Cpu} title="Models" query={query} onClick={() => go('models')} loading={active === undefined} stale={activeStale}>
-          {active && <KVList query={query} rows={CORE.map(([uc, label]) => {
+          {active && (anyBound ? <KVList query={query} rows={CORE.map(([uc, label]) => {
             const bound = (active[uc] ?? [])[0]
             return { k: label, mono: true, vText: bound ? shortModel(bound) : '—', v: bound
               ? <span className="inline-flex items-center gap-1"><CheckCircle2 size={11} className="shrink-0 text-ok" /> <span className="truncate">{shortModel(bound)}</span></span>
               : <span className="text-on-surface-low">—</span> }
-          })} />}
+          })} /> : <div data-type="body-s" className="text-on-surface-low">No models bound yet. Set up a model provider and the bindings for chat, embeddings, and voice appear here.</div>)}
         </BentoCard>
       )
     },

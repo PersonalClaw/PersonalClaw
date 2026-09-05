@@ -89,8 +89,13 @@ WRITERS: tuple[Writer, ...] = (
         table_name="HOOK_STATUS_TO_OUTCOME",
         kind="attr",
         name="last_status",
-        min_sites=8,
-        min_values=7,
+        # The writer GENUINELY SHRANK (the claim this floor's docstring demands): the per-branch
+        # `hook.last_status = "<literal>"` writes were consolidated into ONE `_record(status)`
+        # choke point so the Test-rehearsal rule cannot drift per branch (issue 609). The single
+        # assignment is pinned by a `not in` guard naming the full closed vocabulary, so the scan
+        # now infers MORE values from FEWER sites — min_values is the floor doing the work here.
+        min_sites=1,
+        min_values=9,
     ),
     Writer(
         label="gateway.py records a fire's ScheduleRun",

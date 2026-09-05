@@ -1,4 +1,4 @@
-import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote } from 'lucide-react'
+import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
 import type { InboxClassification, InboxConfidence, InboxItemStatus, InboxItemKind, InboxItem } from '../../lib/api'
@@ -20,6 +20,9 @@ export const CONFIDENCES: ConfMeta[] = [
   { key: 'high', label: 'High confidence', tone: 'var(--color-ok)', icon: CheckCircle2 },
   { key: 'needs_review', label: 'Needs review', tone: 'var(--color-warn)', icon: ShieldQuestion },
   { key: 'escalate', label: 'Escalate', tone: 'var(--color-danger)', icon: AlertTriangle },
+  // A manual reclassification: the verdict is the user's own, so no machine confidence
+  // applies. Neutral tone — a human decision needs no review urgency.
+  { key: 'user', label: 'Set by you', tone: 'var(--color-info)', icon: UserCheck },
 ]
 export function confMeta(c?: string): ConfMeta {
   return CONFIDENCES.find((x) => x.key === c) ?? CONFIDENCES[1]

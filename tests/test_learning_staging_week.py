@@ -215,6 +215,34 @@ def test_cost_is_summed_per_day_and_overall(store, monkeypatch):
     assert today["cost_usd"] == pytest.approx(0.02)
 
 
+# ── never-ran vs ran-then-died (LEARN-1) ──
+
+
+def test_has_ever_run_is_false_with_zero_recorded_runs(store):
+    """A fresh install's silent week is a zero-state, not a warning — the panel needs a field
+    that says so, because the window rows alone cannot tell never-ran from ran-then-died."""
+    week = store.week(days=7, now=time.time())
+    assert week["has_ever_run"] is False
+    assert len(week["silent_days"]) == 7
+
+
+def test_one_recorded_run_flips_has_ever_run(store, monkeypatch):
+    now = time.time()
+    _record(store, monkeypatch, outcome=FlushOutcome.FLUSH_OK, at=now)
+    assert store.week(days=7, now=now)["has_ever_run"] is True
+
+
+def test_has_ever_run_is_unbounded_not_a_window_proxy(store, monkeypatch):
+    """THE distinction. A pass far outside the window still counts as "ever ran": an
+    all-silent-window proxy would read False here and calm a ran-then-died instance — the
+    exact failure the silent-days chip exists to expose."""
+    now = time.time()
+    _record(store, monkeypatch, outcome=FlushOutcome.FLUSH_OK, at=now - 30 * DAY)
+    week = store.week(days=3, now=now)
+    assert all(b["passes"] == 0 for b in week["buckets"])  # the window is silent…
+    assert week["has_ever_run"] is True  # …but the instance ran and died: still a warning
+
+
 # ── window handling ──
 
 
@@ -240,6 +268,7 @@ def test_the_panel_serializes_for_an_api(store):
         "error_days",
         "produced_total",
         "cost_usd",
+        "has_ever_run",
     }
     for bucket in week["buckets"]:
         assert set(bucket) == {

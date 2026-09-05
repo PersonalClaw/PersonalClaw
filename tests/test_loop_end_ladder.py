@@ -23,6 +23,7 @@ import json
 import pytest
 
 from personalclaw import after_turn_review as atr
+from personalclaw.loop import files as loop_files
 from personalclaw.loop import store
 from personalclaw.loop import watchdog as W
 from personalclaw.loop.loop import Loop, LoopStatus
@@ -37,7 +38,7 @@ def _run(coro):
 def home(monkeypatch, tmp_path):
     """One isolated home for the three stores this seam touches: the loop store, the skill
     proposals queue, and the config the gate reads. Nothing may reach the real home."""
-    monkeypatch.setattr("personalclaw.loop.store.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
     monkeypatch.setattr("personalclaw.skills.loader.config_dir", lambda: tmp_path)
     monkeypatch.setattr("personalclaw.config.loader.config_path", lambda: tmp_path / "config.json")
     import personalclaw.skills.marketplace as mp
@@ -194,7 +195,7 @@ class TestOncePerRun:
         wd._state._sessions[key] = object()
         for cycle in range(1, 5):
             _run(wd._poll_once())
-            d = store.loop_dir(c.id)
+            d = loop_files.loop_dir(c.id)
             (d / "findings" / f"cycle_{cycle:03d}.json").write_text(
                 json.dumps({"cycle": cycle, "new_findings_count": 1, "sources_checked": [cycle]})
             )
@@ -226,7 +227,7 @@ class TestOncePerRun:
         """End-to-end through the REAL review: the queue holds one proposal, not one per
         tier and not one per cycle."""
         c = _running()
-        (store.loop_dir(c.id) / "REPORT.md").write_text(
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text(
             "# Outcome\nStaged the migration, verified in staging, then promoted to prod."
         )
         summary = _run(_wd()._run_loop_end_ladder(c.id, [], completion=_create_completion()))
@@ -252,7 +253,7 @@ class TestEnvironmentFailureHygiene:
 
     def test_env_failure_in_the_deliverable_enqueues_nothing(self):
         c = _running()
-        (store.loop_dir(c.id) / "REPORT.md").write_text(
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text(
             "# Outcome\nCould not finish: permission denied writing to the release bucket."
         )
         _run(_wd()._run_loop_end_ladder(c.id, [], completion=_create_completion()))
@@ -262,7 +263,7 @@ class TestEnvironmentFailureHygiene:
 
     def test_env_failure_in_the_goal_enqueues_nothing(self):
         c = _running(task="figure out why the deploy command failed with exit code 137")
-        (store.loop_dir(c.id) / "REPORT.md").write_text("# Outcome\nRoot-caused and fixed.")
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text("# Outcome\nRoot-caused and fixed.")
         _run(_wd()._run_loop_end_ladder(c.id, [], completion=_create_completion()))
         assert proposals.list_pending() == []
 
@@ -270,7 +271,7 @@ class TestEnvironmentFailureHygiene:
         """The control. Without it the two assertions above pass for a fixture whose model
         simply never proposes anything — an empty queue would mean nothing."""
         c = _running()
-        (store.loop_dir(c.id) / "REPORT.md").write_text(
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text(
             "# Outcome\nStaged the migration, verified, promoted."
         )
         _run(_wd()._run_loop_end_ladder(c.id, [], completion=_create_completion()))
@@ -421,7 +422,7 @@ class TestRunTexts:
     def test_the_goal_is_the_user_side_and_the_deliverable_is_the_outcome(self, monkeypatch):
         calls = _counting_review(monkeypatch)
         c = _running()
-        (store.loop_dir(c.id) / "REPORT.md").write_text("# Outcome\nThe report body.")
+        (loop_files.loop_dir(c.id) / "REPORT.md").write_text("# Outcome\nThe report body.")
         _run(_wd()._run_loop_end_ladder(c.id, ["deploy-flow"]))
         assert len(calls) == 1
         assert calls[0]["user_message"] == c.task
@@ -454,7 +455,7 @@ class TestRunTexts:
         calls = _counting_review(monkeypatch)
         c = _running(kind_config={"goal_type": "monitor"})
         big = "x" * (W._LADDER_TEXT_LIMIT * 3)
-        (store.loop_dir(c.id) / "MONITOR_LOG.md").write_text(big)
+        (loop_files.loop_dir(c.id) / "MONITOR_LOG.md").write_text(big)
         _run(_wd()._run_loop_end_ladder(c.id, []))
         assert len(calls[0]["assistant_text"]) == W._LADDER_TEXT_LIMIT
 
