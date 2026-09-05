@@ -1815,6 +1815,25 @@ class GatewayOrchestrator:
                         )
         except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
             logger.warning("autonomy nodding revocation sweep failed", exc_info=True)
+        # E3 lab_field_divergence (ES-9): a subject whose lab score rose while its live
+        # field trend fell files the §4.2 demotion signal mechanically. A divergence is
+        # a STANDING condition like the nodding gate above, so it rides the same sweep;
+        # it lives in the evals layer (which may import both guardrails and workflows)
+        # and prices its own reads — no standing grant anywhere means it returns
+        # immediately, and both demotion paths gate on a standing grant, so a
+        # persistent divergence files once and then nothing.
+        try:
+            from personalclaw.evals.field_metrics import sweep_lab_field_divergence
+
+            demoted = sweep_lab_field_divergence()
+            if demoted:
+                logger.warning(
+                    "autonomy: lab_field_divergence filed demotions for %d subject(s): %s",
+                    len(demoted),
+                    ", ".join(demoted),
+                )
+        except Exception:  # noqa: BLE001 - additive; never breaks the poll loop
+            logger.warning("lab_field_divergence sweep failed", exc_info=True)
 
     def _scan_scratchpad(self) -> None:
         """Scan the configured scratchpad and raise proposals for its new actionable lines.

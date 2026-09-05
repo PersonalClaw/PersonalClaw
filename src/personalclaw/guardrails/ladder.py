@@ -708,6 +708,32 @@ def revoke_granted_scopes(*, cause: str, evidence_id: str, source: str) -> list[
     return revoked
 
 
+def revoke_scope(key: str, *, cause: str, evidence_id: str, source: str) -> bool:
+    """Revoke ONE scope's standing grant NOW, because ``evidence_id`` names IT (ES-9).
+
+    :func:`revoke_granted_scopes` narrowed to a single scope, for evidence that is
+    scope-attributed rather than systemic — a ``lab_field_divergence`` on one action
+    type says THAT type's field record contradicts its lab record, and taking every
+    other scope down with it would punish evidence that was never about them.
+
+    Same contract otherwise: gated on a standing grant (a demotion floor carries no
+    ``granted_at``, so a STANDING trigger is naturally idempotent after the first
+    sweep), demoted through :func:`~personalclaw.guardrails.autonomy.demote` (floor +
+    cooldown + trust-record ``revoked`` flag + SEL audit), and one notice naming the
+    scope, the cause and the evidence. Returns whether anything was revoked.
+    """
+    state = rung_state(key)
+    if state is None or not state.granted_at:
+        return False
+    try:
+        demote(key, cause)
+    except Exception:  # noqa: BLE001 — an unwritable record revokes nothing
+        logger.warning("autonomy: scoped revocation failed for %s", key, exc_info=True)
+        return False
+    _file_revocation_notice([key], cause=cause, evidence_id=evidence_id, source=source)
+    return True
+
+
 def _file_revocation_notice(keys: list[str], *, cause: str, evidence_id: str, source: str) -> None:
     """One inbox row naming what was revoked and the evidence that triggered it."""
     try:

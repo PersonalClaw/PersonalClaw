@@ -208,9 +208,25 @@ accounting). ES-9 is repointed onto the ladder leaves ES-15+ES-16.
 
 ### `ES-9` — Loop-3 live field metrics beside lab results + lab_field_divergence (amendment E3)
 
-**Status:** todo
+**Status:** todo — 🟡 implementation landed 2026-09-05 on a feature branch; held for the owner's dag.json flip
 
 Amendment 2026-07-26 E3 — Loop 3 live quality rendering + divergence flag feeding §4.2 demotion
+
+**[2026-09-05] 🟡 IMPLEMENTATION LANDED.** `evals/field_metrics.py` computes one row per
+subject — lab score (newest pinned `template_ab` ledger row) | gate status (newest
+proposal gate report through `gate.summary`) | field trend (👍/👎 by `producer_id`,
+edit-before-approve from run-journal `user_edited_mid_flight`, approval/rejection/undo
+from the SEL tail + reversal records) — per query, stored nowhere new (file-census
+railed). `lab_field_divergence` = lab rose ∧ field trend falling ∧ field postdates the
+lab row; the gateway autonomy sweep files the §4.2 demotion mechanically (a divergent
+action type through the new per-scope `ladder.revoke_scope`, a divergent template
+through `revoke_granted_scopes` — the failed-study/nodding consequence), both gated on
+a standing grant so a standing divergence files once. Surfaces: read-only
+`GET /api/evals/field-metrics` + the Learning page "Lab vs field" panel. One stated
+gap: the `EXT:FEEDBACK-SIGNAL … edit-before-approve records` dep names records plan 58
+deferred (its own open question), so the template rate derives from the run ledger's
+gold edit signal and the action-type cell renders "not measured" — full detail in the
+plan's ES-9 execution log.
 
 **Done when:** per-template/per-action-type 👍/👎 and edit-before-approve rates (query-computed, stored nowhere new) render beside Loop-1 lab score and Loop-2 gate status as one row per subject on the Learning tab; a subject whose lab score rose while its field trend fell is flagged lab_field_divergence and files a §4.2 trust-record demotion signal mechanically
 

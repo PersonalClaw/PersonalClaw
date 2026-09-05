@@ -253,6 +253,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/durability/run` — {job} — run one backup job now.
 - `GET /api/durability/status` — schedule state + what's due.
 - `GET /api/evals/ablation` — the newest keep/remove/lighten report (ES-7 §3.1).
+- `GET /api/evals/field-metrics` — Loop-3 field metrics beside lab results (E3 / ES-9).
 - `GET /api/evals/judge-bench` — the newest tier-recommendation table.
 - `GET /api/evals/learning-benchmark` — the newest skill-impact benchmark report (LV-7).
 - `GET /api/evals/retrieval` — the newest per-arm P@k/R@k table for BOTH stores (§5).

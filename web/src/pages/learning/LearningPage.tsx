@@ -7,9 +7,10 @@ import { Segmented } from '../../ui/forms'
 import { InlineError } from '../../ui/InlineError'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { useQuery } from '../../lib/data'
-import { api, type AblationView, type AttentionScope, type BenchmarkView, type IdentityReportView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
+import { api, type AblationView, type AttentionScope, type BenchmarkView, type FieldMetricsRow, type IdentityReportView, type JudgeBenchView, type LearningHealth, type LearningInbox, type LearningRow, type RetrievalBenchView, type StagingWeek, type StudyRow } from '../../lib/api'
 import { AblationPanel } from './AblationPanel'
 import { AttentionPanel } from './AttentionPanel'
+import { FIELD_METRICS_KEY, FieldMetricsPanel, fetchFieldMetrics } from './FieldMetricsPanel'
 import { BenchmarkPanel } from './BenchmarkPanel'
 import { HealthPanel } from './HealthPanel'
 import { IdentityReportPanel } from './IdentityReportPanel'
@@ -80,6 +81,13 @@ export function LearningPage() {
   const { data: attention, error: attentionError, refresh: refreshAttention } = useQuery<{ scopes: AttentionScope[] }>(
     ATTENTION_KEY,
     () => api.workflowAttention(),
+  )
+  // The lab-vs-field table (ES-9). `error` is read for the attention panel's reason and one
+  // more: its divergence flag is the row a demotion was filed on, and a swallowed failure
+  // would render "nothing diverged" — the one claim this panel must never make by accident.
+  const { data: fieldMetrics, error: fieldMetricsError, refresh: refreshFieldMetrics } = useQuery<{ subjects: FieldMetricsRow[] }>(
+    FIELD_METRICS_KEY,
+    fetchFieldMetrics,
   )
   // The judge tier table (ES-4). `error` is read for the same reason the health panel's is, plus
   // one more: its ORDINARY state is a 404 ("no benchmark has run"), and the panel needs the error
@@ -182,6 +190,9 @@ export function LearningPage() {
               // Same reasoning, same shape: the benchmark report moves only when someone runs
               // `scripts/learning_benchmark.py --run`, so its staleness is invisible to the page.
               refreshBenchmark()
+              // One reader again — and the field half moves on every thumb/edit/approval,
+              // so Refresh is exactly the moment to recompute it.
+              refreshFieldMetrics()
             }}
           >
             <RefreshCw size={14} /> Refresh
@@ -218,6 +229,8 @@ export function LearningPage() {
           <HealthPanel health={health} error={healthError} onRetry={refreshHealth} />
 
           <AttentionPanel scopes={attention?.scopes} error={attentionError} onRetry={refreshAttention} />
+
+          <FieldMetricsPanel rows={fieldMetrics?.subjects} error={fieldMetricsError} onRetry={refreshFieldMetrics} />
 
           <JudgeBenchPanel bench={judgeBench} error={judgeBenchError} onRetry={refreshJudgeBench} />
 

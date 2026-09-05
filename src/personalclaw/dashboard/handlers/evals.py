@@ -2,6 +2,7 @@
 the harness ablation report (§3.1 / ES-7) and the skill-impact benchmark (LV-7).
 
 GET /api/evals/judge-bench           the newest benchmark run's table + recommendations
+GET /api/evals/field-metrics         one lab|gate|field row per subject + divergence (ES-9)
 GET /api/evals/studies               one row per pre-registered study
 GET /api/evals/studies/{study_id}    one study's verdict, agreement rate and per-run rows
 GET /api/evals/ablation              the newest keep/remove/lighten report + the registry
@@ -419,10 +420,50 @@ async def api_evals_retrieval_labels(request: web.Request) -> web.Response:
     )
 
 
+async def api_evals_field_metrics(request: web.Request) -> web.Response:
+    """GET /api/evals/field-metrics — Loop-3 field metrics beside lab results (E3 / ES-9).
+
+    One row per subject: lab score (Loop 1, pinned) | gate status (Loop 2) | field trend
+    (Loop 3), plus the ``lab_field_divergence`` verdict, all computed on request and
+    stored nowhere. Read-only like every route in this file, and with one extra reason:
+    the divergence flag FILES A DEMOTION when the gateway sweep acts on it, and a GET
+    that demoted things would make refreshing a dashboard a security-relevant act — so
+    this route only ever reports what the sweep would see.
+
+    Off the event loop because the query walks the SEL tail once per action type and a
+    journal per recent run — the same reason ``ladder_view`` and ``api_attention`` are
+    threaded.
+    """
+    if not _enabled():
+        return json_error(
+            "evals_disabled",
+            message="The eval substrate is off. Turn on `evals.enabled` to publish "
+            "lab-vs-field rows.",
+            status=404,
+        )
+    import asyncio
+
+    from personalclaw.evals import field_metrics as fm
+
+    try:
+        rows = await asyncio.to_thread(fm.subject_rows)
+    except Exception:
+        logger.warning("field metrics view failed", exc_info=True)
+        return json_error(
+            "field_metrics_unreadable",
+            message="The lab/field metric sources could not be read.",
+            status=500,
+        )
+    diverged = sum(1 for r in rows if r.lab_field_divergence)
+    _audit(request, "evals_field_metrics", "read", f"subjects={len(rows)} diverged={diverged}")
+    return web.json_response({"subjects": [r.to_dict() for r in rows]})
+
+
 def register_evals_routes(app: web.Application) -> None:
     """Register /api/evals/* — the judge tier table, the studies, the ablation report and
     the retrieval per-arm ablation (+ its hand-label card)."""
     app.router.add_get("/api/evals/judge-bench", api_evals_judge_bench)
+    app.router.add_get("/api/evals/field-metrics", api_evals_field_metrics)
     app.router.add_get("/api/evals/studies", api_evals_studies)
     app.router.add_get("/api/evals/studies/{study_id}", api_evals_study)
     app.router.add_get("/api/evals/ablation", api_evals_ablation)
