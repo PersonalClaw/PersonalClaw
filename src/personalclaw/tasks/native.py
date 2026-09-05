@@ -30,7 +30,15 @@ logger = logging.getLogger(__name__)
 
 #: Fields an update never writes: identity and provenance. `project` is excluded separately in the
 #: update loop because it is DERIVED (re-resolved from the task list on every read), not immutable.
-_IMMUTABLE_FIELDS: frozenset[str] = frozenset({"id", "provider", "created_at"})
+#:
+#: `author` is here for the reason `identity.py` states as doctrine — "existing records keep the
+#: string they were written with; rewriting history to match a new name would silently falsify the
+#: record it exists to preserve". It is write-once at CREATE (where an in-process caller may still
+#: name itself, e.g. `selfqa` filing as "self-qa") and never rewritten afterwards, so an edit cannot
+#: re-attribute a row that was already honestly signed. The HTTP layer refuses a supplied `author`
+#: outright; this is the store saying the same thing, so a future in-process caller cannot reopen
+#: it.
+_IMMUTABLE_FIELDS: frozenset[str] = frozenset({"id", "provider", "created_at", "author"})
 
 
 def _coerce_binding(raw: Any) -> "WorkflowTaskBinding | None":
