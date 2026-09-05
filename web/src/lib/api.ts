@@ -3542,10 +3542,15 @@ export interface PendingApproval {
 // `webpush`: the field exists to be handed to `pushManager.subscribe`, so publishing it
 // under an ntfy backend would advertise a capability that cannot be used.
 export interface PushStatus {
-  backend: 'webpush' | 'ntfy' | 'none'
+  backend: 'webpush' | 'ntfy' | 'relay' | 'none'
   vapid_public_key: string
   vapid_ready: boolean
   ntfy_configured: boolean
+  /** MC-9: is a push-relay URL configured, and which device ids hold a relay token.
+   *  The store app registers its vendor push token per device id, exactly as webpush
+   *  subscriptions are held per browser profile in `devices`. */
+  relay_configured: boolean
+  relay_devices: string[]
   /** Does plan 42's `approval/requested` rule route to the `push` target? The transport and
    *  the routing are two decisions, and a subscribed device with approvals unrouted is
    *  silent for a reason the user cannot otherwise see. */
@@ -5673,6 +5678,17 @@ export const api = {
     post<{ ok: boolean; device_id: string }>('/api/push/subscribe', { device_id, subscription }),
   pushUnsubscribe: (device_id: string) =>
     post<{ ok: boolean }>('/api/push/unsubscribe', { device_id }),
+  // MC-9: the relay backend's device half — the store app's vendor push token, held per
+  // device id. The token is a routing capability against the vendor push service, so it
+  // travels in the body once and is never echoed back by any read route.
+  pushRelayRegister: (device_id: string, platform: string, token: string) =>
+    post<{ ok: boolean; device_id: string }>('/api/push/relay-register', {
+      device_id,
+      platform,
+      token,
+    }),
+  pushRelayUnregister: (device_id: string) =>
+    post<{ ok: boolean }>('/api/push/relay-unregister', { device_id }),
   // Inbox items awaiting a decision (richer than client-filtering /api/inbox).
   inboxPending: () => get<InboxItem[]>('/api/inbox/pending'),
   // Cross-trigger run index (dashboard Schedule widget) — newest runs across all

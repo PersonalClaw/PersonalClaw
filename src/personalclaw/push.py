@@ -36,6 +36,13 @@ builds the payload rather than trusted to each caller's discipline.
   (``mobile.ntfy_topic_url``). Fully self-hostable, no VAPID keys, no per-device
   subscription. The ntfy app renders the JSON verbatim, which is deliberately unpretty:
   the alternative is composing a sentence, and a sentence is content.
+* ``relay`` — POST the same ids-only JSON, wrapped with a routing envelope
+  (``{platform, token, payload}``), to a user-configured push-relay instance
+  (``mobile.relay_url``) which forwards it to the vendor push services for the store app. The
+  relay is
+  stateless and open-source (deployable by anyone); the hosted instance is a
+  convenience, never a dependency. Device tokens are registered per device id by the
+  Capacitor shell, exactly as webpush subscriptions are by the browser.
 * ``none`` — deliver nothing. Not an error, just off.
 
 Delivery is **fail-open with respect to the notification it accompanies**: a push that
@@ -308,6 +315,70 @@ def unsubscribe(device_id: str) -> bool:
     return True
 
 
+# ── Relay device tokens (the ``relay`` backend's per-device half) ───────────
+
+#: Platforms the relay can route to. The vocabulary is closed on purpose: the relay's
+#: whole job is picking the Apple vs the Google push service, so an open-ended string would
+#: just defer the error.
+RELAY_PLATFORMS: tuple[str, ...] = ("ios", "android")
+
+RELAY_TOKENS_FILE = "push_relay_tokens.json"
+
+
+def relay_tokens_path() -> Path:
+    return config_dir() / RELAY_TOKENS_FILE
+
+
+def load_relay_tokens() -> dict[str, dict[str, Any]]:
+    """Every registered relay token, keyed by device id. ``{}`` when absent/unreadable."""
+    path = relay_tokens_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("push: relay token store unreadable — treating as empty", exc_info=True)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_relay_tokens(rows: dict[str, dict[str, Any]]) -> None:
+    path = relay_tokens_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
+def register_relay_token(device_id: str, platform: str, token: str) -> None:
+    """Store one Apple/Google push-service device token against *device_id*.
+
+    Mirrors :func:`subscribe`'s discipline: only the two fields a sender needs are kept,
+    and re-registering the same device REPLACES its row (platforms rotate tokens, and
+    keeping both would ping the phone twice).
+    """
+    platform = str(platform or "").strip().lower()
+    if platform not in RELAY_PLATFORMS:
+        raise ValueError(f"relay platform must be one of {RELAY_PLATFORMS}")
+    token = str(token or "").strip()
+    if not token:
+        raise ValueError("relay registration needs a device token")
+
+    rows = load_relay_tokens()
+    rows[str(device_id)] = {"platform": platform, "token": token, "created_at": time.time()}
+    _save_relay_tokens(rows)
+
+
+def unregister_relay_token(device_id: str) -> bool:
+    """Drop *device_id*'s relay token. True when one was removed."""
+    rows = load_relay_tokens()
+    if str(device_id) not in rows:
+        return False
+    rows.pop(str(device_id))
+    _save_relay_tokens(rows)
+    return True
+
+
 # ── Web push (RFC 8291 encryption + RFC 8292 authorization) ─────────────────
 
 
@@ -468,6 +539,37 @@ def send_ntfy(payload: dict[str, str], topic_url: str) -> bool:
     return 200 <= status < 300
 
 
+def send_relay(payload: dict[str, str], relay_url: str, platform: str, token: str) -> bool:
+    """POST one ids-only ping to the configured relay, wrapped in a routing envelope.
+
+    The body is built from exactly four things — the platform, the device token, and the
+    two payload ids — so the relay physically cannot receive content. The token is a
+    routing address for the relay, not a secret to us, but it IS a capability against
+    the vendor push service, so it never reaches a log line (mirroring the webpush
+    endpoint discipline).
+
+    Refuses a non-https destination, exactly like :func:`send_ntfy` and for the same
+    reason: config keeps the URL verbatim so the settings PATCH can explain a rejection,
+    which makes THIS the fail-closed point.
+    """
+    if urlparse(relay_url).scheme != "https":
+        logger.warning("push: refusing to publish to a non-https relay URL")
+        return False
+    body = json.dumps(
+        {"platform": platform, "token": token, "payload": assert_content_free(payload)}
+    ).encode("utf-8")
+    try:
+        status = _post(
+            relay_url,
+            body,
+            {"Content-Type": "application/json", "Content-Length": str(len(body))},
+        )
+    except Exception:
+        logger.warning("push: relay publish failed", exc_info=True)
+        return False
+    return 200 <= status < 300
+
+
 # ── The plan-42 `push` target ───────────────────────────────────────────────
 
 
@@ -496,6 +598,16 @@ def ntfy_topic_url() -> str:
         return ""
 
 
+def relay_url() -> str:
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return (AppConfig.load().mobile.relay_url or "").strip()
+    except Exception:
+        logger.debug("relay url read failed", exc_info=True)
+        return ""
+
+
 def send_push(device_id: str, payload: dict[str, Any]) -> bool:
     """Plan C3's per-device sender. Gated on the payload contract before anything else."""
     return send_webpush(device_id, assert_content_free(payload))
@@ -518,6 +630,16 @@ def deliver(kind: str, item_id: str) -> int:
             logger.debug("push: backend is ntfy but mobile.ntfy_topic_url is empty")
             return 0
         delivered = 1 if send_ntfy(payload, url) else 0
+    elif backend == "relay":
+        url = relay_url()
+        if not url:
+            logger.debug("push: backend is relay but mobile.relay_url is empty")
+            return 0
+        delivered = sum(
+            1
+            for row in load_relay_tokens().values()
+            if send_relay(payload, url, str(row.get("platform", "")), str(row.get("token", "")))
+        )
     elif backend == "webpush":
         delivered = sum(1 for device in list(load_subscriptions()) if send_webpush(device, payload))
     else:
@@ -632,6 +754,8 @@ def push_status() -> dict[str, Any]:
         "vapid_public_key": vapid_public_key() if backend == "webpush" else "",
         "vapid_ready": vapid_keys() is not None,
         "ntfy_configured": bool(ntfy_topic_url()),
+        "relay_configured": bool(relay_url()),
+        "relay_devices": sorted(load_relay_tokens()),
         "approval_targeted": approval_targeted(),
         "devices": sorted(subs),
         "subscribed": len(subs),

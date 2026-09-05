@@ -1,6 +1,6 @@
-"""Push subscription routes — MOBILE-COMPANION `MC-5` (S3 T3.2).
+"""Push subscription routes — MOBILE-COMPANION `MC-5` (S3 T3.2) + `MC-9` (S4 T4.3).
 
-Three routes, all owner-authenticated by the ordinary middleware (nothing here is added to
+Five routes, all owner-authenticated by the ordinary middleware (nothing here is added to
 ``_BYPASS_PREFIXES`` — a subscription endpoint reachable without a session would let anyone
 who can reach the gateway register a destination for its pings):
 
@@ -12,6 +12,10 @@ who can reach the gateway register a destination for its pings):
   :func:`personalclaw.notification_rules.ensure_target` — this is why the phone's "Turn on
   push" is one switch rather than two).
 * ``POST /api/push/unsubscribe`` — drop it.
+* ``POST /api/push/relay-register`` — store one vendor push-service device token per device id for
+  the ``relay`` backend (MC-9), with the same approval-rule tap as subscribe. The
+  Capacitor shell calls this after native push registration.
+* ``POST /api/push/relay-unregister`` — drop it.
 
 The device id names a BROWSER PROFILE, not a paired device, and is minted client-side
 (``web/src/app/pushClient.ts``). That is not laziness: a push subscription belongs to a
@@ -36,6 +40,8 @@ logger = logging.getLogger(__name__)
 
 ERR_INVALID = "push_subscription_invalid"
 ERR_NOT_SUBSCRIBED = "push_not_subscribed"
+ERR_RELAY_INVALID = "push_relay_registration_invalid"
+ERR_NOT_REGISTERED = "push_relay_not_registered"
 
 #: A W3C ``PushSubscription``'s endpoint. Bounded so a hostile body cannot make the
 #: subscriptions file arbitrarily large — the endpoints browsers actually mint are ~200 chars.
@@ -82,6 +88,8 @@ async def api_push_status(request: web.Request) -> web.Response:
             "vapid_public_key": status["vapid_public_key"],
             "vapid_ready": status["vapid_ready"],
             "ntfy_configured": status["ntfy_configured"],
+            "relay_configured": status["relay_configured"],
+            "relay_devices": status["relay_devices"],
             "approval_targeted": status["approval_targeted"],
             "devices": status["devices"],
             "subscribed": status["subscribed"],
@@ -133,8 +141,57 @@ async def api_push_unsubscribe(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def api_push_relay_register(request: web.Request) -> web.Response:
+    """Store one device's vendor push-service token for the relay backend, and route approvals.
+
+    The token is a capability against the vendor push service, so the audit line carries
+    the device id and platform only — the same reasoning that keeps webpush endpoints
+    out of SEL lines (see :func:`_audit`).
+    """
+    body = await _body(request)
+    device_id = str(body.get("device_id") or "").strip()[:_MAX_DEVICE_ID]
+    platform = str(body.get("platform") or "").strip().lower()
+    token = str(body.get("token") or "").strip()[:_MAX_ENDPOINT]
+    if not device_id or not token:
+        _audit("push_relay_register", "denied", resources="missing device_id or token")
+        return json_error(ERR_RELAY_INVALID, status=400)
+    try:
+        push.register_relay_token(device_id, platform, token)
+    except ValueError as exc:
+        # Names the bad field/vocabulary — a client-programming fact, not a secret.
+        _audit("push_relay_register", "denied", resources=f"device={device_id} platform={platform}")
+        return json_error(ERR_RELAY_INVALID, message=str(exc), status=400)
+    # The same one-switch tap as subscribe: turning push on IS "wake me for a blocked run".
+    routed = False
+    try:
+        from personalclaw import notification_rules
+
+        routed = notification_rules.ensure_target("approval", "requested", "push")
+    except Exception:
+        logger.warning("could not route approvals to the push target", exc_info=True)
+    _audit(
+        "push_relay_register",
+        "ok",
+        resources=f"device={device_id} platform={platform} approval_rule_written={routed}",
+    )
+    return web.json_response({"ok": True, "device_id": device_id, "approval_rule_written": routed})
+
+
+async def api_push_relay_unregister(request: web.Request) -> web.Response:
+    """Drop one device's relay token."""
+    body = await _body(request)
+    device_id = str(body.get("device_id") or "").strip()[:_MAX_DEVICE_ID]
+    if not device_id or not push.unregister_relay_token(device_id):
+        _audit("push_relay_unregister", "denied", resources=f"device={device_id}")
+        return json_error(ERR_NOT_REGISTERED, status=404)
+    _audit("push_relay_unregister", "ok", resources=f"device={device_id}")
+    return web.json_response({"ok": True})
+
+
 def register_push_routes(app: web.Application) -> None:
-    """Wire the three push routes."""
+    """Wire the five push routes."""
     app.router.add_get("/api/push", api_push_status)
     app.router.add_post("/api/push/subscribe", api_push_subscribe)
     app.router.add_post("/api/push/unsubscribe", api_push_unsubscribe)
+    app.router.add_post("/api/push/relay-register", api_push_relay_register)
+    app.router.add_post("/api/push/relay-unregister", api_push_relay_unregister)
