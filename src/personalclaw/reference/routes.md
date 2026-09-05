@@ -700,7 +700,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/task-lists/{list_id}` — _(no summary)_
 - `GET /api/task-lists/{list_id}` — _(no summary)_
 - `PUT /api/task-lists/{list_id}` — _(no summary)_
-- `POST /api/task-lists/{list_id}/reset` — reset a Repeatable-project list: all
+- `POST /api/task-lists/{list_id}/reset` — reset a Repeatable-project list so it can be run
 - `GET /api/tasks` — _(no summary)_
 - `POST /api/tasks` — _(no summary)_
 - `POST /api/tasks/bulk` — validate-all-then-apply bulk create/update/delete.

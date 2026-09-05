@@ -758,18 +758,21 @@ async def api_task_lists_delete(request: web.Request) -> web.Response:
 
 
 async def api_task_lists_reset(request: web.Request) -> web.Response:
-    """POST /api/task-lists/{list_id}/reset — reset a Repeatable-project list: all
-    its tasks → open, exit criteria → incomplete, execution notes cleared. Only
-    allowed for lists under the Repeatable project and only when all tasks done.
+    """POST /api/task-lists/{list_id}/reset — reset a Repeatable-project list so it can be run
+    AGAIN: every task returns to its not-yet-run state. Which fields that clears, and which are
+    deliberately preserved, is stated once in `task_reset_payload` — enumerating them here is
+    what let the list drift from the code (the docstring named three fields, the handler wrote
+    those same three, and `action_plan`'s per-step flags were in neither). Only allowed for
+    lists under the Repeatable project, and only when every task is terminal.
 
-    ``confirm: true`` is required. The two existing guards here are about whether the reset is
+    ``confirm: true`` is required. The two other guards here are about whether the reset is
     LEGAL (a Repeatable list, all tasks terminal), not about whether it was INTENDED, and this
     is the only path that empties ``execution_notes`` — the record of what was actually done on
     each task. Clearing that is unrecoverable and has no undo, so intent has to be stated. It is
     the same bar ``merge_items`` sets in the knowledge handlers for the same reason.
     """
     from personalclaw.tasks import registry
-    from personalclaw.tasks.models import TaskStatus
+    from personalclaw.tasks.models import REPEATABLE_PROJECT, TaskStatus, task_reset_payload
 
     try:
         body = await request.json()
@@ -794,7 +797,7 @@ async def api_task_lists_reset(request: web.Request) -> web.Response:
     if not tl:
         return web.json_response({"error": "not found"}, status=404)
     project = store.get_project(tl.project_id)
-    if not project or project.name != "Repeatable":
+    if not project or project.name != REPEATABLE_PROJECT:
         return web.json_response(
             {"error": "only task lists under the Repeatable project can be reset"}, status=400
         )
@@ -806,8 +809,7 @@ async def api_task_lists_reset(request: web.Request) -> web.Response:
         )
     reset_ids = []
     for t in tasks:
-        criteria = [{**c, "status": "incomplete", "met": False} for c in t.exit_criteria]
-        await registry.update_task(t.id, status="open", exit_criteria=criteria, execution_notes=[])
+        await registry.update_task(t.id, **task_reset_payload(t))
         reset_ids.append(t.id)
     return web.json_response({"ok": True, "reset_task_ids": reset_ids})
 
