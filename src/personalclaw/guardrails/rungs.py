@@ -192,6 +192,35 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         ceiling=RUNG_AUTONOMOUS,
         providers=("selfqa-triage",),
     ),
+    # HARNESS-CRAFT §3.2 (HC-5): the engine-native check-work verification node. Its own key
+    # rather than sharing `action.selfqa_triage`'s: deriving executable checks from claim text
+    # and reading the filesystem under a run root is a different governed behavior from
+    # classifying commits, even though both are read-only — and the shared-key convention is
+    # for a second NAME for one behavior. Autonomous at both ends because the effect is a
+    # report in the node's own output and nothing else: nothing to reverse, nothing to tell.
+    # It never executes code — the provider injects no command runner, so a command check is
+    # reported `unverifiable` rather than run.
+    ActionTypeSpec(
+        key="action.check_work",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("check-work",),
+    ),
+    # HARNESS-CRAFT §2.3 (HC-5): the engine-native best-of-N sampling node. Its own key: N
+    # temperature-varied completions plus a judge pass is not a second name for any class in
+    # this table — it spawns no turn (no tools, no session), writes no store, files no row.
+    # Its whole hazard is SPEND, which is governed where spend can be evaluated: every call
+    # rides `one_shot_completion` → ModelCallGuard → SpendMeter, the core clamps N at 5, and
+    # the write-capable fence in `triggers/screen.py` is where an unattended trigger opts in.
+    # `leaves_machine` stays False on the reading the digest providers established: this table
+    # classifies the EFFECT (text in the node's own output plus one bounded local telemetry
+    # row), not the powers used to compose it.
+    ActionTypeSpec(
+        key="action.best_of_n",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("best-of-n",),
+    ),
     # SELF-VERIFICATION §3.3 (SV-10). Its own key rather than sharing `action.create_task`'s: its
     # effect is registering an Artifact and — on a confirmed failure — opening a LOCAL git branch
     # (never pushed), which is a different governed behavior from filing a task row. Both effects

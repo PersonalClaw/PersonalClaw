@@ -124,6 +124,13 @@ EXPECTED = {
     # an `action` rather than an `infer`: the zero-item short-circuit has to happen before a
     # model is reachable, and the gate's drop rationales have to land in the run ledger.
     "morning-triage",
+    # The engine-native halves of best-of-N and check-work (HARNESS-CRAFT §2.3/§3.2, HC-5).
+    # Each is one action node over the SAME core its bundled skill calls
+    # (`sampling.best_of_n` / `check_work.derive_and_run`), so template and skill are
+    # behaviorally identical by construction — `tests/test_hc5_shared_core.py` holds the two
+    # entry points to one answer.
+    "best-of-n",
+    "check-work",
 }
 
 
