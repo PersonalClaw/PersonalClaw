@@ -72,12 +72,40 @@ class TestCheckerLogic:
     def test_network_declaration_reaches_the_consent_wire(self):
         """EI-12 D2. ``network`` is unenforced, so the ONLY thing it does is reach the
         Store's install-consent surface — the advisory row there is rendered from this
-        dict (``handlers/apps.py`` → ``AppPermissionsWire`` → ``PermissionList``). A
-        declared flag must appear; a declining app must omit the key, because the UI
-        distinguishes "declared" from "not declared" and would otherwise mislabel it."""
+        dict (``handlers/apps.py`` → ``AppPermissionsWire`` → ``PermissionList``).
+
+        THREE states, not two. This used to omit the key for ``"network": false`` exactly
+        as it does for a manifest that never mentions it, so an app that explicitly
+        declined egress was reported to the user as "not declared" — silence — when the
+        author had in fact stated the reassuring thing. The wire now carries ``false`` for
+        a declining app and nothing at all for a silent one, and the UI says three
+        different sentences."""
         assert Permissions.from_dict({"network": True}).to_dict()["network"] is True
-        assert "network" not in Permissions.from_dict({"network": False}).to_dict()
+        assert Permissions.from_dict({"network": False}).to_dict()["network"] is False
         assert "network" not in Permissions.from_dict({}).to_dict()
+
+    def test_an_explicit_network_denial_survives_a_wire_roundtrip(self):
+        """The declared-vs-silent distinction has to hold through the shape the catalog
+        actually moves permissions in (``to_dict`` → JSON → ``from_dict``), not only on
+        the first hop — the Store re-parses a scanned manifest before consent sees it."""
+
+        def roundtrip(declared: dict) -> Permissions:
+            wire = Permissions.from_dict(declared).to_dict()
+            return Permissions.from_dict(json.loads(json.dumps(wire)))
+
+        denied = roundtrip({"network": False})
+        assert denied.network is False and denied.network_declared is True
+        assert denied.to_dict()["network"] is False
+        silent = roundtrip({})
+        assert silent.network is False and not silent.network_declared
+        assert "network" not in silent.to_dict()
+
+    def test_an_explicit_network_denial_grants_nothing(self):
+        """The disclosure fix must not become a grant: ``network: false`` is still a
+        denial to every checker, and ``network_declared`` is bookkeeping for the consent
+        copy, never a capability."""
+        assert not _checker(network=False, network_declared=True).can_use_network()
+        assert _checker(network=True, network_declared=True).can_use_network()
 
 
 # ── APE-12: the consent wire declares every permission this dict can emit ──

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote } from '../../lib/scanFindings'
+import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote, ruleGloss } from '../../lib/scanFindings'
 import {
   ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock,
   Bot, Globe, Copy, Check, Loader2,
@@ -37,8 +37,15 @@ const sentence = (s: string) => (/[.!?…]$/.test(s.trim()) ? s.trim() : `${s.tr
  *  says". `invalid` is a refusal the user cannot override, so it renders as danger, not
  *  as a warning to click through. `unsigned` is stated plainly rather than hidden —
  *  community apps are unsigned by design and that is the honest, non-alarming default. */
-function SignatureRow({ signature }: { signature: NonNullable<AppScanReport['signature']> }) {
+function SignatureRow({ signature, verdict }: {
+  signature: NonNullable<AppScanReport['signature']>
+  /** The scan verdict on the SAME report. The unsigned note has to know it: on a
+   *  `dangerous` verdict there is no install to reassure anyone about, and the sentence
+   *  that reassured them sat five lines above "This app is blocked". */
+  verdict: string
+}) {
   const s = signature.state
+  const blocked = verdict === 'dangerous'
   const tone = s === 'invalid' ? 'text-danger' : s === 'signed' ? 'text-ok' : 'text-on-surface-low'
   const Icon = s === 'invalid' ? ShieldAlert : s === 'signed' ? BadgeCheck : ShieldQuestion
   const label =
@@ -53,10 +60,18 @@ function SignatureRow({ signature }: { signature: NonNullable<AppScanReport['sig
       {s === 'invalid' && signature.reason && (
         <div data-type="body-s" className="text-danger">{signature.reason}</div>
       )}
+      {/* The second sentence is about what the MISSING SIGNATURE does or does not stop, so
+          it has to agree with the verdict it sits beside. Unconditional, it told the user
+          "It still installs" a few lines above "This app is blocked — dangerous content
+          cannot be installed": one screen asserting both that the app installs and that it
+          cannot. On a refusal the honest version of the same point is that being unsigned
+          is not why — the scan is — and neither fact reopens the install. */}
       {s === 'unsigned' && (
         <div data-type="body-s" className="text-on-surface-low">
-          No maintainer signature, so PersonalClaw can't confirm who published this. It still
-          installs — the security scan above is what gates it.
+          No maintainer signature, so PersonalClaw can't confirm who published this.{' '}
+          {blocked
+            ? 'That is not why this install was refused — the security scan is, and it cannot be overridden.'
+            : 'It still installs — the security scan above is what gates it.'}
         </div>
       )}
     </div>
@@ -72,13 +87,21 @@ export function ScanReport({ scan }: { scan: NonNullable<AppInstallResult['scan'
       <div className={`flex items-center gap-2 ${tone}`} data-type="body-m"><Icon size={16} /> Security scan: {v}
         {scan.findings.length > 0 && ` · ${scan.findings.length} finding${scan.findings.length === 1 ? '' : 's'}`}
       </div>
-      {scan.signature && <SignatureRow signature={scan.signature} />}
+      {scan.signature && <SignatureRow signature={scan.signature} verdict={v} />}
       {scan.findings.length > 0 && (
         <ul className="mt-2 flex flex-col gap-1">
+          {/* rule (severity) — path: evidence, then what the rule MEANS. The first line is
+              the scanner's own vocabulary and the evidence is the real argv; neither tells a
+              non-expert what the app can do to their machine, which is the only question they
+              can actually answer. The gloss is a second line rather than an inline clause so
+              the technical row stays greppable/comparable against the scanner's output. */}
           {scan.findings.slice(0, SCAN_FINDINGS_SHOWN).map((f, i) => (
             <li key={i} data-type="body-s" className="text-on-surface-low">
               <span className="text-on-surface">{f.rule}</span> ({f.severity})
               {f.path ? ` — ${f.path}` : ''}{f.evidence ? `: ${f.evidence}` : ''}
+              {ruleGloss(f.rule) && (
+                <span className="block text-on-surface-var">{ruleGloss(f.rule)}</span>
+              )}
             </li>
           ))}
           {/* The list stops at the cap; without this the eight shown read as all of them, on the
@@ -101,8 +124,25 @@ export function ScanReport({ scan }: { scan: NonNullable<AppInstallResult['scan'
 // Exported so the onboarding essential-apps step consents through THIS surface rather
 // than a second, quieter one: a warning verdict must show the same scanner findings and
 // demand the same explicit "Install anyway" wherever the install was initiated.
-export function ConsentModal({ label, result, busy, onConfirm, onClose }: {
+//
+// 🔑 THE GRANTS ARE PART OF CONSENT, AND THIS MODAL OWNS THEM NOW. The module header
+// promised every install path discloses the same thing, and two of four callers broke it:
+// the Store CARD's Install and Manage Sources → Install rendered this modal with the scan
+// report only, so the fastest path to an install disclosed the scanner's findings and never
+// what the app is permitted to do or what it will run unattended. The other two disclosed
+// them on the panel BEHIND this modal — which this modal covers at the moment the user
+// clicks "Install anyway". So the bullets moved inside: the disclosure is now on the same
+// screen as the button that acts on it, for every caller, by construction.
+//
+// 🪤 `permissions` and `crons` are REQUIRED props, not optional ones — that is the whole
+// mechanism. A comment asking four callers to remember is what failed here; a required
+// prop makes forgetting a type error. Pass `undefined` when the grants genuinely are not
+// known yet (a registry pointer's manifest is not fetched until install) and the modal says
+// so out loud, which is a different and honest disclosure — never silence.
+export function ConsentModal({ label, result, busy, permissions, crons, onConfirm, onClose }: {
   label: string; result: GuardedResult; busy: boolean
+  permissions: AppSummary['permissions'] | undefined
+  crons: AppCronSummary[] | undefined
   onConfirm: () => void; onClose: () => void
 }) {
   // P21: a client-install directive — the app installs on the user's local machine,
@@ -144,6 +184,21 @@ export function ConsentModal({ label, result, busy, onConfirm, onClose }: {
             || 'The security scanner raised warnings. Review the findings — you can install anyway if you trust the source.'}
         </p>
         {result.scan && <ScanReport scan={result.scan} />}
+        {/* What the app is GRANTED and what it will RUN, beside the scanner's verdict on its
+            CONTENT. Three different questions; a screen answering only the third lets "the
+            scan found two warnings" stand in for "and it may also read your credentials
+            store on a schedule". Rendered on a refusal too: a user is owed the reason the
+            platform said no, and the grants are why the findings matter. */}
+        {permissions
+          ? <PermissionList perms={permissions} />
+          : (
+            <div data-type="body-s" className="text-on-surface-low">
+              PersonalClaw could not read this app's declared permissions before installing —
+              its manifest is fetched as part of the install. Open the app in the Store to see
+              them, or review them on its page once installed.
+            </div>
+          )}
+        {(crons ?? []).length > 0 && <CronConsentList crons={crons!} />}
         <div className="flex justify-end gap-2 pt-s">
           {/* A terminal refusal leaves NOTHING to cancel — the install was already refused server-side,
               so this button only dismisses. "Cancel" claims the user is abandoning a pending action and
@@ -212,6 +267,18 @@ function describeMessagingTarget(pattern: string): string {
 // other apps an app may talk to. Declaring nothing is disclosed too (the caption
 // below the bullets): deny-by-default is the real behaviour, and silence would repeat
 // the mistake D2 found for `network`.
+//
+// THREE network states, not two. The row read `not declared` for a manifest carrying an
+// explicit `"network": false`, collapsing a STATEMENT by the author into silence — and it
+// is the statement a user most wants: "this app says it does not go out to the internet".
+// `undefined` (the key absent) is the only honest "not declared"; the server now emits
+// `false` for a declining app (`Permissions.to_dict` keeps the key when the manifest
+// mentioned it) so the two cases can read differently here.
+function networkClaim(network: boolean | undefined): string {
+  if (network === undefined) return 'not declared'
+  return network ? 'declared' : 'declared as denied'
+}
+
 export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) {
   const rows: string[] = []
   if (perms.api?.length) rows.push(`API: ${perms.api.join(', ')}`)
@@ -299,7 +366,7 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
       <div className="mt-2 flex gap-2 rounded-m border border-outline-variant bg-surface-high p-m">
         <Globe size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
         <div data-type="body-s" className="text-on-surface-low">
-          <span className="text-on-surface">Network access: {perms.network ? 'declared' : 'not declared'}</span>
+          <span className="text-on-surface">Network access: {networkClaim(perms.network)}</span>
           {' — advisory only. PersonalClaw does not confine an app\'s outbound traffic: this app\'s '}
           code can reach the network either way. The declaration is disclosure, not containment.
         </div>
@@ -311,14 +378,31 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
 // P29: the recurring jobs an app declares, shown pre-install. Each is an agent run on
 // a schedule — we surface the cadence + which agent + the prompt so the user sees what
 // will run unattended before granting the `cron` permission.
+//
+// 🔑 A CRONTAB LINE IS NOT A DISCLOSURE. This returned `cron_expr` verbatim, so the one
+// screen whose job is saying what will run unattended said `23 * * * *`. The words come
+// from the server (`catalog._humanized_cadence` → `schedule.format_schedule` →
+// cron-descriptor), the SAME formatter the Schedule page reads, rather than a second
+// hand-rolled parser here that would drift from it. The raw expression is not discarded —
+// it stays on the row as its `title` (see `cadenceTitle`), so a reader who wants the
+// exact expression still has it.
 function fmtCadence(c: AppCronSummary): string {
-  if (c.cron_expr) return c.cron_expr
+  if (c.cron_expr) return c.cadence || c.cron_expr
   const s = c.every ?? 0
   if (!s) return 'on a schedule'
   if (s % 86400 === 0) { const d = s / 86400; return `every ${d === 1 ? 'day' : `${d} days`}` }
   if (s % 3600 === 0) { const h = s / 3600; return `every ${h === 1 ? 'hour' : `${h} hours`}` }
   if (s % 60 === 0) { const m = s / 60; return `every ${m === 1 ? 'minute' : `${m} minutes`}` }
   return `every ${s}s`
+}
+
+/** The exact crontab expression, as a hover title on the humanised cadence — kept so
+ *  humanising loses nothing. `undefined` when the row already shows the expression itself
+ *  (the server could not describe it), because a tooltip repeating the visible text is
+ *  noise, and for the `every` form, which has no expression. */
+function cadenceTitle(c: AppCronSummary): string | undefined {
+  if (!c.cron_expr || !c.cadence) return undefined
+  return `cron: ${c.cron_expr}`
 }
 
 export function CronConsentList({ crons }: { crons: AppCronSummary[] }) {
@@ -335,7 +419,7 @@ export function CronConsentList({ crons }: { crons: AppCronSummary[] }) {
           <li key={c.name || i} className="rounded-m border border-outline-variant bg-surface-high p-m">
             <div className="flex items-center justify-between gap-2">
               <span data-type="body-s" className="text-on-surface">{c.name || 'job'}</span>
-              <span data-type="label-s" className="shrink-0 text-on-surface-low">{fmtCadence(c)}</span>
+              <span data-type="label-s" className="shrink-0 text-on-surface-low" title={cadenceTitle(c)}>{fmtCadence(c)}</span>
             </div>
             {(c.agent || c.message) && (
               <div className="mt-1 flex items-start gap-1.5 text-on-surface-low" data-type="label-s">
