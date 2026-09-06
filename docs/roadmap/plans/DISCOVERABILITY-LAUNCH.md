@@ -709,3 +709,36 @@ does read this file's citations, and really would red on a broken one.
   handoff is at the end of `docs/demo/CLICKPATH.md`. The 1280×640 social-preview cards the same
   `done_when` asks for landed with #2532 (`docs/brand/social-preview-{core,apps}.png`, both verified
   1280×640) and are unchanged here.
+
+- **2026-09-06 — `DL-5` flipped: the site hero now references the tour, and the reference is one
+  click away on purpose.** The entry above left `DL-5` open on a single clause — the capture had to be
+  *referenced from the site hero*, which lives in the separate `personalclaw.dev` repo. That reference
+  landed as personalclaw.dev PR #54 (3 commits, all CI green: static contract, 130 Playwright tests
+  including Axe WCAG A/AA and visual regression, Lighthouse budgets, release parity, Vercel deploy).
+  The interesting part is where it did **not** go. The handoff asked for the player beside the hero
+  carousel; that was declined on two measurements rather than on taste. First, there is no "beside":
+  `.home-hero` is a fixed-height clipped composition (`min(780px, 100dvh - 112px)`,
+  `overflow: hidden`) with `SystemWindow` absolutely positioned at `min(1180px, 76vw)`, bleeding past
+  the viewport edge, so a player in the copy column crops on short viewports. Second, the embedded
+  version was **built and measured before being rejected**: +226ms LCP on `/`, leaving **90ms of a
+  2500ms budget**, with one of five samples landing *under* it — a `<video>` poster is fetched
+  eagerly, so there was no cheap fix. The player therefore lives at `/product#tour`, the site's own
+  guided-tour route covering exactly those beats, with 311ms of margin; the hero spends one text row.
+  Lighthouse median-of-4: `/` LCP 2191 → 2190ms and +924 bytes, `/product` 1820 → 2189ms and +36 KB,
+  and **zero media bytes on load on both** — the 1.2 MB mp4 is not fetched until someone presses play.
+  Three deviations are on the record rather than in a diff nobody reads. `preload="none"` instead of
+  `"metadata"`, because Chromium range-requests the header and then *aborts*, which reds that repo's
+  zero-failed-requests browser assertion. A **captions track**, because Axe's `video-caption` rule
+  (WCAG 2.0 A) fires on any `<video>` without one — and since the capture is silent the VTT
+  *describes* each beat at click-path timings rather than transcribing silence, with a visible ordered
+  beat strip as the text alternative. And `scripts/validate-build.mjs` grew to resolve
+  `video`/`source`/`poster`/`track` URLs, because media under `public/` is not fingerprinted and
+  nothing else in that repo would catch a renamed capture. The capture was **reused, not
+  regenerated** (verified byte-identical: 83.72s, 1,195,120 bytes, single stream, no audio,
+  faststart), so the video and the committed click-path still describe the same thing. One item is
+  flagged for owner judgement rather than quietly fixed: the capture shows the truthful
+  `Transcription degraded` and `Durability degraded` chips throughout, so they are in the poster too —
+  honest, consistent with the site's name-the-boundary rule, and also the first thing a stranger sees
+  on `/product`. With `DL-5` closed, **every remaining `DL` atom is owner-side**: `DL-9`'s engineering
+  is already merged on the site's main and only its owner residual is open, and `DL-10`/`DL-11` are
+  the two launch actions an agent must not take.
