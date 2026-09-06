@@ -112,6 +112,17 @@ item vector).
   `~/.personalclaw/memory.faiss` (optional — degrades to FTS5 without
   embeddings), time-decay retrieval, and config-threaded episodic knobs
   (`episodic_dedup_threshold`, `episodic_max_results` in `config/loader.py`).
+- **`memory_ranking.py`** — the ONE owner of "how did this recall actually rank".
+  Derives a `RecallRanking` from the provider's declared `MemoryCapabilities`
+  (`vector` / `full_text_search` / `entity_graph`) and composes the user-facing
+  sentence **server-side**, so every surface presenting ranked results renders one
+  wording instead of authoring its own. Served as `ranking` by
+  `/api/memory/recall`, `/api/memory/context-preview`, `/api/memory/episodic/search`
+  and `/api/memory/entities`; `null` on a recall a temporary session blocked, because
+  no recall ran. Adding a capability is forced to declare what it means for recall —
+  `tests/test_recall_ranking_disclosure.py` censuses the dataclass fields, and a
+  second census requires every handler calling a ranking scorer to serve the
+  disclosure.
 - **`memory.py`** — structured key/value memory with FTS5.
 - **`memory_record.py`** — the typed `MemoryRecord` with a `kind`
   discriminator, the one shape the subsystem speaks. The key taxonomy is
