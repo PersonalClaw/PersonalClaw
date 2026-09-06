@@ -5,7 +5,14 @@ cartesian product of its axes × ``trial_count``, and executes each cell
 **sequentially** in a **spawned child process** (:mod:`personalclaw.evals.child`)
 whose ``PERSONALCLAW_WORKSPACE`` points at a fresh per-cell temp workspace. The
 parent gateway's ``os.environ`` is NEVER mutated — that is the §1.3 isolation fix,
-achieved by env-copy-at-spawn (precedent: ``schedule_script.run_script_sandboxed``).
+achieved by constructing the child env at spawn (precedent:
+``schedule_script.run_script_sandboxed``).
+
+That construction is a BUILD, not a copy: :func:`personalclaw.sandbox.build_child_env`
+composes the child env from the measured name ALLOWLIST, so nothing a cell may reach is
+there merely because the launching shell happened to export it. What a cell needs beyond
+that floor it gets by NAME — see :data:`_FORWARDED_ENV_NAMES` and
+:mod:`personalclaw.evals.cell_provider`.
 
 Three-state outcome mapping (§1.2), the load-bearing contract:
 
@@ -31,6 +38,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw.evals import cell_provider
 from personalclaw.evals import gate as gate_lib
 from personalclaw.evals import overlay as overlay_lib
 from personalclaw.evals import pinning
@@ -48,9 +56,20 @@ from personalclaw.evals.matrix import (
     aggregate,
     expand_cells,
 )
+from personalclaw.llm import registry as registry_lib
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
+
+#: Parent-environment variables a cell inherits BY NAME, on top of
+#: :data:`personalclaw.sandbox.CHILD_ENV_BASE_NAMES`.
+#:
+#: The base allowlist is written for agent-influenced children and knows nothing about
+#: evals, so the one variable an UNBOUND cell genuinely needs is granted here explicitly:
+#: without it the offline ``scripted`` fixture stops registering and the default cell loses
+#: the only provider it ever had. It names a replay-script PATH, not a secret — every
+#: credential-shaped variable stays withheld, bound cell or not.
+_FORWARDED_ENV_NAMES: tuple[str, ...] = (registry_lib.SCRIPTED_PROVIDER_ENV,)
 
 # Default per-cell wall-clock ceiling. A single-user machine runs cells one at a
 # time, so this bounds one scenario, not a fleet.
@@ -112,6 +131,30 @@ def _cell_overlay(spec: MatrixSpec, coords: dict) -> "overlay_lib.ComponentOverl
     return base.for_arm(arm)
 
 
+def _cell_base_env(workspace: Path, cell_home: Path) -> dict[str, str]:
+    """The environment ONE cell's child starts from — built, never inherited.
+
+    ``build_child_env`` is the repo's one answer to "what may a spawned child see": a name
+    allowlist rather than a copy, measured at 121 inherited variables on a real gateway
+    process, with a credential floor no declaration can lower. A matrix cell is a spawn site
+    like any other, and it is the one whose inheritance was load-bearing in the wrong
+    direction — ``config/loader.py`` deliberately seeds stored credentials into
+    ``os.environ`` so trusted children get them for free, which is exactly the free gift a
+    measurement must not accept.
+
+    On top of the allowlist: the two per-cell overrides (computed here, not inherited) and
+    :data:`_FORWARDED_ENV_NAMES` by name. Nothing else crosses.
+    """
+    from personalclaw.sandbox import build_child_env
+
+    extra = {"PERSONALCLAW_WORKSPACE": str(workspace), "PERSONALCLAW_HOME": str(cell_home)}
+    for name in _FORWARDED_ENV_NAMES:
+        value = os.environ.get(name, "")
+        if value:
+            extra[name] = value
+    return build_child_env(site="evals-cell", extra=extra)
+
+
 def _spawn_cell(
     spec: MatrixSpec,
     coords: dict,
@@ -121,16 +164,25 @@ def _spawn_cell(
     timeout_secs: float,
     pin: pinning.RunPin,
     artifact_arm: "gate_lib.ArtifactArm | None" = None,
+    provider_binding: "cell_provider.CellProviderBinding | None" = None,
 ) -> CellResult:
     """Run ONE cell in a child process and map its outcome to a ``CellResult``.
 
-    Env construction is the load-bearing §1.3 isolation code: we ``os.environ.copy()``
-    (a COPY — the parent's env is never mutated) and set ``PERSONALCLAW_WORKSPACE``
-    and ``PERSONALCLAW_HOME`` on the COPY only, so both overrides exist in the child
-    and nowhere else. ``PERSONALCLAW_HOME`` points at an empty per-cell dir the child
-    seeds from the scenario's named ``fixture_home`` (ES-2): the run executes over a
-    known clean state, and everything the child writes lands in the throwaway home
-    rather than in the user's.
+    Env construction is the load-bearing §1.3 isolation code, and it is a BUILD rather than
+    a copy: ``build_child_env`` composes the child environment from the measured name
+    allowlist, then ``PERSONALCLAW_WORKSPACE``/``PERSONALCLAW_HOME`` are set on that fresh
+    dict, so both overrides exist in the child and nowhere else and the parent's own env is
+    never touched. ``PERSONALCLAW_HOME`` points at an empty per-cell dir the child seeds
+    from the scenario's named ``fixture_home`` (ES-2): the run executes over a known clean
+    state, and everything the child writes lands in the throwaway home rather than the
+    user's.
+
+    An ``os.environ.copy()`` here would hand a cell every credential the launching shell
+    exported — a provider key a study never declared is a provider a study never declared,
+    and a benchmark that reached one by accident could not say which model produced its
+    numbers. So the ONLY model grant a cell gets is ``provider_binding``: one use case, one
+    model ref, expressed by the caller. With none declared the cell keeps exactly the
+    offline ``scripted`` default it has always had.
 
     The cell's own pin (the matrix pin with the model-axis override applied) is
     persisted beside the cell artifact, so a surprising cell is attributable without
@@ -161,6 +213,11 @@ def _spawn_cell(
     # LABEL is recorded so a surprising cell says which side of the before/after it was.
     if artifact_arm is not None:
         descriptor["arm"] = artifact_arm.label
+    # The declared provider binding, recorded (secret-free — it carries only the NAME of the
+    # variable it forwards) so a retained cell artifact says on its face whether this cell ran
+    # a real model or the offline replay. A reader must never have to infer which.
+    if provider_binding is not None:
+        descriptor["provider_binding"] = provider_binding.to_dict()
     descriptor_path.write_text(json.dumps(descriptor, indent=2, sort_keys=True), encoding="utf-8")
     artifact_ref = str(cell_dir)
 
@@ -170,18 +227,20 @@ def _spawn_cell(
         # The child seeds this path itself; ``seed()`` refuses a non-empty target
         # without ``replace=True``, so we deliberately do NOT create it here.
         cell_home = Path(cell_tmp) / "home"
-        # ── §1.3 isolation: env override on a COPY, parent env never touched ──
-        env = os.environ.copy()
-        env["PERSONALCLAW_WORKSPACE"] = str(ws)
-        env["PERSONALCLAW_HOME"] = str(cell_home)
-        # The component toggle rides the child's env, on the same COPY. This is the whole
-        # of "child-process overlay toggling": nothing in the parent applies the overlay,
-        # so no code path here can reach the live spec/config.
+        # ── §1.3 isolation: a BUILT child env, parent env never touched ──
+        env = _cell_base_env(ws, cell_home)
+        # The component toggle rides the child's env, on the same fresh dict. This is the
+        # whole of "child-process overlay toggling": nothing in the parent applies the
+        # overlay, so no code path here can reach the live spec/config.
         env = overlay_lib.spawn_env_for(env, cell_overlay)
-        # The ES-6 gate arm rides the SAME copy. Nothing in the parent stages the candidate, so
+        # The ES-6 gate arm rides the SAME dict. Nothing in the parent stages the candidate, so
         # no code path here can reach the live home — the child's `throwaway_home()` refusal is
         # what actually enforces that.
         env = gate_lib.spawn_env_for(env, artifact_arm)
+        # The declared model grant rides it too — and it is the only way one can. An unbound
+        # cell's env carries no provider binding and no secret, so it resolves the offline
+        # `scripted` fixture and nothing else.
+        env = cell_provider.spawn_env_for(env, provider_binding)
         try:
             proc = subprocess.run(
                 [sys.executable, "-m", "personalclaw.evals.child", str(descriptor_path)],
@@ -237,6 +296,7 @@ def run_matrix(
     matrix_id: str,
     timeout_secs: float = DEFAULT_CELL_TIMEOUT_SECS,
     artifact_arm: "gate_lib.ArtifactArm | None" = None,
+    provider_binding: "cell_provider.CellProviderBinding | None" = None,
 ) -> MatrixResult:
     """Execute ``spec`` cell-by-cell in child processes; persist + return the result.
 
@@ -250,6 +310,13 @@ def run_matrix(
     ``artifact_arm`` (ES-6) is the Loop-2 gate's before/after arm: a set of home-relative files
     the CHILD stages into its throwaway home. It is threaded here rather than given its own
     runner because a second spawn path would be a second isolation contract to keep true.
+
+    ``provider_binding`` is the model grant the CALLER declares for this run: one use case
+    bound to one ``Provider:model`` ref, applied by the child inside its throwaway home. It
+    is an explicit parameter rather than a field on the spec because it is a property of
+    THIS invocation's environment, not of the experiment being described — an
+    ``experiment.json`` that hardcoded an endpoint would stop being reproducible elsewhere.
+    Omit it and every cell resolves the offline ``scripted`` fixture, exactly as before.
 
     ES-2: the pin is computed FIRST, before any cell runs, and persisted as
     ``matrices/<id>/pin.json``. A scenario that cannot be resolved — or that names a
@@ -287,6 +354,7 @@ def run_matrix(
                 timeout_secs=timeout_secs,
                 pin=pin,
                 artifact_arm=artifact_arm,
+                provider_binding=provider_binding,
             )
         )
 

@@ -249,11 +249,17 @@ def config_field_exists(dotted: str) -> bool:
     return True
 
 
-def _patch_child_config(dotted: str, value: object) -> str:
+def patch_child_config(dotted: str, value: object) -> str:
     """Write ``dotted`` = ``value`` into the CHILD home's ``config.json``.
 
     The file is the throwaway home's, created if absent. Nested paths are created as
     needed, so a field the fixture home never wrote is still overridable.
+
+    PUBLIC for the same reason :func:`throwaway_home` is: a second child-side stager needs
+    the identical write (the declared provider binding in
+    :mod:`personalclaw.evals.cell_provider` puts ONE ``providers[]`` entry into the cell
+    home), and a private copy would be a second answer to "how does a cell edit its own
+    config" — one answer too many for a writer whose whole job is to touch nothing else.
     """
     home = throwaway_home()
     home.mkdir(parents=True, exist_ok=True)
@@ -339,5 +345,5 @@ def apply_in_child(overlay: ComponentOverlay | None) -> list[str]:
                 f"component {overlay.component_id!r} declares no cheap_value; a cheap arm "
                 "that changed nothing would be reported as 'the cheap variant matches'"
             )
-        return [_patch_child_config(overlay.target, overlay.cheap_value)]
-    return [_patch_child_config(overlay.target, overlay.off_value)]
+        return [patch_child_config(overlay.target, overlay.cheap_value)]
+    return [patch_child_config(overlay.target, overlay.off_value)]

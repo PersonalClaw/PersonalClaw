@@ -4,6 +4,7 @@
     python scripts/learning_benchmark.py --preflight            # nothing is called
     python scripts/learning_benchmark.py --dry-run              # the paired cell plan
     python scripts/learning_benchmark.py --run                  # the paired runs
+    python scripts/learning_benchmark.py --run --bind-provider LocalOllama:gemma4:12b
     python scripts/learning_benchmark.py --run --task sk_grill --trials 5
     python scripts/learning_benchmark.py --reproduce <baseline_run_id> --run
 
@@ -28,6 +29,12 @@ whose `PERSONALCLAW_HOME` is a per-cell temp dir seeded from the scenario's decl
 `fixture_home`, and the `skills_off` arm's suppression is an overlay applied only inside that
 child. The REPORT, however, is written under the invoking home's `evals/learning_bench/`, so run
 this against an isolated `PERSONALCLAW_HOME` unless you mean to keep the results.
+
+Why `--bind-provider` and not "use whatever this home has": a cell's environment is BUILT from a
+name allowlist, not inherited, so no provider or credential reaches it by accident. `--run` on its
+own therefore measures nothing — every cell resolves the offline scripted fixture — and the flag
+names the ONE `Provider:model` ref the cells may call. The ref it names lands in the report's
+`provider_binding`, so a published table can never be mistaken for the other kind of run.
 """
 
 from __future__ import annotations
@@ -230,7 +237,7 @@ def _verdict_for_task(task: bench.BenchTask, cells: list) -> verdict_lib.TaskVer
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Run the paired arms and write the report. THIS calls models."""
-    from personalclaw.evals import ablation, store
+    from personalclaw.evals import ablation, cell_provider, store
     from personalclaw.evals.runner import run_matrix
 
     home = os.environ.get("PERSONALCLAW_HOME", "")
@@ -239,10 +246,25 @@ def cmd_run(args: argparse.Namespace) -> int:
     moment = _now()
     run_id = _run_id(moment)
 
+    # `--bind-provider` is what makes a cell able to call a real model. It names ONE
+    # `Provider:model` ref; everything the cell needs is resolved from that one entry, and a
+    # run without the flag keeps the offline scripted default. Resolved BEFORE the first task
+    # so a typo'd ref fails now rather than after burning half a matrix.
+    binding = None
+    if args.bind_provider:
+        try:
+            binding = cell_provider.resolve_binding(args.bind_provider)
+        except cell_provider.CellBindingError as exc:
+            print(f"cannot bind {args.bind_provider!r}: {exc}")
+            return 1
+        print(f"bound {binding.model_ref()} for {binding.use_case!r} — cells call a real model")
+    else:
+        print("no --bind-provider: every cell resolves the offline scripted fixture")
+
     ready = {r.task_id: r for r in bench.preflight()}
     verdicts: list[verdict_lib.TaskVerdict] = []
     skipped: list[dict] = []
-    pin_seen: dict[str, str] = {}
+    pin_seen: dict = {}
 
     for task in tasks:
         pre = ready.get(task.task_id)
@@ -256,7 +278,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"RUN  {task.task_id} ({task.skill}) — {trials * 2} cells")
         try:
             with ablation.live_state_unchanged():
-                result = run_matrix(spec, matrix_id=matrix_id)
+                result = run_matrix(spec, matrix_id=matrix_id, provider_binding=binding)
         except store.PinRequiredError as exc:
             # §3: "the pin is the comparability claim", and `run_matrix` refuses an incomplete
             # one BEFORE spawning. That refusal is correct behaviour, not an error to work
@@ -273,6 +295,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             pin_seen.setdefault("prompt_pack_sha256", pin.prompt_pack_sha256)
             pin_seen.setdefault("config_snapshot_ref", pin.config_snapshot_ref)
             pin_seen.setdefault("model_fp", pin.model_fp())
+            # The per-use-case refs behind `model_fp`, spelled out. `model_fp` is a digest, so a
+            # reader of a published table could not tell a real model from the offline replay
+            # from it — and §8 forbids publishing a number whose provenance is unreadable.
+            pin_seen.setdefault("model_fingerprint", dict(pin.model_fingerprint))
         except Exception:  # noqa: BLE001 - an unpinnable task is reported, not fatal
             pass
         print(
@@ -296,6 +322,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             "source": "harness/fanout_measure.py",
         },
         "pin": pin_seen,
+        # WHAT the cells were actually allowed to call. `null` is the honest reading of an
+        # offline run and must stay distinguishable from a real one at a glance: the two
+        # produce identically-shaped score tables and only one of them is a measurement.
+        "provider_binding": (binding.to_dict() if binding is not None else None),
         "home": home,
         "tasks": [tv.to_dict() for tv in verdicts],
         "skipped": skipped,
@@ -355,6 +385,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--task", action="append", default=[], help="restrict to a register task id")
     p.add_argument(
         "--trials", type=int, default=0, help="trials per arm (default: study_default_k)"
+    )
+    p.add_argument(
+        "--bind-provider",
+        default="",
+        metavar="Provider:model",
+        help=(
+            "bind ONE real model for this run's cells (e.g. LocalOllama:gemma4:12b). Without "
+            "it every cell resolves the offline scripted fixture and measures nothing"
+        ),
     )
     p.add_argument("--reproduce", default="", help="baseline run id to judge this run against (V4)")
     p.add_argument("--against", default="", help="with --check-reproduction: the re-run's run id")
