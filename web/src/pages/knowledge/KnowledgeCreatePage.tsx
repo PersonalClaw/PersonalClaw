@@ -31,13 +31,13 @@ export function KnowledgeCreatePage({ onBack, onCreated }: { onBack: () => void;
         <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>Add knowledge</PageTitle></div>} />
         <div className="flex-1 overflow-y-auto">
           <div className="mx-auto px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
-            <p className="text-on-surface-low text-[0.9375rem] mb-l text-center">What kind of knowledge are you adding?</p>
+            <p data-type="body-m" className="text-on-surface-low mb-l text-center">What kind of knowledge are you adding?</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-m">
               {TYPES.map((t) => (
                 <button key={t.key} type="button" onClick={() => setType(t.key)}
                   className="group flex flex-col items-center gap-2 rounded-xl bg-surface-container p-l hover:bg-surface-high transition-colors">
                   <span className="inline-flex size-12 items-center justify-center rounded-xl" style={{ background: `color-mix(in srgb, ${t.tone} 16%, transparent)` }}><t.icon size={22} style={{ color: t.tone }} /></span>
-                  <span className="text-on-surface text-[0.8125rem]" style={fvs(500)}>{t.label}</span>
+                  <span data-type="label-s" className="text-on-surface" style={fvs(500)}>{t.label}</span>
                 </button>
               ))}
             </div>
@@ -155,7 +155,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
           {kind === 'bookmark' && (
             <div className="shrink-0 flex items-center gap-s rounded-md bg-surface-container px-m h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
               <Link2 size={15} className="text-on-surface-low shrink-0" />
-              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" autoFocus aria-label="Bookmark URL" className="flex-1 bg-transparent text-on-surface text-[0.9375rem] outline-none placeholder:text-on-surface-low" />
+              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" autoFocus aria-label="Bookmark URL" data-type="body-m" className="flex-1 bg-transparent text-on-surface outline-none placeholder:text-on-surface-low" />
             </div>
           )}
 
@@ -172,9 +172,9 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
           {/* Gist language selector — inline label + select, same as the edit shell. */}
           {kind === 'gist' && (
             <div className="shrink-0 flex items-center gap-2">
-              <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Language</span>
+              <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Language</span>
               <select value={language} onChange={(e) => setLanguage(e.target.value)} aria-label="Gist language"
-                className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
+                data-type="body-s" className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
                 {GIST_LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>
@@ -194,7 +194,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
               {/* Focus the body when there's no title field (fleeting/journal) — it's the
                   primary input, so the cursor should land here rather than nowhere. */}
               <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Markdown supported…" autoFocus={!titleEditable} aria-label="Note content"
-                className="h-full w-full resize-none bg-transparent px-m py-2 text-on-surface text-[0.8125rem] leading-relaxed outline-none" />
+                data-type="body-s" className="h-full w-full resize-none bg-transparent px-m py-2 text-on-surface leading-relaxed outline-none" />
             </div>
           )}
           {kind === 'file' && (
@@ -204,7 +204,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
                 <div className="mb-m flex gap-1 rounded-pill bg-surface-high p-0.5 w-max">
                   {(['upload', 'record'] as const).map((s) => (
                     <button key={s} type="button" onClick={() => { setAudioSrc(s); setFile(null); setPreview(null); setFileTooBig(false); setErr('') }}
-                      className={`inline-flex items-center gap-1.5 rounded-pill px-3 h-8 text-[0.8125rem] transition-colors ${audioSrc === s ? 'bg-surface text-on-surface' : 'text-on-surface-low hover:text-on-surface'}`}>
+                      data-type="body-s" className={`inline-flex items-center gap-1.5 rounded-pill px-3 h-8 transition-colors ${audioSrc === s ? 'bg-surface text-on-surface' : 'text-on-surface-low hover:text-on-surface'}`}>
                       {s === 'upload' ? <Upload size={14} /> : <Mic size={14} />} {s === 'upload' ? 'Upload' : 'Record'}
                     </button>
                   ))}
@@ -245,11 +245,11 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
                     {file ? (
                       <div className="flex items-center gap-m px-m">
                         {preview ? <img src={preview} alt="" className="size-16 rounded-md object-cover" /> : <tm.icon size={28} style={{ color: tm.tone }} />}
-                        <div className="min-w-0"><div className="truncate text-on-surface text-[0.8125rem]">{file.name}</div><div className="text-on-surface-low text-[0.75rem]">{fmtBytes(file.size)}</div></div>
+                        <div className="min-w-0"><div data-type="body-s" className="truncate text-on-surface">{file.name}</div><div data-type="caption" className="text-on-surface-low">{fmtBytes(file.size)}</div></div>
                         <SquareIconButton icon={X} iconSize={16} tone="danger" label="Remove file" onClick={(e) => { e.stopPropagation(); setFile(null); setPreview(null); setFileTooBig(false); setErr('') }} />
                       </div>
                     ) : (
-                      <><Upload size={22} className="text-on-surface-low" /><span className="text-on-surface-low text-[0.8125rem]">Drop a {tm.label.toLowerCase()} file, or choose one</span></>
+                      <><Upload size={22} className="text-on-surface-low" /><span data-type="body-s" className="text-on-surface-low">Drop a {tm.label.toLowerCase()} file, or choose one</span></>
                     )}
                   </div>
                 </>
@@ -257,9 +257,9 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
             </div>
           )}
 
-          {err && <p role="alert" className="shrink-0 text-danger text-[0.8125rem]">{err}</p>}
+          {err && <p role="alert" data-type="body-s" className="shrink-0 text-danger">{err}</p>}
           {uploadPct >= 0 && (
-            <div className="flex shrink-0 items-center gap-2 text-[0.75rem] text-on-surface-var">
+            <div data-type="caption" className="flex shrink-0 items-center gap-2 text-on-surface-var">
               <Loader2 size={13} className="shrink-0 animate-spin text-primary" />
               <span>Uploading… {uploadPct}%</span>
               <Meter size="thin" className="w-32" label="Upload progress" pct={uploadPct} />
@@ -269,7 +269,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">
         <div className="mx-auto flex items-center justify-between gap-s" style={{ maxWidth: 'var(--content-width)' }}>
-          <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]"><FileText size={12} /> Saved to your knowledge library, then enriched automatically.</span>
+          <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low"><FileText size={12} /> Saved to your knowledge library, then enriched automatically.</span>
           <div className="flex gap-s">
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
             {/* Reason per KIND, because `canSave` means something different for each; omitted

@@ -76,7 +76,7 @@ export function DocumentOutline({ entries, activeOffset, onSelect }: {
 
   return (
     <nav aria-label="Document outline" className="flex min-h-0 flex-col">
-      <div className="mb-1.5 flex items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">
+      <div data-type="caption" className="mb-1.5 flex items-center gap-1.5 text-on-surface-low uppercase tracking-wide">
         <List size={12} />Outline
       </div>
       {/* `gap-xs`, NOT `gap-2xs`. The tree's dense-list idiom (7 files under pages/workflows)

@@ -70,7 +70,7 @@ function StaleSynthesisBanner({ item }: { item: KnowledgeItem }) {
   return (
     <div role="status" className="flex shrink-0 flex-wrap items-center gap-s rounded-lg border border-outline-variant/60 bg-surface-container/60 px-3 py-2">
       <AlertTriangle size={14} className="shrink-0" style={{ color: 'var(--color-warning)' }} />
-      <span className="min-w-0 text-on-surface-var text-[0.8125rem]">
+      <span data-type="body-s" className="min-w-0 text-on-surface-var">
         {parts.join(' \u00b7 ')} since this was written{state.scope ? ` (${state.scope})` : ''}.
       </span>
       <Button size="xs" variant="secondary" className="ml-auto" disabled={busy}
@@ -92,7 +92,7 @@ function StaleSynthesisBanner({ item }: { item: KnowledgeItem }) {
         }}>
         Regenerate
       </Button>
-      {outcome && <span className="w-full text-on-surface-low text-[0.75rem]">{outcome}</span>}
+      {outcome && <span data-type="caption" className="w-full text-on-surface-low">{outcome}</span>}
     </div>
   )
 }
@@ -412,7 +412,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
   // and the shell omits it entirely (no empty strip).
   const reingestApplies = tm.group === 'text' || tm.key === 'bookmark'
   const editBar = reingestApplies ? (
-    <label className="flex items-center gap-1.5 text-on-surface-var text-[0.8125rem] cursor-pointer select-none">
+    <label data-type="body-s" className="flex items-center gap-1.5 text-on-surface-var cursor-pointer select-none">
       <input type="checkbox" checked={reingest} onChange={(e) => setReingest(e.target.checked)} className="size-4 accent-[var(--color-primary)]" />
       Re-process on save
     </label>
@@ -433,9 +433,9 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
         )}
         {draft.item_type === 'gist' && (
           <div className="shrink-0 flex items-center gap-2">
-            <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Language</span>
+            <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Language</span>
             <select value={draft.gist_language || ''} onChange={(e) => setDraft({ ...draft, gist_language: e.target.value })}
-              className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
+              data-type="body-s" className="h-8 appearance-none rounded-md bg-surface-container px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
               <option value="">(none)</option>
               {GIST_LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
             </select>
@@ -446,7 +446,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           <div className="shrink-0 flex items-center gap-s rounded-md bg-surface-container px-m h-10 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
             <ExternalLink size={15} className="shrink-0 text-on-surface-low" />
             <input value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="https://…"
-              className="flex-1 bg-transparent text-on-surface text-[0.9375rem] outline-none placeholder:text-on-surface-low" />
+              data-type="body-m" className="flex-1 bg-transparent text-on-surface outline-none placeholder:text-on-surface-low" />
           </div>
         )}
         {/* Tags edited inline, in the same place the preview shows them. */}
@@ -455,7 +455,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
             body is scraped (URL edited above); media/document content is an extracted
             artifact of the file (not editable) → show the read-only preview so the user
             still sees what they're titling/tagging. */}
-        {journalLocked && <p className="shrink-0 text-on-surface-low text-[0.75rem]">This journal entry is immutable — its day has passed. You can still curate tags, pin, and archive.</p>}
+        {journalLocked && <p data-type="caption" className="shrink-0 text-on-surface-low">This journal entry is immutable — its day has passed. You can still curate tags, pin, and archive.</p>}
         {draft.item_type === 'gist' ? (
           // Gists get the full Monaco code editor (syntax highlighting by language),
           // not a raw textarea — same editor surface as the Files page.
@@ -466,7 +466,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-container focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
             <textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} readOnly={journalLocked}
               placeholder="Markdown supported…"
-              className={`h-full w-full resize-none bg-transparent px-m py-2 text-on-surface text-[0.8125rem] leading-relaxed outline-none ${journalLocked ? 'opacity-60 cursor-not-allowed' : ''}`} />
+              data-type="body-s" className={`h-full w-full resize-none bg-transparent px-m py-2 text-on-surface leading-relaxed outline-none ${journalLocked ? 'opacity-60 cursor-not-allowed' : ''}`} />
           </div>
         ) : (
           <div className="relative flex min-h-0 flex-1 overflow-hidden">
@@ -502,9 +502,9 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           CLIPPED rather than reachable: the last ingestion stage was invisible on a
           phone. */}
       <div className="flex flex-wrap shrink-0 items-start gap-x-m gap-y-1">
-        <div className="flex flex-wrap items-center gap-x-m gap-y-1 text-on-surface-low text-[0.8125rem] min-w-0">
-          {full.provider && full.provider !== 'native' && <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{full.provider}</span>}
-          {full.mime_type && <span className="font-mono text-[0.75rem]">{full.mime_type}</span>}
+        <div data-type="body-s" className="flex flex-wrap items-center gap-x-m gap-y-1 text-on-surface-low min-w-0">
+          {full.provider && full.provider !== 'native' && <span data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{full.provider}</span>}
+          {full.mime_type && <span data-type="caption" className="font-mono">{full.mime_type}</span>}
           {full.file_size != null && <span>{fmtBytes(full.file_size)}</span>}
           {full.file_metadata?.width && full.file_metadata?.height && <span>{full.file_metadata.width}×{full.file_metadata.height}</span>}
           {typeof full.file_metadata?.page_count === 'number' && <span>{full.file_metadata.page_count} pages</span>}
@@ -528,8 +528,8 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
           Always rendered so Expand has a home even for a tag-less item. */}
       <div className="flex shrink-0 items-start gap-s">
         <div className="flex flex-1 flex-wrap gap-1.5">{(full.tags ?? []).map((t) => onTagClick
-          ? <button key={t} type="button" onClick={() => onTagClick(t)} title={`Find items tagged "${t}"`} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem] transition-colors hover:bg-surface-container hover:text-primary">{t}</button>
-          : <span key={t} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{t}</span>)}</div>
+          ? <button key={t} type="button" onClick={() => onTagClick(t)} title={`Find items tagged "${t}"`} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var transition-colors hover:bg-surface-container hover:text-primary">{t}</button>
+          : <span key={t} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{t}</span>)}</div>
         <ExpandButton onClick={() => setFullscreen({ title: full.title || full.url_title || 'Preview', node: <Preview item={full} tm={tm} fullscreen /> })} />
       </div>
 
@@ -594,8 +594,8 @@ function Preview({ item, tm, fullscreen, prominent }: { item: KnowledgeItem; tm:
         <a href={item.url} target="_blank" rel="noreferrer" className="flex items-center gap-s px-m py-3 hover:bg-surface-high transition-colors">
           <tm.icon size={18} className="shrink-0" style={{ color: tm.tone }} />
           <div className="flex-1 min-w-0">
-            <div className="truncate text-on-surface text-[0.8125rem]">{item.url_title || item.title || item.url}</div>
-            {item.url && <div className="truncate text-on-surface-low text-[0.75rem]">{item.url}</div>}
+            <div data-type="body-s" className="truncate text-on-surface">{item.url_title || item.title || item.url}</div>
+            {item.url && <div data-type="caption" className="truncate text-on-surface-low">{item.url}</div>}
           </div>
           <ExternalLink size={14} className="shrink-0 text-on-surface-low" />
         </a>
@@ -625,7 +625,7 @@ function Preview({ item, tm, fullscreen, prominent }: { item: KnowledgeItem; tm:
       <div className={hasText ? fillFrame : baseFrame + (prominent ? ' w-full self-start' : '')}>
         <FileRow item={item} tm={tm} />
         {hasText && (
-          <div className={`border-t border-outline-variant/40 px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed ${textMax}`}>
+          <div data-type="body-s" className={`border-t border-outline-variant/40 px-m py-2 text-on-surface-var leading-relaxed ${textMax}`}>
             <Markdown>{item.content!}</Markdown>
           </div>
         )}
@@ -645,7 +645,7 @@ function Preview({ item, tm, fullscreen, prominent }: { item: KnowledgeItem; tm:
   if (item.content) {
     return (
       <div className={`${prominent ? fillFrame : baseFrame} px-m py-2 ${textMax}`}>
-        <div className="text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{item.content}</Markdown></div>
+        <div data-type="body-s" className="text-on-surface-var leading-relaxed"><Markdown>{item.content}</Markdown></div>
       </div>
     )
   }
@@ -656,10 +656,10 @@ function Preview({ item, tm, fullscreen, prominent }: { item: KnowledgeItem; tm:
 function FileRow({ item, tm }: { item: KnowledgeItem; tm: ReturnType<typeof resolveType> }) {
   return (
     <a href={api.knowledgeItemFileUrl(item.id)} target="_blank" rel="noreferrer" download={item.title}
-      className="flex items-center gap-s px-m py-2.5 hover:bg-surface-high transition-colors text-on-surface-var text-[0.8125rem] border-t border-outline-variant/30 first:border-t-0">
+      data-type="body-s" className="flex items-center gap-s px-m py-2.5 hover:bg-surface-high transition-colors text-on-surface-var border-t border-outline-variant/30 first:border-t-0">
       <tm.icon size={16} style={{ color: tm.tone }} className="shrink-0" />
       <span className="flex-1 truncate">{item.title}</span>
-      {item.file_size != null && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{fmtBytes(item.file_size)}</span>}
+      {item.file_size != null && <span data-type="caption" className="shrink-0 text-on-surface-low">{fmtBytes(item.file_size)}</span>}
       <Download size={14} className="shrink-0 text-on-surface-low" />
     </a>
   )
@@ -740,7 +740,7 @@ function ProcessingStrip({ status, nodePhases, error, graph, onRetry, retrying }
   // hard failure, both of which a later attempt may clear.
   const retryBtn = onRetry && (unreachable || status === 'failed') ? (
     <button type="button" onClick={onRetry} disabled={retrying}
-      className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var transition-colors hover:text-on-surface disabled:opacity-60">
+      data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var transition-colors hover:text-on-surface disabled:opacity-60">
       <RefreshCw size={11} className={retrying ? 'animate-spin' : ''} /> {retrying ? 'Retrying…' : 'Retry'}
     </button>
   ) : null
@@ -749,16 +749,16 @@ function ProcessingStrip({ status, nodePhases, error, graph, onRetry, retrying }
   if (!hasDag) {
     if (unreachable) {
       return (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1 text-[0.8125rem]">
+        <div data-type="body-s" className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
           <span className="inline-flex items-center gap-1.5" style={{ color: 'var(--color-warning)' }}><WifiOff size={13} /> Unreachable</span>
           {retryBtn}
-          {error && <span className="basis-full text-[0.75rem] text-on-surface-low">{error}</span>}
+          {error && <span data-type="caption" className="basis-full text-on-surface-low">{error}</span>}
         </div>
       )
     }
     if (active) {
       return (
-        <div className="flex items-center gap-1.5 py-1 text-[0.8125rem]" style={{ color: 'var(--color-primary)' }}>
+        <div data-type="body-s" className="flex items-center gap-1.5 py-1" style={{ color: 'var(--color-primary)' }}>
           <Loader2 size={13} className="animate-spin" />
           <span>{status === 'queued' ? 'Queued…' : 'Processing…'}</span>
         </div>
@@ -766,8 +766,8 @@ function ProcessingStrip({ status, nodePhases, error, graph, onRetry, retrying }
     }
     // failed/partial with no graph yet → reason + retry.
     return (
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1 text-[0.8125rem]">
-        {error && <span className="text-[0.75rem]" style={{ color: status === 'failed' ? 'var(--color-danger)' : 'var(--color-on-surface-low)' }}>{error}</span>}
+      <div data-type="body-s" className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+        {error && <span data-type="caption" style={{ color: status === 'failed' ? 'var(--color-danger)' : 'var(--color-on-surface-low)' }}>{error}</span>}
         {retryBtn}
       </div>
     )
@@ -776,10 +776,10 @@ function ProcessingStrip({ status, nodePhases, error, graph, onRetry, retrying }
   // The DAG itself is the indicator: the running step expands inline with a spinner +
   // its name; when finished, the last node stays expanded with a check + "Processed".
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1 text-[0.8125rem]">
+    <div data-type="body-s" className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
       <MiniDag graph={graph!} phases={resolveNodePhases(graph!, nodePhases, status, error)} status={status} />
       {retryBtn}
-      {error && <span className="basis-full text-[0.75rem]" style={{ color: status === 'failed' ? 'var(--color-danger)' : 'var(--color-on-surface-low)' }}>{error}</span>}
+      {error && <span data-type="caption" className="basis-full" style={{ color: status === 'failed' ? 'var(--color-danger)' : 'var(--color-on-surface-low)' }}>{error}</span>}
     </div>
   )
 }
@@ -827,7 +827,7 @@ function MiniDag({ graph, phases }: { graph: import('../../lib/api').KnowledgeIn
           {ph === 'done' && <Check size={8} strokeWidth={3} style={{ color: c }} />}
           {ph === 'failed' && <X size={8} style={{ color: c }} />}
         </span>
-        <span className="text-[0.75rem] whitespace-nowrap" style={{ color: ph === 'pending' ? 'var(--color-on-surface-low)' : c }}>
+        <span data-type="caption" className="whitespace-nowrap" style={{ color: ph === 'pending' ? 'var(--color-on-surface-low)' : c }}>
           {nodeLabel(nt)}{loop && <RefreshCw size={9} className="ml-0.5 inline-block align-[-1px]" style={{ color: 'var(--color-primary)' }} />}
         </span>
         <span className="sr-only">{stateWord}</span>
@@ -853,7 +853,7 @@ function MiniDag({ graph, phases }: { graph: import('../../lib/api').KnowledgeIn
 function Section({ label, icon: Icon, action, children }: { label: string; icon?: typeof Sparkles; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{Icon && <Icon size={12} />}{label}{action && <span className="ml-auto normal-case tracking-normal">{action}</span>}</div>
+      <div data-type="caption" className="mb-1.5 flex items-center gap-1.5 text-on-surface-low uppercase tracking-wide">{Icon && <Icon size={12} />}{label}{action && <span className="ml-auto normal-case tracking-normal">{action}</span>}</div>
       {children}
     </div>
   )
@@ -915,13 +915,13 @@ function InsightsDock({ open, onToggle, summary, insights, intents, canGenerate,
             <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/10">
               <Sparkles size={14} className={`text-primary ${genning || processing ? 'animate-pulse' : ''}`} />
             </span>
-            <span className="shrink-0 text-on-surface text-[0.8125rem]" style={fvs(500)}>Insights</span>
+            <span data-type="label-s" className="shrink-0 text-on-surface" style={fvs(500)}>Insights</span>
             {hasMore && (
-              <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem] tabular-nums">{insights.length + intents.length}</span>
+              <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low tabular-nums">{insights.length + intents.length}</span>
             )}
             {/* Persistent flex-1 slot: a one-line summary preview when collapsed (so the bar
                 is informative at a glance), empty when open (the body shows the full text). */}
-            <span className="min-w-0 flex-1 truncate text-[0.8125rem] text-on-surface-low">
+            <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface-low">
               {open ? '' : (summary || (processing ? 'Enriching…' : hasMore ? 'Key points, topics & more' : 'No insights yet'))}
             </span>
             {/* Decorative, and INSIDE the disclosure on purpose: it is the affordance for
@@ -943,14 +943,14 @@ function InsightsDock({ open, onToggle, summary, insights, intents, canGenerate,
 
         {open && (
           <div className="flex max-h-[45vh] flex-col gap-l overflow-y-auto border-t border-outline-variant/40 pb-m pt-m">
-            {summary && <p className="text-on-surface-var text-[0.8125rem] leading-relaxed">{summary}</p>}
+            {summary && <p data-type="body-s" className="text-on-surface-var leading-relaxed">{summary}</p>}
             {insights.length > 0 && (
               <Section label="Highlights" icon={Sparkles}>
                 <div className="flex flex-col gap-1.5">
                   {insights.map((r) => (
                     <div key={r.label} className="rounded-md bg-surface-high px-m py-1.5">
-                      <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{r.label}</div>
-                      <div className="text-on-surface-var text-[0.8125rem] mt-0.5">{r.value}</div>
+                      <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">{r.label}</div>
+                      <div data-type="body-s" className="text-on-surface-var mt-0.5">{r.value}</div>
                     </div>
                   ))}
                 </div>
@@ -961,12 +961,12 @@ function InsightsDock({ open, onToggle, summary, insights, intents, canGenerate,
                 <div className="flex flex-col gap-1.5">
                   {intents.map((o) => (
                     <div key={o.id} className="rounded-md bg-surface-high px-m py-1.5">
-                      <div className="flex items-center gap-1.5"><Target size={12} className="shrink-0 text-primary/80" /><span className="truncate text-on-surface text-[0.8125rem]">{o.intent_name || o.intent_id}</span></div>
-                      {o.takeaway && <div className="mt-0.5 text-on-surface-var text-[0.8125rem]">{o.takeaway}</div>}
+                      <div className="flex items-center gap-1.5"><Target size={12} className="shrink-0 text-primary/80" /><span data-type="body-s" className="truncate text-on-surface">{o.intent_name || o.intent_id}</span></div>
+                      {o.takeaway && <div data-type="body-s" className="mt-0.5 text-on-surface-var">{o.takeaway}</div>}
                       {/* The structured fields this item contributed (the point of a Tier-3
                           intent) — shown from the item's own page, mirroring the intents tab. */}
                       {(o.fields?.length ?? 0) > 0 && (
-                        <div className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-m gap-y-0.5 text-[0.75rem]">
+                        <div data-type="caption" className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-m gap-y-0.5">
                           {o.fields!.map((f, i) => (
                             <div key={i} className="contents">
                               <span className="text-on-surface-low">{f.name}</span>
@@ -1006,7 +1006,7 @@ export function OutcomeFieldValue({ field }: { field: IntentOutcomeField }) {
   if (type === 'boolean') return <span className="text-on-surface">{value ? 'Yes' : 'No'}</span>
   if (type === 'number') return <span className="text-on-surface tabular-nums">{String(value)}</span>
   if (type === 'url') return <a href={String(value)} target="_blank" rel="noreferrer" className="text-primary underline decoration-primary/40 break-all">{String(value)}</a>
-  if (type === 'tags' && Array.isArray(value)) return <span className="flex flex-wrap gap-1">{value.map((t, i) => <span key={i} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var text-[0.75rem]">{String(t)}</span>)}</span>
+  if (type === 'tags' && Array.isArray(value)) return <span className="flex flex-wrap gap-1">{value.map((t, i) => <span key={i} data-type="caption" className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-var">{String(t)}</span>)}</span>
   return <span className="text-on-surface break-words">{String(value)}</span>
 }
 
@@ -1028,7 +1028,7 @@ function FullscreenModal({ title, onClose, children }: { title: string; onClose:
   return (
     <div ref={trapRef} className="fixed inset-0 z-50 flex flex-col bg-surface/95 backdrop-blur-sm" onClick={onClose}>
       <div className="flex items-center gap-s border-b border-outline-variant/40 px-l py-3">
-        <span className="flex-1 truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{title}</span>
+        <span data-type="title-m" className="flex-1 truncate text-on-surface" style={fvs(500)}>{title}</span>
         <button type="button" onClick={onClose} aria-label="Close fullscreen"
           className="grid size-8 place-items-center rounded-pill text-on-surface-low hover:bg-surface-high hover:text-on-surface"><X size={18} /></button>
       </div>

@@ -41,8 +41,8 @@ function StatChip({ icon: Icon, label, value }: { icon: typeof Database; label: 
   return (
     <div className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2">
       <Icon size={15} className="text-primary shrink-0" />
-      <span className="text-on-surface text-[0.9375rem] tabular-nums" style={fvs(500)}>{value}</span>
-      <span className="text-on-surface-low text-[0.75rem]">{label}</span>
+      <span data-type="title-m" className="text-on-surface tabular-nums" style={fvs(500)}>{value}</span>
+      <span data-type="caption" className="text-on-surface-low">{label}</span>
     </div>
   )
 }
@@ -55,7 +55,7 @@ function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/a
     return (
       <div className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2 text-on-surface-low" title="No embedding model active — search is keyword + entity-graph only. Set one in Settings › AI & Models.">
         <Boxes size={15} className="shrink-0" />
-        <span className="text-[0.75rem]">semantic search off</span>
+        <span data-type="caption" >semantic search off</span>
       </div>
     )
   }
@@ -70,8 +70,8 @@ function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/a
         title={`${stale} item${stale === 1 ? '' : 's'} embedded with a previous model — click to re-embed all with ${e.model} (semantic search ignores stale vectors until then)`}
         className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2 transition-colors hover:bg-surface-high disabled:opacity-60">
         <Boxes size={15} className={`shrink-0 ${busy ? 'animate-pulse text-primary' : 'text-warning'}`} />
-        <span className="text-on-surface text-[0.9375rem] tabular-nums" style={fvs(500)}>{stale}</span>
-        <span className="text-on-surface-low text-[0.75rem]">{busy ? 'embedding…' : 'stale — re-embed'}</span>
+        <span data-type="title-m" className="text-on-surface tabular-nums" style={fvs(500)}>{stale}</span>
+        <span data-type="caption" className="text-on-surface-low">{busy ? 'embedding…' : 'stale — re-embed'}</span>
       </button>
     )
   }
@@ -81,16 +81,16 @@ function EmbeddingChip({ stats, busy, onBackfill }: { stats: import('../../lib/a
         title={`${behind} item${behind === 1 ? '' : 's'} not yet embedded — click to backfill (model: ${e.model})`}
         className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2 transition-colors hover:bg-surface-high disabled:opacity-60">
         <Boxes size={15} className={`shrink-0 ${busy ? 'animate-pulse text-primary' : 'text-warning'}`} />
-        <span className="text-on-surface text-[0.9375rem] tabular-nums" style={fvs(500)}>{embedded}/{stats.items}</span>
-        <span className="text-on-surface-low text-[0.75rem]">{busy ? 'embedding…' : 'embed rest'}</span>
+        <span data-type="title-m" className="text-on-surface tabular-nums" style={fvs(500)}>{embedded}/{stats.items}</span>
+        <span data-type="caption" className="text-on-surface-low">{busy ? 'embedding…' : 'embed rest'}</span>
       </button>
     )
   }
   return (
     <div className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2" title={`All items embedded for semantic search (model: ${e.model})`}>
       <Boxes size={15} className="text-primary shrink-0" />
-      <span className="text-on-surface text-[0.9375rem] tabular-nums" style={fvs(500)}>{embedded}</span>
-      <span className="text-on-surface-low text-[0.75rem]">embedded</span>
+      <span data-type="title-m" className="text-on-surface tabular-nums" style={fvs(500)}>{embedded}</span>
+      <span data-type="caption" className="text-on-surface-low">embedded</span>
     </div>
   )
 }
@@ -621,7 +621,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                 {activeCollection && (
                   <div className="mb-m flex flex-wrap items-center gap-2">
                     <span data-type="label-l" className="text-on-surface">{activeCollection.name}</span>
-                    <span className="text-on-surface-low text-[0.75rem]">
+                    <span data-type="caption" className="text-on-surface-low">
                       {activeCollection.kind === 'smart'
                         ? `Smart shelf — everything matching "${activeCollection.query}", kept current automatically.`
                         : 'Manual shelf — the items you put here.'}
@@ -632,7 +632,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                 )}
                 {selecting && (
                   <div className="mb-m flex flex-wrap items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
-                    <span className="text-on-surface text-[0.8125rem]" style={fvs(500)}>
+                    <span data-type="label-s" className="text-on-surface" style={fvs(500)}>
                       {selected.size} selected
                     </span>
                     <Button variant="tonal" size="xs" disabled={bulkBusy}
@@ -667,7 +667,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                 {/* Outcome note lives OUTSIDE the bar so it survives the bar unmounting
                     when the selection clears on success. */}
                 {bulkNote && !selecting && (
-                  <div role="status" className="mb-m text-on-surface-var text-[0.8125rem]">{bulkNote}</div>
+                  <div role="status" data-type="body-s" className="mb-m text-on-surface-var">{bulkNote}</div>
                 )}
                 {(shown?.length ?? 0) === 0 ? (
                   /* Narrowed-to-nothing split (emptyStateNoMatch): the old single state blamed
@@ -773,38 +773,38 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                                   badging every fresh item would make the list noise.
                                   Only the two states a reader deliberately set show. */}
                               {it.read_state === 'reading' && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem] text-primary-emphasis" title="You're partway through this">
+                                <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary-emphasis" title="You're partway through this">
                                   <BookOpen size={10} /> reading
                                 </span>
                               )}
-                              <span className={`truncate text-[0.9375rem] ${it.read_state === 'read' ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(it.read_state === 'read' ? 400 : 500)}>{it.title || it.url_title || '(untitled)'}</span>
+                              <span data-type="title-m" className={`truncate ${it.read_state === 'read' ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(it.read_state === 'read' ? 400 : 500)}>{it.title || it.url_title || '(untitled)'}</span>
                               {(it.processing_status === 'queued' || it.processing_status === 'processing') && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary-emphasis text-[0.75rem]"><Loader2 size={10} className="animate-spin" /> Enriching</span>
+                                <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary-emphasis"><Loader2 size={10} className="animate-spin" /> Enriching</span>
                               )}
                               {it.processing_status === 'failed' && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-danger text-[0.75rem]" title={it.processing_error || 'Enrichment failed'}><CircleAlert size={10} /> Failed</span>
+                                <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-danger" title={it.processing_error || 'Enrichment failed'}><CircleAlert size={10} /> Failed</span>
                               )}
                               {/* Unreachable = the URL couldn't be fetched (network/DNS/timeout/HTTP error) —
                                   the link is saved; it's retryable, NOT an unexpected failure. */}
                               {it.processing_status === 'unreachable' && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem]" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || "Couldn't reach the site"} — open to retry`}><WifiOff size={10} /> Unreachable</span>
+                                <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || "Couldn't reach the site"} — open to retry`}><WifiOff size={10} /> Unreachable</span>
                               )}
                               {/* A genuine partial (e.g. insights model unavailable) is actionable — flag it
                                   so it's not mistaken for a fully-processed item. Benign skips (optional
                                   media steps with no model) are left unbadged. */}
                               {it.processing_status === 'partial' && !(it.processing_error || '').startsWith('Skipped (optional steps unavailable):') && (
-                                <span className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem]" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || 'Enrichment incomplete'} — open to regenerate`}><CircleAlert size={10} /> Incomplete</span>
+                                <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5" style={{ color: 'var(--color-warning)' }} title={`${it.processing_error || 'Enrichment incomplete'} — open to regenerate`}><CircleAlert size={10} /> Incomplete</span>
                               )}
-                              {it.is_archived && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">Archived</span>}
-                              {it._match_type && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{it._match_type}</span>}
+                              {it.is_archived && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low">Archived</span>}
+                              {it._match_type && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low">{it._match_type}</span>}
                             </div>
-                            <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
+                            <div data-type="body-s" className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low">
                               <span style={{ color: tm.tone }}>{typeLabel(it)}</span>
                               {/* PEP-7: a mirrored artifact's provenance is already the type label
                                   ("Artifact", its own icon + tone), so the generic provider pill is
                                   suppressed for it — "Artifact" beside a lowercase "artifacts" pill
                                   is the same fact twice in two vocabularies. */}
-                              {it.provider && it.provider !== 'native' && !isArtifactItem(it) && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-var text-[0.75rem]">{it.provider}</span>}
+                              {it.provider && it.provider !== 'native' && !isArtifactItem(it) && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-on-surface-var">{it.provider}</span>}
                               {/* The way BACK to the real thing. A mirror is a search surface, so a
                                   hit that could only ever show extracted text would be a dead end —
                                   the artifact itself has the versions, the preview and the editor.
@@ -812,7 +812,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                                   behaviours have to remain reachable. */}
                               {isArtifactItem(it) && !!it.guid && (
                                 <a href={`#/artifacts/${encodeURIComponent(it.guid)}`} onClick={(e) => e.stopPropagation()}
-                                  className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-[0.75rem] text-primary-emphasis transition-colors hover:bg-surface-container">
+                                  data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 text-primary-emphasis transition-colors hover:bg-surface-container">
                                   <ExternalLink size={10} aria-hidden /> Open artifact
                                 </a>
                               )}
@@ -826,8 +826,8 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                               {(it.summary || it.content) && <span className="truncate">{it.summary || it.content}</span>}
                             </div>
                           </div>
-                          {(it.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{it.tags!.slice(0, 2).map((t) => <button key={t} type="button" onClick={(e) => { e.stopPropagation(); setTagFilter(t) }} title={`Filter by "${t}"`} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem] transition-colors hover:bg-surface-container hover:text-primary">{t}</button>)}</div>}
-                          {it.updated_at && <span className="hidden sm:block shrink-0 text-on-surface-low text-[0.75rem]">{relTime(it.updated_at)}</span>}
+                          {(it.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{it.tags!.slice(0, 2).map((t) => <button key={t} type="button" onClick={(e) => { e.stopPropagation(); setTagFilter(t) }} title={`Filter by "${t}"`} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var transition-colors hover:bg-surface-container hover:text-primary">{t}</button>)}</div>}
+                          {it.updated_at && <span data-type="caption" className="hidden sm:block shrink-0 text-on-surface-low">{relTime(it.updated_at)}</span>}
                         </ListRow>
                         </ContextMenu>
                       )
@@ -914,7 +914,7 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
   if (intents === null) return <ListSkeleton rows={3} what="intents" />
   return (
     <div className="flex flex-col gap-s">
-      <p className="text-on-surface-low text-[0.8125rem]">Tell PersonalClaw what to watch for in plain language. As you save items, it gathers what matches — with the specifics extracted as structured fields. Click an intent to see everything it found, or add one with “New intent”.</p>
+      <p data-type="body-s" className="text-on-surface-low">Tell PersonalClaw what to watch for in plain language. As you save items, it gathers what matches — with the specifics extracted as structured fields. Click an intent to see everything it found, or add one with “New intent”.</p>
       {intents.length === 0 && (
         // PEP-2: the empty state carries the SAME create seed the header's "New intent" control
         // uses — `blankIntent()`, one definition of the blank shape, so the two cannot drift into
@@ -938,11 +938,11 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
                   a sighted phone user got a third of it. `title` on the truncating element is this
                   app's idiom for that (19 elements carry it; SystemWidget, RoutingPanel and the tag
                   row among them). */}
-              <span className="truncate text-on-surface text-[0.9375rem]" title={it.goal || it.id}>{it.goal || it.id}</span>
-              {!it.enabled && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">off</span>}
-              {it.propose_skill && <span className="rounded-pill bg-surface-high px-1.5 text-primary-emphasis text-[0.75rem]">proposes skill</span>}
+              <span data-type="body-m" className="truncate text-on-surface" title={it.goal || it.id}>{it.goal || it.id}</span>
+              {!it.enabled && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-on-surface-low">off</span>}
+              {it.propose_skill && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-primary-emphasis">proposes skill</span>}
             </div>
-            <div className="truncate text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="truncate text-on-surface-low">
               {(it.outcome_count ?? 0) > 0 ? `${it.outcome_count} gathered` : 'nothing gathered yet'}
               {(it.enabled_for?.length ?? 0) > 0 && ` · ${it.enabled_for!.join('/')}`}
             </div>
@@ -969,9 +969,9 @@ function IntentsView({ selectedId, onSelect, reloadKey }: {
 function OutcomeCard({ o, onOpenItem }: { o: IntentOutcome; onOpenItem: (id: string) => void }) {
   return (
     <div className="rounded-lg border border-outline-variant/40 bg-surface-container p-m flex flex-col gap-s">
-      {o.takeaway && <p className="text-on-surface text-[0.8125rem]">{o.takeaway}</p>}
+      {o.takeaway && <p data-type="body-s" className="text-on-surface">{o.takeaway}</p>}
       {(o.fields?.length ?? 0) > 0 && (
-        <div className="grid grid-cols-[auto_1fr] gap-x-m gap-y-1 text-[0.8125rem]">
+        <div data-type="body-s" className="grid grid-cols-[auto_1fr] gap-x-m gap-y-1">
           {o.fields!.map((f, i) => (
             <Fragment key={i}>
               <span className="text-on-surface-low">{f.name}</span>
@@ -981,7 +981,7 @@ function OutcomeCard({ o, onOpenItem }: { o: IntentOutcome; onOpenItem: (id: str
         </div>
       )}
       <button type="button" onClick={() => o.item_id && onOpenItem(o.item_id)} disabled={!o.item_id}
-        className="self-start inline-flex items-center gap-1 text-[0.75rem] text-on-surface-low hover:text-primary disabled:hover:text-on-surface-low disabled:opacity-70">
+        data-type="caption" className="self-start inline-flex items-center gap-1 text-on-surface-low hover:text-primary disabled:hover:text-on-surface-low disabled:opacity-70">
         <FileText size={12} />
         {o.item_id ? (o.item_title || 'source item') : `${o.item_title || 'source item'} (removed — insight kept)`}
       </button>
@@ -1039,7 +1039,7 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
 
   return (
     <div className="flex flex-col gap-m p-l">
-      <p className="text-on-surface text-[0.9375rem]">{intent.goal}</p>
+      <p data-type="body-m" className="text-on-surface">{intent.goal}</p>
       <div className="flex flex-wrap items-center gap-s">
         <Button size="sm" variant="secondary" onClick={run} disabled={running}><Play size={14} className={running ? 'animate-pulse' : ''} /> {running ? 'Running…' : 'Run on existing items'}</Button>
         {/* The blocked reason used to live on a WRAPPING span's title, where a hover finds it and
@@ -1061,11 +1061,11 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
           }}><Trash2 size={14} /> Delete</Button>
         </span>
       </div>
-      {note && <p className="text-on-surface-low text-[0.8125rem]">{note}</p>}
-      <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Gathered ({outcomes?.length ?? 0})</div>
+      {note && <p data-type="body-s" className="text-on-surface-low">{note}</p>}
+      <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">Gathered ({outcomes?.length ?? 0})</div>
       {outcomesErr ? <LoadError what="gathered matches" error={outcomesErr} onRetry={load} />
         : outcomes === null ? <ListSkeleton rows={3} what="gathered matches" />
-        : outcomes.length === 0 ? <p className="text-on-surface-low text-[0.8125rem]">Nothing gathered yet. Save items relevant to this intent, or run it on what you already have.</p>
+        : outcomes.length === 0 ? <p data-type="body-s" className="text-on-surface-low">Nothing gathered yet. Save items relevant to this intent, or run it on what you already have.</p>
         : <div className="flex flex-col gap-s">{outcomes.map((o) => <OutcomeCard key={o.id} o={o} onOpenItem={onOpenItem} />)}</div>}
     </div>
   )
@@ -1079,33 +1079,33 @@ function EntityDetail({ name, onOpenItem, onSelectEntity }: { name: string; onOp
     <div className="flex flex-col gap-l p-l">
       {(related?.length ?? 0) > 0 && (
         <div className="flex flex-col gap-s">
-          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Connected to</div>
+          <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">Connected to</div>
           <div className="flex flex-col gap-1">
             {related!.map((r, i) => (
               <button key={i} type="button" onClick={() => onSelectEntity?.(r.name)}
                 className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-high">
                 <Network size={13} className="shrink-0 text-primary/70" />
-                <span className="truncate text-on-surface text-[0.8125rem]">{r.name}</span>
-                <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]">{r.outgoing ? '' : '← '}{r.relation_type}{r.outgoing ? ' →' : ''}</span>
+                <span data-type="body-s" className="truncate text-on-surface">{r.name}</span>
+                <span data-type="caption" className="ml-auto shrink-0 text-on-surface-low">{r.outgoing ? '' : '← '}{r.relation_type}{r.outgoing ? ' →' : ''}</span>
               </button>
             ))}
           </div>
         </div>
       )}
       <div className="flex flex-col gap-s">
-        <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Mentioned in</div>
+        <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">Mentioned in</div>
         {/* Error first: a failed read used to render null here — the section simply vanished. */}
         {items === undefined && itemsErr ? <LoadError what="mentioned items" error={itemsErr} onRetry={refreshItems} />
           : items === undefined ? (loading ? <ListSkeleton rows={3} what="mentioned items" /> : null)
-          : items.length === 0 ? <p className="text-on-surface-low text-[0.8125rem]">No items reference this entity.</p>
+          : items.length === 0 ? <p data-type="body-s" className="text-on-surface-low">No items reference this entity.</p>
           : items.map((it, i) => {
               const tm = resolveType(it)
               return (
                 <ListRow key={it.id} index={i} accent={tm.tone} onClick={() => onOpenItem(it.id)} label={it.title || it.url_title || '(untitled)'}>
                   <tm.icon size={16} style={{ color: tm.tone }} className="shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-on-surface text-[0.8125rem]">{it.title || it.url_title || '(untitled)'}</div>
-                    <div className="truncate text-on-surface-low text-[0.75rem]" style={{ color: tm.tone }}>{typeLabel(it)}</div>
+                    <div data-type="body-s" className="truncate text-on-surface">{it.title || it.url_title || '(untitled)'}</div>
+                    <div data-type="caption" className="truncate text-on-surface-low" style={{ color: tm.tone }}>{typeLabel(it)}</div>
                   </div>
                 </ListRow>
               )
@@ -1143,24 +1143,24 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
   return (
     <div className="p-l flex flex-col gap-m">
       <div className="flex items-center justify-between">
-        <span className="text-on-surface text-[0.9375rem]">New intent</span>
+        <span data-type="body-m" className="text-on-surface">New intent</span>
         {/* Icon-only close: with no name it announced as bare "button". A CONSTANT name is right
             here (one per panel), unlike the per-item buttons this sweep also found. */}
         <button type="button" aria-label="Close the intent editor" onClick={onClose} className="text-on-surface-low hover:text-on-surface"><X size={16} /></button>
       </div>
       <div className="flex flex-col gap-1.5">
-        <label className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">What do you want to track?</label>
+        <label data-type="caption" className="text-on-surface-low uppercase tracking-wide">What do you want to track?</label>
         <textarea aria-label="What do you want to track?" value={goal} onChange={(e) => setGoal(e.target.value)} rows={4} autoFocus
           placeholder={'e.g. "anything that could improve my homelab self-hosted setup"'}
-          className="rounded-md bg-surface p-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-none" />
-        <p className="text-on-surface-low text-[0.75rem]">Plain language. As items are saved, PersonalClaw decides what's relevant and pulls out the useful specifics for you — no need to define fields.</p>
+          data-type="body-s" className="rounded-md bg-surface p-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-none" />
+        <p data-type="caption" className="text-on-surface-low">Plain language. As items are saved, PersonalClaw decides what's relevant and pulls out the useful specifics for you — no need to define fields.</p>
       </div>
       <div className="flex flex-col gap-1.5">
-        <label className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Limit to types (optional)</label>
+        <label data-type="caption" className="text-on-surface-low uppercase tracking-wide">Limit to types (optional)</label>
         <input aria-label="Limit to types (optional)" value={enabledFor} onChange={(e) => setEnabledFor(e.target.value)} placeholder="comma-separated, blank = all types"
-          className="h-9 rounded-md bg-surface px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          data-type="body-s" className="h-9 rounded-md bg-surface px-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       </div>
-      <label className="flex items-start gap-2 text-on-surface-var text-[0.8125rem]">
+      <label data-type="body-s" className="flex items-start gap-2 text-on-surface-var">
         <input type="checkbox" className="mt-0.5" checked={proposeSkill} onChange={(e) => setProposeSkill(e.target.checked)} />
         <span>Offer to build a skill from this intent — adds a “Generate skill” action that distills what it has gathered into a reusable skill.</span>
       </label>
@@ -1195,7 +1195,7 @@ function FilterChip({ active, onClick, tone, children }: { active: boolean; onCl
     : { background: 'var(--color-primary-container)', color: 'var(--color-on-primary-container)' }
   return (
     <button type="button" onClick={onClick} aria-pressed={active}
-      className="inline-flex items-center gap-1 rounded-pill px-m h-8 text-[0.8125rem] transition-colors"
+      data-type="body-s" className="inline-flex items-center gap-1 rounded-pill px-m h-8 transition-colors"
       style={active ? selected : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
       {children}
     </button>

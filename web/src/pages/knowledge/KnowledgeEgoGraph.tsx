@@ -202,7 +202,7 @@ export function KnowledgeEgoGraph({
         {/* The depth control. The Studio hand-rolled three bare toggles here; this is the
             canonical exclusive-choice primitive instead, which carries the tablist semantics and
             the selected state the hand-rolled version conveyed with colour alone. */}
-        <div className="absolute right-3 top-3 flex items-center gap-2 rounded-pill bg-surface-high/90 px-2 py-1 text-[0.75rem] backdrop-blur">
+        <div data-type="caption" className="absolute right-3 top-3 flex items-center gap-2 rounded-pill bg-surface-high/90 px-2 py-1 backdrop-blur">
           <span className="text-on-surface-low">Focus · hops</span>
           <Segmented
             size="sm"
@@ -225,15 +225,15 @@ export function KnowledgeEgoGraph({
           neighbourhood is also listed, in the Studio drawer's own shape: an uppercase
           "What links here" header over relation-chip rows. */}
       <div className="min-w-0">
-        <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">What links here</div>
+        <div data-type="caption" className="mb-1 text-on-surface-low uppercase tracking-wide">What links here</div>
         {focusNode && (
-          <div className="mb-1 flex flex-wrap items-baseline gap-x-2 text-[0.75rem]">
+          <div data-type="caption" className="mb-1 flex flex-wrap items-baseline gap-x-2">
             <span className="min-w-0 break-words text-on-surface">{focusNode.name || focusNode.id}</span>
             {focusNode.type && <span className="whitespace-nowrap text-on-surface-low">{focusNode.type}</span>}
           </div>
         )}
         {neighbours.length === 0 ? (
-          <div className="mt-2 text-on-surface-low text-[0.75rem] italic">
+          <div data-type="caption" className="mt-2 text-on-surface-low italic">
             {hasAnyLink
               ? `Nothing links here within ${hopDepth} hop${hopDepth === 1 ? '' : 's'} — widen the hops, or clear the link filter.`
               : 'No links yet — either nothing scored close enough, or the graph has not covered this document.'}
@@ -241,7 +241,7 @@ export function KnowledgeEgoGraph({
         ) : (
           <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
             {neighbours.map((n) => (
-              <div key={n.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[0.75rem]">
+              <div key={n.id} data-type="caption" className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 {n.types.map((t) => (
                   <span
                     key={t}
