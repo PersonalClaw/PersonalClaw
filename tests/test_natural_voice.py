@@ -331,7 +331,16 @@ class TestConversationScope:
     async def test_the_send_body_accepts_it_for_a_brand_new_chat(self, chat_app):
         """A pick made before the first send has no session to PATCH, so the send
         body carries it — or turn 1 would run without the instruction while the
-        composer showed it on."""
+        composer showed it on.
+
+        "Brand new" means a session with no TURNS yet, not an unknown key: the
+        dashboard's ``ensureSession`` creates the session (``POST /api/chat/sessions``)
+        and only then sends, so the create below is what the real flow does. A send
+        naming a key that exists nowhere is now refused ``session_not_found`` (see
+        tests/test_chat_session_resurrection_audit.py), and the sibling test right
+        below already uses this same setup.
+        """
+        chat_app.get_or_create_session("fresh")
         with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(chat_app))) as client:
                 resp = await client.post(

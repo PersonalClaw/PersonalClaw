@@ -241,7 +241,13 @@ class TestVoiceOriginTurn:
             "personalclaw.dashboard.chat_handlers.run_chat", AsyncMock(return_value=None)
         )
 
-    async def _send(self, client, **body):
+    async def _send(self, client, state, **body):
+        # The session must EXIST before a send names it: a send to a key that exists
+        # nowhere is refused `session_not_found`
+        # (tests/test_chat_session_resurrection_audit.py), and the real flow creates it
+        # first — the dashboard's `ensureSession` POSTs /api/chat/sessions before the
+        # first turn. `_user_turn` below already assumes this same session exists.
+        state.get_or_create_session("s1")
         return await client.post("/api/chat?ws=1", json={"session": "s1", **body})
 
     def _user_turn(self, state, tmp_path):
@@ -267,7 +273,7 @@ class TestVoiceOriginTurn:
         state = _make_state(voice_home)
         state.broadcast_ws = MagicMock()
         async with TestClient(TestServer(_make_app(state))) as client:
-            resp = await self._send(client, message="deploy the beta", input_origin="voice")
+            resp = await self._send(client, state, message="deploy the beta", input_origin="voice")
             assert resp.status == 200
         turn = self._user_turn(state, voice_home)
         assert turn["content"].startswith("deploy the beta")
@@ -279,7 +285,7 @@ class TestVoiceOriginTurn:
         state = _make_state(voice_home)
         state.broadcast_ws = MagicMock()
         async with TestClient(TestServer(_make_app(state))) as client:
-            assert (await self._send(client, message="deploy the beta")).status == 200
+            assert (await self._send(client, state, message="deploy the beta")).status == 200
         turn = self._user_turn(state, voice_home)
         assert turn["content"] == "deploy the beta"
         assert VOICE_DISCLAIMER not in turn["content"]
@@ -291,7 +297,7 @@ class TestVoiceOriginTurn:
         state.broadcast_ws = MagicMock()
         async with TestClient(TestServer(_make_app(state))) as client:
             assert (
-                await self._send(client, message="deploy it", input_origin="telepathy")
+                await self._send(client, state, message="deploy it", input_origin="telepathy")
             ).status == 200
         turn = self._user_turn(state, voice_home)
         assert VOICE_DISCLAIMER not in turn["content"]
@@ -303,7 +309,7 @@ class TestVoiceOriginTurn:
         state.broadcast_ws = MagicMock()
         async with TestClient(TestServer(_make_app(state))) as client:
             assert (
-                await self._send(client, message="deploy the beta", input_origin="voice")
+                await self._send(client, state, message="deploy the beta", input_origin="voice")
             ).status == 200
         turn = self._user_turn(state, voice_home)
         assert VOICE_DISCLAIMER not in turn["content"]

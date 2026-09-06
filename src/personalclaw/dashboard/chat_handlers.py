@@ -27,6 +27,7 @@ from personalclaw.dashboard.chat_persistence import (
     _validate_reasoning_effort,
     resolve_session,
     save_session_to_history,
+    session_key_exists,
 )
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_utils import (
@@ -191,7 +192,25 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # rehydrate and hide all of this, which is why it only bit non-UI callers (`G157`).
     # Registers the restored session in ``state._sessions``, so the create below
     # returns it; a name with nothing on disk yields None and still creates fresh.
+    #
+    # 🔴 …but a name the client supplies is only honored when it NAMES SOMETHING.
+    # `get_or_create_session` mints a blank session on a miss, so a send to a
+    # hard-deleted key answered 200 and re-materialised the conversation the user
+    # destroyed — measured: back in `GET /api/chat/sessions`, `GET
+    # /api/chat/sessions/{key}` 200 again, and carrying only the resurrecting turn.
+    # That is "delete" degraded to "close", reachable from a background tab, a retried
+    # request or a queued send. `session_key_exists` is the one owner of that question
+    # (log-file presence, so an ARCHIVED session is still writable and the G157
+    # disk-only rehydrate above still works); the refusal matches the {session}-addressed
+    # route family, 47 of whose other 49 members already 404 on an unknown key — measured
+    # against a live gateway — and `GET /api/sessions/{key}` in particular, which stopped
+    # reading a deleted key as an empty-but-real session for exactly this reason
+    # (tests/test_session_detail_404.py). A client that wants a NEW conversation omits
+    # `session` — that contract is unchanged and is what the dashboard's `ensureSession`
+    # already uses.
     if session_name:
+        if not session_key_exists(state, session_name):
+            return json_error("session_not_found", status=404)
         _rehydrate_session_from_history(state, session_name)
     session = state.get_or_create_session(session_name, app=request.get("app", ""))
 
@@ -2296,6 +2315,16 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
             }
         )
 
+    # Not resident — so this must be a RESUME of something persisted, not a create.
+    # The second of the two writers that reached `get_or_create_session` with a
+    # client-supplied name: `POST /resume` on a hard-deleted key answered 200 with an
+    # empty transcript and put the key back in the sidebar, the same resurrection the
+    # send path had. Guarded on `history_key` (the body may name a different key than
+    # the path) via the same one owner. Everything below reads that key off disk —
+    # `get_metadata`, `read_messages_chained` — so a key with nothing persisted was
+    # only ever going to produce a blank session wearing a dead conversation's name.
+    if not session_key_exists(state, history_key):
+        return json_error("session_not_found", status=404)
     session = state.get_or_create_session(name, app=request.get("app", ""))
     title = body.get("title", "")
     if title:
