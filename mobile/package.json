@@ -9,6 +9,8 @@
     "cap": "cap",
     "add:ios": "cap add ios",
     "add:android": "cap add android",
+    "assets:ios": "npx -y @capacitor/assets generate --ios",
+    "assets:android": "npx -y @capacitor/assets generate --android",
     "sync": "cap sync",
     "open:ios": "cap open ios",
     "open:android": "cap open android",
