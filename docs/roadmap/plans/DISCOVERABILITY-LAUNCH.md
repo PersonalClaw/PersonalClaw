@@ -684,3 +684,28 @@ does read this file's citations, and really would red on a broken one.
   `permission` message plus the WS `approval` frame, and resolves via
   `POST /api/chat/sessions/<UNPREFIXED name>/approve`. A capture script polling `/api/approvals` for
   the approval beat will wait forever on a turn that is in fact correctly parked.
+- **[2026-09-06] `DL-5` re-capture — all five specified beats are now real.** PR #2532 shipped the
+  scripted click-path but had to drop or substitute three of the five beats the `done_when` names,
+  because the `demo-home` fixture bound no model: no model, no turn, so no `chat` turn, no approval
+  and no artifact. #2538's `gateway --seed demo-home --seed-local-model` removes that blocker, and
+  this re-capture rebuilds the path on it. **84s** (83s budgeted, 83.7s measured), 1280×720 H.264,
+  1.2 MB, one stream and no audio track. Seven beats — `B1-home` · `B2-chat` · `B3-approval` ·
+  `B4-loop` · `B5-knowledge` · `B6-artifact` · `B7-close` — with the five specified ones in the
+  specified order. `chat`, `approval` and `artifact` move from surface-only / substituted / dropped
+  to **real**: a turn against `gemma4:12b` parked on the `artifact_save` permission gate, a human
+  click on **Allow** under `--approval interactive`, and the resulting markdown artifact opened and
+  rendered from the home's `artifacts/` tree. Audit chain for that call:
+  `invoked → approved → success → completed`, with the `approved` entry carrying
+  `{'reason': 'interactive', 'risk': 'caution'}`. The two policy beats that had stood in for the
+  approval (`B3-receipts`, `B4-guardrails`) are retired — a stand-in for something showable is spent
+  time. Two things stated rather than implied: the prompt is **sent in a non-recorded pre-roll**
+  because a local 12B model took 254s to reach the tool call and a 60–90s asset cannot hold three
+  minutes of spinner (the gate, the decision and the artifact are all on camera, and the gate
+  survives the browser restart because a chat approval is persisted on the session's `permission`
+  message); and the shell's truthful `Transcription degraded` chip is visible throughout, because
+  `--seed-local-model` binds chat and embedding and nothing local serves speech-to-text. `DL-5`
+  NOT flipped: the `done_when` also requires the capture to be **referenced from the site hero**,
+  which lives in the separate `personalclaw.dev` repo and is not reachable from core — the exact
+  handoff is at the end of `docs/demo/CLICKPATH.md`. The 1280×640 social-preview cards the same
+  `done_when` asks for landed with #2532 (`docs/brand/social-preview-{core,apps}.png`, both verified
+  1280×640) and are unchanged here.
