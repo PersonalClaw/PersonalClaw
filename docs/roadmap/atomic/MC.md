@@ -4,7 +4,7 @@
 **Code:** `MC`  
 **Source status:** proposed
 
-Decomposed MOBILE-COMPANION into 10 atoms along the 2026-07-26 Amendment's session placement (push-to-approval is milestone 1). The companion + push line has since shipped through MC-9 (web push, ntfy, the content-free relay backend, the Capacitor shell, QR pairing); MC-10 (store packaging) remains. Device sessions/tokens (MC-2) and QR pairing (MC-8) are SUPERSEDED — they consume COMPANION-APPS (plan 54) + REMOTE-USER-AUTH (plan 53) contracts rather than editing token_auth.py. Push atoms (MC-5/6/9) edge on INBOX-NOTIFICATIONS-UNIFICATION (plan 42) push target/rules. The pre-existing docs/guides/remote-access.md is plan 53's artifact, not MC-1 done-work.
+Decomposed MOBILE-COMPANION into 10 atoms along the 2026-07-26 Amendment's session placement (push-to-approval is milestone 1). All 10 atoms are done: the companion + push line shipped through MC-9 (web push, ntfy, the content-free relay backend, the Capacitor shell, QR pairing), and MC-10 closed the plan with store packaging (brand-derived assets, truthful no-collection declarations, docs/maintainers/mobile-release.md); only the owner's store enrollments/submissions remain, tracked on the owner checklist. Device sessions/tokens (MC-2) and QR pairing (MC-8) are SUPERSEDED — they consume COMPANION-APPS (plan 54) + REMOTE-USER-AUTH (plan 53) contracts rather than editing token_auth.py. Push atoms (MC-5/6/9) edge on INBOX-NOTIFICATIONS-UNIFICATION (plan 42) push target/rules. The pre-existing docs/guides/remote-access.md is plan 53's artifact, not MC-1 done-work.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -19,7 +19,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `MC-7` | ✅ | S4 Capacitor shell wrapping the served companion route | `MC-3`, `MC-2` | A Capacitor shell (new mobile/ dir; repo-location decision recorded) wraps the served companion URL with config for gateway URL + device session and native safe-areas, no forked UI; builds for iOS+Android and renders the live companion. |
 | `MC-8` | ✅ | S4 QR pairing screen (renders COMPANION-APPS pairing routes) | `MC-7`, `MC-2`, `EXT:COMPANION-APPS:unified pairing routes /api/devices/pair/start|complete` | Settings > Devices > Pair phone renders a QR of {pairing_url, one-time code}; the shell scans and exchanges it for a device session end to end; code single-use (TTL 5min) verified. Pairing routes are consumed from plan 54, not defined here. |
 | `MC-9` | ✅ | S4 platform push: ntfy default + open-source content-free relay + APNs/FCM shell wiring | `MC-7`, `MC-5` | Done (PR #2455): `mobile.push_backend` gains `relay` — `send_relay` wraps MC-5's two-id payload in a `{platform, token, payload}` envelope to a user-configured `mobile.relay_url` (stateless, open-source; `assert_content_free` inside the sender); relay-register/unregister routes + per-device `push_relay_tokens.json`; vendor-push shell wiring in `nativePush.ts`; `tests/test_mc9_relay_push.py` proves the content-free envelope, the relay repo's own suite carries the ids-only log audit. ntfy stays the documented default. No real handset driven — the on-device vendor leg waits on MC-10's store builds. |
-| `MC-10` | ⬜ | S4 store packaging + mobile-release docs | `MC-7`, `MC-9` | Icons/splash from brand assets, truthful no-data-collection privacy declarations, and docs/maintainers/mobile-release.md produce installable TestFlight/internal-track builds via the documented steps (owner performs the actual store submissions). |
+| `MC-10` | ✅ | S4 store packaging + mobile-release docs | `MC-7`, `MC-9` | Icons/splash from brand assets, truthful no-data-collection privacy declarations, and docs/maintainers/mobile-release.md produce installable TestFlight/internal-track builds via the documented steps (owner performs the actual store submissions). |
 
 ## Atom scopes
 
@@ -212,7 +212,7 @@ Sessions 4-6 — T4.3 Platform push
 
 ### `MC-10` — S4 store packaging + mobile-release docs
 
-**Status:** todo
+**Status:** done
 
 Sessions 4-6 — T4.4 Store packaging + Owner tasks 3-4
 

@@ -179,6 +179,23 @@ Plan 42 rules-engine `push` target calls `send_push` with `{kind, item_id}` only
 
 ## Execution log
 
+**2026-09-05 — MC-10 DONE (PR #2498, merge `e96ca3085`) — PLAN COMPLETE (10/10 atoms).** T4.4 store
+packaging, the agent-buildable half of owner tasks 3-4. `mobile/assets/` commits the five source
+images `@capacitor/assets generate` consumes (1024px icon + adaptive layers, 2732px light/dark
+splash), built from `docs/brand/` by the committed `mobile/scripts/generate_store_assets.py` so a
+brand change regenerates rather than re-draws. `mobile/store/` carries the truthful no-collection
+declarations — an app-level `PrivacyInfo.xcprivacy` (all four declarations empty; the generated
+Capacitor 8.5 iOS template ships without one, so the committed copy is the source of truth across
+`cap add` regenerations) and `play-data-safety.md` (no collection, no sharing; store-agnostic
+walk-through reused for Apple's App Privacy answers). `docs/maintainers/mobile-release.md` walks a
+clean checkout to TestFlight/Play internal track with a provenance section separating what was
+actually run here (root `npm ci`, `test:mobile`, `cap add ios|android` — SPM project, no CocoaPods —
+`@capacitor/assets generate` writing 7 iOS + 74 Android resources, `cap build --help` flag
+verification) from what is marked **(not exercised)** (everything inside Xcode, the Android release
+build, both consoles, any handset). The remaining OWNER-only work — enrollments, store records,
+signing, submissions — is on the owner checklist; the first real store build is also what finally
+exercises MC-9's on-device vendor-push leg.
+
 **2026-09-05 — MC-9 DONE (PR #2455, merge `944615456`).** The relay half of T4.3 platform push.
 `mobile.push_backend` gains `relay`: `send_relay` (src/personalclaw/push.py) wraps MC-5's
 content-free two-id payload in a `{platform, token, payload}` routing envelope and POSTs it to a
