@@ -4776,7 +4776,7 @@
             "PCS-7",
             "PCS-3"
           ],
-          "blocked_reason": "ENVIRONMENT-GATED (owner ruling 2026-08-28 split this from PCS-7's shipped numbers half). Cannot be closed from this environment: (a) no Bedrock inference-profile id resolves to a price row, so a real run renders 'saved unpriced' — needs _rates id normalisation (a repo-wide pricing change); (b) no OPENAI_API_KEY here (PCS-3 now supplies the OpenAI AUTOMATIC posture the run depends on). Both gates are credentials/environment, not code."
+          "blocked_reason": "ENVIRONMENT-GATED (owner ruling 2026-08-28 split this from PCS-7's shipped numbers half). Cannot be closed from this environment: (a) no Bedrock inference-profile id resolves to a price row, so a real run renders 'saved unpriced' — needs _rates id normalisation (a repo-wide pricing change); (b) no OPENAI_API_KEY here (PCS-3 now supplies the OpenAI AUTOMATIC posture the run depends on). Both gates are credentials/environment, not code. AUDIT UPDATE 2026-09-05 (PR #2489 merged): the _rates id-normalisation code half landed — every Bedrock inference-profile shape (any region prefix; version pair before a trailing date stamp) resolves to its family price row, pinned with a vacuity partner. Two gates remain, both environment: the live Anthropic+OpenAI telemetry runs (no OPENAI_API_KEY here), and one data gap — claude-fable-5 has no price row (needs verified public pricing, never invented)."
         },
         {
           "id": "PCS-8",
@@ -5347,13 +5347,14 @@
         {
           "id": "HC-5",
           "title": "v2 workflow templates for best-of-n and check-work (engine-native halves)",
-          "status": "todo",
+          "status": "done",
           "scope": "§2.3 The template: v2 judge-panel consumer; §3.2 Workflow template (check-work node); Success Criteria 8",
           "done_when": "A best-of-n workflow template (fan-out N -> judge -> select) and a check-work node template run engine-side, each CALLING the §2.1/§3.1 cores (no reimplementation) so template and skill are behaviorally identical; a shared-core test exercising both skill and template entry points is green (SC 8).",
           "deps": [
             "HC-3",
             "HC-4"
-          ]
+          ],
+          "evidence": "done 2026-09-05 (PR #2492): two bundled v2 templates — best-of-n (sample action node -> select transform) and check-work (check action node -> verdict transform) — each backed by a thin action provider CALLING the shipped core (sampling.best_of_n whole; check_work.derive_and_run), so template and skill are behaviorally identical by construction. DEVIATION, recorded at the definition sites: the plan's fan-out->judge->select node decomposition does not map onto the shipped core (its pieces are private; the concurrency proof, fail-open tiers, tie-break contract and outcome record span the whole call), so the template calls the core WHOLE from one metered action node — splitting would re-own those contracts in template config, the exact skill/template drift the plan's risk table forbids. SC 8 is tests/test_hc5_shared_core.py: one stub set drives the skill's tool AND the real template node through dispatch_action, including a deliberate score tie proving the deterministic tie-break through both paths, plus a source-level pin that wrappers import the cores, not pieces. Rails in the same commit: provider registry + ALLOWED_HOOK_PROVIDERS, capability tables (check-work read-only; best-of-n write-capable for its unattended N-fold spend), rungs ActionTypeSpecs, bundled census, frontier golden regenerated purely additively (20 new rows, 0 changed). 499+171 green. NOTE: dep HC-3 remains todo only on its OWNER LIVE-RUN clause — its code (the core this atom calls) is complete and railed per HC-3's own 2026-08-27 re-verification."
         }
       ]
     },
@@ -5649,13 +5650,14 @@
         {
           "id": "DC-6",
           "title": "S4: Windows/Linux electron-builder targets (PLATFORM-REACH-gated)",
-          "status": "todo",
+          "status": "done",
           "scope": "Session 4 — Presence + platforms, T4.4 (Windows/Linux targets, gated); design S4 ('desktop follows platform support, never leads it')",
           "done_when": "either Windows/Linux electron-builder targets ship with per-OS signing docs once PLATFORM-REACH's corresponding rung is proven, OR a dated DEFERRED note records the exact gate condition.",
           "deps": [
             "DC-1"
           ],
-          "blocked_reason": "OWNER RULING 2026-08-27 (question 3 of 11). Q: ship an electron-builder Linux AppImage/deb target now, or write the dated DEFERRED note citing windows-native-audit.md:302? RULED: SHIP THE LINUX TARGET NOW; WINDOWS STAYS DEFERRED with the dated note. Reasoning: the Linux target needs no Apple signing -- it is one release.yml job -- so it is buildable today, and a whole platform should not wait behind an audit it does not depend on. Windows genuinely does wait: it needs the native audit plus signing secrets neither of which exists. This splits a blocked atom into a shippable half and an honestly-parked half instead of parking both."
+          "blocked_reason": "OWNER RULING 2026-08-27 (question 3 of 11). Q: ship an electron-builder Linux AppImage/deb target now, or write the dated DEFERRED note citing windows-native-audit.md:302? RULED: SHIP THE LINUX TARGET NOW; WINDOWS STAYS DEFERRED with the dated note. Reasoning: the Linux target needs no Apple signing -- it is one release.yml job -- so it is buildable today, and a whole platform should not wait behind an audit it does not depend on. Windows genuinely does wait: it needs the native audit plus signing secrets neither of which exists. This splits a blocked atom into a shippable half and an honestly-parked half instead of parking both.",
+          "evidence": "done 2026-09-05 (PR #2488, validated during the inventory-audit final push): both branches of the either/or done_when are satisfied per the 2026-08-27 owner ruling (ship Linux NOW, defer Windows with the dated note). Linux: desktop/package.json gains the electron-builder linux config (AppImage+deb, package renamed personalclaw-desktop because the deb Package: field derives from name); release.yml gains the desktop-linux job (ubuntu-latest, make desktop-dist-linux) with a release-blocking smoke that EXECUTES the frozen personalclaw-backend --version out of the extracted AppImage and inspects the deb control block, then attaches both artifacts to the Release; a real electron-builder --linux cross-build ran on a Mac and passed (it caught two defects schema validation missed: deb refuses without homepage; License: unknown without a license field). Windows: the dated DEFERRED note in DC.md names the exact gate — windows-native-audit.md:302's no-go flipping via its own demand-evidence criteria plus signing secrets that do not exist. Per-OS signing story in docs/guides/desktop.md#platforms (unsigned-by-design Linux and exactly what users see). Desktop test tier 190/190; owner note: the deb maintainer email noreply@personalclaw.dev is invented (no contact email exists in the repo)."
         }
       ]
     },
@@ -7026,7 +7028,7 @@
             "EI-5",
             "EXT:WORK-CONTAINERS:WORK-R8 lease convention (flock under locks/) + WORK-R7 suspended-liveness path"
           ],
-          "blocked_reason": "PARTIAL. Runner lifecycle landed WHOLE (pool.claim -> _record_lease -> claim_runner -> a flock lease under config_dir()/locks/leases, swept in the live _health_loop, read back by runners.lease_for and rendered as 'held by {holder}'; both config fields pass all round-trip points with a [60,86400] clamp). The DURABLE-SESSION clause is a LIVE READER OF AN UNWRITTEN KEY: _durable_substrate is called first from _substrate_for, tmux is in Substrate.isolated, sweep_decision yields SUSPENDED and the journal 'resumed' kind pre-exists - but NOTHING IN CORE SPAWNS A DURABLE WORKER. durable_session_name, the only producer of the pclaw-<project>-<run>-<session> shape, has exactly ONE production caller: the READER. Core's sole tmux spawn uses a DIFFERENT name shape. NOTE FOR THE NEXT AUDITOR: a later EXT-dep audit reported this atom 'SATISFIED and LANDED' - it was answering the narrower question 'is the WORK-CONTAINERS dep met?', not 'is the atom done'. The clause-by-clause reading wins. UPSTREAM-BLOCKED on EI-2's container provider (ACP runners are stdio-bound and the sandbox-interior shell is EI-2's); do NOT schedule standalone. AUDIT REFRESH 2026-09-05: the 'unwritten key' clause is now PARTIALLY STALE — config/loader.py:589 declares agent.durable_sessions and :3357 parses it. Remaining work re-measured: verify the value actually reaches watchdog._durable_substrate's run (the reader at workflows/watchdog.py:426-449), wire whatever link is missing, and run the SC5 kill-mid-run validation. Agent-buildable (M), measure-first."
+          "blocked_reason": "PARTIAL. Runner lifecycle landed WHOLE (pool.claim -> _record_lease -> claim_runner -> a flock lease under config_dir()/locks/leases, swept in the live _health_loop, read back by runners.lease_for and rendered as 'held by {holder}'; both config fields pass all round-trip points with a [60,86400] clamp). The DURABLE-SESSION clause is a LIVE READER OF AN UNWRITTEN KEY: _durable_substrate is called first from _substrate_for, tmux is in Substrate.isolated, sweep_decision yields SUSPENDED and the journal 'resumed' kind pre-exists - but NOTHING IN CORE SPAWNS A DURABLE WORKER. durable_session_name, the only producer of the pclaw-<project>-<run>-<session> shape, has exactly ONE production caller: the READER. Core's sole tmux spawn uses a DIFFERENT name shape. NOTE FOR THE NEXT AUDITOR: a later EXT-dep audit reported this atom 'SATISFIED and LANDED' - it was answering the narrower question 'is the WORK-CONTAINERS dep met?', not 'is the atom done'. The clause-by-clause reading wins. UPSTREAM-BLOCKED on EI-2's container provider (ACP runners are stdio-bound and the sandbox-interior shell is EI-2's); do NOT schedule standalone. AUDIT REFRESH 2026-09-05: the 'unwritten key' clause is now PARTIALLY STALE — config/loader.py:589 declares agent.durable_sessions and :3357 parses it. Remaining work re-measured: verify the value actually reaches watchdog._durable_substrate's run (the reader at workflows/watchdog.py:426-449), wire whatever link is missing, and run the SC5 kill-mid-run validation. Agent-buildable (M), measure-first. AUDIT UPDATE 2026-09-05 (PR #2494 merged): the SPAWN half landed — tmux_substrate.spawn_durable_session + provisioning wiring behind durable_sessions_enabled(), fail-open to the bare subprocess, teardown kills the worker before workspace deletion. The ONLY unmet clause is SC5's LIVE kill-mid-run validation: the test exists (tests/test_ei6_durable_spawn.py) but is skipif(tmux absent) and tmux is absent on the dev machine and stock CI runners. Closes via a machine with tmux (owner checklist #2490) or a CI job that installs tmux."
         },
         {
           "id": "EI-7",
@@ -9966,9 +9968,9 @@
         "code": "HC",
         "plan": "HARNESS-CRAFT",
         "total_atoms": 5,
-        "done": 3,
+        "done": 4,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 1
       },
       {
@@ -9993,9 +9995,9 @@
         "code": "DC",
         "plan": "DESKTOP-CAPABILITIES",
         "total_atoms": 6,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
