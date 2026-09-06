@@ -409,6 +409,56 @@ def resolve_session(state: DashboardState, name: str):
     return state._sessions.get(name) or _rehydrate_session_from_history(state, name)
 
 
+def session_key_exists(state: DashboardState, name: str) -> bool:
+    """THE owner of "does this session key exist, and may it be written?".
+
+    ``True`` when *name* addresses a real chat session — resident in
+    ``state._sessions``, or holding a conversation log FILE on disk. ``False`` when the
+    key names nothing at all: never created, or hard-deleted by
+    ``api_chat_session_delete`` (which unlinks that file).
+
+    **Why a writer needs this and cannot just call get_or_create_session.**
+    ``state.get_or_create_session`` mints a blank session on a name MISS — which is
+    correct for the paths that own creation (``POST /api/chat/sessions``, a fork, a
+    channel thread, a loop) and wrong for every path where the name arrived from a
+    CLIENT. There, a miss means the client is addressing something that is not there,
+    and creating it turns "delete" into "close": a stale tab, a retried request or a
+    queued send re-materialises a conversation the user destroyed, minus everything
+    the original carried. Measured before this helper existed: ``POST /api/chat``
+    naming a hard-deleted key answered **200** and put the key back in
+    ``GET /api/chat/sessions`` with an empty transcript.
+
+    **The predicate is FILE PRESENCE, and deliberately neither of its two neighbours.**
+    Not :func:`resolve_session` — that answers ``None`` for an ARCHIVED (``closed``)
+    session, because a soft-closed chat is not resident; but archival is not deletion,
+    ``api_chat_session_resume`` exists to reopen one, and refusing a write there would
+    be a brand-new refusal on live user data. And not "has readable metadata" either:
+    :func:`resolve_history_key` collapses "no metadata" and "I could not READ the
+    metadata" into the same ``None``, so asking it would 404 a session whose file is
+    right there the moment a read fails — measured with a ``get_metadata`` that raises
+    ``OSError``. So the question is put to :meth:`ConversationLog.has_log`, a bare
+    ``Path.exists()`` that no unreadable byte and no corrupt first line can defeat.
+    A broken disk degrades to the old permissive behaviour; a hard-deleted key, whose
+    file is gone, is still refused.
+
+    Provider-agnostic without assuming a key SHAPE: both candidate keys are tried — the
+    bare one (a channel-provider thread persists under its own key, exactly as the
+    channel app wrote it) and the ``dashboard:`` form — which is the same pair
+    :func:`resolve_history_key` tries, so the two cannot disagree about which files
+    belong to a key.
+    """
+    if name in state._sessions:
+        return True
+    try:
+        log = state.conversation_log
+        if log is None:
+            return True  # no log configured — absence is unprovable, so don't refuse
+        return any(log.has_log(k) for k in {name, _history_key_for(name)})
+    except Exception:  # noqa: BLE001 — an unreadable log must not refuse a live send
+        logger.warning("session existence check failed for %s", name, exc_info=True)
+        return True
+
+
 def restore_recent_sessions(
     state: DashboardState, window_minutes: int = 30, *, folders_only: bool = False
 ) -> int:

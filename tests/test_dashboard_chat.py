@@ -2777,6 +2777,11 @@ class TestApiChatAgentPassing:
     async def test_agent_set_on_new_session(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
+        # "New" = a session with no agent bound yet, which is what this asserts. The
+        # session itself must EXIST: a send naming an unknown key is refused
+        # `session_not_found` (tests/test_chat_session_resurrection_audit.py), and the
+        # sibling test below already creates the session before sending.
+        state.get_or_create_session("external-my-skill")
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
                 "/api/chat?ws=1",
@@ -5174,6 +5179,9 @@ class TestColorTheme:
     async def test_color_theme_set_on_session(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
+        # The session must exist before a send names it — a send to an unknown key is
+        # refused `session_not_found`. The two sibling tests below already do this.
+        state.get_or_create_session("theme-session")
         with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
@@ -5218,6 +5226,7 @@ class TestColorTheme:
     async def test_invalid_color_theme_coerced_to_empty(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
+        state.get_or_create_session("theme-session")  # see the note above
         with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
@@ -5231,6 +5240,7 @@ class TestColorTheme:
     async def test_non_string_color_theme_coerced(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
+        state.get_or_create_session("theme-session")  # see the note above
         with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
