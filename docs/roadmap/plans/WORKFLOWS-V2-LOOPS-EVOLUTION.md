@@ -1908,3 +1908,62 @@ the bound and the routing assertions.
 passed**; the four regenerated rails → **58 passed**; `make lint` clean over 960 files; full
 `make test` → **24,133 passed, 30 skipped, exit 0**. `dag.json` deliberately untouched — a PARTIAL
 atom stays not-done.
+
+### 2026-09-06 — the `council` deliberative template (the template-library candidate this plan owed AGENT-ROOMS)
+
+**[2026-09-06] 🟡 IMPLEMENTATION LANDED.** This plan closed with every atom done but never shipped
+the council template `AGENT-ROOMS.md` §"The cheap precursor" nominates as a LOOPS-EVOLUTION
+template-library candidate — and `AR-1`'s ext gate ("council fan-out/fan-in workflow template ships
+first") names it, so the whole 8-atom AGENT-ROOMS plan was waiting behind a deliverable nobody
+owned. `workflows/bundled/council/` is that deliverable: one question out to three members who each
+answer it independently from a distinct role, one zero-token collector, one synthesis that
+**attributes** every position, names the disagreements instead of averaging them, and states the
+strongest position it did **not** follow.
+
+**Shape, and why it is not a provider.** The precursor's own brief says "zero new topology — an
+ordinary fan-out/fan-in workflow on Workflows v2 primitives", and that is literally what shipped:
+`parallel` of three `infer` → `transform` → `infer`. No action provider, no new core, so no
+`ALLOWED_HOOK_PROVIDERS` / `guardrails.rungs` / `triggers.screen` entries were needed. Two reasons
+the provider route was rejected: the members' work IS model reasoning, which belongs in a node the
+engine meters rather than inside an action (the library's own convention, stated on
+`contradiction-review`); and `best-of-n`'s action-provider form is justified by an EXISTING core its
+skill and MCP tool already share, which a council has no equivalent of — minting one purely to
+justify a provider would re-litigate that convention for nothing.
+
+**Why three named seats rather than a dynamic `foreach`.** Containers have no output surface at all
+(`controller._journal_collected_items` is explicit: `{{nodes.<foreach>.output}}` resolves in memory
+and then resolves to nothing after a restart, because a container has no stored instance). A `foreach`
+fan-out therefore cannot be fanned back IN through bindings, so named members under a `parallel` are
+the only shape whose answers a synthesis node can actually read. The seats are individually
+role-configurable and individually steerable mid-flight, which an opaque single action node could not
+offer.
+
+**Distinct from `best-of-n`, deliberately.** best-of-n fans the IDENTICAL prompt out N ways and
+SELECTS a winner; its candidates are interchangeable samples. A council's members hold different
+roles and its fan-in MERGES with attribution — a synthesis that laundered three named reads into an
+anonymous consensus would discard the only thing the fan-out bought.
+
+**Rails satisfied.** The bundled census (`test_workflows_bundled.py::EXPECTED`, now 32) and its
+per-template legs (strict validation, clean conventions lint, documented inputs, kickoff + mutation
+steering examples, honest risk tier); the frontier scheduling golden regenerated
+(`tests/fixtures/frontier_golden/bundled.jsonl`, +18 decisions — all three members admit at tick 0,
+which is the concurrency proof); package-data glob already covers the new directory. No manifest or
+tool-schema surface changed, so `python -m personalclaw.manifest_reference` regenerated to no diff.
+
+**New shape contract.** `tests/test_council_template.py` (16) holds the two properties a validator
+cannot see: the fan-out stays independent (one `parallel`, no member reading a sibling, distinct role
+defaults measured on content-word overlap) and the fan-in stays attributive (every member reaches the
+synthesis, the synthesis returns a per-member record plus its dissent, nothing binds a single member
+as the answer). Each detector carries a vacuity floor against `best-of-n`, the sibling that must FAIL
+the attribution contract.
+
+**Falsification (2, on live lines, reverted).** (1) `parallel` → `sequence` on the member container →
+the independence leg reds. (2) Terminal binding repointed at `member_1.output` → the
+selection-versus-synthesis leg reds.
+
+**Gate.** `test_council_template` (16) + `test_workflows_bundled` (388) + the all-template suites
+(`frontier_golden`, `contracts`, `autonomy`, `eval_specs`, `judge_calibration`, `blocks`, `scope`,
+`loop_templates`, `template_wiring`) → **829 passed, 2 skipped**; the roadmap doc gates
+(`test_roadmap_dag_derived`, `test_roadmap_atomic_status_sync`) green. `dag.json` deliberately
+untouched: the deliverable now exists on merit, and `AR-1` also turns on an owner demand
+re-confirmation that no code change can supply — the flip is the owner's.
