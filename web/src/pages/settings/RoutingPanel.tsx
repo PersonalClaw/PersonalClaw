@@ -146,13 +146,13 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
           trying to work out what went wrong. */}
       <Section title="Model efficiency">
         {data === null ? (
-          <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var text-[0.8125rem]" role="status">
+          <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var" role="status">
             Couldn't read routing telemetry right now. It's a read-only view — try switching the bucket or reloading.
           </div>
         ) : data === undefined ? (
-          <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low text-[0.8125rem]">Loading…</div>
+          <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low">Loading…</div>
         ) : rows.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low">
             {(MEASURED_USE_CASES as readonly string[]).includes(useCase)
               ? 'No routing telemetry recorded for this yet — it fills in as models handle this kind of request.'
               : 'Nothing is measured for this axis. Routing telemetry comes from unattended work — reasoning, background, loops and orchestration — because interactive requests deliberately stay outside the model-call guard.'}
@@ -160,7 +160,7 @@ export function RoutingPanel({ query, setQuery }: Pick<RouteProps, 'query' | 'se
         ) : (
           <>
             <TelemetryTable rows={rows} />
-            <p className="mt-m text-on-surface-low text-[0.75rem]">
+            <p data-type="caption" className="mt-m text-on-surface-low">
               <Trophy size={11} className="mr-1 inline text-ok" aria-hidden />
               {frontierCount} of {rows.length} {rows.length === 1 ? 'model is' : 'models are'} on the frontier
               — not beaten by another on all of quality, speed, and cost.
@@ -231,14 +231,14 @@ function RoutingProposalsSection() {
   return (
     <Section title="Proposed routing changes">
       {props_ === null ? (
-        <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var text-[0.8125rem]" role="status">
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var" role="status">
           Couldn't read the proposal queue right now. Nothing is pending action — your routing
           table is unchanged either way.
         </div>
       ) : props_ === undefined ? (
-        <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low text-[0.8125rem]">Loading…</div>
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low">Loading…</div>
       ) : props_.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
+        <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low">
           Nothing proposed. When measurements show one of your models clearly beating another for a
           request kind, the change is proposed here — routing never rewrites your table on its own.
         </div>
@@ -247,14 +247,14 @@ function RoutingProposalsSection() {
         {/* §6.3's count, in a sentence rather than a bare badge: the number is only meaningful
             beside what it means, and "measured, not applied" is the property the queue exists to
             enforce. */}
-        <p className="mb-m text-on-surface-var text-[0.8125rem]">
+        <p data-type="body-s" className="mb-m text-on-surface-var">
           {props_.length} proposed {props_.length === 1 ? 'change' : 'changes'} waiting on you.
           Routing measured these — it has not applied them.
         </p>
         <ul className="flex flex-col gap-2">
           {props_.map((p) => (
             <li key={p.id} className="rounded-lg bg-surface-container px-3 py-2.5">
-              <p className="text-on-surface text-[0.8125rem]">
+              <p data-type="body-s" className="text-on-surface">
                 For <span className="text-on-surface-var">{p.use_case} / {p.query_class}</span>, try{' '}
                 <span className="font-mono">{p.proposed[0]}</span> before{' '}
                 <span className="font-mono">{p.current[0]}</span>.
@@ -283,8 +283,8 @@ function RoutingProposalsSection() {
           gets, sighted or not. (It is also why the resting class is bare rather than `sr-only`: the
           policy section below owns the page's one visually-hidden status region, and a second one
           would shadow it for any reader that picks the first.) */}
-      <p role="status" aria-live="polite"
-        className={said ? 'mt-m text-on-surface-var text-[0.8125rem]' : ''}>{said}</p>
+      <p role="status" aria-live="polite" data-type={said ? 'body-s' : undefined}
+        className={said ? 'mt-m text-on-surface-var' : ''}>{said}</p>
       {note && <FieldError className="mt-s">{note}</FieldError>}
     </Section>
   )
@@ -319,7 +319,7 @@ function ProposalEvidence({ evidence, promoted, demoted }: {
     bits.push(`${fmtCost(Math.abs(cost))} ${cost < 0 ? 'cheaper' : 'dearer'} per call`)
   }
   if (bits.length === 0) return null
-  return <p className="mt-1 text-on-surface-low text-[0.75rem]">{bits.join(' · ')}.</p>
+  return <p data-type="caption" className="mt-1 text-on-surface-low">{bits.join(' · ')}.</p>
 }
 
 /** The routing POLICY table (MODEL-ROUTING-TELEMETRY §6.1-6.2, MRT-4).
@@ -378,7 +378,7 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
     //    unattributed "Couldn't read…" with no way to tell which part of the page failed.
     return (
       <Section title="Routing policy">
-        <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var text-[0.8125rem]" role="status">
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var" role="status">
           Couldn't read the routing policy right now. Your bound models are unaffected — resolution
           falls back to the order you bound them in.
         </div>
@@ -411,7 +411,7 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
 
   return (
     <Section title="Routing policy">
-      <p className="mb-m text-on-surface-var text-[0.8125rem]">
+      <p data-type="body-s" className="mb-m text-on-surface-var">
         Which of your bound models this use case tries first. Routing only reorders the models you
         already bound — it never adds or removes one, and an unavailable model still reports an
         error rather than being quietly swapped.
@@ -419,7 +419,7 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
       </p>
 
       {!row ? (
-        <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
+        <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low">
           Routing doesn't apply to this use case — it runs on background work (reasoning, loops,
           orchestration), not on interactive chat.
         </div>
@@ -458,7 +458,7 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
           </div>
 
           {shown.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
+            <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low">
               No models bound to this use case yet. Bind two — one local, one cloud — to give routing
               a choice to make.
             </div>
@@ -467,10 +467,10 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
               {shown.map((ref, i) => {
                 const local = candidates.find((c) => c.ref === ref)?.local
                 return (
-                  <li key={ref} className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2 text-[0.8125rem]">
+                  <li key={ref} data-type="body-s" className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
                     <span className="w-5 text-right tabular-nums text-on-surface-low">{i + 1}</span>
                     <span className="flex-1 truncate font-mono text-on-surface" title={ref}>{ref}</span>
-                    <span className="text-on-surface-low text-[0.75rem]">{local ? 'local' : 'cloud'}</span>
+                    <span data-type="caption" className="text-on-surface-low">{local ? 'local' : 'cloud'}</span>
                     {/* `size-7` (28px), not `p-1` (21px): an icon-only control needs 24px of target.
                         These deliberately keep `unavailableWhen` rather than adopting
                         `SquareIconButton` — the primitive maps `disabled` to `aria-disabled` and never
@@ -498,7 +498,7 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
             </ol>
           )}
 
-          <p className="mt-m text-on-surface-low text-[0.75rem]">
+          <p data-type="caption" className="mt-m text-on-surface-low">
             {row.pin
               ? `Pinned to ${row.pin} — the order below is recorded but not applied while the pin is set.`
               : recorded
@@ -528,7 +528,7 @@ function TelemetryTable({ rows }: { rows: TelemetryRow[] }) {
   const td = 'border-b border-outline-variant/25 px-2 py-1.5'
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-[0.8125rem]">
+      <table data-type="body-s" className="w-full border-collapse">
         <thead>
           <tr className="text-on-surface-low">
             <th scope="col" className={`${th} text-left`}>Model</th>
@@ -553,7 +553,7 @@ function TelemetryTable({ rows }: { rows: TelemetryRow[] }) {
               <td className={`${td} text-right tabular-nums`}>{fmtCost(r.avg_cost_usd)}</td>
               <td className={`${td} text-right`}>
                 {r.on_frontier ? (
-                  <StatusPill tone="ok" sized={false} className="gap-1 py-0.5 text-[0.6875rem]"
+                  <StatusPill tone="ok" sized={false} data-type="caption" className="gap-1 py-0.5"
                     title="On the Pareto frontier — no other model beats this one on all of quality, speed, and cost.">
                     <Trophy size={9} aria-hidden /> frontier
                   </StatusPill>

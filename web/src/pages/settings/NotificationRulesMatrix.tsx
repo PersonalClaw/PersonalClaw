@@ -82,7 +82,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
       <div className="flex flex-col gap-l">
         {bySource.map(([source, rows]) => (
           <div key={source}>
-            <div className="mb-s text-on-surface-low text-[0.75rem] uppercase tracking-wide">{source}</div>
+            <div data-type="caption" className="mb-s text-on-surface-low uppercase tracking-wide">{source}</div>
             <div className="flex flex-col gap-s">
               {rows.map((r) => {
                 const isOpen = expanded === r.key
@@ -90,7 +90,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                 return (
                   <div key={r.key} className="rounded-md bg-surface-container px-m py-2">
                     <div className="flex flex-wrap items-center gap-s">
-                      <span className="flex-1 min-w-0 truncate text-on-surface text-[0.875rem]">{r.label}</span>
+                      <span data-type="body-m" className="flex-1 min-w-0 truncate text-on-surface">{r.label}</span>
                       {/* Only shown when the user has actually diverged — a "default" tag on
                           every untouched row would be noise on the common case. */}
                       {r.configured && r.mode !== r.default_mode && (
@@ -121,7 +121,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                           hint="Applies to Notify. Dashboard is always available; the others need their app.">
                           <div className="flex flex-col gap-1.5">
                             {doc.targets.map((t) => (
-                              <label key={t} className="inline-flex items-center gap-2 text-on-surface-var text-[0.8125rem]">
+                              <label key={t} data-type="body-s" className="inline-flex items-center gap-2 text-on-surface-var">
                                 <Checkbox checked={r.targets.includes(t)}
                                   ariaLabel={`Deliver ${r.label} to ${TARGET_LABELS[t]}`}
                                   onChange={(on) => {

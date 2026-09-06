@@ -41,7 +41,7 @@ export function SearchPanel() {
       <PanelHeader title="Search" hint="Bind a search provider to each use case. Configure providers (endpoint / API key) in Providers, then assign them here. An unbound use case falls back to General search." />
       <Section>
         {providers.length === 0 && (
-          <div className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low">
             No search providers configured. Enable <span className="text-on-surface">SearXNG</span> or <span className="text-on-surface">Tavily</span> in <span className="text-on-surface">Providers</span> and add their endpoint / API key.
           </div>
         )}
@@ -84,19 +84,19 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
           <meta.icon size={14} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-on-surface text-[0.8125rem]" style={fvs(500)}>{meta.label}</div>
-          <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+          <div data-type="label-s" className="text-on-surface" style={fvs(500)}>{meta.label}</div>
+          <div data-type="caption" className="mt-0.5 text-on-surface-low">
             {activeProviders.length > 0 ? activeProviders[0] : <span className="italic">none — falls back to General</span>}
           </div>
         </div>
-        {eligible.length > 0 && <span className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums">{eligible.length} available</span>}
+        {eligible.length > 0 && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low tabular-nums">{eligible.length} available</span>}
       </button>
 
       {open && (
         <div className="flex flex-col gap-3 border-t border-outline-variant/30 px-4 pb-4 pt-3">
-          <p className="text-on-surface-low text-[0.8125rem]">{meta.description}</p>
+          <p data-type="body-s" className="text-on-surface-low">{meta.description}</p>
           {eligible.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low text-[0.8125rem] italic">
+            <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
               {useCase === 'fetch-article'
                 ? 'No configured provider can extract page content. Bind one with fetch support (e.g. Tavily), or leave this unset to use the native fetch pipeline.'
                 : 'No search providers configured. Add one in Providers first.'}
@@ -119,9 +119,9 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
                       style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
                       {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{p.display_name}</span>
+                    <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{p.display_name}</span>
                     <CapChips caps={p.capabilities} />
-                    <span className="shrink-0 rounded-pill px-1.5 py-0.5 text-[0.75rem]"
+                    <span data-type="caption" className="shrink-0 rounded-pill px-1.5 py-0.5"
                       style={p.available
                         ? { background: 'color-mix(in srgb, var(--color-ok) 16%, transparent)', color: 'var(--color-ok)' }
                         : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
@@ -151,7 +151,7 @@ function CapChips({ caps }: { caps: SearchProviderInfo['capabilities'] }) {
   return (
     <span className="hidden shrink-0 items-center gap-1 sm:inline-flex">
       {active.map((c) => (
-        <span key={c.label} title={c.title} className="inline-flex items-center gap-0.5 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">
+        <span key={c.label} title={c.title} data-type="caption" className="inline-flex items-center gap-0.5 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low uppercase tracking-wide">
           <Zap size={8} className="text-primary" />{c.label}
         </span>
       ))}

@@ -139,7 +139,7 @@ export function PersonalityPicker() {
         <Sparkles size={14} className="text-on-surface-low" />
         <Eyebrow as="span">Personality</Eyebrow>
       </div>
-      <p className="mb-m text-on-surface-low text-[0.8125rem] leading-relaxed">
+      <p data-type="body-s" className="mb-m text-on-surface-low leading-relaxed">
         A personality is a whole identity, not just a palette: it sets the colors, the
         wordmark, the tab title, the interface density, and the motion and backdrop dials
         together — and can offer the assistant a matching name. Every one of those stays
@@ -153,14 +153,14 @@ export function PersonalityPicker() {
             <TileButton key={p.id} onClick={() => pick(p)} active={active} title={p.hint}
               className="p-m">
               <div className="flex items-center gap-1.5">
-                <span className="truncate text-on-surface text-[0.875rem]">{p.label}</span>
+                <span data-type="body-m" className="truncate text-on-surface">{p.label}</span>
                 {active && <Check size={13} className="shrink-0 text-primary" />}
               </div>
-              <p className="mt-0.5 line-clamp-2 text-left text-on-surface-low text-[0.75rem] leading-snug">
+              <p data-type="caption" className="mt-0.5 line-clamp-2 text-left text-on-surface-low">
                 {p.hint}
               </p>
               {p.behavior.displayName && (
-                <p className="mt-1 text-left text-on-surface-low text-[0.6875rem]">
+                <p data-type="caption" className="mt-1 text-left text-on-surface-low">
                   calls itself “{p.behavior.displayName}”
                 </p>
               )}
@@ -173,7 +173,7 @@ export function PersonalityPicker() {
       {pending && (
         <Modal title={`Switch to ${pending.label}?`} onClose={() => setPending(null)}>
           <div className="flex flex-col gap-m">
-            <p className="text-on-surface text-[0.875rem] leading-relaxed">
+            <p data-type="body-m" className="text-on-surface leading-relaxed">
               The colors, wordmark, tab title, density, and motion dials change right away —
               pick another personality any time to change them back.
             </p>
@@ -187,6 +187,7 @@ export function PersonalityPicker() {
                     ? "Also restore the assistant's default name"
                     : `Also rename the assistant to ${pending.behavior.displayName}`} />
               </div>
+              {/* stays raw (ratchet): a role's inherited wght would flatten the <strong> rename */}
               <span className="text-on-surface text-[0.8125rem] leading-relaxed">
                 {pending.id === DEFAULT_PERSONALITY ? (
                   <>

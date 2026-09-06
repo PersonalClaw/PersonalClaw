@@ -110,7 +110,7 @@ export function ExternalAccessPanel() {
 
       {error && (
         <div
-          className="mb-3 flex items-start gap-2 rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem]"
+          data-type="body-s" className="mb-3 flex items-start gap-2 rounded-lg bg-surface-container px-4 py-3"
           style={{ color: 'var(--color-danger)' }}
           role="alert">
           <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden />
@@ -120,7 +120,7 @@ export function ExternalAccessPanel() {
 
       {data?.incident_active && (
         <div
-          className="mb-3 flex items-start gap-2 rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem]"
+          data-type="body-s" className="mb-3 flex items-start gap-2 rounded-lg bg-surface-container px-4 py-3"
           style={{ color: 'var(--color-warning)' }}
           role="status">
           <ShieldOff size={14} className="mt-0.5 shrink-0" aria-hidden />
@@ -151,7 +151,7 @@ export function ExternalAccessPanel() {
         title="Surfaces"
         hint="Each needs its own ≥32-byte token, created with `personalclaw inbound token create <surface>`. A token that is missing, too short, or equal to your dashboard token is refused — the surface will not mount and says so here.">
         {surfaces.length === 0 ? (
-          <div className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
             Couldn’t read the surface configuration.
           </div>
         ) : (
@@ -223,11 +223,11 @@ export function ExternalAccessPanel() {
             patch={patchCap}
             placeholder="Add host…" />
         </RowGroup>
-        <div className="mt-3 rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">
+        <div data-type="body-s" className="mt-3 rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
           <div>
             <span className="text-on-surface">Public URL:</span>{' '}
             {data?.public_url ? (
-              <code className="font-mono text-[0.75rem]">{data.public_url}</code>
+              <code data-type="caption" className="font-mono">{data.public_url}</code>
             ) : (
               'not set — every surface is loopback-only'
             )}
@@ -247,12 +247,12 @@ export function ExternalAccessPanel() {
         hint="A client is one integration, with its own token and its own limits. Its bindings are pins, not defaults: a request that asks for a different agent or an un-listed tool is refused, never quietly redirected.">
         {freshToken && (
           <div
-            className="mb-3 rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem]"
+            data-type="body-s" className="mb-3 rounded-lg bg-surface-container px-4 py-3"
             role="status">
-            <div className="flex items-center gap-2 font-medium">
+            <div className="flex items-center gap-2 fw-500">
               <KeyRound size={14} aria-hidden /> Token for “{freshToken.label}”
             </div>
-            <code className="mt-2 block break-all rounded bg-surface-high px-2 py-1.5 font-mono text-[0.75rem]">
+            <code data-type="caption" className="mt-2 block break-all rounded bg-surface-high px-2 py-1.5 font-mono">
               {freshToken.token}
             </code>
             <div className="mt-2 text-on-surface-low">
@@ -267,7 +267,7 @@ export function ExternalAccessPanel() {
           </div>
         )}
         {clients.length === 0 ? (
-          <div className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
             No clients yet. Create one with <code>personalclaw inbound client create</code> — or
             keep using a plain surface token, which works but cannot be scoped or revoked on its
             own.
@@ -293,7 +293,7 @@ export function ExternalAccessPanel() {
       <Section
         title="Remote access"
         hint="Not editable here, on purpose.">
-        <div className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
           {data?.public_url ? (
             <>
               This instance answers to <code>{data.public_url}</code>. A remote request whose
@@ -346,7 +346,7 @@ function SurfaceRow({
       <div className="flex items-center gap-2">
         {surface.enabled && blocked && (
           <span
-            className="shrink-0 rounded-pill px-2 py-0.5 text-[0.75rem]"
+            data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5"
             style={{
               background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)',
               color: 'var(--color-warning)',
@@ -357,7 +357,7 @@ function SurfaceRow({
         )}
         {surface.enabled && !blocked && surface.allow_remote && (
           <span
-            className="shrink-0 rounded-pill px-2 py-0.5 text-[0.75rem]"
+            data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5"
             style={{
               background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)',
               color: 'var(--color-danger)',
@@ -396,10 +396,10 @@ function ClientRow({
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg bg-surface-container px-3 py-2.5">
       <div className="min-w-40 flex-1">
-        <div className="truncate text-on-surface text-[0.8125rem]">
+        <div data-type="body-s" className="truncate text-on-surface">
           {client.label || 'Unnamed client'}
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-on-surface-low text-[0.75rem]">
+        <div data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-2 text-on-surface-low">
           <span className="inline-flex items-center gap-1">
             <Plug2 size={10} aria-hidden /> {client.surfaces.join(', ') || 'no surfaces'}
           </span>
@@ -412,7 +412,7 @@ function ClientRow({
       </div>
       {client.disabled && (
         <span
-          className="shrink-0 rounded-pill px-2 py-0.5 text-[0.75rem]"
+          data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5"
           style={{
             background: 'color-mix(in srgb, var(--color-danger) 14%, transparent)',
             color: 'var(--color-danger)',

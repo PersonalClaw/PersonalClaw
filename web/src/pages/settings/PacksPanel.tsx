@@ -144,15 +144,15 @@ export function ProposalsSection({ onInstalled }: { onInstalled: () => void }) {
       right={<Button variant="ghost" size="sm" disabled={busy} onClick={scan}>{busy ? 'Scanning…' : 'Suggest packs'}</Button>}
     >
       {error && (
-        <div className="rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem] text-warn">Couldn't scan for suggestions: {error}</div>
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-warn">Couldn't scan for suggestions: {error}</div>
       )}
       {!error && proposals !== null && proposals.length === 0 && (
-        <div className="rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem] text-on-surface-low">
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
           No pack matches any project's workspace. Bind a project to a codebase directory to get suggestions.
         </div>
       )}
       {!error && proposals === null && (
-        <div className="rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem] text-on-surface-low">Scanning your projects…</div>
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">Scanning your projects…</div>
       )}
       <div className="flex flex-col gap-2">
         {(proposals ?? []).map((p) => (
@@ -178,14 +178,14 @@ export function ProposalCard({ proposal, busy, onInstall, onReject }: {
     <div className="rounded-lg bg-surface-container px-4 py-3">
       <div className="flex flex-wrap items-baseline justify-between gap-m">
         <div className="min-w-0">
-          <div className="text-on-surface text-[0.8125rem]">
+          <div data-type="body-s" className="text-on-surface">
             {proposal.displayName} {proposal.version}
             {/* The score, and immediately the reason for it. A bare percentage would be a
                 number the user has to trust; the line under it is the arithmetic. */}
-            <span className="ml-2 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] text-on-surface-var">{pct}% match</span>
+            <span data-type="caption" className="ml-2 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var">{pct}% match</span>
           </div>
           {top && (
-            <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="mt-0.5 text-on-surface-low">
               Looks like a {top.label.toLowerCase()} — {top.matched_globs.length} of {top.declared_globs.length} file patterns
               {top.declared_signals.length > 0 && <> and {top.matched_signals.length} of {top.declared_signals.length} content signals</>}
               {' '}matched, against a declared ceiling of {Math.round(top.declared_confidence * 100)}%.
@@ -197,7 +197,7 @@ export function ProposalCard({ proposal, busy, onInstall, onReject }: {
           <Button variant="ghost" size="sm" onClick={() => onReject(proposal)}>Not for this project</Button>
         </div>
       </div>
-      <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2 text-[0.75rem]">
+      <div data-type="caption" className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
         <div className="text-on-surface-low">{proposal.description}</div>
         {/* Example matched paths. A score with no example path is unreviewable — this is how a
             user confirms the scanner looked at their project and not at a vendored copy. */}
@@ -262,7 +262,7 @@ export function PackStoreSection({ installed, onInstalled }: {
           <RowGroup key={p.name}>
             <Row label={`${p.displayName} ${p.version}`.trim()} hint={p.description}>
               {have.has(p.name)
-                ? <span className="text-[0.75rem] text-on-surface-low">Installed</span>
+                ? <span data-type="caption" className="text-on-surface-low">Installed</span>
                 : <Button variant="primary" size="sm" disabled={busy === p.name} onClick={() => install(p.name, p.displayName)}>Install</Button>}
             </Row>
           </RowGroup>
@@ -275,7 +275,7 @@ export function PackStoreSection({ installed, onInstalled }: {
 // ── installed packs + finish-setup chip ──────────────────────────────────────
 function InstalledPacks({ packs }: { packs: InstalledPackRec[] }) {
   if (packs.length === 0) {
-    return <div className="rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem] text-on-surface-low">No packs installed yet.</div>
+    return <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">No packs installed yet.</div>
   }
   return (
     <div className="flex flex-col gap-2">
@@ -320,7 +320,7 @@ export function connectorWarning(markers: string[]): string | undefined {
 function ConnectorLine({ c }: { c: InstalledPackRec['connectors'][number] }) {
   const skipped = c.mode === 'skip'
   return (
-    <div className="flex items-baseline gap-m text-[0.75rem]">
+    <div data-type="caption" className="flex items-baseline gap-m">
       <span className={`shrink-0 ${skipped ? 'text-warn' : 'text-on-surface-var'}`}>{c.name}</span>
       <div className="min-w-0 flex-1 text-on-surface-low">
         {c.mode}
@@ -410,7 +410,7 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
       {(components.length > 0 || connectors.length > 0 || installedOn || (pack.setup_skill && !pack.setup_pending)) && (
         <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
           {components.length > 0 && (
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[0.75rem]">
+            <div data-type="caption" className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="text-on-surface-low">Installed</span>
               {components.map((c) => (
                 <span key={c} className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low">{c}</span>
@@ -422,14 +422,14 @@ export function PackRow({ pack }: { pack: InstalledPackRec }) {
               chip is NOT — a pending pack already has the affordance, so naming the id there
               would be redundant; a pack whose setup is done keeps a record of what ran. */}
           {pack.setup_skill && !pack.setup_pending && (
-            <div className="text-on-surface-low text-[0.75rem]">Setup skill: {pack.setup_skill}</div>
+            <div data-type="caption" className="text-on-surface-low">Setup skill: {pack.setup_skill}</div>
           )}
           {/* When it landed. Unlike a report's `generated_at`, this is a durable record of a PAST
               event that nothing else on screen can re-derive — "has this pack been here since
               before the thing broke?" has no other answer. Formatted with `toLocaleDateString`
               rather than a new shared helper: one call site does not justify a date primitive. */}
           {installedOn && (
-            <div className="text-on-surface-low text-[0.75rem]">Installed {installedOn}</div>
+            <div data-type="caption" className="text-on-surface-low">Installed {installedOn}</div>
           )}
         </div>
       )}
@@ -451,7 +451,7 @@ export function UpdatePreview({ update, busy, onApply }: {
   const kept = update.components.filter((c) => c.action === 'skip_drift' || c.action === 'skip_unverifiable')
   const notOwned = update.components.filter((c) => c.action === 'skip_not_pack_owned')
   return (
-    <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2 text-[0.75rem]">
+    <div data-type="caption" className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
       <div className="flex flex-wrap items-baseline justify-between gap-m">
         <span className="text-on-surface-var">
           {update.applied ? 'Updated' : 'Update available'}: {update.from_version} → {update.to_version}

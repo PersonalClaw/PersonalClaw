@@ -271,7 +271,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={User} title="Account" query={query} onClick={() => go('account')}>
           <div className="truncate text-on-surface text-[1.0625rem]" style={fvs(550)}>{name || 'PersonalClaw'}</div>
-          <div className="text-on-surface-low text-[0.75rem]">Display name &amp; onboarding</div>
+          <div data-type="caption" className="text-on-surface-low">Display name &amp; onboarding</div>
         </BentoCard>
       )
     },
@@ -297,11 +297,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
                 <span key={i} className="size-4 rounded-full border border-outline-variant/40" style={{ background: c }} />
               ))}
             </div>
-            <span className="truncate text-on-surface text-[0.8125rem]">{query ? <Highlight text={label} query={query} /> : label}</span>
+            <span data-type="body-s" className="truncate text-on-surface">{query ? <Highlight text={label} query={query} /> : label}</span>
           </div>
           {/* Mode is an inline choice; full theme/token editing lives in the subpage. */}
           <div className="mt-2.5 flex items-center justify-between gap-2">
-            <span className="text-on-surface-low text-[0.75rem]">Mode</span>
+            <span data-type="caption" className="text-on-surface-low">Mode</span>
             <SegToggle value={preference} onPick={(p) => setPreference(p)} ariaLabel="Mode"
               options={[{ key: 'light', label: 'Light' }, { key: 'dark', label: 'Dark' }, { key: 'auto', label: 'Auto' }]} />
           </div>
@@ -405,9 +405,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={Route} title="Routing & Efficiency" query={query} onClick={() => go('routing')} loading={data === undefined} stale={isStalePaint}>
           {data === null || (data && data.length === 0)
-            ? <div className="text-on-surface-low text-[0.8125rem]">Per-model success, latency, and cost land here as unattended work runs — reasoning, background, loops and orchestration — showing which is most efficient.</div>
+            ? <div data-type="body-s" className="text-on-surface-low">Per-model success, latency, and cost land here as unattended work runs — reasoning, background, loops and orchestration — showing which is most efficient.</div>
             : data && <><BigStat value={data.length} caption={data.length === 1 ? 'model measured' : 'models measured'} />
-                <div className="mt-1 inline-flex items-center gap-1 text-on-surface-low text-[0.8125rem]">
+                <div data-type="body-s" className="mt-1 inline-flex items-center gap-1 text-on-surface-low">
                   <Trophy size={11} className="text-ok" /> {frontier} on the frontier
                 </div></>}
         </BentoCard>
@@ -430,7 +430,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={Search} title="Search" query={query} onClick={() => go('search')} loading={data === undefined} stale={isStalePaint}>
           {data && (data.providers.length === 0
-            ? <div className="text-on-surface-low text-[0.8125rem]">DuckDuckGo (keyless) is the default; add a provider in Providers to upgrade.</div>
+            ? <div data-type="body-s" className="text-on-surface-low">DuckDuckGo (keyless) is the default; add a provider in Providers to upgrade.</div>
             : <KVList query={query} rows={USE_CASES.map(([uc, label]) => {
                 const bound = (active?.[uc] ?? [])[0]
                 return { k: label, mono: false, vText: bound ?? 'General', v: bound
@@ -457,7 +457,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       })
       return (
         <BentoCard icon={FileText} title="Prompts" query={query} onClick={() => go('prompts')} loading={b === undefined} stale={bStale}>
-          {b && (rows.length ? <KVList query={query} rows={rows} /> : <div className="text-on-surface-low text-[0.8125rem]">All contexts use the default prompt.</div>)}
+          {b && (rows.length ? <KVList query={query} rows={rows} /> : <div data-type="body-s" className="text-on-surface-low">All contexts use the default prompt.</div>)}
         </BentoCard>
       )
     },
@@ -482,14 +482,14 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       )
       return (
         <BentoCard icon={FlaskConical} title="Evaluations" query={query} onClick={() => go('evals')} loading={e === undefined && !evalErr} stale={eStale}>
-          {!e && Boolean(evalErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your evaluation settings.</div>}
+          {!e && Boolean(evalErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your evaluation settings.</div>}
           {e && <><KVList query={query} rows={[
             { k: 'Evals enabled', control: true, v: <Switch on={!!e.enabled} label="Evals enabled" onToggle={save} /> },
           ]} />
             {/* Off is the default and the interesting state: it is why `#/learning`'s four eval
                 panels are empty, so the tile says where the results would appear rather than
                 repeating the switch's own label back at the reader. */}
-            <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="mt-1.5 text-on-surface-low">
               {e.enabled
                 ? `k=${Number(e.study_default_k) || 5} per arm · ablation every ${Number(e.ablation_cadence_days) || 30} days`
                 : 'Off — the four eval panels on Learning stay empty'}
@@ -586,13 +586,13 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={Inbox} title="Inbox" query={query} onClick={() => go('inbox')} loading={s === undefined && !inboxErr} stale={inboxStale} rows={2}>
           {/* A tile that shimmers forever is the same lie in miniature — say it failed instead. */}
-          {!s && Boolean(inboxErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load inbox settings.</div>}
+          {!s && Boolean(inboxErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load inbox settings.</div>}
           {s && <>
             <div className="flex items-baseline gap-1.5">
               <BigStat value={s.retention_days} caption="day retention" />
             </div>
             <div className="mt-2 flex items-center justify-between gap-2">
-              <span className="text-on-surface-low text-[0.75rem]">Auto-cleanup</span>
+              <span data-type="caption" className="text-on-surface-low">Auto-cleanup</span>
               <Switch on={s.auto_cleanup_enabled} label="Auto-cleanup"
                 onToggle={(v) => mutate(() => api.saveInboxSettings({ auto_cleanup_enabled: v }).then(refresh), 'settings:inbox')} />
             </div>
@@ -637,7 +637,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={Blocks} title="Apps" query={query} onClick={() => go('apps')} loading={data === undefined && !appsErr} stale={isStalePaint}>
           {/* Same shape as the Inbox tile: a tile that shimmers forever is the same lie in miniature. */}
-          {!data && Boolean(appsErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your apps.</div>}
+          {!data && Boolean(appsErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your apps.</div>}
           {data && <>
             {/* #615: the stat names exactly what it counts, like every sibling tile.
                 Counting non-provider apps under the caption "installed apps" read as
@@ -646,7 +646,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
                 honest subject here is the apps that expose settings IN this panel,
                 with the installed total as context so 0 can't read as "no apps". */}
             <BigStat value={configurable} caption={configurable === 1 ? 'app with settings' : 'apps with settings'} />
-            <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="mt-1.5 text-on-surface-low">
               {data.length > 0 ? `of ${data.length} installed` : 'Nothing installed yet — browse the Store'}
             </div>
           </>}
@@ -711,10 +711,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={Package} title="Packs" query={query} onClick={() => go('packs')}
           loading={(p === undefined || installed === undefined) && !packsErr} stale={pStale}>
-          {!p && Boolean(packsErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your pack settings.</div>}
+          {!p && Boolean(packsErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your pack settings.</div>}
           {p && installed && <>
             <BigStat value={n} caption={n === 1 ? 'installed pack' : 'installed packs'} />
-            <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="mt-1.5 text-on-surface-low">
               {p.fingerprint_enabled
                 ? 'Matching packs are proposed for a project — never installed on their own'
                 : 'Fingerprinting off — no packs are proposed for a project'}
@@ -736,12 +736,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { data, stale } = useDashCfg()
       return (
         <BentoCard icon={FileType2} title="Documents" query={query} onClick={() => go('documents')} loading={data === undefined} stale={stale}>
-          {data === null && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your document settings.</div>}
+          {data === null && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your document settings.</div>}
           {data && <>
-            <div className="text-on-surface-var text-[0.8125rem]">
+            <div data-type="body-s" className="text-on-surface-var">
               {data.document_editing ? 'Editing generated documents in place' : 'Generated documents are download-only'}
             </div>
-            <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="mt-1.5 text-on-surface-low">
               {data.document_editing ? 'A save re-renders the file — the editor names what it cannot keep' : 'Turn on editing to change one in place'}
             </div>
           </>}
@@ -767,11 +767,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const on = !!s?.enabled
       return (
         <BentoCard icon={Rss} title="Watched sources" query={query} onClick={() => go('sources')} loading={s === undefined && !srcErr} stale={sStale}>
-          {!s && Boolean(srcErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your source settings.</div>}
+          {!s && Boolean(srcErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your source settings.</div>}
           {/* "Parked" rather than "Off" because that is the panel's own word for this state, and it
               says more: the loop is stopped, the sources you added are still there. */}
           {s && <><StatusPill query={query} label={on ? 'Polling' : 'Parked'} tone={on ? 'ok' : 'muted'} />
-            <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="mt-1.5 text-on-surface-low">
               {on
                 ? `Every ${fmtInterval(Number(s.poll_interval_default_secs) || 0)} by default, never faster than ${fmtInterval(Number(s.network_floor_secs) || 0)}`
                 : 'Sources you add are not fetched until you turn it back on'}
@@ -798,7 +798,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const onOff = (v: unknown) => (v ? 'On' : 'Off')
       return (
         <BentoCard icon={LayoutDashboard} title="Ambient surfaces" query={query} onClick={() => go('ambient')} loading={a === undefined && !ambErr} rows={3} stale={aStale}>
-          {!a && Boolean(ambErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your ambient settings.</div>}
+          {!a && Boolean(ambErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your ambient settings.</div>}
           {a && <KVList query={query} rows={[
             { k: 'Composable home', v: onOff(a.tiles_enabled), vText: onOff(a.tiles_enabled) },
             { k: 'Generative UI', v: onOff(a.genui_enabled), vText: onOff(a.genui_enabled) },
@@ -861,8 +861,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={ScrollText} title="Audit log" query={query} onClick={() => go('audit')} loading={v === undefined} stale={vStale}>
           {v && (v.ok
-            ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.checked === 'number' && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{verifiedScope(v)} verified</div>}</>
-            : <><StatusPill label="Chain broken" tone="warn" />{(v.error || v.tampered) && <div className="mt-1.5 text-on-surface-low text-[0.75rem]">{v.error || `${v.tampered} altered`}</div>}</>)}
+            ? <><StatusPill label="Chain intact" tone="ok" />{typeof v.checked === 'number' && <div data-type="caption" className="mt-1.5 text-on-surface-low">{verifiedScope(v)} verified</div>}</>
+            : <><StatusPill label="Chain broken" tone="warn" />{(v.error || v.tampered) && <div data-type="caption" className="mt-1.5 text-on-surface-low">{v.error || `${v.tampered} altered`}</div>}</>)}
         </BentoCard>
       )
     },
@@ -875,8 +875,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const level = useLogLevel()
       return (
         <BentoCard icon={Activity} title="Diagnostics" query={query} onClick={() => go('diagnostics')}>
-          <div className="text-on-surface text-[0.9375rem]" style={fvs(550)}>Live log stream</div>
-          <div className="mt-1 text-on-surface-low text-[0.75rem]">Level: <Highlight text={level ?? '—'} query={query} /></div>
+          <div data-type="title-m" className="text-on-surface" style={fvs(550)}>Live log stream</div>
+          <div data-type="caption" className="mt-1 text-on-surface-low">Level: <Highlight text={level ?? '—'} query={query} /></div>
         </BentoCard>
       )
     },
@@ -900,7 +900,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             : !d.core_ok
               ? <StatusPill label="Gateway core failing" tone="warn" />
               : <><StatusPill query={query} label={`${d.worst} degraded`} tone="warn" />
-                  <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Core healthy · one capability needs attention</div></>)}
+                  <div data-type="caption" className="mt-1.5 text-on-surface-low">Core healthy · one capability needs attention</div></>)}
         </BentoCard>
       )
     },
@@ -923,9 +923,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             ? <StatusPill label="Couldn't check" tone="warn" />
             : d.length === 0
               ? <><StatusPill label="No devices paired" tone="muted" />
-                  <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Pair a phone or another browser</div></>
+                  <div data-type="caption" className="mt-1.5 text-on-surface-low">Pair a phone or another browser</div></>
               : <><BigStat value={d.length} caption={d.length === 1 ? 'paired device' : 'paired devices'} />
-                  <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">
+                  <div data-type="caption" className="mt-1.5 truncate text-on-surface-low">
                     <Highlight text={d.map((x) => x.name || 'Unnamed device').join(' · ')} query={query} />
                   </div></>}
         </BentoCard>
@@ -954,9 +954,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             ? <StatusPill label="Couldn't check" tone="warn" />
             : count === 0
               ? <><StatusPill label="No trusted senders" tone="muted" />
-                  <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Strangers must pair before they can talk</div></>
+                  <div data-type="caption" className="mt-1.5 text-on-surface-low">Strangers must pair before they can talk</div></>
               : <><BigStat value={count} caption={count === 1 ? 'trusted sender' : 'trusted senders'} />
-                  <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">
+                  <div data-type="caption" className="mt-1.5 truncate text-on-surface-low">
                     <Highlight text={names.join(' · ')} query={query} />
                   </div></>}
         </BentoCard>
@@ -978,12 +978,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { data: d, error: discErr, stale: dStale } = useCompanionDiscovery()
       return (
         <BentoCard icon={Smartphone} title="Companion apps" query={query} onClick={() => go('companion')} loading={d === undefined && !discErr} stale={dStale}>
-          {!d && Boolean(discErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t check LAN discovery.</div>}
+          {!d && Boolean(discErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t check LAN discovery.</div>}
           {/* The advertiser's LIVE state plus the backend's own sentence for the reason code — the
               same two things the panel's Status row shows, in the same vocabulary, so "on but
               inert" can never read here as "on". State in words as well as tone (1.4.1). */}
           {d && <><StatusPill query={query} label={d.advertising ? 'Advertising' : 'Not advertising'} tone={d.advertising ? 'ok' : 'muted'} />
-            <div className="mt-1.5 text-on-surface-low text-[0.75rem]"><Highlight text={d.detail} query={query} /></div></>}
+            <div data-type="caption" className="mt-1.5 text-on-surface-low"><Highlight text={d.detail} query={query} /></div></>}
         </BentoCard>
       )
     },
@@ -1000,9 +1000,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             ? <StatusPill label="Couldn't check" tone="warn" />
             : i && (i.active
             ? <><StatusPill label="Incident mode — unattended work paused" tone="warn" />
-                {i.reason && <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">{i.reason}</div>}</>
+                {i.reason && <div data-type="caption" className="mt-1.5 truncate text-on-surface-low">{i.reason}</div>}</>
             : <><StatusPill label="Normal operation" tone="ok" />
-                <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Kill switch · budgets · outbound scan</div></>)}
+                <div data-type="caption" className="mt-1.5 text-on-surface-low">Kill switch · budgets · outbound scan</div></>)}
         </BentoCard>
       )
     },
@@ -1028,12 +1028,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             ? <StatusPill label="Couldn't check" tone="warn" />
             : e && (!e.enabled
             ? <><StatusPill label="No inbound access" tone="ok" />
-                <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Nothing outside can reach in</div></>
+                <div data-type="caption" className="mt-1.5 text-on-surface-low">Nothing outside can reach in</div></>
             : serving.length === 0
               ? <><StatusPill label="On, nothing serving" tone="warn" />
-                  <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Each surface still needs its own token</div></>
+                  <div data-type="caption" className="mt-1.5 text-on-surface-low">Each surface still needs its own token</div></>
               : <><StatusPill label={`${serving.length} surface${serving.length === 1 ? '' : 's'} reachable`} tone="warn" />
-                  <div className="mt-1.5 truncate text-on-surface-low text-[0.75rem]">
+                  <div data-type="caption" className="mt-1.5 truncate text-on-surface-low">
                     {serving.map((s) => s.surface).join(' · ')}
                     {e.clients.length > 0 && ` · ${e.clients.length} client${e.clients.length === 1 ? '' : 's'}`}
                   </div></>)}
@@ -1056,7 +1056,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
         <BentoCard icon={Compass} title="Legibility" query={query} onClick={() => go('legibility')} loading={c === undefined && !legErr} rows={2} stale={cStale}>
           {/* This tile carries live SWITCHES, so a fabricated `{}` did more than mis-state a count — it
               offered two toggles whose "off" position was invented. #1194's line, fifth adopter. */}
-          {!c && Boolean(legErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your legibility settings.</div>}
+          {!c && Boolean(legErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your legibility settings.</div>}
           {c && <KVList query={query} rows={[
             { k: 'Discover tips', control: true, v: <Switch on={!!c.discover_tips} label="Discover tips" onToggle={(v) => save('discover_tips', v)} /> },
             { k: 'Context files', control: true, v: <Switch on={!!c.context_adapters} label="Context files" onToggle={(v) => save('context_adapters', v)} /> },
@@ -1083,20 +1083,20 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
         <BentoCard icon={Scissors} title="Tool output" query={query} onClick={() => go('tool-output')} loading={rules === undefined && !rulesErr} stale={rulesStale}>
           {/* The savings meter is a SEPARATE read that keeps its own fallback, so it can still headline
               here while the rules read has failed — the failure line only speaks for the rules. */}
-          {!rules && Boolean(rulesErr) && savedTokens === 0 && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your projection rules.</div>}
+          {!rules && Boolean(rulesErr) && savedTokens === 0 && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your projection rules.</div>}
           {/* Headline the savings meter once there's data (the feature's whole point);
               fall back to the rule count / builtin-projectors hint otherwise so the card
               is never empty and the feature is always discoverable from the grid. */}
           {savedTokens > 0
             ? <><BigStat value={`~${savedTokens.toLocaleString()}`} caption="tokens saved by projection" />
-                <div className="mt-1 text-on-surface-low text-[0.8125rem]">
+                <div data-type="body-s" className="mt-1 text-on-surface-low">
                   {list.length ? `${list.length} custom rule${list.length === 1 ? '' : 's'} · ` : ''}
                   top compressor: {savings?.top_compressor ?? '—'}
                 </div></>
             : rules && (list.length
               ? <><BigStat value={list.length} caption={list.length === 1 ? 'custom rule' : 'custom rules'} />
                   <div className="mt-2"><ChipRow query={query} chips={list.slice(0, 6).map((r) => ({ label: r.name, tone: 'muted' as const }))} /></div></>
-              : <div className="text-on-surface-low text-[0.8125rem]">Builtin projectors shrink logs, diffs, JSON, tests, CSV, and code; the full raw stays recoverable. A savings meter appears here once projection kicks in.</div>)}
+              : <div data-type="body-s" className="text-on-surface-low">Builtin projectors shrink logs, diffs, JSON, tests, CSV, and code; the full raw stays recoverable. A savings meter appears here once projection kicks in.</div>)}
         </BentoCard>
       )
     },
@@ -1117,9 +1117,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={ThumbsUp} title="AI feedback" query={query} onClick={() => go('feedback')} loading={data === undefined} stale={isStalePaint}>
           {rows.length === 0
-            ? <div className="text-on-surface-low text-[0.8125rem]">👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing stops surfacing.</div>
+            ? <div data-type="body-s" className="text-on-surface-low">👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing stops surfacing.</div>
             : <><BigStat value={rows.length} caption={rows.length === 1 ? 'judgment source' : 'judgment sources'} />
-                <div className="mt-1 text-on-surface-low text-[0.8125rem]">
+                <div data-type="body-s" className="mt-1 text-on-surface-low">
                   {rated.length ? `${rated.length} rated` : 'collecting verdicts'}
                   {suppressed ? ` · ${suppressed} suppressed` : ''}
                 </div></>}
@@ -1140,9 +1140,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={Coins} title="Usage" query={query} onClick={() => go('usage')} loading={data === undefined} stale={isStalePaint}>
           {!data || data.turns === 0
-            ? <div className="text-on-surface-low text-[0.8125rem]">Real cost + tokens for every turn — chat, subagents, loops, automations — land here once usage is recorded.</div>
+            ? <div data-type="body-s" className="text-on-surface-low">Real cost + tokens for every turn — chat, subagents, loops, automations — land here once usage is recorded.</div>
             : <><BigStat value={data.priced ? (data.cost_usd >= 1 ? `$${data.cost_usd.toFixed(2)}` : `$${data.cost_usd.toFixed(4)}`) : 'unpriced'} caption="today" />
-                <div className="mt-1 text-on-surface-low text-[0.8125rem]">
+                <div data-type="body-s" className="mt-1 text-on-surface-low">
                   {tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : tokens} tokens · {data.turns} {data.turns === 1 ? 'turn' : 'turns'}
                 </div></>}
         </BentoCard>
@@ -1157,7 +1157,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { data: a, error: archErr, stale: aStale } = useArchives()
       return (
         <BentoCard icon={Archive} title="Archive" query={query} onClick={() => go('archive')} loading={a === undefined && !archErr} stale={aStale}>
-          {!a && Boolean(archErr) && <div className="text-on-surface-low text-[0.75rem]">Couldn&rsquo;t load your archives.</div>}
+          {!a && Boolean(archErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your archives.</div>}
           {a && <BigStat value={a.length} caption={a.length === 1 ? 'archived session' : 'archived sessions'} />}
         </BentoCard>
       )
@@ -1170,8 +1170,8 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     render(query, go) {
       return (
         <BentoCard icon={FolderSync} title="Import / Export" query={query} onClick={() => go('portability')}>
-          <div className="text-on-surface-var text-[0.8125rem]">Back up or migrate this instance.</div>
-          <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Export a portable archive · import from another instance</div>
+          <div data-type="body-s" className="text-on-surface-var">Back up or migrate this instance.</div>
+          <div data-type="caption" className="mt-1.5 text-on-surface-low">Export a portable archive · import from another instance</div>
         </BentoCard>
       )
     },
@@ -1191,10 +1191,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={HardDriveDownload} title="Backups" query={query} onClick={() => go('durability')} loading={s === undefined} stale={sStale}>
           {s && (count === undefined
-            ? <div className="text-on-surface-var text-[0.8125rem]">Snapshot schedule and retention.</div>
+            ? <div data-type="body-s" className="text-on-surface-var">Snapshot schedule and retention.</div>
             : <>
                 <BigStat value={count} caption={count === 1 ? 'snapshot kept' : 'snapshots kept'} />
-                <div className="mt-1.5 text-on-surface-low text-[0.75rem]">
+                <div data-type="caption" className="mt-1.5 text-on-surface-low">
                   {s.status?.enabled ? 'Nightly + hourly, automatic' : 'Automatic backups are off'}
                 </div>
               </>)}
@@ -1211,14 +1211,14 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       return (
         <BentoCard icon={DownloadCloud} title="Updates" query={query} onClick={() => go('updates')} loading={u === undefined} rows={2} stale={uStale}>
           {u && <>
-            <div className="text-on-surface text-[0.9375rem] font-mono">{u.version || '—'}</div>
+            <div data-type="body-m" className="text-on-surface font-mono">{u.version || '—'}</div>
             <div className="mt-1.5">
               {u.available
                 ? <StatusPill query={query} label={`Update available${u.latest ? ` — ${u.latest}` : ''}`} tone="primary" />
                 : <StatusPill label="Up to date" tone="ok" />}
             </div>
             <div className="mt-2.5 flex items-center justify-between gap-2">
-              <span className="text-on-surface-low text-[0.75rem]">Auto-update</span>
+              <span data-type="caption" className="text-on-surface-low">Auto-update</span>
               <Switch on={u.auto_update} label="Auto-update"
                 onToggle={(v) => mutate(() => api.setAutoUpdate(v).then(refresh), 'settings:update-check')} />
             </div>

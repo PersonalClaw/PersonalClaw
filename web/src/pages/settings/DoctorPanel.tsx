@@ -57,7 +57,7 @@ export function DoctorPanel() {
           // changes what the screen means — the same reason `LoadError` announces. Measured before:
           // the sentence rendered with `[role="alert"]` count 0, so a screen-reader user reading the
           // panel top-down heard the Doctor's hint and then a Re-run button, with nothing between them.
-          <div role="alert" className="text-on-surface-low text-[0.8125rem]">Couldn't load the doctor report.</div>
+          <div role="alert" data-type="body-s" className="text-on-surface-low">Couldn't load the doctor report.</div>
         )}
         <Button variant="secondary" size="sm" onClick={refresh} disabled={busy}>
           <RefreshCw size={15} className={busy ? 'animate-spin' : undefined} /> Re-run
@@ -75,7 +75,7 @@ export function DoctorPanel() {
             {caps.map(([key, cap]) => <CapabilityCard key={key} name={key} cap={cap} onFixed={refresh} />)}
           </div>
           {report.skipped_capabilities.length > 0 && (
-            <div className="mt-m text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="mt-m text-on-surface-low">
               Skipped (core failed first): {report.skipped_capabilities.map(capLabel).join(', ')}
             </div>
           )}
@@ -128,8 +128,8 @@ function SurfacingSimulator() {
 
   return (
     <div className="rounded-lg bg-surface-container px-4 py-3">
-      <div className="text-on-surface text-[0.875rem]">Skill surfacing</div>
-      <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+      <div data-type="body-m" className="text-on-surface">Skill surfacing</div>
+      <div data-type="caption" className="mt-0.5 text-on-surface-low">
         Which skills a message would surface, and — for the ones it wouldn't — why not.
       </div>
       {/* `TextInput`/`Select` from the shared form family, not raw elements: the primitive-adoption
@@ -154,17 +154,17 @@ function SurfacingSimulator() {
         </Button>
       </form>
       {err !== null && (
-        <div role="alert" className="mt-2 text-on-surface-low text-[0.75rem]">
+        <div role="alert" data-type="caption" className="mt-2 text-on-surface-low">
           Couldn't simulate surfacing: {String((err as Error)?.message || err)}
         </div>
       )}
       {rows !== null && rows.length === 0 && (
-        <div className="mt-2 text-on-surface-low text-[0.75rem]">No skill scored against that message.</div>
+        <div data-type="caption" className="mt-2 text-on-surface-low">No skill scored against that message.</div>
       )}
       {rows !== null && rows.length > 0 && (
         <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
           {rows.map((c) => (
-            <div key={c.key} className="flex items-baseline justify-between gap-2 text-[0.75rem]">
+            <div key={c.key} data-type="caption" className="flex items-baseline justify-between gap-2">
               <span className={c.included ? 'text-on-surface-var' : 'text-on-surface-low'}>
                 {c.key} <span className="text-on-surface-low">· {c.reason}</span>
               </span>
@@ -208,8 +208,8 @@ function AutomationSimulator() {
 
   return (
     <div className="rounded-lg bg-surface-container px-4 py-3">
-      <div className="text-on-surface text-[0.875rem]">Automation would-execute</div>
-      <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+      <div data-type="body-m" className="text-on-surface">Automation would-execute</div>
+      <div data-type="caption" className="mt-0.5 text-on-surface-low">
         What one automation would do on its next fire — the resolved schedule, the rendered action,
         the session it targets, what it is allowed to do, and its observe-mode dry fire.
       </div>
@@ -232,12 +232,12 @@ function AutomationSimulator() {
           sentence would promise a live update the panel does not do — and the empty-state-promise
           census exists precisely to keep that shape out. */}
       {empty && (
-        <div className="mt-2 text-on-surface-low text-[0.75rem]">
+        <div data-type="caption" className="mt-2 text-on-surface-low">
           No automations yet. Create one on the Automations page, then reopen this panel.
         </div>
       )}
       {err !== null && (
-        <div role="alert" className="mt-2 text-on-surface-low text-[0.75rem]">
+        <div role="alert" data-type="caption" className="mt-2 text-on-surface-low">
           Couldn't describe that automation: {String((err as Error)?.message || err)}
         </div>
       )}
@@ -278,9 +278,9 @@ export function WouldExecute({ d }: { d: AutomationWouldExecute }) {
         {ac.render_error
           ? <div role="alert" style={{ color: 'var(--color-warning)' }}>Would fail to render: {ac.render_error}</div>
           : ac.rendered
-            ? <pre className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low text-[0.6875rem]">{ac.rendered}</pre>
+            ? <pre data-type="caption" className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low">{ac.rendered}</pre>
             : null}
-        <pre className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low text-[0.6875rem]">
+        <pre data-type="caption" className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low">
           {JSON.stringify(ac.config, null, 2)}
         </pre>
       </Fact>
@@ -321,7 +321,7 @@ export function WouldExecute({ d }: { d: AutomationWouldExecute }) {
             what would run instead of running it.
           </div>
         )}
-        <pre className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low text-[0.6875rem]">{om.detail}</pre>
+        <pre data-type="caption" className="mt-1 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low">{om.detail}</pre>
         {om.gate_plan.enforced && om.gate_plan.enforced.length > 0 && (
           <div className="text-on-surface-low">Gates enforced: {om.gate_plan.enforced.join(', ')}</div>
         )}
@@ -346,7 +346,7 @@ export function WouldExecute({ d }: { d: AutomationWouldExecute }) {
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="text-[0.75rem]">
+    <div data-type="caption">
       <div className="text-on-surface-low">{label}</div>
       <div className="text-on-surface-var">{children}</div>
     </div>
@@ -400,7 +400,7 @@ export function RemediationSection() {
     <Section title="Maintenance" hint="A health-scored engine keeps the stores tidy (embedding re-index, orphan prune, skill aging) on an adaptive schedule. Run it on demand here.">
       <div className="rounded-lg bg-surface-container px-4 py-3">
         <div className="flex items-center justify-between gap-l">
-          <div className="text-on-surface text-[0.8125rem]">
+          <div data-type="body-s" className="text-on-surface">
             {snap
               ? <>Health score <span className="tabular-nums" style={{ color: snap.score >= snap.target_score ? 'var(--color-success)' : 'var(--color-warning)' }}>{Math.round(snap.score)}</span> / target {snap.target_score}</>
               : loadErr
@@ -428,7 +428,7 @@ export function RemediationSection() {
         {scored.length > 0 && (
           <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
             {scored.map((d) => (
-              <div key={d.key} className="flex items-baseline justify-between gap-2 text-[0.75rem]">
+              <div key={d.key} data-type="caption" className="flex items-baseline justify-between gap-2">
                 <span className={d.reachable ? 'text-on-surface-var' : 'text-on-surface-low'}>
                   {capLabel(d.key)}
                   <span className="ml-1.5 text-on-surface-low tabular-nums">×{d.count}</span>
@@ -448,7 +448,7 @@ export function RemediationSection() {
             reason (most often "target_score already met"), which is exactly the state that makes
             a nonzero deficit list look contradictory — so say it. */}
         {snap && (
-          <div className="mt-2 border-t border-outline-variant/30 pt-2 text-on-surface-low text-[0.75rem]">
+          <div data-type="caption" className="mt-2 border-t border-outline-variant/30 pt-2 text-on-surface-low">
             {snap.plan.length > 0
               ? <>Run now would: {snap.plan.map((j) => capLabel(j.id)).join(' · ')}</>
               : scored.some((d) => d.reachable)
@@ -459,7 +459,7 @@ export function RemediationSection() {
         {snap && snap.recent_runs.length > 0 && (
           <div className="mt-2 flex flex-col gap-1 border-t border-outline-variant/30 pt-2">
             {snap.recent_runs.slice(0, 5).map((r, i) => (
-              <div key={i} className="text-on-surface-low text-[0.75rem]">
+              <div key={i} data-type="caption" className="text-on-surface-low">
                 score {Math.round(r.score_before)}→{Math.round(r.score_after)} · {r.jobs.length} job{r.jobs.length === 1 ? '' : 's'} · {r.stopped_reason}
               </div>
             ))}
@@ -474,14 +474,14 @@ export function RemediationSection() {
 function StatusBanner({ report }: { report: DoctorReport }) {
   if (report.core_ok && report.ok) {
     return (
-      <div className="flex items-center gap-2 text-[0.8125rem]" style={{ color: 'var(--color-success)' }}>
+      <div data-type="body-s" className="flex items-center gap-2" style={{ color: 'var(--color-success)' }}>
         <CheckCircle2 size={16} /> All systems healthy
       </div>
     )
   }
   if (!report.core_ok) {
     return (
-      <div className="flex items-center gap-2 text-[0.8125rem]" style={{ color: 'var(--color-error)' }}>
+      <div data-type="body-s" className="flex items-center gap-2" style={{ color: 'var(--color-error)' }}>
         <XCircle size={16} />
         Gateway core failing{report.restart_suggested ? ' — a restart may be required' : ''}
       </div>
@@ -489,7 +489,7 @@ function StatusBanner({ report }: { report: DoctorReport }) {
   }
   // core OK, but a capability degraded — the doctrine framing.
   return (
-    <div className="flex items-center gap-2 text-[0.8125rem]" style={{ color: 'var(--color-warning)' }}>
+    <div data-type="body-s" className="flex items-center gap-2" style={{ color: 'var(--color-warning)' }}>
       <AlertTriangle size={16} />
       Core healthy · {capLabel(report.worst)} degraded
     </div>
@@ -504,9 +504,9 @@ function CapabilityCard({ name, cap, onFixed }: { name: string; cap: DoctorCapab
     <div className="rounded-lg bg-surface-container px-4 py-3">
       <div className="flex items-center gap-2">
         <Icon size={16} style={{ color }} />
-        <span className="text-on-surface text-[0.875rem]">{capLabel(name)}</span>
+        <span data-type="body-m" className="text-on-surface">{capLabel(name)}</span>
         {!cap.ok && (
-          <span className="text-on-surface-low text-[0.75rem]">· failed at tier {cap.tier}</span>
+          <span data-type="caption" className="text-on-surface-low">· failed at tier {cap.tier}</span>
         )}
         {/* Investigate (plan 60): re-runs this capability's read-only probes and
             opens a chat with the findings + any offered fix's dry-run preview —
@@ -561,8 +561,8 @@ function ProbeRow({ probe, onFixed }: { probe: DoctorProbe; onFixed: () => void 
     <>
       <span className="mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: dot }} />
       <span className="min-w-0 flex-1">
-        <span className="text-on-surface text-[0.8125rem]">{probe.title}</span>
-        <span className="block text-on-surface-low text-[0.75rem]">{probe.detail}</span>
+        <span data-type="body-s" className="text-on-surface">{probe.title}</span>
+        <span data-type="caption" className="block text-on-surface-low">{probe.detail}</span>
       </span>
       {probe.fix_id && !probe.ok && <FixButton fixId={probe.fix_id} onFixed={onFixed} />}
     </>
@@ -583,7 +583,7 @@ function ProbeRow({ probe, onFixed }: { probe: DoctorProbe; onFixed: () => void 
           className="mt-1 shrink-0 text-on-surface-low transition-transform group-open:rotate-90"
         />
       </summary>
-      <pre className="mt-1.5 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low text-[0.6875rem]">
+      <pre data-type="caption" className="mt-1.5 overflow-x-auto rounded-md bg-surface px-2.5 py-2 text-on-surface-low">
         {JSON.stringify(probe.evidence, null, 2)}
       </pre>
     </details>

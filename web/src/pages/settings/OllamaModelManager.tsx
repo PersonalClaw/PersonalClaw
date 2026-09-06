@@ -28,7 +28,7 @@ export function OllamaModelManager({ provider }: { provider: string }) {
 function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button onClick={onClick}
-      className={`rounded-md px-2.5 py-1 text-[0.75rem] ${active ? 'bg-surface-high text-on-surface' : 'text-on-surface-low hover:text-on-surface'}`}>
+      data-type="caption" className={`rounded-md px-2.5 py-1 ${active ? 'bg-surface-high text-on-surface' : 'text-on-surface-low hover:text-on-surface'}`}>
       {children}
     </button>
   )
@@ -47,17 +47,17 @@ function InstalledModels({ provider }: { provider: string }) {
   }, [provider])
   useEffect(reload, [reload])
 
-  if (models === null) return <div className="flex items-center gap-2 text-on-surface-low text-[0.75rem]"><Loader2 size={13} className="animate-spin" /> Loading…</div>
+  if (models === null) return <div data-type="caption" className="flex items-center gap-2 text-on-surface-low"><Loader2 size={13} className="animate-spin" /> Loading…</div>
 
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Installed ({models.length})</span>
+        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Installed ({models.length})</span>
         <button onClick={reload} className="text-on-surface-low hover:text-on-surface" title="Refresh"><RefreshCw size={12} /></button>
       </div>
-      {err && <div className="mb-2 flex items-center gap-1.5 text-danger text-[0.75rem]"><AlertCircle size={12} /> {err}</div>}
+      {err && <div data-type="caption" className="mb-2 flex items-center gap-1.5 text-danger"><AlertCircle size={12} /> {err}</div>}
       {models.length === 0 && !err ? (
-        <p className="text-on-surface-low text-[0.75rem] italic">No models installed. Use “Browse library” to pull one.</p>
+        <p data-type="caption" className="text-on-surface-low italic">No models installed. Use “Browse library” to pull one.</p>
       ) : (
         <div className="flex flex-col gap-1.5">
           {models.map((m) => <InstalledRow key={m.name} provider={provider} model={m} onDeleted={reload} />)}
@@ -93,8 +93,8 @@ function InstalledRow({ provider, model, onDeleted }: { provider: string; model:
   return (
     <div className="rounded-lg bg-surface-high/40 px-3 py-2" style={{ opacity: busy ? 0.5 : 1 }}>
       <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.75rem]">{model.name}</span>
-        {meta && <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{meta}</span>}
+        <span data-type="caption" className="min-w-0 flex-1 truncate font-mono text-on-surface">{model.name}</span>
+        {meta && <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">{meta}</span>}
         <button onClick={inspect} className="shrink-0 text-on-surface-low hover:text-on-surface" title="Details"><Info size={13} /></button>
         <button onClick={del} disabled={busy} className="shrink-0 text-on-surface-low hover:text-danger" title="Delete"><Trash2 size={13} /></button>
       </div>
@@ -104,14 +104,14 @@ function InstalledRow({ provider, model, onDeleted }: { provider: string; model:
 }
 
 function ModelInfoBlock({ info }: { info: OllamaModelInfo }) {
-  if (info.error) return <div className="mt-1.5 text-on-surface-low text-[0.75rem]">No details: {info.error}</div>
+  if (info.error) return <div data-type="caption" className="mt-1.5 text-on-surface-low">No details: {info.error}</div>
   const rows: [string, string | number | undefined][] = [
     ['Family', info.family], ['Parameters', info.parameter_size], ['Quantization', info.quantization],
     ['Format', info.format], ['Context', info.context_length ? info.context_length.toLocaleString() : ''],
     ['Capabilities', info.capabilities?.join(', ')], ['License', info.license_short],
   ]
   return (
-    <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 border-outline-variant/30 border-t pt-2 text-[0.75rem]">
+    <div data-type="caption" className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 border-outline-variant/30 border-t pt-2">
       {rows.filter(([, v]) => v).map(([k, v]) => (
         <span key={k} className="contents"><span className="text-on-surface-low">{k}</span><span className="text-on-surface">{v}</span></span>
       ))}
@@ -152,17 +152,17 @@ function BrowseLibrary({ provider }: { provider: string }) {
           <ResultAnnouncement count={results?.length ?? 0} noun="models"
             active={!!q.trim() && !searching && results !== null} />
         </div>
-        <button onClick={search}
+        <button onClick={search} data-type="caption"
           {...unavailableWhen(!q.trim(), 'Type a model name first', { busy: searching })}
-          className="shrink-0 rounded-md bg-surface-container px-3 py-1 text-on-surface text-[0.75rem] hover:bg-surface-container-high disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
+          className="shrink-0 rounded-md bg-surface-container px-3 py-1 text-on-surface hover:bg-surface-container-high disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
           {searching ? <Loader2 size={13} className="animate-spin" /> : 'Search'}
         </button>
       </div>
-      {err && <div className="mb-2 flex items-center gap-1.5 text-danger text-[0.75rem]"><AlertCircle size={12} /> {err}</div>}
+      {err && <div data-type="caption" className="mb-2 flex items-center gap-1.5 text-danger"><AlertCircle size={12} /> {err}</div>}
       {results === null ? (
-        !searching && <p className="text-on-surface-low text-[0.75rem] italic">Search the Ollama library to find models to pull.</p>
+        !searching && <p data-type="caption" className="text-on-surface-low italic">Search the Ollama library to find models to pull.</p>
       ) : results.length === 0 && !err ? (
-        <p className="text-on-surface-low text-[0.75rem] italic">No models found for “{q}”.</p>
+        <p data-type="caption" className="text-on-surface-low italic">No models found for “{q}”.</p>
       ) : (
         <div className="flex flex-col gap-1.5">
           {results.map((r) => <SearchRow key={r.name} provider={provider} result={r} />)}
@@ -207,19 +207,19 @@ function SearchRow({ provider, result }: { provider: string; result: OllamaSearc
 
   return (
     <div className="flex items-center gap-2 rounded-lg bg-surface-high/40 px-3 py-2">
-      <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.75rem]">{result.name}</span>
+      <span data-type="caption" className="min-w-0 flex-1 truncate font-mono text-on-surface">{result.name}</span>
       {state === 'pulling' ? (
-        <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{pct > 0 ? `${msg} · ${pct}%` : msg}</span>
+        <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">{pct > 0 ? `${msg} · ${pct}%` : msg}</span>
       ) : state === 'error' ? (
-        <span role="alert" className="shrink-0 truncate text-danger text-[0.75rem]" title={msg}>{msg}</span>
+        <span role="alert" data-type="caption" className="shrink-0 truncate text-danger" title={msg}>{msg}</span>
       ) : state === 'cancelled' ? (
-        <span className="shrink-0 text-on-surface-low text-[0.75rem]">stopped</span>
+        <span data-type="caption" className="shrink-0 text-on-surface-low">stopped</span>
       ) : null}
       {state === 'done' ? (
         <Check size={15} className="shrink-0 text-primary" />
       ) : state === 'pulling' ? (
         <button onClick={stop}
-          className="inline-flex shrink-0 items-center gap-1 rounded-md bg-surface-container px-2 py-1 text-on-surface text-[0.75rem] hover:bg-surface-container-high"
+          data-type="caption" className="inline-flex shrink-0 items-center gap-1 rounded-md bg-surface-container px-2 py-1 text-on-surface hover:bg-surface-container-high"
           title="Stop download">
           <X size={12} /> Stop
         </button>
@@ -227,7 +227,7 @@ function SearchRow({ provider, result }: { provider: string; result: OllamaSearc
         <button onClick={pull} className="shrink-0 text-on-surface-low hover:text-on-surface" title="Retry"><RefreshCw size={13} /></button>
       ) : (
         <button onClick={pull}
-          className="inline-flex shrink-0 items-center gap-1 rounded-md bg-surface-container px-2 py-1 text-on-surface text-[0.75rem] hover:bg-surface-container-high">
+          data-type="caption" className="inline-flex shrink-0 items-center gap-1 rounded-md bg-surface-container px-2 py-1 text-on-surface hover:bg-surface-container-high">
           <Download size={12} /> Pull
         </button>
       )}

@@ -124,7 +124,7 @@ export function AlwaysOnConventions() {
             value={projectId}
             onChange={(e) => setProjectId(e.target.value)}
             aria-label="Show project instructions for"
-            className="rounded-md bg-surface-high px-2 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
+            data-type="body-s" className="rounded-md bg-surface-high px-2 py-1.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
           >
             <option value="">Choose a project…</option>
             {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -148,7 +148,7 @@ export function AlwaysOnConventions() {
                 editor={openId === item.id ? (
                   <div className="mt-3">
                     {loadingDoc ? (
-                      <p className="text-on-surface-low text-[0.8125rem]">Loading the exact text a session receives…</p>
+                      <p data-type="body-s" className="text-on-surface-low">Loading the exact text a session receives…</p>
                     ) : (
                       <>
                         <label className="sr-only" htmlFor={`always-on-editor-${item.id}`}>{item.name}</label>
@@ -158,7 +158,7 @@ export function AlwaysOnConventions() {
                           onChange={(e) => setDraft(e.target.value)}
                           rows={10}
                           spellCheck={false}
-                          className="w-full rounded-md bg-surface-high px-3 py-2 font-mono text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
+                          data-type="body-s" className="w-full rounded-md bg-surface-high px-3 py-2 font-mono text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
                         />
                         <div className="mt-2 flex items-center gap-2">
                           <Button size="sm" loading={saving} disabled={saving} onClick={() => save(item)}>
@@ -183,7 +183,7 @@ export function AlwaysOnConventions() {
 
 function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <p className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">
+    <p data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
       {children}
     </p>
   )
@@ -197,13 +197,13 @@ function ItemRow({ item, open, onToggle, editor }: {
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-on-surface text-[0.8125rem]">{item.name}</span>
-            <span className="rounded bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.6875rem]">{item.source}</span>
-            <span className="text-on-surface-low text-[0.6875rem]">{item.chars.toLocaleString()} chars</span>
+            <span data-type="body-s" className="text-on-surface">{item.name}</span>
+            <span data-type="caption" className="rounded bg-surface-high px-1.5 py-0.5 text-on-surface-low">{item.source}</span>
+            <span data-type="caption" className="text-on-surface-low">{item.chars.toLocaleString()} chars</span>
           </div>
-          <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-on-surface-low text-[0.75rem]">{item.preview}</pre>
+          <pre data-type="caption" className="mt-1 whitespace-pre-wrap break-words font-mono text-on-surface-low">{item.preview}</pre>
           {!item.editable && item.read_only_reason && (
-            <p className="mt-1 flex items-start gap-1.5 text-on-surface-low text-[0.75rem]">
+            <p data-type="caption" className="mt-1 flex items-start gap-1.5 text-on-surface-low">
               <Lock size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
               {item.read_only_reason}
             </p>

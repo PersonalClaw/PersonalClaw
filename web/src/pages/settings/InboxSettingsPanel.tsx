@@ -177,7 +177,7 @@ export function InboxSettingsPanel() {
           <Row label="Retention" hint="How long to keep inbox items (all sources).">
             <div className="flex items-center gap-2">
               <NumberField value={s.retention_days} min={1} max={3650} onChange={(v) => patch({ retention_days: v })} width="w-20" ariaLabel="Retention (days)" />
-              <span className="text-on-surface-low text-[0.75rem]">days</span>
+              <span data-type="caption" className="text-on-surface-low">days</span>
             </div>
           </Row>
         )}

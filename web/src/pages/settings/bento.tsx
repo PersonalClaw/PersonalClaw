@@ -102,7 +102,7 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, stale, a
           <span className="grid size-7 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in srgb, ${tint} 16%, transparent)`, color: tint }}>
             <Icon size={15} />
           </span>
-          <span className="flex-1 truncate text-on-surface text-[0.9375rem]" style={fvs(600)}>
+          <span data-type="title-m" className="flex-1 truncate text-on-surface" style={fvs(600)}>
             {query ? <Highlight text={title} query={query} /> : title}
           </span>
           <StaleNotice stale={!loading && !!stale} what={title.toLowerCase()} announce={false} className="shrink-0" />
@@ -111,7 +111,7 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, stale, a
         {loading
           ? <CardSkeleton rows={rows ?? 2} />
           : <div className="flex min-h-0 flex-1 flex-col">{children}</div>}
-        {footer && <div className="mt-2 text-on-surface-low text-[0.75rem]">{footer}</div>}
+        {footer && <div data-type="caption" className="mt-2 text-on-surface-low">{footer}</div>}
       </div>
     </motion.div>
   )
@@ -191,7 +191,7 @@ export function SegToggle<T extends string>({ value, options, onPick, ariaLabel 
           // Measured on `#/settings`: 43.70×22, 41.30×22, 42.48×22 (the Mode row) and the same for every
           // other adopter. `h-6` with `-my-px` gives 24px and hands the 2px back, so the group keeps its
           // height and no tile row reflows — the shape cycle 113 established for `RowAction`.
-          className="rounded-pill px-2 h-6 -my-px text-[0.75rem] transition-colors"
+          data-type="caption" className="rounded-pill px-2 h-6 -my-px transition-colors"
           style={o.key === value ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
           {o.label}
         </button>
@@ -209,7 +209,7 @@ export function InlineSelect({ value, options, onPick, ariaLabel }: {
     <select value={value} aria-label={ariaLabel} disabled={busy}
       onClick={(e) => e.stopPropagation()}
       onChange={async (e) => { e.stopPropagation(); setBusy(true); try { await onPick(e.target.value) } finally { setBusy(false) } }}
-      className="pointer-events-auto max-w-[10rem] truncate rounded-md bg-surface-high px-2 h-7 text-[0.75rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-60">
+      data-type="caption" className="pointer-events-auto max-w-[10rem] truncate rounded-md bg-surface-high px-2 h-7 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-60">
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )
@@ -220,7 +220,7 @@ export function BigStat({ value, caption, tone }: { value: ReactNode; caption: R
   return (
     <div className="flex items-baseline gap-1.5">
       <span className="tabular-nums text-on-surface text-[1.75rem] leading-none" style={withWeight({ color: tone }, 600)}>{value}</span>
-      <span className="text-on-surface-low text-[0.8125rem]">{caption}</span>
+      <span data-type="body-s" className="text-on-surface-low">{caption}</span>
     </div>
   )
 }
@@ -231,9 +231,9 @@ export function KVList({ rows, query }: { rows: { k: string; v: ReactNode; vText
   return (
     <div className="flex flex-col gap-1.5">
       {rows.map((r, i) => (
-        <div key={i} className="flex min-h-[1.75rem] items-center justify-between gap-2 text-[0.8125rem]">
+        <div key={i} data-type="body-s" className="flex min-h-[1.75rem] items-center justify-between gap-2">
           <span className="shrink-0 text-on-surface-low">{query ? <Highlight text={r.k} query={query} /> : r.k}</span>
-          <span className={`min-w-0 text-right text-on-surface ${r.control ? 'shrink-0' : 'truncate'} ${r.mono ? 'font-mono text-[0.75rem]' : 'tabular-nums'}`}>
+          <span data-type={r.mono ? 'caption' : undefined} className={`min-w-0 text-right text-on-surface ${r.control ? 'shrink-0' : 'truncate'} ${r.mono ? 'font-mono' : 'tabular-nums'}`}>
             {query && r.vText !== undefined ? <Highlight text={r.vText} query={query} /> : r.v}
           </span>
         </div>
@@ -250,7 +250,7 @@ export function StatusPill({ label, tone, query }: { label: string; tone?: 'ok' 
   const content = query ? <Highlight text={label} query={query} /> : label
   if (!tone || tone === 'muted') {
     return (
-      <span className="inline-flex items-center gap-1 rounded-pill px-2 h-[22px] text-[0.75rem]"
+      <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-[22px]"
         style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
         {content}
       </span>

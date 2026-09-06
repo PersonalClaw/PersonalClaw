@@ -50,7 +50,7 @@ export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
           answer about THIS group and only reads as one if the group is named. */}
       <Section title="Installed app settings" hint="Settings contributed by non-provider apps you have installed. An app with nothing to configure does not appear.">
         {!apps ? <AppCardsSkeleton /> : configurable.length === 0 ? (
-          <div className="rounded-lg bg-surface-container px-l py-xl text-center text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="rounded-lg bg-surface-container px-l py-xl text-center text-on-surface-low">
             No installed apps expose configurable settings. Browse the <TextLink onClick={() => navigate?.('apps')}>Store</TextLink> to add some.
           </div>
         ) : (
@@ -115,11 +115,11 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(600)}>{app.displayName}</span>
-            <span className="text-on-surface-low text-[0.75rem] tabular-nums">v{app.version}</span>
-            {!app.enabled && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">Disabled</span>}
+            <span data-type="title-m" className="truncate text-on-surface" style={fvs(600)}>{app.displayName}</span>
+            <span data-type="caption" className="text-on-surface-low tabular-nums">v{app.version}</span>
+            {!app.enabled && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">Disabled</span>}
           </div>
-          {app.description && <div className="truncate text-on-surface-low text-[0.75rem]">{app.description}</div>}
+          {app.description && <div data-type="caption" className="truncate text-on-surface-low">{app.description}</div>}
         </div>
         {app.hasUI && (
           <Button variant="ghost" size="sm" onClick={() => navigate?.(`app/${app.name}`)}>
@@ -139,7 +139,7 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
           <AppConfigFields appName={app.name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} required={cfg.required} />
           {cfg.err && <div data-type="body-s" className="text-negative">{cfg.err}</div>}
           <div className="flex items-center justify-end gap-2">
-            {justSaved && <span className="flex items-center gap-1 text-ok text-[0.75rem]"><Check size={13} /> Saved</span>}
+            {justSaved && <span data-type="caption" className="flex items-center gap-1 text-ok"><Check size={13} /> Saved</span>}
             <Button variant="primary" size="sm" disabled={cfg.busy || !cfg.dirty || cfg.missing.length > 0}
               disabledReason={cfg.missing.length > 0 ? `Fill in ${cfg.missingLabels.join(', ')}`
                 : !cfg.dirty && !cfg.busy ? 'No changes to save' : undefined} onClick={() => cfg.save()}>

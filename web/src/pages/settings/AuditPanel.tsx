@@ -197,7 +197,7 @@ export function AuditPanel() {
             return (
               <button key={f.key || 'all'} type="button" onClick={() => setFilter('outcome', sent)} aria-pressed={active}
                 title={f.values.length ? `Outcomes: ${f.values.join(', ')}` : undefined}
-                className="rounded-pill px-3 h-7 text-[0.8125rem] transition-colors"
+                data-type="body-s" className="rounded-pill px-3 h-7 transition-colors"
                 style={active ? { background: 'var(--color-surface-highest)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>{f.label}</button>
             )
           })}
@@ -232,7 +232,7 @@ export function AuditPanel() {
       )}
 
       {verify && (
-        <div className="mb-3 rounded-lg bg-surface-container px-3 py-2 text-[0.8125rem]">
+        <div data-type="body-s" className="mb-3 rounded-lg bg-surface-container px-3 py-2">
           <div className="flex items-center gap-1.5"
             style={{ color: verify.ok ? 'var(--color-success)' : 'var(--color-danger)' }}>
             {verify.ok ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
@@ -241,7 +241,7 @@ export function AuditPanel() {
               : `Chain broken — ${verify.tampered ?? '?'} of ${verifiedScope(verify)} altered${verify.error ? ` (${verify.error})` : ''}.`}
           </div>
           {capped(verify) && (
-            <p className="mt-1 text-on-surface-low text-[0.75rem]">
+            <p data-type="caption" className="mt-1 text-on-surface-low">
               Older entries were not checked — this is the live tamper-detection window.
               {' '}<code className="font-mono">personalclaw security verify</code> walks the whole log
               offline, which can take a while on a long one.
@@ -253,7 +253,7 @@ export function AuditPanel() {
       {/* The per-row verdict, summarized. `integrity_ok === false` is the server's own
           HMAC recheck of that record, so this counts real breaks in what is on screen. */}
       {broken > 0 && (
-        <div role="alert" className="mb-3 flex items-center gap-1.5 rounded-lg px-3 py-2 text-[0.8125rem]"
+        <div role="alert" data-type="body-s" className="mb-3 flex items-center gap-1.5 rounded-lg px-3 py-2"
           style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}>
           <ShieldAlert size={14} />
           {broken === 1 ? '1 listed event fails its integrity check — it was altered on disk.' : `${broken} listed events fail their integrity check — they were altered on disk.`}
@@ -261,7 +261,7 @@ export function AuditPanel() {
       )}
 
       {events.length === 0 ? (
-        <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">No matching events.</p>
+        <p data-type="body-s" className="py-6 text-center text-on-surface-low">No matching events.</p>
       ) : (
         <div className="flex flex-col gap-1">
           {events.map((e) => <EventRow key={e.event_id} ev={e} />)}
@@ -275,7 +275,7 @@ export function AuditPanel() {
           </Button>
         )}
         {!cursor && events.length > 0 && (
-          <p className="text-on-surface-low text-[0.75rem]">
+          <p data-type="caption" className="text-on-surface-low">
             {truncated ? `End of the ${events.length} most recent matching events — older entries exist beyond the scanned window.` : `All ${events.length} matching events shown.`}
           </p>
         )}
@@ -292,22 +292,22 @@ function EventRow({ ev }: { ev: SelEvent }) {
     <div className="rounded-md px-3 py-1.5" style={tampered
       ? { background: 'color-mix(in srgb, var(--color-danger) 16%, var(--color-surface-container))' }
       : { background: 'var(--color-surface-container)' }}>
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-2 text-left text-[0.75rem]">
-        <span className="w-14 shrink-0 font-mono text-[0.75rem]" style={{ color: tone }}>{ev.outcome || '—'}</span>
-        <span className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{ev.event_type}</span>
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} data-type="caption" className="flex w-full items-center gap-2 text-left">
+        <span data-type="caption" className="w-14 shrink-0 font-mono" style={{ color: tone }}>{ev.outcome || '—'}</span>
+        <span data-type="caption" className="shrink-0 rounded bg-surface-high px-1.5 text-on-surface-low">{ev.event_type}</span>
         <span className="min-w-0 flex-1 truncate text-on-surface">{ev.operation || ev.resources || '—'}</span>
         {/* Not colour alone: the glyph + its accessible label carry the meaning too. */}
         {tampered && <ShieldAlert size={13} className="shrink-0" style={{ color: 'var(--color-danger)' }} aria-label="Integrity check failed — this record was altered" />}
-        <span className="shrink-0 text-on-surface-low text-[0.75rem]">{fmtTime(ev.timestamp)}</span>
+        <span data-type="caption" className="shrink-0 text-on-surface-low">{fmtTime(ev.timestamp)}</span>
       </button>
       {open && (
         <>
           {tampered && (
-            <p className="mt-1.5 text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>
+            <p data-type="caption" className="mt-1.5" style={{ color: 'var(--color-danger)' }}>
               This record's HMAC does not match its contents — it was modified after it was written.
             </p>
           )}
-          <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 border-t border-outline-variant/30 pt-1.5 text-[0.75rem]">
+          <div data-type="caption" className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 border-t border-outline-variant/30 pt-1.5">
             <Kv k="caller" v={ev.caller_identity} /><Kv k="agent" v={ev.agent} />
             <Kv k="source" v={ev.source} /><Kv k="tool kind" v={ev.tool_kind} />
             <Kv k="downstream" v={ev.downstream_service} />

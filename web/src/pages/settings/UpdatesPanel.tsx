@@ -140,37 +140,37 @@ export function UpdatesPanel() {
             <div className="min-w-0 flex-1">
               {info.available ? (
                 <>
-                  <div className="text-on-surface text-[0.9375rem]" style={fvs(550)}>Update available{info.latest ? ` — ${info.latest}` : ''}</div>
-                  <div className="text-on-surface-low text-[0.75rem]">
+                  <div data-type="title-m" className="text-on-surface" style={fvs(550)}>Update available{info.latest ? ` — ${info.latest}` : ''}</div>
+                  <div data-type="caption" className="text-on-surface-low">
                     {info.changes || 'A new version is ready to install.'}
                     {isGit && typeof info.commits_behind === 'number' && info.commits_behind > 0 ? ` (${info.commits_behind} commit${info.commits_behind === 1 ? '' : 's'} behind)` : ''}
                   </div>
                 </>
               ) : (
-                <div className="flex items-center gap-1.5 text-[0.9375rem]" style={{ color: 'var(--color-success)' }}>
+                <div data-type="body-m" className="flex items-center gap-1.5" style={{ color: 'var(--color-success)' }}>
                   <CheckCircle2 size={15} /> <span className="text-on-surface">{info.checked ? 'Up to date' : 'No update check yet'}</span>
                 </div>
               )}
-              <div className="text-on-surface-low mt-0.5 text-[0.75rem]">Install type: {kindLabel}{info.current ? ` · v${info.current}` : ''}</div>
+              <div data-type="caption" className="text-on-surface-low mt-0.5">Install type: {kindLabel}{info.current ? ` · v${info.current}` : ''}</div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button variant="secondary" size="sm" loading={checking} onClick={check}><RefreshCw size={14} /> Check</Button>
               {info.available && canApplyInApp && <Button size="sm" loading={applying} onClick={apply}><DownloadCloud size={14} /> Update</Button>}
             </div>
           </div>
-          {msg && <div className="mt-2 text-on-surface-low text-[0.75rem]">{msg}</div>}
+          {msg && <div data-type="caption" className="mt-2 text-on-surface-low">{msg}</div>}
 
           {/* Container: no in-place apply — show the exact pull+recreate commands. */}
           {isContainer && info.available && (
             <div className="mt-3 rounded-md bg-surface-high px-3 py-2">
-              <div className="text-on-surface-low mb-1 text-[0.75rem]">Update this container install by pulling the new image and recreating:</div>
+              <div data-type="caption" className="text-on-surface-low mb-1">Update this container install by pulling the new image and recreating:</div>
               <pre tabIndex={0} role="group" aria-label="Update commands"
-                className="overflow-auto text-[0.75rem] leading-relaxed text-on-surface"><code>{(info.instructions?.length ? info.instructions : ['docker compose -f deploy/compose/compose.yaml pull', 'docker compose -f deploy/compose/compose.yaml up -d']).join('\n')}</code></pre>
+                data-type="caption" className="overflow-auto leading-relaxed text-on-surface"><code>{(info.instructions?.length ? info.instructions : ['docker compose -f deploy/compose/compose.yaml pull', 'docker compose -f deploy/compose/compose.yaml up -d']).join('\n')}</code></pre>
             </div>
           )}
           {/* Desktop: the shell (electron-updater) owns updates. */}
           {isDesktop && info.available && (
-            <div className="mt-3 rounded-md bg-surface-high px-3 py-2 text-on-surface-low text-[0.75rem]">The desktop app updates itself on the next launch.</div>
+            <div data-type="caption" className="mt-3 rounded-md bg-surface-high px-3 py-2 text-on-surface-low">The desktop app updates itself on the next launch.</div>
           )}
         </div>
       </Section>
@@ -192,10 +192,10 @@ export function UpdatesPanel() {
       <Section title="Changelog" hint="What's changed recently.">
         {changelog.trim()
           // CHANGELOG.md is markdown — render it (headings/lists/links), not a raw <pre>.
-          ? <div className="max-h-96 overflow-auto rounded-lg bg-surface-container px-4 py-3 text-[0.8125rem]">
+          ? <div data-type="body-s" className="max-h-96 overflow-auto rounded-lg bg-surface-container px-4 py-3">
               <Markdown>{changelogBody(changelog)}</Markdown>
             </div>
-          : <p className="text-on-surface-low text-[0.8125rem] italic">No changelog available.</p>}
+          : <p data-type="body-s" className="text-on-surface-low italic">No changelog available.</p>}
       </Section>
     </div>
   )
