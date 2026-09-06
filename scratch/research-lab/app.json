@@ -1,0 +1,58 @@
+{
+  "name": "research-lab",
+  "version": "0.1.0",
+  "displayName": "Research Lab",
+  "description": "Multi-cycle autonomous research campaigns: a question becomes a sub-question tree, cycles run unattended, findings synthesise into one report.",
+  "icon": "FlaskConical",
+  "license": "MIT",
+  "tags": [
+    "tool",
+    "research"
+  ],
+  "cli": {
+    "setup": "app_cli:setup",
+    "doctor": "app_cli:doctor"
+  },
+  "loggerRoots": [
+    "research_lab"
+  ],
+  "permissions": {
+    "storage": true,
+    "cron": true
+  },
+  "crons": [
+    {
+      "name": "advance-campaigns",
+      "cron_expr": "23 * * * *",
+      "silent": true,
+      "persistent_session": false,
+      "message": "Advance the open Research Lab campaign by one cycle.\n\n1. Call research_next. If its metadata says done: true, call research_report once and stop — do not open a new campaign.\n2. Otherwise take the worklist it returns and research each sub-question in its own subagent, in parallel, so one slow question does not stall the cycle.\n3. For each answered sub-question call research_record with the finding, the sources it rests on, and any follow-up questions the work raised.\n4. Stop after this one cycle. The next cron tick runs the next one.\n\nRecord what you actually found, including \"no reliable source says\" — an unattended campaign is only worth reading if its findings are honest."
+    }
+  ],
+  "provider": {
+    "type": "tool",
+    "implementation": "provider:create_provider",
+    "settingsSchema": {
+      "type": "object",
+      "properties": {
+        "default_cycle_budget": {
+          "type": "integer",
+          "default": 5,
+          "x-meta": {
+            "label": "Default cycle budget",
+            "help": "How many unattended cycles a new campaign may run before it stops and asks to be synthesised."
+          }
+        },
+        "cycle_breadth": {
+          "type": "integer",
+          "default": 3,
+          "x-meta": {
+            "label": "Sub-questions per cycle",
+            "help": "How many sub-questions one cycle hands out to subagents."
+          }
+        }
+      }
+    }
+  },
+  "author": "PersonalClaw contributors"
+}
