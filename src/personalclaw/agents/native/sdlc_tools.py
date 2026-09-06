@@ -45,7 +45,7 @@ def _state():
 
 def _svc():
     """The autonudge service that drives loop workers, or None."""
-    from personalclaw.autonudge import get_instance
+    from personalclaw.triggers.nudge import get_instance
 
     return get_instance()
 

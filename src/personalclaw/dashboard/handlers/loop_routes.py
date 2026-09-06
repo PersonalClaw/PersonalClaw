@@ -560,7 +560,7 @@ async def api_loop_action(request: web.Request) -> web.Response:
         if reason:
             return web.json_response({"error": reason}, status=422)
     state = request.app["state"]
-    from personalclaw.autonudge import get_instance
+    from personalclaw.triggers.nudge import get_instance
 
     svc = get_instance()
     if svc is None:
@@ -599,7 +599,7 @@ async def api_loop_delete(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
-    from personalclaw.autonudge import get_instance
+    from personalclaw.triggers.nudge import get_instance
 
     svc = get_instance()
     if svc is not None:
@@ -675,7 +675,7 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": f"Unknown task id for this loop: {task_id}"}, status=400
             )
-    from personalclaw.autonudge import get_instance
+    from personalclaw.triggers.nudge import get_instance
 
     svc = get_instance()
     if svc is None:
@@ -838,8 +838,8 @@ def _kick_plan_advance(request: web.Request, cid: str) -> web.Response:
     """Run ONE planning walkthrough pass in the background (it spawns the planner —
     minutes), publish a refresh when it lands, return 202. The client watches the
     planner session WS (``loop-plan-<id>``) + polls the plan-session."""
-    from personalclaw.autonudge import get_instance
     from personalclaw.loop import plan_walkthrough as pw
+    from personalclaw.triggers.nudge import get_instance
 
     svc = get_instance()
     if svc is None:

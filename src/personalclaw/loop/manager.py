@@ -272,7 +272,9 @@ async def pause(state, svc, loop_id: str) -> Loop:
     if main is not None:
         await svc.update(main.id, active=False)
     prefix = f"{session_key(loop_id)}-"
-    for lp in list(getattr(svc, "_loops", {}).values()):
+    # `list_all()` (the public surface) rather than the old `svc._loops` peek — the nudge
+    # service no longer keeps an in-memory dict (WF2AUT-11: its rows live in the trigger store).
+    for lp in svc.list_all():
         if str(getattr(lp, "session_name", "")).startswith(prefix):
             await svc.update(lp.id, active=False)
     return store.update_status(loop_id, LoopStatus.PAUSED)

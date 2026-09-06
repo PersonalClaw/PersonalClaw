@@ -24,25 +24,27 @@ forgotten — which is exactly the defect this module exists to close. So `tick_
 the spool drain sits there: an idle session is *precisely* when an idle trigger is due, and
 returning early on an empty due-set would skip it exactly then.
 
-**🔴 THIS CANNOT DOUBLE-FIRE ALONGSIDE `autonudge.py`, and the split is structural, not a
-convention.** Half 2 of WF2AUT-11 (deleting `autonudge.py` so the loop tick engine rides
-`kind:idle`) is blocked on LOOPS-EVOLUTION Phase 4 — there is no loop-ticker in the tree yet — so
-both mechanisms are alive at once and the disjointness has to be *provable*:
+**🔴 HALF 2 LANDED (WF2AUT-11): `autonudge.py` is deleted and the loop tick engine rides this
+runtime.** The two populations that used to coexist — user idle triggers here, loop-worker nudge
+loops in autonudge's private store + timers — now live in ONE store and tick off ONE poll. The
+split that remains is a ROUTING split, decided per row by one spec read (`_is_nudge`):
 
-* **Different stores.** An autonudge loop lives in autonudge's own `nudges` JSON store as a
-  `NudgeLoop`; an idle trigger lives in `triggers.json` as a `Trigger`. Neither reads the other's
-  file, so neither can enumerate the other's rows. `autonudge.AutoNudgeService` has no
-  `TriggerStore` and this module has no `NudgeLoop`.
-* **Different arming.** Autonudge arms an `asyncio` timer per loop from `notify_turn_complete`;
-  this is a poll off the tick. Nothing bridges them.
-* **And the overlap that WOULD be possible is refused.** The one way a single session could be
-  nudged twice is an idle trigger whose scope names a session that also has an autonudge loop. So
-  `poll` skips exactly that trigger and returns it as a SKIPPED row with a reason
-  (`autonudge_owns_session`) — logged, never silently dropped (§7 crit 8). When Phase 4 lands and
-  autonudge is deleted, the check finds nothing to defer to and every idle trigger fires; that is
-  the migration, and it needs no flag.
+* **A plain idle row** (no `spec.message`) fires through the shipped wake path below —
+  `wakeup.dispatch_fires` + `executor.drain` — unchanged.
+* **A nudge row** (`spec.message` present) is handed to `triggers.nudge.AutoNudgeService.deliver`,
+  which carries the old timer's fire body verbatim in meaning (stop-sentinel → remove;
+  `max_cycles` → deactivate; delivered-only counting through this module's `record_delivery`) and
+  whose `on_fire` is the gateway's loop-cycle driver, injected exactly as before. A due nudge row
+  with no service to hand it to is a typed skip (`nudge_service_unavailable`), never a
+  fall-through to the wake path.
+* **The overlap that WOULD be possible is still refused.** A plain idle trigger scoped to a
+  session some nudge loop drives is skipped with the same typed reason (`autonudge_owns_session`,
+  kept verbatim for wire/test stability) — logged, never silently dropped (§7 crit 8). The fence
+  is now a scan of the rows already in hand (`_nudge_owned_sessions`) rather than a probe into a
+  second store, because there is no second store.
 
-**Preserved autonudge semantics** (`autonudge.py` lines 318-352, kept verbatim in meaning):
+**Preserved autonudge semantics** (from the deleted `autonudge.py`'s timer body, kept verbatim
+in meaning — the historical line references live in the WF2AUT-11 design note):
 
 * **Reactive re-arm.** A fire re-arms from the fire, not from a fixed grid: `armed_at` is stamped
   to the fire instant so the next fire is `idle_secs` after *this* one settled. User activity
@@ -95,6 +97,10 @@ _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 SKIP_NOT_IDLE = "not_idle_yet"
 SKIP_AUTONUDGE = "autonudge_owns_session"
 SKIP_SESSION_BUSY = "session_mid_turn"
+#: A due nudge row with no nudge service to hand it to (flag off, or an API-only process). The
+#: state stays un-advanced so the fire retries once the service exists — same rule as
+#: `no_session_manager` below, and NEVER a fall-through to the wake path.
+SKIP_NUDGE_UNAVAILABLE = "nudge_service_unavailable"
 
 
 @dataclass
@@ -104,11 +110,19 @@ class IdleState:
     `armed_at` is the instant the quiet period restarted — a fire, a user turn, or first sight of
     the trigger. `cycle_count` counts DELIVERED fires only, which is what makes `first_idle_secs`
     a genuine one-shot: a mid-turn drop leaves the count at 0 and the short first wait still armed.
+
+    `error_count` and `created_ts` carry the nudge adapter's per-loop state (WF2AUT-11 half 2):
+    consecutive errored turns (turn-churning, so it belongs here per S61d, not on the row) and
+    the loop's birth time (the trigger entity deliberately keeps no birth time — its legacy field
+    map says so — so the `/api/autonudge` wire's `created_ts` lives here instead). Both read as 0
+    on every sidecar written before the port, which is the right default for each.
     """
 
     armed_at: float = 0.0
     cycle_count: int = 0
     last_fire: float = 0.0
+    error_count: int = 0
+    created_ts: float = 0.0
 
 
 def _state_dir(base_dir: Path | str | None) -> Path:
@@ -143,6 +157,8 @@ def load_state(trigger_id: str, *, base_dir: Path | str | None = None) -> IdleSt
         armed_at=float(raw.get("armed_at", 0) or 0),
         cycle_count=int(raw.get("cycle_count", 0) or 0),
         last_fire=float(raw.get("last_fire", 0) or 0),
+        error_count=int(raw.get("error_count", 0) or 0),
+        created_ts=float(raw.get("created_ts", 0) or 0),
     )
 
 
@@ -156,6 +172,15 @@ def save_state(trigger_id: str, state: IdleState, *, base_dir: Path | str | None
         atomic_write(path, json.dumps(asdict(state), indent=2))
     except Exception:  # noqa: BLE001 - state is a cache of when to fire, not the fire itself
         logger.warning("could not persist idle state for %s", trigger_id, exc_info=True)
+
+
+def clear_state(trigger_id: str, *, base_dir: Path | str | None = None) -> None:
+    """Delete one trigger's sidecar — a removed nudge loop must not leave a stale arm point
+    behind for a future row that re-uses the id. Best-effort, like `save_state`."""
+    try:
+        _state_path(trigger_id, base_dir).unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001
+        logger.debug("could not clear idle state for %s", trigger_id, exc_info=True)
 
 
 def idle_triggers(store: Any) -> list[Any]:
@@ -259,26 +284,28 @@ def notify_activity(
     return rearmed
 
 
-def _autonudge_owns(session_key: str) -> bool:
-    """Whether `autonudge.py` already nudges this session (the anti-double-fire fence).
+def _is_nudge(trigger: Any) -> bool:
+    """Whether this idle row is a NUDGE row — `triggers.nudge.is_nudge`, without the import.
 
-    The structural half of the disjointness argument in the module docstring. Fail-OPEN — an
-    autonudge that is not running, or a probe that raises, means nobody else is nudging, so the
-    idle trigger fires. Failing closed here would silently retire every idle automation the moment
-    autonudge misbehaved, and this fence exists to prevent a duplicate nudge, not to gate the kind.
+    Inlined rather than imported because `nudge.py` imports THIS module at module level; the
+    discriminator is one spec read, and duplicating it is cheaper than a lazy import on every
+    poll iteration. `tests` pin the two against each other.
     """
-    if not session_key:
-        return False
-    try:
-        from personalclaw.autonudge import get_instance
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    return bool(str(spec.get("message") or "").strip())
 
-        service = get_instance()
-        if service is None:
-            return False
-        return service.get_by_session(session_key) is not None
-    except Exception:  # noqa: BLE001 - a probe must never stop a fire
-        logger.debug("autonudge ownership probe raised for %s", session_key, exc_info=True)
-        return False
+
+def _nudge_owned_sessions(triggers: list[Any]) -> set[str]:
+    """The sessions a nudge row already owns (the anti-double-fire fence, post-port).
+
+    Before WF2AUT-11 half 2 this was a probe into `autonudge.py`'s separate store; both
+    populations now live in ONE store, so the fence is a scan of the rows already in hand. The
+    question is unchanged — a plain idle trigger scoped to a session some nudge loop drives must
+    defer, with the same typed reason (`SKIP_AUTONUDGE`), or the session gets nudged twice.
+    Deactivated nudge rows are not in `triggers` (armable drops them), so a paused loop releases
+    its session — exactly as a removed autonudge loop used to.
+    """
+    return {scope_session(t) for t in triggers if _is_nudge(t)} - {""}
 
 
 def due_fires(
@@ -299,7 +326,9 @@ def due_fires(
     now = now or time.time()
     fires: list[Any] = []
     skipped: list[dict[str, str]] = []
-    for trigger in idle_triggers(store):
+    triggers = idle_triggers(store)
+    owned = _nudge_owned_sessions(triggers)
+    for trigger in triggers:
         try:
             state = load_state(trigger.id, base_dir=base_dir)
             if state.armed_at <= 0:
@@ -308,7 +337,7 @@ def due_fires(
                 skipped.append({"trigger_id": trigger.id, "reason": SKIP_NOT_IDLE})
                 continue
             session_key = scope_session(trigger)
-            if _autonudge_owns(session_key):
+            if not _is_nudge(trigger) and session_key in owned:
                 skipped.append({"trigger_id": trigger.id, "reason": SKIP_AUTONUDGE})
                 continue
             due, why = is_idle(trigger, state, now=now)
@@ -377,14 +406,46 @@ async def poll(
     fires, skipped = due_fires(store, now=now, base_dir=base_dir)
     if not fires:
         return 0, skipped
+
+    # ── Nudge rows ride the adapter, not the wake path (WF2AUT-11 half 2). ──
+    # A message-bearing idle row means "inject this into the bound conversation" — the loop
+    # tick engine's fire — and its deliverer (the gateway's loop-cycle driver) lives on the
+    # nudge service, injected exactly as the old autonudge `on_fire` was. State advances via the
+    # SAME delivered-only rule: `deliver` calls `record_delivery` itself, so a mid-turn drop
+    # leaves the trigger due and it retries next tick. An absent service (flag off, or an
+    # API-only process) is a typed skip, never a fall-through to the wake path — waking a loop
+    # worker's inbox instead of nudging it would be a silent behavior change.
+    nudge_fires = [f for f in fires if _is_nudge(f.trigger)]
+    fires = [f for f in fires if not _is_nudge(f.trigger)]
+    delivered_nudges = 0
+    if nudge_fires:
+        from personalclaw.triggers import nudge as nudge_mod
+
+        service = nudge_mod.get_instance()
+        for fire in nudge_fires:
+            if service is None:
+                skipped.append({"trigger_id": fire.trigger.id, "reason": SKIP_NUDGE_UNAVAILABLE})
+                continue
+            try:
+                ok, why = await service.deliver(fire.trigger, now=now)
+            except Exception:  # noqa: BLE001 - one nudge must not strand the others
+                logger.warning("nudge deliver failed for %s", fire.trigger.id, exc_info=True)
+                ok, why = False, "deliver_error"
+            if ok:
+                delivered_nudges += 1
+            else:
+                skipped.append({"trigger_id": fire.trigger.id, "reason": why or SKIP_SESSION_BUSY})
+
+    if not fires:
+        return delivered_nudges, skipped
     if sessions is None:
         for fire in fires:
             skipped.append({"trigger_id": fire.trigger.id, "reason": "no_session_manager"})
-        return 0, skipped
+        return delivered_nudges, skipped
 
     deliveries = wk.dispatch_fires(sessions, fires, now=now)
     by_id = {d.wakeup.trigger_id: d for d in deliveries}
-    delivered_count = 0
+    delivered_count = delivered_nudges
     for fire in fires:
         delivery = by_id.get(fire.trigger.id)
         delivered = bool(delivery is not None and delivery.delivered)
