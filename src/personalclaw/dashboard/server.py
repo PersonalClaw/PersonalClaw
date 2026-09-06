@@ -1267,9 +1267,16 @@ async def start_dashboard(
     # only (loopback + X-Internal-Secret, see internal_paths below); the whole capability is
     # OFF until the operator arms it out-of-band, and every call runs the keystone → app
     # allowlist → index freshness → input-target screen → SEL audit chain.
-    from personalclaw.dashboard.handlers.computer_use import api_computer_use_dispatch
+    from personalclaw.dashboard.handlers.computer_use import (
+        api_computer_use_dispatch,
+        api_computer_use_live_view,
+    )
 
     app.router.add_post("/api/computer-use/dispatch", api_computer_use_dispatch)
+    # The human-facing live view + cursor-motion overlay data (DCU-7). A browser GET under
+    # ordinary cookie auth — deliberately NOT internal-only like the dispatch above, and
+    # deliberately sharing no verb with it: the one route that can act stays the one POST.
+    app.router.add_get("/api/computer-use/live-view", api_computer_use_live_view)
 
     # Manifest — the generated self-description (tools + routes + providers) an
     # agent reads to drive this instance instead of guessing signatures.

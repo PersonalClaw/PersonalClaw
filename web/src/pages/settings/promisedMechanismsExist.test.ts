@@ -206,6 +206,7 @@ describe('the census: every empty-state promise is accounted for', () => {
       'pages/settings/FeedbackPanel.tsx',             // four thumbs surfaces — checked
       'pages/settings/MemoryPanel.tsx',               // digests cadence + memory-event log — checked
       'pages/loops/DesignCockpitPage.tsx',            // loop writes kind:react tagged to the loop — checked
+      'pages/dashboard/widgets/DesktopLiveView.tsx',  // DCU-7: the mirror fills from computer_use/render.py snapshots recorded on every dispatch (observe hooks in service.py) — checked
       'pages/settings/RoutingPanel.tsx',              // was FALSE → copy now names the measured axes (#1631)
       'pages/settings/settingsWidgets.tsx',           // was FALSE and unfillable → measured axis (this PR)
       // 🪤 A DIFFERENT AND SAFE CLASS, kept in the list with its reason rather than excluded by a regex

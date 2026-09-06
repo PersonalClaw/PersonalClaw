@@ -332,6 +332,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "platform, or the ceilinged driver subprocess failed. Nothing was changed on the "
         "desktop."
     ),
+    # A third code rather than a reuse of `audit_owner_only` (DCU-7): that one names the
+    # security audit trail, and a stable wire code that says one thing must not start
+    # meaning two.
+    "computer_use_view_owner_only": (
+        "The desktop live view is readable by the owner only — an app-scoped token cannot "
+        "watch what the agent is doing on the operator's desktop."
+    ),
     # ── binary artifact write + document model (artifacts/handlers.py — DFE §C3) ──
     #
     # Every row here is a DIFFERENT thing for the caller to do, which is the whole test
