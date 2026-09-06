@@ -6,6 +6,12 @@ apps. **Nothing here is posted yet**: the shared risk-policy paragraph below is
 live only after that approval, verbatim or as amended. Post each as its own
 issue with labels `community-tier` + `bounty`.
 
+These three are the **channel** rows of
+[app-bounty-wants-list.md](app-bounty-wants-list.md), the single list ECOSYSTEM-TOOLING's
+`ET-7` bounty board files from. That file enumerates what is wanted (channels, providers,
+sources) and is machine-checked; this file carries the public issue prose for the three
+channels. Keep them in step — `tests/test_bounty_wants_list.py` reds if they disagree.
+
 The other two CE-9 legs are already satisfied in-tree and are cited by every
 draft:
 
