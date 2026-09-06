@@ -78,9 +78,9 @@ export function ReactWidgetFrame({ jsx, title = 'React widget' }: Props) {
         ? 'fixed inset-4 z-50 overflow-hidden rounded-xl border border-outline-variant/50 bg-surface shadow-2xl'
         : 'my-3 overflow-hidden rounded-lg border border-outline-variant/40 bg-surface-low'}>
       <div className="flex items-center gap-2 border-b border-outline-variant/40 bg-surface-container px-3 py-1.5">
-        <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{title}</span>
+        <span data-type="label-s" className="truncate text-on-surface" style={fvs(500)}>{title}</span>
         {error && (
-          <span className="inline-flex items-center gap-1 text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>
+          <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: 'var(--color-danger)' }}>
             <AlertTriangle size={11} /> error
           </span>
         )}

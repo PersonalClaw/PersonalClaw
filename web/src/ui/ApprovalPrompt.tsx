@@ -85,24 +85,24 @@ export function ApprovalPrompt({
         <ShieldQuestion size={roomy ? 18 : 15} className="mt-0.5 shrink-0" aria-hidden style={{ color: 'var(--color-warn)' }} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <div role="alert" className={`text-on-surface ${roomy ? 'text-[0.9375rem]' : 'text-[0.8125rem]'}`} style={fvs(500)}>Permission needed</div>
+            <div role="alert" data-type={roomy ? 'title-m' : 'label-s'} className="text-on-surface" style={fvs(500)}>Permission needed</div>
             {badge}
           </div>
           {roomy ? (
             <>
-              <div className="mt-1 break-all font-mono text-on-surface text-[0.875rem]">{tool}</div>
+              <div data-type="body-m" className="mt-1 break-all font-mono text-on-surface">{tool}</div>
               {args && (
                 // Wrapped and scrollable rather than truncated: on the phone this text IS
                 // the decision. A capped height keeps one enormous payload from burying the
                 // Allow/Deny row below the fold.
-                <pre tabIndex={0} role="group" aria-label="Tool arguments"
-                  className="mt-s max-h-[14rem] overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-high p-s font-mono text-on-surface-var text-[0.75rem]">{args}</pre>
+                <pre tabIndex={0} role="group" aria-label="Tool arguments" data-type="caption"
+                  className="mt-s max-h-[14rem] overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-high p-s font-mono text-on-surface-var">{args}</pre>
               )}
             </>
           ) : (
-            <div className="mt-0.5 truncate font-mono text-on-surface-var text-[0.75rem]">{tool}{args ? `(${args.replace(/\s+/g, ' ').slice(0, 60)})` : ''}</div>
+            <div data-type="caption" className="mt-0.5 truncate font-mono text-on-surface-var">{tool}{args ? `(${args.replace(/\s+/g, ' ').slice(0, 60)})` : ''}</div>
           )}
-          {purpose && <p className={`mt-1 text-on-surface-low ${roomy ? 'text-[0.8125rem]' : 'text-[0.75rem]'}`}>{purpose}</p>}
+          {purpose && <p data-type={roomy ? 'body-s' : 'caption'} className="mt-1 text-on-surface-low">{purpose}</p>}
           {meta}
           {/* How far the answer reaches, read BEFORE the verbs — the scope has to be
               settled while the reader is still weighing the call, not after they have
@@ -135,7 +135,8 @@ function ApprovalChoiceButton({ choice, roomy }: { choice: ApprovalChoice; roomy
   return (
     <button type="button" onClick={onClick} disabled={busy} aria-busy={busy || undefined}
       title={name || label} aria-label={name || undefined}
-      className={`inline-flex items-center justify-center gap-1 rounded-pill transition-colors disabled:opacity-50 ${roomy ? 'h-11 min-w-[6.5rem] gap-2 px-l text-[0.9375rem]' : 'h-7 px-2.5 text-[0.75rem]'}`}
+      data-type={roomy ? 'body-m' : 'caption'}
+      className={`inline-flex items-center justify-center gap-1 rounded-pill transition-colors disabled:opacity-50 ${roomy ? 'h-11 min-w-[6.5rem] gap-2 px-l' : 'h-7 px-2.5'}`}
       style={palette}>
       <Icon size={roomy ? 16 : 12} aria-hidden /> {label}
     </button>

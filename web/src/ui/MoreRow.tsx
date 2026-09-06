@@ -29,7 +29,7 @@ export function MoreRow({ total, shown, noun, className }: {
   const hidden = total - shown
   if (hidden <= 0) return null
   return (
-    <div className={`text-on-surface-low text-[0.75rem] ${className ?? ''}`}>
+    <div data-type="caption" className={`text-on-surface-low ${className ?? ''}`}>
       … {hidden} more{noun ? ` ${noun}` : ''}
     </div>
   )

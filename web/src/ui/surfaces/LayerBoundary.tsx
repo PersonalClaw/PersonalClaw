@@ -51,7 +51,8 @@ export class LayerBoundary extends Component<Props, State> {
     return (
       <div
         role="alert"
-        className="flex items-start gap-2 rounded-lg px-3 py-2 text-[0.75rem] text-warn"
+        data-type="caption"
+        className="flex items-start gap-2 rounded-lg px-3 py-2 text-warn"
         style={{ background: 'color-mix(in srgb, var(--color-warn) 8%, transparent)' }}
       >
         <AlertTriangle size={13} className="mt-0.5 shrink-0" />

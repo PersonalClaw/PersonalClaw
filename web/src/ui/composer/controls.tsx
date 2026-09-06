@@ -45,7 +45,8 @@ function PillButton({ icon, label, dimension, open, toggle }: { icon: React.Reac
       // otherwise announce "Agent: Agent".
       aria-label={label === dimension ? dimension : `${dimension}: ${label}`}
       whileTap={{ scale: 1 - expr(0.04, 0.3) }} transition={spring.spatialFast}
-      className={cx('flex items-center gap-1.5 h-9 rounded-pill px-m transition-colors text-[0.8125rem] max-w-[160px]',
+      data-type="label-s"
+      className={cx('flex items-center gap-1.5 h-9 rounded-pill px-m transition-colors max-w-[160px]',
         open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high')}
       style={fvs(470)}
     >
@@ -88,7 +89,8 @@ export function AgentPill({ data, value, onSelect, openSignal }: { data?: Compos
             <div className="relative shrink-0 px-1 pb-1">
               <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agents" autoFocus
-                className="h-8 w-full rounded-md bg-surface-high pl-8 pr-2 text-[0.8125rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+                data-type="body-s"
+                className="h-8 w-full rounded-md bg-surface-high pl-8 pr-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
             </div>
           )}
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -97,14 +99,14 @@ export function AgentPill({ data, value, onSelect, openSignal }: { data?: Compos
             ))}
             {discovered.map(([rt, agents]) => (
               <div key={rt}>
-                <div className="px-m pt-m pb-1 text-[0.75rem] uppercase tracking-wide text-on-surface-low">{rt}</div>
+                <div data-type="caption" className="px-m pt-m pb-1 uppercase tracking-wide text-on-surface-low">{rt}</div>
                 {agents.map((d) => (
                   <MenuRow key={d.id} label={d.name} hint={cleanAgentHint(d.description)} selected={d.name === value} onClick={() => { onSelect(d.name); close() }} />
                 ))}
               </div>
             ))}
-            {noMatches && <div className="px-m py-2 text-[0.8125rem] text-on-surface-low">No agents match “{q.trim()}”</div>}
-            {total === 0 && <div className="px-m py-2 text-[0.8125rem] text-on-surface-low">No agents available</div>}
+            {noMatches && <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents match “{q.trim()}”</div>}
+            {total === 0 && <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents available</div>}
           </div>
         </div>
       )}
@@ -156,13 +158,13 @@ export function ModelPill({ data, agent, value, onSelect, contextPct, openSignal
           {acp
             ? acpModels.length > 0
               ? acpModels.map((m) => <MenuRow key={m} icon={<Cpu size={16} />} label={m} hint={acp.runtime} selected={m === value} onClick={() => { onSelect(m); close() }} />)
-              : <div className="px-m py-2 text-[0.8125rem] text-on-surface-low">No selectable models — this runtime uses its own default.</div>
+              : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No selectable models — this runtime uses its own default.</div>
             : (data?.models ?? []).map((m) => (
                 <MenuRow key={m.name} icon={<Cpu size={16} />} label={m.model_name || m.name} hint={m.provider} selected={m.name === value} onClick={() => { onSelect(m.name); close() }} />
               ))}
           {/* Precedence explainer (MODEL-USE-CASES-V2 T3.4): the pick sits one level
               above the use-case chain — it never replaces the chain, only fronts it. */}
-          <div className="border-t border-outline-variant/30 px-m py-2 text-[0.75rem] text-on-surface-low">
+          <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
             A picked model overrides this session's use-case chain; if it fails, the chain takes over.
           </div>
         </div>
@@ -248,7 +250,7 @@ export function NaturalVoicePill({ choice, effective, source, agentDefault, onSe
             selected={choice === 'on'} onClick={() => { onSelect('on'); close() }} />
           <MenuRow label="Off" hint="Standard prose here, even if the agent asks for plainer"
             selected={choice === 'off'} onClick={() => { onSelect('off'); close() }} />
-          <div className="border-t border-outline-variant/30 px-m py-2 text-[0.75rem] text-on-surface-low">
+          <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
             Changes style only — never a fact, a caveat or a refusal. A choice here applies to this conversation and does not edit the agent.
           </div>
         </div>

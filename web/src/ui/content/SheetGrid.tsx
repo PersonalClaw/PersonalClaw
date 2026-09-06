@@ -59,7 +59,7 @@ interface Cursor { sheet: number; row: number; col: number }
  *  the save confirmation from one place here, so this surface's two copies cannot drift. */
 function SheetLossList({ loss }: { loss: DocumentLossReport }) {
   return (
-    <div className="text-[0.8125rem]">
+    <div data-type="body-s">
       <p className="text-on-surface">{loss.summary}</p>
       <ul className="mt-2 space-y-1 text-on-surface-var">
         {loss.items.slice(0, 12).map((item, i) => (
@@ -132,12 +132,12 @@ export function SheetGrid({ slug, title, readOnly, onDirty }: DocumentEditorProp
         title: `Save and re-render “${title}”?`,
         body: (
           <div className="space-y-2">
-            <p className="text-[0.8125rem] text-on-surface">
+            <p data-type="body-s" className="text-on-surface">
               Saving re-creates the workbook from the cells below, so the things
               PersonalClaw cannot represent will not be in the saved copy:
             </p>
             <SheetLossList loss={loaded.loss} />
-            <p className="text-[0.8125rem] text-on-surface-var">
+            <p data-type="body-s" className="text-on-surface-var">
               Version {loaded.version} is kept — you can restore it from Details › Versions
               at any time.
             </p>
@@ -198,8 +198,8 @@ export function SheetGrid({ slug, title, readOnly, onDirty }: DocumentEditorProp
           <div className="flex items-start gap-2">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-on-surface-var" aria-hidden="true" />
             <div className="min-w-0">
-              <p className="text-[0.875rem] text-on-surface">Editing this workbook loses formatting</p>
-              <p className="mt-1 text-[0.8125rem] text-on-surface-var">
+              <p data-type="body-m" className="text-on-surface">Editing this workbook loses formatting</p>
+              <p data-type="body-s" className="mt-1 text-on-surface-var">
                 It contains things this editor’s sheet model cannot hold. Saving re-creates
                 the file, so they will not be in the saved copy. The version you have now is
                 kept and can be restored from Details › Versions.
@@ -215,7 +215,7 @@ export function SheetGrid({ slug, title, readOnly, onDirty }: DocumentEditorProp
 
       {/* ── the cell inspector: what the selected cell IS, and how it is formatted ── */}
       <div className="flex flex-wrap items-center gap-2 border-b border-outline/40 px-m py-1.5">
-        <span className="min-w-[5.5rem] font-mono text-[0.75rem] text-on-surface-var">
+        <span data-type="caption" className="min-w-[5.5rem] font-mono text-on-surface-var">
           {cursor ? cellRef(sheet, cursor.row, cursor.col) : '—'}
         </span>
         <Button size="xs" variant="ghost" shape="squircle"
@@ -245,7 +245,7 @@ export function SheetGrid({ slug, title, readOnly, onDirty }: DocumentEditorProp
             <Icon size={13} aria-hidden="true" />
           </Button>
         ))}
-        <label className="flex items-center gap-1.5 text-[0.75rem] text-on-surface-low">
+        <label data-type="caption" className="flex items-center gap-1.5 text-on-surface-low">
           <span id="sheet-format-label">Format</span>
           <Select value={active?.number_format ?? ''}
             options={formatOptions(active?.number_format ?? '')}
@@ -254,13 +254,13 @@ export function SheetGrid({ slug, title, readOnly, onDirty }: DocumentEditorProp
             ariaLabel={formatLabel}
             onChange={(code) => active && patch({ ...active, number_format: code })} />
         </label>
-        <span className="text-[0.75rem] text-on-surface-low">
+        <span data-type="caption" className="text-on-surface-low">
           {active?.formula
             ? 'Formula — saved as written; your spreadsheet calculates it.'
             : cursor ? 'Start a cell with “=” to make it a formula.' : 'Select a cell to format it.'}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          {dirty && <span className="text-[0.75rem] text-on-surface-low">Unsaved changes</span>}
+          {dirty && <span data-type="caption" className="text-on-surface-low">Unsaved changes</span>}
           <Button size="xs" variant="primary" shape="squircle" loading={saving}
             disabled={!editing || !dirty}
             disabledReason={blockedReason || 'No changes to save yet.'}
@@ -287,7 +287,7 @@ export function SheetGrid({ slug, title, readOnly, onDirty }: DocumentEditorProp
 
       {/* ── the grid ── */}
       <div className="min-h-0 flex-1 overflow-auto p-m">
-        <table className="border-separate border-spacing-0 text-[0.8125rem]">
+        <table data-type="body-s" className="border-separate border-spacing-0">
           <caption className="sr-only">
             {sheet.name} — {sheet.cells.length} rows by {width} columns. Cells holding a
             formula show the formula, not a calculated result.
@@ -298,7 +298,7 @@ export function SheetGrid({ slug, title, readOnly, onDirty }: DocumentEditorProp
                 <span className="sr-only">Row</span>
               </th>
               {Array.from({ length: width }, (_, col) => (
-                <th key={col} scope="col" className="border-b border-outline/40 bg-surface-container/40 px-2 py-1 font-medium text-on-surface-var">
+                <th key={col} scope="col" className="border-b border-outline/40 bg-surface-container/40 px-2 py-1 fw-500 text-on-surface-var">
                   {columnLabel(col)}
                 </th>
               ))}
@@ -307,7 +307,7 @@ export function SheetGrid({ slug, title, readOnly, onDirty }: DocumentEditorProp
           <tbody>
             {sheet.cells.map((_row, rowIndex) => (
               <tr key={rowIndex}>
-                <th scope="row" className="sticky left-0 z-10 border-r border-outline/40 bg-surface-container/40 px-2 py-1 text-right font-normal text-on-surface-low">
+                <th scope="row" className="sticky left-0 z-10 border-r border-outline/40 bg-surface-container/40 px-2 py-1 text-right fw-400 text-on-surface-low">
                   {rowIndex + 1}
                 </th>
                 {Array.from({ length: width }, (_, col) => {
@@ -325,7 +325,7 @@ export function SheetGrid({ slug, title, readOnly, onDirty }: DocumentEditorProp
                         // neither is a programmatic name for the INPUT, so a screen reader
                         // would announce an unlabelled text box. The ref is the name.
                         aria-label={cellRef(sheet, rowIndex, col)}
-                        className={`w-[9rem] bg-transparent px-2 py-1 text-on-surface tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:opacity-60 ${selected ? 'ring-2 ring-inset ring-primary/50' : ''} ${cell.bold ? 'font-semibold' : ''} ${cell.italic ? 'italic' : ''} ${cell.formula ? 'text-primary' : ''}`}
+                        className={`w-[9rem] bg-transparent px-2 py-1 text-on-surface tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:opacity-60 ${selected ? 'ring-2 ring-inset ring-primary/50' : ''} ${cell.bold ? 'fw-600' : ''} ${cell.italic ? 'italic' : ''} ${cell.formula ? 'text-primary' : ''}`}
                         style={{ textAlign: (cell.align || 'left') as 'left' | 'center' | 'right' }}
                         onFocus={() => setCursor({ sheet: sheetIndex, row: rowIndex, col })}
                         onChange={(e) => {
@@ -339,7 +339,7 @@ export function SheetGrid({ slug, title, readOnly, onDirty }: DocumentEditorProp
             ))}
           </tbody>
         </table>
-        <p className="mt-3 text-[0.75rem] text-on-surface-low">
+        <p data-type="caption" className="mt-3 text-on-surface-low">
           Formulas are saved exactly as written — this editor does not calculate them, so a
           cell shows its formula rather than a result. Charts, pivot tables and conditional
           formatting are listed above if present; they are not carried through a save.

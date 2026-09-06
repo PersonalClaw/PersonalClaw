@@ -54,14 +54,15 @@ function OptimizedDisclosure({ optimized, onFileClick }: { optimized: string; on
   return (
     <div className="mt-2.5 border-t border-outline-variant/40 pt-2">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
-        className="flex items-center gap-1 text-[0.75rem] text-on-surface-low hover:text-on-surface-var transition-colors"
+        data-type="caption"
+        className="flex items-center gap-1 text-on-surface-low hover:text-on-surface-var transition-colors"
         style={fvs(500)}>
         <ChevronRight size={13} className={`shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
         <Sparkles size={12} className="shrink-0" />
         {open ? 'Optimized prompt sent to the model' : 'Sent an optimized version'}
       </button>
       {open && (
-        <div className="mt-2 rounded-lg bg-surface/60 px-3 py-2 text-[0.9375rem] [&_>*:first-child]:mt-0 [&_>*:last-child]:mb-0">
+        <div data-type="body-m" className="mt-2 rounded-lg bg-surface/60 px-3 py-2 [&_>*:first-child]:mt-0 [&_>*:last-child]:mb-0">
           <MessageBody text={optimized} onFileClick={onFileClick} />
         </div>
       )}

@@ -3,10 +3,13 @@ import type { LucideIcon } from 'lucide-react'
 import { cx } from './cx'
 
 type Size = 'xs' | 'sm' | 'inherit'
-const SIZE: Record<Size, string> = {
-  xs: 'text-[0.75rem]',      // dense chrome (queue chips, VoicePanel hints, FilterMenu "Clear")
-  sm: 'text-[0.8125rem]',    // standalone links (Show more, View all loops, external "Open")
-  inherit: '',               // inline inside a running sentence — take the paragraph's size
+// Type role per size (undefined = no data-type attribute, inherit the context).
+// body-s (wght 400) for sm keeps the standalone link at the weight it always
+// rendered; xs rides the caption tier, the only sub-body role.
+const SIZE_ROLE: Record<Size, string | undefined> = {
+  xs: 'caption',             // dense chrome (queue chips, VoicePanel hints, FilterMenu "Clear")
+  sm: 'body-s',              // standalone links (Show more, View all loops, external "Open")
+  inherit: undefined,        // inline inside a running sentence — take the paragraph's size
 }
 
 // ── The ink is decided by the GROUND, which is why it is a prop ────────────────────────────────────
@@ -86,9 +89,9 @@ export function TextLink({
     INK[ink],
     'hover:underline disabled:opacity-50 py-1 -my-1',
     Icon && 'inline-flex items-center gap-1',
-    SIZE[size],
     className,
   )
+  const role = SIZE_ROLE[size]
   const body = Icon
     ? (iconPosition === 'trailing'
         ? <>{children} <Icon size={iconSize} /></>
@@ -97,14 +100,14 @@ export function TextLink({
 
   if (href !== undefined) {
     return (
-      <a href={href} onClick={onClick} title={title} aria-label={ariaLabel} className={cls}
+      <a href={href} onClick={onClick} title={title} aria-label={ariaLabel} data-type={role} className={cls}
         {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>
         {body}
       </a>
     )
   }
   return (
-    <button type="button" onClick={onClick} disabled={disabled} title={title} aria-label={ariaLabel} className={cls}>
+    <button type="button" onClick={onClick} disabled={disabled} title={title} aria-label={ariaLabel} data-type={role} className={cls}>
       {body}
     </button>
   )

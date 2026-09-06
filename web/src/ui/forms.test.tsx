@@ -9,13 +9,13 @@ import { TextInput, TextArea, Select, NumberField, Field, Checkbox, ChipInput } 
 // redesign*:
 //
 //  1. DEFAULTS ARE BYTE-IDENTICAL. The prior family shipped a single fixed
-//     chrome (h-10 / bg-surface-container / text-[0.9375rem]); every existing
-//     adopter relies on that exact className. A default-props render must still
+//     chrome (h-10 / bg-surface-container / the body-m type role); every existing
+//     adopter relies on that exact rendering. A default-props render must still
 //     produce it token-for-token, so the migration moves zero pixels.
-//  2. THE SCALE IS ON-RAMP. Every size step uses a DESIGN.md-blessed type size
-//     (0.8125rem / 0.9375rem) and a real height rung (h-8/h-9/h-10) — never the
-//     off-ramp 0.875rem drift we normalize away. If someone edits a size table
-//     to an off-ramp value, this reddens before the impeccable hook would.
+//  2. THE SCALE IS ON-RAMP. Every size step uses a DESIGN.md-blessed type role
+//     (body-s / body-m, the 0.8125/0.9375rem tiers) and a real height rung
+//     (h-8/h-9/h-10) — never the off-ramp 0.875rem drift we normalize away. If
+//     someone edits a size table to an off-ramp value, this reddens first.
 //
 // Behavioral/structural props (type, mono, leadingIcon, …) are grown in lockstep
 // with the first real adopter, so they are tested when they land — not here.
@@ -38,9 +38,11 @@ describe('standard-field scale', () => {
     // The exact token set the family shipped before the scale existed.
     expectTokens(input, [
       'w-full', 'h-10', 'rounded-md', 'bg-surface-container', 'px-m',
-      'text-on-surface', 'text-[0.9375rem]', 'placeholder:text-on-surface-low',
+      'text-on-surface', 'placeholder:text-on-surface-low',
       'outline-none', 'focus:ring-2', 'focus:ring-inset', 'focus:ring-primary',
     ])
+    // The type size/line-height/weight ride the body-m role, not a raw utility.
+    expect(input?.getAttribute('data-type')).toBe('body-m')
     // No explicit type attribute (native default = text) — byte-identical to the
     // pre-scale field, which set none either.
     expect(input?.getAttribute('type')).toBeNull()
@@ -50,9 +52,12 @@ describe('standard-field scale', () => {
     const sm = render(<TextInput value="" onChange={() => {}} size="sm" />).container.querySelector('input')
     const md = render(<TextInput value="" onChange={() => {}} size="md" />).container.querySelector('input')
     const lg = render(<TextInput value="" onChange={() => {}} size="lg" />).container.querySelector('input')
-    expectTokens(sm, ['h-8', 'text-[0.8125rem]'])
-    expectTokens(md, ['h-9', 'text-[0.8125rem]'])
-    expectTokens(lg, ['h-10', 'text-[0.9375rem]'])
+    expectTokens(sm, ['h-8'])
+    expectTokens(md, ['h-9'])
+    expectTokens(lg, ['h-10'])
+    expect(sm?.getAttribute('data-type')).toBe('body-s')
+    expect(md?.getAttribute('data-type')).toBe('body-s')
+    expect(lg?.getAttribute('data-type')).toBe('body-m')
     // No size may introduce the off-ramp 0.875rem (14px) drift.
     for (const el of [sm, md, lg]) expect(classOf(el)).not.toContain('text-[0.875rem]')
   })
@@ -98,37 +103,38 @@ describe('standard-field scale', () => {
 
   it('TextArea default render is the prior fixed chrome', () => {
     const { container } = render(<TextArea value="" onChange={() => {}} />)
-    expectTokens(container.querySelector('textarea'), [
-      'w-full', 'rounded-md', 'bg-surface-container', 'text-[0.9375rem]', 'resize-y',
-    ])
+    const ta = container.querySelector('textarea')
+    expectTokens(ta, ['w-full', 'rounded-md', 'bg-surface-container', 'resize-y'])
+    expect(ta?.getAttribute('data-type')).toBe('body-m')
   })
 
   it('TextArea size axis: sm/md are the dense on-ramp size, lg the page-form size', () => {
     const sm = render(<TextArea value="" onChange={() => {}} size="sm" />).container.querySelector('textarea')
     const md = render(<TextArea value="" onChange={() => {}} size="md" />).container.querySelector('textarea')
     const lg = render(<TextArea value="" onChange={() => {}} size="lg" />).container.querySelector('textarea')
-    expectTokens(sm, ['text-[0.8125rem]'])
-    expectTokens(md, ['text-[0.8125rem]'])
-    expectTokens(lg, ['text-[0.9375rem]'])
+    expect(sm?.getAttribute('data-type')).toBe('body-s')
+    expect(md?.getAttribute('data-type')).toBe('body-s')
+    expect(lg?.getAttribute('data-type')).toBe('body-m')
     // No size may introduce the off-ramp 0.875rem (14px) drift.
     for (const el of [sm, md, lg]) expect(classOf(el)).not.toContain('text-[0.875rem]')
   })
 
   it('TextArea mono stays byte-identical (font-mono + dense text, regardless of size)', () => {
-    // The mono branch protects every existing mono adopter: it appends
-    // `font-mono text-[0.8125rem]` AFTER the size text, so the effective size is
-    // always dense mono — the pre-scale behavior — even at the default lg.
+    // The mono branch protects every existing mono adopter: a mono textarea pins
+    // the dense body-s role whatever `size` says, so the effective size is always
+    // dense mono — the pre-scale behavior — even at the default lg.
     const monoLg = render(<TextArea value="" onChange={() => {}} mono />).container.querySelector('textarea')
-    expectTokens(monoLg, ['font-mono', 'text-[0.8125rem]'])
+    expectTokens(monoLg, ['font-mono'])
+    expect(monoLg?.getAttribute('data-type')).toBe('body-s')
   })
 
   it('Select default render is the prior fixed chrome and carries options', () => {
     const { container } = render(
       <Select value="a" onChange={() => {}} options={[{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }]} />,
     )
-    expectTokens(container.querySelector('select'), [
-      'w-full', 'h-10', 'appearance-none', 'rounded-md', 'bg-surface-container', 'text-[0.9375rem]',
-    ])
+    const select = container.querySelector('select')
+    expectTokens(select, ['w-full', 'h-10', 'appearance-none', 'rounded-md', 'bg-surface-container'])
+    expect(select?.getAttribute('data-type')).toBe('body-m')
     expect(container.querySelectorAll('option')).toHaveLength(2)
   })
 })
@@ -145,9 +151,10 @@ describe('NumberField', () => {
     const input = render(<NumberField value={3} onChange={() => {}} />).container.querySelector('input')
     expectTokens(input, [
       'h-8', 'w-24', 'rounded-md', 'bg-surface-high', 'px-2', 'text-right',
-      'text-[0.8125rem]', 'text-on-surface', 'tabular-nums', 'outline-none',
+      'text-on-surface', 'tabular-nums', 'outline-none',
       'focus:ring-2', 'focus:ring-inset', 'focus:ring-primary',
     ])
+    expect(input?.getAttribute('data-type')).toBe('body-s')
     expect(input?.getAttribute('type')).toBe('number')
   })
 

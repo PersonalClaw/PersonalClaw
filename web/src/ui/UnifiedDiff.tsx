@@ -32,7 +32,8 @@ export function diffLineColor(l: string): string | undefined {
  *  patches — two regions both called "Diff" have a name that does not distinguish them. */
 export function UnifiedDiff({ patch, label = 'Diff', className }: { patch: string; label?: string; className?: string }) {
   return (
-    <pre tabIndex={0} aria-label={label} className={className ?? 'overflow-x-auto font-mono text-[0.75rem] leading-snug'}>
+    <pre tabIndex={0} aria-label={label} data-type={className ? undefined : 'caption'}
+      className={className ?? 'overflow-x-auto font-mono leading-snug'}>
       {patch.split('\n').map((l, i) => <div key={i} style={{ color: diffLineColor(l) }}>{l || ' '}</div>)}
     </pre>
   )

@@ -52,7 +52,7 @@ export function Meter({
           style={{ width: `${clamped}%`, background: tone }}
         />
       </div>
-      {detail && <div className="text-on-surface-low text-[0.75rem] tabular-nums">{detail}</div>}
+      {detail && <div data-type="caption" className="text-on-surface-low tabular-nums">{detail}</div>}
     </div>
   )
 }

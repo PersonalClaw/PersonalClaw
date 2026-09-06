@@ -62,7 +62,7 @@ import type { DocumentEditorProps } from './contentTypes'
  *  the save confirmation from one place here, so this surface's two copies cannot drift. */
 function DeckLossList({ loss }: { loss: DocumentLossReport }) {
   return (
-    <div className="text-[0.8125rem]">
+    <div data-type="body-s">
       <p className="text-on-surface">{loss.summary}</p>
       <ul className="mt-2 space-y-1 text-on-surface-var">
         {loss.items.slice(0, 12).map((item, i) => (
@@ -131,12 +131,12 @@ export function SlideDeck({ slug, title, readOnly, onDirty }: DocumentEditorProp
         title: `Save and re-render “${title}”?`,
         body: (
           <div className="space-y-2">
-            <p className="text-[0.8125rem] text-on-surface">
+            <p data-type="body-s" className="text-on-surface">
               Saving re-creates the deck from the slides below, so the things PersonalClaw
               cannot represent will not be in the saved copy:
             </p>
             <DeckLossList loss={loaded.loss} />
-            <p className="text-[0.8125rem] text-on-surface-var">
+            <p data-type="body-s" className="text-on-surface-var">
               Version {loaded.version} is kept — you can restore it from Details › Versions
               at any time.
             </p>
@@ -188,8 +188,8 @@ export function SlideDeck({ slug, title, readOnly, onDirty }: DocumentEditorProp
           <div className="flex items-start gap-2">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-on-surface-var" aria-hidden="true" />
             <div className="min-w-0">
-              <p className="text-[0.875rem] text-on-surface">Editing this deck loses formatting</p>
-              <p className="mt-1 text-[0.8125rem] text-on-surface-var">
+              <p data-type="body-m" className="text-on-surface">Editing this deck loses formatting</p>
+              <p data-type="body-s" className="mt-1 text-on-surface-var">
                 It contains things this editor’s deck model cannot hold. Saving re-creates
                 the file, so they will not be in the saved copy. The version you have now is
                 kept and can be restored from Details › Versions.
@@ -226,7 +226,7 @@ export function SlideDeck({ slug, title, readOnly, onDirty }: DocumentEditorProp
           </Field>
         </div>
         <div className="ml-auto flex items-center gap-2 pb-1">
-          {dirty && <span className="text-[0.75rem] text-on-surface-low">Unsaved changes</span>}
+          {dirty && <span data-type="caption" className="text-on-surface-low">Unsaved changes</span>}
           <Button size="xs" variant="primary" shape="squircle" loading={saving}
             disabled={!editing || !dirty}
             disabledReason={blockedReason || 'No changes to save yet.'}
@@ -306,8 +306,8 @@ export function SlideDeck({ slug, title, readOnly, onDirty }: DocumentEditorProp
 
           {/* the outline — text and DEPTH, which is what this atom is about */}
           <div>
-            <p className="text-[0.8125rem] font-medium text-on-surface">Bullets</p>
-            <p className="mt-0.5 text-[0.75rem] text-on-surface-low">
+            <p data-type="label-s" className="fw-500 text-on-surface">Bullets</p>
+            <p data-type="caption" className="mt-0.5 text-on-surface-low">
               A bullet’s level is its indent depth in the saved deck — choose it here rather
               than typing dashes.
             </p>
@@ -357,7 +357,7 @@ export function SlideDeck({ slug, title, readOnly, onDirty }: DocumentEditorProp
           </Field>
 
           {/* Geometry: preserved, explained, releasable — never authored here. */}
-          <div className="rounded-md border border-outline/40 p-m text-[0.75rem] text-on-surface-var">
+          <div data-type="caption" className="rounded-md border border-outline/40 p-m text-on-surface-var">
             {placed ? (
               <>
                 <p className="text-on-surface">This slide’s shapes were moved out of their layout’s positions.</p>
@@ -378,7 +378,7 @@ export function SlideDeck({ slug, title, readOnly, onDirty }: DocumentEditorProp
             )}
           </div>
 
-          <p className="text-[0.75rem] text-on-surface-low">
+          <p data-type="caption" className="text-on-surface-low">
             Pictures, tables, charts and per-character formatting are listed above if this
             deck has any; they are not carried through a save.
           </p>

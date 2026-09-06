@@ -137,7 +137,8 @@ export function DegradedChip() {
   return (
     <div className="relative">
       <button ref={triggerRef} type="button" onClick={() => setOpen((o) => !o)}
-        className={`flex min-h-6 items-center gap-1.5 rounded-pill py-1 text-[0.75rem] transition-colors hover:brightness-110 ${isMobile ? 'px-1.5' : 'px-2.5'}`}
+        data-type="caption"
+        className={`flex min-h-6 items-center gap-1.5 rounded-pill py-1 transition-colors hover:brightness-110 ${isMobile ? 'px-1.5' : 'px-2.5'}`}
         // 16%, like every other warn-toned chip in the app (ToolInspector's "needs approval",
         // bento's warn tile). This chip was the ONLY 20% site, and that extra 4% is what put
         // warn ink on a warn-hued tint under AA: axe measured it FAILING at 20% and PASSING at
@@ -169,14 +170,14 @@ export function DegradedChip() {
           <div role="dialog" aria-label="Degraded surfaces"
             className="absolute right-0 z-50 mt-1.5 w-80 rounded-xl bg-surface-container p-3 shadow-lg"
             style={{ border: '1px solid var(--color-outline-variant)' }}>
-            <div className="mb-2 flex items-center gap-1.5 text-on-surface text-[0.8125rem]" style={{ color: 'var(--color-warn)' }}>
+            <div data-type="body-s" className="mb-2 flex items-center gap-1.5 text-on-surface" style={{ color: 'var(--color-warn)' }}>
               <CloudOff size={14} /> {unknown ? 'Could not read the check' : 'Running without a model'}
             </div>
             {/* An unknown state has no rows to list, so the popover says what it does not know rather
                 than opening empty. It deliberately does NOT claim a fault: the surfaces may all be
                 fine, and asserting a problem we have not measured is the same error in reverse. */}
             {unknown && (
-              <div className="text-on-surface-low text-[0.8125rem]">
+              <div data-type="body-s" className="text-on-surface-low">
                 The degraded-surfaces check is not answering, so this chip cannot say whether any
                 surface is running without a model. It will clear itself when the check responds.
               </div>
@@ -215,9 +216,11 @@ export function DegradedChip() {
               {down.map((s) => (
                 <div key={s.surface} className="border-b border-outline-variant/30 pb-2 last:border-0 last:pb-0">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-on-surface text-[0.8125rem]">{label(s.surface)}</span>
+                    <span data-type="body-s" className="text-on-surface">{label(s.surface)}</span>
                     {s.backlog > 0 && (
-                      <span className="shrink-0 text-on-surface-low text-[0.6875rem]">{s.backlog} queued</span>
+                      // 0.6875rem sat under the caption floor tokens.css documents;
+                      // the caption role is that drift's designated on-ramp home.
+                      <span data-type="caption" className="shrink-0 text-on-surface-low">{s.backlog} queued</span>
                     )}
                   </div>
                   {/* WHAT IS MISSING, beside what still works. `floor` is the reassurance ("these
@@ -234,11 +237,11 @@ export function DegradedChip() {
                       that crashes the shell corner because a field is absent is a worse failure
                       than the one being fixed. */}
                   {(s.use_cases ?? []).length > 0 && (
-                    <div className="mt-0.5 text-on-surface-var text-[0.75rem]">
+                    <div data-type="caption" className="mt-0.5 text-on-surface-var">
                       No model for {(s.use_cases ?? []).map(useCaseLabel).join(', ')}
                     </div>
                   )}
-                  <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{s.floor}</div>
+                  <div data-type="caption" className="mt-0.5 text-on-surface-low">{s.floor}</div>
                 </div>
               ))}
             </div>

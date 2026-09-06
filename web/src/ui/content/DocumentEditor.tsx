@@ -68,7 +68,7 @@ const KIND_LABEL: Record<DocumentBlock['kind'], string> = {
  *  the save confirmation, from one place, so the two can never drift apart. */
 function LossList({ loss }: { loss: DocumentLossReport }) {
   return (
-    <div className="text-[0.8125rem]">
+    <div data-type="body-s">
       <p className="text-on-surface">{loss.summary}</p>
       <ul className="mt-2 space-y-1 text-on-surface-var">
         {loss.items.slice(0, 12).map((item, i) => (
@@ -159,12 +159,12 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
         title: `Save and re-render “${title}”?`,
         body: (
           <div className="space-y-2">
-            <p className="text-[0.8125rem] text-on-surface">
+            <p data-type="body-s" className="text-on-surface">
               Saving re-creates the file from the structure below, so the constructs
               PersonalClaw cannot represent will not be in the saved copy:
             </p>
             <LossList loss={loaded.loss} />
-            <p className="text-[0.8125rem] text-on-surface-var">
+            <p data-type="body-s" className="text-on-surface-var">
               Version {loaded.version} is kept — you can restore it from Details › Versions
               at any time.
             </p>
@@ -216,8 +216,8 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
           <div className="flex items-start gap-2">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-on-surface-var" aria-hidden="true" />
             <div className="min-w-0">
-              <p className="text-[0.875rem] text-on-surface">Editing this document loses formatting</p>
-              <p className="mt-1 text-[0.8125rem] text-on-surface-var">
+              <p data-type="body-m" className="text-on-surface">Editing this document loses formatting</p>
+              <p data-type="body-s" className="mt-1 text-on-surface-var">
                 It contains things this editor’s document model cannot hold. Saving re-creates
                 the file, so they will not be in the saved copy. The version you have now is
                 kept and can be restored from Details › Versions.
@@ -244,11 +244,11 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
             <Icon size={13} aria-hidden="true" />
           </Button>
         ))}
-        <span className="ml-1 text-[0.75rem] text-on-surface-low">
+        <span data-type="caption" className="ml-1 text-on-surface-low">
           {sel ? 'Formats the selected text' : 'Select text in a paragraph to format it'}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          {dirty && <span className="text-[0.75rem] text-on-surface-low">Unsaved changes</span>}
+          {dirty && <span data-type="caption" className="text-on-surface-low">Unsaved changes</span>}
           <Button size="xs" variant="primary" shape="squircle" loading={saving}
             disabled={!editing || !dirty}
             disabledReason={blockedReason || 'No changes to save yet.'}
@@ -285,7 +285,7 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
             const label = KIND_LABEL[block.kind] ?? block.kind
             if (!isTextBlock(block)) {
               return (
-                <div key={index} className="rounded-lg border border-outline/40 bg-surface-container/40 px-3 py-2 text-[0.8125rem] text-on-surface-var">
+                <div key={index} data-type="body-s" className="rounded-lg border border-outline/40 bg-surface-container/40 px-3 py-2 text-on-surface-var">
                   {label} — kept exactly as it was parsed. This editor does not change it.
                 </div>
               )
@@ -295,7 +295,7 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
             return (
               <div key={index}>
                 <div className="flex items-center justify-between gap-2">
-                  <label htmlFor={fieldId} className="block text-[0.75rem] uppercase tracking-wide text-on-surface-low">
+                  <label htmlFor={fieldId} data-type="caption" className="block uppercase tracking-wide text-on-surface-low">
                     {label}{block.kind === 'heading' ? ` ${block.level}` : ''}
                   </label>
                   <Button size="xs" variant="ghost" shape="squircle"
@@ -308,7 +308,8 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
                 </div>
                 <textarea id={fieldId} rows={block.kind === 'paragraph' ? 3 : 2}
                   ref={(el) => { if (el) fields.current.set(index, el); else fields.current.delete(index) }}
-                  className="mt-1 w-full resize-y rounded-lg border border-outline/40 bg-surface px-3 py-2 text-[0.875rem] text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60"
+                  data-type="body-m"
+                  className="mt-1 w-full resize-y rounded-lg border border-outline/40 bg-surface px-3 py-2 text-on-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60"
                   value={blockText(block)}
                   readOnly={!editing}
                   disabled={!editing}
@@ -329,7 +330,7 @@ export function DocumentEditor({ slug, title, readOnly, onDirty }: DocumentEdito
             )
           })}
           {nonText > 0 && (
-            <p className="text-[0.75rem] text-on-surface-low">
+            <p data-type="caption" className="text-on-surface-low">
               {nonText} block{nonText === 1 ? '' : 's'} of this document (tables, images, page
               breaks) are shown above but not editable here — they are written back unchanged.
             </p>

@@ -50,7 +50,8 @@ export function StaleNotice({ stale, what, className, announce = true }: {
       // labelled" survives a wording change. Present whether or not this instance announces.
       data-stale="true"
       role={announce ? 'status' : undefined}
-      className={`inline-flex items-center gap-1 text-on-surface-low text-[0.75rem] ${className ?? ''}`}
+      data-type="caption"
+      className={`inline-flex items-center gap-1 text-on-surface-low ${className ?? ''}`}
     >
       <RefreshCw size={11} className="animate-pulse" aria-hidden />
       Updating {what}…

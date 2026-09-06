@@ -149,7 +149,7 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
               <input ref={inputRef} value={q} onChange={(e) => { setQ(e.target.value); setActive(0) }} onKeyDown={onKey}
                 role="combobox" aria-expanded aria-controls={listId} aria-autocomplete="list"
                 aria-activedescendant={flat[active] ? optId(active) : undefined}
-                placeholder="Search…" className="w-full h-8 rounded-md bg-surface pl-8 pr-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+                placeholder="Search…" data-type="body-s" className="w-full h-8 rounded-md bg-surface pl-8 pr-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
             </div>
             {/* `role="listbox"` only while it HOLDS options: a container that claims the role and
                 contains one line of prose is the exact lie `popupItemRoles` was written about. When the
@@ -157,9 +157,9 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
                 sitting silently inside an empty listbox. */}
             <div id={listId} role={flat.length ? 'listbox' : undefined} tabIndex={-1}
               className="max-h-64 overflow-y-auto pb-1">
-              {filtered.length === 0 ? <div role="status" className="px-3 py-3 text-on-surface-low text-[0.8125rem]">{emptyText}</div> : groups.map(([group, opts]) => (
+              {filtered.length === 0 ? <div role="status" data-type="body-s" className="px-3 py-3 text-on-surface-low">{emptyText}</div> : groups.map(([group, opts]) => (
                 <div key={group} role={group ? 'group' : undefined} aria-label={group || undefined}>
-                  {group && <div className="px-3 pt-2 pb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{group}</div>}
+                  {group && <div data-type="caption" className="px-3 pt-2 pb-1 text-on-surface-low uppercase tracking-wide">{group}</div>}
                   {opts.map((o) => {
                     flatIdx++
                     const idx = flatIdx
@@ -189,8 +189,8 @@ export function Combobox({ options, value, onChange, placeholder = 'Select…', 
                             className="absolute inset-x-1 inset-y-0.5 rounded-md bg-primary/15" />
                         )}
                         <span className="relative flex-1 min-w-0">
-                          <span className="block truncate text-on-surface text-[0.8125rem]">{o.label}</span>
-                          {o.description && <span className="block truncate text-on-surface-low text-[0.75rem]">{o.description}</span>}
+                          <span data-type="body-s" className="block truncate text-on-surface">{o.label}</span>
+                          {o.description && <span data-type="caption" className="block truncate text-on-surface-low">{o.description}</span>}
                         </span>
                         {sel && <Check size={14} className="relative shrink-0 text-primary" />}
                       </button>

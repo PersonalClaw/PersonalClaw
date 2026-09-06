@@ -102,10 +102,10 @@ export function SystemWidget() {
               <>
                 <div className="mb-3 flex items-center gap-2">
                   <Server size={14} className="text-on-surface-low" />
-                  <span className="flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(600)}>{sys.hostname}</span>
+                  <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(600)}>{sys.hostname}</span>
                   {/* Gateway version lives here (not on the dashboard) — the shell's
                       connectivity card is the single home for gateway identity. */}
-                  <span className="text-on-surface-low text-[0.75rem]">{sys.os.split(' ')[0]} · {sys.arch?.split(' ')[0]}{sys.version ? ` · v${sys.version}` : ''}</span>
+                  <span data-type="caption" className="text-on-surface-low">{sys.os.split(' ')[0]} · {sys.arch?.split(' ')[0]}{sys.version ? ` · v${sys.version}` : ''}</span>
                 </div>
 
                 <Bar icon={Cpu} label="CPU" pct={cpu} detail={`${sys.cpu_count} cores · load ${sys.load_1m.toFixed(1)}`} />
@@ -114,7 +114,7 @@ export function SystemWidget() {
                   <Bar icon={HardDrive} label="Disk" pct={((sys.disk_total_gb - sys.disk_free_gb) / sys.disk_total_gb) * 100} detail={`${sys.disk_free_gb.toFixed(0)} GB free`} />
                 )}
 
-                <div className="mt-3 flex flex-col gap-1.5 text-[0.75rem]">
+                <div data-type="caption" className="mt-3 flex flex-col gap-1.5">
                   {sys.gpu_present && sys.gpu_model && <Kv icon={Zap} label="GPU" value={sys.gpu_model} />}
                   {(sys.net_rx_kbs != null || sys.net_tx_kbs != null) && <Kv icon={Network} label="Network" value={`↓${fmtKbs(sys.net_rx_kbs)}  ↑${fmtKbs(sys.net_tx_kbs)}`} />}
                   <Kv icon={Boxes} label="Processes" value={`${sys.child_processes ?? 0} child · ${sys.mcp_total ?? 0} MCP`} />
@@ -127,7 +127,7 @@ export function SystemWidget() {
               // still give the click a useful result — the connectivity status itself.
               <div className="flex items-center gap-2">
                 <span className="size-2 shrink-0 rounded-full" style={{ background: dotColor }} />
-                <span className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{statusLabel}</span>
+                <span data-type="label-s" className="text-on-surface" style={fvs(600)}>{statusLabel}</span>
               </div>
             )}
 
@@ -136,7 +136,7 @@ export function SystemWidget() {
             <RestartControls onFired={() => setOpen(false)} />
 
             {auth && (
-              <div className="mt-3 flex items-center gap-2 border-t border-outline-variant/30 pt-2.5 text-[0.75rem]">
+              <div data-type="caption" className="mt-3 flex items-center gap-2 border-t border-outline-variant/30 pt-2.5">
                 <ShieldCheck size={13} style={{ color: auth.valid ? 'var(--color-success)' : 'var(--color-error)' }} className="shrink-0" />
                 <span className="text-on-surface-var">{authLabel(auth)}</span>
                 {auth.minutes_remaining != null && <span className="ml-auto text-on-surface-low tabular-nums">{fmtMins(auth.minutes_remaining)}</span>}
@@ -188,11 +188,11 @@ function RunningAgents({ open }: { open: boolean }) {
   if (failed && !agents) {
     return (
       <div className="mt-3 border-t border-outline-variant/30 pt-2.5">
-        <div className="mb-1.5 flex items-center gap-1.5 text-[0.75rem]">
+        <div data-type="caption" className="mb-1.5 flex items-center gap-1.5">
           <Bot size={12} className="text-on-surface-low" />
           <span className="text-on-surface-var" style={fvs(600)}>Background agents</span>
         </div>
-        <div className="px-2 py-1 text-on-surface-low text-[0.75rem] italic">
+        <div data-type="caption" className="px-2 py-1 text-on-surface-low italic">
           Couldn’t read the background agents — retrying every few seconds.
         </div>
       </div>
@@ -229,7 +229,7 @@ function RunningAgents({ open }: { open: boolean }) {
   }
   return (
     <div className="mt-3 border-t border-outline-variant/30 pt-2.5">
-      <div className="mb-1.5 flex items-center gap-1.5 text-[0.75rem]">
+      <div data-type="caption" className="mb-1.5 flex items-center gap-1.5">
         <Bot size={12} className="text-on-surface-low" />
         <span className="text-on-surface-var" style={fvs(600)}>Background agents</span>
         {/* When the poll is failing we are showing the LAST KNOWN list, so the counts must not read as
@@ -245,7 +245,8 @@ function RunningAgents({ open }: { open: boolean }) {
           {running.map((a) => (
             <motion.div key={a.id} layout variants={listItemEnter}
               exit={{ opacity: 0, height: 0, marginTop: 0, transition: spring.spatialFast }}
-              className="flex items-center gap-1.5 rounded-md bg-surface-high px-2 py-1 text-[0.75rem]">
+              data-type="caption"
+              className="flex items-center gap-1.5 rounded-md bg-surface-high px-2 py-1">
               <Loader2 size={10} className="shrink-0 animate-spin text-primary" />
               <span className="min-w-0 flex-1 truncate text-on-surface-var" title={a.task}>{firstLine(a.task)}</span>
               {a.parent && <span className="shrink-0 text-on-surface-low/70">{a.parent.replace('cron:', '⏱')}</span>}
@@ -254,11 +255,11 @@ function RunningAgents({ open }: { open: boolean }) {
             </motion.div>
           ))}
         </AnimatePresence>
-        {running.length === 0 && <div className="px-2 py-1 text-on-surface-low text-[0.75rem] italic">No agents running now.</div>}
+        {running.length === 0 && <div data-type="caption" className="px-2 py-1 text-on-surface-low italic">No agents running now.</div>}
       </motion.div>
       {doneCount > 0 && (
-        <button type="button" onClick={clear} disabled={busy === '__clear'}
-          className="mt-1.5 text-on-surface-low text-[0.75rem] hover:text-on-surface disabled:opacity-50">Clear {doneCount} finished</button>
+        <button type="button" onClick={clear} disabled={busy === '__clear'} data-type="caption"
+          className="mt-1.5 text-on-surface-low hover:text-on-surface disabled:opacity-50">Clear {doneCount} finished</button>
       )}
     </div>
   )
@@ -316,20 +317,20 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
     <div className="mt-3 border-t border-outline-variant/30 pt-2.5">
       {!pending ? (
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => ask('restart')}
-            className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var text-[0.75rem] hover:bg-surface-highest hover:text-on-surface"
+          <button type="button" onClick={() => ask('restart')} data-type="caption"
+            className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var hover:bg-surface-highest hover:text-on-surface"
             style={{ borderRadius: 'var(--radius-md)' }}>
             <RotateCw size={12} /> Restart
           </button>
-          <button type="button" onClick={() => ask('update')}
-            className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var text-[0.75rem] hover:bg-surface-highest hover:text-on-surface"
+          <button type="button" onClick={() => ask('update')} data-type="caption"
+            className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var hover:bg-surface-highest hover:text-on-surface"
             style={{ borderRadius: 'var(--radius-md)' }}>
             <DownloadCloud size={12} /> Update &amp; Restart
           </button>
         </div>
       ) : (
         <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} transition={spring.spatialFast}>
-          <div className="flex items-start gap-1.5 text-[0.75rem] text-on-surface-var">
+          <div data-type="caption" className="flex items-start gap-1.5 text-on-surface-var">
             {warn && <AlertTriangle size={13} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} />}
             <span>
               {pending === 'update'
@@ -342,13 +343,13 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
             </span>
           </div>
           <div className="mt-2 flex items-center gap-2">
-            <button type="button" onClick={confirm}
-              className="rounded-lg px-2 py-1 text-[0.75rem] text-on-primary"
+            <button type="button" onClick={confirm} data-type="caption"
+              className="rounded-lg px-2 py-1 text-on-primary"
               style={{ background: warn ? 'var(--color-warning)' : 'var(--color-primary)', borderRadius: 'var(--radius-md)' }}>
               {pending === 'update' ? 'Update & Restart' : 'Restart'}
             </button>
-            <button type="button" onClick={cancel}
-              className="rounded-lg px-2 py-1 text-on-surface-low text-[0.75rem] hover:text-on-surface">Cancel</button>
+            <button type="button" onClick={cancel} data-type="caption"
+              className="rounded-lg px-2 py-1 text-on-surface-low hover:text-on-surface">Cancel</button>
           </div>
         </motion.div>
       )}
@@ -367,7 +368,7 @@ function Bar({ icon: Icon, label, pct, detail }: { icon: typeof Cpu; label: stri
   const tone = p > 90 ? 'var(--color-error)' : p > 70 ? 'var(--color-warning)' : 'var(--color-primary)'
   return (
     <div className="mb-2">
-      <div className="flex items-center gap-1.5 text-[0.75rem]">
+      <div data-type="caption" className="flex items-center gap-1.5">
         <Icon size={11} className="text-on-surface-low" />
         <span className="text-on-surface-var">{label}</span>
         <span className="ml-auto text-on-surface-low tabular-nums">{Math.round(p)}%</span>
@@ -379,7 +380,7 @@ function Bar({ icon: Icon, label, pct, detail }: { icon: typeof Cpu; label: stri
       <div className="mt-1 flex items-center gap-2">
         <Meter size="thin" className="flex-1" label={`${label} usage`} pct={p} tone={tone} />
       </div>
-      <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{detail}</div>
+      <div data-type="caption" className="mt-0.5 text-on-surface-low">{detail}</div>
     </div>
   )
 }

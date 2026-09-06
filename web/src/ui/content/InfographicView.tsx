@@ -47,7 +47,7 @@ export function InfographicView({ content, mode }: PreviewProps) {
 
   if (failed) {
     return (
-      <pre className="m-l overflow-auto rounded-lg bg-surface-low px-m py-3 font-mono text-on-surface-low text-[0.8125rem] leading-relaxed whitespace-pre-wrap">{content}</pre>
+      <pre data-type="body-s" className="m-l overflow-auto rounded-lg bg-surface-low px-m py-3 font-mono text-on-surface-low leading-relaxed whitespace-pre-wrap">{content}</pre>
     )
   }
   return (

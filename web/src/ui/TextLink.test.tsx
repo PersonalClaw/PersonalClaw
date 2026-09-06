@@ -59,16 +59,14 @@ describe('TextLink', () => {
     }
   })
 
-  it('maps the size scale to the house type sizes', () => {
+  it('maps the size scale to the house type roles', () => {
     // each render adds to the shared document body, so scope to its own container
     const btnOf = (ui: Parameters<typeof render>[0]) =>
       render(ui).container.querySelector('button') as HTMLElement
-    expect(classOf(btnOf(<TextLink size="xs">Clear</TextLink>))).toContain('text-[0.75rem]')
-    expect(classOf(btnOf(<TextLink size="sm">Show more</TextLink>))).toContain('text-[0.8125rem]')
-    // inherit (the default) adds no size class — it takes the surrounding text size
-    const have = classOf(btnOf(<TextLink>inline</TextLink>))
-    expect(have).not.toContain('text-[0.75rem]')
-    expect(have).not.toContain('text-[0.8125rem]')
+    expect(btnOf(<TextLink size="xs">Clear</TextLink>).getAttribute('data-type')).toBe('caption')
+    expect(btnOf(<TextLink size="sm">Show more</TextLink>).getAttribute('data-type')).toBe('body-s')
+    // inherit (the default) claims no role — it takes the surrounding text size
+    expect(btnOf(<TextLink>inline</TextLink>).getAttribute('data-type')).toBeNull()
   })
 
   it('forwards disabled + title, and merges an extra className without dropping base chrome', () => {
