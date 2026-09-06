@@ -620,6 +620,25 @@ PR validation workflow: manifest fetch+parse (core `apps/manifest.py`), repo liv
   isolated `PERSONALCLAW_HOME`, all four install + register. **V3 fork-simulate PASS** —
   `channel-null` cloned → renamed to `my-null-channel` → installed through the same scanner gate.
 
+## Exemplar list — the first-party product-app suite
+
+Per the §-header note above, the nine first-party product apps in
+[PRODUCT-EXPERIENCE-PARITY](PRODUCT-EXPERIENCE-PARITY.md) (`PEP-12`..`PEP-20`) ARE this plan's
+exemplars, recorded here as they ship. They prove the platform on real work rather than on the four
+teaching bundles of `ET-6`, which stay listed above as the minimal per-type references.
+
+- **2026-09-06 — `design-critique` (`PEP-14`, suite 3/9) — a `tool` exemplar for the ANALYSIS
+  shape.** PersonalClawApps PR #77. What it exemplifies that `ET-6`'s four do not: an app whose whole
+  value is a deterministic rule engine over untrusted input, reaching the network only through
+  `sdk.net.fetch` with `egress_policy_for(CONNECTOR)` (so the operator's Security → Network posture
+  binds an app the same way it binds core) and taking its rendered reading from the shipped
+  `sdk.net.web_fetch(render=True)` path rather than driving a browser of its own. It also
+  demonstrates the honest-ceiling pattern the guide asks for in prose: the app declares
+  `storage: false` with a test that greps its own source to keep that true, refuses a
+  decompression bomb on the image HEADER before decoding, and returns the judgement it cannot
+  measure as an explicit rubric instead of inventing findings. Not yet install-validated in the
+  real UI — see the atom's own note.
+
 ## Execution log — `ET-9` / `ET-10` (owner-provisioning atoms minted) — 2026-09-03
 
 - **2026-09-03 — MINTED (`ET-9`): create the github.com/PersonalClaw/registry public repo.** Carves
