@@ -352,7 +352,7 @@ describe('a panel that owns its h1 does not skip a level', () => {
   it('the premises hold: PanelHeader is an h1 and Section is an h2', () => {
     const ui = readFileSync(join(process.cwd(), 'src/pages/settings/settingsUI.tsx'), 'utf8')
     expect(ui, 'PanelHeader must render the panel title as h1').toMatch(/<h1 className="text-on-surface"/)
-    expect(ui, 'Section must render its heading as h2').toMatch(/<h2 className=\{`mb-s text-on-surface/)
+    expect(ui, 'Section must render its heading as h2').toMatch(/<h2 data-type="title-m" className=\{`mb-s text-on-surface/)
   })
 
   it('finds the population (not vacuously green)', () => {

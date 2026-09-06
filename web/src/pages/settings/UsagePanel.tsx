@@ -164,7 +164,7 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
       {/* Honest-partial marker: a period that includes any unpriced model can't
           present a complete dollar figure. */}
       {unpricedModels.length > 0 && (
-        <div className="mb-l rounded-lg bg-surface-container px-3 py-2 text-on-surface-var text-[0.8125rem]"
+        <div data-type="body-s" className="mb-l rounded-lg bg-surface-container px-3 py-2 text-on-surface-var"
           role="status">
           <span className="text-warning">Partial</span> — {unpricedModels.length} unpriced{' '}
           {unpricedModels.length === 1 ? 'model' : 'models'} (no price row); their tokens count but
@@ -180,7 +180,7 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
       {/* Cap context — the first time the Guardrails cap input has a corresponding actual. */}
       {dayCap > 0 && (
         <Section title="Daily budget">
-          <div className="rounded-lg bg-surface-container px-3 py-2.5 text-[0.8125rem] text-on-surface-var">
+          <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var">
             <Coins size={13} className="mr-1.5 inline text-primary" />
             Spent <span className="tabular-nums text-on-surface">{fmtUsd(todayTotals?.cost_usd ?? 0)}</span>{' '}
             of your <span className="tabular-nums text-on-surface">${dayCap.toFixed(2)}</span> daily cap
@@ -198,7 +198,7 @@ export function UsagePanel({ query, setQuery }: Pick<RouteProps, 'query' | 'setQ
       </Section>
 
       <Section title="Cache savings">
-        <div className="rounded-lg bg-surface-container px-3 py-2.5 text-[0.8125rem] text-on-surface-var">
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-var">
           {cacheTokens > 0
             ? <>Reused <span className="tabular-nums text-on-surface">{fmtTokens(cacheTokens)}</span> cached tokens this period.</>
             : 'No prompt-cache activity yet — cached tokens appear here once a provider reports them.'}
@@ -256,12 +256,12 @@ function UsageTable({ rows, keyField, empty }: {
 }) {
   const total = rows.reduce((s, r) => s + (r.cost_usd || 0), 0)
   if (rows.length === 0) {
-    return <div className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low text-[0.8125rem]">{empty}</div>
+    return <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low">{empty}</div>
   }
   return (
     <Table
       sized={false}
-      className="border-collapse text-[0.8125rem]"
+      data-type="body-s" className="border-collapse"
       caption={`Token usage and cost per ${keyField === 'model' ? 'model' : 'source'}`}>
       <THead>
         <tr>
@@ -322,7 +322,7 @@ function DailySpendChart({ series }: { series: UsageFold['series'] }) {
           </div>
         ))}
       </div>
-      <div className="mt-1 flex justify-between text-on-surface-low text-[0.75rem] tabular-nums">
+      <div data-type="caption" className="mt-1 flex justify-between text-on-surface-low tabular-nums">
         <span>{series[0]?.date}</span>
         <span>{series[series.length - 1]?.date}</span>
       </div>
@@ -346,7 +346,7 @@ function ByDayAndPurposeSection({ fold, days }: { fold: UsageFold | null; days: 
   const apps = Object.keys(fold.app_sources ?? {})
   const window = days === 1 ? 'today' : `the last ${days} days`
   const excluded = uncounted?.calls > 0 && (
-    <div className="text-on-surface-var text-[0.8125rem]" role="status">
+    <div data-type="body-s" className="text-on-surface-var" role="status">
       <span className="text-on-surface">Not included:</span>{' '}
       {uncounted.calls.toLocaleString()} unattended model{' '}
       {uncounted.calls === 1 ? 'call' : 'calls'} (~{fmtUsd(uncounted.total_dollars_est)} across the
@@ -357,7 +357,7 @@ function ByDayAndPurposeSection({ fold, days }: { fold: UsageFold | null; days: 
   if (total.calls === 0) {
     return (
       <Section title="By day and purpose" hint={`How ${window} broke down.`}>
-        <div className="flex flex-col gap-s rounded-lg bg-surface-container px-3 py-2.5 text-[0.8125rem] text-on-surface-low">
+        <div data-type="body-s" className="flex flex-col gap-s rounded-lg bg-surface-container px-3 py-2.5 text-on-surface-low">
           <span>No turns recorded {window}.</span>
           {excluded}
         </div>
@@ -372,7 +372,7 @@ function ByDayAndPurposeSection({ fold, days }: { fold: UsageFold | null; days: 
             the same three numbers for the same window (driving the page is what made the
             duplication obvious). The local share is the one headline figure the tiles omit. */}
         {total.local_calls > 0 && (
-          <div className="text-[0.8125rem] text-on-surface-var">
+          <div data-type="body-s" className="text-on-surface-var">
             <span className="text-on-surface tabular-nums">
               {Math.round((total.local_calls / total.calls) * 100)}%
             </span>{' '}
@@ -394,20 +394,20 @@ function ByDayAndPurposeSection({ fold, days }: { fold: UsageFold | null; days: 
         </div>
 
         {apps.length > 0 && (
-          <div className="text-on-surface-var text-[0.8125rem]">
+          <div data-type="body-s" className="text-on-surface-var">
             App spend came from {apps.join(', ')}.
           </div>
         )}
 
         {!total.priced && (
-          <div className="text-on-surface-var text-[0.8125rem]" role="status">
+          <div data-type="body-s" className="text-on-surface-var" role="status">
             <span className="text-warning">Floor</span> — {total.unpriced_calls.toLocaleString()}{' '}
             {total.unpriced_calls === 1 ? 'turn ran' : 'turns ran'} on a model with no price row, so
             their tokens count but their cost does not. Real spend is higher than the figure above.
           </div>
         )}
         {excluded}
-        <p className="text-on-surface-low text-[0.75rem]">
+        <p data-type="caption" className="text-on-surface-low">
           Every figure here is prefixed “~” because it is computed from the price table, not
           reported by the provider{fold.estimated_share < 1
             ? ` (${Math.round(fold.estimated_share * 100)}% of this total is estimated)`

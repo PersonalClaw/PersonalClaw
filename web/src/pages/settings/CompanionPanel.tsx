@@ -151,7 +151,7 @@ export function CompanionPanel() {
               one vocabulary, so "on but inert" can never read here as "on". */}
           {discovery ? (
             <Row label="Status" hint={discovery.detail}>
-              <span className={`inline-flex items-center gap-1.5 text-[0.8125rem] ${discovery.advertising ? 'text-ok' : 'text-on-surface-low'}`}>
+              <span data-type="body-s" className={`inline-flex items-center gap-1.5 ${discovery.advertising ? 'text-ok' : 'text-on-surface-low'}`}>
                 {discovery.advertising ? <Radio size={14} /> : <RadioTower size={14} />}
                 {discovery.advertising ? 'Advertising' : 'Not advertising'}
               </span>
@@ -167,7 +167,7 @@ export function CompanionPanel() {
       {discovery?.advertising ? (
         <Section title="What your network is told" hint="The exact record this gateway broadcasts. It carries no token, no session and no content.">
           <div className="rounded-lg bg-surface-container px-4 py-3">
-            <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-[0.8125rem]">
+            <dl data-type="body-s" className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1">
               <dt className="text-on-surface-low">service</dt>
               <dd className="font-mono break-all">{discovery.service_type}</dd>
               {discovery.addresses.map((addr) => (
@@ -231,7 +231,7 @@ export function CompanionPanel() {
               hint={pushStatus.vapid_ready
                 ? 'Ready — subscribed devices can receive pushes.'
                 : 'Missing — run `personalclaw push init` on the gateway host, then reload. Until then, Web push sends nothing.'}>
-              <span className={`inline-flex items-center gap-1.5 text-[0.8125rem] ${pushStatus.vapid_ready ? 'text-ok' : 'text-warn'}`}>
+              <span data-type="body-s" className={`inline-flex items-center gap-1.5 ${pushStatus.vapid_ready ? 'text-ok' : 'text-warn'}`}>
                 {pushStatus.vapid_ready ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
                 {pushStatus.vapid_ready ? 'Ready' : 'Not set up'}
               </span>
@@ -271,7 +271,7 @@ export function CompanionPanel() {
             hint={swBlocked
               ? `Unavailable — ${swBlocked}.`
               : 'Available — the app shell is cached, and your browser can install this page as an app.'}>
-            <span className={`inline-flex items-center gap-1.5 text-[0.8125rem] ${swBlocked ? 'text-warn' : 'text-ok'}`}>
+            <span data-type="body-s" className={`inline-flex items-center gap-1.5 ${swBlocked ? 'text-warn' : 'text-ok'}`}>
               {swBlocked ? <ShieldAlert size={14} /> : <ShieldCheck size={14} />}
               {swBlocked ? 'Unavailable' : 'Available'}
             </span>

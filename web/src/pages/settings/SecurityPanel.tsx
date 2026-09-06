@@ -67,8 +67,8 @@ export function SecurityPanel() {
               </span>
               <div className="min-w-0">
                 <div className="text-on-surface text-[1.25rem] tabular-nums" style={fvs(600)}>{c.value}</div>
-                <div className="text-on-surface text-[0.8125rem]">{c.label}</div>
-                <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{c.hint}</div>
+                <div data-type="body-s" className="text-on-surface">{c.label}</div>
+                <div data-type="body-s" className="mt-0.5 text-on-surface-low">{c.hint}</div>
               </div>
             </div>
           ))}
@@ -173,14 +173,14 @@ function CredentialStoreEditor() {
             {inKeychain ? <KeyRound size={17} className="text-primary" /> : <Lock size={17} className="text-primary" />}
           </span>
           <div className="min-w-0">
-            <div className="text-on-surface text-[0.8125rem]" style={fvs(600)}>
+            <div data-type="label-s" className="text-on-surface" style={fvs(600)}>
               {inKeychain ? 'OS keychain' : '.env at mode 0600'}
             </div>
-            <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">
+            <div data-type="body-s" className="mt-0.5 text-on-surface-low">
               {cs.keychain_keys} in the keychain · {cs.pending} still in .env
             </div>
             {cs.blocked && cs.requested === 'keychain' && (
-              <div className="mt-1 text-error text-[0.8125rem]">
+              <div data-type="body-s" className="mt-1 text-error">
                 The keychain was requested but no usable OS keyring backend answered on this
                 machine. Credentials stay in .env at mode 0600.
               </div>
@@ -197,8 +197,8 @@ function CredentialStoreEditor() {
               finally { setBusy(false) }
             }} />
           <span className="min-w-0">
-            <span className="text-on-surface text-[0.8125rem]">Store credentials in the OS keychain</span>
-            <span className="block text-on-surface-low text-[0.8125rem]">Changes where NEW credentials are written. Secrets already in .env stay readable and stay put until you move them below.</span>
+            <span data-type="body-s" className="text-on-surface">Store credentials in the OS keychain</span>
+            <span data-type="body-s" className="block text-on-surface-low">Changes where NEW credentials are written. Secrets already in .env stay readable and stay put until you move them below.</span>
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -216,12 +216,12 @@ function CredentialStoreEditor() {
             </Button>
           )}
           {cs.pending === 0 && !cs.blocked && (
-            <span className="text-on-surface-low text-[0.8125rem]">
+            <span data-type="body-s" className="text-on-surface-low">
               Nothing left in .env{cs.verification.checked > 0 ? ` — ${cs.verification.checked} verified in the keychain` : ''}.
             </span>
           )}
         </div>
-        {note && <div className="text-on-surface-low text-[0.8125rem]" role="status">{note}</div>}
+        {note && <div data-type="body-s" className="text-on-surface-low" role="status">{note}</div>}
         {err && <FieldError>{err}</FieldError>}
       </div>
     </Section>
@@ -291,8 +291,8 @@ function LoginItemRow({ label }: { label: string }) {
   return (
     <div className="flex items-start justify-between gap-3 rounded-lg bg-surface-container px-4 py-3">
       <div className="min-w-0">
-        <div className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{label}</div>
-        <div className={`mt-0.5 text-[0.8125rem] ${state.enabled ? 'text-success' : 'text-on-surface-low'}`}>
+        <div data-type="label-s" className="text-on-surface" style={fvs(600)}>{label}</div>
+        <div data-type="body-s" className={`mt-0.5 ${state.enabled ? 'text-success' : 'text-on-surface-low'}`}>
           {state.enabled
             ? 'On — PersonalClaw starts when you log in'
             : 'Off — PersonalClaw starts only when you open it'}
@@ -300,7 +300,7 @@ function LoginItemRow({ label }: { label: string }) {
         {/* `describes` names the exact registration this touches. A login item is a
             persistent change to the user's machine, so the sentence belongs BEFORE the
             flip, not in a confirmation after it. */}
-        <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{state.describes}</div>
+        <div data-type="body-s" className="mt-0.5 text-on-surface-low">{state.describes}</div>
         {err && <FieldError>{err}</FieldError>}
       </div>
       <div className="flex items-center gap-2">
@@ -377,8 +377,8 @@ function DesktopCapabilitiesPanel() {
               <MonitorOff size={17} className="text-on-surface-low" />
             </span>
             <div className="min-w-0">
-              <div className="text-on-surface text-[0.8125rem]" style={fvs(600)}>Desktop app not connected</div>
-              <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">
+              <div data-type="label-s" className="text-on-surface" style={fvs(600)}>Desktop app not connected</div>
+              <div data-type="body-s" className="mt-0.5 text-on-surface-low">
                 You are viewing this in a browser tab. Native capabilities — microphone, notifications, the menu-bar item — exist only while the PersonalClaw desktop app is running, so there is nothing to show or grant here.
               </div>
             </div>
@@ -397,10 +397,10 @@ function DesktopCapabilitiesPanel() {
             return (
               <div key={cap} className="flex items-start justify-between gap-3 rounded-lg bg-surface-container px-4 py-3">
                 <div className="min-w-0">
-                  <div className="text-on-surface text-[0.8125rem]" style={fvs(600)}>{label}</div>
-                  <div className={`mt-0.5 text-[0.8125rem] ${p.tone}`}>{p.label}</div>
+                  <div data-type="label-s" className="text-on-surface" style={fvs(600)}>{label}</div>
+                  <div data-type="body-s" className={`mt-0.5 ${p.tone}`}>{p.label}</div>
                   {state.reason && (
-                    <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{state.reason}</div>
+                    <div data-type="body-s" className="mt-0.5 text-on-surface-low">{state.reason}</div>
                   )}
                 </div>
                 {state.requestable && (
@@ -415,7 +415,7 @@ function DesktopCapabilitiesPanel() {
             )
           })}
           {ds.shell && (
-            <div className="text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="text-on-surface-low">
               Reported by the desktop app {ds.shell.version} on {ds.shell.platform}.
             </div>
           )}
@@ -459,8 +459,8 @@ function EgressPolicyEditor() {
             onChange={(e) => save({ ...eg, allow_private: e.target.checked })}
             className="mt-0.5 size-4 shrink-0 accent-primary" />
           <span className="min-w-0">
-            <span className="text-on-surface text-[0.8125rem]">Allow all private networks</span>
-            <span className="block text-on-surface-low text-[0.8125rem]">Permit egress to any private/LAN address, not just the allow-list. Only on a fully trusted network — this removes SSRF protection for the whole LAN.</span>
+            <span data-type="body-s" className="text-on-surface">Allow all private networks</span>
+            <span data-type="body-s" className="block text-on-surface-low">Permit egress to any private/LAN address, not just the allow-list. Only on a fully trusted network — this removes SSRF protection for the whole LAN.</span>
           </span>
         </label>
         {err && <FieldError>{err}</FieldError>}
@@ -511,12 +511,12 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
   }
   return (
     <div>
-      <div className="mb-1 flex items-center gap-1.5 text-on-surface text-[0.8125rem]"><Globe size={13} className="text-on-surface-low" /> {label}</div>
-      <div className="mb-2 text-on-surface-low text-[0.8125rem]">{hint}</div>
+      <div data-type="body-s" className="mb-1 flex items-center gap-1.5 text-on-surface"><Globe size={13} className="text-on-surface-low" /> {label}</div>
+      <div data-type="body-s" className="mb-2 text-on-surface-low">{hint}</div>
       <div className="flex flex-col gap-1.5">
         {hosts.map((h) => (
           <div key={h} className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
-            <code className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{h}</code>
+            <code data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{h}</code>
             <button type="button" disabled={disabled} onClick={() => onChange(hosts.filter((x) => x !== h))}
               className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface" aria-label={`Remove ${h}`}>
               <X size={15} />
@@ -534,10 +534,10 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
             onChange={(e) => { setDraft(e.target.value); if (refused) setRefused('') }}
             onKeyDown={(e) => { if (e.key === 'Enter') add() }}
             placeholder="e.g. nas.local"
-            className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary" />
-          <button type="button" onClick={add}
+            data-type="body-s" className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary" />
+          <button type="button" onClick={add} data-type="body-s"
             {...unavailableWhen(!draft.trim(), 'Enter a host first', { busy: disabled })}
-            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-on-primary text-[0.8125rem] disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-on-primary disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
             <Plus size={15} /> Add
           </button>
         </div>
@@ -562,11 +562,12 @@ function HostList({ label, hint, hosts, disabled, onChange }: {
  *  list below means. Both carry an explicit `aria-label`: `status`/`alert` do not take
  *  their name from content, so without one the a11y tree would announce nothing. */
 function BaselineState({ baseline: b }: { baseline: DenylistBaseline }) {
-  const chip = 'inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[0.75rem]'
+  // Metrics + chrome only — the type size rides `data-type="caption"` on each consumer.
+  const chip = 'inline-flex items-center gap-1.5 rounded-md px-2 py-0.5'
   const digest = <code className="tabular-nums" title={b.sha256}>{b.sha256.slice(0, 12)}…</code>
   if (b.verified) {
     return (
-      <span role="status" className={`${chip} bg-surface-container text-on-surface-low`}
+      <span role="status" data-type="caption" className={`${chip} bg-surface-container text-on-surface-low`}
         aria-label={`Baseline v${b.version} matches what shipped: ${b.count} patterns verified against the release sha256`}>
         <ShieldCheck size={13} className="text-primary" aria-hidden />
         <span>Baseline v{b.version} matches what shipped — {b.count} patterns, sha256 {digest}</span>
@@ -574,7 +575,7 @@ function BaselineState({ baseline: b }: { baseline: DenylistBaseline }) {
     )
   }
   return (
-    <span role="alert" className={`${chip} border border-danger/30 bg-danger/5 text-danger`}
+    <span role="alert" data-type="caption" className={`${chip} border border-danger/30 bg-danger/5 text-danger`}
       aria-label={`Baseline v${b.version} does not match what shipped: ${b.detail || 'the packaged file diverged'}. The ${b.count} verified patterns are still enforced.`}>
       <ShieldAlert size={13} aria-hidden />
       <span>Baseline v{b.version} does NOT match what shipped — {b.detail || 'the packaged file diverged'}; the {b.count} verified patterns are still enforced (release sha256 {digest})</span>
@@ -618,11 +619,11 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
     <Section title="Shell denylist" hint="Regexes matched against every command the agent runs. The packaged baseline is always enforced and read-only; your patterns are added to it, never subtracted from it.">
       <div className="flex flex-col gap-4">
         <div>
-          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-on-surface-low">
             <span className="inline-flex items-center gap-1.5"><Lock size={13} aria-hidden /> Baseline ({builtin.length}) — always enforced, not editable here</span>
             <BaselineState baseline={baseline} />
           </div>
-          <p className="mb-2 text-on-surface-low text-[0.8125rem]">
+          <p data-type="body-s" className="mb-2 text-on-surface-low">
             The baseline ships with PersonalClaw and is re-checked against the sha256
             recorded at release on every read, so nothing running inside the agent — the
             model included — can quietly shorten it. That catches drift and tampering from
@@ -639,7 +640,7 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
           <div className="max-h-44 overflow-y-auto rounded-lg bg-surface-container p-2"
             tabIndex={0} role="group" aria-label={`Baseline shell denylist patterns (${builtin.length}), read-only`}>
             {builtin.map((p) => (
-              <code key={p} className="block px-2 py-1 text-on-surface-low text-[0.75rem] tabular-nums">{p}</code>
+              <code key={p} data-type="caption" className="block px-2 py-1 text-on-surface-low tabular-nums">{p}</code>
             ))}
           </div>
         </div>
@@ -649,8 +650,8 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
               NOTHING to what is enforced. The count comes from the effective set
               (`user_additions`), and the shadowed remainder is named rather than hidden —
               otherwise the panel would claim additions that change no behaviour. */}
-          <div className="mb-0.5 text-on-surface text-[0.8125rem]">Your patterns</div>
-          <div className="mb-2 text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="mb-0.5 text-on-surface">Your patterns</div>
+          <div data-type="body-s" className="mb-2 text-on-surface-low">
             {userAdditions} user addition{userAdditions === 1 ? '' : 's'} on top of the baseline
             {user.length > userAdditions
               && ` · ${user.length - userAdditions} of your ${user.length} entries already match a baseline pattern and add nothing`}
@@ -658,7 +659,7 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
           <div className="flex flex-col gap-1.5">
             {user.map((p) => (
               <div key={p} className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-2">
-                <code className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]">{p}</code>
+                <code data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface">{p}</code>
                 <button type="button" disabled={busy} onClick={() => save(user.filter((x) => x !== p))}
                   className="shrink-0 rounded-md p-1 text-on-surface-low hover:bg-surface-high hover:text-on-surface" aria-label={`Remove ${p}`}>
                   <X size={15} />
@@ -674,11 +675,11 @@ function DeniedCommandsEditor({ builtin, user, baseline, userAdditions, onChange
                 onChange={(e) => { setDraft(e.target.value); setErr('') }}
                 onKeyDown={(e) => { if (e.key === 'Enter') add() }}
                 placeholder="e.g. my-secret-tool .*"
-                className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary"
+                data-type="body-s" className="min-w-0 flex-1 rounded-lg bg-surface-container px-3 py-2 text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary"
               />
-              <button type="button" onClick={add}
+              <button type="button" onClick={add} data-type="body-s"
                 {...unavailableWhen(!draft.trim(), 'Enter a pattern first', { busy })}
-                className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-on-primary text-[0.8125rem] disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
+                className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-2 text-on-primary disabled:opacity-50 aria-disabled:opacity-50 aria-disabled:cursor-not-allowed">
                 <Plus size={15} /> Add
               </button>
             </div>

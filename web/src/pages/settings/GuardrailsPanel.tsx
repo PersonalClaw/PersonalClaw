@@ -146,11 +146,11 @@ function AutonomyLadderSection() {
       {!ladder && loadErr ? (
         <LoadError what="autonomy ladder" error={loadErr} onRetry={reload} />
       ) : !ladder ? (
-        <div className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low text-[0.8125rem]">Loading…</div>
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">Loading…</div>
       ) : (
         <div className="flex flex-col gap-l">
           {ladder.incident_active && (
-            <div role="alert" className="rounded-lg px-4 py-3 text-[0.8125rem] bg-error/10 ring-1 ring-error/40 text-on-surface-var">
+            <div role="alert" data-type="body-s" className="rounded-lg px-4 py-3 bg-error/10 ring-1 ring-error/40 text-on-surface-var">
               Incident mode is active, so nothing runs above “asks first” — a granted rung shows as held until you resume.
             </div>
           )}
@@ -159,10 +159,10 @@ function AutonomyLadderSection() {
               <div key={t.key} className="flex items-start justify-between gap-l border-b border-outline-variant/30 py-3 last:border-0">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-on-surface text-[0.8125rem]">{t.key}</span>
+                    <span data-type="body-s" className="text-on-surface">{t.key}</span>
                     <RungChip type={t} ladder={ladder} />
                     {t.leaves_machine && (
-                      <span className="text-on-surface-low text-[0.6875rem]" title="Its effect is visible outside this machine, so a track record can never propose full autonomy for it.">leaves this machine</span>
+                      <span data-type="caption" className="text-on-surface-low" title="Its effect is visible outside this machine, so a track record can never propose full autonomy for it.">leaves this machine</span>
                     )}
                   </div>
                   {/* WHY it runs at this rung, then WHAT it has earned. Both, always: the first
@@ -170,10 +170,10 @@ function AutonomyLadderSection() {
                       only thing that decides whether a promote button appears — and when it does
                       not appear, the record says what is missing rather than leaving a user to
                       guess why a row is inert. */}
-                  <div className="mt-0.5 text-on-surface-low text-[0.8125rem]">{t.authority}</div>
-                  <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{t.record}</div>
+                  <div data-type="body-s" className="mt-0.5 text-on-surface-low">{t.authority}</div>
+                  <div data-type="caption" className="mt-0.5 text-on-surface-low">{t.record}</div>
                   {t.demotions.length > 0 && (
-                    <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+                    <div data-type="caption" className="mt-0.5 text-on-surface-low">
                       Last demoted {t.demotions[t.demotions.length - 1].at.slice(0, 10)} — {t.demotions[t.demotions.length - 1].cause}
                       {t.demotions.length > 1 && ` (${t.demotions.length} demotions on record)`}
                     </div>
@@ -231,10 +231,10 @@ function UndoList({ ladder, onChange }: { ladder: AutonomyLadder; onChange: () =
 
   return (
     <div>
-      <div className="mb-s text-on-surface-low text-[0.75rem] uppercase tracking-wide">Automatic actions you can still undo</div>
+      <div data-type="caption" className="mb-s text-on-surface-low uppercase tracking-wide">Automatic actions you can still undo</div>
       <RowGroup>
         {pending.length === 0 ? (
-          <div className="py-3 text-on-surface-low text-[0.8125rem]">Nothing is waiting to be undone — no action has run at the “runs with undo” rung yet.</div>
+          <div data-type="body-s" className="py-3 text-on-surface-low">Nothing is waiting to be undone — no action has run at the “runs with undo” rung yet.</div>
         ) : pending.map((r) => (
           <Row key={r.id} label={r.label || r.action_type}
             hint={`Ran ${r.created_at.slice(0, 16).replace('T', ' ')}. Undoing it also stops ${r.action_type} from doing this on its own.`}>
@@ -303,13 +303,13 @@ function ProviderHealthSection() {
     <Section title="Provider health" hint="Derived from the model-call audit — breaker state, latency, and recent failures per provider. No data leaves your machine.">
       <div className="rounded-lg bg-surface-container px-4 py-3">
         {loadErr ? (
-          <div role="alert" className="text-on-surface-low text-[0.8125rem]">
+          <div role="alert" data-type="body-s" className="text-on-surface-low">
             Couldn't check provider health: {String((loadErr as Error)?.message || loadErr)}
           </div>
         ) : rows === null ? (
-          <div className="text-on-surface-low text-[0.8125rem]">Loading…</div>
+          <div data-type="body-s" className="text-on-surface-low">Loading…</div>
         ) : rows.length === 0 ? (
-          <div className="text-on-surface-low text-[0.8125rem]">No background model calls recorded yet.</div>
+          <div data-type="body-s" className="text-on-surface-low">No background model calls recorded yet.</div>
         ) : (
           <div className="flex flex-col gap-2">
             {rows.map((p) => <HealthRow key={p.name} p={p} />)}
@@ -317,7 +317,7 @@ function ProviderHealthSection() {
         )}
         {callers.length > 0 && (
           <div className="mt-3 border-t border-outline-variant/30 pt-3">
-            <div className="text-on-surface-low text-[0.75rem]">By background caller</div>
+            <div data-type="caption" className="text-on-surface-low">By background caller</div>
             <div className="mt-1 flex flex-col gap-1">
               {callers.map((c) => <CallerRow key={c.name} c={c} />)}
             </div>
@@ -336,7 +336,7 @@ export function CallerRow({ c }: { c: CallerHealth }) {
   // failure table: naming why it is dead is what makes it actionable, listing every mode is not.
   const worstMode = Object.entries(c.failure_modes ?? {}).sort((a, b) => b[1] - a[1])[0]
   return (
-    <div className="flex items-baseline justify-between gap-l text-[0.75rem]">
+    <div data-type="caption" className="flex items-baseline justify-between gap-l">
       <span className="min-w-0 truncate text-on-surface">{c.name.replace(/_/g, ' ')}</span>
       <span className="text-on-surface-low tabular-nums">
         {c.calls} calls · <span style={dead ? { color: 'var(--color-error)' } : undefined}>
@@ -363,13 +363,13 @@ export function HealthRow({ p }: { p: ProviderHealth }) {
   return (
     <div className="flex items-center justify-between gap-l border-b border-outline-variant/30 py-2 last:border-0">
       <div className="min-w-0">
-        <div className="flex items-center gap-2 text-on-surface text-[0.8125rem]">
+        <div data-type="body-s" className="flex items-center gap-2 text-on-surface">
           <span className="inline-block h-2 w-2 rounded-full" style={{ background: stateColor }} />
           <span className="truncate">{p.name}</span>
           <span className="text-on-surface-low">· {stateLabel}</span>
           {p.degraded && <span style={{ color: 'var(--color-warning)' }}>· degraded</span>}
         </div>
-        <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+        <div data-type="caption" className="mt-0.5 text-on-surface-low">
           {p.calls} calls · {p.pass_rate === null ? '—' : `${Math.round(p.pass_rate * 100)}% ok`}
           {p.p90_ms > 0 && ` · p90 ${Math.round(p.p90_ms)}ms`}
           {/* The tail, only when it diverges from p90. `provider_health` computes p50/p90/p99 and
@@ -388,7 +388,7 @@ export function HealthRow({ p }: { p: ProviderHealth }) {
           <div className="mt-0.5 flex flex-wrap gap-1">
             {failureModes.map(([mode, n]) => (
               <span key={mode}
-                className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.6875rem] tabular-nums">
+                data-type="caption" className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low tabular-nums">
                 {mode.replace(/_/g, ' ')} ×{n}
               </span>
             ))}
@@ -413,7 +413,7 @@ function NumberRow({ label, hint, value, min, step, dollars, onSave }: {
     <Row label={label} hint={hint}>
       <div className="flex items-center gap-2">
         <SavedToast show={saved} />
-        {dollars && <span className="text-on-surface-low text-[0.8125rem]">$</span>}
+        {dollars && <span data-type="body-s" className="text-on-surface-low">$</span>}
         <NumberField value={value} min={min} step={step} onChange={commit} ariaLabel={label} />
       </div>
     </Row>

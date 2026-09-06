@@ -115,13 +115,13 @@ export function VoicePanel({ go, query }: { go?: (id: string) => void; query?: R
                     onKeyUp={(e) => { if (RANGE_KEYS.has(e.key)) save({ speed: Number((e.target as HTMLInputElement).value) }) }}
                     className="flex-1 accent-[var(--color-primary)]" />
                   <span data-type="caption" className="text-on-surface-low">{higherIsFaster ? 'Fast' : 'Slow'}</span>
-                  <span className="w-10 text-right font-mono text-on-surface text-[0.75rem] tabular-nums">{speed.toFixed(2)}×</span>
+                  <span data-type="caption" className="w-10 text-right font-mono text-on-surface tabular-nums">{speed.toFixed(2)}×</span>
                 </div>
                 </Field>
               )}
               {isRemoteVoice && !isGeminiVoice && (
                 <Field label="Voice persona" hint="The hosted voice used by remote TTS models.">
-                  <select value={speechVoice} onChange={(e) => save({ speech_voice: e.target.value })} className={selectCls}>
+                  <select value={speechVoice} onChange={(e) => save({ speech_voice: e.target.value })} data-type="body-s" className={selectCls}>
                     {SPEECH_VOICES.map((v) => <option key={v} value={v}>{v}</option>)}
                   </select>
                 </Field>
@@ -260,7 +260,7 @@ function ChordRow({ value, onChange }: { value: string; onChange: (next: string,
       {error && (
         // The conflict/refusal sentence from the shell, verbatim: it names the chord and
         // what to do, which a generic "couldn't save" would not.
-        <p role="alert" className="mt-1.5 text-[0.75rem]" style={{ color: 'var(--color-error)' }}>{error}</p>
+        <p role="alert" data-type="caption" className="mt-1.5" style={{ color: 'var(--color-error)' }}>{error}</p>
       )}
     </Field>
   )
@@ -354,8 +354,8 @@ function UseCaseVoiceSection({
         {/* The binding itself is owned by Models — show it read-only here. */}
         <Row label="Model" hint={`Bound to the ${useCase.toUpperCase()} use case — change it in Models.`}>
           {bound
-            ? <span className="rounded-md bg-surface-high px-2 py-1 font-mono text-on-surface text-[0.75rem]">{modelLabel}</span>
-            : <span className="text-on-surface-low text-[0.8125rem] italic">none</span>}
+            ? <span data-type="caption" className="rounded-md bg-surface-high px-2 py-1 font-mono text-on-surface">{modelLabel}</span>
+            : <span data-type="body-s" className="text-on-surface-low italic">none</span>}
         </Row>
 
         {enabled && bound && extras?.(settings, saveSettings, boundModel)}
@@ -367,11 +367,12 @@ function UseCaseVoiceSection({
   )
 }
 
-const selectCls = 'h-9 w-full max-w-sm rounded-md bg-surface-high px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary cursor-pointer'
+// Metrics + chrome only — the type size rides `data-type="body-s"` on the consumer.
+const selectCls = 'h-9 w-full max-w-sm rounded-md bg-surface-high px-3 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary cursor-pointer'
 
 function AvailChip({ available, okLabel, missLabel }: { available: boolean; okLabel: string; missLabel: string }) {
   return (
-    <span className="inline-flex items-center gap-1 text-[0.75rem]" style={{ color: available ? 'var(--color-success)' : 'var(--color-on-surface-low)' }}>
+    <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: available ? 'var(--color-success)' : 'var(--color-on-surface-low)' }}>
       {available ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />} {available ? okLabel : missLabel}
     </span>
   )
@@ -473,20 +474,20 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
                 aria-label="Add a vocabulary term"
                 onKeyDown={(e) => { if (e.key === 'Enter') addTerm() }}
                 placeholder="Add a term (e.g. Kubernetes, K8s)…"
-                className="flex-1 rounded-md border border-outline-variant/50 bg-surface-container px-3 py-2 text-[0.8125rem] outline-none focus:border-primary" />
-              <button type="button" onClick={addTerm}
+                data-type="body-s" className="flex-1 rounded-md border border-outline-variant/50 bg-surface-container px-3 py-2 outline-none focus:border-primary" />
+              <button type="button" onClick={addTerm} data-type="body-s"
                 {...unavailableWhen(!adding.trim(), 'Enter a term first', { busy })}
-                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-on-primary text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
+                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-on-primary disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
                 <Plus size={15} /> Add
               </button>
               <button type="button" onClick={rebuild} disabled={busy} title="Resync from the knowledge graph"
-                className="inline-flex h-9 items-center gap-1.5 rounded-md border border-outline-variant/50 px-3 text-on-surface-low text-[0.8125rem] hover:text-on-surface disabled:opacity-40">
+                data-type="body-s" className="inline-flex h-9 items-center gap-1.5 rounded-md border border-outline-variant/50 px-3 text-on-surface-low hover:text-on-surface disabled:opacity-40">
                 <RefreshCw size={15} className={busy ? 'animate-spin' : ''} /> Rebuild
               </button>
             </div>
-            <p className="mb-2 text-on-surface-low text-[0.75rem]">{data.total} in your lexicon.</p>
+            <p data-type="caption" className="mb-2 text-on-surface-low">{data.total} in your lexicon.</p>
             {data.terms.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low text-[0.8125rem]">
+              <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low">
                 No terms yet. <span className="text-on-surface">Rebuild</span> to seed from your knowledge graph, or add one above.
               </div>
             ) : (
@@ -507,10 +508,10 @@ function VocabularySection({ scrollTo }: { scrollTo: boolean }) {
                 🪤 `ux-audit` did NOT report this one, and providers' skip on the same run: it evaluates
                 after the panel's skeleton clears but BEFORE this nested, separately-fetched block
                 renders, so the h4 is not in the DOM it measures. A static rail catches it instead. */}
-            <h3 className="mt-6 mb-1 text-on-surface text-[0.8125rem]" style={fvs(600)}>Learned corrections</h3>
-            <p className="mb-2 text-on-surface-low text-[0.75rem]">Fixes captured from your transcript edits. Toggle “always” to auto-apply next time.</p>
+            <h3 data-type="label-s" className="mt-6 mb-1 text-on-surface" style={fvs(600)}>Learned corrections</h3>
+            <p data-type="caption" className="mb-2 text-on-surface-low">Fixes captured from your transcript edits. Toggle “always” to auto-apply next time.</p>
             {data.corrections.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low text-[0.8125rem]">
+              <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-6 text-center text-on-surface-low">
                 No learned corrections yet. When you fix a mis-heard term in a transcript, it shows up here.
               </div>
             ) : (
@@ -534,11 +535,11 @@ function TermRow({ term, onChanged }: { term: LexiconTerm; onChanged: () => void
   const act = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); onChanged() } finally { setBusy(false) } }
   return (
     <div className={`flex items-center gap-2 py-2 ${term.enabled ? '' : 'opacity-50'}`}>
-      <span className="flex-1 truncate text-[0.8125rem]">
+      <span data-type="body-s" className="flex-1 truncate">
         {term.canonical}
-        {term.aliases.length > 0 && <span className="ml-1.5 text-on-surface-low text-[0.75rem]">({term.aliases.join(', ')})</span>}
+        {term.aliases.length > 0 && <span data-type="caption" className="ml-1.5 text-on-surface-low">({term.aliases.join(', ')})</span>}
       </span>
-      <span className={`rounded px-1.5 py-0.5 text-[0.75rem] ${badge.cls}`}>{badge.label}</span>
+      <span data-type="caption" className={`rounded px-1.5 py-0.5 ${badge.cls}`}>{badge.label}</span>
       <button type="button" disabled={busy} title={term.enabled ? 'Disable (prune)' : 'Enable'}
         onClick={() => act(() => api.lexiconSetTermEnabled(term.id, !term.enabled))}
         className="inline-flex h-7 w-7 items-center justify-center rounded text-on-surface-low hover:text-on-surface disabled:opacity-40">
@@ -559,16 +560,16 @@ function CorrectionRow({ corr, onChanged }: { corr: LexiconCorrection; onChanged
   const [busy, setBusy] = useState(false)
   const toggle = async () => { setBusy(true); try { await api.lexiconSetCorrectionAuto(corr.id, !corr.auto_apply); onChanged() } finally { setBusy(false) } }
   return (
-    <div className="flex items-center gap-2 py-2 text-[0.8125rem]">
+    <div data-type="body-s" className="flex items-center gap-2 py-2">
       <span className="flex-1 truncate">
         <span className="text-on-surface-low line-through">{corr.heard}</span>
         <span className="mx-1.5 text-on-surface-low">→</span>
         <span className="text-on-surface">{corr.meant}</span>
-        <span className="ml-2 text-on-surface-low text-[0.75rem]">×{corr.count}</span>
+        <span data-type="caption" className="ml-2 text-on-surface-low">×{corr.count}</span>
       </span>
       <button type="button" onClick={toggle} disabled={busy}
         title={corr.auto_apply ? 'Auto-applied — click to make it a suggestion' : 'Always fix this automatically'}
-        className={`inline-flex h-7 items-center gap-1 rounded px-2 text-[0.75rem] transition-colors disabled:opacity-40 ${
+        data-type="caption" className={`inline-flex h-7 items-center gap-1 rounded px-2 transition-colors disabled:opacity-40 ${
           corr.auto_apply ? 'bg-ok/15' : 'border border-outline-variant/50 text-on-surface-low hover:text-on-surface'}`}>
         <Wand2 size={12} /> {corr.auto_apply ? 'Always' : 'Suggest'}
       </button>

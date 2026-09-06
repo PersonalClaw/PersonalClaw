@@ -36,7 +36,7 @@ function Refusal({ what, icon: Icon }: { what: string; icon: typeof QrCode }) {
   return (
     <Plate dashed>
       <Icon size={26} className="text-on-surface-low" aria-hidden="true" />
-      <span className="text-on-surface-low text-[0.75rem] leading-tight">{what}</span>
+      <span data-type="caption" className="text-on-surface-low leading-tight">{what}</span>
     </Plate>
   )
 }

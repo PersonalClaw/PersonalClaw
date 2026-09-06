@@ -119,15 +119,15 @@ function ModelChips({ model, onRepair, repairing }: {
   return (
     <span className="flex shrink-0 items-center gap-1">
       {model.status === 'deprecated' && (
-        <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.6875rem] uppercase tracking-wide"
+        <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low uppercase tracking-wide"
           title="Deprecated — still bindable, but a newer model is preferred.">deprecated</span>
       )}
       {model.status === 'sunset' && (
-        <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.6875rem] uppercase tracking-wide"
+        <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low uppercase tracking-wide"
           title="Sunset — hidden from new bindings; an existing binding keeps working.">sunset</span>
       )}
       {model.non_commercial && (
-        <span className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.6875rem]"
+        <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
           style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
           title={`Non-commercial license${model.license ? ` (${model.license})` : ''} — for personal/research use only.`}>
           <AlertTriangle size={9} /> non-commercial
@@ -135,13 +135,13 @@ function ModelChips({ model, onRepair, repairing }: {
       )}
       {model.integrity === 'truncated' && (
         <>
-          <span className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.6875rem]"
+          <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
             style={{ background: 'color-mix(in srgb, var(--color-danger) 16%, transparent)', color: 'var(--color-danger)' }}
             title="Downloaded weights are incomplete — this model won't load. Repair to re-download.">
             truncated
           </span>
           <button type="button" onClick={onRepair} disabled={repairing}
-            className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.6875rem] transition-colors hover:bg-surface-high"
+            data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 transition-colors hover:bg-surface-high"
             style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface)' }}
             title="Re-download this model's weights.">
             <Wrench size={9} /> {repairing ? 'repairing…' : 'Repair'}
@@ -246,7 +246,7 @@ export function ModelsPanel() {
           this one section, and promoting them is its own change. */}
       <Section title="Model bindings" hint="One model — or an ordered fallback chain — per use case.">
         {allModels.length === 0 && (
-          <div className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="mb-3 rounded-lg border border-dashed border-outline-variant/50 bg-surface-container px-4 py-5 text-center text-on-surface-low">
             No models discovered. Add a backend in <span className="text-on-surface">Providers</span> and test its connection.
           </div>
         )}
@@ -256,7 +256,7 @@ export function ModelsPanel() {
           const showGroupHeader = meta?.group && meta.group !== prevGroup
           return (
             <div key={uc}>
-              {showGroupHeader && <div className="mb-1.5 mt-3 px-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{meta.group}</div>}
+              {showGroupHeader && <div data-type="caption" className="mb-1.5 mt-3 px-1 text-on-surface-low uppercase tracking-wide">{meta.group}</div>}
               <UseCaseRow useCase={uc} activeModels={active[uc] ?? []} allModels={allModels} health={health ?? []} judgeRec={(judgeRecs ?? []).find((r) => r.verdict === 'recommended' && r.use_case === uc)} onChanged={reloadActive} />
             </div>
           )
@@ -334,7 +334,7 @@ function LoadedModelsSection() {
           detail={pressureDetail(data.pressure)}
         />
         {notReady.length > 0 && (
-          <ul className="mt-3 flex flex-col gap-0.5 text-on-surface-low text-[0.8125rem]">
+          <ul data-type="body-s" className="mt-3 flex flex-col gap-0.5 text-on-surface-low">
             {notReady.map((p) => (
               <li key={p.provider}>
                 {p.display_name}:{' '}
@@ -344,7 +344,7 @@ function LoadedModelsSection() {
           </ul>
         )}
         {rows.length === 0 ? (
-          <div className="mt-3 text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="mt-3 text-on-surface-low">
             No models are loaded right now. One loads on its first use.
           </div>
         ) : (
@@ -355,10 +355,10 @@ function LoadedModelsSection() {
                 className="flex items-center gap-2 rounded-md bg-surface-high px-2.5 py-1.5"
               >
                 <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>
+                  <span data-type="label-s" className="truncate text-on-surface" style={fvs(500)}>
                     {row.model || row.provider}
                   </span>
-                  <span className="truncate text-on-surface-low text-[0.75rem]">
+                  <span data-type="caption" className="truncate text-on-surface-low">
                     {row.provider} · {occupantDetail(row)}
                   </span>
                 </span>
@@ -565,8 +565,8 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
           <meta.icon size={14} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-on-surface text-[0.8125rem]" style={fvs(500)}>{meta.label}</div>
-          <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+          <div data-type="label-s" className="text-on-surface" style={fvs(500)}>{meta.label}</div>
+          <div data-type="caption" className="mt-0.5 text-on-surface-low">
             {activeModels.length > 0
               ? meta.chain && activeModels.length > 1
                 ? `chain of ${activeModels.length}`
@@ -576,13 +576,13 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
                 : <span className="italic">none configured</span>}
           </div>
         </div>
-        {capable.length > 0 && <span className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums">{capable.length} available</span>}
+        {capable.length > 0 && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low tabular-nums">{capable.length} available</span>}
       </button>
 
       {open && (
         <div className="flex flex-col gap-3 border-t border-outline-variant/30 px-4 pb-4 pt-3">
-          <p className="text-on-surface-low text-[0.8125rem]">{meta.description}</p>
-          <div className="inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-[0.75rem]"
+          <p data-type="body-s" className="text-on-surface-low">{meta.description}</p>
+          <div data-type="caption" className="inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1"
             style={meta.chain ? accentChip : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
             <span className="size-1.5 rounded-pill" style={{ background: meta.chain ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
             {meta.chain ? 'Fallback chain — first is the default, later entries take over on failure' : 'Single-select — one model per use case'}
@@ -597,12 +597,12 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
           {judgeRec && judgeRec.model_ref && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface px-2.5 py-2">
               <Gavel size={13} className="shrink-0 text-on-surface-low" />
-              <span className="text-on-surface-low text-[0.75rem]">
+              <span data-type="caption" className="text-on-surface-low">
                 Judge benchmark: cheapest adequate tier is <span className="text-on-surface">{judgeRec.tier}</span>
                 {' '}at {judgeRec.samples} sample{judgeRec.samples === 1 ? '' : 's'} — <span className="text-on-surface">{judgeRec.model_ref}</span>
               </span>
               {activeModels[0] === judgeRec.model_ref ? (
-                <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]">
+                <span data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low">
                   <Check size={12} /> already the default
                 </span>
               ) : (
@@ -625,12 +625,12 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
                 const id = sep >= 0 ? ref.slice(sep + 1) : ref
                 return (
                   <div key={ref} className="flex items-center gap-2 rounded-md bg-surface-container px-2.5 py-1.5">
-                    <span className="w-16 shrink-0 text-on-surface-low text-[0.6875rem] uppercase tracking-wide">
+                    <span data-type="caption" className="w-16 shrink-0 text-on-surface-low uppercase tracking-wide">
                       {i === 0 ? 'default' : `fallback ${i}`}
                     </span>
                     <HealthDot provider={provider} health={health} />
-                    <span className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.8125rem]">{id}</span>
-                    {provider && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{provider}</span>}
+                    <span data-type="body-s" className="min-w-0 flex-1 truncate font-mono text-on-surface">{id}</span>
+                    {provider && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{provider}</span>}
                     {/* Two different claims, so two different props. The BOUNDARY (`i === 0`,
                         last row) is genuine unavailability and keeps `disabled` + the reason that
                         names it. `saving` is the chain PUT in flight, so it is `loading`: OR-ing
@@ -651,7 +651,7 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
           )}
 
           {useCase === 'embedding' && reindex && (
-            <div className="rounded-md px-3 py-2 text-[0.75rem]"
+            <div data-type="caption" className="rounded-md px-3 py-2"
               style={{ background: reindex.status === 'error' ? 'color-mix(in srgb, var(--color-danger) 10%, transparent)' : 'var(--color-surface-high)' }}>
               {/* "Re-index not started" is only true when the POST itself failed — that path sets
                   `id: ''`. A job with an id DID start (e.g. its progress feed dropped), so its message
@@ -685,9 +685,9 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
           )}
 
           {capable.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low text-[0.8125rem] italic">
+            <div data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
               {meta.fallback ? (
-                <>Already uses your <span className="text-on-surface not-italic font-medium">{meta.fallback}</span> chain by default — no dedicated {meta.label} model is required. Add a backend with a chat-capable model to override.</>
+                <>Already uses your <span className="text-on-surface not-italic fw-500">{meta.fallback}</span> chain by default — no dedicated {meta.label} model is required. Add a backend with a chat-capable model to override.</>
               ) : (
                 <>No models with {meta.label} capability. Add a backend with compatible models first.</>
               )}
@@ -705,7 +705,7 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
                 </>
               )}
               {filtered.length === 0 ? (
-                <div className="rounded-md border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low text-[0.8125rem] italic">
+                <div data-type="body-s" className="rounded-md border border-dashed border-outline-variant/50 px-3 py-3 text-on-surface-low italic">
                   No models match “{query}”.
                 </div>
               ) : (
@@ -730,17 +730,17 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
                         style={on ? { background: 'var(--color-primary)', borderColor: 'var(--color-primary)' } : { borderColor: 'var(--color-outline-variant)' }}>
                         {on && <Check size={10} strokeWidth={3} className="text-on-primary" />}
                       </span>
-                      <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem] font-mono">{m.name}</span>
+                      <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface font-mono">{m.name}</span>
                     </button>
                     <ModelChips model={m} onRepair={() => repair(m)} repairing={repairing === ref} />
                     {on && notDownloaded && (
-                      <span className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5 text-[0.75rem]"
+                      <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5"
                         style={{ background: 'color-mix(in srgb, var(--color-warning) 16%, transparent)', color: 'var(--color-warning)' }}
                         title="Bound but not downloaded — download it in Providers to activate.">
                         <Download size={9} /> not downloaded
                       </span>
                     )}
-                    <span className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{m.provider}</span>
+                    <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{m.provider}</span>
                   </div>
                 )
                   })}

@@ -41,14 +41,14 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
         <span className="size-2 shrink-0 rounded-full" style={{ background: ext.enabled && !unavailable ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{ext.displayName || ext.name}</span>
-            {ext.version && <span className="text-on-surface-low text-[0.75rem]">v{ext.version}</span>}
+            <span data-type="title-m" className="truncate text-on-surface" style={fvs(500)}>{ext.displayName || ext.name}</span>
+            {ext.version && <span data-type="caption" className="text-on-surface-low">v{ext.version}</span>}
             {(ext.provider?.capabilities ?? []).map((c) => (
-              <span key={c} className="rounded-md bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{c}</span>
+              <span key={c} data-type="caption" className="rounded-md bg-surface-high px-1.5 py-0.5 text-on-surface-low">{c}</span>
             ))}
-            {unavailable && <span className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]"><AlertTriangle size={10} /> unavailable</span>}
+            {unavailable && <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low"><AlertTriangle size={10} /> unavailable</span>}
           </div>
-          {ext.description && <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{ext.description}</p>}
+          {ext.description && <p data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{ext.description}</p>}
         </div>
 
         {runtime && !unavailable && <RuntimeChip state={runtime.state} />}
@@ -60,7 +60,7 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
             EXPRESSION position is an object literal, which is four TS1005s and no comment at all. */}
         {runtime && runtime.state === 'needs_login' && runtime.login_command && onSignIn && (
           <button type="button" onClick={() => onSignIn(runtime)} aria-label={`Sign in: ${who}`}
-            className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface text-[0.75rem] hover:bg-surface-highest">
+            data-type="caption" className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-surface-high px-2.5 py-1 text-on-surface hover:bg-surface-highest">
             <KeyRound size={12} /> Sign in
           </button>
         )}
@@ -79,7 +79,7 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
             always-on (mandatory): no toggle, just a quiet badge. */}
         {!unavailable && (managed
           ? <Toggle on={ext.enabled} onChange={toggle} label={`Toggle ${ext.name}`} />
-          : <span className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low text-[0.75rem]" title="Built-in provider — always available">Always on</span>
+          : <span data-type="caption" className="shrink-0 rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-low" title="Built-in provider — always available">Always on</span>
         )}
         {/* Configure is a DISCLOSURE, not a toggle: it reveals the config form below. `ariaExpanded`
             rather than `on` — the tint is identical, the announcement is the true one.
@@ -94,12 +94,12 @@ export function ProviderCard({ ext, runtime, channel, open, onOpenChange, onChan
 
       {/* unavailable reason / runtime detail */}
       {unavailable && ext.unavailableReason && (
-        <div className="mt-2 flex items-start gap-1.5 text-on-surface-low text-[0.75rem]"><AlertTriangle size={12} className="mt-0.5 shrink-0" /> {ext.unavailableReason}</div>
+        <div data-type="caption" className="mt-2 flex items-start gap-1.5 text-on-surface-low"><AlertTriangle size={12} className="mt-0.5 shrink-0" /> {ext.unavailableReason}</div>
       )}
       {runtime && runtime.detail && runtime.state !== 'ready' && !unavailable && (
-        <div className="mt-2 flex items-start gap-1.5 text-on-surface-low text-[0.75rem]"><TerminalSquare size={12} className="mt-0.5 shrink-0" /> {runtime.detail}</div>
+        <div data-type="caption" className="mt-2 flex items-start gap-1.5 text-on-surface-low"><TerminalSquare size={12} className="mt-0.5 shrink-0" /> {runtime.detail}</div>
       )}
-      {ext.error && <div className="mt-2 flex items-center gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-danger)' }}><AlertTriangle size={12} /> {ext.error}</div>}
+      {ext.error && <div data-type="caption" className="mt-2 flex items-center gap-1.5" style={{ color: 'var(--color-danger)' }}><AlertTriangle size={12} /> {ext.error}</div>}
 
       {/* Live channel runtime — connection health + connect/disconnect/test. This
           is the RUNTIME view (is the transport actually connected right now),
@@ -137,24 +137,24 @@ function ChannelRuntimeRow({ channel, onChanged }: { channel: ChannelRuntime; on
   }
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-outline-variant/30 pt-2">
-      <span className="inline-flex items-center gap-1.5 text-[0.75rem] text-on-surface-var">
+      <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-var">
         <span className="size-2 rounded-full" style={{ background: tone }} />
         {channel.connected ? 'Connected' : channel.health.state === 'error' ? 'Error' : 'Not connected'}
       </span>
-      {(detail ?? channel.health.detail) && <span className="text-on-surface-low text-[0.75rem] truncate max-w-[60%]">{detail ?? channel.health.detail}</span>}
+      {(detail ?? channel.health.detail) && <span data-type="caption" className="text-on-surface-low truncate max-w-[60%]">{detail ?? channel.health.detail}</span>}
       <div className="ml-auto flex items-center gap-1.5">
         {/* One strip per channel provider, so these three share names across rows too. */}
         <button type="button" onClick={() => act('test')} disabled={!!busy} aria-label={`Test: ${channel.name}`}
-          className="inline-flex items-center gap-1 rounded-md bg-surface-high px-2 py-1 text-[0.75rem] text-on-surface-var hover:text-on-surface disabled:opacity-50">
+          data-type="caption" className="inline-flex items-center gap-1 rounded-md bg-surface-high px-2 py-1 text-on-surface-var hover:text-on-surface disabled:opacity-50">
           {busy === 'test' ? <Loader2 size={11} className="animate-spin" /> : <Beaker size={11} />} Test
         </button>
         {channel.connected
           ? <button type="button" onClick={() => act('disconnect')} disabled={!!busy} aria-label={`Disconnect: ${channel.name}`}
-              className="inline-flex items-center gap-1 rounded-md bg-surface-high px-2 py-1 text-[0.75rem] text-on-surface-var hover:text-danger disabled:opacity-50">
+              data-type="caption" className="inline-flex items-center gap-1 rounded-md bg-surface-high px-2 py-1 text-on-surface-var hover:text-danger disabled:opacity-50">
               {busy === 'disconnect' ? <Loader2 size={11} className="animate-spin" /> : <Plug size={11} />} Disconnect
             </button>
           : <button type="button" onClick={() => act('connect')} disabled={!!busy} aria-label={`Connect: ${channel.name}`}
-              className="inline-flex items-center gap-1 rounded-md bg-surface-high px-2 py-1 text-[0.75rem] text-on-surface-var hover:text-primary disabled:opacity-50">
+              data-type="caption" className="inline-flex items-center gap-1 rounded-md bg-surface-high px-2 py-1 text-on-surface-var hover:text-primary disabled:opacity-50">
               {busy === 'connect' ? <Loader2 size={11} className="animate-spin" /> : <PlugZap size={11} />} Connect
             </button>}
       </div>
@@ -172,5 +172,5 @@ function RuntimeChip({ state }: { state: string }) {
     error: { icon: <AlertTriangle size={12} />, label: 'Error', color: 'var(--color-danger)' },
   }
   const m = map[state] ?? map.error
-  return <span className="inline-flex shrink-0 items-center gap-1 text-[0.75rem]" style={{ color: m.color }}>{m.icon} {m.label}</span>
+  return <span data-type="caption" className="inline-flex shrink-0 items-center gap-1" style={{ color: m.color }}>{m.icon} {m.label}</span>
 }

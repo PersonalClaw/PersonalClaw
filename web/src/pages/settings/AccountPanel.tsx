@@ -100,7 +100,7 @@ export function AccountPanel() {
             <button type="button" onClick={dirty ? save : undefined} aria-disabled={!dirty || undefined}
               aria-label="Save: Your name"
               title={!dirty ? 'No changes to save' : undefined}
-              className="inline-flex items-center gap-1 rounded-md px-3 h-9 text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40"
+              data-type="body-s" className="inline-flex items-center gap-1 rounded-md px-3 h-9 disabled:opacity-40 aria-disabled:opacity-40"
               style={{ background: dirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: dirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}>
               {saved ? <Check size={14} /> : null} {saved ? 'Saved' : 'Save'}
             </button>
@@ -126,7 +126,7 @@ export function AccountPanel() {
             <button type="button" onClick={botDirty ? saveBot : undefined} aria-disabled={!botDirty || undefined}
               aria-label="Save: Assistant name"
               title={!botDirty ? 'No changes to save' : undefined}
-              className="inline-flex items-center gap-1 rounded-md px-3 h-9 text-[0.8125rem] disabled:opacity-40 aria-disabled:opacity-40"
+              data-type="body-s" className="inline-flex items-center gap-1 rounded-md px-3 h-9 disabled:opacity-40 aria-disabled:opacity-40"
               style={{ background: botDirty ? 'var(--color-primary)' : 'var(--color-surface-high)', color: botDirty ? 'var(--color-on-primary)' : 'var(--color-on-surface-low)' }}>
               {botSaved ? <Check size={14} /> : null} {botSaved ? 'Saved' : 'Save'}
             </button>
@@ -134,7 +134,7 @@ export function AccountPanel() {
         </Field>
         <Row label="Restart onboarding" hint="Clears your name and re-runs the first-run setup flow.">
           <button type="button" onClick={async () => { if (await confirm({ title: 'Restart onboarding?', body: 'This clears your name and shows the setup flow again.', confirmLabel: 'Restart' })) clearName() }}
-            className="inline-flex items-center gap-1.5 rounded-md px-3 h-9 text-[0.8125rem] text-on-surface-var hover:bg-surface-high transition-colors">
+            data-type="body-s" className="inline-flex items-center gap-1.5 rounded-md px-3 h-9 text-on-surface-var hover:bg-surface-high transition-colors">
             <RotateCcw size={14} /> Restart
           </button>
         </Row>
@@ -238,12 +238,12 @@ function LoginSection() {
               {pwSaved ? <Check size={14} /> : null} {pwSaved ? 'Saved' : 'Save sign-in'}
             </Button>
             {pwDraft.length > 0 && !pwLongEnough ? (
-              <span className="text-[0.75rem]" style={{ color: 'var(--color-on-surface-low)' }}>
+              <span data-type="caption" style={{ color: 'var(--color-on-surface-low)' }}>
                 {12 - pwDraft.length} more characters
               </span>
             ) : null}
             {pwDraft.length > 0 && pwLongEnough && !pwMatches ? (
-              <span className="text-[0.75rem]" style={{ color: 'var(--color-on-surface-low)' }}>
+              <span data-type="caption" style={{ color: 'var(--color-on-surface-low)' }}>
                 Passwords don't match
               </span>
             ) : null}
@@ -273,7 +273,7 @@ function LoginSection() {
       </Row>
 
       {state.login_enabled ? (
-        <p className="text-[0.75rem] leading-relaxed" style={{ color: 'var(--color-on-surface-low)' }}>
+        <p data-type="caption" className="leading-relaxed" style={{ color: 'var(--color-on-surface-low)' }}>
           After {state.lockout_threshold} failed attempts, sign-in is refused for {state.lockout_window}.
           Every attempt is recorded in the audit log.
         </p>

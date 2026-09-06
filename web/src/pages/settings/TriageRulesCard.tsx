@@ -91,7 +91,7 @@ export function TriageRulesCard() {
             </div>
           )}
           {data.rules.length === 0 ? (
-            <p className="text-on-surface-low text-[0.8125rem]">
+            <p data-type="body-s" className="text-on-surface-low">
               You haven't taught the digest any rules yet. Answer “Always” or “Never” on a digest proposal and the
               pattern shows up here, where you can revoke it.
             </p>
@@ -101,13 +101,13 @@ export function TriageRulesCard() {
                 <li key={rule.key} className="rounded-lg bg-surface-high px-m py-s">
                   <div className="flex flex-wrap items-center gap-s">
                     <VerdictBadge verdict={rule.verdict} />
-                    <code className="min-w-0 flex-1 truncate font-mono text-on-surface text-[0.8125rem]">{rule.pattern}</code>
+                    <code data-type="body-s" className="min-w-0 flex-1 truncate font-mono text-on-surface">{rule.pattern}</code>
                     <Button size="xs" variant="ghost" loading={busy === rule.key} onClick={() => revoke(rule)}
                       title={`Revoke ${rule.pattern}`}>
                       <Trash2 size={12} /> Revoke
                     </Button>
                   </div>
-                  <p className="mt-1 flex flex-wrap gap-m text-on-surface-low text-[0.75rem]">
+                  <p data-type="caption" className="mt-1 flex flex-wrap gap-m text-on-surface-low">
                     <span>scope {rule.scope || 'global'}</span>
                     {/* An UNCOUNTED hit count is not zero hits. `hit_count` absent from the row means
                         the rule was written before counting existed, which must not read as "this
@@ -124,7 +124,7 @@ export function TriageRulesCard() {
                       >
                         <div className="flex items-center gap-s">
                           {rule.send_capable && (
-                            <span className="rounded-full bg-warn/15 px-2 py-0.5 text-warn text-[0.75rem]" style={fvs(500)}>
+                            <span data-type="caption" className="rounded-full bg-warn/15 px-2 py-0.5 text-warn" style={fvs(500)}>
                               graduated
                             </span>
                           )}
@@ -156,5 +156,5 @@ function VerdictBadge({ verdict }: { verdict: ApprovalRuleRow['verdict'] }) {
     : verdict === 'suppressed'
       ? { label: 'cooling off', cls: 'bg-surface-highest text-on-surface-low' }
       : { label: 'always', cls: 'bg-primary/15 text-on-primary-tint' }
-  return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[0.75rem] ${meta.cls}`} style={fvs(500)}>{meta.label}</span>
+  return <span data-type="caption" className={`shrink-0 rounded-full px-2 py-0.5 ${meta.cls}`} style={fvs(500)}>{meta.label}</span>
 }
