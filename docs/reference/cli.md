@@ -32,13 +32,50 @@ process everything else talks to.
 | `--test-mode` | Convenience bundle: `--port auto --no-open --json-ready --approval reads` (explicit `--port`/`--approval` win). |
 | `--seed FIXTURE` | Dev tool: populate `$PERSONALCLAW_HOME` from a named fixture (under `tests_fixtures/`) before starting. Refuses the main gateway home (`~/.personalclaw`) and non-empty targets. |
 | `--seed-replace` | With `--seed`, wipe `$PERSONALCLAW_HOME` before copying. Never overrides the main-home rail. |
+| `--seed-local-model` | Bind a local Ollama provider into `$PERSONALCLAW_HOME` after seeding, so the home can run a real chat turn. Conditional and never fatal — see below. |
+| `--local-model-endpoint URL` | Endpoint for `--seed-local-model` (default `http://localhost:11434`, or `$PERSONALCLAW_LOCAL_MODEL_ENDPOINT`). |
+| `--local-model MODEL_ID` | Model to bind (default: the endpoint's most recently modified chat-capable model, or `$PERSONALCLAW_LOCAL_MODEL`). |
+| `--local-model-apps-dir DIR` | Local checkout of the apps repo to install the `ollama-models` provider app from, when it is not already installed in the home (or `$PERSONALCLAW_LOCAL_MODEL_APPS_DIR`). |
 
 Two fixtures ship:
 
 | Fixture | Contents |
 |---|---|
 | `empty` | A bare home — just the `fixture.yaml` marker. Everything else is created on first boot. |
-| `demo-home` | A home that looks used, for screenshots and demos: two projects with briefs, three task lists, ten tasks spanning every status (one blocked on a real dependency), markdown memory (preferences, project context, two days of history), five knowledge docs, and one completed loop with a three-phase plan. Onboarding is pre-completed, so it boots straight to the dashboard. Semantic/episodic memory *records* are still not included — that store is SQLite-only with no text tier, unlike the markdown memory the fixture does carry. |
+| `demo-home` | A home that looks used, for screenshots and demos: two projects with briefs, three task lists, ten tasks spanning every status (one blocked on a real dependency), markdown memory (preferences, project context, two days of history), five knowledge docs, and one completed loop with a three-phase plan. Onboarding is pre-completed, so it boots straight to the dashboard. Semantic/episodic memory *records* are still not included — that store is SQLite-only with no text tier, unlike the markdown memory the fixture does carry. **No model provider** — the fixture is a byte-identical copy on every machine, so it cannot carry any one machine's endpoint; `--seed-local-model` is the step that binds one. |
+
+### Binding a model into a seeded home
+
+A seeded home carries no model provider, so the three surfaces that exist only as the
+product of a turn are empty: `/api/sessions` is `0`, `/api/approvals` is `[]` (an
+approval is written by the tool-permission gate on a real turn), and `/api/artifacts` is
+`[]` (artifacts are agent-produced). `--seed-local-model` closes that in the same
+command:
+
+```
+PERSONALCLAW_HOME=~/.personalclaw-demo \
+  personalclaw gateway --seed demo-home --seed-replace --seed-local-model
+```
+
+It probes Ollama's `/api/tags` and, only when a server answers with a usable model, does
+three things: confirms or installs the `ollama-models` provider app, writes the
+`providers[]` entry into `config.json`, and binds the `chat` use case (plus `embedding`,
+when the endpoint has an embedding model) in `active_models.json`. No credential is
+involved — a local Ollama needs none, which is why it is the provider on this path.
+
+It degrades rather than half-populates. If nothing is listening, if the endpoint has no
+chat model pulled, or if the provider app is neither installed nor reachable from a
+local app source, **nothing is written**: the home is exactly what the fixture copied,
+the gateway starts normally, and one `seed-local-model: skipped_…` line names which
+precondition failed and how to satisfy it. The exit status is unaffected, so a machine
+with no Ollama seeds exactly as it did before the flag existed.
+
+To bind a home that already exists — an evals cell home, a research-lab home — without
+re-seeding it or booting a gateway:
+
+```
+PERSONALCLAW_HOME=… python -m personalclaw.seed_local_model
+```
 
 ## `personalclaw chat`
 
