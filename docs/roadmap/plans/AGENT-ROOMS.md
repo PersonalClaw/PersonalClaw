@@ -48,3 +48,25 @@ A **"council" workflow template** — N agents independently answer the same bri
 1. Re-confirm demand after the council template ships — rooms proceed only if deliberation (not fan-out) is what's actually missing.
 2. Set the default round budget and the pause UX copy (the "your agents have been talking for a while" moment is the product's tone in one sentence).
 3. Decide room membership eligibility for ACP bindings against the parity plan's final documented boundary.
+
+## Execution log
+
+### 2026-09-06 — the precursor gate was void in fact; minted as AR-9
+
+An audit of every non-done atom found this plan walled off by a gate that could not clear. `AR-1`'s
+dependency named a council fan-out/fan-in template owned by WORKFLOWS-V2-LOOPS-EVOLUTION; that plan
+closed with all atoms `done` and never shipped one (zero non-doc hits for "council" on main — 28 bundled
+templates, none of them council). Because the edge resolved to a *done* atom, the graph read AR-1 as
+merely ext-gated while the deliverable the gate named did not exist: satisfied on paper, void in fact,
+with AR-2..AR-8 queued behind it indefinitely.
+
+The correction takes the first of the two options AR-1's own blocked_reason offered — mint the precursor
+rather than waive it — because the precursor is not incidental to this plan. "The cheap precursor (build
+this first, on the engine)" above specifies it, and owner task 1 consumes its outcome. It is now `AR-9`,
+homed here rather than by reopening a closed plan, and AR-1 depends on it.
+
+What is left on AR-1 is genuinely the owner's and nothing else: after AR-9 ships, re-confirm that
+*deliberation* rather than fan-out is the missing capability. This log records the cheap outcome as a
+first-class possibility, not a failure mode, because the plan already says so: if the template satisfies
+demand, rooms stay deferred, and AR-1..AR-9 close as satisfied-by-precursor instead of leaving eight
+atoms of phantom work on the board.
