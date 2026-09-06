@@ -64,6 +64,21 @@ Session 3 — Launch assets (T3.2 GIF) + Session 2 T2.4 residual (social-preview
 
 **Done when:** 60-90s silent capture (chat->approval->loop->knowledge->artifact) recorded on the seeded demo home and referenced from the site hero, with the click-path scripted; 1280x640 social-preview images produced per web/DESIGN.md palette ready for owner upload to both repos
 
+**2026-09-06 — measured against the seeded demo home.** The click-path is scripted and
+committed (`docs/demo/CLICKPATH.md` + its driver), the capture plays it in 82s silent at
+1280x720 on `--seed demo-home`, and both 1280x640 cards are committed under `docs/brand/`.
+Two clauses are NOT met, and neither is a scripting problem. (1) The specified arc cannot be
+shown in full: the fixture binds no model provider, so a chat *turn* and a tool *approval*
+have no way to occur, and no artifact exists in the fixture's tree — the path shows chat as
+surface-only, substitutes the guardrail/audit-chain policy for the approval event, and drops
+the artifact beat rather than staging one. Binding a local model into the fixture is the
+single change that would close this, and it belongs to the fixture, not the capture. (2)
+"Referenced from the site hero" is not reachable from this repo: the hero is
+`src/pages/index.astro` in the `personalclaw.dev` repo, and that site's doc-sync
+deliberately excludes core's asset trees, so the reference needs a commit there. The capture
+itself is deliberately not committed (~1.2 MB mp4, no LFS, no committed-media convention at
+that size); it is regenerated from the committed script.
+
 ### `DL-6` — T3.4: launch-post draft (architecture-receipts narrative)
 
 **Status:** done
