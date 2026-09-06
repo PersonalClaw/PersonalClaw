@@ -190,7 +190,8 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
               {/* summary header */}
               <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={spring.spatialFast}
                 className="rounded-xl border border-outline-variant/50 bg-surface-container/60 p-4">
-                <p className="text-on-surface text-[0.9375rem]">{project.task}</p>
+                <p data-type="body-m" className="text-on-surface">{project.task}</p>
+                {/* Raw size kept: a data-type role's inherited font-variation-settings would flatten the browser-bold <b> child (variable font: fvs beats font-weight; no exact-match fw-700 utility). */}
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[0.75rem]">
                   <span className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var">entry: <b className="text-on-surface">{sdlcStageLabel(String(kc(project).entry_stage ?? ''))}</b></span>
                   <span className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var capitalize">{String(kc(project).project_kind ?? '')}</span>
@@ -201,7 +202,7 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
                   {!!kc(project).test_command && <span className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var">tests: <code className="text-on-surface">{String(kc(project).test_command)}</code></span>}
                 </div>
                 {project.success_criteria && (
-                  <p className="mt-2 text-on-surface-low text-[0.8125rem]"><span className="text-on-surface-var">Done when:</span> {project.success_criteria}</p>
+                  <p data-type="body-s" className="mt-2 text-on-surface-low"><span className="text-on-surface-var">Done when:</span> {project.success_criteria}</p>
                 )}
               </motion.div>
 
@@ -224,14 +225,15 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
 
               {/* the stage plan */}
               <div className="flex items-center justify-between">
-                <span className="text-on-surface-var text-[0.8125rem]" style={fvs(550)}>Stages ahead ({stages.length})</span>
-                <button type="button" onClick={addStage} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.75rem] text-on-surface-low hover:text-on-surface hover:bg-surface-high"><Plus size={13} /> Add stage</button>
+                <span data-type="label-s" className="text-on-surface-var" style={fvs(550)}>Stages ahead ({stages.length})</span>
+                <button type="button" onClick={addStage} data-type="caption" className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-on-surface-low hover:text-on-surface hover:bg-surface-high"><Plus size={13} /> Add stage</button>
               </div>
 
               {/* Stages that collide on launch (one TaskList + one status entry per
                   effective key = stage type, or title for an untyped stage) — the
                   backend drops the duplicate, so warn the user to disambiguate it
                   rather than silently lose a stage. */}
+              {/* Raw size kept: a data-type role's inherited font-variation-settings would flatten the browser-bold <b> child (variable font: fvs beats font-weight; no exact-match fw-700 utility). */}
               {dupStages.length > 0 && (
                 <div role="alert" className="rounded-lg px-3 py-2 text-[0.8125rem]"
                   style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
@@ -245,35 +247,35 @@ export function CodePlanReview({ draft, onBack, onLaunched }: {
                     onPatch={(p) => patchStage(i, p)} onRemove={() => removeStage(i)} onMove={(d) => move(i, d)} />
                 ))}
                 {stages.length === 0 && (
-                  <p className="rounded-lg border border-dashed border-outline-variant/40 py-8 text-center text-on-surface-low text-[0.8125rem]">
+                  <p data-type="body-s" className="rounded-lg border border-dashed border-outline-variant/40 py-8 text-center text-on-surface-low">
                     No stages — add one, or launch to let the worker plan as it goes.
                   </p>
                 )}
               </div>
 
               {error && (
-                <div role="alert" className="rounded-lg px-4 py-3 text-[0.8125rem]"
+                <div role="alert" data-type="body-s" className="rounded-lg px-4 py-3"
                   style={{ background: 'color-mix(in srgb, var(--color-danger) 8%, transparent)', color: 'var(--color-danger)' }}>{error}</div>
               )}
 
               {/* Drive mode — choose before launch how the phased tasks execute. */}
               <div className="flex flex-col gap-1.5 rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3">
-                <span className="text-on-surface-var text-[0.8125rem]" style={fvs(550)}>How should it run?</span>
+                <span data-type="label-s" className="text-on-surface-var" style={fvs(550)}>How should it run?</span>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setAutopilot(true)} aria-pressed={autopilot}
                     className={`flex flex-1 items-start gap-2 rounded-lg border p-2.5 text-left transition-colors ${autopilot ? 'border-primary/60 bg-primary/10' : 'border-outline-variant/50 hover:bg-surface-high'}`}>
                     <Rocket size={15} className={`mt-0.5 shrink-0 ${autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
                     <span>
-                      <span className="block text-on-surface text-[0.8125rem]">Autopilot</span>
-                      <span className="block text-on-surface-low text-[0.75rem]">The system queues + drives every phase to completion.</span>
+                      <span data-type="body-s" className="block text-on-surface">Autopilot</span>
+                      <span data-type="caption" className="block text-on-surface-low">The system queues + drives every phase to completion.</span>
                     </span>
                   </button>
                   <button type="button" onClick={() => setAutopilot(false)} aria-pressed={!autopilot}
                     className={`flex flex-1 items-start gap-2 rounded-lg border p-2.5 text-left transition-colors ${!autopilot ? 'border-primary/60 bg-primary/10' : 'border-outline-variant/50 hover:bg-surface-high'}`}>
                     <Hand size={15} className={`mt-0.5 shrink-0 ${!autopilot ? 'text-primary' : 'text-on-surface-low'}`} />
                     <span>
-                      <span className="block text-on-surface text-[0.8125rem]">One-by-one</span>
-                      <span className="block text-on-surface-low text-[0.75rem]">You queue tasks yourself, at your own pace.</span>
+                      <span data-type="body-s" className="block text-on-surface">One-by-one</span>
+                      <span data-type="caption" className="block text-on-surface-low">You queue tasks yourself, at your own pace.</span>
                     </span>
                   </button>
                 </div>
@@ -353,10 +355,10 @@ function PlanCapabilities({ skills, workflows, skillIds, workflowIds, onToggleSk
   const selectedCount = skillIds.size + workflowIds.size
   return (
     <div className="rounded-xl border border-outline-variant/50 bg-surface-container/60 p-3.5">
-      <div className="mb-1 inline-flex items-center gap-1.5 text-on-surface-var text-[0.8125rem]" style={fvs(550)}>
+      <div data-type="label-s" className="mb-1 inline-flex items-center gap-1.5 text-on-surface-var" style={fvs(550)}>
         <Sparkle size={14} className="text-primary" /> Capabilities loaded every cycle
       </div>
-      <p className="mb-2 text-on-surface-low text-[0.75rem]">
+      <p data-type="caption" className="mb-2 text-on-surface-low">
         The worker loads these actively each cycle. The planner pre-selected what looks relevant — adjust freely.{' '}
         {selectedCount > 0 ? `${selectedCount} selected.` : 'None selected — the agent still trigger-matches skills as it goes.'}
       </p>
@@ -374,14 +376,15 @@ function PlanCapabilities({ skills, workflows, skillIds, workflowIds, onToggleSk
       {/* Planner-suggested marketplace skills not yet installed — install in place. */}
       {marketplaceToShow.length > 0 && (
         <div className="mt-2.5 flex flex-col gap-1.5 border-t border-outline-variant/40 pt-2.5">
-          <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Suggested to install</span>
+          <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Suggested to install</span>
           {marketplaceToShow.map((m) => (
-            <div key={m.id} className="flex items-center gap-2 rounded-md bg-surface-high/50 px-2.5 py-1.5 text-[0.8125rem]">
+            <div key={m.id} data-type="body-s" className="flex items-center gap-2 rounded-md bg-surface-high/50 px-2.5 py-1.5">
               <Sparkle size={12} className="shrink-0 text-primary" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-on-surface-var">{m.name}</div>
-                {m.description && <div className="truncate text-on-surface-low text-[0.75rem]">{m.description}</div>}
+                {m.description && <div data-type="caption" className="truncate text-on-surface-low">{m.description}</div>}
               </div>
+              {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
               <Button variant="tonal" size="xs" className="shrink-0 gap-1 px-2 text-[0.75rem]" loading={!!installing[m.id]} onClick={() => onInstall(m)}>
                 <Plus size={11} /> Install
               </Button>
@@ -403,10 +406,10 @@ function PlanArtifacts({ steps }: { steps: PlanStep[] }) {
     <div className="rounded-xl border border-outline-variant/50 bg-surface-container/60">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
         aria-label={open ? 'Hide plan artifacts' : 'Show plan artifacts'}
-        className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-on-surface-var text-[0.8125rem]" style={fvs(550)}>
+        data-type="label-s" className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-on-surface-var" style={fvs(550)}>
         <FileText size={14} className="text-primary" />
         Plan artifacts ({steps.length})
-        <span className="text-on-surface-low text-[0.75rem]">{steps.map((s) => s.kind.replace(/_/g, ' ')).join(' · ')}</span>
+        <span data-type="caption" className="text-on-surface-low">{steps.map((s) => s.kind.replace(/_/g, ' ')).join(' · ')}</span>
         {open ? <ChevronUp size={15} className="ml-auto text-on-surface-low" /> : <ChevronDown size={15} className="ml-auto text-on-surface-low" />}
       </button>
       {open && (
@@ -423,15 +426,15 @@ function PlanArtifacts({ steps }: { steps: PlanStep[] }) {
             })()
             return (
               <div key={s.id} className="flex flex-col gap-1">
-                <div className="flex items-center gap-1.5 text-on-surface text-[0.8125rem]">
+                <div data-type="body-s" className="flex items-center gap-1.5 text-on-surface">
                   {s.title}
-                  <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{s.kind.replace(/_/g, ' ')}</span>
+                  <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-on-surface-low">{s.kind.replace(/_/g, ' ')}</span>
                 </div>
                 {md
-                  ? <div className="text-on-surface-var text-[0.8125rem]"><Markdown>{md}</Markdown></div>
+                  ? <div data-type="body-s" className="text-on-surface-var"><Markdown>{md}</Markdown></div>
                   : structured
-                    ? <pre className="overflow-x-auto rounded-md bg-surface-high/60 p-2 text-on-surface-var text-[0.75rem] leading-snug whitespace-pre-wrap break-words">{structured}</pre>
-                    : <span className="text-on-surface-low text-[0.75rem]">No detail.</span>}
+                    ? <pre data-type="caption" className="overflow-x-auto rounded-md bg-surface-high/60 p-2 text-on-surface-var whitespace-pre-wrap break-words">{structured}</pre>
+                    : <span data-type="caption" className="text-on-surface-low">No detail.</span>}
               </div>
             )
           })}
@@ -465,15 +468,15 @@ function StageQualityGate({ stage, onPatch }: { stage: CodeStage; onPatch: (p: P
   return (
     <div className="mt-2 flex flex-col gap-1">
       <button type="button" onClick={toggle} aria-pressed={on}
-        className="flex w-fit items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide hover:text-on-surface-var">
+        data-type="caption" className="flex w-fit items-center gap-1.5 text-on-surface-low uppercase tracking-wide hover:text-on-surface-var">
         <Gauge size={12} className={on ? 'text-primary' : ''} />
         <span>Quality bar</span>
-        <span className={`rounded-pill px-1.5 py-0.5 text-[0.75rem] normal-case tracking-normal ${on ? 'bg-primary-container text-on-primary-container' : 'bg-surface-high text-on-surface-low'}`}>
+        <span data-type="caption" className={`rounded-pill px-1.5 py-0.5 normal-case tracking-normal ${on ? 'bg-primary-container text-on-primary-container' : 'bg-surface-high text-on-surface-low'}`}>
           {on ? 'on' : 'off'}
         </span>
       </button>
       {on && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md bg-surface-high/60 px-2.5 py-2 text-[0.75rem] text-on-surface-var">
+        <div data-type="caption" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md bg-surface-high/60 px-2.5 py-2 text-on-surface-var">
           <label className="flex items-center gap-1.5">
             <span className="text-on-surface-low">Pass ≥</span>
             <input type="number" min={0} max={5} step={0.5} value={pass}
@@ -486,7 +489,7 @@ function StageQualityGate({ stage, onPatch }: { stage: CodeStage; onPatch: (p: P
               onChange={(e) => setHold(parseFloat(e.target.value))} aria-label="Quality hold floor"
               className="w-14 rounded bg-surface-high px-1.5 py-0.5 text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           </label>
-          <span className="text-on-surface-low text-[0.75rem]">score 0–5 · below hold rolls back</span>
+          <span data-type="caption" className="text-on-surface-low">score 0–5 · below hold rolls back</span>
         </div>
       )}
     </div>
@@ -530,32 +533,32 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
         <div className="mt-1 flex flex-col items-center gap-0.5 text-on-surface-low">
           <SquareIconButton icon={ChevronUp} label="Move stage up" disabled={index === 0} onClick={() => onMove(-1)}
             disabledReason="Already the first stage" />
-          <span className="text-[0.75rem] tabular-nums">{index + 1}</span>
+          <span data-type="caption" className="tabular-nums">{index + 1}</span>
           <SquareIconButton icon={ChevronDown} label="Move stage down" disabled={index === count - 1} onClick={() => onMove(1)}
             disabledReason="Already the last stage" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <input value={stage.title} onChange={(e) => onPatch({ title: e.target.value })} placeholder="Stage title"
-              className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+              data-type="body-s" className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
             {/* Stage type — the canonical SDLC id (drives capabilities + gate
                 tracking). Editable so a user can re-type a stage or fix an added
                 one; the SDLC ladder is the only valid set. */}
             <select value={SDLC_STAGES.includes(stage.stage as typeof SDLC_STAGES[number]) ? stage.stage : ''}
               onChange={(e) => onPatch({ stage: e.target.value })} aria-label="Stage type"
-              className="shrink-0 rounded-md bg-surface-high px-2 py-1.5 text-[0.75rem] text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
+              data-type="caption" className="shrink-0 rounded-md bg-surface-high px-2 py-1.5 text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
               {!SDLC_STAGES.includes(stage.stage as typeof SDLC_STAGES[number]) && <option value="">— type —</option>}
               {SDLC_STAGES.map((sg) => <option key={sg} value={sg}>{sg}</option>)}
             </select>
             <SquareIconButton icon={Trash2} iconSize={13} tone="danger" label="Remove stage" onClick={onRemove} className="shrink-0" />
           </div>
           <textarea value={stage.objective} onChange={(e) => onPatch({ objective: e.target.value })} rows={2} placeholder="What this stage accomplishes…"
-            className="mt-2 w-full resize-none rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface-var text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+            data-type="body-s" className="mt-2 w-full resize-none rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           {/* exit criteria */}
           <div className="mt-2 flex flex-col gap-1">
-            <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Done when</span>
+            <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Done when</span>
             {(stage.exit_criteria ?? []).map((c, ci) => (
-              <div key={ci} className="flex items-center gap-1.5 rounded-md bg-surface-high/60 px-2 py-1 text-[0.8125rem] text-on-surface-var">
+              <div key={ci} data-type="body-s" className="flex items-center gap-1.5 rounded-md bg-surface-high/60 px-2 py-1 text-on-surface-var">
                 <span className="min-w-0 flex-1">{c}</span>
                 <button type="button" onClick={() => removeCrit(ci)} aria-label="Remove criterion" className="shrink-0 text-on-surface-low hover:text-danger"><X size={12} /></button>
               </div>
@@ -565,7 +568,7 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
             <input value={crit} onChange={(e) => setCrit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCrit() } }}
               onBlur={addCrit}
               placeholder="Add a concrete, checkable condition…"
-              className="rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary placeholder:text-on-surface-low" />
+              data-type="body-s" className="rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary placeholder:text-on-surface-low" />
           </div>
           {/* P6 quality gate — the per-stage metric bar (metric_pass/metric_hold). The
               exit criteria are the structural gate (met/not-met); the quality bar is the
@@ -578,9 +581,9 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
               at launch. Editable: rename, remove, or add the work items the worker
               executes one by one. */}
           <div className="mt-2 flex flex-col gap-1">
-            <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Tasks{(stage.tasks ?? []).length ? ` (${stage.tasks!.length})` : ''}</span>
+            <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Tasks{(stage.tasks ?? []).length ? ` (${stage.tasks!.length})` : ''}</span>
             {(stage.tasks ?? []).map((t, ti) => (
-              <div key={ti} className="flex items-start gap-1.5 rounded-md bg-surface-high/60 px-2 py-1 text-[0.8125rem]">
+              <div key={ti} data-type="body-s" className="flex items-start gap-1.5 rounded-md bg-surface-high/60 px-2 py-1">
                 <span className="mt-1.5 size-3 shrink-0 rounded-full border border-outline-variant/60" />
                 <div className="flex min-w-0 flex-1 flex-col">
                   <input value={t.title} onChange={(e) => patchTask(ti, { title: e.target.value })}
@@ -590,7 +593,7 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
                       tooltip, so the user reviews WHAT each task does, not just its name. */}
                   <input value={t.description ?? ''} onChange={(e) => patchTask(ti, { description: e.target.value })}
                     placeholder="how / details (optional)…"
-                    className="min-w-0 flex-1 bg-transparent text-on-surface-low text-[0.75rem] outline-none placeholder:text-on-surface-low/60 focus:ring-2 focus:ring-inset focus:ring-primary" />
+                    data-type="caption" className="min-w-0 flex-1 bg-transparent text-on-surface-low outline-none placeholder:text-on-surface-low/60 focus:ring-2 focus:ring-inset focus:ring-primary" />
                 </div>
                 <button type="button" onClick={() => removeTask(ti)} aria-label="Remove task" className="mt-1 shrink-0 text-on-surface-low hover:text-danger"><X size={12} /></button>
               </div>
@@ -600,7 +603,7 @@ function StageCard({ index, count, stage, onPatch, onRemove, onMove }: {
               <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTask() } }}
                 onBlur={addTask}
                 placeholder="Add a task…"
-                className="min-w-0 flex-1 bg-transparent text-[0.8125rem] text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary" />
+                data-type="body-s" className="min-w-0 flex-1 bg-transparent text-on-surface outline-none placeholder:text-on-surface-low focus:ring-2 focus:ring-inset focus:ring-primary" />
             </div>
           </div>
         </div>

@@ -98,13 +98,13 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
   },
   {
     file: 'pages/code/CodePlanReview.tsx',
-    anchor: 'min-w-0 flex-1 bg-transparent text-on-surface-low text-[0.75rem]',
+    anchor: 'min-w-0 flex-1 bg-transparent text-on-surface-low outline-none',
     ring: ELEMENT_RING,
     what: 'task description input',
   },
   {
     file: 'pages/code/CodePlanReview.tsx',
-    anchor: 'min-w-0 flex-1 bg-transparent text-[0.8125rem] text-on-surface',
+    anchor: 'min-w-0 flex-1 bg-transparent text-on-surface outline-none',
     ring: ELEMENT_RING,
     what: 'add-a-task input',
   },

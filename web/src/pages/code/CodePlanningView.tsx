@@ -59,7 +59,7 @@ function ArtifactView({ kind, artifact, projectId, commentTarget }: { kind: stri
   const empty = !md && !keyPoints.length && !stories.length && !decisions.length && !entities.length && !phases.length
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg bg-surface-high/40 p-3 text-[0.8125rem]">
+    <div data-type="body-s" className="flex flex-col gap-3 rounded-lg bg-surface-high/40 p-3">
       {/* docId is the comment store's DOCUMENT IDENTITY, and the store is one global
           localStorage key. `code-plan-<kind>` carried no project scope, so every Code
           project's "requirements" step was the SAME document: comments left on one
@@ -85,7 +85,7 @@ function ArtifactView({ kind, artifact, projectId, commentTarget }: { kind: stri
             {decisions.map((d, i) => (
               <div key={i} className="rounded-md bg-surface p-2">
                 <div className="text-on-surface">{String(d.title || d.decision || d.name || `Decision ${i + 1}`)}</div>
-                {!!(d.rationale || d.why) && <div className="text-on-surface-low text-[0.75rem]">{String(d.rationale || d.why)}</div>}
+                {!!(d.rationale || d.why) && <div data-type="caption" className="text-on-surface-low">{String(d.rationale || d.why)}</div>}
               </div>
             ))}
           </div>
@@ -96,7 +96,7 @@ function ArtifactView({ kind, artifact, projectId, commentTarget }: { kind: stri
         <ArtifactSection icon={<Boxes size={13} className="text-primary" />} label={`Entities (${entities.length})`}>
           <div className="flex flex-wrap gap-1.5">
             {entities.map((e, i) => (
-              <span key={i} className="rounded-md bg-surface px-2 py-1 text-on-surface-var text-[0.75rem]" title={String(e.description || e.role || '')}>
+              <span key={i} data-type="caption" className="rounded-md bg-surface px-2 py-1 text-on-surface-var" title={String(e.description || e.role || '')}>
                 {String(e.name || e.title || e.entity || `Entity ${i + 1}`)}
               </span>
             ))}
@@ -114,19 +114,19 @@ function ArtifactView({ kind, artifact, projectId, commentTarget }: { kind: stri
                 <div key={i} className="rounded-md bg-surface p-2.5">
                   <div className="flex items-center gap-1.5">
                     <span className="text-on-surface">{i + 1}. {String(p.title || p.stage || 'Phase')}</span>
-                    {!!p.stage && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{String(p.stage)}</span>}
+                    {!!p.stage && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-on-surface-low">{String(p.stage)}</span>}
                   </div>
-                  {!!p.objective && <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{String(p.objective)}</div>}
+                  {!!p.objective && <div data-type="caption" className="mt-0.5 text-on-surface-low">{String(p.objective)}</div>}
                   {tasks.length > 0 && (
                     <ol className="mt-1.5 flex flex-col gap-1">
                       {tasks.map((t, j) => {
                         const deps = Array.isArray(t.depends_on) ? (t.depends_on as unknown[]).map((x) => Number(x) + 1).filter((n) => !Number.isNaN(n)) : []
                         return (
-                          <li key={j} className="flex items-start gap-1.5 text-on-surface-var text-[0.75rem]">
+                          <li key={j} data-type="caption" className="flex items-start gap-1.5 text-on-surface-var">
                             <span className="mt-0.5 shrink-0 text-on-surface-low">{i + 1}.{j + 1}</span>
                             <span>
                               {String(t.title || `Task ${j + 1}`)}
-                              {!!deps.length && <span className="ml-1 text-on-surface-low text-[0.75rem]">↳ after {deps.map((d) => `${i + 1}.${d}`).join(', ')}</span>}
+                              {!!deps.length && <span data-type="caption" className="ml-1 text-on-surface-low">↳ after {deps.map((d) => `${i + 1}.${d}`).join(', ')}</span>}
                             </span>
                           </li>
                         )
@@ -134,7 +134,7 @@ function ArtifactView({ kind, artifact, projectId, commentTarget }: { kind: stri
                     </ol>
                   )}
                   {exit.length > 0 && (
-                    <div className="mt-1.5 text-on-surface-low text-[0.75rem]">Done when: {exit.join('; ')}</div>
+                    <div data-type="caption" className="mt-1.5 text-on-surface-low">Done when: {exit.join('; ')}</div>
                   )}
                 </div>
               )
