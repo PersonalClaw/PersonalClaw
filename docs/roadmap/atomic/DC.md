@@ -4,7 +4,7 @@
 **Code:** `DC`  
 **Source status:** proposed
 
-6 atoms: 4 done (`DC-2` 2026-08-13/#1286, `DC-3` 2026-08-16, `DC-4`/`DC-5` 2026-08-27), 1 implemented-pending-`dag.json` (`DC-6` 2026-09-05 — the Linux half shipped per the 2026-08-27 owner ruling and the Windows half carries the dated DEFERRED note, so the atom's either/or done-when is satisfied on both branches), 1 todo (`DC-1`, the mac signing/updater pipeline). DC-2 is the independently-startable capability-bridge seam-owner; DC-3/4/5 hang off it; DC-5 and DC-6 carry the two cross-plan gates (INBOX-NOTIF, PLATFORM-REACH).
+6 atoms: 4 done (`DC-2` 2026-08-13/#1286, `DC-3` 2026-08-16, `DC-4`/`DC-5` 2026-08-27), 5 done (`DC-6` flipped 2026-09-05 — the Linux half shipped per the 2026-08-27 owner ruling, PR #2488, and the Windows half carries the dated DEFERRED note, so the either/or done-when is satisfied on both branches), 1 todo (`DC-1`, the mac signing/updater pipeline, owner-gated on SH-11's Apple secrets). DC-2 is the independently-startable capability-bridge seam-owner; DC-3/4/5 hang off it; DC-5 and DC-6 carry the two cross-plan gates (INBOX-NOTIF, PLATFORM-REACH).
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -15,7 +15,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `DC-3` | ✅ | S3: Live audio — push-to-talk mic capture to STT | `DC-2` | global-hotkey push-to-talk (bridge global_hotkey cap, chord configurable in Settings) captures only while held/toggled with an always-on capturing indicator; renderer getUserMedia (TCC via bridge grant) chunk-uploads to existing /api/stt/transcribe and a spoken sentence lands in the composer at cursor <=2s after release on faster-whisper local; system-audio probe returns unavailable with reason and docs/guides/desktop.md states mic-only; deny-mic path degrades with an actionable prompt and an already-registered-chord conflict surfaces cleanly. (Owner tasks 3/4: mic-privacy sanity pass + default chord.) |
 | `DC-4` | ✅ | S4: Tray/menu-bar presence + login-item + graceful quit | `DC-2` | tray/menu-bar icon+menu shows pending-approvals count (click-through deep-links into the SPA), running loops, quick-capture note->inbox, open dashboard, quit; counts live-update over the loopback WS/API; login-item toggle (Settings via bridge) survives reboot; graceful gateway shutdown on quit leaves no orphan gateway (process table verified). AMBIENT-SURFACES menu-bar tiles render here only when that plan is available (non-blocking). |
 | `DC-5` | ✅ | S4: Native notifications as a plan-42 rules target | `DC-2`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:native notification target registered in the rules engine` | a notification rule with target `native` fires an Electron OS Notification when the desktop shell is connected and the tap focuses the relevant surface; falls back to dashboard toasts when the shell is not connected. |
-| `DC-6` | 🟡 | S4: Windows/Linux electron-builder targets (PLATFORM-REACH-gated) | `DC-1`, `EXT:PLATFORM-REACH:non-mac backend proven on the target OS` | either Windows/Linux electron-builder targets ship with per-OS signing docs once PLATFORM-REACH's corresponding rung is proven, OR a dated DEFERRED note records the exact gate condition. |
+| `DC-6` | ✅ | S4: Windows/Linux electron-builder targets (PLATFORM-REACH-gated) | `DC-1`, `EXT:PLATFORM-REACH:non-mac backend proven on the target OS` | either Windows/Linux electron-builder targets ship with per-OS signing docs once PLATFORM-REACH's corresponding rung is proven, OR a dated DEFERRED note records the exact gate condition. |
 
 ## Atom scopes
 
@@ -137,7 +137,7 @@ Session 4 — Presence + platforms, T4.2 (native notifications target); Integrat
 
 ### `DC-6` — S4: Windows/Linux electron-builder targets (PLATFORM-REACH-gated)
 
-**Status:** implemented 2026-09-05 per the 2026-08-27 owner ruling (Linux ships now; Windows stays deferred — both halves recorded below). First artifacts attach on the next tag; `dag.json` is the driver's to flip.
+**Status:** ✅ done — flipped 2026-09-05 (PR #2488) per the 2026-08-27 owner ruling: Linux ships now, Windows stays deferred with the dated note (both halves recorded below). First artifacts attach on the next tag.
 
 Session 4 — Presence + platforms, T4.4 (Windows/Linux targets, gated); design S4 ('desktop follows platform support, never leads it')
 

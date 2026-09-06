@@ -14,7 +14,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `HC-2` | ✅ | Sparse + parallel + reuse worktree hydration with loop.worktree_sparse config | `HC-1` | Scoped SDLC tasks create sparse worktrees hydrating only target paths; an out-of-scope write auto-widens (git sparse-checkout add) without failing; phase-READY worktree creation batches through a bounded (cpu_count, ceil 4) thread pool; a reuse pool resets surviving worktrees (checkout -B + clean -fd) between phases and tears down to remove+add on any reset failure; merge-back is diff-identical to full checkouts; loop.worktree_sparse (default true) round-trips through the four wiring points (dataclass _meta, load, to_dict, _EDITABLE_CONFIG+FE); existing worktree tests plus a fan-out timing assertion pass (SC 1, 2, 7). |
 | `HC-3` | ⬜ | Best-of-N sampling core (sampling.py) + bundled best-of-n skill | — | best_of_n(prompt,n,judge_criteria,use_case) fires N temperature-varied parallel one_shot_completion calls through the ModelCallGuard chokepoint, LLMJudge scores each and returns winner+candidates+judgments, and appends a bounded record (ts,n,criteria_digest,winner_idx,score_spread,tokens_total) to ~/.personalclaw/sampling_outcomes.jsonl (snapshot-excluded); skills/bundled/best-of-n/SKILL.md confirms N (cap 5)+criteria naming the N-call cost multiplier (grill ambiguous-trigger precedent), presents winner with collapsible runners-up and a working 'use #2' choice; chat 'give me 3 versions and pick the best' validated end-to-end with all N calls visible in model_calls.jsonl (SC 3, 4). |
 | `HC-4` | ✅ | Check-work skill + SDLC post-gate hook + chat suggestion chip | — | skills/bundled/check-work/SKILL.md reconstructs session claims, derives 2-4 executable checks, runs them with real tool calls (unverifiable checks reported as such, never assumed passing), and reports pass/fail with evidence; an adversarial planted-flaw case is caught with zero self-reported passes; loop.check_work_stages (default off) runs the same check-derivation module after a passing SDLC gate and catches a claimed-but-missing file; chat.offer_check_work (default on) offers a 'Check this work' chip after >=3-tool-call completion turns (invocation always user-clicked); the QA-Companion light-vs-deep boundary doc is present; both config bools round-trip through the four wiring points (SC 5, 6, 7). Soft, non-blocking: delegates deep-verify escalation to SELF-VERIFICATION S3 QA Companion only if that has landed. |
-| `HC-5` | ⬜ | v2 workflow templates for best-of-n and check-work (engine-native halves) | `HC-3`, `HC-4`, `EXT:WORKFLOWS-V2:Slice 3 judge-panel/fan-out template machinery` | A best-of-n workflow template (fan-out N -> judge -> select) and a check-work node template run engine-side, each CALLING the §2.1/§3.1 cores (no reimplementation) so template and skill are behaviorally identical; a shared-core test exercising both skill and template entry points is green (SC 8). |
+| `HC-5` | ✅ | v2 workflow templates for best-of-n and check-work (engine-native halves) | `HC-3`, `HC-4`, `EXT:WORKFLOWS-V2:Slice 3 judge-panel/fan-out template machinery` | A best-of-n workflow template (fan-out N -> judge -> select) and a check-work node template run engine-side, each CALLING the §2.1/§3.1 cores (no reimplementation) so template and skill are behaviorally identical; a shared-core test exercising both skill and template entry points is green (SC 8). |
 
 ## Atom scopes
 
@@ -135,7 +135,15 @@ the sentence with backticked spans removed) with a regression test.
 
 ### `HC-5` — v2 workflow templates for best-of-n and check-work (engine-native halves)
 
-**Status:** todo
+**Status:** ✅ done — PR #2492, 2026-09-05. Both templates call the shipped cores WHOLE from one
+metered action node (the plan's fan-out→judge→select node decomposition does not map onto the core:
+its pieces are private, and the concurrency proof, fail-open tiers, tie-break contract and outcome
+record span the whole call — splitting would re-own those contracts in template config, the exact
+skill/template drift the plan's risk table forbids; recorded at the definition sites). SC 8 holds via
+`tests/test_hc5_shared_core.py`: one stub set drives the skill's tool and the real template node
+through `dispatch_action`, with a deliberate score tie proving the deterministic tie-break through
+both paths. Note: dep `HC-3` stays todo only on its owner live-run clause — the core this atom calls
+is complete and railed.
 
 §2.3 The template: v2 judge-panel consumer; §3.2 Workflow template (check-work node); Success Criteria 8
 

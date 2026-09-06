@@ -137,6 +137,25 @@ Session 1 is fully independent (Wave 2, or whenever fan-out slowness is observed
 
 ## Execution log
 
+- **2026-09-05 — `HC-5` DONE (PR #2492): the engine-native halves, with one recorded deviation from
+  §2.3's sketch.** Two bundled v2 templates — `best-of-n` (sample action node → select transform)
+  and `check-work` (check action node → verdict transform) — each backed by a thin action provider
+  that CALLS the shipped core (`sampling.best_of_n` whole; `check_work.derive_and_run`), so template
+  and skill are behaviorally identical by construction. **The deviation:** §2.3's
+  fan-out→judge→select node decomposition does not map onto the shipped core — `_sample_one` /
+  `_judge_candidates` / `_select_winner` are private, and the concurrency proof, fail-open tiers,
+  tie-break contract and outcome record all span the whole `best_of_n` call. Splitting them across
+  engine nodes would re-own those contracts in template config — the exact skill/template drift this
+  plan's own risk table forbids ("templates are thin spec wrappers"). So the template calls the core
+  WHOLE from one metered action node; the engine sees fan-out→judge→select as one action, and the
+  parallelism is the core's own `asyncio.gather`. SC 8 holds via `tests/test_hc5_shared_core.py`
+  (one stub set through both entry points, a deliberate score tie pinning the deterministic
+  tie-break through both paths, and a source-level pin that the wrappers import the cores, not
+  their pieces). Rails in the same commit: provider registry + `ALLOWED_HOOK_PROVIDERS`, capability
+  tables (check-work read-only; best-of-n write-capable for its unattended N-fold spend), rungs
+  ActionTypeSpecs, bundled census, frontier golden regenerated purely additively. `HC-3` stays todo
+  on its owner live-run clause alone — the core this atom calls is complete and railed.
+
 - **[2026-08-21] HC-6 DONE — independent tool calls dispatch concurrently under reader/writer
   path reservations.** `src/personalclaw/agents/native/dispatch_plan.py` owns the reservations and
   the wave partition; `runtime.py`'s `_execute_tool_batch`/`_execute_wave` dispatch them.
