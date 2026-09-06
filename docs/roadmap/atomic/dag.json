@@ -1913,6 +1913,17 @@
             "ES-13"
           ],
           "evidence": "Core PR #2422 (feat(workflows): ES-16 human-attention accounting with decay and demotion signal, MERGED 2026-09-04, merge commit 01fae0425). Attention accounting ships as a PURE QUERY over events the run journal already carries -- nothing new is stored: human-answered gates journal `resolved_after_secs` (dwell from the continuation's `created_at`; auto-approved gates deliberately carry none, they cost no attention), and `workflows/introspection.py` computes the SS4.4 projections on demand -- `attention_events` (human gate answers + mid-flight edits + judge divergences), `attention_debt` (7-day half-life exponential decay), `attention_trend` (first-half vs second-half, sample-gated), and `post_grant_rise`, the mechanical demotion signal that fires only with a real sample on both sides of a grant. A bounded `GET /api/workflows/attention` serves per-scope summaries and the Learning page's Attention panel renders them (Table family + StatusPill; rising is the one warn-toned verdict and an unmeasured trend reads as \"too few runs\" rather than dressing up as flat). Promotion proposals cite the trend through a `note_for` callback injected by the gateway sweep, so `guardrails` never imports `workflows` and a citation failure never blocks the proposal. Locked by `tests/test_workflows_attention_accounting.py` (124 backend) + 7 panel tests. Unblocks nothing further on its own; ES-9 waits on ES-15."
+        },
+        {
+          "id": "ES-17",
+          "title": "An eval cell child can reach a bound model provider: carry the operator binding into the isolated fixture home",
+          "status": "todo",
+          "scope": "Minted 2026-09-06 from LV-7 measured evidence: the sixth gap the LV-6 protocol §7 does not name",
+          "done_when": "A matrix cell spawned by evals/runner.py can resolve a real (non-`scripted`) provider for use case 'chat' from inside its isolated per-cell home, so a paired study measures something instead of reporting VERIFIER_ABSENT on every cell. Two causes must both be addressed and each proven by a cell that actually resolves: (1) runner.py builds the child env as os.environ.copy() and rewrites PERSONALCLAW_HOME to a per-cell temp dir seeded from the scenario fixture_home, which carries no providers[] or active_models.json — and config_path() is unconditionally $PERSONALCLAW_HOME/config.json with NO env override, so the operator's binding cannot cross the boundary; (2) llm/registry.py's _CONFIG_TYPE_MAP is empty by design after the provider-as-app migration, so core alone builds no real provider type — those come from per-home installed apps and apps_dir() is itself per-home. Whatever mechanism is chosen must keep the isolation the substrate exists for: `scripted` remains the default and a cell must never silently inherit ambient credentials. Verified by a paired run reporting measured_tasks > 0 with a real provider named in the pin.",
+          "deps": [
+            "ES-1"
+          ],
+          "blocked_reason": "NOT blocked — startable. Minted here rather than in LEARNING-VISIBILITY because the cell spawn/isolation mechanism is this plan's (ES-1), and LV-6 §7 G1 already ruled that LV must not grow a second lever beside it (the arm_mask ruling). LV-7 depends on this."
         }
       ]
     },
@@ -6719,9 +6730,10 @@
           "deps": [
             "LV-6",
             "EXT:EVALUATION-SUBSTRATE:S1-2 template-study machinery",
-            "EXT:DISCOVERABILITY-LAUNCH:site content publish path (plan 36 sync)"
+            "EXT:DISCOVERABILITY-LAUNCH:site content publish path (plan 36 sync)",
+            "ES-17"
           ],
-          "blocked_reason": "PARTIAL. The harness ships and is railed (scripts/learning_benchmark.py, the three /api/evals/* routes, BenchmarkPanel.tsx, the LV-6 methodology protocol). UNMET is clause 3: 'an independent re-run reproduces within stated variance' - and NO results artifact exists anywhere in the tree (the script writes reports into $PERSONALCLAW_HOME/evals/learning_bench/, which is not committed). So the benchmark has never been RUN, only built. That same absence is exactly what DL-7 is blocked on. NEEDS AUTHORIZED MODEL SPEND: the protocol is 100 paired cells. Also worth knowing for whoever runs it: the branch's own falsification was INVALID - BenchmarkPanel.test.tsx never mocked identityReport, which LearningPage reads, so the call-site test failed with a TypeError regardless of the mutation and its 'RED' count was identical to the unmutated count. Fixed on main; re-falsify honestly if that rail is touched again."
+          "blocked_reason": "PARTIAL — and the long-standing premise 'needs authorized model spend' is now MEASURED FALSE (2026-09-06). The harness ships and is railed (scripts/learning_benchmark.py, three /api/evals/* routes, BenchmarkPanel.tsx, the LV-6 protocol). RUN TWICE end-to-end against fixture homes backed by a local Ollama gemma4:12b: measured_tasks 0, absent_cells 100/100 both times, every one of 200 retained cell payloads carrying the same ProviderResolutionError — no model provider resolves for use case 'chat'. So a local model is NECESSARY BUT NOT SUFFICIENT and no amount of spend closes this. The real gate is that a cell child cannot reach a bound provider at all, now owned by the newly minted ES-17: runner.py reseeds PERSONALCLAW_HOME per cell from a fixture_home with no providers[]/active_models.json and config_path() admits no env override, while core's _CONFIG_TYPE_MAP is empty by design post provider-as-app migration. Only `scripted` is reachable, and both arms off one canned script is the fabricated comparison the protocol exists to forbid. Clause 1 is HALF: the command is literally reproducible (identical pins, task-set fingerprints and outcomes across runs) but the runs are not measurements. Clause 2 is SATISFIED in-app (GET /api/evals/learning-benchmark returns 200 with the register, all five stated_variance conditions and protocol_doc; BenchmarkPanel renders the methodology link from the report rather than hardcoding it); the SITE half needs an owner decision, because personalclaw.dev/scripts/sync-docs.mjs generates from a pinned released tag and records docs/roadmap/ as deliberately NOT synced — so it needs a tree choice, a tag, a sources-pin bump and a deploy. Clause 3 UNMET at 4 of 5: same task_set_version, scenario_sha256 set, prompt_pack_sha256 and config_snapshot_ref all true; verdict-class agreement correctly FALSE because reproduction_check treats a None class in either report as a change, precisely so a benchmark that never ran cannot certify itself. Separately CLOSED: LV-6 §7 G1's arm lever is measured working (load_skill returns None under PERSONALCLAW_SUPPRESSED_SKILLS). Full numbers in the plan's LV-7 execution log."
         }
       ]
     },
@@ -7921,6 +7933,11 @@
         "plan": "ES"
       },
       {
+        "id": "ES-17",
+        "title": "An eval cell child can reach a bound model provider: carry the operator binding into the isolated fixture home",
+        "plan": "ES"
+      },
+      {
         "id": "PCS-9",
         "title": "V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs)",
         "plan": "PCS"
@@ -8077,14 +8094,6 @@
         "plan": "ET",
         "gate": [
           "owner"
-        ]
-      },
-      {
-        "id": "LV-7",
-        "title": "S4 benchmark implementation as an eval-substrate study + publish",
-        "plan": "LV",
-        "gate": [
-          "ext"
         ]
       },
       {
@@ -8370,6 +8379,7 @@
       "ES-15",
       "ES-16",
       "ES-9",
+      "ES-17",
       "ET-1",
       "ET-2",
       "ET-3",
@@ -9682,10 +9692,10 @@
       {
         "code": "ES",
         "plan": "EVALUATION-SUBSTRATE",
-        "total_atoms": 16,
+        "total_atoms": 17,
         "done": 15,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 2,
         "blocked": 0
       },
       {
@@ -10175,6 +10185,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 848
+    "edge_count": 850
   }
 }

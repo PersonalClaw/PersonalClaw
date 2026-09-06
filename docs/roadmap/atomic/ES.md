@@ -4,8 +4,10 @@
 **Code:** `ES`  
 **Source status:** proposed
 
-Of 16 atoms, 15 are `done` and one remains open: ES-9 (Loop-3 field metrics) — READY now that
-both ladder leaves ES-15+ES-16 are done (its remaining deps are EXT). ES-8 (the trust-graduation ladder) was decomposed per owner ruling 2026-08-27
+Of 17 atoms, 15 are `done` and two remain open: ES-9 (Loop-3 field metrics) — READY now that
+both ladder leaves ES-15+ES-16 are done (its remaining deps are EXT) — and ES-17 (a matrix cell
+child can reach a bound model provider), minted 2026-09-06 from LV-7's measured evidence and
+startable now. ES-8 (the trust-graduation ladder) was decomposed per owner ruling 2026-08-27
 (question 2 of 11): done-by-decomposition, re-scoped onto the EXISTING `guardrails/autonomy.py`
 rungs (no second maturity/L3 vocabulary) and split into ES-13 (§4.2 trust record), ES-14 (§4.3
 ladder rungs), ES-15 (§4.4 graduation/revocation) and ES-16 (§4.4 attention accounting); ES-9 now
@@ -34,6 +36,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `ES-14` | ✅ | Ladder rungs: map trust thresholds onto autonomy.py rungs + rung chips | `ES-13` | trust thresholds map onto autonomy rungs via the existing `grant_rung`/`resolve_rung` (`rung_rank` orders them); crossing a threshold grants the mapped rung; rung chips (`rung_state`) render on template rows and the approval dialog; no parallel rung ladder is introduced. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size S. |
 | `ES-15` | ✅ | Graduation/revocation: promote on sustained success, demote on failure/kill events | `ES-14` | sustained success promotes a scope's rung, and a HARMFUL LEARN-R16 verdict, failed §2 study, nodding-loop flag or watchdog fingerprint expiry mechanically demotes/revokes it through `grant_rung`/`resolve_rung` so the next run falls back to per-stage; every transition is SEL-audited. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
 | `ES-16` | ✅ | Human-attention accounting: per-scope pending-attention debt with decay + demotion signal | `ES-13` | per-scope pending-attention debt is computed with decay and trends on the Learning page (attention_events_per_run plus a resolved_after_secs ledger addition); graduation proposals cite the trend and a post-grant attention rise files a demotion signal into the rung machinery. Decomposed from ES-8 (owner ruling 2026-08-27 Q2/11); size M. |
+| `ES-17` | ⬜ | An eval cell child can reach a bound model provider: carry the operator binding into the isolated fixture home | `ES-1` | A matrix cell spawned by evals/runner.py can resolve a real (non-`scripted`) provider for use case 'chat' from inside its isolated per-cell home, so a paired study measures something instead of reporting VERIFIER_ABSENT on every cell. Two causes must both be addressed and each proven by a cell that actually resolves: (1) runner.py builds the child env as os.environ.copy() and rewrites PERSONALCLAW_HOME to a per-cell temp dir seeded from the scenario fixture_home, which carries no providers[] or active_models.json — and config_path() is unconditionally $PERSONALCLAW_HOME/config.json with NO env override, so the operator's binding cannot cross the boundary; (2) llm/registry.py's _CONFIG_TYPE_MAP is empty by design after the provider-as-app migration, so core alone builds no real provider type — those come from per-home installed apps and apps_dir() is itself per-home. Whatever mechanism is chosen must keep the isolation the substrate exists for: `scripted` remains the default and a cell must never silently inherit ambient credentials. Verified by a paired run reporting measured_tasks > 0 with a real provider named in the pin. |
 
 ## Atom scopes
 
@@ -281,3 +284,11 @@ the owner's `dag.json` flip.
 §4.4 human-attention accounting (decomposed from ES-8 per owner ruling 2026-08-27 Q2/11); size M
 
 **Done when:** per-scope pending-attention debt is computed with decay and trends on the Learning page (attention_events_per_run plus a resolved_after_secs ledger addition); graduation proposals cite the trend and a post-grant attention rise files a demotion signal into the rung machinery.
+
+### `ES-17` — An eval cell child can reach a bound model provider: carry the operator binding into the isolated fixture home
+
+**Status:** todo
+
+Minted 2026-09-06 from LV-7 measured evidence: the sixth gap the LV-6 protocol §7 does not name
+
+**Done when:** A matrix cell spawned by evals/runner.py can resolve a real (non-`scripted`) provider for use case 'chat' from inside its isolated per-cell home, so a paired study measures something instead of reporting VERIFIER_ABSENT on every cell. Two causes must both be addressed and each proven by a cell that actually resolves: (1) runner.py builds the child env as os.environ.copy() and rewrites PERSONALCLAW_HOME to a per-cell temp dir seeded from the scenario fixture_home, which carries no providers[] or active_models.json — and config_path() is unconditionally $PERSONALCLAW_HOME/config.json with NO env override, so the operator's binding cannot cross the boundary; (2) llm/registry.py's _CONFIG_TYPE_MAP is empty by design after the provider-as-app migration, so core alone builds no real provider type — those come from per-home installed apps and apps_dir() is itself per-home. Whatever mechanism is chosen must keep the isolation the substrate exists for: `scripted` remains the default and a cell must never silently inherit ambient credentials. Verified by a paired run reporting measured_tasks > 0 with a real provider named in the pin.

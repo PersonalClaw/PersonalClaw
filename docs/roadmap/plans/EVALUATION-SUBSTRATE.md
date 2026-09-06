@@ -1949,3 +1949,35 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
 ## Execution log — ES-9 (Loop-3 live field metrics beside lab results + lab_field_divergence, amendment E3)
 
 - **[2026-09-05] IMPLEMENTATION LANDED on a feature branch; atom stays ⬜ for the owner's dag.json flip.** `evals/field_metrics.py` is E3's ledger query module: one `SubjectRow` per subject — lab score (Loop 1: the newest `results.tsv` `template_ab` row, pin and all) | gate status (Loop 2: the newest gate report on a proposal targeting the subject, projected through the SAME `gate.summary` the inbox row renders) | field trend (Loop 3) — computed per request, stored nowhere new (§4.4 discipline; railed by a file-census test). The two subject families E3 names are decided by the REGISTRY, not the evidence: templates (from recent runs ∪ study rows) and registered action types, because the family decides which demotion a divergence files. Field sources, all shipped records: 👍/👎 from `feedback.jsonl` current verdicts attributed by `producer_id == subject` (the exact `_feedback_rejections` dialect, via a new `producer_verdict_series` reader); edit-before-approve from run-journal `user_edited_mid_flight` against human-answered gates (auto-approved gates yield NOTHING) — **template-scoped only**, because plan 58 defers explicit edit records and no store captures an edit on an action type's output, so that cell is honestly `None`, never `0.0`; approvals/rejections/undos from the SEL tail via `autonomy.approval_outcome_series` (built on the SAME `_outcome_events` walk `promotion_eligibility` counts — one attribution dialect, refactored not duplicated) plus reversed reversal records. The trend is `field_trend` — halves-over-good-rate, sample-gated at 6 signals (`attention_trend`'s reasoning), and `""` renders as "too few signals", never as flat. **The divergence flag is three conjuncts** — lab `score_new > score_old` on the newest row, field trend `falling`, and the newest field signal postdating the lab row (E3's "post-ship") — each with a vacuous partner in the tests, because the flag files a demotion and a demotion must rest on a measured contradiction. **The §4.2 demotion signal is mechanical**: `sweep_lab_field_divergence` rides the gateway autonomy sweep (beside the nodding leg; the evals layer may import both guardrails and workflows), is gated on `evals.enabled` (fail-closed — the row still RENDERS the flag when evals is off; only the demotion is suspended) and on any standing grant existing at all; a divergent action type loses its OWN grant through the new `ladder.revoke_scope` (demote → floor + cooldown + trust-record `revoked` + SEL + the registered `guardrails/autonomy_revocation` notice — scope-attributed evidence must not punish the neighbours), and a divergent template revokes standing grants wholesale through `revoke_granted_scopes`, the same consequence the failed-study and nodding triggers carry, because all three are template-scoped proof that the "system behaves well" evidence behind every grant is void. Both paths gate on `granted_at`, so a standing divergence files once and then nothing. **Surfaces:** read-only `GET /api/evals/field-metrics` (`evals_disabled` 404 / new registered `field_metrics_unreadable` 500; a GET must never demote) and the "Lab vs field" panel on the Learning page (Table family + StatusPill; `lab_field_divergence` and a falling field trend are the warn-toned verdicts; every `None` rate is an em dash). Rails updated: `HTTP_ERROR_CODES` +1, offline reference regenerated; no new config keys, no new notification kinds (the revocation notice reuses ES-15's registered pair), no new persisted files. Tests: `tests/test_evals_field_metrics.py` (module + sweep + wire) in the production-writer discipline, `web/src/pages/learning/FieldMetricsPanel.test.tsx`. **Honest gap, stated:** the atom's `EXT:FEEDBACK-SIGNAL … edit-before-approve records` dep names records plan 58 never shipped (its §"Open" defers edited-then-sent capture to LEARN-R5) — the template-side rate derives from the run ledger's own gold edit signal instead, and the action-type cell stays unmeasured until an owner rules on growing plan-58 capture.
+
+## Execution log — `ES-17` (a matrix cell child can reach a bound model provider)
+
+- **[2026-09-06] MINTED from measured evidence, not from reasoning.** A run of the LV-7 learning
+  benchmark against fixture homes — backed by a real local Ollama `gemma4:12b` — executed twice
+  end-to-end and measured **nothing**: `measured_tasks: 0`, `absent_cells: 100/100` both times, with
+  all 200 retained cell payloads carrying one identical cause, `ProviderResolutionError: no model
+  provider resolves for use case 'chat'`. That retires a premise several prior passes had recorded:
+  the blocker was never authorized model spend. A local model is necessary but **not sufficient**.
+
+  Two independent causes, each read off the code rather than inferred. First, `evals/runner.py`
+  builds the child environment as `os.environ.copy()` and then rewrites `PERSONALCLAW_HOME` to a
+  per-cell temp directory seeded from the scenario's `fixture_home` — and neither shipped fixture
+  carries a `providers[]` entry or an `active_models.json`, while `config_path()` is unconditionally
+  `$PERSONALCLAW_HOME/config.json` with no environment override. There is therefore no path by which
+  an operator's binding crosses the isolation boundary. Second, even a fully bound home cannot build
+  a real provider from core alone: `llm/registry.py`'s `_CONFIG_TYPE_MAP` is empty *by design* after
+  the provider-as-app migration, real types arrive from per-home installed apps, and `apps_dir()` is
+  itself per-home.
+
+  The consequence is that the only provider a cell can reach is `scripted`, core's offline replay —
+  and running both arms of a paired study off one canned script is exactly the fabricated comparison
+  the protocol exists to forbid. The benchmark is not failing to measure by accident; it is
+  correctly refusing to fabricate.
+
+  Homed here rather than in LEARNING-VISIBILITY because the cell spawn/isolation mechanism belongs to
+  `ES-1`, and LV-6 §7 G1 already ruled that LV must not grow a second lever beside it — the same
+  ruling that governed `arm_mask`. `LV-7` now depends on this atom.
+
+  Whatever mechanism closes this must preserve the isolation the substrate exists for: `scripted`
+  stays the default, and a cell must never silently inherit ambient credentials. The point is to make
+  a *deliberate* binding expressible, not to make the boundary leak.
