@@ -63,6 +63,7 @@ import {
   LEGS, STATUS, newLegs, passLeg, failLeg, skipLeg, noteLeg,
   shapeBundleReport, shapeReport, formatReport,
 } from './lib/app_validate_report.mjs'
+import { fillRequiredArgs } from './lib/app_validate_form.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const SHELL_SELECTOR = 'nav[data-tour="rail"]'
@@ -633,15 +634,6 @@ function pickInvokableTool(tools) {
   return primitive[0] ?? null
 }
 
-function placeholderFor(schema) {
-  if (Array.isArray(schema?.enum) && schema.enum.length) return String(schema.enum[0])
-  switch (schema?.type) {
-    case 'integer': case 'number': return '1'
-    case 'boolean': return 'false'
-    default: return 'harness-probe'
-  }
-}
-
 /** Open the tool inspector, expand "Try it", fill any required primitives, and go
  *  through "Run tool" → "Confirm & run" — the same two clicks a user makes. */
 async function runToolFromUi({ page, base, tool, shot }) {
@@ -666,19 +658,18 @@ async function runToolFromUi({ page, base, tool, shot }) {
   await tryIt.first().click()
   await page.waitForTimeout(500)
 
-  const args = {}
-  for (const key of tool.parameters?.required ?? []) {
-    const schema = tool.parameters?.properties?.[key]
-    const value = placeholderFor(schema)
-    args[key] = value
-    const field = page.locator(`input[name="${key}"], textarea[name="${key}"], select[name="${key}"]`).first()
-    if (await field.count()) {
-      const tag = await field.evaluate((el) => el.tagName.toLowerCase())
-      if (tag === 'select') await field.selectOption(value).catch(() => {})
-      else await field.fill(value).catch(() => {})
+  // Fill by ACCESSIBLE NAME and read every value back — see scripts/lib/app_validate_form.mjs.
+  // A required argument the harness cannot enter BLOCKS the leg: running the tool anyway
+  // yields its own "needs an X" error, which the report would then blame on the bundle.
+  const { args, unfilled } = await fillRequiredArgs(page, tool)
+  screenshots.push(await shot('tool-invoke-form'))
+  if (unfilled.length) {
+    return {
+      status: 'blocked',
+      output: `the harness could not enter ${unfilled.length} required argument(s) in the "Try it" form, so the run would not have tested ${tool.name}: ${unfilled.join('; ')}`,
+      args, screenshots,
     }
   }
-  screenshots.push(await shot('tool-invoke-form'))
 
   const runBtn = page.getByRole('button', { name: /^Run tool$/ })
   if (!(await runBtn.count())) {
