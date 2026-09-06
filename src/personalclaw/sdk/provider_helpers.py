@@ -42,6 +42,7 @@ from personalclaw.llm.anthropic import AnthropicProvider  # noqa: F401
 from personalclaw.llm.base import ModelProvider  # noqa: F401
 from personalclaw.llm.branded_specs import (  # noqa: E402,F401
     BrandedProviderSpec,
+    build_protocol_provider,
     resolve_credential,
     resolve_spec_secret,
 )
@@ -67,32 +68,6 @@ from personalclaw.llm.subscription_credentials import (  # noqa: F401
     register_subscription_source,
     resolve_subscription_credential,
 )
-
-
-def _build_provider(
-    spec: BrandedProviderSpec,
-    *,
-    model: str,
-    credential: Credential,
-    base_url: str,
-    extra_options: dict[str, object] | None = None,
-) -> ModelProvider:
-    """Construct the protocol client for ``spec`` with a resolved credential + base_url."""
-    if spec.protocol == "anthropic":
-        return AnthropicProvider(
-            model=model,
-            credential=credential,
-            base_url=base_url or None,
-            max_tokens=spec.max_tokens if spec.max_tokens is not None else 4096,
-            extra_options=extra_options,
-        )
-    return OpenAIProvider(
-        model=model,
-        credential=credential,
-        base_url=base_url or None,
-        max_tokens=spec.max_tokens,
-        extra_options=extra_options,
-    )
 
 
 class BrandedCatalog(ModelCatalog):
@@ -206,7 +181,6 @@ class BrandedCatalog(ModelCatalog):
         so the probe validates exactly what :meth:`test_connection` found."""
         model = self._spec.default_model or "claude-3-5-haiku-latest"
         try:
-            from personalclaw.llm.anthropic import AnthropicProvider
             from personalclaw.llm.credentials import Credential
 
             prov = AnthropicProvider(
@@ -316,7 +290,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
             eff_spec = BrandedProviderSpec(**{**spec.__dict__, "max_tokens": max_tokens_value})
         else:
             eff_spec = spec
-        return _build_provider(
+        return build_protocol_provider(
             eff_spec,
             model=entry.model or spec.default_model,
             credential=cred or _anon_credential(spec),
@@ -336,7 +310,7 @@ def register_branded_app(spec: BrandedProviderSpec) -> tuple[Callable, Callable,
         cred = cred or _anon_credential(spec)
         base_url = str(cfg.get("endpoint") or cfg.get("base_url") or spec.default_base_url)
         model = str(cfg.get("model") or cfg.get("default_model") or spec.default_model)
-        return _build_provider(spec, model=model, credential=cred, base_url=base_url)
+        return build_protocol_provider(spec, model=model, credential=cred, base_url=base_url)
 
     def create_catalog(options: dict[str, Any] | None = None, *, model: str = "") -> ModelCatalog:
         opts = options or {}

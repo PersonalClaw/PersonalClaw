@@ -1983,3 +1983,55 @@ Sharpens, doesn't append: RunPin + scenario library extend **Session 1** (the st
   Whatever mechanism closes this must preserve the isolation the substrate exists for: `scripted`
   stays the default, and a cell must never silently inherit ambient credentials. The point is to make
   a *deliberate* binding expressible, not to make the boundary leak.
+- **[2026-09-06] IMPLEMENTATION LANDED on a feature branch; atom stays ⬜ for the owner's dag.json flip.**
+  Both minted causes reproduced first, against a real local Ollama `gemma4:12b`, before anything
+  changed: one task at k=1 reported `measured_tasks: 0` with both cells carrying
+  `ProviderResolutionError: no model provider resolves for use case 'chat'` (cause 1 — the seeded
+  `empty` fixture home has no `providers[]`, no `active_models.json`, and `config_path()` has no env
+  override), and a probe that COPIED a fully-bound home into a cell-shaped home still refused to
+  build, because `openai_compatible` is registered by no app there and the synced entry therefore
+  carried an empty capability set (cause 2 — `_CONFIG_TYPE_MAP` is empty by design).
+- **The mechanism is a DECLARED binding plus an ALLOWLISTED child env, not an env passthrough.**
+  `evals/cell_provider.py` adds `CellProviderBinding`: ONE use case, ONE `Provider:model` ref, the
+  wire protocol and endpoint — resolved in the parent from exactly the one named `providers[]` entry
+  and its type's registered spec, so nothing else about the operator's config crosses. `run_matrix`
+  takes it as an explicit parameter (not a `MatrixSpec` field: an `experiment.json` carrying an
+  endpoint would stop being reproducible elsewhere), serializes it into the child's spawn env beside
+  the existing overlay/gate envelopes, and the child applies it inside its throwaway home through the
+  same `throwaway_home()` refusal — one `providers[]` entry, a one-use-case `active_models.json`, and
+  the protocol registered into that process's registry only. Each half fixes one cause, and a
+  mis-spawned cell is an honest `VERIFIER_ABSENT` rather than an edit to the real home.
+- **Least privilege is the child env, and it is the load-bearing half.** `_spawn_cell` no longer calls
+  `os.environ.copy()`; it calls `sandbox.build_child_env`, the repo's one measured answer to what a
+  spawned child may see (a name allowlist, ~30 of a real gateway's 121 variables, with a credential
+  floor no declaration can lower). That is what makes the grant *expressed*: `config/loader.py`
+  deliberately seeds stored credentials into `os.environ` so trusted children inherit them, and a
+  benchmark accepting that gift could not say which model produced its numbers. A binding may name ONE
+  key variable; its value is forwarded under the cell-scoped `PERSONALCLAW_EVAL_PROVIDER_KEY` and
+  nothing else, so no installed app's generic `api_key_env` can be satisfied by accident. The offline
+  default is preserved by forwarding the scripted replay-script PATH by name — `scripted` stays what an
+  unbound cell resolves, and it is all it resolves. Capabilities are narrowed to the bound use case
+  (chat-class also declares `CODE_TOOLS`, or the native loop offers no tool schemas and the protocol's
+  `tool_calls` metric reads as a fabricated zero); `EMBEDDING`/`VISION` are refused.
+- **Visibility, because the two run kinds produce identically-shaped tables.** The cell descriptor and
+  the child's result payload both carry the (secret-free) binding, and the benchmark report gains
+  `provider_binding` plus a spelled-out `pin.model_fingerprint` beside the `model_fp` digest — a
+  reader can no longer mistake an offline replay for a real-model run in either direction.
+- **MEASURED, twice, against a real local Ollama `gemma4:12b` (`/v1/models` 200), isolated home under
+  `/private/tmp`.** `--run --task sk_grill --trials 1 --bind-provider LocalOllama:gemma4:12b` →
+  `measured_tasks: 1`, `absent_cells: 0`, `pin.model_fingerprint.chat = "LocalOllama:gemma4:12b"`,
+  spend observed (10,452 / 5,949 tokens across the two arms, `estimated: true`) — the same command
+  without the flag still reports `measured_tasks: 0` by design. Then at PROTOCOL strength —
+  `--trials 5`, 10 cells, `sk_grill` — `measured_tasks: 1`, `absent_cells: 0`, five scored trials
+  per arm, spend observed on both (`skills_off` 38,497 tokens / `skills_on` 30,381), and a real §5
+  verdict rather than `insufficient_trials`: `not_token_matched`, delta `0.0`, token ratio `0.789`.
+  **Stated precisely:** the delta is not this atom's claim — whether a direction reproduces is LV-7's
+  question. What is proven here is that the cells MEASURED at all, which is the clause that was
+  structurally unreachable.
+- **Refactor, not a second implementation:** the protocol-client switch moved from
+  `sdk/provider_helpers._build_provider` down to `llm/branded_specs.build_protocol_provider` (core, where
+  the spec and the credential ladder already live) because a cell must not import the SDK facade, and
+  `overlay._patch_child_config` became public `patch_child_config` for the same reason
+  `throwaway_home()` is: one answer to "how does a cell edit its own config".
+- **DISCOVERY (not fixed here):** `run_matrix` was the last spawn site the child-env allowlist sweep had
+  not reached. Nothing else in `evals/` spawns, but the sweep's own inventory should record it.
