@@ -485,7 +485,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
         <HelpCircle size={32} className="text-on-surface-low" />
         <div>
           <p data-type="title-m" className="text-on-surface">This project no longer exists</p>
-          <p className="mt-1 text-on-surface-low text-[0.8125rem]">It may have been deleted, or the link is stale.</p>
+          <p data-type="body-s" className="mt-1 text-on-surface-low">It may have been deleted, or the link is stale.</p>
         </div>
         <Button onClick={onBack}><ListChecks size={15} /> Back to projects</Button>
       </div>
@@ -611,7 +611,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
             <input autoFocus value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
               onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') abortRename() }}
               aria-label="Rename project"
-              className="min-w-[14rem] h-7 rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+              data-type="body-m" className="min-w-[14rem] h-7 rounded-md bg-surface-high px-2 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           ) : (
             <button type="button" onClick={startRename} title="Rename project"
               data-type="title-l" className="truncate text-on-surface text-left hover:text-on-surface-var">
@@ -627,7 +627,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
               so the vocabulary is not re-invented and the colour only confirms the word. Shown only
               while `active` — a finished loop has no stream to be connected to. */}
           {active && (
-            <span className="inline-flex shrink-0 items-center gap-1 text-on-surface-low text-[0.75rem]">
+            <span data-type="caption" className="inline-flex shrink-0 items-center gap-1 text-on-surface-low">
               <span className="inline-block size-1.5 rounded-pill"
                 style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
               {connected ? 'Streaming' : 'Connecting…'}
@@ -682,7 +682,7 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
           that explicit + actionable instead of a silent failed Start. */}
       {p.status === 'ready' && p.project_kind === 'brownfield' && !ws && (
         <motion.div variants={messageEnter} initial="initial" animate="animate"
-          className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant/40 bg-warn/10 px-l py-2 text-[0.8125rem]"
+          data-type="body-s" className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant/40 bg-warn/10 px-l py-2"
           style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
           <span>This brownfield project needs a workspace directory before it can start.</span>
           <Button variant="ghost" size="xs" onClick={() => setPickWs(true)} className="shrink-0">Choose folder</Button>
@@ -699,14 +699,14 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
       {ws && wsMissing && p.status !== 'running' && !TERMINAL_STATUSES.has(p.status) && (
         (p.status === 'ready' || p.status === 'review') ? (
           <motion.div variants={messageEnter} initial="initial" animate="animate"
-            className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant/40 px-l py-2 text-[0.8125rem]"
+            data-type="body-s" className="flex shrink-0 items-center justify-between gap-2 border-b border-outline-variant/40 px-l py-2"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
             <span>The workspace folder <span className="font-mono">{ws.split('/').slice(-1)[0]}</span> no longer exists — re-pick it to continue.</span>
             <Button variant="ghost" size="xs" onClick={() => setPickWs(true)} className="shrink-0">Re-pick folder</Button>
           </motion.div>
         ) : (
           <motion.div variants={messageEnter} initial="initial" animate="animate"
-            className="flex shrink-0 items-center gap-2 border-b border-outline-variant/40 px-l py-2 text-[0.8125rem]"
+            data-type="body-s" className="flex shrink-0 items-center gap-2 border-b border-outline-variant/40 px-l py-2"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)', color: 'var(--color-warn)' }}>
             <span>The workspace folder <span className="font-mono">{ws.split('/').slice(-1)[0]}</span> no longer exists, so this run can't continue. Its files are gone — Stop or Delete the project, or restore the folder and reopen.</span>
           </motion.div>
@@ -771,15 +771,15 @@ function CodeToast({ kind, text, onDismiss, onRespond }: {
       <div className="flex items-start gap-2.5">
         <Icon size={18} className="mt-0.5 shrink-0" style={{ color: tone }} />
         <div className="min-w-0 flex-1">
-          <p className="text-on-surface text-[0.8125rem]" style={fvs(600)}>
+          <p data-type="label-s" className="text-on-surface" style={fvs(600)}>
             {kind === 'error' ? "That didn't work" : kind === 'conflict' ? 'Merge conflict — needs you' : kind === 'ok' ? 'Done' : 'The worker needs your input'}
           </p>
-          <p className="mt-0.5 text-on-surface-var text-[0.75rem] leading-snug">{text}</p>
+          <p data-type="caption" className="mt-0.5 text-on-surface-var">{text}</p>
           <div className="mt-2 flex items-center gap-2">
             {/* Respond keeps its per-kind tone background (error/conflict/input) —
                 a dynamic solid fill the Button variants deliberately don't cover. */}
             {onRespond && <button type="button" onClick={onRespond}
-              className="rounded-md px-2.5 py-1 text-[0.75rem]" style={{ background: tone, color: 'var(--color-on-primary)' }}>Respond</button>}
+              data-type="caption" className="rounded-md px-2.5 py-1" style={{ background: tone, color: 'var(--color-on-primary)' }}>Respond</button>}
             <Button variant="ghost" size="xs" onClick={onDismiss}>Dismiss</Button>
           </div>
         </div>
@@ -837,7 +837,7 @@ function StageTrail({ project }: { project: CodeProject }) {
             <span key={i} className="inline-flex min-w-0 items-center gap-1" title={`${s.title || s.stage} — ${st}`}>
               {i > 0 && <span className="shrink-0 text-on-surface-low/40">›</span>}
               <Icon size={12} className={`shrink-0 ${activeRunning ? 'animate-spin' : ''}`} style={{ color }} />
-              <span className="max-w-[7rem] truncate text-[0.75rem]" style={{ color }}>{s.title || s.stage}</span>
+              <span data-type="caption" className="max-w-[7rem] truncate" style={{ color }}>{s.title || s.stage}</span>
             </span>
           )
         })}
@@ -845,7 +845,7 @@ function StageTrail({ project }: { project: CodeProject }) {
       {/* compact "stage N/M · title" — always visible (incl. narrow screens where
           the full trail is hidden), so stage context is never lost. Pre-launch it
           shows the plan size as upcoming rather than a misleading "stage 1 active". */}
-      <span className="ml-1 inline-flex items-center gap-1 text-[0.75rem] md:hidden"
+      <span data-type="caption" className="ml-1 inline-flex items-center gap-1 md:hidden"
         style={{ color: allDone ? 'var(--color-ok)' : halted ? 'var(--color-warn)' : started ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }}>
         {!started
           ? <><Circle size={12} /> {plan.length} stage{plan.length === 1 ? '' : 's'} planned</>
@@ -912,7 +912,7 @@ function CockpitMeta({ project: p, onOpenProject }: { project: CodeProject; onOp
   // pre-run draft with no stages/workspace/cycles/project there's nothing worth a bar.
   if (!wsBase && !showProj && !cyclesText && !elapsedText) return null
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-outline-variant/40 bg-surface-low/30 px-l py-1 text-[0.75rem] text-on-surface-low">
+    <div data-type="caption" className="flex shrink-0 items-center gap-3 border-b border-outline-variant/40 bg-surface-low/30 px-l py-1 text-on-surface-low">
       {/* Elapsed leads at the far LEFT — "how long has this been running" is the first
           thing to read on the strip. */}
       {elapsedText && (
@@ -1016,7 +1016,7 @@ function CollapsiblePanel({ side, panelKey, def, min, max, icon: Icon, label, ch
   return (
     <div className={`relative flex shrink-0 flex-col ${borderSide} border-outline-variant/40 bg-surface-low/40`} style={{ width }}>
       <div className="flex shrink-0 items-center justify-between gap-1 border-b border-outline-variant/40 px-2 py-1.5">
-        <span className="inline-flex items-center gap-1.5 text-on-surface-var text-[0.8125rem]" style={fvs(550)}>
+        <span data-type="label-s" className="inline-flex items-center gap-1.5 text-on-surface-var" style={fvs(550)}>
           <Icon size={14} /> {label}
         </span>
         <IconButton icon={side === 'left' ? PanelLeftClose : PanelRightClose} label={`Collapse ${label}`}
@@ -1173,8 +1173,8 @@ function FileFinder({ ws }: { ws: string }) {
             // "No files match" (which would flash over the prior results until the new
             // ones land + read as a false empty).
             searching
-              ? <p className="inline-flex items-center gap-1.5 px-2.5 py-2 text-on-surface-low text-[0.75rem]"><Loader2 size={11} className="animate-spin" /> Searching…</p>
-              : <p className="px-2.5 py-2 text-on-surface-low text-[0.75rem]">No files match “{q.trim()}”.</p>
+              ? <p data-type="caption" className="inline-flex items-center gap-1.5 px-2.5 py-2 text-on-surface-low"><Loader2 size={11} className="animate-spin" /> Searching…</p>
+              : <p data-type="caption" className="px-2.5 py-2 text-on-surface-low">No files match “{q.trim()}”.</p>
           ) : results.map((r, i) => {
             // fileSearch returns REALPATH-resolved paths (file_index realpaths the root),
             // so a naive startsWith(ws) fails on a symlinked workspace root (/tmp vs
@@ -1191,7 +1191,7 @@ function FileFinder({ ws }: { ws: string }) {
                 id={`${qoId}-opt-${i}`}
                 onClick={() => openFile(r)} onMouseEnter={() => setHi(i)}
                 ref={(el) => { if (i === hi && open) el?.scrollIntoView({ block: 'nearest' }) }}
-                className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[0.75rem] ${i === hi ? 'bg-surface-high' : 'hover:bg-surface-high'}`}>
+                data-type="caption" className={`flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left ${i === hi ? 'bg-surface-high' : 'hover:bg-surface-high'}`}>
                 <FileCode size={11} className="shrink-0 text-on-surface-low" />
                 <span className="min-w-0 truncate text-on-surface-var" title={rel}>{rel}</span>
               </button>
@@ -1369,10 +1369,11 @@ function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, ga
           rendering the affected stage as a false-empty "no tasks". Any stages that DID
           load stay shown below; this is a non-blocking notice, not a wipe. */}
       {loadFailed && (
-        <div role="alert" className="mx-2 mt-2 flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[0.75rem]"
+        <div role="alert" data-type="caption" className="mx-2 mt-2 flex items-center gap-2 rounded-md px-2.5 py-1.5"
           style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)', color: 'var(--color-warn)' }}>
           <AlertTriangle size={12} className="shrink-0" />
           <span className="min-w-0 flex-1">Couldn't refresh some tasks — showing the last known list.</span>
+          {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
           <Button variant="ghost" size="xs" onClick={refresh} className="shrink-0 gap-1 px-1.5 text-[0.75rem] text-warn hover:bg-warn/15"><RotateCcw size={11} /> Retry</Button>
         </div>
       )}
@@ -1390,13 +1391,13 @@ function RightPanel({ project, onTasksChanged, tasksNonce, activityBySession, ga
 function RailTab({ icon: Icon, label, on, onClick, badge }: { icon: typeof ListChecks; label: string; on: boolean; onClick: () => void; badge?: number }) {
   return (
     <button type="button" onClick={onClick}
-      className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[0.8125rem] transition-colors"
+      data-type="body-s" className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 transition-colors"
       style={on ? { background: 'var(--color-surface-high)', color: 'var(--color-on-surface)' } : { color: 'var(--color-on-surface-low)' }}>
       <Icon size={14} /> {label}
       {/* Pending-change count — lets the user see review-worthy changes are waiting
           while they're on another tab (a worker editing files updates this live). */}
       {!!badge && badge > 0 && (
-        <span className="ml-0.5 inline-flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[0.75rem] tabular-nums"
+        <span data-type="caption" className="ml-0.5 inline-flex min-w-[1.1rem] items-center justify-center rounded-full px-1 tabular-nums"
           style={{ background: on ? 'var(--color-primary)' : 'color-mix(in srgb, var(--color-primary) 22%, transparent)', color: on ? 'var(--color-on-primary)' : 'var(--color-primary)' }}>
           {badge > 99 ? '99+' : badge}
         </span>
@@ -1491,14 +1492,14 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
     if (!isPreLaunch && !TERMINAL_STATUSES.has(project.status) && mainActivity.length > 0) {
       return (
         <div className="flex flex-col gap-2 p-3">
-          <p className="text-on-surface-low text-[0.75rem]">No task breakdown for this run — the worker is operating directly from the brief.</p>
+          <p data-type="caption" className="text-on-surface-low">No task breakdown for this run — the worker is operating directly from the brief.</p>
           <div className="rounded-lg border border-primary/30 bg-primary/5 p-2.5">
-            <div className="mb-1.5 inline-flex items-center gap-1.5 text-[0.75rem] text-primary"><Loader2 size={11} className="animate-spin" /> working now</div>
+            <div data-type="caption" className="mb-1.5 inline-flex items-center gap-1.5 text-primary"><Loader2 size={11} className="animate-spin" /> working now</div>
             <div className="flex flex-col gap-1">
               {mainActivity.map((it, i) => (
                 it.kind === 'say'
-                  ? <p key={i} className="whitespace-pre-wrap text-[0.75rem] leading-snug text-on-surface-var">{it.label}</p>
-                  : <div key={i} className="flex items-start gap-1.5 text-[0.75rem] text-on-surface-low">
+                  ? <p key={i} data-type="caption" className="whitespace-pre-wrap text-on-surface-var">{it.label}</p>
+                  : <div key={i} data-type="caption" className="flex items-start gap-1.5 text-on-surface-low">
                       {it.kind === 'tool' ? <Wrench size={11} className="mt-0.5 shrink-0" /> : <Activity size={11} className="mt-0.5 shrink-0" />}
                       <span className="min-w-0"><span className="text-on-surface-var">{it.label}</span>{it.detail && <span className="text-on-surface-low/70"> · {it.detail.slice(0, 60)}</span>}</span>
                     </div>
@@ -1513,13 +1514,13 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
       : TERMINAL_STATUSES.has(project.status)
         ? 'This project ran without a task breakdown — see the activity and workspace files for what it did.'
         : 'No task breakdown for this run — the worker is operating directly from the brief. Watch its activity below as it works.'
-    return <p className="px-3 py-6 text-center text-on-surface-low text-[0.8125rem]">{msg}</p>
+    return <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">{msg}</p>
   }
   return (
     <div className="flex flex-col gap-1 p-2">
       {!noLists && (
         <div className="flex items-center justify-between gap-2 px-2 pb-1">
-          <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]">
+          <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low">
             {runningCount > 0 && (
               <span className="inline-flex items-center gap-1 text-primary" title="Tasks running in parallel worktrees">
                 <Loader2 size={10} className="animate-spin" />{runningCount} running
@@ -1538,6 +1539,7 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
               {autopilot ? <Rocket size={11} /> : <Hand size={11} />} {autopilot ? 'Autopilot' : 'One-by-one'}
             </Button>
             {/* Manual Queue all only matters in one-by-one mode (autopilot auto-queues). */}
+            {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
             {!autopilot && queueable.length > 0 && (
               <Button variant="tonal" size="xs" disabled={busy} onClick={() => queue(queueable.map((t) => t.id))}
                 className="gap-1 px-2 text-[0.75rem]">
@@ -1548,7 +1550,7 @@ function StageTasks({ project, onTasksChanged, loading, tasksByList, onSelect, a
         </div>
       )}
       {noLists && isPreLaunch && (
-        <p className="px-2 pb-1 text-on-surface-low text-[0.75rem]">Planned — provisioned when you launch.</p>
+        <p data-type="caption" className="px-2 pb-1 text-on-surface-low">Planned — provisioned when you launch.</p>
       )}
       {stages.map((s, si) => {
         const key = stageKey(s)
@@ -1637,12 +1639,12 @@ function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, 
           </button>
         }>
           <div className="mb-1 ml-4 flex flex-col gap-1.5 border-l border-outline-variant/40 pl-2.5">
-            {objective && <p className="text-on-surface-var text-[0.75rem] leading-snug normal-case">{objective}</p>}
+            {objective && <p data-type="caption" className="text-on-surface-var normal-case">{objective}</p>}
             {criteria.length > 0 && (
               <div className="flex flex-col gap-0.5">
                 <Eyebrow as="span">Done when</Eyebrow>
                 {criteria.map((c, i) => (
-                  <div key={i} className="flex items-start gap-1.5 text-on-surface-low text-[0.75rem] leading-snug normal-case">
+                  <div key={i} data-type="caption" className="flex items-start gap-1.5 text-on-surface-low normal-case">
                     <Target size={9} className="mt-[3px] shrink-0 opacity-60" /><span>{c}</span>
                   </div>
                 ))}
@@ -1658,7 +1660,7 @@ function StageGroup({ stage: s, status: st, tasks, preview, doneIds, queuedSet, 
         </div>
       )}
       {tasks.length === 0
-        ? <p className="px-3 pb-2 text-on-surface-low/70 text-[0.75rem]">no tasks yet</p>
+        ? <p data-type="caption" className="px-3 pb-2 text-on-surface-low/70">no tasks yet</p>
         // Cascade the rows in on first paint (stagger + rise/fade) so a stage's tasks
         // read as arriving, not popping together. Keyed by task id, so the poll/SSE
         // refresh (a re-render, not a remount) never re-fires it — only a genuinely new
@@ -1708,7 +1710,7 @@ function TaskRow({ task, state, preview, active, onSelect }: {
   if (preview) {
     // pre-launch: no detail to navigate to yet, just show the planned row.
     return (
-      <div className="flex items-start gap-1.5 px-2 py-1.5 text-[0.8125rem]">
+      <div data-type="body-s" className="flex items-start gap-1.5 px-2 py-1.5">
         <Icon size={14} className="mt-0.5 shrink-0" style={{ color: STATE_COLOR[state] }} />
         <span className="min-w-0 flex-1 text-on-surface-var">{task.title}</span>
       </div>
@@ -1716,19 +1718,19 @@ function TaskRow({ task, state, preview, active, onSelect }: {
   }
   return (
     <button type="button" onClick={onSelect} aria-label={`${task.title} — ${STATE_LABEL[state]}`}
-      className="group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[0.8125rem] hover:bg-surface-high/60">
+      data-type="body-s" className="group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-surface-high/60">
       <Icon size={14} className={`shrink-0 ${state === 'running' ? 'animate-spin' : ''}`} style={{ color: STATE_COLOR[state] }} />
       <span className={`min-w-0 flex-1 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>{task.title}</span>
       {/* a live pulse when THIS task's worker is actively emitting events right now */}
       {active && <span className="reveal-caret size-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-primary)' }} title="Active now" />}
-      {state === 'cancelled' && <span className="shrink-0 text-[0.75rem] text-on-surface-low/70">cancelled</span>}
-      {state === 'running' && <span className="shrink-0 text-[0.75rem] text-primary">running</span>}
-      {state === 'queued' && <span className="shrink-0 text-[0.75rem] text-primary">queued</span>}
-      {state === 'blocked' && <span className="shrink-0 text-[0.75rem] text-on-surface-low/70">blocked</span>}
-      {state === 'waiting' && <span className="shrink-0 text-[0.75rem] text-on-surface-low/70" title="Waiting for its stage to start">waiting</span>}
+      {state === 'cancelled' && <span data-type="caption" className="shrink-0 text-on-surface-low/70">cancelled</span>}
+      {state === 'running' && <span data-type="caption" className="shrink-0 text-primary">running</span>}
+      {state === 'queued' && <span data-type="caption" className="shrink-0 text-primary">queued</span>}
+      {state === 'blocked' && <span data-type="caption" className="shrink-0 text-on-surface-low/70">blocked</span>}
+      {state === 'waiting' && <span data-type="caption" className="shrink-0 text-on-surface-low/70" title="Waiting for its stage to start">waiting</span>}
       {/* `ready` is the actionable state — a quiet chip (matches the others' pattern)
           so it reads as available-to-queue, not just an unlabeled inert row. */}
-      {state === 'ready' && <span className="shrink-0 text-[0.75rem] text-on-surface-low/70" title="Ready to queue">ready</span>}
+      {state === 'ready' && <span data-type="caption" className="shrink-0 text-on-surface-low/70" title="Ready to queue">ready</span>}
       <ChevronRight size={13} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
     </button>
   )
@@ -1843,31 +1845,33 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
     <div className="flex h-full flex-col">
       {/* header: back + status */}
       <div className="flex shrink-0 items-center gap-1.5 border-b border-outline-variant/40 px-2 py-1.5">
+        {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
         <Button variant="ghost" size="xs" onClick={onBack} className="gap-1 px-1.5 text-[0.75rem] text-on-surface-low">
           <ChevronLeft size={14} /> Tasks
         </Button>
-        <span className="ml-auto inline-flex items-center gap-1 text-[0.75rem]" style={{ color: running ? 'var(--color-primary)' : done ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }}>
+        <span data-type="caption" className="ml-auto inline-flex items-center gap-1" style={{ color: running ? 'var(--color-primary)' : done ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }}>
           {running && <Loader2 size={10} className="animate-spin" />}{running ? 'running' : queued ? 'queued' : done ? 'done' : task.status}
         </span>
       </div>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">
-        <h3 className="text-on-surface text-[0.9375rem]" style={fvs(600)}>{task.title}</h3>
-        {task.description && <p className="mt-1 text-on-surface-var text-[0.8125rem] leading-snug">{task.description}</p>}
+        <h3 data-type="title-m" className="text-on-surface" style={fvs(600)}>{task.title}</h3>
+        {task.description && <p data-type="body-s" className="mt-1 text-on-surface-var">{task.description}</p>}
 
         {/* attended question for THIS task — answer in the steer box below */}
         {project.status === 'needs_input' && project.pending_question?.question && (
-          <div className="mt-3 rounded-lg p-2.5 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
+          <div data-type="body-s" className="mt-3 rounded-lg p-2.5" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
               <HelpCircle size={14} /> Needs your input
             </div>
             <p className="whitespace-pre-wrap text-on-surface">{project.pending_question.question}</p>
             {project.pending_question.why && (
-              <p className="mt-1 whitespace-pre-wrap text-on-surface-low text-[0.75rem]">{project.pending_question.why}</p>
+              <p data-type="caption" className="mt-1 whitespace-pre-wrap text-on-surface-low">{project.pending_question.why}</p>
             )}
             <div className="mt-2 flex items-center gap-2">
-              <p className="flex-1 text-on-surface-low text-[0.75rem]">Answer in the box below to resume.</p>
+              <p data-type="caption" className="flex-1 text-on-surface-low">Answer in the box below to resume.</p>
               {/* One-click unblock — matches the project-level footer's affordance so a
                   user steering from the task scope isn't forced to type a full answer. */}
+              {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
               <Button variant="ghost" size="xs" disabled={busy}
                 onClick={() => steer('Proceed with your best judgment / the sensible default you proposed. Record the assumption in your finding and continue.')}
                 className="shrink-0 px-2 text-[0.75rem] text-info hover:bg-info/10">
@@ -1882,7 +1886,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
             <Eyebrow as="p">Action plan</Eyebrow>
             <ol className="mt-1 flex flex-col gap-0.5">
               {plan.map((a, i) => (
-                <li key={i} className={`flex items-start gap-1.5 text-[0.75rem] leading-snug ${a.completed ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>
+                <li key={i} data-type="caption" className={`flex items-start gap-1.5 ${a.completed ? 'text-on-surface-low line-through' : 'text-on-surface-var'}`}>
                   <span className="mt-[1px] shrink-0 tabular-nums text-on-surface-low">{i + 1}.</span><span>{a.content}</span>
                 </li>
               ))}
@@ -1894,7 +1898,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
             <Eyebrow as="p">Done when</Eyebrow>
             <ul className="mt-1 flex flex-col gap-0.5">
               {crit.map((c, i) => (
-                <li key={i} className="flex items-start gap-1.5 text-on-surface-low text-[0.75rem] leading-snug">
+                <li key={i} data-type="caption" className="flex items-start gap-1.5 text-on-surface-low">
                   <Target size={9} className="mt-[4px] shrink-0 opacity-60" /><span className={c.met ? 'line-through opacity-70' : ''}>{c.description}</span>
                 </li>
               ))}
@@ -1906,7 +1910,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
         <div className="mt-3">
           <Eyebrow as="p">Agent activity{findings.length ? ` · ${findings.length} ${findings.length === 1 ? 'cycle' : 'cycles'}` : ''}</Eyebrow>
           {findings.length === 0 && live.length === 0 && (
-            <p className="mt-1 text-on-surface-low/70 text-[0.75rem]">{running ? 'Working…' : queued ? 'Queued — will run when ready.' : 'No activity yet.'}</p>
+            <p data-type="caption" className="mt-1 text-on-surface-low/70">{running ? 'Working…' : queued ? 'Queued — will run when ready.' : 'No activity yet.'}</p>
           )}
           <div className="mt-1 flex flex-col gap-1.5">
             {/* Cap to the most recent cycles (findings are appended oldest-first, so the
@@ -1930,12 +1934,12 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
           </div>
           {live.length > 0 && (
             <div className="mt-2 rounded-lg border border-primary/30 bg-primary/5 p-2.5">
-              <div className="mb-1.5 inline-flex items-center gap-1.5 text-[0.75rem] text-primary"><Loader2 size={11} className="animate-spin" /> working now</div>
+              <div data-type="caption" className="mb-1.5 inline-flex items-center gap-1.5 text-primary"><Loader2 size={11} className="animate-spin" /> working now</div>
               <div className="flex flex-col gap-1">
                 {live.map((it, i) => (
                   it.kind === 'say'
-                    ? <p key={i} className="whitespace-pre-wrap text-[0.75rem] leading-snug text-on-surface-var">{it.label}</p>
-                    : <div key={i} className="flex items-start gap-1.5 text-[0.75rem] text-on-surface-low">
+                    ? <p key={i} data-type="caption" className="whitespace-pre-wrap text-on-surface-var">{it.label}</p>
+                    : <div key={i} data-type="caption" className="flex items-start gap-1.5 text-on-surface-low">
                         {it.kind === 'tool' ? <Wrench size={11} className="mt-0.5 shrink-0" /> : <Activity size={11} className="mt-0.5 shrink-0" />}
                         <span className="min-w-0"><span className="text-on-surface-var">{it.label}</span>{it.detail && <span className="text-on-surface-low/70"> · {it.detail.slice(0, 60)}</span>}</span>
                       </div>
@@ -1953,7 +1957,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
         {autopilot ? (
           !terminal && (
             <>
-              <p className="mb-2 inline-flex items-center gap-1 text-[0.75rem] text-on-surface-low">
+              <p data-type="caption" className="mb-2 inline-flex items-center gap-1 text-on-surface-low">
                 <Rocket size={11} className="text-primary" />
                 {running ? 'Running on autopilot.'
                   : state === 'blocked' ? 'Autopilot will run it once its dependencies finish.'
@@ -1961,7 +1965,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
                   : 'Queued by autopilot.'}
               </p>
               {state === 'blocked' && blockers.length > 0 && (
-                <div className="mb-2 text-[0.75rem] text-on-surface-low">
+                <div data-type="caption" className="mb-2 text-on-surface-low">
                   <span>Waiting on:</span>
                   <BlockerList blockers={blockers} onOpenTask={onOpenTask} />
                 </div>
@@ -1972,6 +1976,7 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
           <>
             {/* queueable: ready now, or waiting-for-its-stage (queue it for when the
                 stage opens). Blocked tasks can't be queued usefully (deps not done). */}
+            {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
             {(state === 'ready' || (state === 'waiting' && !queued)) && (
               <Button variant="tonal" size="xs" disabled={busy} onClick={() => queue('queue')}
                 className="mb-2 gap-1 px-2 text-[0.75rem]">
@@ -1979,10 +1984,10 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
               </Button>
             )}
             {state === 'waiting' && queued && (
-              <p className="mb-2 text-[0.75rem] text-on-surface-low">Queued · waiting for its stage to start.</p>
+              <p data-type="caption" className="mb-2 text-on-surface-low">Queued · waiting for its stage to start.</p>
             )}
             {state === 'blocked' && (
-              <div className="mb-2 text-[0.75rem] text-on-surface-low">
+              <div data-type="caption" className="mb-2 text-on-surface-low">
                 <span>Blocked — waiting on{queued ? ' (queued; will run when they finish)' : ''}:</span>
                 <BlockerList blockers={blockers} onOpenTask={onOpenTask} />
               </div>
@@ -1999,14 +2004,14 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
           // Not steerable. For a terminal project that's "finished"; for a pre-launch
           // one (a brief flash before the cockpit re-routes to Plan Review) it hasn't
           // started — say which, so the message is never a misleading "finished".
-          <p className="px-1.5 py-1 text-center text-on-surface-low text-[0.75rem]">
+          <p data-type="caption" className="px-1.5 py-1 text-center text-on-surface-low">
             {TERMINAL_STATUSES.has(project.status) ? 'This project has finished.' : 'This project hasn’t started yet.'}
           </p>
         ) : terminal ? (
           // A finished (done) OR cancelled task's worker is gone — a task-scoped steer
           // would write guidance_<task_id>.txt that nothing reads (and parallel teardown
           // clears it). Don't offer a no-op box; point to where steering still lands.
-          <p className="px-1.5 py-1 text-center text-on-surface-low text-[0.75rem]">
+          <p data-type="caption" className="px-1.5 py-1 text-center text-on-surface-low">
             This task is {task.status === 'cancelled' ? 'cancelled' : 'done'} — steer the project or another task to direct further work.
           </p>
         ) : (
@@ -2014,16 +2019,16 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
             {/* echo the latest steer so the user sees it landed (mirrors the project
                 steer box); a failed send is marked + the text was kept in the box. */}
             {lastSteer && (
-              <div className="mb-2 self-end rounded-xl bg-primary/15 px-2.5 py-1.5 text-[0.8125rem] text-on-surface-var">
+              <div data-type="body-s" className="mb-2 self-end rounded-xl bg-primary/15 px-2.5 py-1.5 text-on-surface-var">
                 {lastSteer.text}
-                {lastSteer.failed && <span className="ml-1.5 text-[0.75rem] text-danger">· failed to send</span>}
+                {lastSteer.failed && <span data-type="caption" className="ml-1.5 text-danger">· failed to send</span>}
               </div>
             )}
             <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
               <textarea ref={steerRef} value={text} onChange={(e) => setText(e.target.value)} rows={1}
                 placeholder={project.status === 'needs_input' ? 'Answer for this task…' : `Steer “${task.title.slice(0, 24)}${task.title.length > 24 ? '…' : ''}”…`}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}
-                className="max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />
+                data-type="body-s" className="max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-on-surface outline-none placeholder:text-on-surface-low" />
               {/* Compound gate, SPLIT down the middle: `!text.trim()` is unavailable and the user can
                   fix it, so it keeps `disabled` + the reason; `busy` is in flight, so it is `loading`.
                   They used to be OR-ed into one `disabled`, which announced "unavailable" mid-send and
@@ -2195,7 +2200,7 @@ function WorkspaceTree({ ws, running, isProjectDir }: { ws: string; running: boo
     }
   }
   const cancelCreate = () => { setCreating(null); setNewName(''); setCreateErr('') }
-  if (!ws) return <p className="px-3 py-6 text-center text-on-surface-low text-[0.8125rem]">No files yet for this project.</p>
+  if (!ws) return <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">No files yet for this project.</p>
   return (
     <div className="p-1">
       {/* create-new row: icon buttons reveal an inline name input (Enter creates,
@@ -2207,9 +2212,10 @@ function WorkspaceTree({ ws, running, isProjectDir }: { ws: string; running: boo
             <input autoFocus value={newName} onChange={(e) => { setNewName(e.target.value); if (createErr) setCreateErr('') }}
               onKeyDown={(e) => { if (e.key === 'Enter') submitCreate(); if (e.key === 'Escape') cancelCreate() }}
               onBlur={() => { if (!createErr) submitCreate() }} placeholder={creating === 'file' ? 'new-file.ext' : 'new-folder'}
-              className={`h-7 min-w-0 flex-1 rounded-md bg-surface-high px-2 text-[0.8125rem] text-on-surface outline-none focus:ring-2 placeholder:text-on-surface-low ${createErr ? 'focus:ring-danger/50 ring-2 ring-danger/40' : 'focus:ring-primary'}`} />
+              data-type="body-s" className={`h-7 min-w-0 flex-1 rounded-md bg-surface-high px-2 text-on-surface outline-none focus:ring-2 placeholder:text-on-surface-low ${createErr ? 'focus:ring-danger/50 ring-2 ring-danger/40' : 'focus:ring-primary'}`} />
           ) : (
             <>
+              {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
               <Button variant="ghost" size="xs" title="New file" onClick={() => { setCreating('file'); setNewName('') }}
                 className="gap-1 px-1.5 text-[0.75rem] text-on-surface-low"><FilePlus2 size={13} /> File</Button>
               <Button variant="ghost" size="xs" title="New folder" onClick={() => { setCreating('dir'); setNewName('') }}
@@ -2217,13 +2223,13 @@ function WorkspaceTree({ ws, running, isProjectDir }: { ws: string; running: boo
             </>
           )}
          </div>
-         {createErr && <span role="alert" className="px-0.5 text-[0.75rem] text-danger">{createErr}</span>}
+         {createErr && <span role="alert" data-type="caption" className="px-0.5 text-danger">{createErr}</span>}
         </div>
       )}
       {/* rename/delete failure — dismissable, sits above the tree (works in both
           bound-workspace and project-dir modes, where the create row is hidden). */}
       {treeErr && (
-        <div role="alert" className="mx-1.5 mb-1 flex items-start gap-1.5 px-0.5 text-[0.75rem] text-danger">
+        <div role="alert" data-type="caption" className="mx-1.5 mb-1 flex items-start gap-1.5 px-0.5 text-danger">
           <span className="min-w-0 flex-1">{treeErr}</span>
           <IconButton icon={X} label="Dismiss" onClick={() => setTreeErr('')} size={18} iconSize={11} className="shrink-0" />
         </div>
@@ -2333,13 +2339,13 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
   // A no-workspace (greenfield) project: its files live in the engine dir with no
   // git, so there's no diff/branch history to show — say so honestly instead of a
   // misleading "clean working tree".
-  if (isProjectDir) return <p className="px-3 py-6 text-center text-on-surface-low text-[0.8125rem]">This project has no git workspace — changes aren't version-tracked. Files the worker created are in the Files tab.</p>
-  if (!ws) return <p className="px-3 py-6 text-center text-on-surface-low text-[0.8125rem]">No workspace directory.</p>
+  if (isProjectDir) return <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">This project has no git workspace — changes aren't version-tracked. Files the worker created are in the Files tab.</p>
+  if (!ws) return <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">No workspace directory.</p>
   // A bound brownfield workspace that ISN'T a git repo (empty repoRoot once loaded):
   // there's no branch/diff/history to show, and "working tree is clean" would be a
   // lie (it's just not version-controlled). Say so honestly — distinct from a clean
   // repo + from a transient read error.
-  if (state === 'loaded' && !repoRoot) return <p className="px-3 py-6 text-center text-on-surface-low text-[0.8125rem]">This workspace isn’t a git repository — changes aren’t version-tracked. Browse the files in the Files tab.</p>
+  if (state === 'loaded' && !repoRoot) return <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">This workspace isn’t a git repository — changes aren’t version-tracked. Browse the files in the Files tab.</p>
   const entries = Object.entries(statuses)
   // git status codes → a short, readable label + tone.
   const label = (code: string): { text: string; color: string } => {
@@ -2377,25 +2383,26 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
   }
   return (
     <div className="flex flex-col">
-      <div className="flex items-center justify-between gap-2 px-3 py-2 text-[0.75rem] text-on-surface-low">
+      <div data-type="caption" className="flex items-center justify-between gap-2 px-3 py-2 text-on-surface-low">
         <span className="inline-flex items-center gap-1.5 min-w-0">
           <GitBranch size={12} className="shrink-0" />
           <span className="truncate text-on-surface-var">{branch || (state === 'loaded' ? '(no branch)' : '…')}</span>
         </span>
+        {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
         <Button variant="ghost" size="xs" onClick={() => setNonce((n) => n + 1)} className="shrink-0 px-1.5 text-[0.75rem] text-on-surface-low">refresh</Button>
       </div>
       {entries.length === 0 ? (
         // Distinguish the three empty-map states: a failed/in-flight fetch must NOT
         // masquerade as a genuinely clean tree (the old bug — all three read "clean").
         state === 'loading' || state === 'idle' ? (
-          <p className="px-3 py-6 text-center text-on-surface-low text-[0.8125rem]">Loading changes…</p>
+          <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">Loading changes…</p>
         ) : state === 'error' ? (
-          <div className="flex flex-col items-center gap-2 px-3 py-6 text-center text-[0.8125rem]">
+          <div data-type="body-s" className="flex flex-col items-center gap-2 px-3 py-6 text-center">
             <span style={{ color: 'var(--color-warn)' }}>Couldn't read git status for this workspace.</span>
             <Button variant="ghost" size="xs" onClick={() => setNonce((n) => n + 1)}>Retry</Button>
           </div>
         ) : (
-          <p className="px-3 py-6 text-center text-on-surface-low text-[0.8125rem]">No uncommitted changes — the working tree is clean.</p>
+          <p data-type="body-s" className="px-3 py-6 text-center text-on-surface-low">No uncommitted changes — the working tree is clean.</p>
         )
       ) : (
         <div className="flex flex-col">
@@ -2408,8 +2415,8 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
             const l = label(code)
             return (
               <button key={path} type="button" onClick={() => open(path, code)}
-                className="flex items-center gap-2 px-3 py-1.5 text-left text-[0.8125rem] transition-colors hover:bg-surface-high">
-                <span className="w-[58px] shrink-0 text-[0.75rem]" style={{ color: l.color }}>{l.text}</span>
+                data-type="body-s" className="flex items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-surface-high">
+                <span data-type="caption" className="w-[58px] shrink-0" style={{ color: l.color }}>{l.text}</span>
                 <span className="min-w-0 truncate font-mono text-on-surface-var" title={path}>{rel(path)}</span>
               </button>
             )
@@ -2425,15 +2432,15 @@ function ChangesPanel({ ws, running, isProjectDir = false }: { ws: string; runni
             {/* The log is capped server-side (20); when we get a full page back there
                 are almost certainly older commits not shown — say so rather than let
                 the list read as the repo's entire history. */}
-            {commits.length >= 20 && <span className="text-[0.75rem] text-on-surface-low/70">latest 20</span>}
+            {commits.length >= 20 && <span data-type="caption" className="text-on-surface-low/70">latest 20</span>}
           </div>
           {commits.map((c) => (
             <button key={c.hash} type="button"
               onClick={() => window.dispatchEvent(new CustomEvent('ne:code-open-commit', { detail: { hash: c.hash, subject: c.subject, path: ws } }))}
-              className="flex w-full items-baseline gap-2 px-3 py-1 text-left text-[0.8125rem] transition-colors hover:bg-surface-high">
-              <span className="shrink-0 font-mono text-[0.75rem] text-on-surface-low">{c.hash}</span>
+              data-type="body-s" className="flex w-full items-baseline gap-2 px-3 py-1 text-left transition-colors hover:bg-surface-high">
+              <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{c.hash}</span>
               <span className="min-w-0 flex-1 truncate text-on-surface-var" title={c.subject}>{c.subject}</span>
-              <span className="shrink-0 text-[0.75rem] text-on-surface-low">{c.relative}</span>
+              <span data-type="caption" className="shrink-0 text-on-surface-low">{c.relative}</span>
             </button>
           ))}
         </div>
@@ -2806,7 +2813,7 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
             // routed through requestClose so a dirty tab gets the themed confirm.
             <div key={t.path} ref={(!diff && !commit && t.path === activePath) ? activeTabRef : undefined}
               onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); requestClose(t.path, t.name) } }}
-              className={`group flex shrink-0 items-center gap-1.5 rounded-t-md px-2.5 py-1.5 text-[0.8125rem] ${!diff && !commit && t.path === activePath ? 'bg-surface text-on-surface' : 'text-on-surface-low hover:text-on-surface'}`}>
+              data-type="body-s" className={`group flex shrink-0 items-center gap-1.5 rounded-t-md px-2.5 py-1.5 ${!diff && !commit && t.path === activePath ? 'bg-surface text-on-surface' : 'text-on-surface-low hover:text-on-surface'}`}>
               {/* Selecting a tab shows that file — clear BOTH the working-diff and the
                   commit-patch overlays (either would otherwise keep covering the editor). */}
               <button type="button" onClick={() => { setDiff(null); setCommit(null); setActivePath(t.path) }} title={t.path} className="max-w-[180px] truncate">{tabLabels[t.path]}</button>
@@ -2837,7 +2844,7 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
       <div className="min-h-0 flex-1">
         {reveal ? (
           <div className="flex h-full flex-col">
-            <div className="flex shrink-0 items-center gap-1.5 border-b border-outline-variant/40 bg-surface-low/40 px-2 py-1 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="flex shrink-0 items-center gap-1.5 border-b border-outline-variant/40 bg-surface-low/40 px-2 py-1 text-on-surface-low">
               <Loader2 size={11} className="animate-spin text-primary" /> {reveal.kind === 'diff' ? 'Editing' : reveal.kind === 'erase' ? 'Deleting' : 'Writing'} {reveal.name}…
             </div>
             <div className="min-h-0 flex-1">
@@ -2862,7 +2869,7 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
         ) : diff ? (
           <div className="flex h-full flex-col">
             <div className="flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface-low/40 px-2 py-1">
-              <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]"><GitBranch size={12} /> Diff — {diff.name}</span>
+              <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low"><GitBranch size={12} /> Diff — {diff.name}</span>
               <IconButton icon={X} label="Close diff" onClick={() => setDiff(null)} size={24} iconSize={13} />
             </div>
             <div className="min-h-0 flex-1"><DiffView path={diff.path} name={diff.name} ws={ws} deleted={diff.deleted} /></div>
@@ -2876,7 +2883,7 @@ function CenterEditor({ ws, showTerm, onCloseTerm, running, runCmd }: { ws: stri
           <Centered>
             <div className="flex flex-col items-center gap-2 text-on-surface-low">
               <Code2 size={26} className="opacity-40" />
-              <p className="text-[0.8125rem]">Open a file from the tree to view + edit it.</p>
+              <p data-type="body-s">Open a file from the tree to view + edit it.</p>
               {/* Re-engage "follow the worker" — auto-open whatever it edits next. Only
                   while a worker is actually RUNNING; on a terminal/idle project there's
                   nothing to follow, so the button would be a dead no-op. */}
@@ -2929,7 +2936,7 @@ function CommitView({ ws, hash, subject, onClose }: { ws: string; hash: string; 
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface-low/40 px-2 py-1">
-        <span className="inline-flex min-w-0 items-center gap-1.5 text-on-surface-low text-[0.75rem]">
+        <span data-type="caption" className="inline-flex min-w-0 items-center gap-1.5 text-on-surface-low">
           <GitBranch size={12} className="shrink-0" /> <span className="font-mono">{hash}</span> <span className="truncate text-on-surface-var">{subject}</span>
         </span>
         <IconButton icon={X} label="Close commit" onClick={onClose} size={24} iconSize={13} className="shrink-0" />
@@ -2939,22 +2946,22 @@ function CommitView({ ws, hash, subject, onClose }: { ws: string; hash: string; 
           <Centered><Loader2 size={16} className="animate-spin text-on-surface-low" /></Centered>
         ) : failed ? (
           <Centered>
-            <div className="flex flex-col items-center gap-2 px-4 text-center text-[0.8125rem]">
+            <div data-type="body-s" className="flex flex-col items-center gap-2 px-4 text-center">
               <FieldError>Couldn't load this commit.</FieldError>
               <Button variant="ghost-accent" size="xs" onClick={() => setAttempt((n) => n + 1)}><RotateCcw size={13} /> Try again</Button>
             </div>
           </Centered>
         ) : notFound ? (
-          <Centered><p className="px-4 text-center text-on-surface-low text-[0.8125rem]">This commit is no longer in the workspace — its history may have been rewritten (rebase / force-push) or the workspace re-pointed.</p></Centered>
+          <Centered><p data-type="body-s" className="px-4 text-center text-on-surface-low">This commit is no longer in the workspace — its history may have been rewritten (rebase / force-push) or the workspace re-pointed.</p></Centered>
         ) : diff === '' ? (
-          <Centered><p className="px-4 text-center text-on-surface-low text-[0.8125rem]">This commit has no textual changes (e.g. a merge or an empty checkpoint).</p></Centered>
+          <Centered><p data-type="body-s" className="px-4 text-center text-on-surface-low">This commit has no textual changes (e.g. a merge or an empty checkpoint).</p></Centered>
         ) : (
           <>
             {/* Same patch renderer the skill-refinement approval surface uses — one
                 marker→token map, so an added line is the same green in both places. */}
-            <UnifiedDiff patch={diff} label={`Diff for commit ${hash}`} className="font-mono text-[0.75rem] leading-snug" />
+            <UnifiedDiff patch={diff} label={`Diff for commit ${hash}`} />
             {truncated && (
-              <p className="mt-2 px-1 text-on-surface-low/80 text-[0.75rem]">
+              <p data-type="caption" className="mt-2 px-1 text-on-surface-low/80">
                 Diff truncated — this commit is large; only the first part is shown. Use the workspace terminal (<span className="font-mono">git show {hash}</span>) for the full patch.
               </p>
             )}
@@ -3026,12 +3033,12 @@ function BottomTerminal({ ws, hidden, onClose, runCmd }: { ws: string; hidden?: 
         <div className="mx-auto h-0.5 w-full bg-transparent transition-colors group-hover/th:bg-primary/60 group-focus-visible/th:bg-primary" />
       </div>
       <div className="flex shrink-0 items-center justify-between border-b border-outline-variant/40 bg-surface-low/40 px-3 py-1">
-        <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]"><TerminalSquare size={12} /> Terminal · {ws.split('/').slice(-1)[0]}</span>
+        <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low"><TerminalSquare size={12} /> Terminal · {ws.split('/').slice(-1)[0]}</span>
         <IconButton icon={X} label="Hide terminal" onClick={onClose} size={24} iconSize={13} />
       </div>
       <div className="min-h-0 flex-1">
         {err ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-[0.8125rem]">
+          <div data-type="body-s" className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
             <span style={{ color: 'var(--color-danger)' }}>{err}</span>
             <div className="flex items-center gap-2">
               <Button variant="ghost-accent" size="xs" onClick={() => setAttempt((n) => n + 1)}><RotateCcw size={13} /> Try again</Button>
@@ -3100,13 +3107,13 @@ function OutcomeBanner({ project: p, findings }: { project: CodeProject; finding
   ].filter(Boolean)
   const Icon = meta.ok ? CheckCircle2 : XCircle
   return (
-    <div className="mb-3 rounded-lg p-2.5 text-[0.8125rem]"
+    <div data-type="body-s" className="mb-3 rounded-lg p-2.5"
       style={{ background: `color-mix(in srgb, ${meta.tone} 12%, transparent)` }}>
       <div className="inline-flex items-center gap-1.5" style={withWeight({ color: meta.tone }, 550)}>
         <Icon size={14} /> {meta.label}
       </div>
-      {bits.length > 0 && <p className="mt-1 text-on-surface-var text-[0.75rem]">{bits.join(' · ')}</p>}
-      {!meta.ok && p.error_message && <p className="mt-1 text-on-surface-low text-[0.75rem]">{p.error_message}</p>}
+      {bits.length > 0 && <p data-type="caption" className="mt-1 text-on-surface-var">{bits.join(' · ')}</p>}
+      {!meta.ok && p.error_message && <p data-type="caption" className="mt-1 text-on-surface-low">{p.error_message}</p>}
       {/* Surface the files the worker produced as clickable chips — the payoff of the
           run is "open + read what was built". Shown for ANY terminal outcome that
           produced files: a genuine complete, an incomplete (budget-exhausted) finish,
@@ -3117,7 +3124,7 @@ function OutcomeBanner({ project: p, findings }: { project: CodeProject; finding
         <div className="mt-1.5">
           {/* FilesTouched now owns the cap + "+N more" reveal (max=12 here), so no
               external slice / static "showing 12" note — the toggle is self-describing. */}
-          <p className="text-on-surface-low text-[0.75rem]">What was built — click to open:</p>
+          <p data-type="caption" className="text-on-surface-low">What was built — click to open:</p>
           <FilesTouched files={[...files]} ws={ws} max={12} />
         </div>
       )}
@@ -3147,22 +3154,22 @@ function FindingCard({ finding: f, ws }: { finding: CodeFinding; ws: string }) {
   const evidence = evidenceToText(f.evidence)
   return (
     <div className="rounded-lg border border-outline-variant/40 bg-surface-container/50 p-2.5">
-      <div className="mb-1 flex items-center gap-1.5 text-[0.75rem] text-on-surface-low">
+      <div data-type="caption" className="mb-1 flex items-center gap-1.5 text-on-surface-low">
         <span className="rounded-pill bg-surface-high px-1.5 tabular-nums">cycle {f.cycle}</span>
         {f.stage && <span className="rounded-pill bg-surface-high px-1.5">{f.stage}</span>}
       </div>
-      {f.summary && <p className="text-on-surface-var text-[0.8125rem]">{f.summary}</p>}
-      {f.key_insight && <p className="mt-1 text-on-surface-low text-[0.75rem]">→ {f.key_insight}</p>}
+      {f.summary && <p data-type="body-s" className="text-on-surface-var">{f.summary}</p>}
+      {f.key_insight && <p data-type="caption" className="mt-1 text-on-surface-low">→ {f.key_insight}</p>}
       <FilesTouched files={f.files_touched} ws={ws} />
       {evidence && (
         <div className="mt-1.5">
           <button type="button" onClick={() => setShowEvidence((v) => !v)} aria-expanded={showEvidence}
             aria-label={showEvidence ? 'Hide evidence' : 'Show evidence'}
-            className="inline-flex items-center gap-1 text-[0.75rem] text-on-surface-low hover:text-on-surface">
+            data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low hover:text-on-surface">
             {showEvidence ? <ChevronDown size={11} /> : <ChevronRight size={11} />} evidence
           </button>
           {showEvidence && (
-            <pre className="mt-1 max-h-48 overflow-auto rounded-md bg-surface-high/60 p-2 text-[0.75rem] leading-snug text-on-surface-var whitespace-pre-wrap break-words">{evidence}</pre>
+            <pre data-type="caption" className="mt-1 max-h-48 overflow-auto rounded-md bg-surface-high/60 p-2 text-on-surface-var whitespace-pre-wrap break-words">{evidence}</pre>
           )}
         </div>
       )}
@@ -3229,7 +3236,7 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
       <div className="max-h-[40vh] overflow-y-auto px-2 pt-2">
         {/* Attended question — the call to action; answer in the steer box below. */}
         {project.status === 'needs_input' && project.pending_question?.question && (
-          <div role="alert" className="mb-2 rounded-lg p-2.5 text-[0.8125rem]"
+          <div role="alert" data-type="body-s" className="mb-2 rounded-lg p-2.5"
             style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
               <HelpCircle size={14} /> The worker needs your input
@@ -3238,10 +3245,11 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
             {/* The worker's reasoning for asking (what changes based on the answer) —
                 context that helps the user answer well. */}
             {project.pending_question.why && (
-              <p className="mt-1 whitespace-pre-wrap text-on-surface-low text-[0.75rem]">{project.pending_question.why}</p>
+              <p data-type="caption" className="mt-1 whitespace-pre-wrap text-on-surface-low">{project.pending_question.why}</p>
             )}
             <div className="mt-2 flex items-center gap-2">
-              <p className="flex-1 text-on-surface-low text-[0.75rem]">Answer below to resume the build.</p>
+              <p data-type="caption" className="flex-1 text-on-surface-low">Answer below to resume the build.</p>
+              {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
               <Button variant="ghost" size="xs" disabled={sending}
                 onClick={() => steer('Proceed with your best judgment / the sensible default you proposed. Record the assumption in your finding and continue.')}
                 className="shrink-0 px-2 text-[0.75rem] text-info hover:bg-info/10">
@@ -3255,13 +3263,14 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
             without this the panel gave zero explanation + no call to action. Fall back
             to a generic prompt so the user always knows what to do — steer to resume. */}
         {project.status === 'needs_input' && !project.pending_question?.question && (
-          <div role="alert" className="mb-2 rounded-lg p-2.5 text-[0.8125rem]"
+          <div role="alert" data-type="body-s" className="mb-2 rounded-lg p-2.5"
             style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
               <HelpCircle size={14} /> The worker is waiting on you
             </div>
-            <p className="text-on-surface-var text-[0.75rem]">It paused for input but didn't leave a specific question. Steer it below with direction (or tell it to use its best judgment), then it resumes.</p>
+            <p data-type="caption" className="text-on-surface-var">It paused for input but didn't leave a specific question. Steer it below with direction (or tell it to use its best judgment), then it resumes.</p>
             <div className="mt-2 flex justify-end">
+              {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
               <Button variant="ghost" size="xs" disabled={sending}
                 onClick={() => steer('Proceed with your best judgment / the sensible default. Record any assumption in your finding and continue.')}
                 className="shrink-0 px-2 text-[0.75rem] text-info hover:bg-info/10">
@@ -3277,24 +3286,24 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
             supervisor flips the project to blocked, this is what tells the user what
             happened + that a steer/Resume gets it going again. */}
         {project.status === 'blocked' && project.error_message && (
-          <div className="mb-2 rounded-lg p-2.5 text-[0.8125rem]"
+          <div data-type="body-s" className="mb-2 rounded-lg p-2.5"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
               <AlertTriangle size={14} /> Paused — needs you
             </div>
             <p className="whitespace-pre-wrap text-on-surface-var">{project.error_message}</p>
-            <p className="mt-1 text-on-surface-low text-[0.75rem]">Steer it below (or relax a stage criterion), then Resume.</p>
+            <p data-type="caption" className="mt-1 text-on-surface-low">Steer it below (or relax a stage criterion), then Resume.</p>
           </div>
         )}
         {gateFail && project.status === 'running' && (
-          <div role="alert" className="mb-2 rounded-lg p-2.5 text-[0.8125rem]"
+          <div role="alert" data-type="body-s" className="mb-2 rounded-lg p-2.5"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
               <XCircle size={14} /> Supervisor {gateFail.label} check failed — stage held
             </div>
-            {gateFail.command && <p className="font-mono text-on-surface-low text-[0.75rem]">{gateFail.command}</p>}
+            {gateFail.command && <p data-type="caption" className="font-mono text-on-surface-low">{gateFail.command}</p>}
             {gateFail.output && (
-              <pre className="mt-1 max-h-40 overflow-auto rounded-md bg-surface-high/60 p-2 text-[0.75rem] leading-snug text-on-surface-var whitespace-pre-wrap break-words">{gateFail.output}</pre>
+              <pre data-type="caption" className="mt-1 max-h-40 overflow-auto rounded-md bg-surface-high/60 p-2 text-on-surface-var whitespace-pre-wrap break-words">{gateFail.output}</pre>
             )}
           </div>
         )}
@@ -3303,22 +3312,22 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
             explains WHY — gating on 'running' alone hid it exactly when the user most
             needs it (the project is parked awaiting their steer). */}
         {stalled && !gateFail && (project.status === 'running' || project.status === 'blocked') && (
-          <div role="status" className="mb-2 rounded-lg p-2.5 text-[0.8125rem]"
+          <div role="status" data-type="body-s" className="mb-2 rounded-lg p-2.5"
             style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
               <AlertTriangle size={14} /> “{stalled.title}” {project.status === 'blocked' ? 'is stuck — paused for you' : 'seems stuck'}
             </div>
-            <p className="text-on-surface-var text-[0.75rem]">{stalled.findings} cycles in and the gate still hasn't passed — steer it or relax a criterion{project.status === 'blocked' ? ', then Resume' : ''}.</p>
+            <p data-type="caption" className="text-on-surface-var">{stalled.findings} cycles in and the gate still hasn't passed — steer it or relax a criterion{project.status === 'blocked' ? ', then Resume' : ''}.</p>
           </div>
         )}
         {/* the most recent steer, so the user sees their message landed */}
         {lastSteer && (
-          <div className="mb-2 self-end rounded-xl bg-primary/15 px-2.5 py-1.5 text-[0.8125rem] text-on-surface-var">
+          <div data-type="body-s" className="mb-2 self-end rounded-xl bg-primary/15 px-2.5 py-1.5 text-on-surface-var">
             {lastSteer.text}
             {'applied_cycle' in lastSteer && (lastSteer as { applied_cycle?: number }).applied_cycle != null && (
-              <span className="ml-1.5 text-[0.75rem] text-on-surface-low">· applied cycle {(lastSteer as { applied_cycle?: number }).applied_cycle}</span>
+              <span data-type="caption" className="ml-1.5 text-on-surface-low">· applied cycle {(lastSteer as { applied_cycle?: number }).applied_cycle}</span>
             )}
-            {'failed' in lastSteer && (lastSteer as { failed?: boolean }).failed && <span className="ml-1.5 text-[0.75rem] text-danger">· failed to send</span>}
+            {'failed' in lastSteer && (lastSteer as { failed?: boolean }).failed && <span data-type="caption" className="ml-1.5 text-danger">· failed to send</span>}
           </div>
         )}
       </div>
@@ -3329,7 +3338,7 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
             <textarea ref={steerRef} value={text} onChange={(e) => setText(e.target.value)} rows={1}
               placeholder={project.status === 'needs_input' ? 'Answer the worker…' : 'Steer the worker…'}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer() } }}
-              className="max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />
+              data-type="body-s" className="max-h-24 min-h-0 flex-1 resize-none overflow-y-auto bg-transparent text-on-surface outline-none placeholder:text-on-surface-low" />
             {/* Same split as the task-level steer box above: emptiness stays `disabled` (with the
                 reason), in-flight becomes `loading` and the primitive owns the spinner. */}
             <IconButton icon={Send} label="Send steer" filled size={28} iconSize={13}
@@ -3337,13 +3346,14 @@ function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew }: { p
               loading={sending} onClick={() => steer()} className="shrink-0" />
           </div>
         ) : project.status === 'ready' || project.status === 'review' ? (
-          <p className="px-1.5 py-1 text-center text-on-surface-low text-[0.75rem]">Press Start to launch — steer the worker once it's running.</p>
+          <p data-type="caption" className="px-1.5 py-1 text-center text-on-surface-low">Press Start to launch — steer the worker once it's running.</p>
         ) : (
           // Finished: the steer box is gone, so give the dangling "start a new one"
           // call-to-action a real button (was prose pointing nowhere — the only paths
           // out were buried in the overflow menu). Navigates to the new-project composer.
           <div className="flex flex-col items-center gap-1.5 px-1.5 py-1 text-center">
-            <p className="text-on-surface-low text-[0.75rem]">This project has finished.</p>
+            <p data-type="caption" className="text-on-surface-low">This project has finished.</p>
+            {/* The raw 0.75rem size stays: Button carries its own data-type role and takes no override — no call-site element here to carry caption (see typeScaleRatchet). */}
             <Button variant="tonal" size="xs" onClick={() => onStartNew?.()} className="gap-1.5 px-3 text-[0.75rem]">
               <Plus size={13} /> Start a new project
             </Button>
@@ -3385,7 +3395,7 @@ function FilesTouched({ files, ws, max = 8 }: { files?: string[]; ws: string; ma
       {shown.map(({ abs: p, rel }) => {
         return (
           <button key={p} type="button" onClick={() => open(p)} title={rel}
-            className="inline-flex max-w-full items-center gap-1 rounded bg-surface-high px-1.5 py-0.5 text-[0.75rem] text-on-surface-low transition-colors hover:text-primary">
+            data-type="caption" className="inline-flex max-w-full items-center gap-1 rounded bg-surface-high px-1.5 py-0.5 text-on-surface-low transition-colors hover:text-primary">
             <FileCode size={10} className="shrink-0" />
             <span className="truncate">{rel}</span>
           </button>
