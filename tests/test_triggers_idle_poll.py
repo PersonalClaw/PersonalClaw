@@ -60,11 +60,24 @@ def _idle(tid="idle:standup", *, idle_secs=60, first_idle_secs=0, scope="", enab
 
 
 @pytest.fixture(autouse=True)
-def _no_autonudge(monkeypatch):
-    """No AutoNudgeService in a test process. Asserted explicitly rather than assumed: the
-    anti-double-fire fence reads the live singleton, and a leaked instance from another test would
-    make every fire here defer for the wrong reason."""
-    monkeypatch.setattr("personalclaw.autonudge.get_instance", lambda: None)
+def _no_nudge_service(monkeypatch):
+    """No nudge service in a test process. Asserted explicitly rather than assumed: a leaked
+    singleton from another test would route any message-bearing row in these stores to a dead
+    deliverer instead of surfacing it as a typed skip."""
+    monkeypatch.setattr("personalclaw.triggers.nudge._INSTANCE", None)
+
+
+def _nudge_row(tid="nudge:worker", *, session="chat-1", idle_secs=60, message="next cycle"):
+    """A message-bearing idle row — what a loop-worker nudge is after WF2AUT-11 half 2."""
+    return Trigger(
+        id=tid,
+        name=f"N-{tid}",
+        kind="idle",
+        created_by="system",
+        spec={"scope": f"session:{session}", "idle_secs": idle_secs, "message": message},
+        session=f"conversation:{session}",
+        overlap="skip",
+    )
 
 
 # ── 🔴 the wiring: a kind:idle trigger fires through the REAL tick ──
@@ -255,53 +268,81 @@ def test_a_mid_turn_drop_does_NOT_spend_the_short_first_wait(tmp_path):
     assert IP.wait_secs(trigger, state) == 10
 
 
-# ── 🔴 the anti-double-fire fence against autonudge (half 2 is BLOCKED, so both are alive) ──
+# ── 🔴 the anti-double-fire fence (post-port: one store, so the fence is a row scan) ──
 
 
-def test_a_session_AUTONUDGE_owns_is_SKIPPED_with_a_reason(tmp_path, monkeypatch):
-    """🔴 `autonudge.py` is NOT deleted (half 2 waits on LOOPS-EVOLUTION Phase 4 — there is no
-    loop-ticker in the tree). The stores are disjoint, so the only reachable overlap is an idle
-    trigger scoped to a session that also has a nudge loop. That one defers, LOUDLY."""
-
-    class _Svc:
-        def get_by_session(self, key):
-            return object() if key == "chat-1" else None
-
-    monkeypatch.setattr("personalclaw.autonudge.get_instance", lambda: _Svc())
+def test_a_session_a_NUDGE_ROW_owns_is_SKIPPED_with_a_reason(tmp_path):
+    """🔴 The one reachable overlap after WF2AUT-11 half 2: a plain idle trigger scoped to a
+    session a message-bearing (nudge) row already drives. That one defers, LOUDLY, with the
+    reason string kept verbatim from the two-store era."""
     store = TriggerStore(base_dir=tmp_path)
     store.upsert(_idle(scope="session:chat-1"))
+    store.upsert(_nudge_row(session="chat-1"))
     IP.save_state("idle:standup", IP.IdleState(armed_at=NOW), base_dir=tmp_path)
+    IP.save_state("nudge:worker", IP.IdleState(armed_at=NOW), base_dir=tmp_path)
 
     fires, skipped = IP.due_fires(store, now=NOW + 61, base_dir=tmp_path)
-    assert fires == [], "an idle trigger double-fired a session autonudge already nudges"
-    assert [r["reason"] for r in skipped] == [IP.SKIP_AUTONUDGE]
+    assert [f.trigger.id for f in fires] == ["nudge:worker"], "the nudge row itself must still fire"
+    assert {(r["trigger_id"], r["reason"]) for r in skipped} == {
+        ("idle:standup", IP.SKIP_AUTONUDGE)
+    }, "an idle trigger double-fired a session a nudge loop already drives"
 
 
-def test_a_session_autonudge_does_NOT_own_still_fires(tmp_path, monkeypatch):
+def test_a_session_no_nudge_row_owns_still_fires(tmp_path):
     """The fence is narrow: another session's nudge loop must not silence this trigger."""
-
-    class _Svc:
-        def get_by_session(self, key):
-            return object() if key == "someone-else" else None
-
-    monkeypatch.setattr("personalclaw.autonudge.get_instance", lambda: _Svc())
     store = TriggerStore(base_dir=tmp_path)
     store.upsert(_idle(scope="session:chat-1"))
+    store.upsert(_nudge_row(session="someone-else"))
+    IP.save_state("idle:standup", IP.IdleState(armed_at=NOW), base_dir=tmp_path)
+    fires, _ = IP.due_fires(store, now=NOW + 61, base_dir=tmp_path)
+    assert "idle:standup" in [f.trigger.id for f in fires]
+
+
+def test_a_DEACTIVATED_nudge_row_releases_its_session(tmp_path):
+    """A deliberate delta from the two-store era, and the safe direction: a deactivated loop is
+    not nudging anyone, so the user's own idle trigger on that session may speak again. (The old
+    probe deferred to a deactivated loop too, because it could not see whether it was live.)"""
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(_idle(scope="session:chat-1"))
+    row = _nudge_row(session="chat-1")
+    row.enabled = False
+    store.upsert(row)
     IP.save_state("idle:standup", IP.IdleState(armed_at=NOW), base_dir=tmp_path)
     fires, _ = IP.due_fires(store, now=NOW + 61, base_dir=tmp_path)
     assert [f.trigger.id for f in fires] == ["idle:standup"]
 
 
-def test_the_autonudge_probe_FAILS_OPEN(tmp_path, monkeypatch):
-    """A broken probe must not retire every idle automation. This fence prevents a duplicate nudge;
-    it is not the gate that authorises the kind."""
+def test_a_GATEWAY_scoped_nudge_row_fences_nothing(tmp_path):
+    """`scope: gateway` reads as no session; it must not become an accidental global mute."""
+    store = TriggerStore(base_dir=tmp_path)
+    row = _nudge_row(session="chat-1")
+    row.spec = dict(row.spec, scope="gateway")
+    store.upsert(row)
+    assert IP._nudge_owned_sessions([row]) == set()
 
-    class _Svc:
-        def get_by_session(self, key):
-            raise RuntimeError("autonudge is broken")
 
-    monkeypatch.setattr("personalclaw.autonudge.get_instance", lambda: _Svc())
-    assert IP._autonudge_owns("chat-1") is False
+def test_a_due_nudge_row_with_NO_service_is_a_typed_skip_never_the_wake_path(tmp_path):
+    """The routing rule at the poll: a message-bearing row must never fall through to
+    `wakeup.dispatch_fires` — waking a loop worker's inbox instead of nudging it would be a
+    silent behavior change. With no service registered, the skip is TYPED and nothing counts."""
+    store = TriggerStore(base_dir=tmp_path)
+    store.upsert(_nudge_row(session="chat-1"))
+    IP.save_state("nudge:worker", IP.IdleState(armed_at=NOW), base_dir=tmp_path)
+    manager = _manager(WK.session_key_for("nudge:worker"))
+
+    ran: list[str] = []
+
+    async def runner(payload):
+        ran.append(payload.get("trigger_id", ""))
+        return {"status": "ok"}
+
+    delivered, skipped = asyncio.run(
+        IP.poll(store, manager, runner, now=NOW + 61, base_dir=tmp_path)
+    )
+    assert delivered == 0
+    assert ran == [], "a nudge fire leaked into the wake/action path"
+    assert [r["reason"] for r in skipped] == [IP.SKIP_NUDGE_UNAVAILABLE]
+    assert IP.load_state("nudge:worker", base_dir=tmp_path).cycle_count == 0
 
 
 # ── the ordinary refusals ──

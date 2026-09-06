@@ -91,6 +91,11 @@ class _FakeSvc:
     def get_by_session(self, session_name):
         return next((lp for lp in self._loops.values() if lp.session_name == session_name), None)
 
+    def list_all(self):
+        # The public surface `manager.pause` scans since WF2AUT-11 (the real service keeps its
+        # rows in the trigger store, not an in-memory dict).
+        return list(self._loops.values())
+
     async def update(self, loop_id, **kw):
         lp = self._loops.get(loop_id)
         if lp:

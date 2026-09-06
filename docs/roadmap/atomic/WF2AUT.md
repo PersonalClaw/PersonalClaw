@@ -125,6 +125,25 @@ Unblock by porting the loop-cycle driver off autonudge first, per LOOPS-EVOLUTIO
 
 §2 autonudge.py ABSORBED as kind:idle (LAST); §7 step 9; §1.2 idle kind; Risks (Loops coupling)
 
+**[2026-09-05] 🟡 IMPLEMENTATION LANDED** on `feature-wf2aut11-idle-kind`; held for the owner's
+dag.json flip. The 2026-08-27 ruling's sequence executed in one PR — port the driver, THEN
+delete: nudge loops are now `Trigger{kind: idle}` rows (`SPEC_KEYS["idle"]` widened by
+`message`/`max_cycles`/`stop_sentinel_path`; a non-empty `message` routes the fire to the nudge
+deliverer instead of the wake path), due-ness rides `idle_poll`'s sidecar off the substrate tick
+(the per-loop asyncio timers are gone), and `src/personalclaw/autonudge.py` is **DELETED** — the
+surviving adapter `src/personalclaw/triggers/nudge.py` keeps the exact `AutoNudgeService` duck
+type, so `loop/manager`, `loop/watchdog`, `planning/runner`, the `/api/autonudge` wire and the
+`autonudge_state` WS events are unchanged; the chat hot paths' fail-open
+`notify_user_input`/`notify_turn_complete` contracts are preserved (re-arm as an `armed_at`
+restamp — the translation half 1 ratified — plus the 3-consecutive-errors deactivation), and the
+re-prompt-gap fence moved into the gateway's `_fire` (`_suppress_autonudge_rearm` now checked at
+delivery, since a poll stays due where a timer stayed unarmed). Legacy `autonudge.json` migrates
+losslessly at `start()` (loop ids verbatim; file renamed `.migrated` for rollback). The
+EXT:LOOPS-EVOLUTION dependency is discharged by the 2026-09-05 audit re-homing the port HERE
+(WF2LOO closed without a loop-ticker atom). Design note:
+`docs/roadmap/design-notes/wf2aut11-port-design.md` (decision (b) — no new kind; the shipped
+`idle` kind + runtime carry the semantics).
+
 **Done when:** kind:idle fires for user automations preserving reactive re-arm/delivered-only counting/mid-turn-drop; autonudge.py deleted and the loop tick engine rides kind:idle (this half only after LOOPS-EVOLUTION Phase 4)
 
 ### `WF2AUT-12` — webhook kind fire endpoint + scoped token verification
