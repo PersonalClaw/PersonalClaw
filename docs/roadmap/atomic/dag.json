@@ -6431,10 +6431,10 @@
           "scope": "The cheap precursor (build this first, on the engine); Design questions to resolve at un-deferral; Owner tasks (at un-deferral, not before)",
           "done_when": "The LOOPS-EVOLUTION council template has shipped, the owner re-confirms deliberation (not fan-out) is the missing capability, and all 6 design questions (transcript persistence format, member context budget policy, rooms x memory writes, ACP capability gates, room-level SEL, UI surface) plus the 3 owner tasks (default round budget + pause UX copy, ACP membership eligibility) are resolved into a Contracts section and task table added to this plan.",
           "deps": [
-            "EXT:LOOPS-EVOLUTION:council fan-out/fan-in workflow template ships first; demand re-confirmation gate",
+            "AR-9",
             "EXT:WORKFLOWS-V2:core slices own pipeline-shaped multi-agent orchestration; rooms are only the deliberative remainder"
           ],
-          "blocked_reason": "AUDIT FINDING 2026-09-05: the ext gate names a council-template precursor owned by WORKFLOWS-V2-LOOPS-EVOLUTION, but that plan closed (all atoms done) WITHOUT shipping any council template (zero non-doc hits for 'council' on main; 28 bundled templates, none council) — so the gate can never mechanically clear, while the plan header's original deferral conditions (WV core slices + ACP-AGENT-PARITY) are now all satisfied. OWNER RULING REQUESTED: either mint the council-template precursor as a first-class atom somewhere, or waive the precursor and rule on un-deferral; AR-2..8 (the whole plan) wait behind this."
+          "blocked_reason": "OWNER-GATED (correction 2026-09-06). The 2026-09-05 audit found this atom's ext gate named a council-template precursor owned by WORKFLOWS-V2-LOOPS-EVOLUTION, but that plan closed with every atom done and never shipped one — the edge resolved to a done atom (WF2LOO-3) while the deliverable it named did not exist, so the gate was satisfied on paper and void in fact, and it walled off AR-2..8. The blocked_reason asked the owner to either mint the precursor as a first-class atom or waive it; the first option is taken here, because the source plan's own header calls the council template the cheap precursor to 'build this first, on the engine' and makes it the input to owner task 1. It is minted as AR-9 and this atom now depends on it. What remains is genuinely the owner's: per owner task 1, re-confirm after AR-9 ships that DELIBERATION (not fan-out) is the missing capability. Note the plan states the honest cheap outcome plainly — 'if the council template satisfies demand, rooms may stay deferred indefinitely — that outcome is acceptable and cheap to discover' — so a 'no' here correctly closes AR-1..AR-9 as satisfied-by-precursor rather than leaving 8 atoms of phantom work on the board."
         },
         {
           "id": "AR-2",
@@ -6508,6 +6508,14 @@
             "AR-2",
             "AR-5"
           ]
+        },
+        {
+          "id": "AR-9",
+          "title": "Council fan-out/fan-in workflow template: the cheap precursor that makes the un-deferral decision answerable",
+          "status": "todo",
+          "scope": "The cheap precursor (build this first, on the engine)",
+          "done_when": "A bundled 'council' workflow template ships on Workflows v2 primitives: N members independently answer the same brief, a synthesis step merges and contrasts their answers with each position attributed, and the human reads one artifact — zero new topology, registered in the template library beside its fan-out siblings (best-of-n, check-work) and railed by the bundled-template census. Homed here rather than reopening the closed LOOPS-EVOLUTION plan: this plan's header is where the precursor is specified, and AR-1 is its only consumer.",
+          "deps": []
         }
       ]
     },
@@ -7875,6 +7883,11 @@
   "dag": {
     "ready_frontier": [
       {
+        "id": "AR-9",
+        "title": "Council fan-out/fan-in workflow template: the cheap precursor that makes the un-deferral decision answerable",
+        "plan": "AR"
+      },
+      {
         "id": "CRE-7",
         "title": "Owner real-world provisioning remainder",
         "plan": "CRE"
@@ -7956,14 +7969,6 @@
       }
     ],
     "gated_frontier": [
-      {
-        "id": "AR-1",
-        "title": "Un-defer the plan: ship the council precursor, re-confirm demand, and resolve the 6 design questions into contracts",
-        "plan": "AR",
-        "gate": [
-          "ext"
-        ]
-      },
       {
         "id": "CA-8",
         "title": "S4 desktop connect-to-gateway mode + multi-gateway switcher (T4.1 + amendment T4.4)",
@@ -8146,6 +8151,7 @@
       "APE-11",
       "APE-6",
       "APE-12",
+      "AR-9",
       "AR-1",
       "AR-2",
       "AR-3",
@@ -9358,11 +9364,6 @@
       },
       {
         "atom": "AR-1",
-        "ext_ref": "EXT:LOOPS-EVOLUTION:council fan-out/fan-in workflow template ships first; demand re-confirmation gate",
-        "to_atom": "WF2LOO-3"
-      },
-      {
-        "atom": "AR-1",
         "ext_ref": "EXT:WORKFLOWS-V2:core slices own pipeline-shaped multi-agent orchestration; rooms are only the deliberative remainder",
         "to_atom": "WV-8"
       },
@@ -10067,10 +10068,10 @@
       {
         "code": "AR",
         "plan": "AGENT-ROOMS",
-        "total_atoms": 8,
+        "total_atoms": 9,
         "done": 0,
         "in_progress": 0,
-        "todo": 8,
+        "todo": 9,
         "blocked": 0
       },
       {
