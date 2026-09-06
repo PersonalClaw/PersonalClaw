@@ -102,7 +102,7 @@ export function ReviewTriagePanel({ runId, onDispatched }: { runId: string; onDi
 
   if (error) {
     return (
-      <div className="flex flex-col items-center gap-2 py-6 text-[0.8125rem]">
+      <div data-type="body-s" className="flex flex-col items-center gap-2 py-6">
         <span style={{ color: 'var(--color-warn)' }}>{error}</span>
         <QuietButton onClick={load} title="Try reading the findings again"><RotateCcw size={12} /> Try again</QuietButton>
       </div>
@@ -113,7 +113,7 @@ export function ReviewTriagePanel({ runId, onDispatched }: { runId: string; onDi
   }
   if (findings.length === 0) {
     return (
-      <p className="py-6 text-center text-on-surface-low text-[0.8125rem]">
+      <p data-type="body-s" className="py-6 text-center text-on-surface-low">
         No review findings yet — a review stage has not reported any for this run.
       </p>
     )
@@ -126,7 +126,7 @@ export function ReviewTriagePanel({ runId, onDispatched }: { runId: string; onDi
   return (
     <div className="flex flex-col gap-l">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">
+        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">
           {counts.total} finding{counts.total === 1 ? '' : 's'} · {counts.anchored} anchored
           {counts.unanchored > 0 ? ` · ${counts.unanchored} unverifiable` : ''}
         </span>
@@ -142,22 +142,22 @@ export function ReviewTriagePanel({ runId, onDispatched }: { runId: string; onDi
           return (
             <div key={f.key} className="rounded-lg bg-surface-high px-m py-2">
               <div className="flex items-baseline gap-2">
-                <span className="shrink-0 text-[0.75rem] uppercase tracking-wide" style={{ color: SEVERITY_TONE[f.severity] ?? 'var(--color-on-surface-low)' }}>
+                <span data-type="caption" className="shrink-0 uppercase tracking-wide" style={{ color: SEVERITY_TONE[f.severity] ?? 'var(--color-on-surface-low)' }}>
                   {f.severity || 'unrated'}
                 </span>
-                <span className="min-w-0 truncate font-mono text-on-surface-var text-[0.75rem]" title={f.location}>
+                <span data-type="caption" className="min-w-0 truncate font-mono text-on-surface-var" title={f.location}>
                   {anchored ? `${f.resolved_path}:${f.resolved_line}` : f.location || 'no location'}
                 </span>
                 {f.auto_fixable && (
-                  <span className="ml-auto flex shrink-0 items-center gap-1 text-on-surface-low text-[0.75rem]" title="A mechanical edit — appliable without judgment once accepted">
+                  <span data-type="caption" className="ml-auto flex shrink-0 items-center gap-1 text-on-surface-low" title="A mechanical edit — appliable without judgment once accepted">
                     <Wand2 size={11} /> mechanical
                   </span>
                 )}
               </div>
-              <div className="mt-1 text-on-surface text-[0.8125rem]">{f.problem}</div>
-              {f.why && <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{f.why}</div>}
+              <div data-type="body-s" className="mt-1 text-on-surface">{f.problem}</div>
+              {f.why && <div data-type="caption" className="mt-0.5 text-on-surface-low">{f.why}</div>}
               {f.recommended_fix && (
-                <div className="mt-1 text-on-surface-var text-[0.75rem]">Fix: {f.recommended_fix}</div>
+                <div data-type="caption" className="mt-1 text-on-surface-var">Fix: {f.recommended_fix}</div>
               )}
 
               {anchored ? (
@@ -172,7 +172,7 @@ export function ReviewTriagePanel({ runId, onDispatched }: { runId: string; onDi
                   </Button>
                 </div>
               ) : (
-                <div className="mt-1.5 flex items-start gap-1.5 text-[0.75rem]" style={{ color: 'var(--color-warn)' }}>
+                <div data-type="caption" className="mt-1.5 flex items-start gap-1.5" style={{ color: 'var(--color-warn)' }}>
                   <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                   <span>
                     Can’t verify this against the diff — {anchorExplanation(f.anchor_reason)}. It can be
@@ -195,7 +195,7 @@ export function ReviewTriagePanel({ runId, onDispatched }: { runId: string; onDi
 
       <div className="flex flex-col gap-s">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-on-surface-low text-[0.75rem]">
+          <span data-type="caption" className="text-on-surface-low">
             {acceptedCount} to send · {rejectedCount} to record
           </span>
           <Button size="sm" onClick={dispatch} disabled={busy || (acceptedCount === 0 && rejectedCount === 0)}
@@ -203,16 +203,16 @@ export function ReviewTriagePanel({ runId, onDispatched }: { runId: string; onDi
             <Send size={14} /> {busy ? 'Dispatching…' : 'Dispatch decisions'}
           </Button>
         </div>
-        <p className="text-on-surface-low text-[0.75rem]">
+        <p data-type="caption" className="text-on-surface-low">
           Only accepted findings reach the worker. Rejections are recorded against the reviewer so a
           gate that only ever cries wolf becomes visible.
         </p>
       </div>
 
       {result && (
-        <div className="rounded-lg px-m py-2 text-[0.8125rem]"
+        <div data-type="body-s" className="rounded-lg px-m py-2"
           style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)', border: '1px dashed color-mix(in srgb, var(--color-info) 30%, transparent)' }}>
-          <div className="text-info text-[0.75rem] uppercase tracking-wide mb-1">Dispatch result</div>
+          <div data-type="caption" className="text-info uppercase tracking-wide mb-1">Dispatch result</div>
           <p className="text-on-surface-var">
             {result.receipt.delivered
               ? `${result.receipt.count} accepted finding${result.receipt.count === 1 ? '' : 's'} sent to the worker — applied at its next iteration.`
@@ -223,12 +223,12 @@ export function ReviewTriagePanel({ runId, onDispatched }: { runId: string; onDi
                   : `Not sent — ${result.receipt.reason}.`}
           </p>
           {(result.calibrated ?? 0) > 0 && (
-            <p className="mt-0.5 text-on-surface-low text-[0.75rem]">
+            <p data-type="caption" className="mt-0.5 text-on-surface-low">
               {result.calibrated} rejection{result.calibrated === 1 ? '' : 's'} recorded in the calibration record.
             </p>
           )}
           {result.refused.length > 0 && (
-            <p className="mt-0.5 text-[0.75rem]" style={{ color: 'var(--color-warn)' }}>
+            <p data-type="caption" className="mt-0.5" style={{ color: 'var(--color-warn)' }}>
               {result.refused.length} accepted finding{result.refused.length === 1 ? '' : 's'} could no longer be
               anchored and {result.refused.length === 1 ? 'was' : 'were'} not sent.
             </p>

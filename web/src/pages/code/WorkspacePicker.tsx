@@ -133,7 +133,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
             onBlur={() => setPathDraft(path)}
             spellCheck={false} autoCapitalize="off" autoCorrect="off" aria-label="Workspace path"
             placeholder="/absolute/path/to/folder"
-            className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 font-mono text-[0.8125rem] text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+            data-type="body-s" className="min-w-0 flex-1 rounded-md bg-surface-high px-2.5 py-1.5 font-mono text-on-surface-var outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         </div>
 
         {/* in-dir filter — only worth showing once the list is long enough to scan */}
@@ -155,7 +155,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                 folder, which is a bigger surprise than picking a row — it changes what the whole panel
                 is showing. */}
             {shownDirs.length > 0 && (
-              <span className="inline-flex shrink-0 items-center gap-1 pl-1 text-on-surface-low text-[0.75rem]">
+              <span data-type="caption" className="inline-flex shrink-0 items-center gap-1 pl-1 text-on-surface-low">
                 <CornerDownLeft size={11} /> opens the first folder
               </span>
             )}
@@ -167,22 +167,22 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
           {loading ? (
             <div className="flex h-40 items-center justify-center"><Loader2 size={20} className="animate-spin text-on-surface-low" /></div>
           ) : dirs.length === 0 ? (
-            <div className="flex h-40 items-center justify-center px-4 text-center text-on-surface-low text-[0.8125rem]">No sub-folders here.</div>
+            <div data-type="body-s" className="flex h-40 items-center justify-center px-4 text-center text-on-surface-low">No sub-folders here.</div>
           ) : shownDirs.length === 0 ? (
-            <div className="flex h-40 items-center justify-center px-4 text-center text-on-surface-low text-[0.8125rem]">No folders match “{filter.trim()}”.</div>
+            <div data-type="body-s" className="flex h-40 items-center justify-center px-4 text-center text-on-surface-low">No folders match “{filter.trim()}”.</div>
           ) : (
             <div className="flex flex-col">
               {shownDirs.map((d) => (
                 // The row opens the folder (navigate in); a trailing "Use" button
                 // selects it directly — so the user can pick a repo they can SEE in
                 // the list without having to navigate into it then hit the footer.
-                <div key={d.path} className="group/row flex items-center gap-2 px-3 py-2 text-[0.8125rem] text-on-surface-var transition-colors hover:bg-surface-high">
+                <div key={d.path} data-type="body-s" className="group/row flex items-center gap-2 px-3 py-2 text-on-surface-var transition-colors hover:bg-surface-high">
                   <button type="button" onClick={() => browse(d.path)}
                     className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-on-surface" title={`Open ${d.name}`}>
                     <Folder size={15} className="shrink-0 text-on-surface-low" />
                     <span className="truncate">{d.name}</span>
                     {d.is_repo && (
-                      <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[0.75rem] font-medium"
+                      <span data-type="caption" className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 fw-500"
                         style={{ color: 'var(--color-primary)', border: '1px solid color-mix(in srgb, var(--color-primary) 40%, transparent)' }}
                         title="This folder is a git repository">
                         <GitBranch size={10} /> repo
@@ -194,7 +194,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                       action from touch users entirely (no hover, no easy focus), leaving
                       the footer "Use this folder" as their only path. */}
                   <button type="button" onClick={() => onPick(d.path)}
-                    className="shrink-0 rounded px-1.5 py-0.5 text-[0.75rem] text-on-surface-low opacity-50 transition-opacity hover:bg-surface-highest hover:text-primary hover:opacity-100 focus-visible:opacity-100 group-hover/row:opacity-100"
+                    data-type="caption" className="shrink-0 rounded px-1.5 py-0.5 text-on-surface-low opacity-50 transition-opacity hover:bg-surface-highest hover:text-primary hover:opacity-100 focus-visible:opacity-100 group-hover/row:opacity-100"
                     title={mode === 'brownfield' ? `Use ${d.name} as the codebase` : `Use ${d.name} as the project home`}>
                     Use
                   </button>
@@ -205,7 +205,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
         </div>
 
         {error && (
-          <div role="alert" className="rounded-lg px-3 py-2 text-[0.8125rem]"
+          <div role="alert" data-type="body-s" className="rounded-lg px-3 py-2"
             style={{ background: 'color-mix(in srgb, var(--color-danger) 8%, transparent)', color: 'var(--color-danger)' }}>{error}</div>
         )}
 
@@ -216,7 +216,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
               <input autoFocus value={newName} onChange={(e) => { setNewName(e.target.value); if (error) setError(null) }}
                 onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); else if (e.key === 'Escape' && !submitting) { setCreating(false); setError(null) } }}
                 disabled={submitting} placeholder="new-project-folder"
-                className="h-9 min-w-0 flex-1 rounded-md bg-surface-high px-2.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-60" />
+                data-type="body-s" className="h-9 min-w-0 flex-1 rounded-md bg-surface-high px-2.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-60" />
               <Button size="sm" onClick={createFolder} disabled={!newName.trim() || submitting}
                 disabledReason={!newName.trim() ? 'Enter a folder name first' : undefined}>
                 {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Create + use
@@ -224,7 +224,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
             </div>
           ) : (
             <button type="button" onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 self-start rounded-md px-2 py-1.5 text-[0.8125rem] text-on-surface-low hover:text-on-surface">
+              data-type="body-s" className="inline-flex items-center gap-1.5 self-start rounded-md px-2 py-1.5 text-on-surface-low hover:text-on-surface">
               <FolderPlus size={15} /> New folder here
             </button>
           )
@@ -234,7 +234,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
             greenfield = use an existing (e.g. pre-made empty) folder as the new
             project's home, alongside the "New folder here" create-new path above. */}
         <div className="flex items-center justify-between gap-2 border-t border-outline-variant/40 pt-3">
-          <span className="min-w-0 text-on-surface-low text-[0.75rem]">
+          <span data-type="caption" className="min-w-0 text-on-surface-low">
             {mode === 'brownfield' ? 'Open a folder to navigate; use the current one as the codebase.' : 'Create a new folder, or use the current one as the project home.'}
             {/* Brownfield: confirm the current dir's git status — a non-repo pick means
                 no diff/history tracking in the cockpit. Only shown once a dir is loaded. */}

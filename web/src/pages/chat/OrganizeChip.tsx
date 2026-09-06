@@ -78,7 +78,8 @@ export function OrganizeChip({ sessionKey, refreshKey, onApplied }: {
     <motion.div
       initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6 }}
       transition={spring.spatialFast}
-      className="inline-flex items-center gap-2 rounded-pill border border-outline-variant/50 bg-surface-container pl-3 pr-1.5 h-8 text-[0.8125rem]"
+      data-type="label-s"
+      className="inline-flex items-center gap-2 rounded-pill border border-outline-variant/50 bg-surface-container pl-3 pr-1.5 h-8"
       role="status">
       <FolderTree size={14} style={{ color: 'var(--color-primary)' }} className="shrink-0" />
       <span className="text-on-surface-var">

@@ -411,6 +411,67 @@ def test_catalog_carries_the_declared_quality_block(tmp_path):
     assert by_name["quiet-app"]["quality"] == {}
 
 
+def _consent_fixture_source(tmp_path) -> Path:
+    """Two local apps whose manifests are the two cases install consent kept confusing:
+    one that explicitly DECLINES network and schedules a job by cron expression, and one
+    that mentions network nowhere and schedules by interval."""
+    src = tmp_path / "consentapps"
+    for name, perms, cron in (
+        (
+            "declines-net",
+            {"cron": True, "network": False},
+            {"name": "nightly", "cron_expr": "23 * * * *", "agent": "researcher", "message": "go"},
+        ),
+        ("silent-net", {"cron": True}, {"name": "poller", "every": 3600, "agent": "a"}),
+    ):
+        d = src / name
+        d.mkdir(parents=True)
+        (d / "app.json").write_text(
+            json.dumps(
+                {
+                    "name": name,
+                    "version": "1.0.0",
+                    "displayName": name,
+                    "description": f"{name} fixture",
+                    "permissions": perms,
+                    "crons": [cron],
+                }
+            ),
+            encoding="utf-8",
+        )
+    return src
+
+
+def test_catalog_consent_payload_distinguishes_a_network_denial_from_a_silence(tmp_path):
+    """The pre-install consent card reads THIS payload, and it used to collapse an
+    explicit ``"network": false`` into the same shape as a manifest that never mentions
+    the key — so an app that had stated it does not go out to the internet was disclosed
+    as "not declared". Pinned in both directions: a declining app carries ``False``, a
+    silent one carries no key at all, and the UI is free to say two different things."""
+    catalog.add_local_source(str(_consent_fixture_source(tmp_path)))
+    by_name = {a["name"]: a for a in catalog.available_catalog()["localApps"]}
+    assert by_name["declines-net"]["permissions"]["network"] is False
+    assert "network" not in by_name["silent-net"]["permissions"]
+    # The declaration is still not a grant — the enforced flag is untouched.
+    assert by_name["declines-net"]["permissions"]["cron"] is True
+
+
+def test_catalog_consent_payload_words_the_cron_cadence(tmp_path):
+    """A consent screen said ``23 * * * *``. The catalog now ships the words alongside
+    the expression, from the same formatter the Schedule page uses — the expression is
+    kept (the UI shows it as the row's tooltip), and the ``every`` form gets no cadence
+    because the surface already words that one itself."""
+    catalog.add_local_source(str(_consent_fixture_source(tmp_path)))
+    by_name = {a["name"]: a for a in catalog.available_catalog()["localApps"]}
+    cron = by_name["declines-net"]["crons"][0]
+    assert cron["cron_expr"] == "23 * * * *", "the exact expression is not discarded"
+    assert cron["cadence"] and cron["cadence"] != cron["cron_expr"]
+    assert "23" in cron["cadence"] and "*" not in cron["cadence"]
+    # The interval form is the surface's own to word; a server cadence there would be a
+    # second spelling of the same fact.
+    assert by_name["silent-net"]["crons"][0]["cadence"] == ""
+
+
 def test_first_party_source_is_present_and_not_removable(tmp_path, monkeypatch):
     """The first-party default source is always present, badges its apps
     'first-party', and refuses removal."""

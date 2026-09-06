@@ -6,19 +6,47 @@ dangerous reserved for high-confidence malice (terminal, non-overridable) and
 trust-tier downgrading trusted provenance. Covers: clean pass, destructive-root,
 exfil (sensitive-path + network), remote pipe-exec, obfuscated exec, prompt
 injection in prose, zero-width + bidi Unicode, and tier modulation.
+
+Also covers the shape of the EVIDENCE each finding carries, which is what the
+install-consent dialog shows a user who is deciding yes/no.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+import personalclaw.supply_chain
 from personalclaw.supply_chain import (
+    _EVIDENCE_CAP,
     ScanReport,
     SkillScanner,
     TrustTier,
     Verdict,
     scan_dir,
 )
+
+# The real construct that made this defect visible: a first-party `gh` invocation whose
+# argv sits on the line AFTER the callee, with a lint pragma on the callee's own line.
+_GH_CALL = """import shutil
+import subprocess
+
+
+def doctor() -> list[str]:
+    if not shutil.which("gh"):
+        return ["gh is not on PATH"]
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed argv, no shell, no user input
+            ["gh", "auth", "status"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ["gh failed"]
+    return [proc.stdout]
+"""
 
 
 def _mk(tmp_path: Path, files: dict[str, str]) -> Path:
@@ -206,3 +234,135 @@ class TestReportShape:
         # A huge file is skipped (not read into the scanner), so no crash/finding.
         d = _mk(tmp_path, {"big.md": "x" * (600 * 1024)})
         assert scan_dir(d).verdict is Verdict.CLEAN
+
+
+class TestEvidenceWindow:
+    """What the consent dialog SHOWS. A window that hugged the matched token rendered
+    `python_exec (warning) — app_cli.py: try:\\n proc = subprocess.run(  # noqa: S603 — fi`
+    — a user warned about a subprocess, shown the lint pragma, and never shown the argv.
+    These pin the informative shape; none of them touch whether a rule fires."""
+
+    def _finding(self, text: str, rule: str) -> str:
+        rep = SkillScanner().scan_text(text, surface="script")
+        hits = [f for f in rep.findings if f.rule == rule]
+        assert hits, f"expected {rule} to fire; got {sorted(_rules(rep))}"
+        return hits[0].evidence
+
+    def test_multiline_call_evidence_carries_the_argv(self) -> None:
+        ev = self._finding(_GH_CALL, "python_exec")
+        # The callee AND what it actually runs — the whole point of the disclosure.
+        assert "subprocess.run" in ev
+        assert '"gh"' in ev and '"auth"' in ev and '"status"' in ev
+
+    def test_multiline_call_evidence_is_not_just_the_pragma(self) -> None:
+        ev = self._finding(_GH_CALL, "python_exec")
+        # The pragma is commentary about the code; it must not be what the user is shown
+        # in place of the code. Trimming it is what freed the budget for the argv.
+        assert "noqa" not in ev
+        assert ev.rstrip().endswith(")"), ev
+
+    def test_evidence_names_the_line(self) -> None:
+        # `subprocess.run(` is on line 9 of the fixture (1-based, as an editor counts).
+        assert self._finding(_GH_CALL, "python_exec").startswith("L9: ")
+
+    def test_evidence_has_no_literal_backslash_n(self) -> None:
+        # The dialog renders this string inline; an escaped newline is noise, not a break.
+        assert "\\n" not in self._finding(_GH_CALL, "python_exec")
+
+    def test_truncation_is_marked_and_stays_within_the_cap(self) -> None:
+        argv = ", ".join(f'"--flag-{i}"' for i in range(40))
+        ev = self._finding(f'out = subprocess.run(["gh", {argv}])\n', "python_exec")
+        assert len(ev) <= _EVIDENCE_CAP
+        assert ev.endswith("…"), ev
+        # A cut that is marked is still honest evidence: the callee survives the cut.
+        assert "subprocess.run" in ev
+
+    def test_unclosed_construct_is_marked_truncated(self) -> None:
+        # An unbalanced/oversized call must not read as a complete one.
+        text = "proc = subprocess.run(\n" + "".join(f'    "a{i}",\n' for i in range(30))
+        ev = self._finding(text, "python_exec")
+        assert ev.endswith("…") and len(ev) <= _EVIDENCE_CAP
+
+    def test_shell_rule_evidence_drops_the_trailing_comment(self) -> None:
+        ev = self._finding("set -eu\nrm -rf /   # nuke the box\n", "destructive_root")
+        assert ev.startswith("L2: ") and "rm -rf /" in ev and "nuke" not in ev
+
+    def test_a_match_inside_a_comment_still_shows_the_comment(self) -> None:
+        # Comment trimming must never empty out a finding whose match IS the comment.
+        ev = self._finding("x = 1\n# never call eval(user_input) here\n", "python_exec")
+        assert "eval(" in ev and ev.startswith("L2: ")
+
+    def test_sensitive_path_evidence_shows_the_read(self) -> None:
+        text = 'import os\ntok = open(os.path.expanduser("~/.aws/credentials")).read()\n'
+        ev = self._finding(text, "reads_sensitive_path")
+        assert ".aws/credentials" in ev and ev.startswith("L2: ")
+
+
+# ── Every rule the scanner can emit reaches consent in plain language ──
+
+
+_SCAN_FINDINGS_TS = (
+    Path(__file__).resolve().parent.parent / "web" / "src" / "lib" / "scanFindings.ts"
+)
+_SUPPLY_CHAIN_PY = Path(personalclaw.supply_chain.__file__)
+
+
+def _emittable_rules() -> set[str]:
+    """Every ``rule`` name a ``Finding`` can carry. Two sources, because the scanner has
+    two idioms: the pattern catalogs (a rule per ``(name, regex)`` pair) and the
+    hand-built findings for the co-occurrence/Unicode heuristics, whose rule is a literal
+    at the ``Finding(...)`` call. Derived rather than listed so a rule added either way is
+    caught here instead of shipping unexplained."""
+    from personalclaw.supply_chain import (
+        _DANGEROUS_SCRIPT,
+        _INJECTION_PROSE,
+        _WARNING_SCRIPT,
+    )
+
+    catalogued = {name for name, _ in (*_DANGEROUS_SCRIPT, *_WARNING_SCRIPT, *_INJECTION_PROSE)}
+    src = _SUPPLY_CHAIN_PY.read_text(encoding="utf-8")
+    literal = set(re.findall(r'Verdict\.\w+,\s*"([a-z_]+)"', src, re.S))
+    return catalogued | literal
+
+
+def _glossed_rules() -> set[str]:
+    """The keys of ``SCAN_RULE_GLOSS`` in web/src/lib/scanFindings.ts."""
+    src = _SCAN_FINDINGS_TS.read_text(encoding="utf-8")
+    m = re.search(r"export const SCAN_RULE_GLOSS[^{]*\{(.*?)\n\}", src, re.S)
+    assert m, "SCAN_RULE_GLOSS not found in web/src/lib/scanFindings.ts"
+    body = re.sub(r"//[^\n]*", "", m.group(1))  # drop comments before scanning
+    return set(re.findall(r"^\s*([a-z_]+):", body, re.M))
+
+
+def test_every_scanner_rule_has_a_plain_language_gloss():
+    """The install-consent findings list rendered ``python_exec (warning) — path: evidence``.
+    The rule name is the scanner's vocabulary, not the user's: a non-expert reading it cannot
+    say what the app would be allowed to do, which is the only question the dialog asks them.
+
+    Pinned in BOTH directions. A rule with no gloss is a finding the user cannot act on —
+    the defect. A gloss with no rule is copy explaining something the scanner never emits,
+    which decays into describing a check that no longer exists. Adding a scanner rule now
+    reds here until it is explained."""
+    emittable = _emittable_rules()
+    glossed = _glossed_rules()
+    assert emittable == glossed, (
+        f"emitted but never explained: {sorted(emittable - glossed)}; "
+        f"explained but never emitted: {sorted(glossed - emittable)}"
+    )
+    # Not a vacuous comparison of two empty sets, and the two idioms are both represented.
+    assert {"python_exec", "exfil_sensitive_path", "bidi_override"} <= emittable
+
+
+def test_no_gloss_merely_restates_its_rule_name():
+    """A gloss that echoes the rule name is the defect wearing a sentence. Each must be
+    prose about what the app can do, not ``python_exec`` with the underscores removed."""
+    src = _SCAN_FINDINGS_TS.read_text(encoding="utf-8")
+    m = re.search(r"export const SCAN_RULE_GLOSS[^{]*\{(.*?)\n\}", src, re.S)
+    assert m
+    entries = re.findall(r"^\s*([a-z_]+):\s*[\"'](.+?)[\"'],\s*$", m.group(1), re.M)
+    assert len(entries) >= 15, "the gloss map did not parse"
+    for rule, text in entries:
+        words = rule.split("_")
+        assert not all(w in text.lower() for w in words), f"{rule} gloss restates its own name"
+        assert len(text.split()) >= 5, f"{rule} gloss is too short to explain anything"
+        assert text.endswith("."), f"{rule} gloss is not a sentence"

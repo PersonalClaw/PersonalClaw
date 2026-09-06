@@ -117,13 +117,13 @@ export function SteeringPanel({
       {/* Judge-comment triage: accept a flagged node's comment and it becomes a steer. */}
       {flagged.length > 0 && (
         <div className="flex flex-col gap-s">
-          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Judge comments</div>
+          <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">Judge comments</div>
           {flagged.map((n) => {
             const comment = judgeComment(n)
             return (
               <div key={n.instance_path} className="rounded-lg bg-surface-high px-m py-2">
-                <div className="text-on-surface text-[0.8125rem]">{nodeLabel(n)}</div>
-                <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{comment}</div>
+                <div data-type="body-s" className="text-on-surface">{nodeLabel(n)}</div>
+                <div data-type="caption" className="mt-0.5 text-on-surface-low">{comment}</div>
                 <div className="mt-1.5 flex justify-end">
                   <QuietButton
                     onClick={() => steer(steerTextFromComment(nodeLabel(n), comment))}
@@ -140,7 +140,7 @@ export function SteeringPanel({
 
       {/* The interrupt queue — a free-text instruction consumed at the next boundary. */}
       <div className="flex flex-col gap-s">
-        <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Steer this run</div>
+        <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">Steer this run</div>
         <TextArea
           value={draft}
           onChange={setDraft}
@@ -155,8 +155,8 @@ export function SteeringPanel({
           </Button>
         </div>
         {pending.length > 0 && (
-          <div className="rounded-lg px-m py-2 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)', border: '1px dashed color-mix(in srgb, var(--color-info) 30%, transparent)' }}>
-            <div className="flex items-center gap-1.5 text-info text-[0.75rem] uppercase tracking-wide mb-1">
+          <div data-type="body-s" className="rounded-lg px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)', border: '1px dashed color-mix(in srgb, var(--color-info) 30%, transparent)' }}>
+            <div data-type="caption" className="flex items-center gap-1.5 text-info uppercase tracking-wide mb-1">
               <MessageSquarePlus size={12} /> queued — applies next iteration
             </div>
             {pending.map((p, i) => <p key={i} className="text-on-surface-var">{p.text}</p>)}
@@ -167,7 +167,7 @@ export function SteeringPanel({
       {/* Per-project standing judge guidance — only for a project-scoped run. */}
       {projectId && (
         <div className="flex flex-col gap-s">
-          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Project</div>
+          <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">Project</div>
           <QuietButton onClick={setJudgeGuidance} title="Standing guidance for every run under this project — reaches the worker and the judge">
             <Gavel size={12} /> Judge guidance…
           </QuietButton>

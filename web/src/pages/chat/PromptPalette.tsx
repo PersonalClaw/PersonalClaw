@@ -90,7 +90,7 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
               on row 0 would promise a cursor these rows do not have (no arrows; Tab reaches them as
               ordinary buttons, and then Enter picks the focused one instead). */}
           {!!filtered?.length && (
-            <div className="flex items-center gap-3 px-1 text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="flex items-center gap-3 px-1 text-on-surface-low">
               <span className="inline-flex items-center gap-1"><CornerDownLeft size={11} /> picks the first match</span>
               {!!q.trim() && <span className="inline-flex items-center gap-1">esc clears the search</span>}
             </div>
@@ -100,7 +100,7 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
             {filtered === null ? (
               <div className="flex h-40 items-center justify-center"><Loader2 size={18} className="animate-spin text-on-surface-low" /></div>
             ) : filtered.length === 0 ? (
-              <div className="flex h-40 flex-col items-center justify-center gap-1 px-4 text-center text-on-surface-low text-[0.8125rem]">
+              <div data-type="body-s" className="flex h-40 flex-col items-center justify-center gap-1 px-4 text-center text-on-surface-low">
                 {q ? `No prompts match “${q.trim()}”.` : 'No user prompts yet. Create one on the Prompts page.'}
               </div>
             ) : (
@@ -110,10 +110,10 @@ export function PromptPalette({ onInsert, onSend, onClose }: {
                     className="flex items-start gap-2.5 px-3 py-2 text-left transition-colors hover:bg-surface-high">
                     <FileText size={15} className="mt-0.5 shrink-0 text-on-surface-low" />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-on-surface text-[0.8125rem]">{p.title || p.name}</span>
-                      {p.description && <span className="block truncate text-on-surface-low text-[0.75rem]">{p.description}</span>}
+                      <span data-type="body-s" className="block truncate text-on-surface">{p.title || p.name}</span>
+                      {p.description && <span data-type="caption" className="block truncate text-on-surface-low">{p.description}</span>}
                     </span>
-                    {(p.variables?.length ?? 0) > 0 && <span className="shrink-0 rounded-pill bg-surface-highest px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{p.variables!.length} var{p.variables!.length > 1 ? 's' : ''}</span>}
+                    {(p.variables?.length ?? 0) > 0 && <span data-type="caption" className="shrink-0 rounded-pill bg-surface-highest px-1.5 py-0.5 text-on-surface-low">{p.variables!.length} var{p.variables!.length > 1 ? 's' : ''}</span>}
                   </button>
                 ))}
               </div>
@@ -174,23 +174,23 @@ function FillIn({ prompt, onBack, onInsert, onSend }: {
           e.preventDefault(); void finalize(!!onSend)
         }
       }}>
-      <button type="button" onClick={onBack} className="inline-flex items-center gap-1 self-start text-on-surface-low text-[0.8125rem] hover:text-on-surface">
+      <button type="button" onClick={onBack} data-type="body-s" className="inline-flex items-center gap-1 self-start text-on-surface-low hover:text-on-surface">
         <ChevronLeft size={14} /> All prompts
       </button>
-      {prompt.description && <p className="text-on-surface-var text-[0.8125rem]">{prompt.description}</p>}
+      {prompt.description && <p data-type="body-s" className="text-on-surface-var">{prompt.description}</p>}
 
       <div className="flex flex-col gap-2">
         {vars.map((v) => (
           <label key={v.name} className="flex flex-col gap-1">
-            <span className="text-on-surface-var text-[0.75rem]">{v.name}{v.required && <span className="text-danger"> *</span>}{v.description && <span className="text-on-surface-low"> — {v.description}</span>}</span>
+            <span data-type="caption" className="text-on-surface-var">{v.name}{v.required && <span className="text-danger"> *</span>}{v.description && <span className="text-on-surface-low"> — {v.description}</span>}</span>
             <VarInput v={v} value={values[v.name]} onChange={(val) => setValues((s) => ({ ...s, [v.name]: val }))} />
           </label>
         ))}
       </div>
 
       <div>
-        <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Preview</div>
-        <pre className="max-h-44 overflow-y-auto rounded-md bg-surface-container px-3 py-2 text-on-surface-var text-[0.8125rem] whitespace-pre-wrap break-words">{preview || '…'}</pre>
+        <div data-type="caption" className="mb-1 text-on-surface-low uppercase tracking-wide">Preview</div>
+        <pre data-type="body-s" className="max-h-44 overflow-y-auto rounded-md bg-surface-container px-3 py-2 text-on-surface-var whitespace-pre-wrap break-words">{preview || '…'}</pre>
       </div>
 
       {err && <FieldError>{err}</FieldError>}
@@ -205,23 +205,24 @@ function FillIn({ prompt, onBack, onInsert, onSend }: {
 }
 
 function VarInput({ v, value, onChange }: { v: PromptVariable; value: unknown; onChange: (v: unknown) => void }) {
-  const base = 'w-full rounded-md bg-surface-container px-2.5 py-1.5 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
+  // No element carries this const, so the type role (body-s) sits on each consumer below.
+  const base = 'w-full rounded-md bg-surface-container px-2.5 py-1.5 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   if (v.type === 'boolean') {
     return <Toggle on={!!value} onChange={(val) => onChange(val)} size="sm" />
   }
   if (v.type === 'select') {
     return (
-      <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base}`}>
+      <select value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={`${base}`}>
         <option value="">—</option>
         {(v.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
     )
   }
   if (v.type === 'textarea') {
-    return <textarea value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} rows={3} className={`${base} resize-y`} />
+    return <textarea value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} rows={3} data-type="body-s" className={`${base} resize-y`} />
   }
   if (v.type === 'number') {
-    return <input type="number" value={value === '' || value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))} className={base} />
+    return <input type="number" value={value === '' || value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))} data-type="body-s" className={base} />
   }
-  return <input value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={base} />
+  return <input value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={base} />
 }

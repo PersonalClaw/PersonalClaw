@@ -61,7 +61,7 @@ describe('the workflow run view says whether its feed is alive', () => {
 
   it('it shows only while the run is live', () => {
     // A terminal run has no stream; "Connecting…" on a finished run would be a lie.
-    expect(read('pages/workflows/WorkflowRunDetail.tsx')).toMatch(/\{live && \(\s*\n\s*<span className="inline-flex shrink-0 items-center gap-1 text-on-surface-low/)
+    expect(read('pages/workflows/WorkflowRunDetail.tsx')).toMatch(/\{live && \(\s*\n\s*<span data-type="caption" className="inline-flex shrink-0 items-center gap-1 text-on-surface-low/)
   })
 
   it('the form it converges on is still the one DiagnosticsPanel ships', () => {

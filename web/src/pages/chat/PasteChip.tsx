@@ -41,7 +41,7 @@ export function PasteChip({ paste }: { paste: TurnPaste }) {
       </button>
       {open && (
         <Modal title={`Paste #${paste.seq} · ${paste.lines} lines`} icon={<Clipboard size={18} className="text-primary" />} onClose={() => setOpen(false)}>
-          <pre className="overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-m py-s font-mono text-on-surface-var text-[0.8125rem] leading-relaxed">{paste.content}</pre>
+          <pre data-type="body-s" className="overflow-auto whitespace-pre-wrap rounded-md bg-surface-low px-m py-s font-mono text-on-surface-var leading-relaxed">{paste.content}</pre>
         </Modal>
       )}
     </>

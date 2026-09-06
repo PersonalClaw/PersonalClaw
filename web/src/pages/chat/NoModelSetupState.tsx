@@ -50,8 +50,8 @@ export function NoModelSetupState({ detail, onSetup }: { detail: string; onSetup
           <Sparkles size={18} className="text-primary" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-on-surface text-[0.9375rem]" style={fvs(600)}>No model connected yet</p>
-          <p className="mt-0.5 text-on-surface-var text-[0.8125rem] leading-snug">
+          <p data-type="title-m" className="text-on-surface" style={fvs(600)}>No model connected yet</p>
+          <p data-type="body-s" className="mt-0.5 text-on-surface-var">
             Connect a model to start chatting. You can set one up in Settings → Models.
           </p>
           <div className="mt-2.5">
@@ -60,10 +60,10 @@ export function NoModelSetupState({ detail, onSetup }: { detail: string; onSetup
             </Button>
           </div>
           <details className="mt-2">
-            <summary className="cursor-pointer text-on-surface-low text-[0.75rem] hover:text-on-surface-var">
+            <summary data-type="caption" className="cursor-pointer text-on-surface-low hover:text-on-surface-var">
               Technical details
             </summary>
-            <pre className="mt-1.5 whitespace-pre-wrap break-words rounded-md bg-surface-high px-2.5 py-2 font-mono text-on-surface-low text-[0.6875rem] leading-snug">
+            <pre data-type="caption" className="mt-1.5 whitespace-pre-wrap break-words rounded-md bg-surface-high px-2.5 py-2 font-mono text-on-surface-low">
               {detail}
             </pre>
           </details>

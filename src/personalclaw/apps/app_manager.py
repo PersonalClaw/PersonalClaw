@@ -138,8 +138,46 @@ class InstallResult:
         }
 
 
+#: How many distinct rule ids a scan annotation names before it degrades to the count
+#: alone. The SEL `resources` field is truncated at write time, so an app tripping many
+#: rules must not push `consent=true` — the fact an incident asks for — off the end.
+_AUDIT_MAX_RULES = 6
+
+
+def _scan_detail(report: "ScanReport | None", *, consent: bool) -> str:
+    """The scanner outcome of one lifecycle decision, as ``resources`` key=value text.
+
+    Renders ``verdict=…``, the rule ids that produced it, and ``consent=true`` when a
+    human overrode a WARNING gate. Consent is claimed ONLY for a verdict that actually
+    gated: `confirm=True` on a clean bundle authorized nothing, and a log that called
+    that an override would make every pre-confirmed install look like a waved-through
+    one — the exact question this annotation exists to answer.
+
+    Rule ids and a count only. A finding's ``evidence`` is the matched source snippet,
+    and the SEL log is durable and exportable, so the snippet never goes in.
+    """
+    if report is None:
+        return ""
+    parts = [f"verdict={report.verdict.value}"]
+    rules = sorted({f.rule for f in report.findings if f.rule})
+    if rules:
+        named = rules[:_AUDIT_MAX_RULES]
+        parts.append(f"rules={','.join(named)}")
+        if len(rules) > len(named):
+            parts.append(f"rules_total={len(rules)}")
+    if consent and report.verdict is Verdict.WARNING:
+        parts.append("consent=true")
+    return " ".join(parts)
+
+
 def _audit(
-    operation: str, outcome: str, name: str, *, caller: str = "app_manager", error: str = ""
+    operation: str,
+    outcome: str,
+    name: str,
+    *,
+    caller: str = "app_manager",
+    error: str = "",
+    detail: str = "",
 ) -> None:
     try:
         sel().log_api_access(
@@ -147,7 +185,7 @@ def _audit(
             operation=f"app.{operation}",
             outcome=outcome,
             source="app_platform",
-            resources=f"app={name}",
+            resources=f"app={name} {detail}".rstrip(),
             error=error,
         )
     except Exception:  # noqa: BLE001 — audit must never break the lifecycle
@@ -620,7 +658,14 @@ def install(
         report = default_scanner.scan(staged, tier)
         report.signature = signature
         if report.verdict is Verdict.DANGEROUS:
-            _audit("install", "refused", name, caller=caller, error="scan: dangerous")
+            _audit(
+                "install",
+                "refused",
+                name,
+                caller=caller,
+                error="scan: dangerous",
+                detail=_scan_detail(report, consent=confirm),
+            )
             return InstallResult(
                 ok=False,
                 name=name,
@@ -628,7 +673,13 @@ def install(
                 error="install refused: scanner flagged dangerous content",
             )
         if report.verdict is Verdict.WARNING and not confirm:
-            _audit("install", "needs_consent", name, caller=caller)
+            _audit(
+                "install",
+                "needs_consent",
+                name,
+                caller=caller,
+                detail=_scan_detail(report, consent=False),
+            )
             return InstallResult(
                 ok=False,
                 name=name,
@@ -749,7 +800,11 @@ def install(
             logger.debug("app %s: dependency-ledger record failed", name, exc_info=True)
         _register_mcp(manifest)
         _start_backend(manifest)
-        _audit("install", "ok", name, caller=caller)
+        # The scanner outcome rides the SUCCESS event too. A warning the user overrode by
+        # confirming is the most security-relevant decision in this flow and the first
+        # thing an incident asks about; without it here, a waved-through install is
+        # byte-identical in the log to one that scanned clean.
+        _audit("install", "ok", name, caller=caller, detail=_scan_detail(report, consent=confirm))
         return InstallResult(ok=True, name=name, scan=report, restart_required=restart_required)
     except AppLifecycleError as exc:
         _audit("install", "error", name, caller=caller, error=str(exc))
@@ -839,7 +894,14 @@ def update(
         report = default_scanner.scan(staged, tier)
         report.signature = signature
         if report.verdict is Verdict.DANGEROUS:
-            _audit("update", "refused", name, caller=caller, error="scan: dangerous")
+            _audit(
+                "update",
+                "refused",
+                name,
+                caller=caller,
+                error="scan: dangerous",
+                detail=_scan_detail(report, consent=confirm),
+            )
             return InstallResult(
                 ok=False,
                 name=name,
@@ -847,7 +909,13 @@ def update(
                 error="update refused: scanner flagged dangerous content",
             )
         if report.verdict is Verdict.WARNING and not confirm:
-            _audit("update", "needs_consent", name, caller=caller)
+            _audit(
+                "update",
+                "needs_consent",
+                name,
+                caller=caller,
+                detail=_scan_detail(report, consent=False),
+            )
             return InstallResult(
                 ok=False,
                 name=name,
@@ -939,7 +1007,9 @@ def update(
             _seed_app_skills(manifest, name)  # re-seed the new app's skills (re-scans)
             _register_mcp(manifest)  # wire the new app's MCP servers
             _start_backend(manifest)  # launch the new backend (skip if disabled)
-        _audit("update", "ok", name, caller=caller)
+        # Same gap as install: an update that re-passed the gate only because the user
+        # confirmed a warning has to say so on its success event.
+        _audit("update", "ok", name, caller=caller, detail=_scan_detail(report, consent=confirm))
         return InstallResult(ok=True, name=name, scan=report, restart_required=restart_required)
     except AppLifecycleError as exc:
         _audit("update", "error", name, caller=caller, error=str(exc))

@@ -67,7 +67,7 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
             <button key={t.key} type="button" role="tab" id={`act-tab-${t.key}`} aria-controls={`act-panel-${t.key}`}
               aria-selected={tab === t.key} tabIndex={tab === t.key ? 0 : -1} title={t.label} aria-label={t.label}
               onClick={() => setTab(t.key)}
-              className={`flex-1 inline-flex items-center justify-center gap-[5px] h-7 rounded-pill border-none text-[0.75rem] cursor-pointer transition-colors duration-150 ${
+              data-type="caption" className={`flex-1 inline-flex items-center justify-center gap-[5px] h-7 rounded-pill border-none cursor-pointer transition-colors duration-150 ${
                 tab === t.key
                   ? 'bg-surface text-on-surface shadow-[0_1px_3px_rgb(0_0_0/0.08)]'
                   : 'bg-transparent text-on-surface-low'
@@ -75,7 +75,7 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
               style={fvs(470)}>
               <t.icon size={13} /> {t.label}
               {t.count > 0 && (
-                <span className={`rounded-pill px-[5px] text-[0.75rem] tabular-nums ${
+                <span data-type="caption" className={`rounded-pill px-[5px] tabular-nums ${
                   tab === t.key ? 'bg-primary-container text-on-primary-container' : 'bg-surface-highest'
                 }`}>{t.count}</span>
               )}
@@ -97,7 +97,7 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
                 {activity.index.map((e, i) => (
                   <motion.button key={e.turnIndex} type="button" onClick={() => onJumpTo(e.turnIndex)} title={e.label}
                     initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(i * 0.03, 0.3) }}
-                    className="block w-full truncate rounded-md px-2.5 py-2 text-left text-on-surface-var text-[0.8125rem] leading-snug transition-colors hover:bg-surface-high hover:text-on-surface [&_*]:!my-0 [&_*]:!inline [&_p]:truncate">
+                    data-type="body-s" className="block w-full truncate rounded-md px-2.5 py-2 text-left text-on-surface-var transition-colors hover:bg-surface-high hover:text-on-surface [&_*]:!my-0 [&_*]:!inline [&_p]:truncate">
                     <Markdown className="truncate">{e.label}</Markdown>
                   </motion.button>
                 ))}
@@ -113,8 +113,8 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
                     className="group flex items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-surface-high">
                     <FileText size={14} className="shrink-0 text-on-surface-low" />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-mono text-on-surface text-[0.8125rem]">{f.name}</span>
-                      <span className="block truncate text-on-surface-low text-[0.75rem]">{f.path}</span>
+                      <span data-type="body-s" className="block truncate font-mono text-on-surface">{f.name}</span>
+                      <span data-type="caption" className="block truncate text-on-surface-low">{f.path}</span>
                     </span>
                   </motion.button>
                 ))}
@@ -130,8 +130,8 @@ export function ChatActivityPanel({ activity, onJumpTo, onOpenFile, subagents = 
                     className="group flex items-center gap-2 rounded-md px-2.5 py-2 transition-colors hover:bg-surface-high">
                     <Link2 size={14} className="shrink-0 text-on-surface-low" />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-on-surface text-[0.8125rem]">{l.label}</span>
-                      <span className="block truncate text-on-surface-low text-[0.75rem]">{l.url}</span>
+                      <span data-type="body-s" className="block truncate text-on-surface">{l.label}</span>
+                      <span data-type="caption" className="block truncate text-on-surface-low">{l.url}</span>
                     </span>
                     <ExternalLink size={12} className="shrink-0 text-on-surface-low opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
                   </motion.a>
@@ -187,8 +187,8 @@ function SubagentRow({ sub, index = 0 }: { sub: SubagentCard; index?: number }) 
           {status === 'running' ? <Loader2 size={14} className="animate-spin" /> : failed ? <AlertTriangle size={14} /> : <Check size={14} />}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-on-surface text-[0.8125rem]" style={fvs(500)} title={sub.task}>{sub.task || '(task)'}</span>
-          <span className="block truncate text-on-surface-low text-[0.75rem]">
+          <span data-type="label-s" className="block truncate text-on-surface" style={fvs(500)} title={sub.task}>{sub.task || '(task)'}</span>
+          <span data-type="caption" className="block truncate text-on-surface-low">
             {sub.agent || 'subagent'}
             {status === 'running' && sub.lastTool ? ` · ${sub.lastTool}` : ''}
             {sub.done && sub.elapsed !== undefined ? ` · ${sub.elapsed.toFixed(1)}s` : ''}
@@ -198,15 +198,15 @@ function SubagentRow({ sub, index = 0 }: { sub: SubagentCard; index?: number }) 
           </span>
         </span>
       </div>
-      {failed && <div className="mt-1.5 text-[0.75rem] text-danger">{sub.error}</div>}
+      {failed && <div data-type="caption" className="mt-1.5 text-danger">{sub.error}</div>}
       {sub.done && !failed && sub.result && (
         <div className="mt-1.5">
           <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
-            className="text-[0.75rem] text-on-surface-low hover:text-on-surface-var transition-colors">
+            data-type="caption" className="text-on-surface-low hover:text-on-surface-var transition-colors">
             {open ? 'Hide result' : 'Show result'}
           </button>
           {open && (
-            <div className="mt-1 max-h-60 overflow-y-auto rounded-md bg-surface/60 px-2 py-1.5 text-[0.75rem] [&_*:first-child]:mt-0 [&_*:last-child]:mb-0">
+            <div data-type="caption" className="mt-1 max-h-60 overflow-y-auto rounded-md bg-surface/60 px-2 py-1.5 [&_*:first-child]:mt-0 [&_*:last-child]:mb-0">
               <Markdown>{sub.result}</Markdown>
             </div>
           )}
@@ -230,14 +230,14 @@ function SideChat({ side }: { side: SidePanelData }) {
         {side.msgs.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-on-surface-low">
             <MessagesSquare size={20} className="opacity-40" />
-            <span className="text-[0.8125rem]">Ask a side question — answered against this conversation's context, without touching the main transcript.</span>
+            <span data-type="body-s">Ask a side question — answered against this conversation's context, without touching the main transcript.</span>
           </div>
         ) : (
           <div className="flex flex-col gap-3">
             {side.msgs.map((m, i) => (
               <div key={i} className="flex flex-col gap-1.5">
-                <div className="self-end rounded-xl bg-surface-container px-3 py-1.5 text-on-surface text-[0.8125rem]" style={{ maxWidth: '90%' }}>{m.q}</div>
-                <div className="text-on-surface-var text-[0.8125rem] [&_p]:my-1">
+                <div data-type="body-s" className="self-end rounded-xl bg-surface-container px-3 py-1.5 text-on-surface" style={{ maxWidth: '90%' }}>{m.q}</div>
+                <div data-type="body-s" className="text-on-surface-var [&_p]:my-1">
                   {m.a ? <Markdown>{m.a}</Markdown> : <Loader2 size={13} className="animate-spin text-on-surface-low" />}
                 </div>
               </div>
@@ -249,7 +249,7 @@ function SideChat({ side }: { side: SidePanelData }) {
         <div className="flex items-end gap-1.5 rounded-xl bg-surface-container px-2.5 py-1.5 focus-within:ring-2 focus-within:ring-inset focus-within:ring-primary">
           <textarea value={q} onChange={(e) => setQ(e.target.value)} rows={1} placeholder="Ask the side…"
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }}
-            className="max-h-24 min-h-0 flex-1 resize-none bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low" />
+            data-type="body-s" className="max-h-24 min-h-0 flex-1 resize-none bg-transparent text-on-surface outline-none placeholder:text-on-surface-low" />
           <button type="button" onClick={ask} aria-label="Ask side"
             {...unavailableWhen(!q.trim(), 'Type a question first', { busy: side.busy })}
             className="grid size-7 shrink-0 place-items-center rounded-full disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"

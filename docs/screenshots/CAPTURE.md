@@ -29,7 +29,19 @@ pages are added — append new routes, don't renumber existing ones.
    so the Knowledge and loop-cockpit shots need no hand-driving. Semantic/episodic
    memory *records* are still absent (that store is SQLite-only with no text tier), so
    drive the memory-records views by hand if a shot needs them.
-3. **Playwright**: `npm i -D playwright && npx playwright install chromium`.
+3. **A model bound into that seeded home**, if the capture includes chat, an approval or
+   an artifact. The fixture binds no provider — it is a byte-identical copy on every
+   machine, so it cannot carry one — and those three surfaces exist only as the product
+   of a turn: sessions is `0`, `/api/approvals` is `[]` (an approval is written by the
+   tool-permission gate on a real turn), `/api/artifacts` is `[]` (artifacts are
+   agent-produced, with no hand-authoring affordance in the UI). Add
+   `--seed-local-model` to the seed command and a local Ollama is bound in the same
+   step; with no Ollama present it writes nothing and says so, so the command is safe to
+   keep in the runbook either way. Details in
+   [`docs/reference/cli.md`](../reference/cli.md#binding-a-model-into-a-seeded-home).
+   Do NOT stage a screen the product cannot produce — capture the empty state or drop
+   the beat instead.
+4. **Playwright**: `npm i -D playwright && npx playwright install chromium`.
 
 ## Run
 

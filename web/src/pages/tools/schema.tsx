@@ -81,14 +81,26 @@ export function typeLabel(s: JsonSchema): string {
 }
 
 /** Seed an arguments object from a schema's defaults (so the run form starts
- *  populated and the user can edit). */
+ *  populated and the user can edit).
+ *
+ *  An OPTIONAL boolean with no declared `default` is seeded to `''` — the same "unset"
+ *  sentinel every other type uses — NOT to `false`. Seeding `false` put `false` on the
+ *  wire for a switch the user never touched, which OVERRODE the provider's own default:
+ *  `run-prompt-action`'s `dry_run` is exactly this shape (a boolean with no schema
+ *  `default`, whose real default lives in the provider). A toggle nobody looked at must
+ *  not out-vote the provider. Flipping it on — or on and back off — still sends an
+ *  explicit `true`/`false`, because `buildArgs` drops only `''` and `null`.
+ *
+ *  A REQUIRED boolean keeps `false`: `buildArgs` never drops a required key, so the form
+ *  must hold a real boolean for it, and `false` is the honest reading of a Toggle that
+ *  renders OFF. */
 export function seedArgs(parameters: unknown): Record<string, unknown> {
-  const { props } = schemaProps(parameters)
+  const { props, required } = schemaProps(parameters)
   const out: Record<string, unknown> = {}
   for (const [k, s] of props) {
     if (s.default !== undefined) out[k] = s.default
     else if (s.enum?.length) out[k] = ''
-    else if (s.type === 'boolean') out[k] = false
+    else if (s.type === 'boolean') out[k] = required.has(k) ? false : ''
     else out[k] = ''
   }
   return out

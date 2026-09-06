@@ -10,7 +10,10 @@ import type { FieldMetricsRow } from '../../lib/api'
  *  2. An unmeasured field trend ('') is "too few signals", never "flat".
  *  3. `lab_field_divergence` arrives decided and gets the warn treatment — it is the one
  *     verdict here a demotion was filed on.
- *  4. An absent lab score / gate run renders as an absence, not as a zero. */
+ *  4. An absent lab score / gate run renders as an absence, not as a zero.
+ *  5. A subject that HAS a gate run renders its gate cell in the same row as its lab
+ *     score — the "beside" half of the row's contract, which an absence test alone
+ *     leaves unpinned. */
 
 function row(over: Partial<FieldMetricsRow> = {}): FieldMetricsRow {
   return {
@@ -90,6 +93,50 @@ describe('the lab-vs-field table', () => {
     const pill = screen.getByText('lab_field_divergence')
     expect(pill.closest('span')?.getAttribute('style')).toContain('--color-warn')
     expect(screen.getByText('1 diverged')).toBeTruthy()
+  })
+
+  it('renders a gated subject\'s Loop-2 cell in the same row as its lab score', () => {
+    const gate: NonNullable<FieldMetricsRow['gate']> = {
+      state: 'gated',
+      reason: 'cheap subset',
+      before: 0.658,
+      after: 0.7,
+      delta: 0.042,
+      regressed: false,
+      scenarios: 4,
+      halted: false,
+      dollars_est: 0.01,
+      spend_observed: true,
+      pin: { model_fp: 'abc123' },
+      ran_at: '2026-09-05T00:00:00Z',
+    }
+    render(<FieldMetricsPanel rows={[row({ gate })]} error={undefined} onRetry={() => {}} />)
+    const cell = screen.getByText('gated (+0.042)')
+    // One row carries all three loops, which is the whole claim of the table: the gate
+    // cell is worthless as a "beside" if it renders in some other row than the lab score.
+    const tr = cell.closest('tr')
+    expect(tr).toBeTruthy()
+    expect(tr?.textContent).toContain('0.700')
+    expect(tr?.textContent).toContain('weekly-report')
+  })
+
+  it('renders a negative gate delta with its sign, never as a bare number', () => {
+    const gate: NonNullable<FieldMetricsRow['gate']> = {
+      state: 'gated',
+      reason: 'cheap subset',
+      before: 0.7,
+      after: 0.658,
+      delta: -0.042,
+      regressed: true,
+      scenarios: 4,
+      halted: false,
+      dollars_est: 0.01,
+      spend_observed: true,
+      pin: {},
+      ran_at: '2026-09-05T00:00:00Z',
+    }
+    render(<FieldMetricsPanel rows={[row({ gate })]} error={undefined} onRetry={() => {}} />)
+    expect(screen.getByText('gated (-0.042)')).toBeTruthy()
   })
 
   it('renders a missing lab score and a missing gate run as absences, not zeros', () => {

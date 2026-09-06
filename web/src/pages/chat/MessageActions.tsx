@@ -60,7 +60,7 @@ function VariantSwitcher({ count, idx, onSwitch }: { count: number; idx: number;
         {...unavailableWhen(atStart, 'Already at the first answer', { title: 'Previous answer' })}>
         <ChevronLeft size={14} />
       </button>
-      <span className="min-w-[2.1rem] select-none text-center text-[0.75rem] tabular-nums" aria-live="polite">{idx + 1}/{count}</span>
+      <span data-type="caption" className="min-w-[2.1rem] select-none text-center tabular-nums" aria-live="polite">{idx + 1}/{count}</span>
       <button type="button" onClick={() => !atEnd && onSwitch(idx + 1)}
         aria-label="Next answer" className={arrow}
         {...unavailableWhen(atEnd, 'Already at the last answer', { title: 'Next answer' })}>
@@ -92,7 +92,8 @@ export function UserActions({ text, canFork = true, canRewind = false, onEdit, o
 function ActBtn({ icon: Icon, label, onClick, done, active }: { icon: typeof Copy; label: string; onClick: () => void; done?: boolean; active?: boolean }) {
   return (
     <button type="button" onClick={onClick} title={label} aria-label={label}
-      className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-on-surface-low text-[0.75rem] transition-colors hover:bg-surface-high hover:text-on-surface"
+      data-type="caption"
+      className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface"
       style={done ? { color: 'var(--color-ok)' } : active ? { color: 'var(--color-primary)' } : undefined}>
       <Icon size={14} className={active ? 'fill-current' : ''} />
     </button>

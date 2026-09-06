@@ -39,7 +39,7 @@ function editFileInput(seg: ToolSegment): ReactNode {
   const diff = oldStr.split('\n').map((l) => `-${l}`).join('\n') + '\n' + newStr.split('\n').map((l) => `+${l}`).join('\n')
   return (
     <div className="mb-1.5">
-      <div className="mb-1 flex items-center gap-1.5 text-on-surface-low text-[0.75rem]"><FilePen size={12} /> <span className="font-mono">{path}</span>{o.replace_all ? <span className="rounded bg-surface-high px-1 py-0.5">replace all</span> : null}</div>
+      <div data-type="caption" className="mb-1 flex items-center gap-1.5 text-on-surface-low"><FilePen size={12} /> <span className="font-mono">{path}</span>{o.replace_all ? <span className="rounded bg-surface-high px-1 py-0.5">replace all</span> : null}</div>
       <RawBlock label="Change"><Markdown>{`\`\`\`diff\n${diff}\n\`\`\``}</Markdown></RawBlock>
     </div>
   )
@@ -61,11 +61,11 @@ function pathChipInput(label: string) {
     const rest = Object.entries(o).filter(([k]) => !(PRIMARY_INPUT_KEYS as readonly string[]).includes(k))
     return (
       <div className="mb-1.5">
-        <div className="mb-0.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</div>
-        <code className="block rounded-md bg-surface-low px-2 py-1.5 font-mono text-on-surface text-[0.75rem] break-words">{primary}</code>
+        <div data-type="caption" className="mb-0.5 text-on-surface-low uppercase tracking-wide">{label}</div>
+        <code data-type="caption" className="block rounded-md bg-surface-low px-2 py-1.5 font-mono text-on-surface break-words">{primary}</code>
         {rest.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1.5">
-            {rest.map(([k, v]) => <span key={k} className="rounded-pill bg-surface-high px-2 py-0.5 font-mono text-on-surface-low text-[0.75rem]">{k}: {str(v)}</span>)}
+            {rest.map(([k, v]) => <span key={k} data-type="caption" className="rounded-pill bg-surface-high px-2 py-0.5 font-mono text-on-surface-low">{k}: {str(v)}</span>)}
           </div>
         )}
       </div>
@@ -83,7 +83,7 @@ function hitListOutput(seg: ToolSegment): ReactNode {
   if (lines.length === 0 || lines.length > 500) return undefined as unknown as ReactNode
   return (
     <RawBlock label="Matches">
-      <div className="flex flex-col font-mono text-[0.75rem]">
+      <div data-type="caption" className="flex flex-col font-mono">
         {lines.slice(0, 300).map((ln, i) => {
           const m = ln.match(/^(.+?):(\d+):(.*)$/)  // path:line:content
           return m
@@ -121,8 +121,8 @@ function searchResultsOutput(seg: ToolSegment): ReactNode {
           const sub = str(o.url || o.type || o.snippet || o.description)
           return (
             <div key={i} className="rounded-md bg-surface px-2 py-1.5">
-              <div className="truncate text-on-surface text-[0.8125rem]" style={fvs(550)}>{title}</div>
-              {sub && sub !== title && <div className="truncate text-on-surface-low text-[0.75rem]">{sub}</div>}
+              <div data-type="label-s" className="truncate text-on-surface" style={fvs(550)}>{title}</div>
+              {sub && sub !== title && <div data-type="caption" className="truncate text-on-surface-low">{sub}</div>}
             </div>
           )
         })}
@@ -144,7 +144,7 @@ function webFetchOutput(seg: ToolSegment): ReactNode {
   const url = str(inputOf(seg).url)
   return (
     <RawBlock label="Fetched page">
-      {url && <div className="mb-1 truncate text-primary text-[0.75rem]">{url}</div>}
+      {url && <div data-type="caption" className="mb-1 truncate text-primary">{url}</div>}
       <div className="max-h-72 overflow-auto"><Markdown>{text.slice(0, 8000)}</Markdown></div>
     </RawBlock>
   )
@@ -169,9 +169,9 @@ function taskChipOutput(seg: ToolSegment): ReactNode {
   return (
     <div className="mt-1 inline-flex flex-wrap items-center gap-1.5 rounded-md bg-surface-container px-2 py-1">
       <ListChecks size={12} className="text-primary" />
-      {id && <span className="font-mono text-on-surface-low text-[0.75rem]">{id}</span>}
-      {title && <span className="text-on-surface text-[0.75rem]">{title}</span>}
-      {status && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-var text-[0.75rem] uppercase">{status}</span>}
+      {id && <span data-type="caption" className="font-mono text-on-surface-low">{id}</span>}
+      {title && <span data-type="caption" className="text-on-surface">{title}</span>}
+      {status && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-on-surface-var uppercase">{status}</span>}
     </div>
   )
 }
@@ -190,7 +190,7 @@ function memoryChipOutput(seg: ToolSegment): ReactNode {
   return (
     <div className="mt-1 flex items-start gap-1.5 rounded-md bg-surface-container px-2 py-1">
       <Brain size={12} className="mt-0.5 shrink-0 text-primary" />
-      <span className="text-on-surface-var text-[0.75rem] leading-snug">{text}</span>
+      <span data-type="caption" className="text-on-surface-var">{text}</span>
     </div>
   )
 }
@@ -206,8 +206,8 @@ function runStatusOutput(seg: ToolSegment): ReactNode {
   return (
     <div className="mt-1 inline-flex items-center gap-1.5 rounded-md bg-surface-container px-2 py-1">
       <Bot size={12} className="text-primary" />
-      {id && <span className="font-mono text-on-surface-low text-[0.75rem]">{id}</span>}
-      {status && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-var text-[0.75rem] uppercase">{status}</span>}
+      {id && <span data-type="caption" className="font-mono text-on-surface-low">{id}</span>}
+      {status && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-on-surface-var uppercase">{status}</span>}
     </div>
   )
 }

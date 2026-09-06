@@ -369,15 +369,15 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
                   className="group flex cursor-pointer items-center gap-3 rounded-xl border border-outline-variant/50 bg-surface-container/60 px-4 py-3 text-left transition-colors hover:bg-surface-high">
                   <Code2 size={16} className="shrink-0 text-on-surface-low" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-on-surface text-[0.9375rem]">{p.name}</div>
-                    <div className="truncate text-on-surface-low text-[0.75rem]">{sdlcStageLabel(entryStage(p))} · {projectKind(p)}{progress(p) ? ` · ${progress(p)}` : ''}</div>
+                    <div data-type="body-m" className="truncate text-on-surface">{p.name}</div>
+                    <div data-type="caption" className="truncate text-on-surface-low">{sdlcStageLabel(entryStage(p))} · {projectKind(p)}{progress(p) ? ` · ${progress(p)}` : ''}</div>
                   </div>
                   {/* A brownfield project that's pre-launch with no workspace can't start
                       until one is chosen — flag it on the row AND let the user fix it
                       in place (opens the workspace picker) without entering the cockpit. */}
                   {needsWorkspace(p) && (
                     <button type="button" onClick={(e) => { e.stopPropagation(); setPickFor(p) }}
-                      className="shrink-0 inline-flex items-center gap-1 rounded-pill px-2 py-0.5 text-[0.75rem] transition-colors hover:brightness-110"
+                      data-type="caption" className="shrink-0 inline-flex items-center gap-1 rounded-pill px-2 py-0.5 transition-colors hover:brightness-110"
                       style={{ background: 'color-mix(in srgb, var(--color-warn) 16%, transparent)', color: 'var(--color-warn)' }}
                       title="Choose a workspace folder before this project can start">
                       <FolderOpen size={11} /> needs workspace
@@ -388,7 +388,7 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
                     // Show the reason on hover for ANY status that carries one — blocked
                     // (the stall-pause explanation), failed, and the synthetic ended_early
                     // — so the user can triage which project needs them without opening it.
-                    <span className="shrink-0 rounded-pill px-2 py-0.5 text-[0.75rem]" style={statusPill(es)}
+                    <span data-type="caption" className="shrink-0 rounded-pill px-2 py-0.5" style={statusPill(es)}
                       title={p.error_message || undefined}>{loopStatusLabel(es)}</span>
                   ) })()}
                   {/* focus-visible:opacity-100 so a keyboard user who tabs to Delete can

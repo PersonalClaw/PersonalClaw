@@ -19,13 +19,16 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.llm.capabilities import Capability
 from personalclaw.llm.credentials import Credential
 from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import CredentialMissing, ProviderEntry
 from personalclaw.llm.subscription_credentials import resolve_subscription_credential
+
+if TYPE_CHECKING:  # pragma: no cover - typing only; the runtime import is lazy below
+    from personalclaw.llm.base import ModelProvider
 
 
 @dataclass(frozen=True)
@@ -112,6 +115,43 @@ class BrandedProviderSpec:
             },
             credential_source=str(data.get("credential_source", "") or ""),
         )
+
+
+def build_protocol_provider(
+    spec: BrandedProviderSpec,
+    *,
+    model: str,
+    credential: Credential,
+    base_url: str,
+    extra_options: dict[str, object] | None = None,
+) -> "ModelProvider":
+    """Construct the protocol client for ``spec`` with a resolved credential + base_url.
+
+    CORE, beside the spec it switches on, because two callers need it and neither may
+    import the other: ``sdk/provider_helpers.register_branded_app`` (an installed app's
+    registry factory) and ``evals/cell_provider`` (an eval cell's declared provider
+    binding, which runs in a throwaway home where no app is installed). A private second
+    copy in the evals package would be a second answer to "which wire client does this
+    protocol name mean".
+    """
+    from personalclaw.llm.anthropic import AnthropicProvider
+    from personalclaw.llm.openai import OpenAIProvider
+
+    if spec.protocol == "anthropic":
+        return AnthropicProvider(
+            model=model,
+            credential=credential,
+            base_url=base_url or None,
+            max_tokens=spec.max_tokens if spec.max_tokens is not None else 4096,
+            extra_options=extra_options,
+        )
+    return OpenAIProvider(
+        model=model,
+        credential=credential,
+        base_url=base_url or None,
+        max_tokens=spec.max_tokens,
+        extra_options=extra_options,
+    )
 
 
 def resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Credential | None:

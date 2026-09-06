@@ -53,8 +53,11 @@ describe('both consent surfaces disclose their cap', () => {
       // things (a trailing `*` off a permission pattern), so a blanket "no literal slice" would fail
       // on correct code.
       expect(src, `${rel} must not re-choose the limit`).not.toMatch(/findings\.slice\(\s*0\s*,\s*\d/)
+      // Both shared rules, from the shared module. The named list is matched loosely because
+      // `scanFindings` now also vends the plain-language rule gloss and a surface may import
+      // that alongside — what matters is that the cap and its sentence are not re-chosen here.
       expect(src, `${rel} must import the shared rules`).toMatch(
-        /import \{ SCAN_FINDINGS_SHOWN, hiddenFindingsNote \} from '(\.\.\/)+lib\/scanFindings'/,
+        /import \{[^}]*\bSCAN_FINDINGS_SHOWN\b[^}]*\bhiddenFindingsNote\b[^}]*\} from '(\.\.\/)+lib\/scanFindings'/,
       )
     }
   })

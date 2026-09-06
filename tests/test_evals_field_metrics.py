@@ -523,6 +523,25 @@ def test_one_subjects_failure_never_stops_the_rest(monkeypatch, evals_on, notice
     assert fm.sweep_lab_field_divergence() == ["action.second"]
 
 
+def test_the_gateway_sweep_is_the_divergence_paths_production_caller():
+    """The demotion is MECHANICAL only while a real loop calls the sweep.
+
+    Every other test here drives ``sweep_lab_field_divergence`` directly, which proves the
+    sweep works and says nothing about whether anything runs it. Without this rail a
+    refactor can lift the call out of the scan and leave a divergence that renders on the
+    Learning tab and demotes nothing, with the whole suite still green — so the assertion
+    is deliberately about the CALL SITE, not the behaviour.
+    """
+    import inspect
+
+    from personalclaw.gateway import GatewayOrchestrator
+
+    scan = inspect.getsource(GatewayOrchestrator._scan_autonomy_promotions)
+    assert "sweep_lab_field_divergence" in scan
+    loop = inspect.getsource(GatewayOrchestrator._file_watch_poll_loop)
+    assert "_scan_autonomy_promotions" in loop
+
+
 # ── 6. the E3 discipline: computed by query, stored nowhere new ───────────────
 
 

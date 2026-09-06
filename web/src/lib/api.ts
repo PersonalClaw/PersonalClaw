@@ -785,6 +785,12 @@ export interface AppDetail {
 // `every` seconds or a `cron_expr`.
 export interface AppCronSummary {
   name: string; every?: number; cron_expr?: string; agent?: string; message?: string
+  /** `cron_expr` in words, composed server-side by the SAME formatter the Schedule page
+   *  reads (`schedule.format_schedule` → cron-descriptor), so a consent screen never shows
+   *  `23 * * * *` as its disclosure of what will run unattended. Empty for the
+   *  `every`-seconds form (the surface words that itself) and for an expression that could
+   *  not be described — the raw `cron_expr` is the honest fallback there. */
+  cadence?: string
 }
 export interface AppCatalogEntry {
   name: string; displayName: string; description: string; version: string

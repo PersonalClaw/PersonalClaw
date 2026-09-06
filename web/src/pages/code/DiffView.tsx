@@ -51,7 +51,7 @@ export function DiffView({ path, name, ws, deleted = false }: { path: string; na
   }, [path, attempt, deleted])
 
   if (error) return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 text-on-surface-low text-[0.8125rem]">
+    <div data-type="body-s" className="flex h-full flex-col items-center justify-center gap-2 text-on-surface-low">
       <span>{error}</span>
       <Button variant="secondary" size="sm" onClick={() => setAttempt((n) => n + 1)}><RotateCcw size={15} /> Try again</Button>
     </div>
@@ -66,20 +66,20 @@ export function DiffView({ path, name, ws, deleted = false }: { path: string; na
   })()
   return (
     <div className="flex h-full flex-col">
-      <div className="shrink-0 border-b border-outline-variant/40 bg-surface-low/40 px-3 py-1.5 text-on-surface-var text-[0.8125rem]">
+      <div data-type="body-s" className="shrink-0 border-b border-outline-variant/40 bg-surface-low/40 px-3 py-1.5 text-on-surface-var">
         {/* An untracked/new file has no committed (HEAD) version — every line shows as
             added — so "working vs HEAD" misreads. Label it honestly as a new file. */}
         <span className="font-mono">{rel}</span>{' '}
         {/* Label honestly: a deleted file, a new (no-HEAD) file, an empty file (both
             sides blank — "working vs HEAD" would imply a diff that doesn't exist), else
             a real working-vs-HEAD change. */}
-        <span className="text-on-surface-low text-[0.75rem]">· {
+        <span data-type="caption" className="text-on-surface-low">· {
           deleted ? 'deleted — removed from working tree'
           : original === '' && modified !== '' ? 'new file — not yet committed'
           : original === '' && modified === '' ? 'empty file — nothing to compare'
           : 'working vs HEAD'}</span>
         {truncated && (
-          <span className="ml-2 text-[0.75rem]" style={{ color: 'var(--color-warn)' }}>
+          <span data-type="caption" className="ml-2" style={{ color: 'var(--color-warn)' }}>
             · large file — diff truncated at 512&nbsp;KB; later changes aren't shown
           </span>
         )}

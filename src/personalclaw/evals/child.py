@@ -16,6 +16,12 @@ ES-6 adds one more thing this child does before the run: it stages the Loop-2 ga
 before/after ARM (:mod:`personalclaw.evals.gate`) into its throwaway home, so the candidate
 artifact under test exists only inside this cell.
 
+One more stager runs last: when — and ONLY when — the caller declared one, the child applies
+the cell's provider binding (:mod:`personalclaw.evals.cell_provider`) into the same throwaway
+home, so a cell can reach one real model for one use case. With no binding declared the
+child's env carries no provider and no credential at all, and the offline ``scripted``
+fixture is the only model it can resolve.
+
 Crash / infra-error contract: any failure emits an ``{"ok": false}`` result AND
 exits non-zero, so the parent maps the cell to ``VERIFIER_ABSENT`` (never a false
 ``FAILED``). A clean scenario run emits ``{"ok": true, "passed": ..., "score": ...}``.
@@ -255,6 +261,17 @@ async def _run(descriptor: dict) -> dict:
     cell_arm = gate_lib.from_env()
     staged = gate_lib.apply_in_child(cell_arm)
 
+    # The DECLARED provider binding, applied last of the three child-side stagers and
+    # still BEFORE the first config read. It writes the ONE `providers[]` entry and the
+    # one-use-case `active_models.json` this cell may resolve, and registers the wire protocol
+    # into THIS process's registry — a cell home has no installed app to register one. Absent
+    # ⇒ nothing is written and the cell resolves the offline `scripted` fixture, which is the
+    # default a study must opt out of explicitly and by name.
+    from personalclaw.evals import cell_provider
+
+    binding = cell_provider.from_env()
+    bound = cell_provider.apply_in_child(binding)
+
     coords = descriptor.get("coords") or {}
     model = coords.get("model") if isinstance(coords, dict) else None
 
@@ -284,6 +301,18 @@ async def _run(descriptor: dict) -> dict:
         # assumed. A `before` arm that staged nothing and an `after` arm that silently staged
         # nothing produce the same score, and only one of them is a measurement.
         result["arm"] = {"label": cell_arm.label, "staged": staged}
+    if binding is not None:
+        # WHICH real model this cell was bound to, and what the binding actually changed.
+        # Reported rather than assumed for the reason the whole seam exists: a real-model
+        # score and an offline-replay score are the same number in a table, and only one of
+        # them is evidence. Secret-free — the binding carries a variable NAME, never a value.
+        result["provider_binding"] = {
+            "use_case": binding.use_case,
+            "model_ref": binding.model_ref(),
+            "protocol": binding.protocol,
+            "base_url": binding.base_url,
+            "bound": bound,
+        }
     return result
 
 

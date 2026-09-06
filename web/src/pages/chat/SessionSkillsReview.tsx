@@ -35,7 +35,8 @@ export function SessionSkillsReview({ sessionKey, agent, refreshKey }: {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 rounded-pill bg-surface-container px-3 h-7 text-[0.75rem] text-on-surface-low hover:text-on-surface transition-colors"
+        data-type="caption"
+        className="inline-flex items-center gap-1.5 rounded-pill bg-surface-container px-3 h-7 text-on-surface-low hover:text-on-surface transition-colors"
         title="Review skills taught this session"
       >
         <GraduationCap size={14} style={{ color: 'var(--color-primary)' }} />
@@ -72,7 +73,7 @@ function SessionSkillsModal({ sessionKey, agent, drafts, onClose, onChanged }: {
       icon={<GraduationCap size={18} style={{ color: 'var(--color-primary)' }} />}
       onClose={onClose}
     >
-      <p className="mb-4 text-on-surface-low text-[0.8125rem]">
+      <p data-type="body-s" className="mb-4 text-on-surface-low">
         Keep any of these for later? Save to just this agent, to all agents, or forget it.
       </p>
       <div className="flex flex-col gap-3">
@@ -123,7 +124,7 @@ function DraftCard({ sessionKey, agent, draft, onChanged }: {
 
   if (done) {
     return (
-      <div className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low text-[0.8125rem] flex items-center gap-2">
+      <div data-type="body-s" className="rounded-lg bg-surface-container px-3 py-2 text-on-surface-low flex items-center gap-2">
         <Check size={14} className="text-ok" /> {title} — {done}
       </div>
     )
@@ -134,17 +135,17 @@ function DraftCard({ sessionKey, agent, draft, onChanged }: {
       {editing ? (
         <>
           <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Skill title"
-            className="mb-2 h-8 w-full rounded-md bg-surface-high px-2.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+            data-type="body-s" className="mb-2 h-8 w-full rounded-md bg-surface-high px-2.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} aria-label="Skill body"
-            className="mb-2 w-full rounded-md bg-surface-high px-2.5 py-1.5 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+            data-type="body-s" className="mb-2 w-full rounded-md bg-surface-high px-2.5 py-1.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         </>
       ) : (
         <div className="mb-2">
           <div className="flex items-center gap-1.5">
-            <span className="text-on-surface text-[0.9375rem]" style={fvs(500)}>{title}</span>
+            <span data-type="title-m" className="text-on-surface" style={fvs(500)}>{title}</span>
             <button type="button" onClick={() => setEditing(true)} className="text-on-surface-low hover:text-on-surface" title="Edit"><Pencil size={12} /></button>
           </div>
-          <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap text-on-surface-low text-[0.75rem]">{body}</p>
+          <p data-type="caption" className="mt-0.5 line-clamp-3 whitespace-pre-wrap text-on-surface-low">{body}</p>
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">

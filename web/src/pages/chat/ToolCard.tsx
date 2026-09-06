@@ -33,12 +33,12 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
         </motion.span>
         <Icon size={14} className="shrink-0 text-primary" />
         {/* stable tool name — the identity you scan for */}
-        <span className="shrink-0 text-on-surface text-[0.8125rem]" style={fvs(550)}>{label}</span>
+        <span data-type="label-s" className="shrink-0 text-on-surface" style={fvs(550)}>{label}</span>
         {/* refined summary (command / file) — muted, mono, gives way under pressure */}
         {detail && (
           <>
-            <span className="shrink-0 text-on-surface-low/50 text-[0.8125rem]">·</span>
-            <span className="min-w-0 flex-1 truncate font-mono text-on-surface-low text-[0.75rem]">{detail}</span>
+            <span data-type="body-s" className="shrink-0 text-on-surface-low/50">·</span>
+            <span data-type="caption" className="min-w-0 flex-1 truncate font-mono text-on-surface-low">{detail}</span>
           </>
         )}
         <span className={detail ? 'shrink-0' : 'flex-1'} />
@@ -55,17 +55,17 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
             transition={{ height: spring.spatialFast, opacity: { duration: 0.15 } }}>
             <div className="border-t border-outline-variant/30 px-3 py-2">
-              {seg.purpose && <p className="mb-1.5 text-on-surface-var text-[0.75rem]">{seg.purpose}</p>}
+              {seg.purpose && <p data-type="caption" className="mb-1.5 text-on-surface-var">{seg.purpose}</p>}
               {/* Schema-driven / native-override INPUT (raw fallback inside). */}
               {renderToolInput(seg)}
               {/* Type-aware / native-override OUTPUT. */}
               {renderToolOutput(seg)}
               {seg.done && (seg.output == null || seg.output === '') && (
-                <p className="text-on-surface-low text-[0.75rem]">No output.</p>
+                <p data-type="caption" className="text-on-surface-low">No output.</p>
               )}
               {/* Truncation chip + "show full result" (rawRef → tool_result_get). */}
               {seg.truncated && (
-                <div className="mt-1.5 flex items-center gap-2 text-on-surface-low text-[0.75rem]">
+                <div data-type="caption" className="mt-1.5 flex items-center gap-2 text-on-surface-low">
                   <span>
                     showing a projection{seg.originalLength ? ` of ${seg.originalLength.toLocaleString()} chars` : ''}
                   </span>
@@ -83,11 +83,11 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
                   surfaces. */}
               {seg.agentError && (
                 <div className="mt-1.5 rounded-md border border-danger/30 bg-danger/5 px-2.5 py-1.5">
-                  <div className="mb-1 flex items-center gap-1 text-on-surface-low text-[0.6875rem] uppercase tracking-wide">
+                  <div data-type="caption" className="mb-1 flex items-center gap-1 text-on-surface-low uppercase tracking-wide">
                     <AlertTriangle size={11} style={{ color: 'var(--color-danger)' }} />
                     <span className="font-mono">{seg.agentError.code}</span>
                   </div>
-                  <dl className="flex flex-col gap-0.5 text-[0.75rem] leading-snug">
+                  <dl data-type="caption" className="flex flex-col gap-0.5">
                     <div className="flex gap-1.5">
                       <dt className="shrink-0 text-on-surface-low" style={fvs(600)}>What</dt>
                       <dd className="min-w-0 text-on-surface-var">{seg.agentError.what}</dd>
@@ -103,9 +103,9 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
                   </dl>
                   {seg.agentError.suggestions && seg.agentError.suggestions.length > 0 && (
                     <div className="mt-1 flex flex-wrap items-center gap-1">
-                      <span className="text-on-surface-low text-[0.6875rem] uppercase tracking-wide">Did you mean</span>
+                      <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Did you mean</span>
                       {seg.agentError.suggestions.map((s, i) => (
-                        <span key={i} className="rounded-pill bg-surface-high px-2 py-0.5 font-mono text-on-surface-var text-[0.6875rem]">{s}</span>
+                        <span key={i} data-type="caption" className="rounded-pill bg-surface-high px-2 py-0.5 font-mono text-on-surface-var">{s}</span>
                       ))}
                     </div>
                   )}
@@ -115,12 +115,12 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
                   surfaced so the user (and the reading agent) sees how to recover. */}
               {seg.recoveryHints && seg.recoveryHints.length > 0 && (
                 <div className="mt-1.5 rounded-md bg-surface-container px-2.5 py-1.5">
-                  <div className="mb-0.5 flex items-center gap-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">
+                  <div data-type="caption" className="mb-0.5 flex items-center gap-1 text-on-surface-low uppercase tracking-wide">
                     <Lightbulb size={11} /> Next steps
                   </div>
                   <ul className="flex flex-col gap-0.5">
                     {seg.recoveryHints.map((h, i) => (
-                      <li key={i} className="text-on-surface-var text-[0.75rem] leading-snug">{h}</li>
+                      <li key={i} data-type="caption" className="text-on-surface-var">{h}</li>
                     ))}
                   </ul>
                 </div>

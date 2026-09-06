@@ -44,6 +44,18 @@ import { PageTitle } from '../../ui/PageTitle'
 // The install-consent surface is shared with the first-run essential-apps step.
 import { ScanReport, ConsentModal, PermissionList, CronConsentList } from './installConsent'
 
+/** An install held at the consent gate. `entry` is the catalog row the install came
+ *  from — carried so `ConsentModal` can disclose the app's declared permissions and
+ *  scheduled jobs beside the scan report, which is the disclosure the card-grid and
+ *  source-list paths used to skip. `undefined` when the path genuinely has no manifest
+ *  yet (installing from a bare source URL the catalog has not indexed): the modal states
+ *  that rather than showing an empty grant list. */
+interface PendingInstall {
+  source: string
+  label: string
+  entry?: AppCatalogEntry
+}
+
 // ── Store item: the Store lists EVERY app it knows about — the available-to-
 // install catalog entries UNION the already-installed apps — so it never reads
 // as "empty" just because everything is installed. Both shapes normalize to this
@@ -723,8 +735,12 @@ function ResultCount({ n, total, noun }: { n: number; total: number; noun: strin
  *
  *  Search / filter / sort live in the parent's pinned controls bar (same idiom as
  *  the Library); this presenter renders the already-filtered `result` cards plus
- *  the always-shown source sections. */
-function StoreView({ catalog, catalogError, result, totalKnown, installedCount, onInstalled, reloadCatalog, onClearFilters, filtersActive, onOpen, onAction, onOpenSources }: {
+ *  the always-shown source sections.
+ *
+ *  Exported for the same reason `SourcesPanel` is: what a CARD-FOOTER install discloses at
+ *  consent is a claim only a driven render can make. It is the fastest install path in the
+ *  product and the one that used to disclose the least. */
+export function StoreView({ catalog, catalogError, result, totalKnown, installedCount, onInstalled, reloadCatalog, onClearFilters, filtersActive, onOpen, onAction, onOpenSources }: {
   catalog: { bundled: AppCatalogEntry[]; gitSources: string[]; defaultGitSources?: string[]; builtinGitSources?: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] } | null | undefined
   /** The catalog fetch's rejection. A Store that cannot reach its catalog must say so rather than
    *  render as an empty shelf — "nothing to install" and "we could not ask" are different answers. */
@@ -747,21 +763,21 @@ function StoreView({ catalog, catalogError, result, totalKnown, installedCount, 
   // needs "Install anyway". Card/source-list installs route through the SAME
   // guarded state machine as the modal, so a warning surfaces its findings +
   // consent action instead of dead-ending on a bare error string.
-  const [pending, setPending] = useState<{ source: string; label: string } | null>(null)
+  const [pending, setPending] = useState<PendingInstall | null>(null)
   const guarded = useGuardedInstall((confirm) =>
     api.installApp(pendingRef.current?.source ?? '', confirm).then(guardedFromApp))
-  const pendingRef = useRef<{ source: string; label: string } | null>(null)
+  const pendingRef = useRef<PendingInstall | null>(null)
 
-  async function installFrom(source: string, label: string) {
+  async function installFrom(source: string, label: string, entry?: AppCatalogEntry) {
     setBusy(label); guarded.reset()
-    pendingRef.current = { source, label }
+    pendingRef.current = { source, label, entry }
     const r = await guarded.install()
     setBusy(null)
     if (r?.ok) { onInstalled(); reloadCatalog(); return }
     // A consentable warning, a terminal refusal (dangerous content or an invalid
     // signature), OR a P21 client-install directive opens the panel; a plain error
     // already surfaced via `guarded.error`.
-    if (isBlockingResult(r)) setPending({ source, label })
+    if (isBlockingResult(r)) setPending({ source, label, entry })
   }
 
   async function confirmPending() {
@@ -787,6 +803,8 @@ function StoreView({ catalog, catalogError, result, totalKnown, installedCount, 
           label={pending.label}
           result={guarded.blocked}
           busy={guarded.busy}
+          permissions={pending.entry?.permissions}
+          crons={pending.entry?.crons}
           onConfirm={confirmPending}
           onClose={() => { setPending(null); guarded.reset() }}
         />
@@ -812,7 +830,7 @@ function StoreView({ catalog, catalogError, result, totalKnown, installedCount, 
               <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
                 {g.items.map((e, i) => (
                   <AppCard key={e.name} item={e} index={i} busy={busy === e.name}
-                    onInstall={() => installFrom(e.pointer || e.source, e.name)}
+                    onInstall={() => installFrom(e.pointer || e.source, e.name, e)}
                     onOpen={() => onOpen(e.name)} onAction={onAction} />
                 ))}
               </div>
@@ -839,18 +857,31 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
   const [err, setErr] = useState<string | null>(null)
   const [newSource, setNewSource] = useState('')
   const [newLocal, setNewLocal] = useState('')
-  const [pending, setPending] = useState<{ source: string; label: string } | null>(null)
+  const [pending, setPending] = useState<PendingInstall | null>(null)
   const guarded = useGuardedInstall((confirm) =>
     api.installApp(pendingRef.current?.source ?? '', confirm).then(guardedFromApp))
-  const pendingRef = useRef<{ source: string; label: string } | null>(null)
+  const pendingRef = useRef<PendingInstall | null>(null)
+
+  /** The catalog row for a source URL/path, when the Store has already indexed one — this
+   *  panel installs by SOURCE, but consent has to disclose the app's grants, and for an
+   *  indexed source the manifest is already in hand. `undefined` for an un-indexed source,
+   *  which the modal states plainly rather than showing an empty permission list. */
+  function entryForSource(source: string): AppCatalogEntry | undefined {
+    const all = [
+      ...(catalog?.gitApps ?? []), ...(catalog?.remoteApps ?? []),
+      ...(catalog?.localApps ?? []), ...(catalog?.bundled ?? []),
+    ]
+    return all.find((e) => e.source === source || (e.pointer && e.pointer === source))
+  }
 
   async function installFrom(source: string, label: string) {
     setBusy(label); setErr(null); guarded.reset()
-    pendingRef.current = { source, label }
+    const entry = entryForSource(source)
+    pendingRef.current = { source, label, entry }
     const r = await guarded.install()
     setBusy(null)
     if (r?.ok) { onInstalled(); reloadCatalog(); return }
-    if (isBlockingResult(r)) setPending({ source, label })
+    if (isBlockingResult(r)) setPending({ source, label, entry })
   }
 
   async function confirmPending() {
@@ -896,6 +927,8 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
           label={pending.label}
           result={guarded.blocked}
           busy={guarded.busy}
+          permissions={pending.entry?.permissions}
+          crons={pending.entry?.crons}
           onConfirm={confirmPending}
           onClose={() => { setPending(null); guarded.reset() }}
         />
@@ -1489,6 +1522,7 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
 
       {consent && guarded.blocked && (
         <ConsentModal label={item.displayName} result={guarded.blocked} busy={guarded.busy}
+          permissions={item.permissions} crons={item.crons}
           onConfirm={async () => { const r = await guarded.confirmInstall(); if (r?.ok) { setConsent(null); onInstalled() } }}
           onClose={() => { setConsent(null); guarded.reset() }} />
       )}

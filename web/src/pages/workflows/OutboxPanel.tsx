@@ -148,9 +148,9 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-m p-m">
           <section className="flex flex-col gap-xs">
-            <h3 className="font-medium text-[0.8125rem]">Published by this run</h3>
+            <h3 data-type="label-s" className="fw-500">Published by this run</h3>
             {!files?.length ? (
-              <p className="text-on-surface-low text-[0.8125rem]">
+              <p data-type="body-s" className="text-on-surface-low">
                 Nothing published yet. A node that declares <code>publish:</code> registers its
                 output here as an artifact.
               </p>
@@ -170,12 +170,12 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
                       {/* `noop` is a real outcome, not a failure: a converged refinement round
                           published nothing new, and hiding that makes the artifact look abandoned
                           by the run that owns it. */}
-                      <span className="shrink-0 text-on-surface-low text-[0.6875rem]">
+                      <span data-type="caption" className="shrink-0 text-on-surface-low">
                         {f.action === 'noop' ? 'unchanged' : f.action}
                       </span>
                       {!f.self_contained && (
                         <span
-                          className="inline-flex shrink-0 items-center gap-1 text-warning text-[0.6875rem]"
+                          data-type="caption" className="inline-flex shrink-0 items-center gap-1 text-warning"
                           title="A referenced local file could not be copied in, so this version depends on the workspace still existing."
                         >
                           <TriangleAlert size={12} aria-hidden="true" />
@@ -213,7 +213,7 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
                       ]}
                     />
                     {files?.find((f) => f.slug === selected)?.change_note && (
-                      <span className="min-w-0 truncate text-on-surface-low text-[0.75rem]">
+                      <span data-type="caption" className="min-w-0 truncate text-on-surface-low">
                         {files.find((f) => f.slug === selected)?.change_note}
                       </span>
                     )}
@@ -244,12 +244,12 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
           )}
 
           <section className="flex flex-col gap-xs border-t border-outline/40 pt-m">
-            <h3 className="flex items-center gap-2 font-medium text-[0.8125rem]">
+            <h3 data-type="label-s" className="flex items-center gap-2 fw-500">
               <Inbox size={14} aria-hidden="true" />
               Hand files to this run
             </h3>
             {!drop?.enabled ? (
-              <p className="text-on-surface-low text-[0.8125rem]">
+              <p data-type="body-s" className="text-on-surface-low">
                 {drop?.reason || 'This run does not accept files.'}
               </p>
             ) : (
@@ -284,13 +284,13 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
                     void sendFiles(picked)
                   }}
                 />
-                {dropNote && <p className="text-on-surface-low text-[0.75rem]">{dropNote}</p>}
+                {dropNote && <p data-type="caption" className="text-on-surface-low">{dropNote}</p>}
                 {drop.files.length > 0 && (
                   <ul className="flex flex-col gap-2xs">
                     {drop.files.map((f) => (
                       <li
                         key={f.filename}
-                        className="flex items-center gap-2 text-on-surface-low text-[0.75rem]"
+                        data-type="caption" className="flex items-center gap-2 text-on-surface-low"
                       >
                         <FileDiff size={12} aria-hidden="true" />
                         <span className="min-w-0 flex-1 truncate">{f.filename}</span>

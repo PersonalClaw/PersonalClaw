@@ -822,6 +822,42 @@ def remove_local_source(path: str) -> list[str]:
     return src["local"]
 
 
+def _consent_timezone() -> str:
+    """The configured timezone a manifest cron's clock times should be read in — the same
+    one the Schedule page renders. Empty on any config trouble, which only costs the
+    cadence text its timezone suffix."""
+    try:
+        from personalclaw.config.loader import AppConfig
+
+        return str(AppConfig.load().timezone or "")
+    except Exception:
+        return ""
+
+
+def _humanized_cadence(expr: str, tz_name: str) -> str:
+    """The human reading of a 5-field cron expression, for install consent.
+
+    🔴 DELEGATES to the shipped ``schedule.format_schedule`` for the same reason
+    ``triggers/schedule_view.describe_cadence`` does: a second formatter drifts from the
+    one the rest of the UI reads, and a consent screen that spells a schedule differently
+    from the Schedule page hands the user a third fact to reconcile. ``cron-descriptor``
+    is already a hard dependency, so this is reuse, not a new capability.
+
+    Empty when the expression cannot be described (``format_schedule`` hands the raw
+    expression back), so the caller can fall back to showing the expression itself rather
+    than inventing a cadence it does not know."""
+    if not expr.strip():
+        return ""
+    try:
+        from personalclaw.schedule import ScheduleDefinition, format_schedule
+
+        text = format_schedule(ScheduleDefinition(kind="cron", cron_expr=expr), tz_name=tz_name)
+    except Exception:
+        logger.debug("could not describe cron cadence %r", expr, exc_info=True)
+        return ""
+    return "" if text.strip() == expr.strip() else text.strip()
+
+
 def _manifest_consent(m: AppManifest) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """(permissions, crons) an app declares — the P29 install-consent surface, extracted
     from a scanned manifest so the Store can show what the app will be granted + what
@@ -832,6 +868,11 @@ def _manifest_consent(m: AppManifest) -> tuple[dict[str, Any], list[dict[str, An
         perms = {}
     crons: list[dict[str, Any]] = []
     try:
+        # Resolved once, and only when something actually needs it — a catalog scan runs
+        # this per app and most apps declare no cron at all.
+        tz_name = ""
+        if any(getattr(c, "cron_expr", "") for c in m.crons or []):
+            tz_name = _consent_timezone()
         for c in m.crons or []:
             cd = c.to_dict() if hasattr(c, "to_dict") else {}
             # a compact, human-review summary: name + cadence + what it runs. A
@@ -843,6 +884,13 @@ def _manifest_consent(m: AppManifest) -> tuple[dict[str, Any], list[dict[str, An
                     "name": cd.get("name", ""),
                     "every": cd.get("every", 0),
                     "cron_expr": cd.get("cron_expr", ""),
+                    # The cron expression in words. `cron_expr` rides along unchanged so
+                    # the consent surface can still show the exact expression (as the
+                    # cadence's tooltip) — a user who reads crontab loses nothing, and one
+                    # who does not is no longer shown `23 * * * *` as the disclosure of
+                    # what will run on their machine unattended. Empty for the `every`
+                    # form, which the surface already words for itself.
+                    "cadence": _humanized_cadence(str(cd.get("cron_expr", "")), tz_name),
                     "agent": cd.get("agent", ""),
                     "message": cd.get("message", ""),
                 }

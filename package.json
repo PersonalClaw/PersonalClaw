@@ -11,6 +11,7 @@
     "test:desktop": "npm run test --workspace=desktop",
     "test:mobile": "npm run test --workspace=mobile",
     "smoke:render": "node scripts/render_smoke.mjs",
+    "validate:apps": "node scripts/app_ui_validate.mjs",
     "hooks:install": "sh scripts/install_git_hooks.sh",
     "postinstall": "sh scripts/install_git_hooks.sh"
   },
