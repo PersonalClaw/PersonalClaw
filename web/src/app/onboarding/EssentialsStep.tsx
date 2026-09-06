@@ -261,6 +261,7 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
       {guarded.blocked && pendingRef.current && (
         <ConsentModal label={pendingRef.current.displayName || pendingRef.current.name}
           result={guarded.blocked} busy={guarded.busy}
+          permissions={pendingRef.current.permissions} crons={pendingRef.current.crons}
           onConfirm={confirmInstall} onClose={() => guarded.reset()} />
       )}
     </div>

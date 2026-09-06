@@ -357,6 +357,12 @@ class Permissions:
     mcpTools: list[str] = field(default_factory=list)  # noqa: N815
     storage: bool = False
     network: bool = False
+    # Whether the manifest MENTIONED ``network`` at all, regardless of the value. Not a
+    # permission and not its own wire key — it decides whether ``to_dict`` emits
+    # ``network`` when the value is False, so the consent surface can tell "declared as
+    # denied" (reassuring, and a real statement by the author) from "never mentioned"
+    # (unknown). Collapsing the two made an explicit ``"network": false`` read as silence.
+    network_declared: bool = False
     memory: str = ""  # "", "app-scoped", or "shared"
     cron: bool = False
     agent: bool = False  # may run background agent tasks (headless subagent runs)
@@ -441,8 +447,13 @@ class Permissions:
             d["mcpTools"] = self.mcpTools
         if self.storage:
             d["storage"] = True
-        if self.network:
-            d["network"] = True
+        # Emitted whenever the author took a position — including ``false``. Every other
+        # key here is omit-when-falsey because absence and denial mean the same thing for
+        # an ENFORCED grant; ``network`` is unenforced, so all it does is inform consent,
+        # and there "the author declared no egress" is a different (and better) fact than
+        # "the author said nothing".
+        if self.network or self.network_declared:
+            d["network"] = bool(self.network)
         if self.memory:
             d["memory"] = self.memory
         if self.cron:
@@ -473,6 +484,7 @@ class Permissions:
             mcpTools=[str(t) for t in data.get("mcpTools", []) if t],  # noqa: N815
             storage=bool(data.get("storage", False)),
             network=bool(data.get("network", False)),
+            network_declared="network" in data,
             memory=str(data.get("memory", "")),
             cron=bool(data.get("cron", False)),
             agent=bool(data.get("agent", False)),

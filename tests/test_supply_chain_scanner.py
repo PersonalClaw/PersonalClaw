@@ -13,8 +13,10 @@ install-consent dialog shows a user who is deciding yes/no.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+import personalclaw.supply_chain
 from personalclaw.supply_chain import (
     _EVIDENCE_CAP,
     ScanReport,
@@ -294,3 +296,73 @@ class TestEvidenceWindow:
         text = 'import os\ntok = open(os.path.expanduser("~/.aws/credentials")).read()\n'
         ev = self._finding(text, "reads_sensitive_path")
         assert ".aws/credentials" in ev and ev.startswith("L2: ")
+
+
+# ── Every rule the scanner can emit reaches consent in plain language ──
+
+
+_SCAN_FINDINGS_TS = (
+    Path(__file__).resolve().parent.parent / "web" / "src" / "lib" / "scanFindings.ts"
+)
+_SUPPLY_CHAIN_PY = Path(personalclaw.supply_chain.__file__)
+
+
+def _emittable_rules() -> set[str]:
+    """Every ``rule`` name a ``Finding`` can carry. Two sources, because the scanner has
+    two idioms: the pattern catalogs (a rule per ``(name, regex)`` pair) and the
+    hand-built findings for the co-occurrence/Unicode heuristics, whose rule is a literal
+    at the ``Finding(...)`` call. Derived rather than listed so a rule added either way is
+    caught here instead of shipping unexplained."""
+    from personalclaw.supply_chain import (
+        _DANGEROUS_SCRIPT,
+        _INJECTION_PROSE,
+        _WARNING_SCRIPT,
+    )
+
+    catalogued = {name for name, _ in (*_DANGEROUS_SCRIPT, *_WARNING_SCRIPT, *_INJECTION_PROSE)}
+    src = _SUPPLY_CHAIN_PY.read_text(encoding="utf-8")
+    literal = set(re.findall(r'Verdict\.\w+,\s*"([a-z_]+)"', src, re.S))
+    return catalogued | literal
+
+
+def _glossed_rules() -> set[str]:
+    """The keys of ``SCAN_RULE_GLOSS`` in web/src/lib/scanFindings.ts."""
+    src = _SCAN_FINDINGS_TS.read_text(encoding="utf-8")
+    m = re.search(r"export const SCAN_RULE_GLOSS[^{]*\{(.*?)\n\}", src, re.S)
+    assert m, "SCAN_RULE_GLOSS not found in web/src/lib/scanFindings.ts"
+    body = re.sub(r"//[^\n]*", "", m.group(1))  # drop comments before scanning
+    return set(re.findall(r"^\s*([a-z_]+):", body, re.M))
+
+
+def test_every_scanner_rule_has_a_plain_language_gloss():
+    """The install-consent findings list rendered ``python_exec (warning) — path: evidence``.
+    The rule name is the scanner's vocabulary, not the user's: a non-expert reading it cannot
+    say what the app would be allowed to do, which is the only question the dialog asks them.
+
+    Pinned in BOTH directions. A rule with no gloss is a finding the user cannot act on —
+    the defect. A gloss with no rule is copy explaining something the scanner never emits,
+    which decays into describing a check that no longer exists. Adding a scanner rule now
+    reds here until it is explained."""
+    emittable = _emittable_rules()
+    glossed = _glossed_rules()
+    assert emittable == glossed, (
+        f"emitted but never explained: {sorted(emittable - glossed)}; "
+        f"explained but never emitted: {sorted(glossed - emittable)}"
+    )
+    # Not a vacuous comparison of two empty sets, and the two idioms are both represented.
+    assert {"python_exec", "exfil_sensitive_path", "bidi_override"} <= emittable
+
+
+def test_no_gloss_merely_restates_its_rule_name():
+    """A gloss that echoes the rule name is the defect wearing a sentence. Each must be
+    prose about what the app can do, not ``python_exec`` with the underscores removed."""
+    src = _SCAN_FINDINGS_TS.read_text(encoding="utf-8")
+    m = re.search(r"export const SCAN_RULE_GLOSS[^{]*\{(.*?)\n\}", src, re.S)
+    assert m
+    entries = re.findall(r"^\s*([a-z_]+):\s*[\"'](.+?)[\"'],\s*$", m.group(1), re.M)
+    assert len(entries) >= 15, "the gloss map did not parse"
+    for rule, text in entries:
+        words = rule.split("_")
+        assert not all(w in text.lower() for w in words), f"{rule} gloss restates its own name"
+        assert len(text.split()) >= 5, f"{rule} gloss is too short to explain anything"
+        assert text.endswith("."), f"{rule} gloss is not a sentence"

@@ -52,6 +52,42 @@ describe('PermissionList — the network claim is advisory, not a grant', () => 
   })
 })
 
+// ── "not declared" and "declared as denied" are different facts ──────────────────────────────────
+//
+// D2 fixed the SILENCE (an undeclared app got no row at all) but collapsed the two remaining cases
+// into one word: an app whose manifest says `"network": false` was reported as "not declared" —
+// the reassuring statement the author actually made, reported as though they had said nothing. The
+// wire now distinguishes them (`Permissions.to_dict` keeps a `network` key the manifest mentioned,
+// whatever its value), so this pins all THREE readings. A test that only added the new string
+// would pass just as well if an ABSENT field started claiming a denial.
+describe('PermissionList — the network row distinguishes a denial from a silence', () => {
+  const claim = (perms: AppPermissionsWire) =>
+    ((render(<PermissionList perms={perms} />).container.textContent ?? '')
+      .replace(/\s+/g, ' ').match(/Network access: [^—]*/)?.[0] ?? '').trim()
+
+  it('reads an explicit false as a declared denial', () => {
+    expect(claim({ network: false })).toBe('Network access: declared as denied')
+  })
+
+  it('still reads a genuinely absent field as not declared', () => {
+    expect(claim({ api: ['/api/tasks'] })).toBe('Network access: not declared')
+  })
+
+  it('reads a declared true as declared', () => {
+    expect(claim({ network: true })).toBe('Network access: declared')
+  })
+
+  it('keeps the row advisory in all three states — a denial is not containment either', () => {
+    // The declaration is still disclosure, not enforcement: the gateway has no per-app egress
+    // chokepoint, so "declared as denied" must not read as a block the platform imposes.
+    for (const perms of [{ network: false }, { network: true }, {}] as AppPermissionsWire[]) {
+      const text = render(<PermissionList perms={perms} />).container.textContent ?? ''
+      expect(text).toMatch(/advisory only/)
+      expect(text).toMatch(/does not confine/)
+    }
+  })
+})
+
 // APE-12. `appMessaging` is the OPPOSITE case to D2's `network`: it IS enforced — the
 // broker (`POST /api/apps/message`) is the only app-to-app path and refuses an
 // undeclared target 403 + SEL. It belongs in the enforced bullets, and its copy must
