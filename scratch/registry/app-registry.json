@@ -44,20 +44,6 @@
       "license": "MIT",
       "maintainer": "keyurgolani",
       "added": "2026-09-02"
-    },
-    {
-      "name": "research-lab",
-      "repo": "https://github.com/PersonalClaw/research-lab",
-      "types": [
-        "tool"
-      ],
-      "permissions_declared": [
-        "cron",
-        "storage"
-      ],
-      "license": "MIT",
-      "maintainer": "keyurgolani",
-      "added": "2026-09-06"
     }
   ]
 }
