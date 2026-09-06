@@ -348,6 +348,41 @@ The posture is announced on stderr, so stdout stays pipeable.
         ),
     )
     gw_parser.add_argument(
+        "--seed-local-model",
+        action="store_true",
+        help=(
+            "Bind a local Ollama provider into $PERSONALCLAW_HOME so the home can "
+            "actually run a chat turn — which is what makes approvals and artifacts "
+            "reachable. Conditional and non-fatal: when no local Ollama answers, "
+            "nothing is written and the gateway starts against the plain fixture. "
+            "Endpoint and model default to http://localhost:11434 and the endpoint's "
+            "most recently modified chat model; override with "
+            "--local-model-endpoint / --local-model or the matching "
+            "$PERSONALCLAW_LOCAL_MODEL_ENDPOINT / $PERSONALCLAW_LOCAL_MODEL env vars."
+        ),
+    )
+    gw_parser.add_argument(
+        "--local-model-endpoint",
+        metavar="URL",
+        help="Ollama endpoint for --seed-local-model (default http://localhost:11434)",
+    )
+    gw_parser.add_argument(
+        "--local-model",
+        metavar="MODEL_ID",
+        help=(
+            "Model id to bind for --seed-local-model (default: the endpoint's most "
+            "recently modified chat-capable model)"
+        ),
+    )
+    gw_parser.add_argument(
+        "--local-model-apps-dir",
+        metavar="DIR",
+        help=(
+            "Local checkout of the apps repo to install the ollama-models provider app "
+            "from, when --seed-local-model finds it not already installed in the home"
+        ),
+    )
+    gw_parser.add_argument(
         "--no-open",
         action="store_true",
         help="Do not auto-open the dashboard URL in the default browser on startup",
@@ -1265,6 +1300,16 @@ Examples:
         _rc = seed_cmd(args)
         if _rc != 0:
             sys.exit(_rc)
+
+    # ``--seed-local-model`` runs AFTER the seed (which rmtree/copytree's the target,
+    # so anything written first would be lost) and BEFORE the gateway boots (its
+    # ``sync_entries_from_config`` is what turns the written ``providers[]`` entry into
+    # a resolvable registry entry). Never fatal: on a machine with no local Ollama it
+    # writes nothing, prints why, and the gateway starts against the plain fixture.
+    if args.command == "gateway" and getattr(args, "seed_local_model", False):
+        from personalclaw.seed_local_model import seed_local_model_cmd
+
+        seed_local_model_cmd(args)
 
     if args.verbose >= 2:
         level = logging.DEBUG
