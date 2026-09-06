@@ -28,9 +28,10 @@ export function AddItemButton({ children, onClick, className }: {
       onClick={onClick}
       whileTap={{ scale: pressScale }}
       transition={spring.spatialFast}
+      data-type="body-s"
       className={cx(
         'inline-flex items-center gap-xs rounded-md bg-surface-container px-m h-9',
-        'text-on-surface-var text-[0.8125rem] hover:bg-surface-high transition-colors',
+        'text-on-surface-var hover:bg-surface-high transition-colors',
         className,
       )}
     >

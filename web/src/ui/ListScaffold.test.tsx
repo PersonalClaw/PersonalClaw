@@ -52,11 +52,12 @@ describe('EmptyState', () => {
     expect(classOf(chip?.querySelector('svg') ?? null)).toContain('text-primary')
   })
 
-  it('hint rides the on-ramp type size and the 420px measure', () => {
+  it('hint rides the on-ramp type role and the 420px measure', () => {
     const { container } = render(<EmptyState title="t" hint="a subline" />)
     const p = container.querySelector('p')
-    expectTokens(p, ['mt-1', 'max-w-[420px]', 'text-on-surface-low', 'text-[0.9375rem]'])
-    // The on-ramp size only — never the off-ramp 0.875rem (14px) drift.
+    expectTokens(p, ['mt-1', 'max-w-[420px]', 'text-on-surface-low'])
+    // The body-m role (the on-ramp 0.9375rem tier) — never the off-ramp 0.875rem drift.
+    expect(p?.getAttribute('data-type')).toBe('body-m')
     expect(classOf(p)).not.toContain('text-[0.875rem]')
     // No hint → no paragraph at all.
     expect(render(<EmptyState title="t" />).container.querySelector('p')).toBeNull()

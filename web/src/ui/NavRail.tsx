@@ -135,7 +135,7 @@ export function NavRail({
     return (
       <div key={item.id}>
         {showSection && (
-          <div className="px-s pt-l pb-1 text-[0.8125rem] uppercase tracking-wide text-on-surface"
+          <div data-type="body-s" className="px-s pt-l pb-1 uppercase tracking-wide text-on-surface"
             style={{ opacity: 0.65, ...fvs(400) }}>
             {item.section}
           </div>
@@ -159,6 +159,10 @@ export function NavRail({
           // which belongs to listbox/tab options — the app already uses that correctly in
           // Segmented, ProjectPicker, SlashMenu, MentionMenu and ChatActivityPanel).
           aria-current={active ? 'page' : undefined}
+          // The role sits on the BUTTON (size/line-height; the label span inherits the
+          // font-size) because the active/inactive weight is the inline withWeight
+          // below — a role on the label span would override that inherited weight.
+          data-type="body-m"
           className={rowCls(active ? 'text-on-surface' : 'text-on-surface-var hover:bg-surface-low/60 hover:text-on-surface')}
           style={withWeight({ height: 32 }, active ? 470 : 400)}>
           {/* Springy active pill — a single shared-layout element that SLIDES from
@@ -179,9 +183,9 @@ export function NavRail({
               <span className="absolute -right-1 -top-1 size-2 rounded-pill ring-2 ring-surface" style={{ background: 'var(--color-primary)' }} />
             )}
           </span>
-          {!collapsed && <span className="relative z-10 flex-1 truncate text-[0.9375rem]">{item.label}</span>}
+          {!collapsed && <span className="relative z-10 flex-1 truncate">{item.label}</span>}
           {!collapsed && item.badge && (
-            <span className="relative z-10 inline-flex h-5 items-center rounded-pill px-s text-[0.75rem] text-on-surface"
+            <span data-type="caption" className="relative z-10 inline-flex h-5 items-center rounded-pill px-s text-on-surface"
               style={{ background: 'color-mix(in srgb, var(--color-on-surface) 12%, transparent)' }}>
               {item.badge}
             </span>
@@ -232,6 +236,7 @@ export function NavRail({
           title={disclosure.expanded
             ? `Hide the ${disclosure.moreCount} surface${disclosure.moreCount === 1 ? '' : 's'} you have not opened yet`
             : `Show all ${disclosure.moreCount} remaining surface${disclosure.moreCount === 1 ? '' : 's'}`}
+          data-type="body-m"
           className={rowCls('mt-1 text-on-surface-low hover:bg-surface-low/60 hover:text-on-surface-var')}
           style={withWeight({ height: 32 }, 400)}>
           <span className="relative z-10 shrink-0 inline-flex">
@@ -239,12 +244,12 @@ export function NavRail({
               className={cx('transition-transform', disclosure.expanded && 'rotate-180')} />
           </span>
           {!collapsed && (
-            <span className="relative z-10 flex-1 truncate text-[0.9375rem]">
+            <span className="relative z-10 flex-1 truncate">
               {disclosure.expanded ? 'Show fewer' : 'Everything'}
             </span>
           )}
           {!collapsed && !disclosure.expanded && (
-            <span className="relative z-10 text-[0.75rem] tabular-nums">+{disclosure.moreCount}</span>
+            <span data-type="caption" className="relative z-10 tabular-nums">+{disclosure.moreCount}</span>
           )}
         </motion.button>
       )}

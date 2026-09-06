@@ -87,7 +87,8 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
             <motion.span key={unread}
               initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
               transition={physics.playful}
-              className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill px-1 text-[0.75rem] leading-none"
+              data-type="caption"
+              className="absolute -right-0.5 -top-0.5 grid min-w-[15px] h-[15px] place-items-center rounded-pill px-1 leading-none"
               style={withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 600)}>
               {unread > 9 ? '9+' : unread}
             </motion.span>
@@ -105,22 +106,22 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
             <div className="flex items-center justify-between border-b border-outline-variant/40 px-m py-2.5">
               <span data-type="title-s" className="text-on-surface flex items-center gap-s">
                 Notifications
-                {unread > 0 && <span className="rounded-pill px-1.5 h-5 inline-flex items-center text-[0.75rem]" style={accentChip}>{unread}</span>}
+                {unread > 0 && <span data-type="caption" className="rounded-pill px-1.5 h-5 inline-flex items-center" style={accentChip}>{unread}</span>}
               </span>
               {unread > 0 && (
-                <button type="button" onClick={ackAll}
-                  className="inline-flex items-center gap-1 text-[0.75rem] text-on-surface-low hover:text-on-surface transition-colors">
+                <button type="button" onClick={ackAll} data-type="caption"
+                  className="inline-flex items-center gap-1 text-on-surface-low hover:text-on-surface transition-colors">
                   <CheckCheck size={13} /> Mark all read
                 </button>
               )}
             </div>
             <div className="max-h-[min(60vh,420px)] overflow-y-auto p-1">
               {items === null ? (
-                <div className="px-m py-l text-center text-[0.8125rem] text-on-surface-low">Loading…</div>
+                <div data-type="body-s" className="px-m py-l text-center text-on-surface-low">Loading…</div>
               ) : recent.length === 0 ? (
                 <div className="grid place-items-center px-m py-2xl text-center">
                   <Bell size={22} className="mb-s text-on-surface-low" />
-                  <div className="text-[0.8125rem] text-on-surface" style={fvs(500)}>You're all caught up</div>
+                  <div data-type="label-s" className="text-on-surface" style={fvs(500)}>You're all caught up</div>
                 </div>
               ) : (
                 <motion.div variants={{ animate: { transition: stagger(0.05) } }} initial="initial" animate="animate">
@@ -131,7 +132,8 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
               )}
             </div>
             <button type="button" onClick={() => { setOpen(false); navigate('notifications') }}
-              className="block w-full border-t border-outline-variant/40 px-m py-2.5 text-center text-[0.8125rem] text-on-surface-var hover:bg-surface-high hover:text-on-surface transition-colors"
+              data-type="label-s"
+              className="block w-full border-t border-outline-variant/40 px-m py-2.5 text-center text-on-surface-var hover:bg-surface-high hover:text-on-surface transition-colors"
               style={fvs(500)}>
               View all notifications
             </button>
@@ -168,10 +170,10 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
       <span className="mt-0.5 shrink-0 inline-flex size-7 items-center justify-center rounded-md" style={{ background: toneChipBg(km.tone) }}><km.icon size={14} style={{ color: km.tone }} /></span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-s">
-          <span className={`truncate text-[0.8125rem] ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(500)}>{n.title}</span>
-          <span className="shrink-0 text-on-surface-low text-[0.75rem]">{relTime(n.ts, now)}</span>
+          <span data-type="label-s" className={`truncate ${n.acked ? 'text-on-surface-var' : 'text-on-surface'}`} style={fvs(500)}>{n.title}</span>
+          <span data-type="caption" className="shrink-0 text-on-surface-low">{relTime(n.ts, now)}</span>
         </div>
-        <p className="mt-0.5 truncate text-on-surface-low text-[0.75rem]">{firstLine(n.body)}</p>
+        <p data-type="caption" className="mt-0.5 truncate text-on-surface-low">{firstLine(n.body)}</p>
       </div>
       <div className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
         {!n.acked && (

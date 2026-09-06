@@ -61,7 +61,7 @@ export const FieldHintProvider = FieldHintCtx.Provider
  *  The label carries a stable id and is exposed via context so the wrapped
  *  control associates with it for accessibility. */
 /** The one-line failure message under a control or beside an action — the shape 30 call sites
- *  had hand-rolled as `<p className="text-danger text-[0.8125rem]">{err}</p>`.
+ *  had hand-rolled as a danger-tinted body-s paragraph.
  *
  *  Byte-identical on screen; what it adds is `role="alert"`. Measured on `#/settings/design`
  *  with `POST /api/themes` forced to 500: the failure text appeared on screen and the page
@@ -76,7 +76,7 @@ export function FieldError({ children, className }: {
   /** Per-site spacing only (e.g. `mt-2`, `mb-m`, `shrink-0`); the tone and size are fixed. */
   className?: string
 }) {
-  return <p role="alert" className={cx('text-danger text-[0.8125rem]', className)}>{children}</p>
+  return <p role="alert" data-type="body-s" className={cx('text-danger', className)}>{children}</p>
 }
 
 export function Field({ label, hint, right, children }: { label: string; hint?: string; right?: ReactNode; children: ReactNode }) {
@@ -94,7 +94,7 @@ export function Field({ label, hint, right, children }: { label: string; hint?: 
           {right}
         </div>
         {children}
-        {hint && <p id={hintId} className="mt-1 text-on-surface-low text-[0.75rem]">{hint}</p>}
+        {hint && <p id={hintId} data-type="caption" className="mt-1 text-on-surface-low">{hint}</p>}
       </div>
       </FieldHintCtx.Provider>
     </FieldLabelCtx.Provider>
@@ -124,10 +124,13 @@ type FieldSize = 'sm' | 'md' | 'lg'
 type FieldSurface = 'container' | 'high' | 'base'
 
 const FIELD_SIZE: Record<FieldSize, string> = {
-  sm: 'h-8 text-[0.8125rem]',
-  md: 'h-9 text-[0.8125rem]',
-  lg: 'h-10 text-[0.9375rem]',
+  sm: 'h-8',
+  md: 'h-9',
+  lg: 'h-10',
 }
+// The typed text's type role per size — body-* (wght 400), the weight a field's
+// text always rendered at; the role now carries the size + line-height pairing.
+const FIELD_ROLE: Record<FieldSize, string> = { sm: 'body-s', md: 'body-s', lg: 'body-m' }
 const FIELD_SURFACE: Record<FieldSurface, string> = {
   container: 'bg-surface-container',
   high: 'bg-surface-high',
@@ -208,6 +211,7 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
       disabled={disabled}
       title={disabled ? disabledReason || undefined : undefined}
       onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} placeholder={placeholder}
+      data-type={FIELD_ROLE[size]}
       className={cx(INPUT_BASE, FIELD_SIZE[size], FIELD_SURFACE[surface], leadingIcon ? 'pl-9 pr-m' : 'px-m', mono && 'font-mono', disabled && 'opacity-50')} />
   )
   if (!leadingIcon) return input
@@ -226,17 +230,13 @@ export function TextInput({ value, onChange, placeholder, autoFocus, onKeyDown, 
 // size/surface scale above when — and only when — a real migration needs a
 // non-default variant (grown in lockstep with the adopter, never ahead of one).
 
-// TextArea's typographic size axis — the same on-ramp type steps as FIELD_SIZE,
+// TextArea's typographic size axis — the same FIELD_ROLE type steps as TextInput,
 // minus the height rung (a textarea's height comes from `rows`, not a fixed h-*).
-// sm/md share the dense 0.8125rem (matching TextInput, where those tiers differ
-// only in height); lg is the page-form 0.9375rem. Default lg keeps every prior
-// call-site — and the mono branch below — byte-identical; a real adopter that
-// needs the dense size opts into `sm`.
-const TEXTAREA_TEXT: Record<FieldSize, string> = {
-  sm: 'text-[0.8125rem]',
-  md: 'text-[0.8125rem]',
-  lg: 'text-[0.9375rem]',
-}
+// sm/md share the dense body-s (matching TextInput, where those tiers differ
+// only in height); lg is the page-form body-m. Default lg keeps every prior
+// call-site byte-identical; a real adopter that needs the dense size opts into
+// `sm`. A mono textarea always rides body-s, the dense technical size the mono
+// branch has always pinned regardless of `size`.
 
 export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLabel, autoFocus, size = 'lg', disabled, disabledReason }: { value: string; onChange: (v: string) => void; placeholder?: string; rows?: number; mono?: boolean; ariaLabel?: string; autoFocus?: boolean; size?: FieldSize
   /** Dim + block the field, and why — TextInput's pair, same reasoning (an editor behind a
@@ -248,16 +248,17 @@ export function TextArea({ value, onChange, placeholder, rows = 4, mono, ariaLab
   const autoId = useId()
   // Prefer a Field's published label (aria-labelledby); else an explicit ariaLabel
   // for call-sites that wrap the control in their own (non-Field) section label.
-  // The mono branch is unchanged — it still appends `font-mono text-[0.8125rem]`
-  // after the size text, so every existing (default-size) mono adopter renders
-  // byte-for-byte as before.
+  // The mono branch keeps its meaning — a mono textarea pins the dense body-s
+  // role whatever `size` says, so every existing (default-size) mono adopter
+  // renders as before.
   // Same precedence as TextInput: an explicit ariaLabel WINS, so a multi-control Field can name each
   // member. `aria-labelledby={labelId}` used to be unconditional, silently ignoring a caller's
   // ariaLabel.
   return (
     <textarea value={value} rows={rows} autoFocus={autoFocus} id={autoId} aria-describedby={hintId} aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={!labelId || ariaLabel ? ariaLabel : undefined} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
       disabled={disabled} title={disabled ? disabledReason || undefined : undefined}
-      className={`w-full rounded-md bg-surface-container px-m py-2 text-on-surface ${TEXTAREA_TEXT[size]} placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary ${mono ? 'font-mono text-[0.8125rem]' : ''}`} />
+      data-type={mono ? 'body-s' : FIELD_ROLE[size]}
+      className={`w-full rounded-md bg-surface-container px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none resize-y focus:ring-2 focus:ring-inset focus:ring-primary ${mono ? 'font-mono' : ''}`} />
   )
 }
 
@@ -314,7 +315,8 @@ export function NumberField({ value, onChange, min, max, step, width = 'w-24', a
       aria-labelledby={!ariaLabel ? labelId : undefined} aria-label={ariaLabel} aria-describedby={hintId}
       onChange={(e) => setLocal(e.target.value)} onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-      className={cx('h-8 rounded-md bg-surface-high px-2 text-right text-[0.8125rem] text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary', width)} />
+      data-type="body-s"
+      className={cx('h-8 rounded-md bg-surface-high px-2 text-right text-on-surface tabular-nums outline-none focus:ring-2 focus:ring-inset focus:ring-primary', width)} />
   )
 }
 
@@ -324,7 +326,8 @@ export function DateInput({ value, onChange }: { value: string; onChange: (v: st
   const autoId = useId()
   return (
     <input type="date" value={value} id={autoId} aria-labelledby={labelId} aria-describedby={hintId} onChange={(e) => onChange(e.target.value)}
-      className="h-10 rounded-md bg-surface-container px-m text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+      data-type="body-m"
+      className="h-10 rounded-md bg-surface-container px-m text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
   )
 }
 
@@ -365,6 +368,7 @@ export function Select({ value, onChange, options, disabled, name, ariaLabel, di
       aria-labelledby={claimsFieldLabel ? labelId : undefined} aria-label={claimsFieldLabel ? undefined : ariaLabel}
       aria-describedby={hintId} aria-required={required || undefined}
       title={disabled ? disabledReason || undefined : undefined}
+      data-type={FIELD_ROLE[size]}
       className={cx('w-full appearance-none rounded-md bg-surface-container pl-m pr-8 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-50', FIELD_SIZE[size])}>
       {options.map((o) => <option key={o.value} value={o.value} disabled={o.disabled} title={o.title}>{o.label}</option>)}
     </select>
@@ -417,7 +421,7 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
       onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); fieldRef.current?.focus() } }}
     >
       {values.map((v) => (
-        <span key={v} className="inline-flex items-center rounded-pill bg-surface-high pl-2 pr-0 h-7 text-on-surface-var text-[0.8125rem]">
+        <span key={v} data-type="body-s" className="inline-flex items-center rounded-pill bg-surface-high pl-2 pr-0 h-7 text-on-surface-var">
           {v}
           {/* One per chip, icon-only: without a name every remove button is announced as bare
               "button" — N identical ones, each destructive. Named from the chip's own text, which is
@@ -440,7 +444,8 @@ export function ChipInput({ values, onChange, placeholder, max, suggestions, ari
         list={remaining.length ? listId : undefined} name={`chip-${listId}`} aria-describedby={hintId} aria-labelledby={labelId} aria-label={labelId ? undefined : ariaLabel ?? 'Add a tag'}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } else if (e.key === 'Backspace' && !draft && values.length) onChange(values.slice(0, -1)) }}
         onBlur={add}
-        className="flex-1 min-h-6 min-w-[80px] bg-transparent text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none" />
+        data-type="body-s"
+        className="flex-1 min-h-6 min-w-[80px] bg-transparent text-on-surface placeholder:text-on-surface-low outline-none" />
       {remaining.length > 0 && <datalist id={listId}>{remaining.map((s) => <option key={s} value={s} />)}</datalist>}
     </div>
   )

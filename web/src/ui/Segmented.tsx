@@ -143,7 +143,12 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
             whileTap={disabled ? undefined : { scale: pressScale }}
             transition={spring.spatialFast}
             onClick={() => onChange(o.key)} title={o.title ?? o.label}
-            className={`relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-pill transition-colors whitespace-nowrap ${iconOnly ? (sm ? 'size-6' : 'size-8') : (sm ? 'h-6 px-2.5 text-[0.75rem]' : 'h-8 px-m text-[0.8125rem]')}`}
+            // The role carries size + line-height; the WEIGHT stays what the tab
+            // always rendered — fw-400 pins the sm tier back to 400 (caption's own
+            // 470 would bolden every inactive tab) and the active tab's inline 550
+            // (below) wins over both.
+            data-type={sm ? 'caption' : 'body-s'}
+            className={`relative inline-flex shrink-0 items-center justify-center gap-1.5 rounded-pill transition-colors whitespace-nowrap ${sm ? 'fw-400' : ''} ${iconOnly ? (sm ? 'size-6' : 'size-8') : (sm ? 'h-6 px-2.5' : 'h-8 px-m')}`}
             style={on ? withWeight({ color: fg }, 550) : { color: fg }}>
             {on && (
               <motion.span
@@ -223,7 +228,8 @@ function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel,
           // a listbox is coming, not just that something expanded.
           aria-haspopup="listbox"
           title={bare ? `${ariaLabel ? `${ariaLabel}: ` : ''}${active?.label ?? active?.key}` : undefined}
-          className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-container text-on-surface transition-colors hover:bg-surface-high ${disabled ? 'opacity-50 pointer-events-none' : ''} ${bare ? (sm ? 'size-6 justify-center' : 'size-8 justify-center') : (sm ? 'h-6 px-2.5 text-[0.75rem]' : 'h-8 px-m text-[0.8125rem]')}`}
+          data-type={sm ? 'caption' : 'body-s'}
+          className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-container text-on-surface transition-colors hover:bg-surface-high ${disabled ? 'opacity-50 pointer-events-none' : ''} ${bare ? (sm ? 'size-6 justify-center' : 'size-8 justify-center') : (sm ? 'h-6 px-2.5' : 'h-8 px-m')}`}
           style={fvs(550)}>
           {ActiveIcon && <ActiveIcon size={sm ? 12 : 15} className="shrink-0" />}
           {!bare && <span className="truncate">{active?.label ?? active?.key}</span>}

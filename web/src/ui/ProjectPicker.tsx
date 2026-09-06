@@ -98,7 +98,8 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
         aria-haspopup="listbox" aria-expanded={open}
         aria-label={label === 'Project' ? 'Project' : `Project: ${label}`}
         title="Choose the project this work scopes under"
-        className="inline-flex h-8 items-center gap-1.5 rounded-pill bg-surface-high px-2.5 text-[0.8125rem] text-on-surface-var transition-colors hover:bg-surface-highest disabled:opacity-50">
+        data-type="body-s"
+        className="inline-flex h-8 items-center gap-1.5 rounded-pill bg-surface-high px-2.5 text-on-surface-var transition-colors hover:bg-surface-highest disabled:opacity-50">
         <FolderKanban size={14} className="shrink-0 text-primary" />
         {/* 🔴 THE WIDEST CONTROL IN A HEADER ROW THAT CANNOT SHRINK. `LoopComposer`'s row is
             `[&>*]:shrink-0` **by design** — every control there must keep its natural size — and its
@@ -130,31 +131,33 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
               from the goal/task. Chat passes emptyLabel="No project" (unbound). */}
           <button type="button" role="option" aria-selected={!value} tabIndex={tabIndexFor(0)}
             onClick={() => { onChange(''); closeAndReturnFocus() }}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high">
+            data-type="body-s"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-on-surface-var hover:bg-surface-high">
             <Plus size={14} className="shrink-0 text-on-surface-low" />
             <span className="min-w-0 flex-1 truncate">{emptyLabel ?? 'New project'} {(emptyHint ?? '(auto-named)') && <span className="text-on-surface-low/70">{emptyHint ?? '(auto-named)'}</span>}</span>
             {!value && <Check size={13} className="shrink-0 text-primary" />}
           </button>
           {selectable === null ? (
-            <div className="px-2 py-2 text-on-surface-low text-[0.75rem]">Loading…</div>
+            <div data-type="caption" className="px-2 py-2 text-on-surface-low">Loading…</div>
           ) : selectable.length === 0 ? (
-            <div className="px-2 py-2 text-on-surface-low text-[0.75rem]">No existing projects.</div>
+            <div data-type="caption" className="px-2 py-2 text-on-surface-low">No existing projects.</div>
           ) : (
             <>
               {/* 🔴 axe (serious) `color-contrast` measured this at 3.62:1 — a 9pt uppercase label
                   needs 4.5. The `/70` alpha on an already-low ink was the whole cause; dropping it
                   takes the same token to 5.93:1 and changes nothing else. Found while driving the
                   listbox for this cycle's keyboard work, and it was there before it. */}
-              <div className="mt-1 border-t border-outline-variant/40 px-2 pt-1.5 pb-0.5 text-[0.75rem] uppercase tracking-wide text-on-surface-low">Existing</div>
+              <div data-type="caption" className="mt-1 border-t border-outline-variant/40 px-2 pt-1.5 pb-0.5 uppercase tracking-wide text-on-surface-low">Existing</div>
               {selectable.map((p, i) => (
                 <button key={p.id} type="button" role="option" aria-selected={value === p.id}
                   tabIndex={tabIndexFor(i + 1)}
                   onClick={() => { onChange(p.id); closeAndReturnFocus() }}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.8125rem] text-on-surface-var hover:bg-surface-high">
+                  data-type="body-s"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-on-surface-var hover:bg-surface-high">
                   <FolderKanban size={14} className="shrink-0 text-on-surface-low" />
                   <span className="min-w-0 flex-1 truncate">{p.name}</span>
                   {/* only the currently-selected project can be archived + still listed */}
-                  {p.status === 'archived' && <span className="shrink-0 text-on-surface-low/60 text-[0.75rem]">archived</span>}
+                  {p.status === 'archived' && <span data-type="caption" className="shrink-0 text-on-surface-low/60">archived</span>}
                   {value === p.id && <Check size={13} className="shrink-0 text-primary" />}
                 </button>
               ))}

@@ -22,9 +22,11 @@ describe('InlineError', () => {
     const { getByRole, getByText } = render(<InlineError onDismiss={() => {}}>Boom</InlineError>)
     const alert = getByRole('alert')
     const have = classOf(alert)
-    for (const t of ['flex', 'items-center', 'gap-2', 'rounded-lg', 'px-3', 'py-2', 'text-[0.8125rem]']) {
+    for (const t of ['flex', 'items-center', 'gap-2', 'rounded-lg', 'px-3', 'py-2']) {
       expect(have, `missing "${t}"`).toContain(t)
     }
+    // The type size rides the body-s role (the 0.8125rem tier), not a raw utility.
+    expect(alert.getAttribute('data-type')).toBe('body-s')
     expect(getByText('Boom')).toBeInTheDocument()
   })
 
@@ -70,9 +72,10 @@ describe('InlineError', () => {
   it('still renders a role=alert danger band in animated mode', () => {
     const { getByRole, getByText } = render(<InlineError animated icon onDismiss={() => {}}>drag rejected</InlineError>)
     const have = classOf(getByRole('alert'))
-    for (const t of ['flex', 'gap-2', 'rounded-lg', 'px-3', 'py-2', 'text-[0.8125rem]']) {
+    for (const t of ['flex', 'gap-2', 'rounded-lg', 'px-3', 'py-2']) {
       expect(have, `missing "${t}"`).toContain(t)
     }
+    expect(getByRole('alert').getAttribute('data-type')).toBe('body-s')
     expect(getByText('drag rejected')).toBeInTheDocument()
   })
 })

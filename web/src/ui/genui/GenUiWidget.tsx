@@ -41,7 +41,8 @@ function DroppedLine({ message }: { message: string }) {
   return (
     <div
       role="alert"
-      className="flex items-start gap-2 rounded-lg px-3 py-2 text-[0.75rem] text-danger"
+      data-type="caption"
+      className="flex items-start gap-2 rounded-lg px-3 py-2 text-danger"
       style={{ background: 'color-mix(in srgb, var(--color-danger) 8%, transparent)' }}
     >
       <AlertTriangle size={13} className="mt-0.5 shrink-0" />
@@ -150,7 +151,7 @@ export const GenUiWidget = memo(function GenUiWidget({ content, title, slug }: E
   return (
     <Surface tone="low" radius="lg" className="my-3 overflow-hidden">
       <div className="border-b border-outline-variant/40 bg-surface-container px-3 py-1.5">
-        <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{title || 'Widget'}</span>
+        <span data-type="label-s" className="truncate text-on-surface" style={fvs(500)}>{title || 'Widget'}</span>
       </div>
       <GenUiActionCtx.Provider value={emit}>
         <div className="flex flex-col gap-s p-l">

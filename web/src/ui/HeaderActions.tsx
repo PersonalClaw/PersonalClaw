@@ -501,8 +501,9 @@ export function HeaderControl({
       aria-pressed={active}
       whileTap={disabled ? undefined : { scale: 0.96 }}
       transition={spring.spatialFast}
+      data-type="label-s"
       className={cx(
-        'inline-flex items-center justify-center gap-1.5 rounded-pill text-[0.8125rem] select-none shrink-0',
+        'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
         'transition-colors duration-100 disabled:opacity-40 disabled:pointer-events-none',
         iconOnly ? 'size-10' : 'h-10 px-l',
         active ? variants.secondary : variants[eff],
@@ -676,8 +677,9 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }
       <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={`${ariaLabel ?? 'Mode'}: ${label}`}
         title={active.title ?? `${ariaLabel ?? 'Mode'}: ${label}`} disabled={disabled}
         onClick={() => (open ? closeNow() : doOpen())}
+        data-type="label-s"
         className={cx(
-          'inline-flex items-center justify-center gap-1.5 rounded-pill text-[0.8125rem] select-none shrink-0',
+          'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
           'transition-colors duration-100 disabled:opacity-40 disabled:pointer-events-none',
           iconOnly ? 'size-10' : 'h-10 px-l',
           open ? 'bg-surface-highest text-on-surface' : 'bg-surface-high text-on-surface hover:bg-surface-highest',
@@ -717,7 +719,8 @@ export function HeaderModePill({ options, value, onChange, ariaLabel, disabled }
                       tabIndex={tabIndexFor(i)}
                       onClick={() => { onChange(o.key); dismiss() }}
                       title={o.title ?? o.label}
-                      className="flex items-center gap-s w-full rounded-md px-m h-9 text-left text-[0.8125rem] transition-colors"
+                      data-type="body-s"
+                      className="flex items-center gap-s w-full rounded-md px-m h-9 text-left transition-colors"
                       style={on
                         ? withWeight({ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }, 550)
                         : { color: 'var(--color-on-surface)' }}

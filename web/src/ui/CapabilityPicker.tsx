@@ -25,10 +25,10 @@ export function CapRow({ id, name, description, checked, suggested, onToggle, on
         <span className="shrink-0 mt-0.5 text-on-surface-low">{icon}</span>
         <span className="flex-1 min-w-0">
           <span className="flex items-center gap-1.5">
-            <span className="text-on-surface text-[0.8125rem] truncate" style={fvs(550)}>{name}</span>
-            {suggested && <span className="shrink-0 rounded-pill px-1.5 h-4 inline-flex items-center text-[0.75rem] uppercase tracking-wide" style={accentChip}>suggested</span>}
+            <span data-type="label-s" className="text-on-surface truncate" style={fvs(550)}>{name}</span>
+            {suggested && <span data-type="caption" className="shrink-0 rounded-pill px-1.5 h-4 inline-flex items-center uppercase tracking-wide" style={accentChip}>suggested</span>}
           </span>
-          {description && <span className="block text-on-surface-low text-[0.75rem] truncate">{description}</span>}
+          {description && <span data-type="caption" className="block text-on-surface-low truncate">{description}</span>}
         </span>
       </button>
       {onPeek && (
@@ -73,11 +73,11 @@ export function CapabilityPeekModal({ peek, onClose }: {
       <div className="max-h-[60vh] overflow-y-auto">
         {peek.kind === 'skill' ? (
           loading ? (
-            <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem] py-4"><Loader2 size={14} className="animate-spin" /> Loading skill…</div>
+            <div data-type="body-s" className="flex items-center gap-2 text-on-surface-low py-4"><Loader2 size={14} className="animate-spin" /> Loading skill…</div>
           ) : content ? (
             <Markdown>{content}</Markdown>
           ) : (
-            <p className="text-on-surface-low text-[0.8125rem]">{peek.skill?.description || 'No content available.'}</p>
+            <p data-type="body-s" className="text-on-surface-low">{peek.skill?.description || 'No content available.'}</p>
           )
         ) : null}
       </div>

@@ -111,7 +111,7 @@ export function DialogShell({ request, onClose }: {
           )}
           <div className="min-w-0 flex-1">
             <div data-type="title-l" className="text-on-surface">{title}</div>
-            {body && <div className="mt-1.5 text-on-surface-var text-[0.8125rem] whitespace-pre-line">{body}</div>}
+            {body && <div data-type="body-s" className="mt-1.5 text-on-surface-var whitespace-pre-line">{body}</div>}
           </div>
         </div>
 
@@ -133,8 +133,8 @@ export function DialogShell({ request, onClose }: {
 
         <div className="flex justify-end gap-2 px-l py-l">
           {showCancel && (
-            <button type="button" onClick={cancel} autoFocus={danger}
-              className="rounded-pill px-4 h-9 text-[0.8125rem] text-on-surface-var bg-surface-high hover:bg-surface-highest transition-colors">
+            <button type="button" onClick={cancel} autoFocus={danger} data-type="body-s"
+              className="rounded-pill px-4 h-9 text-on-surface-var bg-surface-high hover:bg-surface-highest transition-colors">
               {cancelLabel ?? 'Cancel'}
             </button>
           )}
@@ -143,7 +143,8 @@ export function DialogShell({ request, onClose }: {
               restated on `aria-disabled:` because `disabled:` no longer fires. */}
           <button type="button" onClick={confirmAction} autoFocus={!danger && !isPrompt}
             {...unavailableWhen(isPrompt && !canSubmit, 'Fill in the required fields first')}
-            className="rounded-pill px-4 h-9 text-[0.8125rem] transition-colors disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
+            data-type="body-s"
+            className="rounded-pill px-4 h-9 transition-colors disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"
             style={danger
               ? { background: 'var(--color-danger)', color: 'var(--color-on-danger)' }
               : { background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>
@@ -166,22 +167,23 @@ function PromptFieldRow({ field, value, error, autoFocus, onChange, onSubmit }: 
 }) {
   const ref = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
   useEffect(() => { if (autoFocus) ref.current?.focus() }, [autoFocus])
-  const base = 'w-full rounded-lg bg-surface-high px-3 text-[0.9375rem] text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
+  const base = 'w-full rounded-lg bg-surface-high px-3 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   return (
     <div>
-      {field.label && <label className="mb-1 block text-on-surface-var text-[0.8125rem]">{field.label}</label>}
+      {field.label && <label data-type="body-s" className="mb-1 block text-on-surface-var">{field.label}</label>}
       {field.type === 'textarea' ? (
         <textarea ref={ref as React.RefObject<HTMLTextAreaElement>} value={value} placeholder={field.placeholder} rows={4}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(e.target.value)} data-type="body-m"
           className={`${base} py-2 resize-y min-h-[88px] ${error ? 'ring-2 ring-danger/50' : ''}`} />
       ) : (
         <input ref={ref as React.RefObject<HTMLInputElement>} type={field.type === 'password' ? 'password' : 'text'}
           value={value} placeholder={field.placeholder}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSubmit() } }}
+          data-type="body-m"
           className={`${base} h-10 ${error ? 'ring-2 ring-danger/50' : ''}`} />
       )}
-      {error && <div className="mt-1 text-[0.75rem] text-danger">{error}</div>}
+      {error && <div data-type="caption" className="mt-1 text-danger">{error}</div>}
     </div>
   )
 }

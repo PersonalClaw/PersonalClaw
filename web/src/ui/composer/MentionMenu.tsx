@@ -197,10 +197,10 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
             style={i === sel ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' } : undefined}>
             <Icon size={13} className={`shrink-0 ${i === sel ? 'text-primary' : 'text-on-surface-low'}`} />
             <span className="min-w-0 flex-1">
-              <span className="block truncate font-mono text-on-surface text-[0.8125rem]" style={fvs(500)}>{r.name}</span>
-              <span className="block truncate text-on-surface-low text-[0.75rem]">{r.kind === 'knowledge' ? `knowledge · ${r.sub}` : r.kind === 'prompt' ? `prompt · ${r.sub}` : r.sub}</span>
+              <span data-type="label-s" className="block truncate font-mono text-on-surface" style={fvs(500)}>{r.name}</span>
+              <span data-type="caption" className="block truncate text-on-surface-low">{r.kind === 'knowledge' ? `knowledge · ${r.sub}` : r.kind === 'prompt' ? `prompt · ${r.sub}` : r.sub}</span>
             </span>
-            {r.size !== undefined && <span className="shrink-0 font-mono text-on-surface-low text-[0.75rem] tabular-nums">{fmtSize(r.size)}</span>}
+            {r.size !== undefined && <span data-type="caption" className="shrink-0 font-mono text-on-surface-low tabular-nums">{fmtSize(r.size)}</span>}
           </button>
         )
       })}
@@ -210,5 +210,5 @@ export function MentionMenu({ query, anchorRef, open, project, leading, onSelect
 }
 
 function Hint({ children }: { children: React.ReactNode }) {
-  return <div className="px-3 py-3 text-center text-on-surface-low text-[0.75rem]">{children}</div>
+  return <div data-type="caption" className="px-3 py-3 text-center text-on-surface-low">{children}</div>
 }

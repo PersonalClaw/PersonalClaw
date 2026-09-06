@@ -54,11 +54,12 @@ export function ColorControl({ token }: { token: ColorToken }) {
           />
         </span>
       </label>
-      <span className="flex-1 text-on-surface text-[0.8125rem]">{token.label}</span>
+      <span data-type="body-s" className="flex-1 text-on-surface">{token.label}</span>
       <input
         value={val}
         onChange={(e) => { const v = e.target.value; if (/^#[0-9a-fA-F]{6}$/.test(v)) setColor(token.varName, mode, v) }}
-        className="w-[88px] bg-surface-high rounded-md px-s py-1 text-on-surface-var text-[0.8125rem] font-mono outline-none focus:ring-1 focus:ring-primary"
+        data-type="body-s"
+        className="w-[88px] bg-surface-high rounded-md px-s py-1 text-on-surface-var font-mono outline-none focus:ring-1 focus:ring-primary"
         spellCheck={false}
       />
       <ResetButton label={token.label} onReset={() => resetToken(token.varName)} />
@@ -73,7 +74,7 @@ export function SelectControl({ token }: { token: SelectToken }) {
   const indicatorId = `tokensel-${useId()}`
   return (
     <div className="flex items-center gap-m py-2">
-      <span className="flex-1 min-w-0 text-on-surface text-[0.8125rem]">{token.label}</span>
+      <span data-type="body-s" className="flex-1 min-w-0 text-on-surface">{token.label}</span>
       {/* the pill group hugs its content (was flex-1 → the tinted track stretched
           across the whole row); label takes the slack, group sits right, pills fit. */}
       <div className="flex shrink-0 flex-wrap justify-end gap-1 rounded-2xl bg-surface-high p-1">
@@ -89,7 +90,8 @@ export function SelectControl({ token }: { token: SelectToken }) {
               // `bento`'s SegToggle already solves both this way, one screen over.
               aria-label={`${token.label}: ${opt}`}
               aria-pressed={on}
-              className={`relative rounded-pill px-m h-7 text-[0.8125rem] capitalize transition-colors ${on ? 'text-on-primary' : 'text-on-surface-var hover:text-on-surface'}`}
+              data-type="body-s"
+              className={`relative rounded-pill px-m h-7 capitalize transition-colors ${on ? 'text-on-primary' : 'text-on-surface-var hover:text-on-surface'}`}
             >
               {/* liquid active pill — slides between options via layoutId instead of
                   the primary fill jumping instantly from one option to another. */}
@@ -119,8 +121,8 @@ export function ScalarControl({ token }: { token: ScalarToken }) {
       : `${val.toFixed(2)}×`
   return (
     <div className="flex items-center gap-m py-2">
-      <span className="flex-1 text-on-surface text-[0.8125rem]">{token.label}</span>
-      <span className="w-[56px] text-right text-on-surface-low text-[0.8125rem] font-mono tabular-nums">{display}</span>
+      <span data-type="body-s" className="flex-1 text-on-surface">{token.label}</span>
+      <span data-type="body-s" className="w-[56px] text-right text-on-surface-low font-mono tabular-nums">{display}</span>
       <input
         type="range"
         min={token.min} max={token.max} step={token.step}

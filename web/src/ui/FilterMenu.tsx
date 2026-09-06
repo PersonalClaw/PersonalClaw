@@ -66,7 +66,8 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
       portal
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-label="Filter & sort" title="Filter & sort" aria-expanded={open}
-          className={`relative inline-flex items-center gap-1.5 h-10 rounded-pill px-4 text-[0.8125rem] transition-colors ${activeCount > 0 || open ? '' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}`}
+          data-type="body-s"
+          className={`relative inline-flex items-center gap-1.5 h-10 rounded-pill px-4 transition-colors ${activeCount > 0 || open ? '' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}`}
           style={activeCount > 0 || open ? accentChip : undefined}>
           <SlidersHorizontal size={14} />
           <span className="hidden sm:inline">{label}</span>
@@ -77,7 +78,8 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
               <motion.span
                 initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0, opacity: 0 }}
                 transition={physics.playful}
-                className="inline-flex items-center justify-center min-w-[1.05rem] h-[1.05rem] px-1 rounded-pill bg-primary text-on-primary text-[0.75rem] tabular-nums" style={fvs(600)}>{activeCount}</motion.span>
+                data-type="caption"
+                className="inline-flex items-center justify-center min-w-[1.05rem] h-[1.05rem] px-1 rounded-pill bg-primary text-on-primary tabular-nums" style={fvs(600)}>{activeCount}</motion.span>
             )}
           </AnimatePresence>
         </button>
@@ -103,7 +105,7 @@ function Section({ title, onClear, children }: { title: string; onClear?: () => 
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center justify-between px-2 pb-0.5">
-        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{title}</span>
+        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{title}</span>
         {onClear && <TextLink onClick={onClear} size="xs">Clear</TextLink>}
       </div>
       {children}
@@ -115,7 +117,7 @@ function Row({ option, selected, onClick, indicatorId }: { option: FilterOption;
   const Icon = option.icon
   return (
     <>
-      {option.groupLabel && <div className="mt-1 px-2 pt-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide border-t border-on-surface/8">{option.groupLabel}</div>}
+      {option.groupLabel && <div data-type="caption" className="mt-1 px-2 pt-1.5 text-on-surface-low uppercase tracking-wide border-t border-on-surface/8">{option.groupLabel}</div>}
       {/* The row itself is `ui/FilterRow` (PEP-3) — the App Store's persistent
           category/source rail renders the same one, because it and this dropdown are one
           control at two viewport widths. The liquid selected-row indicator (one shared
