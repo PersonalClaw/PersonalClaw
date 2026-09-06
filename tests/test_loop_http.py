@@ -111,6 +111,11 @@ class _FakeSvc:
     def get_by_session(self, session_name):
         return next((lp for lp in self._loops.values() if lp.session_name == session_name), None)
 
+    def list_all(self):
+        # The public surface `manager.pause` scans since WF2AUT-11 (the real service keeps its
+        # rows in the trigger store, not an in-memory dict).
+        return list(self._loops.values())
+
 
 @pytest.fixture
 def state():
@@ -120,7 +125,7 @@ def state():
 @pytest.fixture
 def svc(monkeypatch):
     s = _FakeSvc()
-    monkeypatch.setattr("personalclaw.autonudge.get_instance", lambda: s)
+    monkeypatch.setattr("personalclaw.triggers.nudge.get_instance", lambda: s)
     return s
 
 

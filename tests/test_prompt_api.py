@@ -326,7 +326,7 @@ class TestCampaignTemplateLaunch:
             created.append(("started", lid))
 
         monkeypatch.setattr("personalclaw.loop.manager.start", _start)
-        monkeypatch.setattr("personalclaw.autonudge.get_instance", lambda: object())
+        monkeypatch.setattr("personalclaw.triggers.nudge.get_instance", lambda: object())
         # Only override the launch_blocker on the resolved strategy (leave the real
         # kind machinery — default_kind_config etc. — intact so _build_loop_from_body
         # works). Wrap the real get_or_none so the returned strategy reports `blocker`.

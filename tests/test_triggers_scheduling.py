@@ -434,14 +434,18 @@ def test_KEPT_WITH_DUTY_is_distinct_from_KEPT():
     assert "personalclaw.fs_watch" in modules
 
 
-def test_autonudge_absorption_is_marked_LAST():
-    """Blocked on LOOPS-EVOLUTION Phase 4 — the loop engine rides autonudge as its tick
-    engine, so absorbing it early would take the loops' clock away."""
+def test_autonudge_absorption_LANDED_and_points_at_the_adapter():
+    """WF2AUT-11 half 2: the absorption the table marked LAST has happened — the row now points
+    at the surviving adapter (`triggers.nudge`, which `missing_surfaces()` must be able to
+    import) and its note records the landing, not the block. The kept-semantics list is
+    unchanged: those five behaviours are what the port had to preserve."""
     from personalclaw.triggers.disposition import DISPOSITION
 
-    row = next(r for r in DISPOSITION if r.module == "personalclaw.autonudge")
-    assert "LAST" in row.note
-    assert "Phase 4" in row.note
+    row = next(r for r in DISPOSITION if r.surface == "autonudge.py")
+    assert row.module == "personalclaw.triggers.nudge"
+    assert "landed" in row.note.lower()
+    assert "deleted" in row.note.lower()
+    assert "delivered-only cycle counting" in row.keeps
 
 
 def test_the_policy_layer_is_KEPT_not_absorbed():
