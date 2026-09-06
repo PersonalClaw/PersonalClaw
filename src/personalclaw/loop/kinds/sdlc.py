@@ -229,11 +229,6 @@ class CodeKind(LoopKindStrategy):
             return f"The workspace folder {ws!r} is missing (moved or deleted) — re-pick the codebase directory."  # noqa: E501
         return None
 
-    def phase_key(self, phase: dict) -> str:
-        # A code phase is keyed by its SDLC stage id, falling back to title for a
-        # stageless row — matching the legacy store's `_stage_of` keying exactly.
-        return str(phase.get("stage", "")).strip() or str(phase.get("title", "")).strip()
-
     def active_stage_index(self, loop: Loop) -> int:
         """Index of the stage the UPCOMING cycle belongs to — the first not-done
         stage, staying on the last once all are done; -1 with no plan. Keyed by the

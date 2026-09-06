@@ -45,9 +45,6 @@ class DesignKind(LoopKindStrategy):
             "exports": [],
         }
 
-    def phase_key(self, phase: dict) -> str:
-        return str(phase.get("step", "")).strip() or str(phase.get("title", "")).strip()
-
     def _token_axes(self) -> list[str]:
         """Human-readable list of the default token system's top-level axes (drives the
         brief). Derived from the bundled default set so the brief never drifts from it."""
@@ -106,8 +103,11 @@ class DesignKind(LoopKindStrategy):
         if not plan or not findings:
             return False
         keys = [self.phase_key(p) for p in plan]
-        # Resolve the worker's reported step to a plan index (match step or title, case-
-        # insensitively; substring either way so "palette" matches "Color palette").
+        # Two different nouns spelled alike, so keep them apart: the FINDING's `step` is the
+        # worker's free-text self-report of where it thinks it is, while a PLAN ROW's `stage`
+        # is the phase id `phase_status` is keyed by (`PHASE_KEY_FIELDS`). This resolves the
+        # former to an index into the latter — matching stage or title, case-insensitively,
+        # substring either way so "palette" matches "Color palette".
         # Workers routinely prefix an ordinal ("1. Emit Primitive Token Layer",
         # "2 — Palette"), which matched NOTHING → the trail froze on foundations and the
         # 008a0a9 completion was deferred to the slow per-cycle fallback (same class as the
@@ -127,7 +127,7 @@ class DesignKind(LoopKindStrategy):
         if idx < 0 and reported:
             for i, p in enumerate(plan):
                 title = self._strip_step_ordinal(str(p.get("title", "")).strip().lower())
-                cand = f"{p.get('step', '')} {title}".strip().lower()
+                cand = f"{p.get('stage', '')} {title}".strip().lower()
                 if reported == keys[i].lower() or reported in cand or cand and cand in reported:
                     idx = i
                     break
@@ -169,7 +169,7 @@ class DesignKind(LoopKindStrategy):
             if k and status.get(k) != want and want:
                 store.set_phase_status(cid, k, want)
         try:
-            ctx.publish(cid, "phase_advance", {"active": idx, "step": keys[idx]})
+            ctx.publish(cid, "phase_advance", {"active": idx, "stage": keys[idx]})
         except Exception:
             pass
         # Complete when the worker reports being ON the last phase AND has produced its
@@ -255,27 +255,27 @@ class DesignKind(LoopKindStrategy):
     # executions"), never free-runs.
     _DEFAULT_PHASES = [
         {
-            "step": "foundations",
+            "stage": "foundations",
             "title": "Foundations & audit",
             "objective": "Understand the brand/product, audit references, and decide which default token axes to override.",  # noqa: E501
         },
         {
-            "step": "palette",
+            "stage": "palette",
             "title": "Color palette",
             "objective": "Set the brand/accent/neutral + semantic color scales; verify light/dark and WCAG contrast.",  # noqa: E501
         },
         {
-            "step": "typography",
+            "stage": "typography",
             "title": "Typography & spacing",
             "objective": "Choose type families, the modular size scale, weights, and the spacing/radius rhythm.",  # noqa: E501
         },
         {
-            "step": "components",
+            "stage": "components",
             "title": "Core components",
             "objective": "Generate the core React components (button, input, card, …) styled from the tokens; render them on the canvas.",  # noqa: E501
         },
         {
-            "step": "export",
+            "stage": "export",
             "title": "Document & export",
             "objective": "Write DESIGN.md and produce the export artifacts (token set, CSS variables, React components).",  # noqa: E501
         },
@@ -327,8 +327,9 @@ class DesignKind(LoopKindStrategy):
 
     async def _plan_phases(self, task: str, ask) -> list[dict]:
         """Tailor the canonical design phases to this task via one LLM call; fall back to
-        the defaults on any failure/malformed output. Each row is {step, title, objective}
-        (phase_key reads step→title)."""
+        the defaults on any failure/malformed output. Each row is {stage, title, objective} —
+        `stage` is the shared phase id every kind uses (`PHASE_KEY_FIELDS`), so the row a design
+        planner emits keys `phase_status` the same way a code planner's does."""
         import json as _json
 
         # The phase-planner instruction lives in the prompt system (bundled
@@ -345,12 +346,12 @@ class DesignKind(LoopKindStrategy):
                 rows = _json.loads(raw[start : end + 1])
                 out = [
                     {
-                        "step": str(r.get("step", "")).strip() or str(r.get("title", "")).strip(),
+                        "stage": str(r.get("stage", "")).strip() or str(r.get("title", "")).strip(),
                         "title": str(r.get("title", "")).strip(),
                         "objective": str(r.get("objective", "")).strip(),
                     }
                     for r in rows
-                    if isinstance(r, dict) and (r.get("title") or r.get("step"))
+                    if isinstance(r, dict) and (r.get("title") or r.get("stage"))
                 ]
                 if out:
                     return out
@@ -411,7 +412,7 @@ class DesignKind(LoopKindStrategy):
             for i, ph in enumerate(loop.plan):
                 if not isinstance(ph, dict):
                     continue
-                t = str(ph.get("title", "")).strip() or str(ph.get("step", "")).strip() or "(step)"
+                t = str(ph.get("title", "")).strip() or str(ph.get("stage", "")).strip() or "(step)"
                 obj = str(ph.get("objective", "")).strip()
                 key = self.phase_key(ph)
                 state = ps.get(key, "")
