@@ -74,8 +74,8 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
       <div className="flex flex-wrap items-center gap-s">
         {channelBacked ? (
           <>
-            <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${cm.tone} 16%, transparent)`, color: cm.tone }}><cm.icon size={13} /> {cm.label}</span>
-            <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${cf.tone} 16%, transparent)`, color: cf.tone }}><cf.icon size={13} /> {cf.label}</span>
+            <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${cm.tone} 16%, transparent)`, color: cm.tone }}><cm.icon size={13} /> {cm.label}</span>
+            <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${cf.tone} 16%, transparent)`, color: cf.tone }}><cf.icon size={13} /> {cf.label}</span>
             {/* After a manual reclassification the displayed verdict is the user's own,
                 so there is no machine judgment on screen to rate — a thumbs-down here
                 would file feedback against a classification the model never produced.
@@ -92,9 +92,9 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
             ))}
           </>
         ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {km.label}</span>
+          <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={toneChipSkin(km.tone, 16)}><km.icon size={13} /> {km.label}</span>
         )}
-        <span className="ml-auto inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]">{(() => { const sm = statusMeta(item.status); return <><sm.icon size={13} style={{ color: sm.tone }} /> {sm.label}</> })()}</span>
+        <span data-type="body-s" className="ml-auto inline-flex items-center gap-1.5 text-on-surface-low">{(() => { const sm = statusMeta(item.status); return <><sm.icon size={13} style={{ color: sm.tone }} /> {sm.label}</> })()}</span>
         {/* Investigate (plan 60): open a chat pre-loaded with this item's full
             context (fenced, ask mode) — "what does this message need from me?" */}
         <InvestigateButton kind="inbox_item" id={item.id} backLink="#/inbox" />
@@ -103,15 +103,15 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
       {/* Provenance. For a channel item that's sender + #channel; for a non-channel item
           the "sender" is the emitting subsystem, so showing it twice (as sender AND as
           "via X") plus a fake #channel would be three labels for one fact. */}
-      <div className="flex flex-wrap items-center gap-x-m gap-y-1 text-on-surface-low text-[0.8125rem]">
+      <div data-type="body-s" className="flex flex-wrap items-center gap-x-m gap-y-1 text-on-surface-low">
         {channelBacked && <span className="text-on-surface" style={fvs(600)}>{item.sender_name || item.sender_id}</span>}
         {channelBacked && channelLabel(item) && <span>{channelLabel(item)}</span>}
-        <span className="inline-flex items-center rounded-pill bg-surface-high px-2 h-5 text-[0.75rem] text-on-surface-var">via {sourceLabel(item.source)}</span>
+        <span data-type="caption" className="inline-flex items-center rounded-pill bg-surface-high px-2 h-5 text-on-surface-var">via {sourceLabel(item.source)}</span>
         {item.created_at && <span>{relPast(item.created_at)}</span>}
       </div>
 
       {/* the message */}
-      <div className="rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.9375rem] leading-relaxed"><Markdown>{item.message}</Markdown></div>
+      <div data-type="body-m" className="rounded-md bg-surface-container px-m py-2 text-on-surface leading-relaxed"><Markdown>{item.message}</Markdown></div>
 
       {/* thread context */}
       {(item.thread_context?.length ?? 0) > 0 && (
@@ -119,8 +119,8 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
           <div className="flex flex-col gap-2">
             {item.thread_context!.map((t, i) => (
               <div key={i} className="rounded-md bg-surface-container/60 px-m py-1.5">
-                <div className="text-on-surface-var text-[0.75rem] mb-0.5" style={fvs(600)}>{t.sender_name || 'Unknown'}</div>
-                <div className="text-on-surface-low text-[0.8125rem] leading-relaxed">{t.text}</div>
+                <div data-type="caption" className="text-on-surface-var mb-0.5" style={fvs(600)}>{t.sender_name || 'Unknown'}</div>
+                <div data-type="body-s" className="text-on-surface-low leading-relaxed">{t.text}</div>
               </div>
             ))}
           </div>
@@ -129,7 +129,7 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
 
       {item.context_summary && (
         <Section label="Context the agent used">
-          <p className="text-on-surface-var text-[0.8125rem] leading-relaxed italic">{item.context_summary}</p>
+          <p data-type="body-s" className="text-on-surface-var leading-relaxed italic">{item.context_summary}</p>
         </Section>
       )}
 
@@ -216,7 +216,7 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
       {/* INU-6: a withheld item explains itself and offers the one recovery — Restore
           re-fires the suppressed notification, so a false positive is never a silent drop. */}
       {item.status === 'filtered' && (
-        <div className="flex flex-wrap items-center gap-s rounded-m border border-outline-variant/40 px-m py-s text-[0.8125rem]">
+        <div data-type="body-s" className="flex flex-wrap items-center gap-s rounded-m border border-outline-variant/40 px-m py-s">
           <Filter size={14} style={{ color: 'var(--color-warn)' }} />
           <span className="text-on-surface-low">A second-opinion check flagged this claim, so its notification was withheld. Restore to deliver it.</span>
           <Button size="sm" variant="secondary" className="ml-auto" onClick={restore} disabled={!!busy}>
@@ -248,7 +248,7 @@ function Section({ label, right, children }: { label: string; right?: React.Reac
   return (
     <div>
       <div className="mb-1.5 flex items-center gap-s">
-        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</span>
+        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{label}</span>
         {right}
       </div>
       {children}
@@ -297,7 +297,7 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
   if (gone) {
     return (
       <Section label="Proposal">
-        <p className="text-on-surface-low text-[0.8125rem]">
+        <p data-type="body-s" className="text-on-surface-low">
           This proposal was already answered. <TextLink onClick={() => navigate('skills')}>Open Skills</TextLink>
         </p>
       </Section>
@@ -306,10 +306,10 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
   return (
     <Section label={detail?.kind === 'refine' ? 'Refine a skill' : 'New skill'}>
       {detail === null ? (
-        <p className="text-on-surface-low text-[0.8125rem]">Loading the proposal…</p>
+        <p data-type="body-s" className="text-on-surface-low">Loading the proposal…</p>
       ) : (
         <div className="flex flex-col gap-m">
-          <div className="flex flex-wrap items-center gap-x-m gap-y-1 text-[0.8125rem]">
+          <div data-type="body-s" className="flex flex-wrap items-center gap-x-m gap-y-1">
             <span className="text-on-surface" style={fvs(600)}>{detail.slug}</span>
             {detail.refine_target && <span className="text-on-surface-low">refines {detail.refine_target}</span>}
             {detail.triggers && <span className="text-on-surface-low">triggers: {detail.triggers}</span>}
@@ -320,7 +320,7 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
               (WCAG 2.1.1; axe scrollable-region-focusable, serious). That is the text
               someone is being asked to approve, so it has to be readable without a mouse.
               Same resolution as the kanban columns and the shell-denylist list. */}
-          <div className="max-h-64 overflow-auto rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem]"
+          <div data-type="body-s" className="max-h-64 overflow-auto rounded-md bg-surface-container px-m py-2 text-on-surface"
             tabIndex={0} role="group" aria-label="Procedure">
             <Markdown>{detail.procedure_md}</Markdown>
           </div>
@@ -328,8 +328,8 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
               for review only, so it stays visually distinct from the procedure above. */}
           {detail.source_excerpt && (
             <details>
-              <summary className="cursor-pointer text-on-surface-low text-[0.75rem]">Why this was proposed</summary>
-              <pre tabIndex={0} role="group" aria-label="Why this was proposed" className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-container/60 px-m py-2 text-on-surface-low text-[0.75rem]">{detail.source_excerpt}</pre>
+              <summary data-type="caption" className="cursor-pointer text-on-surface-low">Why this was proposed</summary>
+              <pre tabIndex={0} role="group" aria-label="Why this was proposed" className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-container/60 px-m py-2 text-on-surface-low" data-type="caption">{detail.source_excerpt}</pre>
             </details>
           )}
           <div className="flex flex-wrap items-center gap-s">

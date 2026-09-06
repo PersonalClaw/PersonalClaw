@@ -231,7 +231,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           // `truncate` on this flex container does nothing (it has no text of its own), which
           // left the row 111px under the controls at 390px. Now "Inbox" holds its width and
           // the secondary count truncates — the same shape `notifications` uses.
-          left={<PageTitle className="flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {status && <span className="min-w-0 truncate text-on-surface-low text-[0.75rem] font-normal">{status.pending_count} pending · {status.total_count} total</span>}</PageTitle>}
+          left={<PageTitle className="flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {status && <span data-type="caption" className="min-w-0 truncate text-on-surface-low">{status.pending_count} pending · {status.total_count} total</span>}</PageTitle>}
           right={
             // The header has room now (search/filter live on the page), so surface
             // the actions directly — the cluster collapses them (icon-only → …) if tight.
@@ -241,7 +241,8 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
               {watched.length > 0 && (
                 <Popover placement="bottom" align="right" trigger={(open, toggle) => (
                   <button onClick={toggle} disabled={busy}
-                    className="inline-flex items-center gap-1.5 rounded-pill h-9 px-m text-[0.8125rem] text-on-surface-var hover:bg-surface-high hover:text-on-surface transition-colors disabled:opacity-40"
+                    data-type="body-s"
+                    className="inline-flex items-center gap-1.5 rounded-pill h-9 px-m text-on-surface-var hover:bg-surface-high hover:text-on-surface transition-colors disabled:opacity-40"
                     style={{ background: open ? 'var(--color-surface-high)' : undefined }}
                     title="Generate a catch-up digest for a watched channel">
                     {busy ? <Loader2 size={15} className="animate-spin" /> : <ScrollText size={15} />}
@@ -250,7 +251,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                 )}>
                   {(close) => (
                     <div className="flex flex-col gap-0.5" style={{ minWidth: 220 }}>
-                      <div className="px-m pt-1 pb-1.5 text-[0.75rem] uppercase tracking-wide text-on-surface-low">Catch-up digest · last 4h</div>
+                      <div data-type="caption" className="px-m pt-1 pb-1.5 uppercase tracking-wide text-on-surface-low">Catch-up digest · last 4h</div>
                       {watched.map((ch) => (
                         <MenuRow key={ch.id} icon={<ScrollText size={15} />} label={ch.name || ch.id}
                           onClick={() => { close(); digest(ch.id) }} />
@@ -336,7 +337,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           const hasPollProviders = (status.sources ?? []).some((s) => s.kind === 'poll')
           return (
             <EntranceRegion className="mx-auto w-full px-l" style={{ maxWidth: 'var(--content-width)' }}>
-              <div className="flex items-center gap-s rounded-md px-m py-2 text-[0.8125rem]" style={{ background: 'var(--color-surface-container)' }}>
+              <div data-type="body-s" className="flex items-center gap-s rounded-md px-m py-2" style={{ background: 'var(--color-surface-container)' }}>
                 <span className="relative flex size-2">
                   <span className="relative inline-flex size-2 rounded-pill" style={{ background: 'var(--color-ok)' }} />
                 </span>
@@ -481,10 +482,10 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-s">
-                      <span className={`truncate text-[0.9375rem] ${open ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label}</span>
-                      {channelBacked && channelLabel(it) && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{channelLabel(it)}</span>}
-                      {!channelBacked && target && <span className="shrink-0 inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><ExternalLink size={11} /> deep link</span>}
-                      {it.draft && <span className="shrink-0 inline-flex items-center gap-1 text-ok text-[0.75rem]"><Reply size={11} /> draft</span>}
+                      <span data-type="label-m" className={`truncate ${open ? 'text-on-surface' : 'text-on-surface-var'}`} style={fvs(500)}>{channelBacked ? (it.sender_name || it.sender_id || 'Unknown') : km.label}</span>
+                      {channelBacked && channelLabel(it) && <span data-type="caption" className="shrink-0 text-on-surface-low">{channelLabel(it)}</span>}
+                      {!channelBacked && target && <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 text-on-surface-low"><ExternalLink size={11} /> deep link</span>}
+                      {it.draft && <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 text-ok"><Reply size={11} /> draft</span>}
                       {/* The star the api.ts comment already promised ("a strong engagement
                           signal + a star in the UI"). It carries an accessible name because it is
                           the only thing conveying the state — an icon with no name is invisible to
@@ -495,13 +496,13 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
                     {/* The panel renders this content as real markup; the ROW is a one-line
                         plain-text preview, so the marks must go — a digest body's `**` and `##`
                         rendered literally here for every digest row (issue 618). */}
-                    <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{previewText(it.message)}</p>
+                    <p data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{previewText(it.message)}</p>
                   </div>
                   <div className="hidden sm:flex shrink-0 items-center gap-s">
                     {/* Confidence is a TRIAGE judgment; a needs_input row was never triaged,
                         so showing "needs review" against it would invent a verdict. */}
-                    {channelBacked && <span className="inline-flex items-center gap-1 text-[0.75rem]" style={{ color: cf.tone }} title={cf.label}><cf.icon size={12} /></span>}
-                    {!open ? <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem]"><sm.icon size={12} style={{ color: sm.tone }} /> {sm.label}</span> : it.created_at && <span className="text-on-surface-low text-[0.75rem]">{relPast(it.created_at)}</span>}
+                    {channelBacked && <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: cf.tone }} title={cf.label}><cf.icon size={12} /></span>}
+                    {!open ? <span data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low"><sm.icon size={12} style={{ color: sm.tone }} /> {sm.label}</span> : it.created_at && <span data-type="caption" className="text-on-surface-low">{relPast(it.created_at)}</span>}
                     {unread && <Circle size={7} fill={accentTone} stroke="none" />}
                   </div>
                 </ListRow>
