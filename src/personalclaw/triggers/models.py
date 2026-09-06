@@ -223,7 +223,15 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
     ),
     "event": frozenset({"source", "pattern", "blocking", "agent_scope"}),
     "run_completed": frozenset({"source_trigger", "source_def"}),
-    "idle": frozenset({"scope", "idle_secs", "first_idle_secs"}),
+    # `message`/`max_cycles`/`stop_sentinel_path` are the absorbed autonudge loop's payload
+    # (WF2AUT-11 half 2) — the same §6 argument as the `interval` clock kind below: the store
+    # must be able to carry what the migration puts in it, or every migrated nudge loop would
+    # warn on the very fields that define it. A non-empty `message` is also the ROUTING
+    # discriminator: it sends the fire to the nudge deliverer (inject into the bound
+    # conversation) instead of the wake path (`idle_poll._is_nudge`).
+    "idle": frozenset(
+        {"scope", "idle_secs", "first_idle_secs", "message", "max_cycles", "stop_sentinel_path"}
+    ),
     "file": frozenset({"paths", "dedup"}),
     "webhook": frozenset({"token_ref"}),
     "view": frozenset({"surface_binding", "ttl_secs"}),

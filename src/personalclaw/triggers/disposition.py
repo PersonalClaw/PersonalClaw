@@ -106,7 +106,12 @@ DISPOSITION: tuple[Row, ...] = (
     ),
     Row(
         surface="autonudge.py",
-        module="personalclaw.autonudge",
+        # ABSORBED and DELETED (WF2AUT-11 half 2). The module named here is the surviving
+        # adapter — nudge loops are `kind:idle` rows fired off the substrate tick, and the old
+        # `personalclaw.autonudge` (private store + per-loop asyncio timers) no longer exists.
+        # `missing_surfaces()` imports this module, so the row points at the code that now
+        # carries the kept semantics rather than at a deleted path.
+        module="personalclaw.triggers.nudge",
         verdict=Verdict.ABSORBED,
         keeps=(
             "reactive re-arm",
@@ -115,8 +120,9 @@ DISPOSITION: tuple[Row, ...] = (
             "stop-sentinel",
             "error_count deactivation",
         ),
-        note="LAST — blocked on LOOPS-EVOLUTION Phase 4, because the loop engine rides autonudge "
-        "as its tick engine. kind:idle ships for USER automations before that.",
+        note="ABSORBED LAST, as planned — landed with WF2AUT-11 half 2: the loop tick engine "
+        "rides kind:idle (spec.message routes the fire to the nudge deliverer) and "
+        "autonudge.py was deleted in the same change.",
     ),
     Row(
         surface="heartbeat.py tasks",

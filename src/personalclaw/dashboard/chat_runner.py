@@ -4403,14 +4403,14 @@ async def run_chat(
             get_tracker().clear(session.key)
         except Exception:
             logger.debug("active-job clear failed for %s", session.key, exc_info=True)
-        # ── AutoNudge: re-arm the idle timer on EVERY turn exit (success OR
+        # ── AutoNudge: re-arm the quiet period on EVERY turn exit (success OR
         # error), so a loop survives a failed turn instead of silently dying.
         # A persistently-broken worker is bounded by the service's consecutive-
-        # error cap and (for goal loops) the supervisor's fail-fast.
+        # error cap and (for goal loops) the supervisor's fail-fast. Lazy import +
+        # fail-open kept deliberately: hot path; a broken nudge service must never
+        # turn a finished turn into an error.
         try:
-            from personalclaw.autonudge import (  # circular: autonudge -> dashboard.chat -> chat_runner  # noqa: E501
-                get_instance as _autonudge_get,
-            )
+            from personalclaw.triggers.nudge import get_instance as _autonudge_get
 
             _autonudge = _autonudge_get()
             if _autonudge is not None and not getattr(session, "_suppress_autonudge_rearm", False):

@@ -7,11 +7,11 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.autonudge import get_instance as _autonudge_get
 from personalclaw.config.loader import config_dir, workspace_root
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import is_sensitive_path
 from personalclaw.sel import sel
+from personalclaw.triggers.nudge import get_instance as _autonudge_get
 
 logger = logging.getLogger(__name__)
 
