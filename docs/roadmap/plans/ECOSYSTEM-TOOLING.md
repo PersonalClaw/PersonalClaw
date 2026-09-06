@@ -726,9 +726,28 @@ teaching bundles of `ET-6`, which stay listed above as the minimal per-type refe
   acceptable to core's `parse_trigger` and the write-back contract is driven as core drives it, but no
   gateway tick has ever armed one.
 
-`docs-slides` (`PEP-15`, suite 4/9) is the one bundle not yet recorded here — its PR is still open, and
-a bullet claiming an exemplar for an unmerged bundle would be the same overclaim this list exists to
-avoid. It lands when the PR does.
+- **2026-09-06 — `docs-slides` (`PEP-15`, suite 4/9) — the first bundle that made the platform GROW A
+  SEAM instead of a workaround.** PersonalClawApps PR #79, with core PR #2510. `ET-6`'s four teaching
+  bundles each demonstrate a provider *type*; this one demonstrates the **core/app boundary under
+  pressure**. Fronting core's document writers was impossible through the published SDK, and the fix
+  was the promotion the import-boundary lint's own error message prescribes — `personalclaw.sdk.documents`
+  — rather than vendoring `python-pptx` in the bundle. That distinction is the lesson: the writers must
+  pair with the *parsers* Knowledge reads `.pptx`/`.docx` back with, so a renderer living inside an app
+  would drift from the one that reads it, and the app would emit files core's own parsers degrade on.
+  The seam was also promoted with a deliberate hole in it: `register_writer` is **not** exported,
+  because an app-registered format would be visible to every other caller of the shared registry while
+  that app happened to be enabled and vanish when it was disabled — so `available_formats()` would stop
+  being a property of the build. A test asserts that omission, so it reads as a decision rather than an
+  oversight. Its tests prove "openable" by round-tripping through those same parsers rather than
+  asserting a byte count, which would pass on 30 KB of unopenable zip. Its containment lesson is an
+  *absence*: no tool takes a path or directory argument, so the widest write it can perform is the
+  `storage` grant it already holds. **Ceiling:** validated headless through the real Store path
+  (resolve → install → register → invoke, files read back) but never driven in a browser; not
+  registry-listed, which needs a published repo the validator can reach; and a rendered `.pdf` has a
+  valid `%PDF-` header and `%%EOF` trailer but has never been opened in a reader — only the `.docx`
+  half is parser-proven.
+
+All nine apps of the `PEP-11` suite are now recorded here.
 
 **Neither these nor any later suite app takes an `app-registry.json` row, and that is not an omission.**
 The apps repo is already a default git Store source (`catalog._DEFAULT_GIT_SOURCES`), so a merged bundle
