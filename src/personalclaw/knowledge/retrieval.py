@@ -13,14 +13,34 @@ from .store import KnowledgeStore
 
 logger = logging.getLogger(__name__)
 
-# Relevance-cliff cutoff: walking the score-sorted results, stop at the first
-# point where the score drops by more than this fraction of the running top
-# score — the "cliff" between the relevant cluster and the long tail of weak
-# matches. Returns the natural cluster instead of a fixed top-K (which either
-# pads with weak hits or truncates a strong run). 0.30 is OpenForge's empirical
-# value (§K5); tune from real queries.
-_RELEVANCE_CLIFF_GAP = 0.30
-_CLIFF_MIN_RESULTS = 1  # never cut below this when any match exists
+# ── why there is no post-fusion relevance cut ─────────────────────────────────
+# There used to be one ("the relevance cliff"): walk the score-sorted fused list and stop
+# at the first consecutive pair whose drop exceeded 0.30 × the top score, on the theory
+# that the elbow between the relevant cluster and the weak tail would show up there.
+#
+# It cannot. RRF fuses RANKS: a fused score is Σ 1/(k + rank) over the arms that returned
+# the item, so it is a function of POSITION and ARM COUNT and carries no information at all
+# about how good any single match is. Two items with the same arm membership at the same
+# ranks score identically whether one is the definitive answer and the other mentions the
+# query once in a footnote. Any threshold on that number — a consecutive-pair gap, or a
+# floor relative to the top score — is therefore a threshold on position, and measuring one
+# is measuring the shape of 1/(k+rank), not the corpus.
+#
+# Measured on a 26-item library over 22 real queries (#392): the consecutive-gap cut fired
+# on 12 of them, and in all 12 the firing drop was `_TITLE_BOOST` (1/61 = 0.01639) — the
+# arms' own contribution landed between -0.00190 and +0.00126, never once producing the drop
+# by itself. So in practice it was a title-match detector, and which way it went depended
+# only on whether some title happened to match: with one matching it returned 1 of 23
+# candidates for `scrub`/`raidz`/`smart`, 3 for `resilver`, 9 for `draid`; with none matching
+# it returned all 23 for `zfs` and all 25 for `a`. Both directions are the same defect.
+# A relative-to-top floor — the other obvious repair — is the same error: on a
+# single-arm list `score[i] < (1-gap)·score[0]` reduces to a CONSTANT top-K (rank 28 at
+# gap = 0.30) independent of the corpus, while on a multi-arm list the identical constant
+# instead means "drop every single-arm hit at any rank".
+#
+# Absolute match quality survives in exactly one place: inside an arm, before its hits are
+# flattened into ranks. That is where each arm qualifies them (`ARM_QUALIFICATION` below).
+# Fusion orders what the arms already vouched for, and the caller's `limit` caps it.
 
 # Minimum cosine similarity for a vector hit to count. Vector search otherwise always
 # returns its top-K regardless of how weak the match is, so a precise keyword/tag query
@@ -59,37 +79,28 @@ ARM_VECTOR = "vector"
 #: Every arm :meth:`HybridRetriever.search` fuses, in ``match_type`` order.
 ARMS = (ARM_KEYWORD, ARM_GRAPH, ARM_VECTOR)
 
-
-def relevance_cliff_cut(
-    scores: list[float],
-    *,
-    min_results: int = _CLIFF_MIN_RESULTS,
-    max_results: int | None = None,
-    gap: float = _RELEVANCE_CLIFF_GAP,
-) -> int:
-    """Return how many leading results to keep, cutting at the relevance cliff.
-
-    ``scores`` must be sorted descending. Walks consecutive pairs and cuts before
-    the first where the drop exceeds ``gap`` × (top score) — the elbow between
-    the relevant cluster and the weak tail. The result is clamped to
-    ``[min_results, max_results or len(scores)]``; a degenerate top score of 0
-    (no signal) keeps everything up to the cap. Pure + side-effect-free so the
-    cutoff is unit-testable apart from the DB-backed ranking path.
-    """
-    n = len(scores)
-    cap = n if max_results is None else min(max_results, n)
-    if n <= 1:
-        return cap
-    top = scores[0]
-    if top <= 0:
-        return cap
-    threshold = gap * top
-    cut = n
-    for i in range(1, n):
-        if scores[i - 1] - scores[i] > threshold:
-            cut = i
-            break
-    return max(min(min_results, cap), min(cut, cap))
+#: Each arm's PRE-FUSION qualification, on that arm's own native scale — the contract that
+#: replaced the post-fusion relevance cut (see the block comment at the top of this module for
+#: the measurement that killed it). An arm must never hand fusion its unbounded top-K: RRF
+#: cannot tell a strong hit from a weak one, so whatever the arm knows about match quality has
+#: to be spent before its list becomes ranks. Keyed by :data:`ARMS` precisely so a fourth arm
+#: cannot be added without declaring one — ``tests/test_retrieval_arm_qualification.py``
+#: derives its completeness check from :data:`ARMS`, not from a hand-kept list here.
+ARM_QUALIFICATION: dict[str, str] = {
+    ARM_KEYWORD: (
+        "FTS5 MATCH: an item qualifies only by containing a query term (or its prefix) in "
+        "its indexed text — items with no term occurrence are never in the arm's list."
+    ),
+    ARM_GRAPH: (
+        "hop distance: an item qualifies by mentioning an entity the query matched DIRECTLY. "
+        "Items reached only through the depth-2 traversal are the arm's fallback, used when "
+        "nothing mentions a direct match — never as padding alongside one."
+    ),
+    ARM_VECTOR: (
+        f"cosine ≥ _VECTOR_MIN_SIMILARITY ({_VECTOR_MIN_SIMILARITY}), applied per vector "
+        "before the max roll-up, so a near-orthogonal chunk cannot become an item's evidence."
+    ),
+}
 
 
 class HybridRetriever:
@@ -182,11 +193,10 @@ class HybridRetriever:
 
         fused.sort(key=_sort_key, reverse=True)
 
-        # Relevance-cliff cutoff: keep the natural cluster of strong matches
-        # instead of a fixed top-K, bounded by the caller's limit. A query with
-        # one clearly-best hit returns just that; a broad query returns the whole
-        # relevant run (up to limit).
-        keep = relevance_cliff_cut([score for _, score in fused], max_results=limit)
+        # No post-fusion relevance cut — `limit` is the only cap. Everything still here was
+        # already vouched for by the arm that retrieved it (`ARM_QUALIFICATION`), on that arm's
+        # own absolute scale; a second cut on the fused score would only re-cut by position.
+        # See the module block comment for the measurement.
 
         # Track which lists each item appeared in
         kw_ids = {i for i, _ in kw}
@@ -194,7 +204,7 @@ class HybridRetriever:
         vec_ids = {i for i, _ in (vec or [])}
 
         results = []
-        for item_id, score in fused[:keep]:
+        for item_id, score in fused[:limit]:
             item = items_cache.get(item_id)
             if not item:
                 continue
@@ -258,7 +268,30 @@ class HybridRetriever:
     def _graph_search(
         self, query: str, limit: int = 20, *, include_archived: bool = False
     ) -> list[tuple[str, int]]:
-        """Find entities matching query terms, traverse graph, rank items by mention count."""
+        """Find entities matching query terms, traverse the graph, rank items by mention count.
+
+        Qualification (:data:`ARM_QUALIFICATION`) — **hop distance is this arm's native
+        relevance scale**, in the same sense cosine is the vector arm's, and it used to be
+        computed and then thrown away: the direct name matches and their depth-2 neighbours
+        were folded into one ``IN (...)`` and every mention counted the same.
+
+        On a real library that makes the arm return a query-INDEPENDENT constant: a depth-2
+        traversal over an entity graph where the topic hubs are all linked reaches the whole
+        connected component. Measured (#392) on a 26-item library, ``draid``, ``resilver``,
+        ``scrub`` and ``smart`` each resolved to one entity, reached all 8 through the
+        traversal, and so returned the same 23 of 26 items — of which 5, 17, 19 and 21
+        respectively contained the query term nowhere in title, summary, content OR tags.
+        That tail is what made a search for a present term look like "the entire library", and no
+        post-fusion threshold could remove it, because by then it was indistinguishable from a
+        genuine low-ranked hit (both are ``1/(k+rank)``).
+
+        So the distance is kept: an item mentioning an entity the query matched **directly** is
+        about the query and qualifies. An item reached only through a neighbour is about
+        something adjacent — it is the arm's **fallback**, ranked only when nothing mentions a
+        direct match, which is exactly the role ``_VECTOR_MIN_SIMILARITY`` gives a
+        near-orthogonal neighbour. The traversal itself is unchanged and still does its job
+        (finding an item that discusses the entity without naming it, via its own mention row).
+        """
         words = query.split()
         # Match entity names at several granularities: individual words, consecutive
         # pairs/triples, AND the full query — so a multi-word entity name like
@@ -279,30 +312,40 @@ class HybridRetriever:
         if not entity_ids:
             return []
 
-        # Expand via graph neighbors (depth=2)
+        # Expand via graph neighbors (depth=2), keeping the two hop classes apart.
         all_entity_ids = set(entity_ids)
         for eid in entity_ids:
             for neighbor in self.store.get_neighbors(eid, depth=2):
                 all_entity_ids.add(neighbor["id"])
 
         # Count item mentions (active items; archived hidden by default — matching the
-        # default list semantics — unless the Archived view asked to include them).
-        item_counts: dict[str, int] = defaultdict(int)
-        placeholders = ",".join("?" * len(all_entity_ids))
+        # default list semantics — unless the Archived view asked to include them), splitting
+        # mentions of a DIRECTLY matched entity from mentions of a traversal neighbour.
+        # `direct_cnt` leads the ORDER BY so the SQL `LIMIT` can never spend the arm's budget
+        # on neighbour-only items while a directly-mentioning one is still unranked.
+        direct_ids = sorted(entity_ids)
+        reachable_ids = sorted(all_entity_ids)
+        direct_ph = ",".join("?" * len(direct_ids))
+        placeholders = ",".join("?" * len(reachable_ids))
         archived_clause = "" if include_archived else "AND COALESCE(i.is_archived, 0) = 0 "
         rows = self.store.db.execute(
-            f"SELECT m.item_id, COUNT(*) as cnt FROM mentions m "  # noqa: S608
+            f"SELECT m.item_id, COUNT(*) as cnt, "  # noqa: S608
+            f"SUM(CASE WHEN m.entity_id IN ({direct_ph}) THEN 1 ELSE 0 END) as direct_cnt "
+            f"FROM mentions m "
             f"JOIN items i ON i.id = m.item_id "
             f"WHERE m.entity_id IN ({placeholders}) AND i.status = 'active' "
             f"{archived_clause}"
-            f"GROUP BY m.item_id ORDER BY cnt DESC LIMIT ?",
-            (*all_entity_ids, limit),
+            f"GROUP BY m.item_id ORDER BY direct_cnt DESC, cnt DESC LIMIT ?",
+            (*direct_ids, *reachable_ids, limit),
         ).fetchall()
-        for row in rows:
-            item_counts[row["item_id"]] = row["cnt"]
 
-        sorted_items = sorted(item_counts.items(), key=lambda x: x[1], reverse=True)
-        return [(item_id, rank + 1) for rank, (item_id, _) in enumerate(sorted_items)]
+        # The qualification. Traversal-only items are the fallback, not padding: they rank
+        # only when no item mentions a directly-matched entity at all (an entity that exists
+        # in the graph but is mentioned by nothing), so the arm keeps its recall floor without
+        # spending it on the connected component every time.
+        qualified = [row for row in rows if row["direct_cnt"]]
+        ranked = qualified or list(rows)
+        return [(row["item_id"], rank + 1) for rank, row in enumerate(ranked)]
 
     def _vector_search(
         self,

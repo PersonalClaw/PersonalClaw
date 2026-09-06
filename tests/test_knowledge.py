@@ -1243,9 +1243,9 @@ class TestDocxContentType:
 
 #: Deterministic 4-dim fixture vectors. No embedding model is involved anywhere in this
 #: section: vectors are written straight into the ``items.embedding`` / ``chunks.embedding``
-#: BLOBs so the arithmetic under test (cosine, the similarity floor, the roll-up, RRF and
-#: the cliff cut) is exactly reproducible on every machine. A test that could not embed
-#: would prove nothing about ranking.
+#: BLOBs so the arithmetic under test (cosine, the similarity floor, the roll-up and RRF)
+#: is exactly reproducible on every machine. A test that could not embed would prove
+#: nothing about ranking.
 def _v(*vals):
     return struct.pack(f"{len(vals)}f", *vals)
 
@@ -1294,7 +1294,7 @@ def _fixed_corpus(store):
 #: The exact ``search("token")`` ranking on ``_fixed_corpus`` — captured on the tree
 #: BEFORE the chunk arm landed and unchanged by it. Pinning the scores (not just the
 #: order) is what makes this a fusion regression test: any change to ``_rrf_fuse``, its
-#: ``k``, the title boost or the cliff cut moves these numbers.
+#: ``k`` or the title boost moves these numbers.
 _PINNED_TOKEN_RANKING = [("B", 0.048916), ("A", 0.048660), ("C", 0.048395)]
 
 #: The result dict's keys. The atom must not add, drop or rename a field.
@@ -1345,8 +1345,16 @@ class TestVectorArmUnchangedOnFixedCorpus:
         assert [names[i] for i, _ in vec] == ["A", "B", "C"]
         assert [rank for _, rank in vec] == [1, 2, 3]
 
-    def test_cliff_cut_still_trims_the_weak_tail(self, store):
-        """The relevance cliff is unchanged: four indexed items, three returned."""
+    def test_the_weak_tail_is_still_trimmed(self, store):
+        """Four indexed items, three returned — and it is the ARMS that drop the fourth.
+
+        This pin used to be credited to the post-fusion relevance cliff, which #392 removed
+        (a threshold on an RRF-fused score is a threshold on position, not relevance). It
+        never was the cliff: D reaches neither arm — its cosine is 0.00, below
+        ``_VECTOR_MIN_SIMILARITY``, and it contains no form of "token" for FTS5 to match — so
+        it was already absent from the fused list. Pre-fusion qualification
+        (``ARM_QUALIFICATION``) is what excludes it, before and after.
+        """
         ids = _fixed_corpus(store)
         retriever = HybridRetriever(store, embedder=lambda q: [1.0, 0.0, 0.0, 0.0])
         assert len(retriever.search("token", limit=10)) == 3
