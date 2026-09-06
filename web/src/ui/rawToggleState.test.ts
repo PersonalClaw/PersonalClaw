@@ -49,7 +49,7 @@ const read = (rel: string) => readFileSync(join(PAGES, rel), 'utf8')
 const DISCLOSURES: [string, string, string][] = [
   // The chat turn-context strip is the `ContextLedger`, extracted out of `ChatPage.tsx` (LV-2) so
   // its one-action reach could be mounted and proved; the census follows the code, not the address.
-  ['chat/ContextLedger.tsx', 'open', 'aria-expanded={open}\n        className="flex items-center gap-1.5 rounded-pill'],
+  ['chat/ContextLedger.tsx', 'open', 'aria-expanded={open}\n        data-type="caption"\n        className="flex items-center gap-1.5 rounded-pill'],
   ['artifacts/ArtifactViewer.tsx', 'metaOpen', 'setMetaOpen((v) => !v)} aria-expanded={metaOpen}'],
   ['loops/CockpitPromptBar.tsx', 'open', 'aria-expanded={open} className="flex w-full items-center gap-s text-left min-w-0"'],
   ['loops/LoopCockpitPage.tsx', 'promptOpen', 'setPromptOpen(!promptOpen)} aria-expanded={promptOpen}'],

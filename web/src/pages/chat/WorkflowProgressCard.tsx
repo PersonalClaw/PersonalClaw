@@ -95,7 +95,7 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
     return (
       <motion.div {...messageEnter} className="my-s flex items-center gap-s rounded-xl border border-outline-variant p-m">
         <Workflow size={15} className="shrink-0 text-on-surface-low" />
-        <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem]">Couldn't load this workflow run</span>
+        <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface-var">Couldn't load this workflow run</span>
         <Button variant="ghost-accent" size="xs" onClick={() => load()}>Try again</Button>
       </motion.div>
     )
@@ -112,11 +112,11 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
     >
       <div className="flex min-w-0 items-center gap-s">
         <Workflow size={15} className="shrink-0 text-on-surface-low" />
-        <span className="min-w-0 flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>
+        <span data-type="label-s" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(500)}>
           {vm?.workflow || 'Workflow'}
         </span>
         {look && StatusIcon && (
-          <span className={`inline-flex shrink-0 items-center gap-1 text-[0.75rem] ${look.tone}`}>
+          <span data-type="caption" className={`inline-flex shrink-0 items-center gap-1 ${look.tone}`}>
             <StatusIcon size={12} className={look.spin ? 'animate-spin' : ''} /> {look.label}
           </span>
         )}
@@ -130,7 +130,7 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
         <div className="flex items-center gap-s">
           <Meter size="thin" className="flex-1" pct={pct}
             label={`${vm.workflow || 'Workflow'} progress: ${vm.doneCount} of ${vm.totalCount} steps done`} />
-          <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">
+          <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">
             {vm.doneCount}/{vm.totalCount}
           </span>
         </div>
@@ -139,12 +139,12 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
       {/* The ask, inline: a run waiting on a human is the whole reason to look at this card,
           and making the user open the run page to discover WHY defeats it. */}
       {vm?.needsInput && (
-        <p className="text-warning text-[0.75rem]">
+        <p data-type="caption" className="text-warning">
           {typeof vm.attention?.prompt === 'string' ? String(vm.attention.prompt) : 'Waiting on you'}
         </p>
       )}
 
-      {vm?.error && <p role="alert" className="text-danger text-[0.75rem]">{vm.error}</p>}
+      {vm?.error && <p role="alert" data-type="caption" className="text-danger">{vm.error}</p>}
 
       {/* The currently-interesting node, not the whole list — a chat card is a glance, and
           twenty rows in a message stream is a wall. */}
@@ -155,7 +155,7 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
         const nl = nodeLook(active.state)
         const NIcon = nl.icon
         return (
-          <div className="flex min-w-0 items-center gap-s text-on-surface-low text-[0.75rem]">
+          <div data-type="caption" className="flex min-w-0 items-center gap-s text-on-surface-low">
             <NIcon size={12} className={`shrink-0 ${nl.tone}${nl.spin ? ' animate-spin' : ''}`} />
             <span className="min-w-0 flex-1 truncate">{active.node_id || active.instance_path}</span>
           </div>
@@ -163,7 +163,7 @@ export function WorkflowProgressCard({ refObj }: { refObj: WorkflowRunRef }) {
       })()}
 
       {vm && (vm.tokens > 0 || vm.elapsedSecs > 0) && (
-        <div className="flex items-center gap-m text-on-surface-low text-[0.75rem]">
+        <div data-type="caption" className="flex items-center gap-m text-on-surface-low">
           {vm.elapsedSecs > 0 && <span className="tabular-nums">{fmtElapsed(vm.elapsedSecs)}</span>}
           {vm.tokens > 0 && <span className="tabular-nums">{vm.tokens.toLocaleString()} tokens</span>}
         </div>

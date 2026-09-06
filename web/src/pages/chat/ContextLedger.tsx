@@ -70,7 +70,8 @@ export function ContextLedger({ fed, learned, learnedOrigin, stats }: { fed?: st
   return (
     <div className="mt-2 mb-1">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
-        className="flex items-center gap-1.5 rounded-pill text-on-surface-low/80 text-[0.75rem] transition-colors hover:text-on-surface-low"
+        data-type="caption"
+        className="flex items-center gap-1.5 rounded-pill text-on-surface-low/80 transition-colors hover:text-on-surface-low"
         title={open ? 'Hide what fed this turn and what was learned' : collapsedTitle}>
         <motion.span animate={{ rotate: open ? 90 : 0 }} transition={spring.spatialFast} className="shrink-0 opacity-60">
           <ChevronRight size={11} />
@@ -83,7 +84,7 @@ export function ContextLedger({ fed, learned, learnedOrigin, stats }: { fed?: st
         {open && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
             transition={spring.spatialFast} className="overflow-hidden">
-            <div className="mt-1.5 ml-1.5 flex flex-col gap-1.5 border-l border-outline-variant/40 pl-3 text-[0.75rem] text-on-surface-low">
+            <div data-type="caption" className="mt-1.5 ml-1.5 flex flex-col gap-1.5 border-l border-outline-variant/40 pl-3 text-on-surface-low">
               {fed && (
                 <LedgerRow icon={Brain} label="Fed this turn">
                   Recalled relevant context{fedChars ? ` · ${fedChars} chars` : ''} — saved memories, learned lessons, earlier conversation, and episodic history, assembled and prepended to the prompt.
@@ -117,7 +118,9 @@ function LedgerRow({ icon: Icon, label, children, contentRef }: { icon: LucideIc
     <div className="flex items-start gap-1.5">
       <Icon size={11} className="mt-[0.15rem] shrink-0 opacity-70" />
       <div ref={contentRef} className="min-w-0">
-        <span className="font-medium text-on-surface-low/90">{label}:</span>{' '}
+        {/* fw-500, not font-medium: the caption'd container's font-variation-settings
+            inherits here and would override a font-weight utility on this descendant. */}
+        <span className="fw-500 text-on-surface-low/90">{label}:</span>{' '}
         {children}
       </div>
     </div>
