@@ -74,32 +74,20 @@ def _actor(request: web.Request) -> str:
 
 
 def _installer_for(request: web.Request):
-    """The accept-time installer, or None when no memory store is reachable.
+    """The accept-time installer, bound to this request's memory service.
 
-    `proposals.accept` runs the installer AFTER `require_human` — so this is the human installing,
-    the one path §2.6 permits to write a self-model principle or a project-context change live. It
-    dispatches per proposal shape:
+    The DISPATCH is not here. It lives in `personalclaw.learning.installers`, which
+    `proposals.accept` resolves by itself — so a route that forgot to pass this still installs,
+    which is the failure this function used to own the whole risk of. All this adds is the one
+    thing the store cannot resolve: the memory service the self-model branch writes a principle
+    through, which is cached on the dashboard's state (a second `MemoryService` over the same
+    files would give the process two handles on one store).
 
-    * a self-model principle (`source_cadence == "self_model"`) → `install_accepted_principle`;
-    * a project-context change (kind in `PROJECT_KINDS`, E1.4) → `install_accepted_project_context`,
-      which writes EXACTLY the accepted item (one instruction append, one context file, or one
-      skill) and nothing pending or rejected beside it;
-    * a promoted run/conversation (kind `skill`, E1.3) → `install_accepted_skill`, which writes the
-      `auto/` skill through the existing auto-skill rail. This is the ONLY path that installs a
-      promotion: the agent files the proposal, the human here writes it;
-    * a pasted prompt card (AGENT-PACKS §4.3 — tagged `prompt-card`) →
-      `install_accepted_prompt_card`, which writes the ONE typed entity the card mapped onto
-      (prompt / template / agent). The importer itself never writes a store, so this is the only
-      path a pasted card can reach one;
-    * an ordinary `lesson_batch` from a correction already lives in the lesson store, so there is
-      nothing further to install for it.
-
-    A missing store means accept still records the decision — the self-model projection is deferred
-    (best-effort), while a project-context or skill install needs no memory service and runs
-    regardless.
+    Kept as a named helper rather than inlined because `handlers_inbox`'s proposal-apply route
+    imports it — the inbox and the Learning surface must install through the same code, or
+    "Approve" means two different things depending on where it was clicked.
     """
-    from personalclaw.learning import project_context_review, self_model_observer, skill_promotion
-    from personalclaw.packs import prompt_cards
+    from personalclaw.learning import installers
 
     try:
         from personalclaw.dashboard.handlers.memory import _get_service
@@ -109,20 +97,7 @@ def _installer_for(request: web.Request):
         logger.debug("accept installer: no memory service", exc_info=True)
         svc = None
 
-    def _install(prop) -> None:
-        data = prop.to_dict()
-        # The prompt-card branch is FIRST because it claims by tag, and a card that mapped onto
-        # a template would otherwise fall through to a branch that cannot write it.
-        if prompt_cards.is_prompt_card_proposal(data):
-            prompt_cards.install_accepted_prompt_card(data)
-        elif project_context_review.is_project_context_proposal(data):
-            project_context_review.install_accepted_project_context(data)
-        elif skill_promotion.is_skill_promotion_proposal(data):
-            skill_promotion.install_accepted_skill(data)
-        elif svc is not None and self_model_observer.is_self_model_proposal(data):
-            self_model_observer.install_accepted_principle(svc, data)
-
-    return _install
+    return installers.installer_for(service=svc)
 
 
 async def _apply_accepted_template_diff(prop) -> dict:
@@ -258,6 +233,12 @@ async def api_learning_proposal_accept(request: web.Request) -> web.Response:
     looking for a bug.
 
     There is deliberately no `?force=` or trust override. §7: "under ANY trust mode".
+
+    A kind nothing can install yet is **409 with the reason**, and no decision is recorded — the
+    proposal is still pending afterwards. Measured before this existed: accepting a `retirement`,
+    `tier_migration`, `template` or `knowledge_draft` answered 200 `{"ok": true}`, wrote nothing,
+    and recorded an accept that blocked every future re-file of the same change with "already
+    accepted". A 200 for a change that did not happen is the one answer this route must never give.
     """
     if not _enabled():
         return web.json_response({"error": "learning is disabled"}, status=404)
@@ -270,10 +251,15 @@ async def api_learning_proposal_accept(request: web.Request) -> web.Response:
         prop = store.accept(pid, actor=actor, installer=_installer_for(request))
     except store.AcceptError as exc:
         message = str(exc)
-        # A missing row is a 404; a refused actor is a 403. Collapsing them would report a
-        # permission
-        # decision as a typo and vice versa.
-        status = 404 if message.startswith("no proposal") else 403
+        # A missing row is a 404; a refused actor is a 403; a kind with no installer is a 409.
+        # Collapsing them would report a permission decision as a typo, or an unbuilt installer as
+        # a permission wall someone would go hunting for the setting to open.
+        if isinstance(exc, store.NoProposalInstallerError):
+            status = 409
+        elif message.startswith("no proposal"):
+            status = 404
+        else:
+            status = 403
         _audit(request, "learning.proposal_accept", "rejected", f"{pid}:{message}")
         return web.json_response({"error": message}, status=status)
     applied: dict | None = None
