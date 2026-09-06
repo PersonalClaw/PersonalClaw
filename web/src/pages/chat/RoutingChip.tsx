@@ -6,8 +6,14 @@ import { spring } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
-import { api } from '../../lib/api'
+import { api, type RoutingSuggestion } from '../../lib/api'
 import { notify } from '../../app/appSdk'
+
+// The wire type lives with the transport that produces it (lib/api.ts) — the server
+// builds one payload per send and ships it over BOTH the WS broadcast and the send
+// response, so a copy declared here could drift from what actually arrives. Re-exported
+// so the chip stays the one import site for everything routing-chip-shaped.
+export type { RoutingSuggestion }
 
 /** Routing suggestion chip (AGENT-ROUTING S2) — a subtle, non-blocking pill above
  *  the composer proposing a better-fit specialist for the current default-agent chat.
@@ -16,14 +22,6 @@ import { notify } from '../../app/appSdk'
  *  feedback record (routing_pair producer) so routing-pair accuracy shows up in
  *  Settings → AI feedback with zero extra UI. The chip is a *proposal* — nothing
  *  about the session changes until the user clicks Route. */
-export interface RoutingSuggestion {
-  session: string
-  agent: string
-  specialty: string
-  score: number
-  method: string
-}
-
 export function RoutingChip({ suggestion, defaultAgent, onRoute, onDismiss }: {
   suggestion: RoutingSuggestion
   defaultAgent: string

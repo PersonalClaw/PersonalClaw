@@ -919,6 +919,19 @@ export interface AppDepClassification {
  *  "none", or the dialog goes back to promising a removal that will be refused. */
 export interface AppDataFacts { present: boolean; entries: number; path: string; unconsumed?: string[] }
 export interface AgentDef { name: string }
+/** Agent routing's suggestion payload (AGENT-ROUTING S2). The server builds it ONCE
+ *  per send and ships the same object on two transports — the `routing_suggestion` WS
+ *  broadcast and the send response — so the wire type is declared here, with the
+ *  transport, rather than in the chip that renders it. `session` is the server's own
+ *  identity for the chat the suggestion is about; the frontend resolves it against the
+ *  open session in exactly one place (pages/chat/sessionDelivery.ts). */
+export interface RoutingSuggestion {
+  session: string
+  agent: string
+  specialty: string
+  score: number
+  method: string
+}
 export interface ChatSession {
   key: string; title: string; agent: string; model: string; reasoning_effort: string
   acp_provider: string; acp_provider_agent: string; mode: string; workspace_dir: string
@@ -6151,9 +6164,15 @@ export const api = {
   // "a terse operator voice" while activate() only touched localStorage and CSS.
   // Centralized here so every send path (chat, steer, comment-target) carries it;
   // the server gates on first-turn-of-session and its own closed theme set.
+  //
+  // `routing_suggestion` is the SAME payload the server also broadcasts over WS. It rides
+  // the response because the broadcast is the earliest frame of a send, and a chat created
+  // BY this send remounts ChatSession (closing its socket) before the frame arrives — so
+  // the WS copy is unreachable exactly on a new chat's first message (issue 569). A
+  // response is causally after its request, so this copy cannot be raced.
   sendChat: (message: string, session: string, meta?: object, queue_mode?: string, input_origin?: string) => {
     const color_theme = activePersonaTheme()
-    return post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}), ...(color_theme ? { color_theme } : {}) })
+    return post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean; routing_suggestion?: RoutingSuggestion }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}), ...(color_theme ? { color_theme } : {}) })
   },
   // Cancel a still-pending queued message (mid-stream FIFO) by its queue id.
   cancelQueued: (session: string, queueId: string) => del(`/api/chat/sessions/${encodeURIComponent(session)}/queue/${encodeURIComponent(queueId)}`),
