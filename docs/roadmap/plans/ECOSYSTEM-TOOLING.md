@@ -665,6 +665,71 @@ teaching bundles of `ET-6`, which stay listed above as the minimal per-type refe
   adopts that repo rather than nesting one, and every note commit carries an explicit pathspec, proven
   by a test that a user's unrelated staged file stays staged.
 
+- **2026-09-06 — `issue-radar` (`PEP-17`, suite 6/9) — a `tool` exemplar for REACHING A THIRD-PARTY
+  SYSTEM WITH `network: false`.** PersonalClawApps PR #80. It reads GitHub and GitLab only through the
+  CLIs the user has already signed in (`gh`, `glab`), fixed argv and never a shell string, so the
+  operator's own credentials are never handled by the app. It is the first bundle to normalise **two**
+  foreign payload schemas behind one internal record, so nothing downstream knows which host an issue
+  came from; and the first to constrain a model to a **vocabulary the remote system owns** — the prompt
+  asks for labels from the repository's own label set and the parser then *enforces* it, dropping
+  anything invented while keeping the dropped name visible. Its deterministic matcher must name a label
+  the repo already has, must carry the phrase that fired it and which field it fired on, and omits
+  judgment labels (`good first issue`, `wontfix`, priority tiers) by design. Live data forced a
+  precision rule worth stealing: a title is the reporter's own summary so `slow` is trustworthy there,
+  while "the slow path is not the problem here" mid-body is not. **Ceiling:** it cannot spawn
+  subagents, so its `plan` leg publishes briefs for a host to spawn against; the GitLab leg has never
+  run against a live `glab`; and the model leg has never run against a real provider, so suggestion
+  *quality* is unmeasured.
+- **2026-09-06 — `spec-builder` (`PEP-18`, suite 7/9) — the first exemplar of an app that is a FRONT
+  OVER A CORE ENGINE rather than an implementation of a provider contract.** PersonalClawApps PR #81.
+  All four `ET-6` teaching bundles are one provider type satisfying one published contract, validated
+  by a conformance kit; this one produces core's *own* data format — a workflow definition — and hands
+  it across by name, so its correctness is asserted by core's `validate_node_tree` instead. It is
+  therefore the reference for three things the four cannot teach: the **boundary-refusal path**, where
+  the obvious provider type (`workflow`, a real `PROVIDER_TYPES` entry) publishes no
+  `personalclaw.sdk.*` contract, so the app ships as `tool` and documents why rather than importing
+  around the boundary; the rule that **untrusted content must not become durable** — fetched repository
+  text is fenced *and* structurally excluded from the emitted definition, because a definition is saved
+  and re-run and a folded-in injection would outlive the review that missed it; and product-shaped
+  scale (~1,050 LOC plus 172 tests) rather than the ≤300-LOC teaching size. **Ceiling:** no `ui/`, so
+  no design-system or a11y claim; `spec_seed` needs `git` and an explicitly configured repository, no
+  default, deliberately; and the definitions it emits pass core's validator but have never been *run* —
+  the shape is proven admissible, the runtime behaviour of the stage prompts is not.
+- **2026-09-06 — `ops` (`PEP-19`, suite 8/9) — a `tool` exemplar for a GATED MUTATION PATH.**
+  PersonalClawApps PR #83. An on-call first responder over one incident ledger, where alarms arrive as
+  JSON files in a spool folder — the one intake every monitor can already reach — so `network: false`
+  holds and nothing in the bundle opens a socket. What it exemplifies is that "no ungated mutation
+  path" can be a **file-layout property rather than a promise**: an AST test pins that the only module
+  importing `subprocess` is `runbooks.py`, that `run_action` is referenced from exactly one function,
+  and that the single `shell=` keyword in the bundle is `False`, backed by a runtime tripwire across
+  all eight non-apply tools. Applying a fix is refused four independent ways — setting off, no confirm,
+  wrong token, runbook edited since — before a confirmed apply runs, and replay is refused after.
+  **Ceiling:** the cron has never run in a real scheduler, no real monitor has written the spool, and
+  no remediation has been applied against a real service.
+- **2026-09-06 — `companion` (`PEP-20`, suite 9/9) — the first bundle where A STORED RECORD AND THE
+  AUTOMATION IT BECOMES ARE DIFFERENT OBJECTS, and the gap is the security boundary.**
+  PersonalClawApps PR #86. `ET-6`'s four teaching bundles all persist what they serve, and
+  `shared-automations` — the only other `trigger` provider — stores raw trigger rows, so a hand edit or
+  a synced copy can put any `workflow.provider` into the arm path. `companion` inverts that: it
+  persists *items* (a title, a note, a time, a path) and synthesises the row — `kind`, `workflow`,
+  frozen `capabilities` — in code on every read, through one function that has no parameter for an
+  action. The consequence is a property no amount of fencing buys: there is **no field anywhere in the
+  file where an LLM action could be written**, so a durable, scheduled, unattended fire structurally
+  cannot carry an instruction. A test proves it by injecting `run-prompt`, `invoke-agent`, `kind:
+  webhook` and a top-level `triggers` array and getting `clock`/`notify` out regardless. It also
+  exemplifies the **two-providers-one-bundle** shape (`tool` + `trigger`, both re-exported under
+  `personalclaw.sdk.*` so the boundary job stays clean) and the honest satisfaction of an opt-in
+  clause: three surfaces off by default, and "disabling removes all its triggers" holds because the
+  rows never enter core's own store at all. **Ceiling:** the action is always `notify`, so the
+  companion nudges and never drafts — a day brief that *summarised* the day would need an LLM action,
+  which is exactly what this design refuses to author. And nothing has fired: the rows are proven
+  acceptable to core's `parse_trigger` and the write-back contract is driven as core drives it, but no
+  gateway tick has ever armed one.
+
+`docs-slides` (`PEP-15`, suite 4/9) is the one bundle not yet recorded here — its PR is still open, and
+a bullet claiming an exemplar for an unmerged bundle would be the same overclaim this list exists to
+avoid. It lands when the PR does.
+
 **Neither these nor any later suite app takes an `app-registry.json` row, and that is not an omission.**
 The apps repo is already a default git Store source (`catalog._DEFAULT_GIT_SOURCES`), so a merged bundle
 is listed by construction; and `validate_registry.py` requires an `app.json` at a *repo root*, so a row
