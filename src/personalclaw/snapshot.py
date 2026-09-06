@@ -592,7 +592,13 @@ def snapshot_main(
 
         # Manifest
         ws_files = sum(1 for _ in (stage / "workspace").rglob("*") if _.is_file())
-        sk_count = sum(1 for _ in (stage / "skills").iterdir() if _.is_dir())
+        # The loader's enumeration, not a directory count: `iterdir()` counted the `auto/`
+        # NAMESPACE as one skill however many live under it, and missed `.proposals/` not being
+        # a skill at all (#302's third site). A manifest that miscounts what it archived is a
+        # restore the user cannot check.
+        from personalclaw.skills.loader import iter_skill_files
+
+        sk_count = len(iter_skill_files(stage / "skills"))
         manifest = {
             # v3 adds `domains` — the per-domain counts §6's archive browser shows. The
             # `contents` block is unchanged: `_print_manifest` and the settings panel

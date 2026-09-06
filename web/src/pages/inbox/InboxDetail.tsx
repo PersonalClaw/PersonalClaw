@@ -31,7 +31,15 @@ export function InboxDetail({ item, owner = '', onChanged, navigate }: { item: I
 
   async function patch(body: Record<string, unknown>, tag: string) {
     setBusy(tag); setErr('')
-    try { await api.updateInboxItem(item.id, body); onChanged() }
+    try {
+      await api.updateInboxItem(item.id, body)
+      // Dismissing a PROPOSAL row answers the proposal server-side (issue 409: the two stores must
+      // not report one queue twice), so the Skills page's cached list has to go with it.
+      if (body.status === 'dismissed' && item.refs?.skill_proposal) {
+        invalidateKeys('skill-proposals'); invalidateKeys('skill-proposals-count')
+      }
+      onChanged()
+    }
     catch (e) { setErr(e instanceof Error ? e.message : 'Update failed') } finally { setBusy(null) }
   }
   async function generate() {

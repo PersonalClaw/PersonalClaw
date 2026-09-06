@@ -239,6 +239,16 @@ describe('two more bodies: one corrected, one confirmed', () => {
     expect(ui, "and the filter that makes the second half true").toMatch(
       /filter === 'handled' \? \(it\.status === 'handled' \|\| it\.status === 'sent' \|\| it\.status === 'dismissed'\)/,
     )
+    // 🪤 A THIRD half arrived with issue 409: dismissing a proposal row also REJECTS the proposal,
+    // which deletes its record — so for those rows "they stay readable under Handled" is not the
+    // whole story, and the copy owes the user the part Handled does not keep.
+    expect(ui, 'the proposal half').toContain(
+      'Skill proposals are also rejected, which removes them from the Skills queue.',
+    )
+    const h = py('dashboard/handlers_inbox.py')
+    expect(h, 'and the server is what makes that sentence true').toMatch(
+      /def _dismiss\([\s\S]{0,3000}skill_proposals\.reject\(pid\)/,
+    )
   })
 
   it('the no-undo half is still true — restore refuses a dismissed item', () => {

@@ -152,7 +152,10 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     // "Workspace files on disk are left untouched").
     if (!(await confirm({
       title: `Dismiss all ${n} open item${n === 1 ? '' : 's'}?`,
-      body: 'Every open item of every kind is dismissed at once — including ones you have already read. There is no undo — but they stay readable under Handled.',
+      // Says BOTH halves, and now three: dismissing a proposal row also ANSWERS the proposal
+      // (the same reject the row's own button does), which is a real deletion and not something
+      // Handled keeps. A confirm that named only the reversible half would understate it.
+      body: 'Every open item of every kind is dismissed at once — including ones you have already read. There is no undo — but they stay readable under Handled. Skill proposals are also rejected, which removes them from the Skills queue.',
       danger: true,
       confirmLabel: 'Dismiss all',
     }))) return
@@ -162,6 +165,13 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
     setBusy(true)
     try {
       if (!(await reportingWrite(`dismiss ${n === 1 ? 'this item' : `all ${n} items`}`, () => api.dismissAllInbox()))) return
+      // The Skills proposal queue shrinks with this sweep, so its cached list has to go too —
+      // otherwise the Skills page keeps showing rows the user just answered from here. PREFIX
+      // mode, because this is now a FOURTH proposal-decision site and `SkillsPage` renders its
+      // "Proposals (N)" badge off the sibling `skill-proposals-count` key: busting the exact key
+      // leaves that number counting rows this sweep just rejected. Same convention the other
+      // three sites carry, asserted for all four by `lib/siblingCacheStaleness.test.ts`.
+      invalidateKeys('skill-proposals', true)
       reload()
     } finally { setBusy(false) }
   }

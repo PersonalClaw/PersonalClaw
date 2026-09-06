@@ -137,11 +137,8 @@ async def api_skills_list(request: web.Request) -> web.Response:
     ``tampered`` (a locked file changed/went missing or an unexpected file appeared), or
     ``unverified`` (no lock — a bundled or hand-placed skill, not a failure)."""
     from personalclaw.agent import _all_skill_paths
-    from personalclaw.skills.marketplace import (
-        _SKILL_FILENAME,
-        _parse_description,
-        verify_skill_integrity,
-    )
+    from personalclaw.skills.loader import iter_skill_files
+    from personalclaw.skills.marketplace import _parse_description, verify_skill_integrity
     from personalclaw.skills.native import _bundled_root
 
     bundled_path = str(_bundled_root())
@@ -153,25 +150,22 @@ async def api_skills_list(request: web.Request) -> web.Response:
         if not base.is_dir():
             continue
         is_bundled = base_str == bundled_path
-        # 🔴 RECURSIVE, matching `SkillsLoader._iter`'s own `base.rglob("SKILL.md")`. This walked
-        # ONE level with `iterdir()`, so a NAMESPACE directory — `auto/`, which holds every
-        # accepted skill proposal and has no `SKILL.md` of its own — was skipped whole. Measured on
-        # a live instance: three `auto/*` skills were loaded into every agent's context while
-        # `GET /api/skills` reported none of them, so they were un-inspectable and un-deletable from
-        # the UI (#302). The loader and the listing must agree about what a skill is; they were two
-        # answers to that question and only one of them decided what the user could see.
+        # 🔴 `iter_skill_files` — the LOADER's own enumeration, shared rather than re-derived.
+        # This walked ONE level with `iterdir()`, so a NAMESPACE directory — `auto/`, which holds
+        # every accepted skill proposal and has no `SKILL.md` of its own — was skipped whole.
+        # Measured on a live instance: three `auto/*` skills were loaded into every agent's context
+        # while `GET /api/skills` reported none of them, so they were un-inspectable and
+        # un-deletable from the UI (#302). The loader and the listing must agree about what a skill
+        # is; they were two answers to that question and only one of them decided what the user
+        # could see. Calling the loader's function is what makes them agree by construction — a
+        # second recursive copy here would just be a divergence waiting to happen.
         #
         # `name` is the path RELATIVE to the base, so `auto/loop-worker` keeps its namespace — which
         # is what `SkillsLoader` calls it, what the delete route takes, and what
-        # `_loaded_by_agents` matches on. A bare `entry.name` would collide `auto/x` with a
+        # `_loaded_by_agents` matches on. A bare basename would collide `auto/x` with a
         # top-level `x` and make the dedup set drop one of them.
-        for skill_md in sorted(base.rglob(_SKILL_FILENAME)):
-            if not skill_md.is_file():
-                continue
+        for name, skill_md in iter_skill_files(base):
             entry = skill_md.parent
-            if entry == base:
-                continue  # a SKILL.md at the root names no skill
-            name = entry.relative_to(base).as_posix()
             if name in seen:
                 continue
             seen.add(name)
@@ -202,7 +196,7 @@ async def api_skills_list(request: web.Request) -> web.Response:
     try:
         from personalclaw.agents.defaults import DEFAULT_NATIVE_AGENT_NAME
         from personalclaw.config.loader import AppConfig
-        from personalclaw.skills.loader import agent_skills_dir
+        from personalclaw.skills.loader import agent_skills_dir, iter_skill_files
 
         # The default agent's runtime name (what build_message passes) is the
         # canonical DEFAULT_NATIVE_AGENT_NAME, not its config key ('default'), so
@@ -219,18 +213,17 @@ async def api_skills_list(request: web.Request) -> web.Response:
             seen_agent_dirs.add(str(adir))
             if not adir.is_dir():
                 continue
-            for entry in sorted(adir.iterdir()):
-                if not entry.is_dir():
-                    continue
-                skill_md = entry / _SKILL_FILENAME
-                if not skill_md.is_file():
-                    continue
+            # Recursive, via the loader's own enumeration — the agent-local tier is the same
+            # directory shape as the global one, so a one-level walk hid a nested agent-local
+            # skill exactly the way it hid `auto/*` above (#302's fourth site).
+            for skill_name, skill_md in iter_skill_files(adir):
+                entry = skill_md.parent
                 rep = verify_skill_integrity(entry)
                 integrity = "unverified" if rep.unlocked else ("intact" if rep.ok else "tampered")
                 skills.append(
                     {
-                        "key": f"{ag_name}/{entry.name}",
-                        "name": entry.name,
+                        "key": f"{ag_name}/{skill_name}",
+                        "name": skill_name,
                         "description": _parse_description(skill_md),
                         "always": _parse_always(skill_md),
                         "path": str(skill_md),
