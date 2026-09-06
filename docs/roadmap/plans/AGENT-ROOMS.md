@@ -70,3 +70,23 @@ What is left on AR-1 is genuinely the owner's and nothing else: after AR-9 ships
 first-class possibility, not a failure mode, because the plan already says so: if the template satisfies
 demand, rooms stay deferred, and AR-1..AR-9 close as satisfied-by-precursor instead of leaving eight
 atoms of phantom work on the board.
+
+### 2026-09-06 — AR-9 shipped; the un-deferral question is now answerable
+
+The council template merged as PR #2507: `src/personalclaw/workflows/bundled/council/workflow.json`, a
+`parallel` of three independent `infer` members into a zero-token collector into one attributing synthesis.
+"The cheap precursor (build this first, on the engine)" above asked for an ordinary fan-out/fan-in workflow
+on Workflows v2 primitives with zero new topology, and that is literally what shipped — no action provider,
+no new core. Two shape properties are pinned by `tests/test_council_template.py` rather than left to prose:
+the fan-out stays independent (no member reads a sibling) and the fan-in stays attributive (the synthesis
+returns attributed positions, disagreements and dissent, and never binds one member as *the* answer), each
+detector floored against `best-of-n`, the sibling that must fail the attribution contract.
+
+Three named seats rather than a dynamic fan-out over N is an engine constraint, not a design preference:
+containers have no output surface, so a `foreach` fan-out cannot be fanned back in through bindings.
+
+This closes the precursor half of `AR-1` and leaves owner task 1 standing alone. The question is now
+genuinely answerable rather than hypothetical, because the thing that might satisfy the demand can actually
+be run: does *deliberation* — open-ended, human-refereed, non-terminating conversation — remain missing once
+fan-out is available? The plan pre-authorises the cheap answer, so a "no" is a real outcome that closes
+`AR-1`..`AR-8` as satisfied-by-precursor rather than a failure to explain away.
