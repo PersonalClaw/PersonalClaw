@@ -204,6 +204,89 @@ rather than deferring them past it.
 
 ## Execution log
 
+- **2026-09-06 — `PP-16` sub-seam 4f DONE (recorded late), and `4g`/`4h` ARE UNDEFINED — a roadmap
+  gap named rather than filled. Atom stays `todo` (PARTIAL).**
+  **4f (commit `42656856b`):** `PUT /api/workflows/runs/{id}/policy-overrides` over the 4d store
+  seam, plus `PolicyOverridesPanel` on run detail — five knobs, sparse semantics, per-knob clear,
+  blur-commit inputs. Gated to `LifecyclePhase.PRELAUNCH` for two forced reasons: the engine's
+  whole-row `_save_run()` would silently revert a live edit from its stale in-memory copy, and the
+  loop side freezes the same five knobs at launch (`update_spec` / `PRELAUNCH_STATUSES`) — a noun
+  retirement must not smuggle in a capability grant. `run_not_prelaunch` (409) and
+  `unknown_policy_key` (400) registered in `HTTP_ERROR_CODES`. That closes the 4d entry's NOTE:
+  `set_policy_overrides` has a production caller now, and the mid-run question it left open was
+  ANSWERED by measurement rather than deferred.
+
+  **`4g` and `4h` have no definition anywhere, and that is this session's finding.** Every
+  occurrence of either token in the repository is the same hand-off clause — *"`4c`–`4f` were
+  blocked on the two rulings below. `4g`/`4h` last."* (this file's seam-4 section) and *"4d–4f next
+  under the two recorded rulings, 4g/4h last."* (the 4b entry below, repeated verbatim inside
+  `PP-16`'s `blocked_reason`). Neither names a surface, a `done_when` or a dependency. A session
+  told to implement 4g must therefore invent the seam, which is the one move this atom's record has
+  refused twice and the reason seam 4 was split by measurement instead of by framing. So nothing was
+  built against an invented definition; what follows is the measurement an owner needs to mint them.
+
+  **Re-measured, because the seam GREW while 4a–4f were closing it.** `loops` now has **41**
+  columns, not the 39 measured 2026-08-27; `runs` has **26**. Still exactly eight shared column
+  names (`id`, `project_id`, `status`, `created_at`, `started_at`, `completed_at`, `elapsed_seconds`,
+  `error_message`), so **33** loops columns have no `runs` column — up from 31. The arithmetic: one
+  retired (`total_cycles`, 4a) against three added (`AG-14`'s `max_cost_usd`, `deadline_secs`,
+  `stop_reason`). **Six sub-seams landed and the homeless set grew by two**, which is the measured
+  form of this plan's own timing argument: an unclosed state-shape seam accretes while it waits.
+
+  `LOOP_FIELD_MAP` is exhaustive at **41** rows — `RUN` 10, `NODE_CONFIG` 7, `PROJECTION` 6,
+  `POLICY` 5, `DEF` 2, `RUN_INPUT` 2, `INTENT` 1, and **`NONE` 8**: `name`, `provider_agent`,
+  `strategy_id`, `strategy_config`, `auto_teardown_on_complete`, `deadline_secs`, `stop_reason`,
+  `tasks_project_id`. All eight are owner decisions rather than implementation tasks, so the store
+  retirement cannot start before they are ruled. The 2026-08-27 "fifteen owner-gated" was a
+  COLUMN-level count taken before the two rulings; the field-level residue is eight — and the map's
+  own docstring still said *six*, written before `AG-14` added two homeless fields. Fixed count-free
+  in this change: that number belongs to the pinned rail, not to prose that drifts behind it.
+
+  Row-surface census, refreshed for the ROW half only (4b moved the file half to `loop/files.py`):
+  **21** `src/` modules, **27** distinct fn-uses, **27** test files — against 20 / 52 / 24 measured
+  when one module was both stores. `LoopStatus` 12 against `RunStatus` 8, unchanged.
+
+  **The cockpit cost input is stale on two of its six items, and its line-count framing measures the
+  wrong thing.** Re-measured: `LoopCockpitPage.tsx` 1360, `WorkflowRunDetail.tsx` 553. But the run
+  detail DELEGATES — it imports eight sibling panels, two of which are exactly items the cost input
+  lists as absent: `SteeringPanel.tsx` (178 lines, mid-run steer plus judge-comment triage) IS the
+  run-side steer box, and `WorkspacePanel.tsx` (265 lines, what this run changed and how to take it)
+  IS the run-side file surface. Nor is the loop side one page: `DesignCockpitPage.tsx` (1129) and
+  `LoopPlanReview.tsx` (933) sit beside the cockpit, so the loop cockpit surface is ~3400 lines
+  against a run surface that is already decomposed. A delta between one monolith and one hub is not
+  a cost estimate.
+
+  **Route level, which is the contract the clause actually names.** 19 loop routes against 26 run
+  routes. Three loop routes already have a run-side answer: `nudge` → `steer`/`steering`, `stream` →
+  `events`, `autopilot` → `policy-overrides` (4d/4f). Twelve do not: `report`, `design/tokens`,
+  `grill-tree`, `queue`, `classify`, `validate`, and the six-route plan-walkthrough family
+  (`plan-session`, `plan/start`, `plan/approve`, `plan/comment`, `plan/edit`, `plan/retry`). The
+  traffic is NOT one-way: ten run routes have no loop equivalent (`fork`, `rewind`, `run-from`,
+  `continuations`, `introspect`, per-node `inspect`, `outbox`, `review`, `review/triage`, `drop`).
+  "One cockpit contract" is therefore a UNION of two capable surfaces, not a merge of a big one into
+  a small one — which is also why it cannot be one review-ready change.
+
+  **A decomposition PROPOSED for the owner to mint, deliberately not minted here.** The twelve
+  unanswered loop routes do not fall into two seams; they fall into three, and only one is a cockpit
+  seam at all.
+  * **The ledger rails.** The findings rail and the verdict/ROI rail are PROJECTIONS over the `PP-5`
+    ledger, which already carries `step_completed`, `judge_verdict`, `breaker_trip` and
+    `watcher_reaped` for both nouns. Cheapest of the three, invents no state, needs no ruling, and
+    the run side already has `events` and `introspect` to hang it on. One endpoint family plus one
+    panel — the only candidate here that is genuinely one review-ready change.
+  * **The plan walkthrough plus the run-level deliverable** (`report`). Six routes and a document,
+    and the seam where 4e's DOCTRINE NOTE lands: a loop provisions one TaskList PER PHASE and seeds
+    tasks into it, while a run materializes one task per node into NO list, so parity needs either a
+    run-side filing step or explicit acceptance that a run's derived map is empty until a user
+    files. That is a ruling, so this seam is owner-gated before it is startable.
+  * **Intake and the kind-specific canvases** (`classify`, `validate`, `grill-tree`,
+    `design/tokens`, `queue`). These belong with the store retirement rather than with the cockpit
+    contract: once the kind IS the template, a design loop's token canvas is a template's surface.
+
+  The store retirement itself — 33 homeless columns, eight awaiting a ruling — is seam 4's own tail
+  and is not a cockpit item at all. Sequenced after the rails seam it costs nothing; started ahead
+  of the eight rulings it cannot be finished, only abandoned.
+
 - **2026-09-05 — `PP-16` sub-seams 4d + 4e DONE: the sparse policy overlay (RULING 2) and the
   run-side plural tasks projection (RULING 1's constructive half). Atom stays `todo` (PARTIAL).**
   **4d (PR #2471, merge head `720f356e1`):** `WorkflowRun.policy_overrides` — a sparse per-run dict

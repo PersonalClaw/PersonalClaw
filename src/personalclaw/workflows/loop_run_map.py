@@ -13,8 +13,10 @@ resolves every one so a rename on either side reds rather than rots.
 It is a DECLARATION, railed in both drift directions (`tests/test_pp16_loop_field_map.py`) — the
 honesty marker this program established in `WF2LOO-12` and reused for `PP-14`. The wiring owner is
 PP-16's later sessions; this exists so those sessions inherit a measured map instead of re-deriving
-it per field, and so the six fields with NO home are an owner decision taken in daylight rather
-than a discovery made after `loop/store.py` is gone.
+it per field, and so the fields with NO home are an owner decision taken in daylight rather
+than a discovery made after `loop/store.py` is gone. That set is counted by its pinned rail, not
+by this prose — it has already grown once (`AG-14` added two homeless fields after this docstring
+was written), so a number here would only drift.
 
 **What the map is measured against, not guessed from.** Each `RUN_INPUT` row names a parameter a
 BUNDLED template actually declares (the rail re-reads the shipped `workflow.json` files, so a
