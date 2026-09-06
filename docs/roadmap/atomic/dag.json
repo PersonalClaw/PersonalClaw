@@ -2224,7 +2224,8 @@
             "DIST-8",
             "DIST-9",
             "DIST-10"
-          ]
+          ],
+          "blocked_reason": "OWNER-ONLY (inventory correction 2026-09-06). Carried no blocked_reason, so the ready frontier counted it as available agent work — it never was. The atom's own title begins 'Owner', and all four walkthroughs are defined as clean-VM / never-seen-the-project runs: V1 a wheel install on a Node-absent machine, V2 getting-started followed verbatim by a first-time reader, V3 a container two-command bring-up whose state must survive a compose down/up, V4 all four self-update paths. Their whole evidentiary value is that the machine has no prior state and the operator no prior knowledge, which an agent working in this workspace cannot supply by construction: any environment I can reach has already seen the project. Not blocked on code, and nothing to build — it needs the owner to run them on clean machines and record the results in the Execution log."
         },
         {
           "id": "DIST-12",
@@ -3650,7 +3651,8 @@
           "deps": [
             "CRE-4",
             "CRE-5"
-          ]
+          ],
+          "blocked_reason": "OWNER-ONLY (inventory correction 2026-09-06). Carried no blocked_reason, so the ready frontier counted it as available agent work. Its own done_when ends 'owner-executed, no agent code change' — the clauses are confirming GHCR packages are public after the first image push, confirming the coverage-badge home, and deciding whether main gets branch protection requiring ci.yml green. Each is a registry/settings action on the live org, not a repo change, and the last is a governance decision rather than a task. Nothing here is buildable; leaving it unmarked only made the frontier over-report."
         },
         {
           "id": "CRE-8",
@@ -7908,16 +7910,6 @@
   "dag": {
     "ready_frontier": [
       {
-        "id": "CRE-7",
-        "title": "Owner real-world provisioning remainder",
-        "plan": "CRE"
-      },
-      {
-        "id": "DIST-11",
-        "title": "Owner clean-machine walkthroughs V1–V4 (wheel install, getting-started, container, per-kind self-update)",
-        "plan": "DIST"
-      },
-      {
         "id": "DL-5",
         "title": "T3.2 remainder + T2.4 residual: launch media assets (60-90s demo GIF + social-preview images)",
         "plan": "DL"
@@ -8025,6 +8017,14 @@
         ]
       },
       {
+        "id": "CRE-7",
+        "title": "Owner real-world provisioning remainder",
+        "plan": "CRE",
+        "gate": [
+          "owner"
+        ]
+      },
+      {
         "id": "DC-1",
         "title": "S1: Rebuild + signing + notarization + electron-updater + install-kind",
         "plan": "DC",
@@ -8038,6 +8038,14 @@
         "plan": "DCU",
         "gate": [
           "ext"
+        ]
+      },
+      {
+        "id": "DIST-11",
+        "title": "Owner clean-machine walkthroughs V1–V4 (wheel install, getting-started, container, per-kind self-update)",
+        "plan": "DIST",
+        "gate": [
+          "owner"
         ]
       },
       {
