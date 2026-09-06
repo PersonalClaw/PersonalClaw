@@ -544,3 +544,91 @@ def test_a_working_pool_that_finds_nothing_still_reports_zero_errors(knowledge_s
     assert body["evaluated"] == 1
     assert body["errors"] == 0
     assert body["matched"] == 0
+
+
+# ── pausing an intent STOPS THE MODEL FAN-OUT (#542) ──
+#
+# The FE half of #542 was that nothing could set `enabled=False`: the only writer of an intent in
+# the product hard-coded `enabled: true`, so the list's Paused badge was unreachable markup and an
+# intent could never be paused. That is a cost defect, not a cosmetic one — an active intent is
+# evaluated once per saved item, and a retroactive run fans out one model call per existing item.
+# Delete was the only escape, and it destroys everything the intent gathered.
+#
+# `applies_to` is already asserted to be False for a paused intent (`test_disabled_never_applies`),
+# but that is the PREDICATE, not the fan-out. These count the actual `pool.send` calls on BOTH
+# paths, so a refactor that stops consulting `applies_to` on either one cannot pass.
+
+
+class _CountingPool:
+    """Records every model call so the fan-out can be measured rather than assumed."""
+
+    def __init__(self, response='{"relevant": false}'):
+        self._r = response
+        self.sends = 0
+
+    async def send(self, prompt, timeout=None):
+        self.sends += 1
+        return self._r
+
+
+def test_a_paused_intent_costs_no_model_call_at_ingest():
+    """The per-item path: `run_intents` is called once per saved item."""
+    active = [Intent(id="a", goal="track drive health")]
+    paused = [Intent(id="a", goal="track drive health", enabled=False)]
+
+    hot = _CountingPool(_MATCH)
+    assert len(_run(run_intents(active, "note", "some content", pool=hot))) == 1
+    assert hot.sends == 1, "an active intent must be evaluated"
+
+    cold = _CountingPool(_MATCH)
+    assert _run(run_intents(paused, "note", "some content", pool=cold)) == []
+    assert cold.sends == 0, "a paused intent must not reach the model AT ALL"
+
+
+def test_a_paused_intent_costs_no_model_call_on_a_retroactive_run(knowledge_store):
+    """The Run-on-existing path: one call per existing item, which is the expensive one.
+
+    Measured against a live gateway on an isolated home before this was written: over the same
+    five items the endpoint answered ``{evaluated: 5, errors: 5}`` active and
+    ``{evaluated: 0, errors: 0}`` paused.
+    """
+    for i in range(5):
+        knowledge_store.create_typed_item(item_type="note", title=f"N{i}", content=f"body {i}")
+    _, created = _upsert(knowledge_store, {"goal": "track anything about drives"})
+    intent_id = created["id"]
+
+    hot = _CountingPool()
+    _, body = _run_intent(knowledge_store, intent_id, hot)
+    assert body["evaluated"] == 5
+    assert hot.sends == 5, "an active intent fans out one model call per existing item"
+
+    # Pause it through the SAME endpoint the UI uses, then run again.
+    resp, _ = _upsert(
+        knowledge_store,
+        {"id": intent_id, "goal": "track anything about drives", "enabled": False},
+    )
+    assert resp.status == 201
+    cold = _CountingPool()
+    _, body = _run_intent(knowledge_store, intent_id, cold)
+    assert cold.sends == 0, "pausing must stop the fan-out, not merely hide it"
+    assert body["evaluated"] == 0
+    assert body["errors"] == 0, "a paused run is not an error — it is a run that evaluated nothing"
+
+
+def test_pausing_an_intent_keeps_everything_it_already_gathered(knowledge_store):
+    """The lifecycle question a pause raises, answered from the code rather than guessed:
+    only `delete_intent` cascades into `delete_intent_outcomes`, so a pause is non-destructive
+    and resuming does NOT replay — the backlog is whatever a later Run or ingest finds."""
+    knowledge_store.create_typed_item(item_type="note", title="N", content="body")
+    _, created = _upsert(knowledge_store, {"goal": "track anything about drives"})
+    intent_id = created["id"]
+    _, body = _run_intent(knowledge_store, intent_id, _CountingPool(_MATCH))
+    assert body["matched"] == 1
+
+    _upsert(
+        knowledge_store, {"id": intent_id, "goal": "track anything about drives", "enabled": False}
+    )
+
+    assert (
+        len(knowledge_store.outcomes_for_intent(intent_id)) == 1
+    ), "a pause must not drop outcomes"
