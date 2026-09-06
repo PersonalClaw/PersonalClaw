@@ -96,7 +96,7 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
   // default), so it gets a real explanation rather than an empty panel that reads as a failure.
   if (!ws?.path && !ws?.branch) {
     return (
-      <p data-testid="workspace-none" className="text-on-surface-low text-[0.8125rem]">
+      <p data-testid="workspace-none" data-type="body-s" className="text-on-surface-low">
         This run did not declare a workspace, so it worked in place and has no isolated diff to
         review. Add a <code className="font-mono">workspace:</code> block to the template to run it
         in a git worktree or a scratch directory.
@@ -106,9 +106,9 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-m text-[0.75rem]">
+      <div data-type="caption" className="flex flex-wrap items-center gap-m">
         {declared?.mode && (
-          <span data-testid="workspace-mode" className="inline-flex items-center rounded-pill bg-surface-high px-2 py-0.5 font-mono text-on-surface-var text-[0.6875rem]">
+          <span data-testid="workspace-mode" data-type="caption" className="inline-flex items-center rounded-pill bg-surface-high px-2 py-0.5 font-mono text-on-surface-var">
             {declared.mode}
           </span>
         )}
@@ -126,7 +126,7 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
           that silently fell back from `worktree` to a scratch dir has no branch to check out, and
           without this the two verbs would look broken rather than inapplicable. */}
       {declared?.degraded_reason && (
-        <p data-testid="workspace-degraded" className="flex items-start gap-xs text-on-surface-low text-[0.75rem]">
+        <p data-testid="workspace-degraded" data-type="caption" className="flex items-start gap-xs text-on-surface-low">
           <TriangleAlert size={13} className="mt-0.5 shrink-0" />
           {declared.degraded_reason}
         </p>
@@ -140,10 +140,10 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
           {preview.ports.length > 0 ? (
             <ul data-testid="preview-ports" className="flex flex-col gap-2xs">
               {preview.ports.map((p) => (
-                <li key={p.port} className="flex items-center gap-s rounded-md bg-surface px-2.5 py-1.5 text-[0.75rem]">
+                <li key={p.port} data-type="caption" className="flex items-center gap-s rounded-md bg-surface px-2.5 py-1.5">
                   <span className="min-w-0 flex-1 truncate font-mono text-on-surface">{p.url}</span>
                   {p.command && (
-                    <span className="shrink-0 truncate font-mono text-on-surface-low text-[0.6875rem]">{p.command}</span>
+                    <span data-type="caption" className="shrink-0 truncate font-mono text-on-surface-low">{p.command}</span>
                   )}
                   {/* A plain link, not a scripted window.open: the dev server is a document at a
                       real URL, and a link is what middle-click / open-in-new-window expect.
@@ -158,7 +158,7 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
                     href={p.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-on-surface-low text-[0.75rem] hover:bg-surface-high hover:text-on-surface"
+                    data-type="caption" className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-on-surface-low hover:bg-surface-high hover:text-on-surface"
                     aria-label={`Open Preview on port ${p.port}`}
                     title={`Open localhost:${p.port} in a new tab`}
                   >
@@ -168,11 +168,11 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
               ))}
             </ul>
           ) : (
-            <p data-testid="preview-none" className="text-on-surface-low text-[0.75rem]">
+            <p data-testid="preview-none" data-type="caption" className="text-on-surface-low">
               {preview.reason || 'No dev server is listening in this run’s workspace.'}
             </p>
           )}
-          <p className="text-on-surface-low text-[0.75rem]">
+          <p data-type="caption" className="text-on-surface-low">
             Local only — this machine, no tunnel and no sharing. Links are checked each time you
             open this panel, so a server that has stopped disappears from the list.
           </p>
@@ -181,7 +181,7 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
 
       {ws.preserved_workspace_path && (
         <Block label="Preserved workspace">
-          <p data-testid="preserved-path" className="break-all rounded-md bg-surface px-3 py-2 font-mono text-on-surface text-[0.75rem]">
+          <p data-testid="preserved-path" data-type="caption" className="break-all rounded-md bg-surface px-3 py-2 font-mono text-on-surface">
             {ws.preserved_workspace_path}
           </p>
         </Block>
@@ -189,19 +189,19 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
 
       <Block label={`Changed files${ws.changed.length ? ` (${ws.changed.length})` : ''}`}>
         {ws.changed.length === 0 ? (
-          <p className="text-on-surface-low text-[0.75rem]">
+          <p data-type="caption" className="text-on-surface-low">
             {ws.alive ? 'Nothing changed in the workspace.' : 'The workspace is gone; its work is on the branch below.'}
           </p>
         ) : (
           <ul data-testid="changed-files" className="flex max-h-72 flex-col gap-2xs overflow-auto">
             {ws.changed.map((c) => (
-              <li key={c.path} className="flex items-center gap-s rounded-md bg-surface px-2.5 py-1.5 text-[0.75rem]">
+              <li key={c.path} data-type="caption" className="flex items-center gap-s rounded-md bg-surface px-2.5 py-1.5">
                 <FileDiff size={13} className="shrink-0 text-on-surface-low" />
                 <span className="min-w-0 flex-1 truncate font-mono text-on-surface">{c.path}</span>
                 <span className="shrink-0 text-on-surface-low">{c.status}</span>
                 {/* Staged and unstaged are separate facts, not a detail: "discard" means something
                     different for each, so collapsing them would make the state ambiguous. */}
-                {c.staged && <span className="shrink-0 text-on-surface-var text-[0.6875rem]">staged</span>}
+                {c.staged && <span data-type="caption" className="shrink-0 text-on-surface-var">staged</span>}
               </li>
             ))}
           </ul>
@@ -215,12 +215,12 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
         <Block label={`Setup failures (${setup.failed.length})`}>
           <ul data-testid="setup-failed" className="flex flex-col gap-2xs">
             {setup.failed.map((f, i) => (
-              <li key={i} className="rounded-md bg-surface px-2.5 py-1.5 font-mono text-on-surface-var text-[0.6875rem] break-words">
+              <li key={i} data-type="caption" className="rounded-md bg-surface px-2.5 py-1.5 font-mono text-on-surface-var break-words">
                 {f}
               </li>
             ))}
           </ul>
-          <p className="text-on-surface-low text-[0.75rem]">
+          <p data-type="caption" className="text-on-surface-low">
             Setup never blocks a run — these are recorded so a stage that failed on a missing
             dependency has an explanation in reach.
           </p>
@@ -231,7 +231,7 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
         <Block label={`Conflicts (${conflicts.length})`}>
           <ul data-testid="workspace-conflicts" className="flex flex-col gap-2xs">
             {conflicts.map((p) => (
-              <li key={p} className="rounded-md bg-surface px-2.5 py-1.5 font-mono text-on-surface text-[0.75rem] break-all">{p}</li>
+              <li key={p} data-type="caption" className="rounded-md bg-surface px-2.5 py-1.5 font-mono text-on-surface break-all">{p}</li>
             ))}
           </ul>
         </Block>
@@ -243,21 +243,21 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
             {offer.verbs.map((v) => (
               <li key={v.verb} className="flex flex-col gap-2xs rounded-md bg-surface px-3 py-2">
                 <div className="flex items-center gap-s">
-                  <span className="text-on-surface text-[0.8125rem]">{v.label}</span>
+                  <span data-type="body-s" className="text-on-surface">{v.label}</span>
                   {!v.safe && (
-                    <span data-testid={`unsafe-${v.verb}`} className="text-on-surface-low text-[0.6875rem]">
+                    <span data-testid={`unsafe-${v.verb}`} data-type="caption" className="text-on-surface-low">
                       conflicts
                     </span>
                   )}
                 </div>
-                <p className="text-on-surface-low text-[0.75rem]">{v.detail}</p>
-                <code className="break-all font-mono text-on-surface-var text-[0.6875rem]">
+                <p data-type="caption" className="text-on-surface-low">{v.detail}</p>
+                <code data-type="caption" className="break-all font-mono text-on-surface-var">
                   {verbCommand(v.verb, offer.branch)}
                 </code>
               </li>
             ))}
           </ul>
-          <p data-testid="reintegration-note" className="text-on-surface-low text-[0.75rem]">{offer.note}</p>
+          <p data-testid="reintegration-note" data-type="caption" className="text-on-surface-low">{offer.note}</p>
         </Block>
       ) : null}
     </>

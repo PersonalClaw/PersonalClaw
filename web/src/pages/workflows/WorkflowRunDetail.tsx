@@ -279,14 +279,14 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
               which is what keeps it clear of 1.4.1. Shown only while `live` — a terminal run has no
               stream to be connected to. */}
           {live && (
-            <span className="inline-flex shrink-0 items-center gap-1 text-on-surface-low text-[0.75rem]">
+            <span data-type="caption" className="inline-flex shrink-0 items-center gap-1 text-on-surface-low">
               <span className="inline-block size-1.5 rounded-pill"
                 style={{ background: connected ? 'var(--color-ok)' : 'var(--color-on-surface-low)' }} />
               {connected ? 'Streaming' : 'Connecting…'}
             </span>
           )}
           {look && StatusIcon && (
-            <span className={`inline-flex shrink-0 items-center gap-1 text-[0.75rem] ${look.tone}`}>
+            <span data-type="caption" className={`inline-flex shrink-0 items-center gap-1 ${look.tone}`}>
               <StatusIcon size={13} className={look.spin ? 'animate-spin' : ''} /> {look.label}
             </span>
           )}
@@ -340,7 +340,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
       <div className="flex min-h-0 flex-1">
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
         {loading && !run ? <Loading what="this run" /> : !run ? (
-          <p className="text-on-surface-low text-[0.8125rem]">This run could not be loaded.</p>
+          <p data-type="body-s" className="text-on-surface-low">This run could not be loaded.</p>
         ) : (
           <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">
             {/* Pending asks come FIRST: they are the only thing here a user can act on. */}
@@ -349,10 +349,10 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
             ))}
 
             {run.error && (
-              <p className="text-danger text-[0.8125rem]">{run.error}</p>
+              <p data-type="body-s" className="text-danger">{run.error}</p>
             )}
 
-            <div className="flex flex-wrap items-center gap-l text-on-surface-low text-[0.75rem]">
+            <div data-type="caption" className="flex flex-wrap items-center gap-l text-on-surface-low">
               <span>run <span className="font-mono">{run.run_id}</span></span>
               <span>spec v{run.spec_version}</span>
               {run.tokens ? <span className="tabular-nums">{run.tokens.toLocaleString()} tokens</span> : null}
@@ -437,11 +437,11 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                     <NIcon size={14} className={`shrink-0 ${nl.tone}${nl.spin ? ' animate-spin' : ''}`} />
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-s">
-                        <span className="truncate text-on-surface text-[0.8125rem]">{nodeLabel(n)}</span>
+                        <span data-type="body-s" className="truncate text-on-surface">{nodeLabel(n)}</span>
                         {/* The per-item label (WF2-R5): what makes one row of a twelve-item
                             fan-out identifiable. Dimmed — it is which, not what. */}
                         {itemProgress(n) && (
-                          <span className="min-w-0 shrink truncate text-on-surface-low text-[0.75rem] tabular-nums">
+                          <span data-type="caption" className="min-w-0 shrink truncate text-on-surface-low tabular-nums">
                             {itemProgress(n)}
                           </span>
                         )}
@@ -449,23 +449,23 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                             percentage: "18 skipped" says the branch was not taken and "17 done · 1
                             failed" says exactly where to look. A progress bar says neither. */}
                         {isCollapsed && summary && (
-                          <span className="min-w-0 shrink truncate text-on-surface-low text-[0.75rem]">
+                          <span data-type="caption" className="min-w-0 shrink truncate text-on-surface-low">
                             {summaryLabel(summary)}
                           </span>
                         )}
                       </div>
                       {(n.degraded_reason || n.failure?.cause_plain) && (
-                        <div className="truncate text-on-surface-low text-[0.75rem]">
+                        <div data-type="caption" className="truncate text-on-surface-low">
                           {n.degraded_reason || n.failure?.cause_plain}
                         </div>
                       )}
                       {/* The remediation is a DIFFERENT fact from the cause — it is the next
                           action, and dropping it leaves the user with a diagnosis only. */}
                       {n.failure?.remediation && (
-                        <div className="truncate text-on-surface-low text-[0.75rem]">{n.failure.remediation}</div>
+                        <div data-type="caption" className="truncate text-on-surface-low">{n.failure.remediation}</div>
                       )}
                     </div>
-                    <span className={`shrink-0 text-[0.75rem] ${nl.tone}`}>{nl.label}</span>
+                    <span data-type="caption" className={`shrink-0 ${nl.tone}`}>{nl.label}</span>
                     {(canReenter || (isNodeTerminal(n.state) && !!n.node_id)) && (
                       <span className="flex shrink-0 items-center gap-2xs opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                         {/* Inspect: the §5 reconstructability drawer (WV-10). Offered ONLY for a

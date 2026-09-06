@@ -102,7 +102,7 @@ function RefChip({ icon: Icon, label, value }: { icon: typeof Link2; label: stri
   return (
     <span
       data-testid="ref-chip"
-      className="inline-flex items-center gap-1.5 rounded-pill bg-surface-high px-2.5 py-1 font-mono text-on-surface-var text-[0.75rem]"
+      data-type="caption" className="inline-flex items-center gap-1.5 rounded-pill bg-surface-high px-2.5 py-1 font-mono text-on-surface-var"
       title={`${label} — stored out-of-line; not fetched`}
     >
       <Icon size={13} className="shrink-0 text-on-surface-low" />
@@ -127,7 +127,7 @@ function CodeBlock({ text, testid, maxH = 'max-h-72' }: { text: string; testid?:
   return (
     <pre
       data-testid={testid}
-      className={`${maxH} overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface text-[0.75rem] whitespace-pre-wrap break-words`}
+      data-type="caption" className={`${maxH} overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface whitespace-pre-wrap break-words`}
     >
       {text}
     </pre>
@@ -146,12 +146,12 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
   return (
     <>
       {/* cached badge — was this node's output served from the resume cache, or freshly produced. */}
-      <div className="flex items-center gap-m text-[0.75rem]">
+      <div data-type="caption" className="flex items-center gap-m">
         <span data-type="label-m" className="text-on-surface-low">state</span>
         <span className="text-on-surface">{data.state}</span>
         <span
           data-testid="cached-badge"
-          className="inline-flex items-center rounded-pill px-2 py-0.5 text-[0.6875rem]"
+          data-type="caption" className="inline-flex items-center rounded-pill px-2 py-0.5"
           style={data.cached
             ? accentChip
             : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}
@@ -171,7 +171,7 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
 
       <FieldBlock label="Resolved inputs">
         {inputKeys.length === 0 ? (
-          <p className="text-on-surface-low text-[0.75rem]">No inputs bound.</p>
+          <p data-type="caption" className="text-on-surface-low">No inputs bound.</p>
         ) : (
           <CodeBlock testid="resolved-inputs" text={toJson(data.resolved_inputs)} />
         )}
@@ -187,14 +187,14 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
 
       <FieldBlock label={`Attempts${data.attempts.length ? ` (${data.attempts.length})` : ''}`}>
         {data.attempts.length === 0 ? (
-          <p className="text-on-surface-low text-[0.75rem]">No attempt records.</p>
+          <p data-type="caption" className="text-on-surface-low">No attempt records.</p>
         ) : (
           <ol data-testid="attempts" className="flex flex-col gap-2xs">
             {data.attempts.map((a, i) => {
               const status = typeof a.status === 'string' ? a.status
                 : typeof a.state === 'string' ? a.state : 'attempt'
               return (
-                <li key={i} className="flex items-center gap-s rounded-md bg-surface px-2.5 py-1.5 text-[0.75rem]">
+                <li key={i} data-type="caption" className="flex items-center gap-s rounded-md bg-surface px-2.5 py-1.5">
                   <span className="tabular-nums text-on-surface-low">#{i + 1}</span>
                   <span className="text-on-surface">{status}</span>
                 </li>
@@ -211,7 +211,7 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
           but the last while still looking populated. The count in the label is the cross-check. */}
       <FieldBlock label={`Ledger events${data.ledger_events.length ? ` (${data.ledger_events.length})` : ''}`}>
         {data.ledger_events.length === 0 ? (
-          <p className="text-on-surface-low text-[0.75rem]">No ledger events for this node.</p>
+          <p data-type="caption" className="text-on-surface-low">No ledger events for this node.</p>
         ) : (
           <ul data-testid="ledger-events" className="max-h-72 overflow-auto flex flex-col gap-2xs">
             {data.ledger_events.map((e, i) => {
@@ -220,7 +220,7 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
                 <li
                   key={ledgerRowKey(e, i)}
                   data-testid="ledger-event"
-                  className="flex flex-col gap-2xs rounded-md bg-surface px-2.5 py-1.5 text-[0.6875rem]"
+                  data-type="caption" className="flex flex-col gap-2xs rounded-md bg-surface px-2.5 py-1.5"
                 >
                   <div className="flex flex-wrap items-center gap-s">
                     <span data-testid="ledger-kind" className="font-mono text-on-surface-var">{row.kind}</span>

@@ -226,7 +226,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
               `shrink-0`, so the title is what yields — which is the right order anyway. */}
           <PageTitle>Workflows</PageTitle>
           {needingInput > 0 && (
-            <span className="shrink-0 text-warning text-[0.75rem]">{needingInput} waiting on you</span>
+            <span data-type="caption" className="shrink-0 text-warning">{needingInput} waiting on you</span>
           )}
         </div>}
         // The header keeps only the structural view-switch + the primary action; search moved to
@@ -275,7 +275,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
                   <div className="flex min-w-0 flex-1 items-center gap-m">
                     <Workflow size={15} className="shrink-0 text-on-surface-low" />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-on-surface text-[0.9375rem]">{d.name}</div>
+                      <div data-type="body-m" className="truncate text-on-surface">{d.name}</div>
                       {(() => {
                         const row = surfacing[d.name]
                         const defFindings = byDef[d.name] ?? []
@@ -284,14 +284,14 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
                         // truncate the part that matters.
                         if (defFindings.length > 0) {
                           return (
-                            <div className="truncate text-warning text-[0.75rem]" title={defFindings.map((f) => f.detail).join(' · ')}>
+                            <div data-type="caption" className="truncate text-warning" title={defFindings.map((f) => f.detail).join(' · ')}>
                               {defFindings[0].detail}
                             </div>
                           )
                         }
                         const cadence = row ? cadenceLabel(row) : ''
                         const subtitle = [d.description, cadence].filter(Boolean).join(' · ')
-                        return subtitle ? <div className="truncate text-on-surface-low text-[0.75rem]">{subtitle}</div> : null
+                        return subtitle ? <div data-type="caption" className="truncate text-on-surface-low">{subtitle}</div> : null
                       })()}
                     </div>
                     {(() => {
@@ -304,7 +304,7 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
                         const look = freshnessLook(row.freshness)
                         const Icon = look.icon
                         nodes.push(
-                          <span key="fresh" className={`flex shrink-0 items-center gap-xs text-[0.75rem] ${look.tone}`} title={look.hint}>
+                          <span key="fresh" data-type="caption" className={`flex shrink-0 items-center gap-xs ${look.tone}`} title={look.hint}>
                             <Icon size={12} /> {look.label}
                           </span>,
                         )
@@ -315,21 +315,21 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
                       const mode = modeLook(row.surface_mode)
                       const ModeIcon = mode.icon
                       nodes.push(
-                        <span key="mode" className={`flex shrink-0 items-center gap-xs text-[0.75rem] ${mode.tone}`} title={mode.hint}>
+                        <span key="mode" data-type="caption" className={`flex shrink-0 items-center gap-xs ${mode.tone}`} title={mode.hint}>
                           <ModeIcon size={12} /> {mode.label}
                         </span>,
                       )
                       for (const pack of packChips(row)) {
                         nodes.push(
-                          <span key={`pack-${pack}`} className="shrink-0 text-on-surface-low text-[0.75rem]" title={`Pack: ${pack}`}>
+                          <span key={`pack-${pack}`} data-type="caption" className="shrink-0 text-on-surface-low" title={`Pack: ${pack}`}>
                             {pack}
                           </span>,
                         )
                       }
                       return nodes
                     })()}
-                    <span className="shrink-0 text-on-surface-low text-[0.75rem]">v{d.version}</span>
-                    {d.source === 'bundled' && <span className="shrink-0 text-on-surface-low text-[0.75rem]">bundled</span>}
+                    <span data-type="caption" className="shrink-0 text-on-surface-low">v{d.version}</span>
+                    {d.source === 'bundled' && <span data-type="caption" className="shrink-0 text-on-surface-low">bundled</span>}
                     <QuietButton onClick={(e) => { e.stopPropagation(); start(d.name) }} title={`Run ${d.name}`}>
                       <Play size={13} /> Run
                     </QuietButton>
@@ -404,13 +404,13 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
                   <div className="flex min-w-0 flex-1 items-center gap-m">
                     <Icon size={15} className={`shrink-0 ${look.tone}${look.spin ? ' animate-spin' : ''}`} />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-on-surface text-[0.9375rem]">{r.workflow_name}</div>
-                      <div className="truncate text-on-surface-low text-[0.75rem]">
+                      <div data-type="body-m" className="truncate text-on-surface">{r.workflow_name}</div>
+                      <div data-type="caption" className="truncate text-on-surface-low">
                         {look.label}{r.error_message ? ` · ${r.error_message}` : ''}
                       </div>
                     </div>
-                    {elapsed && <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{elapsed}</span>}
-                    <span className="shrink-0 font-mono text-on-surface-low text-[0.75rem]">{r.id}</span>
+                    {elapsed && <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">{elapsed}</span>}
+                    <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{r.id}</span>
                     {/* Terminal runs only. A live run's delete would race its own controller,
                         so the affordance is absent rather than present-and-refusing. */}
                     {isTerminal(r.status) && (
