@@ -23,8 +23,8 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PEP-11` | ✅ | First-party product-app suite program | — | DONE-BY-DECOMPOSITION per owner ruling 2026-08-27 (q10/11): the programme is tracked by the nine first-class app atoms `PEP-12..PEP-20 (the ruling's 'PEP-11a..i', renamed to the catalog's numeric id grammar — the ES-8 -> ES-13..16 precedent)` below (ES-8 precedent), authored 2026-09-05; the EXT scaffold dep is satisfied (the exemplar scaffold shipped). |
 | `PEP-12` | ✅ | Code Review app (suite 1/9) | — | The code-review app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a real PR is reviewed end to end with per-file subagents and locally persisted findings. |
 | `PEP-13` | ✅ | Research Lab app (suite 2/9) | — | The research-lab app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; one campaign runs multiple unattended cycles producing a synthesized report. |
-| `PEP-14` | ⬜ | Design Critique app (suite 3/9) | — | The design-critique app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a screenshot and a URL each yield structured heuristic + a11y findings. |
-| `PEP-15` | ⬜ | Docs/Slides app (suite 4/9) | — | The docs/slides app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a brief produces an openable .pptx and a compiled document through the existing doc-writer seam. |
+| `PEP-14` | ✅ | Design Critique app (suite 3/9) | — | The design-critique app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a screenshot and a URL each yield structured heuristic + a11y findings. |
+| `PEP-15` | ✅ | Docs/Slides app (suite 4/9) | — | The docs/slides app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a brief produces an openable .pptx and a compiled document through the existing doc-writer seam. |
 | `PEP-16` | ⬜ | Notes app (suite 5/9) | — | The notes app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; notes are versioned in git and survive app reinstall; no parallel knowledge store is created. |
 | `PEP-17` | ✅ | Issue Radar app (suite 6/9) | — | The issue-radar app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a real repo's issues are triaged with suggested labels and locally persisted investigation notes. |
 | `PEP-18` | ⬜ | Spec Builder app (suite 7/9) | — | The spec-builder app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; an idea walks to a task list that hands off to a real workflow run through the engine's own seams. |
@@ -433,7 +433,7 @@ applicable half of that contract pair.
 
 ### `PEP-14` — Design Critique app (suite 3/9)
 
-**Status:** todo
+**Status:** done
 
 Pre-colleague design review from a screenshot / flow / URL: heuristic + a11y findings. Small, high-signal; uses the vision path + headless render.
 
@@ -443,7 +443,7 @@ Pre-colleague design review from a screenshot / flow / URL: heuristic + a11y fin
 
 ### `PEP-15` — Docs/Slides app (suite 4/9)
 
-**Status:** todo
+**Status:** done
 
 Generate real .pptx and LaTeX/markdown documents from a brief. App front over the shipped DOCUMENT-HANDLING-TOOLS seam — reuse, don't rebuild backends.
 
