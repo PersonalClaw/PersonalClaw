@@ -651,3 +651,183 @@ class TestCreateHonorsEnabled:
         assert "active now" not in off.text
         assert "switched off" in off.text
         assert "active now" in on.text
+
+
+# ── 🔴 #779 / #687: a row that could never run is refused at REGISTRATION ──────
+#
+# The chat tools and the CLI reach this module directly, not through the HTTP handler, so the
+# refusals live here rather than in `dashboard/handlers/triggers.py` — one boundary for every
+# writer, beside the `unattended_action_refusal` that already refuses for the same reason.
+
+
+class TestRegistrationRefusesWhatCouldNeverRun:
+    def test_an_unregistered_action_provider_is_refused_and_nothing_is_written(self, store):
+        result = T.create(
+            store,
+            name="Ghost",
+            kind="clock",
+            spec={"kind": "interval", "interval_secs": 3600},
+            workflow={"provider": "no-such-provider", "config": {}},
+        )
+        assert not result.ok
+        assert "no-such-provider" in result.text
+        # The refusal names the registry it refused against, so the fix is one edit away rather
+        # than a guess at what the accepted names are.
+        assert result.data["provider"] == "no-such-provider"
+        assert "notify" in result.text
+        assert store.load() == []
+
+    def test_an_unparseable_cron_is_refused_and_nothing_is_written(self, store):
+        result = T.create(
+            store,
+            name="Inert",
+            kind="clock",
+            spec={"kind": "cron", "expr": "99 99 * * *"},
+            workflow={"provider": "notify", "config": {}},
+        )
+        assert not result.ok
+        assert "99 99 * * *" in result.text
+        assert store.load() == []
+
+    def test_a_registered_provider_and_a_valid_cron_still_create(self, store):
+        """The vacuity partner — the two refusals above must not be passing because everything is
+        refused."""
+        result = T.create(
+            store,
+            name="Fine",
+            kind="clock",
+            spec={"kind": "cron", "expr": "0 9 * * *"},
+            workflow={"provider": "notify", "config": {}},
+        )
+        assert result.ok, result.text
+        assert store.get(result.data["trigger"]["id"]).trigger.next_fire_at
+
+    def test_a_cadence_the_CONVERTER_mangled_is_refused_too(self, store):
+        """The cron check runs on the RESOLVED spec, after `cadence_to_cron`.
+
+        A converter is a model call in production, so its output is exactly the kind of thing that
+        can be syntactically plausible and unparseable — checking the caller's literal only would
+        leave the NL path able to write an inert row.
+        """
+        result = T.create(
+            store,
+            name="From words",
+            when="every weekday at 9am",
+            message="go",
+            cadence_to_cron=lambda _c: ("99 99 * * *", ""),
+        )
+        assert not result.ok
+        assert "99 99 * * *" in result.text
+        assert store.load() == []
+
+    def test_an_UPDATE_cannot_walk_around_either_refusal(self, store):
+        created = T.create(
+            store,
+            name="Fine",
+            kind="clock",
+            spec={"kind": "cron", "expr": "0 9 * * *"},
+            workflow={"provider": "notify", "config": {}},
+        )
+        tid = created.data["trigger"]["id"]
+
+        bad_provider = T.update(
+            store,
+            trigger_id=tid,
+            patch={"workflow": {"inline": {"provider": "nope", "config": {}}}},
+        )
+        assert not bad_provider.ok and "nope" in bad_provider.text
+        assert store.get(tid).trigger.workflow["provider"] == "notify"
+
+        bad_cron = T.update(
+            store, trigger_id=tid, patch={"spec": {"kind": "cron", "expr": "5-1 * * * *"}}
+        )
+        assert not bad_cron.ok and "5-1 * * * *" in bad_cron.text
+        assert store.get(tid).trigger.spec["expr"] == "0 9 * * *"
+
+    def test_an_UPDATE_to_a_good_value_still_lands(self, store):
+        created = T.create(
+            store,
+            name="Fine",
+            kind="clock",
+            spec={"kind": "cron", "expr": "0 9 * * *"},
+            workflow={"provider": "notify", "config": {}},
+        )
+        tid = created.data["trigger"]["id"]
+        assert T.update(
+            store, trigger_id=tid, patch={"spec": {"kind": "cron", "expr": "@daily"}}
+        ).ok
+        assert store.get(tid).trigger.spec["expr"] == "@daily"
+
+    def test_a_non_cron_spec_is_untouched(self, store):
+        """The cron rule reaches only the kind that has an expression. An interval carries seconds
+        and a `file` spec carries a glob, so `semantic_spec_issues` — which returns nothing for a
+        non-clock kind, and nothing for a clock kind with no `expr` — leaves both alone."""
+        assert T.spec_error_refusal("clock", {"kind": "interval", "interval_secs": 3600}) is None
+        assert T.spec_error_refusal("file", {"paths": ["~/notes/**"]}) is None
+        assert T.spec_error_refusal("clock", {"kind": "cron", "expr": "@daily"}) is None
+
+    def test_an_action_with_no_provider_is_left_to_normalize_action(self, store):
+        """One field, one sentence. `normalize_action` owns "an action needs a provider"; answering
+        it here too would give the same mistake two different messages. A `resume` workflow is
+        exempt for a different reason — it re-enters a paused run instead of naming a provider."""
+        assert T.unregistered_action_provider_refusal({}) is None
+        assert T.unregistered_action_provider_refusal({"inline": {"config": {}}}) is None
+        assert T.unregistered_action_provider_refusal({"provider": "  "}) is None
+        assert (
+            T.unregistered_action_provider_refusal({"provider": "nope", "resume": "run-1"}) is None
+        )
+
+
+class TestTheDispatchableProviderSet:
+    """The doctor's set is the SAME answer the write path gives (#779) — not a second one."""
+
+    def test_it_is_exactly_the_live_registry_with_the_builtins_registered(self):
+        from personalclaw.action_providers.registry import (
+            _ensure_default_providers_registered,
+            dispatchable_action_providers,
+            list_action_providers,
+        )
+
+        _ensure_default_providers_registered()
+        assert dispatchable_action_providers() == frozenset(list_action_providers())
+        assert "notify" in dispatchable_action_providers()
+
+    def test_it_registers_the_builtins_itself(self, monkeypatch):
+        """The whole reason it exists rather than the caller reading `_providers`: the built-ins
+        register lazily on first action execution, so a cold read would report EVERY automation as
+        unknown — a doctor crying wolf on a healthy store."""
+        from personalclaw.action_providers import registry as R
+
+        # Registration is guarded by `"bash" not in _providers`, so an emptied registry is a COLD
+        # one — exactly the state a CLI or test process starts in.
+        monkeypatch.setattr(R, "_providers", {})
+        assert "notify" in R.dispatchable_action_providers()
+
+    def test_an_app_registered_name_is_included(self, monkeypatch):
+        """The over-tightening this must not do: an app-contributed provider registers at RUNTIME
+        and its name is in no frozenset core ships."""
+        from personalclaw.action_providers import registry as R
+
+        name = "acme-app-action"
+        assert name not in R.dispatchable_action_providers()
+        monkeypatch.setitem(R._providers, name, object())
+        assert name in R.dispatchable_action_providers()
+
+    def test_a_name_nothing_registers_is_absent(self):
+        from personalclaw.action_providers.registry import dispatchable_action_providers
+
+        available = dispatchable_action_providers()
+        for name in ("no-such-provider", "notifyy", "", "run_prompt"):
+            assert name not in available, name
+
+    def test_the_doctor_set_and_the_write_refusal_agree(self):
+        """Two surfaces, one answer. A name the set omits must be one `create` refuses, and a name
+        it carries must be one `create` accepts — otherwise a form and a doctor disagree about
+        whether an automation can run."""
+        from personalclaw.action_providers.registry import dispatchable_action_providers
+
+        available = dispatchable_action_providers()
+        assert T.unregistered_action_provider_refusal({"provider": "no-such-provider"}) is not None
+        assert "no-such-provider" not in available
+        for name in sorted(available)[:5]:
+            assert T.unregistered_action_provider_refusal({"provider": name}) is None, name

@@ -1061,6 +1061,118 @@ def test_a_non_numeric_one_shot_at_is_400_not_500(home, state):
     assert _store(home).load() == []
 
 
+# ── 🔴 a row that could never run is refused, not saved (#779 / #687) ──
+#
+# BOTH defects produce the same row: created, listed, shown enabled, and unable to ever fire.
+#
+# #779 — the action was validated ONLY by `schedule.normalize_action` (truthy provider, dict config,
+# two provider-specific rules), which never consults the action-provider registry. The only registry
+# lookup was at DISPATCH, so the trigger saved, ARMED, and failed on every fire — while
+# `capabilities_for_action` froze the bogus name into the grant, which is what made the doctor's one
+# provider-shaped finding read the row as healthy.
+#
+# #687 — the cron expression was validated NOWHERE. The frontend counted five tokens (wrong in both
+# directions) and did not gate submit; the create block validated name/action/channel/timezone/
+# every/at and nothing about the cron. `arm` then refuses an unparseable spec rather than guessing,
+# so the row saved with `next_fire_at: ""` and was silently inert forever.
+
+
+def test_an_unregistered_action_provider_is_REFUSED(home, state):
+    resp = _create_schedule(state, action={"provider": "no-such-provider", "config": {}})
+    assert resp.status == 400
+    assert "no-such-provider" in _body(resp)["error"]
+    assert _store(home).load() == [], "the row must not exist at all"
+
+
+def test_an_unparseable_cron_is_REFUSED(home, state):
+    """`'99 99 * * *'` — five tokens, which is exactly why the frontend count cleared it."""
+    resp = _create_schedule(state, cron="99 99 * * *")
+    assert resp.status == 400
+    assert "99 99 * * *" in _body(resp)["error"]
+    assert _store(home).load() == []
+
+
+def test_a_REGISTERED_provider_and_a_VALID_cron_both_still_create(home, state):
+    """The vacuity partner for the two refusals above.
+
+    Without it they would pass just as well against a create path that refused everything — which
+    is the failure mode a tightening change actually has.
+    """
+    resp = _create_schedule(
+        state, action={"provider": "notify", "config": {"title_template": "hi"}}
+    )
+    assert resp.status == 200
+    row = _store(home).get("clock:nightly")
+    assert row is not None
+    assert row.trigger.spec["expr"] == "0 9 * * *"
+    assert row.trigger.next_fire_at, "a valid cron still ARMS"
+
+
+def test_a_cron_MACRO_creates_because_croniter_accepts_it(home, state):
+    """🔴 The other direction the token count got wrong: `@daily` has ONE token.
+
+    The old frontend check flagged it as broken. Asserted against `validate_cron_expr` first so this
+    test states croniter's answer rather than assuming it.
+    """
+    from personalclaw.schedule import validate_cron_expr
+
+    assert validate_cron_expr("@daily") is True
+    resp = _create_schedule(state, cron="@daily")
+    assert resp.status == 200
+    assert _store(home).get("clock:nightly").trigger.spec["expr"] == "@daily"
+
+
+def test_an_APP_registered_provider_outside_the_static_allowlist_is_accepted(
+    home, state, monkeypatch
+):
+    """🔴 The over-tightening this must NOT do.
+
+    App-contributed action providers register at RUNTIME (`providers.registry.ActionTypeHandler`)
+    and their names are not in core's `ALLOWED_HOOK_PROVIDERS` frozenset. Refusing on the frozenset
+    alone would make a legitimately installed app's action unusable on a trigger, so the accepted
+    set is the UNION of that allowlist and the live registry.
+    """
+    from personalclaw.action_providers import registry as R
+    from personalclaw.validation import ALLOWED_HOOK_PROVIDERS
+
+    name = "acme-app-action"
+    assert name not in ALLOWED_HOOK_PROVIDERS, "the premise: not in the static allowlist"
+    monkeypatch.setitem(R._providers, name, object())
+    resp = _create_schedule(state, action={"provider": name, "config": {}})
+    assert resp.status == 200, _body(resp)
+    assert _store(home).get("clock:nightly").trigger.workflow["inline"]["provider"] == name
+
+
+def test_an_interval_trigger_is_untouched_by_the_cron_check(home, state):
+    """The cron refusal is gated on the expression being PRESENT — an `every`/`at` trigger has none,
+    and neither does a store kind whose spec carries a glob."""
+    assert _create_schedule(state, name="Every", cron=None, every=300).status == 200
+    assert _store(home).get("clock:every").trigger.spec["kind"] == "interval"
+    assert _create_schedule(state, name="Once", cron=None, at=4_000_000_000.0).status == 200
+    assert _store(home).get("clock:once").trigger.spec["kind"] == "at"
+
+
+def test_the_lifecycle_kind_answers_the_same_way_about_the_same_field(home, state):
+    """The divergence #779 names: lifecycle triggers have ALWAYS refused an unlisted provider
+    (`HOOK_CREATE_SCHEMA` + `ERR_HOOK_PROVIDER_UNKNOWN`) while schedule triggers accepted it. Both
+    kinds now refuse, so the shipped refusal shape is the one reused rather than a new one."""
+    from personalclaw.validation import HOOK_CREATE_SCHEMA, ValidationError, validate_tool_args
+
+    with pytest.raises(ValidationError):
+        validate_tool_args(
+            {
+                "name": "n",
+                "event": "SessionStart",
+                "provider": "no-such-provider",
+                "provider_config": {},
+            },
+            HOOK_CREATE_SCHEMA,
+        )
+    assert (
+        _create_schedule(state, action={"provider": "no-such-provider", "config": {}}).status == 400
+    )
+
+
 # ── update ──
 
 
@@ -1972,3 +2084,48 @@ async def test_an_UNKNOWN_run_on_a_REAL_store_trigger_says_run_not_found(home):
     resp = await T.api_trigger_history_detail(req)
     assert resp.status == 404
     assert json.loads(resp.body.decode())["error"] == "run not found"
+
+
+def _put(state, body):
+    return _run(
+        T.api_trigger_detail(
+            _req(
+                "PUT",
+                "/api/triggers/x",
+                state,
+                body=body,
+                match_info={"id": "schedule:clock:nightly"},
+            )
+        )
+    )
+
+
+def test_an_UPDATE_cannot_walk_around_either_refusal(home, state):
+    """🔴 The hole a create-only check leaves. Save `bash` + `0 9 * * *`, then PATCH the provider to
+    a name nothing dispatches or the expr to one nothing parses, and the row is right back to
+    armed-and-inert. Same reasoning `unattended_action_refusal` records for its own update leg."""
+    _create_schedule(state)
+    good_spec = dict(_store(home).get("clock:nightly").trigger.spec)
+    good_wf = dict(_store(home).get("clock:nightly").trigger.workflow)
+
+    resp = _put(state, {"action": {"provider": "no-such-provider", "config": {}}})
+    assert resp.status == 400
+    assert "no-such-provider" in _body(resp)["error"]
+    assert _store(home).get("clock:nightly").trigger.workflow == good_wf, "not partially applied"
+
+    resp = _put(state, {"cron": "99 99 * * *"})
+    assert resp.status == 400
+    assert "99 99 * * *" in _body(resp)["error"]
+    assert _store(home).get("clock:nightly").trigger.spec == good_spec
+
+
+def test_an_UPDATE_to_a_valid_cron_and_a_registered_provider_still_lands(home, state):
+    """The vacuity partner for the refusals above — the PUT path is not simply broken."""
+    _create_schedule(state)
+    assert _put(state, {"cron": "@daily"}).status == 200
+    assert _store(home).get("clock:nightly").trigger.spec["expr"] == "@daily"
+    assert (
+        _put(state, {"action": {"provider": "notify", "config": {"title_template": "hi"}}}).status
+        == 200
+    )
+    assert _store(home).get("clock:nightly").trigger.workflow["inline"]["provider"] == "notify"

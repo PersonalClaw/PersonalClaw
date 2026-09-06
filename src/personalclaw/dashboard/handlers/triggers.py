@@ -2355,7 +2355,18 @@ async def api_triggers_doctor(request: web.Request) -> web.Response:
             }
         )
 
-    report = diagnose(rows, known_workflows=known_workflows)
+    # 🔴 #779: the set that makes `unknown_action_provider` real. Injected rather than read
+    # inside `diagnose`, matching `known_workflows` above, so the function stays pure — and
+    # `None` would suppress the check, so a failed read must not silently become "every
+    # provider is fine". `dispatchable_action_providers` ensures the built-ins are registered
+    # first; skipping that on this read-only surface would report EVERY automation as unknown.
+    from personalclaw.action_providers.registry import dispatchable_action_providers
+
+    report = diagnose(
+        rows,
+        known_workflows=known_workflows,
+        known_action_providers=dispatchable_action_providers(),
+    )
     # Semantic spec findings (#560/#612): the structural doctor above cannot see an
     # invalid-but-present cron or an inert skip date — `semantic_spec_issues` lives beside
     # the fire path and mirrors its exact matching rules, so "the doctor says healthy"
