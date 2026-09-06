@@ -300,6 +300,57 @@ def _doctor_timezone() -> list[str]:
     return [f"timezone: unresolved — schedules fall back to {facts['resolved']}"]
 
 
+def _doctor_maintenance() -> None:
+    """Print the remediation engine's health score and the deficits behind it.
+
+    🔴 THE SECOND SURFACE OF THE SAME DROPPED EVIDENCE. `/api/doctor/remediation` measures
+    every deficit and the dashboard renders them; ``personalclaw doctor`` measured nothing
+    and printed no part of that payload. On a home with 25 knowledge items and no embedder
+    the CLI said exactly one thing about it — ``embeddings: ⏹ disabled`` — naming the
+    missing PREREQUISITE while staying silent about its CONSEQUENCE, the 25 items now
+    keyword-only. Whoever reads the CLI instead of the dashboard read "a feature is off",
+    not "a backlog is stuck".
+
+    Deliberately NOT appended to ``issues`` (which exits 1): a deficit is a maintenance
+    backlog, not a broken setup, and a fresh install with unembedded notes must not fail its
+    own doctor. Best-effort like every other probe here — a measure that raises prints one
+    line and moves on, because a health read must never break the setup check that follows.
+    """
+    print("\nMaintenance")
+    try:
+        from personalclaw.config.loader import AppConfig as _Cfg
+        from personalclaw.resilience.remediation import health_score, measure_deficits
+
+        deficits = measure_deficits()
+        target = float(_Cfg.load().resilience.remediation.target_score)
+        score = health_score(deficits)
+        mark = "✅" if score >= target else "⚠️ "
+        print(f"  health:      {mark} score {score:g} / target {target:g}")
+        # Zero-count sources are measurements, not problems — the same filter the panel
+        # applies, for the same reason: listing them buries the real ones.
+        present = [d for d in deficits if d.count > 0]
+        if not present:
+            print("  deficits:    none measured")
+            return
+        for d in sorted(present, key=lambda d: (not d.reachable, -d.penalty)):
+            label = d.key.replace("_", " ")
+            if d.reachable:
+                print(f"  deficit:     ⚠️  {label} ×{d.count} (−{d.penalty:.1f}, fixable now)")
+            else:
+                # `blocked_by` is the producer's own sentence — the panel prints this exact
+                # string, so the two surfaces cannot drift into two different explanations.
+                # On its own continuation line (this file's established shape for a fix hint)
+                # rather than appended: the sentence carries its own dash, and two in one row
+                # reads as a stutter.
+                print(f"  deficit:     ⏹  {label} ×{d.count}")
+                print(f"               {d.blocked_by}")
+        if any(d.reachable for d in present):
+            print("               Fix: personalclaw doctor runs no jobs — use Settings → Doctor")
+            print("               → Maintenance → Run now, or wait for the adaptive pass.")
+    except Exception as exc:
+        print(f"  health:      ⚠️  could not measure ({str(exc)[:120]})")
+
+
 def _doctor() -> None:
     """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity."""
 
@@ -639,6 +690,8 @@ def _doctor() -> None:
         print("  embeddings:  ✅ enabled")
     else:
         print("  embeddings:  ⏹ disabled (pick an embedding model in Settings → Models)")
+
+    _doctor_maintenance()
 
     # ── Speech-to-Text ──
     # STT resolves through the typed registry: enabled lives in

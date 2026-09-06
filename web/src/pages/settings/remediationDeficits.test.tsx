@@ -30,10 +30,12 @@ import { join } from 'node:path'
 
 const PANEL = join(process.cwd(), 'src/pages/settings/DoctorPanel.tsx')
 
+const BLOCKER = 'no embedding model is bound — pick one in Settings → Models'
+
 const DEFICITS = [
-  { key: 'knowledge_missing_embeddings', count: 26, penalty: 13.0, reachable: false },
-  { key: 'orphan_locks', count: 26, penalty: 10.0, reachable: true },
-  { key: 'skill_aging_due', count: 0, penalty: 0.0, reachable: true },
+  { key: 'knowledge_missing_embeddings', count: 26, penalty: 13.0, reachable: false, blocked_by: BLOCKER },
+  { key: 'orphan_locks', count: 26, penalty: 10.0, reachable: true, blocked_by: '' },
+  { key: 'skill_aging_due', count: 0, penalty: 0.0, reachable: true, blocked_by: '' },
 ]
 
 const snapshot = (over: Record<string, unknown> = {}) => ({
@@ -90,15 +92,30 @@ describe('reachable vs unreachable is not flattened', () => {
     expect(text).not.toContain('−13.0')      // unreachable → at its floor, NOT subtracted
   })
 
-  it('marks an unreachable deficit so Run now is not expected to clear it', async () => {
-    expect((await mount()).container.textContent).toContain('not fixable yet')
+  it('names WHY an unreachable deficit will not clear, not just that it will not', async () => {
+    // 🔴 THIS ROW USED TO READ `· not fixable yet`, AND THAT WAS THE WHOLE DEFECT'S SECOND HALF.
+    // Measured live on a seeded home: `GET /api/doctor/remediation` returned score 100.0 with
+    // `knowledge_missing_embeddings ×25 penalty 12.5 reachable:false`, and the panel rendered
+    //
+    //     Health score 100 / target 90
+    //     Knowledge missing embeddings ×25 · not fixable yet   —
+    //     Nothing to do — no fixable deficits.
+    //
+    // The arithmetic is correct (an unreachable penalty is excluded — no run can improve it), but
+    // "yet" promises a later pass, and no pass will ever reach this: what is missing is an
+    // embedding model. The reason was computed one line from where `reachable` was and thrown
+    // away. `blocked_by` carries it, produced once in core so the CLI prints the same sentence.
+    const text = (await mount()).container.textContent ?? ''
+    expect(text).toContain(BLOCKER)
+    expect(text, 'the reason replaces the dead end, it does not sit beside it').not.toContain('not fixable yet')
   })
 
   it('does not mark a reachable one', async () => {
     const { container } = await mount({
-      deficits: [{ key: 'orphan_locks', count: 3, penalty: 6, reachable: true }],
+      deficits: [{ key: 'orphan_locks', count: 3, penalty: 6, reachable: true, blocked_by: '' }],
     })
-    expect(container.textContent).not.toContain('not fixable yet')
+    expect(container.textContent).not.toContain('·  ')
+    expect(container.textContent).toContain('−6.0')
   })
 })
 
@@ -119,11 +136,143 @@ describe('the plan explains what Run now would do', () => {
     expect(text).toContain('already meets its target')
   })
 
-  it('says nothing-to-do when there is genuinely nothing fixable', async () => {
-    const { container } = await mount({
-      deficits: [{ key: 'knowledge_missing_embeddings', count: 4, penalty: 2, reachable: false }],
+  it('distinguishes "nothing fixable" from "nothing measured"', async () => {
+    // 🔴 ONE LINE SERVED TWO OPPOSITE STATES. `Nothing to do — no fixable deficits.` rendered
+    // directly beneath `Knowledge missing embeddings ×25` reads as "no deficits" to anyone who
+    // does not stop on the word "fixable" — which is exactly the reading the green 100 above it
+    // already invites. An empty deficit list and a list of unfixable ones are different facts.
+    const blocked = await mount({
+      deficits: [{ key: 'knowledge_missing_embeddings', count: 4, penalty: 2, reachable: false, blocked_by: BLOCKER }],
     })
-    expect(container.textContent).toContain('Nothing to do')
+    expect(blocked.container.textContent).toContain('nothing measured above is fixable by maintenance')
+
+    const clean = await mount({ deficits: [] })
+    expect(clean.container.textContent).toContain('no deficits measured')
+  })
+})
+
+describe('the run ledger says when, and whether it worked', () => {
+  // It read `score 88→100 · 1 job · target_score reached`. `ts` and every `jobs[].status` were in
+  // the payload and unread, so a pass whose every job THREW rendered identically to one that did
+  // the work — and a silently failing maintenance job is the one thing this list exists to catch.
+  const RUN = (over: Record<string, unknown> = {}) => ({
+    ts: Math.floor(Date.now() / 1000) - 7200,
+    score_before: 76, score_after: 88, stopped_reason: 'plan exhausted',
+    jobs: [{ id: 'serving-fs.prune-orphans', status: 'ok', cost: 0, detail: 'Removed 4 stale locks' }],
+    ...over,
+  })
+
+  it('stamps each run with when it happened', async () => {
+    const text = (await mount({ recent_runs: [RUN()] })).container.textContent ?? ''
+    expect(text).toContain('2h ago')
+  })
+
+  it('counts the jobs that FAILED — and a cooldown skip is not one', async () => {
+    // Measured live: a second Run now inside the 6h window returned
+    // `jobs: [{id: 'serving-fs.prune-orphans', status: 'skipped_cooldown'}]`. The storm guard
+    // doing its job must not read as a failure, so the count is `=== 'error'`, not `!== 'ok'`.
+    const skipped = (await mount({
+      recent_runs: [RUN({ jobs: [{ id: 'serving-fs.prune-orphans', status: 'skipped_cooldown', cost: 0 }] })],
+    })).container.textContent ?? ''
+    expect(skipped).not.toContain('failed')
+    expect(skipped).toContain('Serving fs.prune orphans — skipped_cooldown')
+  })
+
+  it('counts the jobs that did not succeed', async () => {
+    const text = (await mount({
+      recent_runs: [RUN({
+        jobs: [
+          { id: 'serving-fs.prune-orphans', status: 'ok', cost: 0, detail: 'Removed 4 stale locks' },
+          { id: 'memory.rebuild-fts', status: 'error', cost: 0, error: 'database is locked' },
+        ],
+      })],
+    })).container.textContent ?? ''
+    expect(text).toContain('2 jobs')
+    expect(text).toContain('1 failed')
+  })
+
+  it('names each outcome of the newest pass, so a failure carries its reason', async () => {
+    const text = (await mount({
+      recent_runs: [RUN({
+        jobs: [{ id: 'memory.rebuild-fts', status: 'error', cost: 0, error: 'database is locked' }],
+      })],
+    })).container.textContent ?? ''
+    expect(text).toContain('Memory.rebuild fts — error: database is locked')
+  })
+
+  it('expands only the newest pass, so five rows do not bury the score', async () => {
+    const text = (await mount({
+      recent_runs: [
+        RUN({ jobs: [{ id: 'sel.prune', status: 'ok', cost: 0, detail: 'newest detail' }] }),
+        RUN({ jobs: [{ id: 'skills.age', status: 'ok', cost: 0, detail: 'older detail' }] }),
+      ],
+    })).container.textContent ?? ''
+    expect(text).toContain('newest detail')
+    expect(text).not.toContain('older detail')
+  })
+})
+
+describe('the Run-now toast level is derived from the result', () => {
+  // 🔴 PROVEN LIVE, not read off the code path: `POST /api/doctor/remediation/run` on the seeded
+  // home returned `{score_before: 100, score_after: 100, jobs: [], stopped_reason: "target_score
+  // already met"}`, and the panel raised a GREEN success toast reading "score 100→100
+  // (target_score already met)". Nothing ran, the 25-item backlog was untouched, and the only
+  // feedback was the colour that means "done". A run whose jobs all threw took the same green.
+  async function runAndCapture(result: Record<string, unknown>) {
+    vi.resetModules()
+    const calls: Array<[string, string | undefined]> = []
+    vi.doMock('../../app/appSdk', () => ({
+      notify: (m: string, l?: string) => { calls.push([m, l]) },
+    }))
+    vi.doMock('../../ui/dialog', () => ({ confirm: () => Promise.resolve(true) }))
+    vi.doMock('../../lib/api', () => ({
+      api: {
+        doctorRemediation: () => Promise.resolve(snapshot()),
+        doctorRemediationRun: () => Promise.resolve(result),
+      },
+    }))
+    const { RemediationSection } = await import('./DoctorPanel')
+    let r!: ReturnType<typeof render>
+    await act(async () => { r = render(<RemediationSection />); await new Promise((res) => setTimeout(res, 0)) })
+    const btn = [...r.container.querySelectorAll('button')].find((b) => /Run now/.test(b.textContent ?? ''))
+    await act(async () => { btn?.click(); await new Promise((res) => setTimeout(res, 0)) })
+    return calls
+  }
+
+  it('a run that did nothing is information, not success', async () => {
+    const calls = await runAndCapture({ score_before: 100, score_after: 100, jobs: [], stopped_reason: 'target_score already met' })
+    expect(calls).toHaveLength(1)
+    expect(calls[0][1]).toBe('info')
+    expect(calls[0][0]).toContain('changed nothing')
+    expect(calls[0][0]).toContain('target_score already met')
+  })
+
+  it('an all-skipped run is information too, not a failure', async () => {
+    // The live second press: the cooldown guard skipped the only planned job.
+    const calls = await runAndCapture({
+      score_before: 88, score_after: 88, stopped_reason: 'plan exhausted',
+      jobs: [{ id: 'serving-fs.prune-orphans', status: 'skipped_cooldown', cost: 0 }],
+    })
+    expect(calls[0][1]).toBe('info')
+    expect(calls[0][0]).toContain('changed nothing')
+  })
+
+  it('a run whose job failed is an error, and says so', async () => {
+    const calls = await runAndCapture({
+      score_before: 76, score_after: 76, stopped_reason: 'plan exhausted',
+      jobs: [{ id: 'memory.rebuild-fts', status: 'error', cost: 0, error: 'database is locked' }],
+    })
+    expect(calls[0][1]).toBe('error')
+    expect(calls[0][0]).toContain('1 failed')
+  })
+
+  it('a run that actually did the work is the only success', async () => {
+    const calls = await runAndCapture({
+      score_before: 76, score_after: 100, stopped_reason: 'target_score reached',
+      jobs: [{ id: 'serving-fs.prune-orphans', status: 'ok', cost: 0, detail: 'Removed 4 stale locks' }],
+    })
+    expect(calls[0][1]).toBe('success')
+    expect(calls[0][0]).toContain('1 ok')
   })
 })
 
