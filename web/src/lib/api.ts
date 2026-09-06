@@ -1163,6 +1163,19 @@ export interface ScheduleRun {
   reason?: string                           // the mandatory one-line why, for any non-clean row
   weight?: string                           // "ledger" | "full" — a ledger row has no openable run
   incomplete?: boolean                      // this row SUMMARISES N fires ("at least N")
+  // 🔴 THE ROW'S IDENTITY AND ITS LABEL, on the unified shape (issue 466). This type describes TWO
+  // endpoints, and only the per-trigger one sends `job_name`/`job_id`; the cross-trigger
+  // `/api/triggers/history` sends `trigger_id` and (since 466) `trigger_name`. Neither was declared
+  // here, so the Schedule widget's `r.job_name || r.job_id || 'Schedule'` could not resolve on a
+  // projected row and fell all the way to the literal — measured: five different automations, five
+  // rows reading "Schedule", and four of them failures nobody could tell apart.
+  //
+  // Every field on this interface is optional, which is exactly why an 8-of-8 shape mismatch
+  // compiled silently for a month. The type cannot fix that alone (the two endpoints genuinely
+  // disagree), so the enforcement lives in `tests/test_dashboard_widget_payload_reads.py`, which
+  // derives BOTH sides — what the handler really sends and what the widget really reads.
+  trigger_id?: string
+  trigger_name?: string
 }
 // Task entity. The wired-today fields match the backend Task dataclass
 // (open/in_progress/done/cancelled/blocked, flat `project` string, `labels`).

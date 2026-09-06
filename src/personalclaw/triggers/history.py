@@ -234,6 +234,11 @@ def schedule_run_to_record(run: dict[str, Any], *, trigger_id: str = "") -> Fire
     return FireRecord(
         id=str(run.get("run_id", "") or ""),
         trigger_id=trigger_id or (f"schedule:{job_id}" if job_id else ""),
+        # The name the CALLER already joined. `api_trigger_history_all` resolves it out of the
+        # trigger store and `_redact_run` puts it on the row as `job_name` before this projection
+        # runs — so carrying it costs nothing and re-deriving it here would mean a second join that
+        # can disagree. Dropping it is what made every dashboard row read "Schedule".
+        trigger_name=str(run.get("job_name", "") or ""),
         outcome=outcome,
         reason=_redact(reason)[:200],
         # `FULL` — a schedule run has a real run record behind it (trace, error, duration), which
@@ -327,6 +332,8 @@ def hook_to_record(hook: Any) -> FireRecord | None:
     return FireRecord(
         id=f"lifecycle:{hook_id}:last",
         trigger_id=f"lifecycle:{hook_id}",
+        # `ScriptHook.name` — the hook's own field, so no join is needed for this kind.
+        trigger_name=_redact(str(getattr(hook, "name", "") or "")),
         outcome=outcome,
         reason=_redact(_hook_reason(status, outcome)),
         # `FULL`: a hook genuinely executed a script, with an exit code and a duration behind it.
@@ -363,6 +370,12 @@ def event_trigger_to_record(trigger: Any) -> FireRecord | None:
     return FireRecord(
         id=f"event:{tid}:summary",
         trigger_id=f"event:{tid}",
+        # An `EventTrigger` carries NO `name` field — checked against the dataclass. The product
+        # already has a convention for this: the Triggers list serializes the event kind as
+        # `"name": t.id` (`handlers/triggers.py:_serialize_event`), so the bare id IS its display
+        # name. Reusing that beats inventing a second answer for the same question, which is the
+        # whole reason this name is resolved in ONE place.
+        trigger_name=_redact(tid),
         outcome=Outcome.RAN.value,
         reason=f"{count} fire(s) recorded; this store keeps a counter, not per-fire rows",
         weight=RunWeight.LEDGER.value,
