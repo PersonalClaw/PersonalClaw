@@ -5,9 +5,15 @@ app bundle's "driven in the real UI" clause is satisfied, so the part of it that
 quietly lie — a leg that never ran reading as green, a SKIPPED leg with no reason —
 carries unit tests of its own (``scripts/lib/app_validate_report.test.mjs``, run
 under ``node --test``). This module runs those from pytest so they sit inside the
-same gate as everything else, and adds the two static checks that keep the browser
+same gate as everything else, and adds the static checks that keep the browser
 driver honest: it must route every status through the tested module rather than
-writing its own, and it must drive every leg the module declares.
+writing its own, it must drive every leg the module declares, and it must not go
+back to locating a tool's argument fields by ``name`` attribute — a selector that
+matched nothing, ran every tool with EMPTY arguments, and failed the leg with the
+tool's own "needs an X" error attributed to the BUNDLE. The behavioural pin for
+that fill path renders the real form and drives the real function
+(``web/src/pages/tools/harnessFillsToolArgs.test.tsx``); these are the cheap
+source-level rails beside it.
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REPORT_MODULE = REPO_ROOT / "scripts" / "lib" / "app_validate_report.mjs"
 REPORT_TESTS = REPO_ROOT / "scripts" / "lib" / "app_validate_report.test.mjs"
+FORM_MODULE = REPO_ROOT / "scripts" / "lib" / "app_validate_form.mjs"
 DRIVER = REPO_ROOT / "scripts" / "app_ui_validate.mjs"
 
 
@@ -81,6 +88,44 @@ def test_driver_owns_no_status_vocabulary_of_its_own() -> None:
     assert not re.search(r"status:\s*['\"](PASS|FAIL|SKIPPED)['\"]", driver), (
         "the driver assigns a leg status literally instead of going through the "
         "report module, which is what enforces the reason-required rule"
+    )
+
+
+def test_driver_locates_tool_arguments_by_accessible_name() -> None:
+    """A tool argument must be found by the name the inspector RENDERS.
+
+    ``SchemaField`` emits no ``name`` attribute — it binds ``<label htmlFor>`` to a
+    React ``useId()``. An interpolated ``[name="${key}"]`` selector therefore matched
+    nothing, the fill was skipped, and the tool ran with no arguments at all. Because
+    the tool then reported its own missing-argument error, the resulting FAIL looked
+    exactly like a real bundle defect.
+    """
+    driver = DRIVER.read_text(encoding="utf-8")
+    form = FORM_MODULE.read_text(encoding="utf-8")
+    assert "fillRequiredArgs" in driver, (
+        "the driver must fill tool arguments through scripts/lib/app_validate_form.mjs, "
+        "which is the part pinned against the real rendered form"
+    )
+    # An interpolated name selector is the defect's signature. A LITERAL one is fine:
+    # `input[name="app-local-source"]` targets a field that really does set `name`.
+    offenders = [
+        line.strip()
+        for line in (driver + form).splitlines()
+        if re.search(r'\[name="\$\{', line) and not line.lstrip().startswith(("//", "*", "/*"))
+    ]
+    assert not offenders, f"a tool argument is being located by name attribute again: {offenders}"
+    assert "getByLabel" in form, "the fill path must resolve fields by accessible name"
+
+
+def test_driver_blocks_the_leg_when_an_argument_could_not_be_entered() -> None:
+    """Running the tool anyway is what misattributed the failure to the bundle."""
+    driver = DRIVER.read_text(encoding="utf-8")
+    block = driver.split("const { args, unfilled } = await fillRequiredArgs", 1)
+    assert len(block) == 2, "the driver no longer collects unfilled required arguments"
+    after = block[1][:800]
+    assert "unfilled.length" in after and "'blocked'" in after, (
+        "the driver must return a BLOCKED status when it could not enter a required "
+        "argument, instead of invoking the tool with arguments it never typed"
     )
 
 
