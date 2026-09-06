@@ -31,15 +31,6 @@ The original design record is kept below — execution logs, measured findings a
 - **Template repo (`personalclaw/app-template`):** the scaffold's `--type tool` output committed + apps-repo CI preconfigured + a README walking the author from clone to installed-in-Store in minutes.
 - **Registry (`personalclaw/registry`):** `app-registry.json` — `[{name, repo, types, permissions_declared, license, maintainer, added, last_validated}]`; PR-based listing; CI validation on PRs: manifest fetch+parse, repo exists, license present, scanner dry-run verdict recorded into the PR (never auto-blocking listing on `warning` — the verdict is *displayed*; `dangerous` blocks listing). Store integration: the registry repo URL ships as a default git source (config seed + Settings toggle to remove it); listings render with the same consent surface as any source.
 - **Exemplars (org repos, scaffold-generated):** `watched-source-github` (a watched-source provider — coordinates with WATCHED-SOURCES contract timing), `action-home-assistant` (action provider calling HA webhooks), `inbox-github-notifications` (inbox source), `channel-null` (the guide's teaching channel, conformance-kit-passing). Each: small, real, forkable, listed in the registry.
-- **First-party product-app exemplars ([PRODUCT-EXPERIENCE-PARITY](PRODUCT-EXPERIENCE-PARITY.md) §7's suite, recorded here as each ships):** these live in **PersonalClawApps**, one bundle per app, one PR each.
-  - **`code-review`** (`tool`, suite 1/9 — PersonalClawApps PR #75, merged `edd7336`): deep-review a GitHub pull request one file at a time. Fetches the diff through the user's own `gh`, scores every changed file by blast radius (churn, path criticality, fan-in inside the changed set, add/delete/rename), then reviews each file **in isolation** — heaviest first, each review seeing only its own diff, the weight buying both order and context budget. Findings are appended to a JSONL log on the user's machine and nothing is ever posted back to the PR. Declares `storage` with `network: false`: the only outward call is `gh`.
-  - **`research-lab`** (`tool`, suite 2/9 — PersonalClawApps PR #76): unattended multi-cycle research campaigns. A question becomes a sub-question tree; an hourly headless cron advances one cycle per tick and fans that cycle's worklist to subagents; findings and their sources synthesise into one markdown report. Declares only `storage` + `cron`, because the app is the ledger and the engine does the researching.
-
-  **Neither takes an `app-registry.json` row, and that is not an omission:** the apps repo is already a default git Store source (`catalog._DEFAULT_GIT_SOURCES`), so a merged bundle is listed by construction, while the community registry's front door requires an `app.json` at a repo ROOT (`validate_registry.py` → `manifest_missing`) — which a bundle inside a multi-app repo does not have.
-
-  **Local-Store install driven headlessly for both, 2026-09-06** (`add_local_source` → `available_catalog` → `install` → `enable` → `disable`, isolated `PERSONALCLAW_HOME`): both appear on the Store as `sourceKind: local` with their display names, both install through the real quarantine + `SkillScanner` gate, both register their provider on enable (`review_pr`/`record_finding`/`review_findings`; `research_open`/`_list`/`_next`/`_record`/`_report`) and deregister on disable, and both render a clean `personalclaw doctor` section. **The two scan verdicts differ, and the difference is real:** `research-lab` is `CLEAN` and installs with no consent prompt, while `code-review` is `WARNING` (one finding — rule `python_exec` on `app_cli.py`, which is its `subprocess.run` of `gh auth status`) and so is refused with `install needs consent: scanner raised warnings` until `confirm=True`. That is the gate working as designed on a genuine subprocess call, not a defect — but it means `code-review`'s Store card carries a scanner warning pre-install and its install needs the explicit consent click, which is worth knowing before a user meets it. What remains unexercised for both is a human driving them in the browser UI.
-
-  These prove the platform on real product surface rather than on teaching fixtures.
 - **Bounty board:** labeled issues (`bounty`) per wanted app (channels from plan 40 T7.3, providers, sources) with the scaffold + guide + conformance links; showcase channel in the community surface.
 - **Registry surface (S4):** static generation on personalclaw.dev from `app-registry.json` — cards show name, types, **declared permissions and last scan verdict pre-install** (publishing the consent surface).
 
@@ -647,6 +638,49 @@ teaching bundles of `ET-6`, which stay listed above as the minimal per-type refe
   decompression bomb on the image HEADER before decoding, and returns the judgement it cannot
   measure as an explicit rubric instead of inventing findings. Not yet install-validated in the
   real UI — see the atom's own note.
+
+- **2026-09-06 — `code-review` (`PEP-12`, suite 1/9) — a `tool` exemplar for the EXTERNAL-PROCESS
+  shape.** PersonalClawApps PR #75, merged `edd7336`. Deep-reviews a GitHub pull request one file at a
+  time: fetches the diff through the user's own `gh`, scores each changed file by blast radius (churn,
+  path criticality, fan-in within the changed set, add/delete/rename), reviews heaviest-first with the
+  weight buying both order and context budget, appends findings to a local JSONL log, and posts nothing
+  back to the PR. Declares `storage` with `network: false` — its only outward call is `gh`, which is
+  also what makes it the reference for the honest-ceiling pattern: a `ToolProvider` is constructed with
+  its settings dict and nothing else, so it cannot reach the subagent manager, and the app says so
+  rather than implying isolation it cannot provide.
+- **2026-09-06 — `research-lab` (`PEP-13`, suite 2/9) — a `tool` exemplar for the UNATTENDED-CAMPAIGN
+  shape.** PersonalClawApps PR #76. A question becomes a sub-question tree that grows from findings; a
+  declared hourly headless cron advances exactly one cycle per tick. What it exemplifies is restraint:
+  **the app is the ledger, not the researcher** — no index, no embeddings, no network, no `agent`
+  permission, declaring only `storage` + `cron`. Three bounds make an unattended campaign terminate
+  rather than spin (cycle budget, follow-up depth cap, duplicate drop), and `research_next` reporting
+  `done` is a *success*, because an error there would read as transient and keep the cron retrying a
+  finished campaign forever.
+- **2026-09-06 — `notes` (`PEP-16`, suite 5/9) — a `tool` exemplar for the VERSIONED-USER-DATA
+  shape.** PersonalClawApps PR #78. Markdown notes over a real git repo: write/read/list/search,
+  history, restore, and an approval-gated destructive delete. Its discipline is the boundary it refuses
+  to cross — it is an editor, not a second knowledge store, asserted by a test that the notebook only
+  ever holds `.md` + `.git`, with `note_search` a literal grep whose own description and empty-result
+  copy point the user at `knowledge_search` instead. A notebook path already inside a git worktree
+  adopts that repo rather than nesting one, and every note commit carries an explicit pathspec, proven
+  by a test that a user's unrelated staged file stays staged.
+
+**Neither these nor any later suite app takes an `app-registry.json` row, and that is not an omission.**
+The apps repo is already a default git Store source (`catalog._DEFAULT_GIT_SOURCES`), so a merged bundle
+is listed by construction; and `validate_registry.py` requires an `app.json` at a *repo root*, so a row
+for a bundle inside a multi-app repo could never pass the front door.
+
+**Install and UI drive, verified 2026-09-06.** `code-review` and `research-lab` were both registered as
+local Store sources through the Manage Sources panel on an isolated gateway and installed **through the
+browser**: cards and detail panels rendered, `code-review`'s scanner WARNING raised its consent dialog
+and was overridden by a real click (never bypassed), both landed in the Library, their tools rendered in
+Settings → Tools, and three tools were invoked from `ToolInspector` — including `review_pr` running for
+real against a live PR through the authenticated local `gh`. The honest boundary: `research-lab`'s
+campaign loop (`research_open`/`_next`/`_record`/`_report`) and its hourly cron were **not** exercised,
+because each needs a configured model provider; only its read-only `research_list` ran. That drive also
+surfaced several core consent-surface defects, filed as issues rather than fixed here.
+
+These prove the platform on real product surface rather than on teaching fixtures.
 
 ## Execution log — `ET-9` / `ET-10` (owner-provisioning atoms minted) — 2026-09-03
 
