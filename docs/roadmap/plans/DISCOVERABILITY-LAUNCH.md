@@ -656,3 +656,31 @@ does read this file's citations, and really would red on a broken one.
 - **[2026-09-03] NOTE — `DL-8` NOT flipped.** Verified `gh pr view 2363` OPEN/unmerged at worktree cut;
   and even merged, its `done_when` requires the owner to actually submit listings and post, so it
   would at most be 🟡 PARTIAL, never `done`. Left `todo` unchanged.
+- **[2026-09-06] NOTE — the blocker behind `DL-5`'s three dropped beats is closed; `DL-5` itself NOT
+  flipped.** The measured cause was that the `demo-home` fixture binds no model provider, and the
+  three dropped beats are precisely the three surfaces that exist only as the *product* of a turn.
+  Measured on a seeded home before any change: `/api/sessions` `{"total": 0}`, `/api/approvals` `[]`,
+  `/api/artifacts` `{"artifacts": []}`, `/api/model-providers` `{"providers": []}`. The fixture is a
+  bare `shutil.copytree` of a committed tree, so it cannot carry a machine's endpoint and has no hook
+  where a probe could run — the binding therefore lands as a step BESIDE the seed, not inside it:
+  `personalclaw gateway --seed demo-home --seed-local-model`. Measured after, on the same command:
+  `providers` 1 (`Local Ollama` / `ollama` / `gemma4:12b`, capabilities chat+code_tools+embedding+
+  streaming+summarization+vision); a chat turn streamed real tokens; the model then emitted a real
+  `artifact_save` tool call which **parked the turn on the tool-permission gate** (persisted
+  `permission` message, `risk: caution`, mirrored to the inbox as a pending `agent_request`); approving
+  it ran the tool and `/api/artifacts` returned 1 (`reading-digest-week-34` v1, `by: agent`), with
+  `artifacts/reading-digest-week-34/{current.html,meta.json,versions/v1.html}` on disk and the SEL
+  chain `artifact_save invoked` → `tool_approval:approved` → `artifact_save approved/success/completed`.
+  No approval gate was weakened: the record came from a real decision on a real turn. So **chat,
+  approval and artifact are now showable** and the capture can be re-run; `loop` and `knowledge` never
+  depended on a model (the fixture ships both). `DL-5` stays `todo` — its `done_when` requires the
+  recorded 60-90s capture plus the 1280x640 social-preview images, and this atom delivered neither.
+  Two things a re-run must know. (1) `--seed-local-model` writes NOTHING when no local Ollama answers
+  — verified against a closed port: the gateway still reached READY, `config.json` had no `providers`
+  key, no `active_models.json`, no provider app installed, and one `skipped_no_server` line named the
+  unmet precondition. So the capture runbook can carry the flag unconditionally. (2) The
+  in-chat approval never appears on `/api/approvals` — that store (`DashboardState._pending_approvals`)
+  serves BACKGROUND approvals (cron / subagent / task). A chat approval lives on the session's
+  `permission` message plus the WS `approval` frame, and resolves via
+  `POST /api/chat/sessions/<UNPREFIXED name>/approve`. A capture script polling `/api/approvals` for
+  the approval beat will wait forever on a turn that is in fact correctly parked.
