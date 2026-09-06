@@ -28,7 +28,7 @@ function RiskChip({ risk }: { risk: NonNullable<ApprovalSegment['risk']> }) {
     // reports aria-prohibited-attr), and it was redundant anyway — the chip renders
     // `m.label` as visible text below, so the risk level is already in the a11y tree. The
     // `title` stays as the hover affordance that spells out "Risk: …".
-    <span className="inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.75rem] shrink-0"
+    <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] shrink-0"
       title={`Risk: ${m.label}`}
       style={withWeight({ background: `color-mix(in srgb, ${m.color} 16%, transparent)`, color: m.color }, 600)}>
       <Icon size={11} aria-hidden /> {m.label}
@@ -54,7 +54,7 @@ function BlastRadiusChips({ tool, risk }: { tool: string; risk?: ApprovalSegment
       className="mt-1.5 flex list-none flex-wrap items-center gap-1 p-0">
       {facets.map((f) => (
         <li key={f.key} title={f.detail}
-          className="inline-flex items-center rounded-pill bg-surface-high px-1.5 h-[18px] text-on-surface-var text-[0.75rem]">
+          data-type="caption" className="inline-flex items-center rounded-pill bg-surface-high px-1.5 h-[18px] text-on-surface-var">
           {f.label}
         </li>
       ))}
@@ -150,7 +150,7 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
     // misreporting a security decision it is the permanent record of.
     const { label, icon: Icon, tone } = approvalOutcome(seg.resolved)
     return (
-      <div className="my-1 flex items-center gap-1.5 text-[0.75rem]" style={{ color: tone }}>
+      <div data-type="caption" className="my-1 flex items-center gap-1.5" style={{ color: tone }}>
         <Icon size={13} aria-hidden />
         <span>{seg.tool} — {label}</span>
       </div>
@@ -176,7 +176,7 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
       scope={
         <div className="mt-2 flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-on-surface-low text-[0.75rem]">Remember this choice</span>
+            <span data-type="caption" className="text-on-surface-low">Remember this choice</span>
             <Segmented size="sm" ariaLabel="Remember this choice"
               options={REMEMBER_SCOPES.map((s) => ({ key: s.key, label: s.label, title: s.promise }))}
               value={scope} onChange={(k) => setScope(k as RememberScope)} />
@@ -184,7 +184,7 @@ export function ApprovalCard({ seg, onAct }: { seg: ApprovalSegment; onAct: (id:
           {/* The promise, in plain sight rather than only in a tooltip: a scope the user
               cannot read is a scope they cannot consent to. Announced politely (not
               assertively) because the user caused the change by choosing it. */}
-          <p aria-live="polite" className="text-on-surface-low text-[0.75rem]">{chosen.promise}</p>
+          <p aria-live="polite" data-type="caption" className="text-on-surface-low">{chosen.promise}</p>
         </div>
       }
       choices={[

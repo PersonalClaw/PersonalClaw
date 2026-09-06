@@ -87,7 +87,7 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
   const dir = path.replace(/\/+$/, '').replace(/\/[^/]*$/, '')
   const chrome = (
     <div className="flex items-center gap-2 border-b border-outline-variant/40 px-m py-1.5">
-      <span className="min-w-0 flex-1 truncate text-on-surface-low text-[0.75rem]" title={path}>
+      <span data-type="caption" className="min-w-0 flex-1 truncate text-on-surface-low" title={path}>
         {dir && <span className="opacity-60">{dir}/</span>}
         <span className="text-on-surface" style={fvs(500)}>{baseName(path)}</span>
       </span>
@@ -107,7 +107,7 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
       {artModal && (
         <Modal title="Save as artifact" icon={<Box size={18} className="text-primary" />} onClose={() => setArtModal(null)}>
           <div className="flex flex-col gap-m p-l" style={{ minWidth: 360 }}>
-            <p className="text-on-surface-low text-[0.8125rem]">Creates a versioned artifact that live-points at <span className="font-mono">{baseName(artModal.entry.path)}</span>. Re-saving bumps it instead of duplicating.</p>
+            <p data-type="body-s" className="text-on-surface-low">Creates a versioned artifact that live-points at <span className="font-mono">{baseName(artModal.entry.path)}</span>. Re-saving bumps it instead of duplicating.</p>
             <TextInput value={artModal.name} onChange={(v) => setArtModal((m) => m && { ...m, name: v })} placeholder="Artifact name" autoFocus />
             <div className="flex justify-end gap-s">
               <Button variant="ghost" size="sm" onClick={() => setArtModal(null)}>Cancel</Button>
