@@ -1196,3 +1196,103 @@ Stumble detector at the after-turn seam (only when skills were loaded): correcti
   New-Year non-collision case. Re-ran both suites against main: 52/52 green. No code change
   was needed — this entry records the verification that flipped the atom.
 
+
+## Execution log — `LV-7` (V4 reproduction attempt — the benchmark was RUN) — 2026-09-06
+
+- **[2026-09-06][LV-7] 🟡 RUN TWICE, MEASURED NOTHING. The gate is not authorized model spend.**
+  Every prior pass recorded `LV-7` as waiting on a model. A local Ollama serving `gemma4:12b`
+  (`GET /v1/models` → 200 at `127.0.0.1:11434`) removes that premise, so the documented single
+  command was run in full — twice — against an isolated `PERSONALCLAW_HOME` under `/private/tmp`,
+  never `~/.personalclaw`:
+
+      PERSONALCLAW_HOME=/private/tmp/lv7-home-run PYTHONPATH=src \
+        .venv/bin/python scripts/learning_benchmark.py --run
+      PERSONALCLAW_HOME=/private/tmp/lv7-home-run PYTHONPATH=src \
+        .venv/bin/python scripts/learning_benchmark.py --run --reproduce learnbench-20260906T100145Z
+      PERSONALCLAW_HOME=/private/tmp/lv7-home-run PYTHONPATH=src \
+        .venv/bin/python scripts/learning_benchmark.py --check-reproduction \
+          --reproduce learnbench-20260906T100145Z --against learnbench-20260906T100349Z
+
+  The invoking home carried an `ollama` `providers[]` entry plus `chat`/`reasoning`/`code_tools`
+  bound to `ollama-local:gemma4:12b`, which is what makes `compute_pin` complete
+  (`model_fp = 3dd16fa0c755`) and is therefore what lets `run_matrix` past its
+  `PinRequiredError` refusal at all.
+- **MEASURED — both runs: task set v2, k=5, 10 tasks, 100 cells, `measured_tasks = 0`,
+  `absent_cells = 100`.** Every one of the 200 retained cell payloads carries the SAME failure,
+  with no other cause anywhere in either run:
+  `ProviderResolutionError: WHAT: no model provider resolves for use case 'chat' / WHY: no
+  provider in config.json declares the capability this use case needs`. Both reports verdict all
+  ten tasks `null` with the runner's own sentence — *"arms skills_on, skills_off produced no
+  scored cell — this task was not measured, which is not a tie and not a zero delta"*. Nothing
+  was drawn as a zero anywhere; `§8` held.
+- **BLOCKING FINDING — a sixth gap the protocol's §7 does not name: a fixture-home cell cannot
+  reach any model provider.** Two independent causes, each verified:
+  (a) `evals/runner.py` builds the child env as `os.environ.copy()` and rewrites
+  `PERSONALCLAW_HOME` to a fresh per-cell temp dir, which `evals/child.py` then seeds from the
+  scenario's declared `fixture_home`. Both shipped fixtures under
+  `src/personalclaw/tests_fixtures/` (`empty`, `demo-home`) carry no `providers[]` and no
+  `active_models.json` — `empty` is a lone `fixture.yaml`. The child's
+  `AppConfig.load().create_provider_factory()` resolves against THAT home, and no code path
+  carries the invoking home's binding across. The only provider reachable through the copied env
+  is `scripted` (core's offline replay fixture, behind its own env opt-in) — and running both
+  arms off one canned script is precisely the fabricated comparison §1 exists to prevent, so it
+  must not be used here.
+  (b) Even a fully bound home cannot build a real provider from core alone.
+  `llm/registry.py`'s `_CONFIG_TYPE_MAP` is empty by design after the provider-as-app migration:
+  every real type is registered by its own installed app. Measured — `sync_entries_from_config()`
+  → 1 entry registered, and the build still fails *"the active ref names provider 'ollama-local',
+  which is absent from config.json (its app isn't installed or configured)"*. `apps/manager.py`'s
+  `apps_dir()` is `config_dir()/"apps"`, i.e. per-home, so installing the `ollama-models` app in
+  the invoking home would not place it in a cell home either. **Ollama running locally is
+  necessary but not sufficient; this gap is upstream of model spend entirely.**
+- **MEASURED — the skills-off arm itself is real (§7 G1 is closed).** Probed directly in a
+  throwaway home: `SkillsLoader().load_skill("grill")` returns a 2256-character body with the arm
+  env absent, and returns `None` with `PERSONALCLAW_SUPPRESSED_SKILLS=grill` set —
+  `overlay.apply_in_child` on a `KIND_SKILL`/`ARM_OFF` overlay reports exactly
+  `['env:PERSONALCLAW_SUPPRESSED_SKILLS=grill']`. The arm lever LV-6 found missing now exists and
+  bites at `skills/loader.py`'s single body-read choke point. What is missing is the model behind
+  it, not the arm.
+- **MEASURED — V4 lands 4 of 5 stated-variance conditions and correctly refuses on the fifth.**
+  The stated variance is not numeric: §8 states it as four equalities plus verdict-class
+  agreement, codified as `learning_bench.REPRODUCTION_CONDITIONS`. Actual result for
+  `learnbench-20260906T100145Z` → `learnbench-20260906T100349Z`:
+  `same task_set_version: true`, `same scenario_sha256 set: true` (10 scenarios, identical),
+  `same prompt_pack_sha256: true`, `same config_snapshot_ref: true`,
+  `same verdict class per task: FALSE`, `reproduces: false`, with the note *"10 task(s) changed
+  verdict class"* and ten `{baseline: null, rerun: null}` rows. That `false` is the rail working:
+  `reproduction_check` treats a `None` class in EITHER report as a change specifically so a
+  benchmark that never ran cannot certify itself. **So V4 is unmet, and it is unmet for the right
+  reason** — the pin and the task set reproduce perfectly; there is simply no verdict to
+  reproduce.
+- **MEASURED — the in-app results surface is live and reads the real artifact.**
+  `GET /api/evals/learning-benchmark` against the run home (with `evals.enabled` on) returns
+  **200** carrying `report.run_id = learnbench-20260906T100349Z`, `measured_tasks: 0`,
+  `absent_cells: 100`, the ten-task register, all five `stated_variance` conditions, and
+  `protocol_doc = docs/roadmap/research/learning-benchmark-protocol.md` — which is the exact path
+  `BenchmarkPanel.tsx`'s `MethodologyLink` renders from the report rather than hardcoding.
+- **FINDING — the results artifact is prose here, not a committed file, and that is the
+  convention.** `scripts/learning_benchmark.py`'s own docstring states the report is written
+  under the invoking home's `evals/learning_bench/`; nothing under `evals/` is tracked, and the
+  only committed JSON under `src/personalclaw/evals/` is a benchmark *input* fixture
+  (`benchmarks/judge/starter.json`). LV-6 set the precedent explicitly — its protocol §9 says
+  *"Full outputs are in the LV-6 execution-log entry"*. So the artifact `LV-7`'s clause can mean
+  is **this entry**: the run ids, the command, the conditions and the numbers, committed where a
+  reader finds them, with the machine-readable report staying in the operator's home where the
+  gateway route reads it. A committed `report.json` would be a second source of truth that drifts
+  from whatever the reader's home last produced.
+- **FINDING — "results page is live with a methodology link" has two readings, and only the
+  in-app one is buildable from this repo.** The in-app reading is satisfied (route + panel +
+  methodology link, evidenced above). The `personalclaw.dev` reading is owner/deploy-side and
+  cannot be closed from here: the site generates `src/content/docs/` at build time from a PINNED
+  RELEASED TAG of core (`sources/personalclaw.sources.json` → `v0.1.3`), it syncs only the
+  `guides` / `reference` / `architecture` / `security` / `research/learnings` trees, and
+  `scripts/sync-docs.mjs` records `docs/roadmap/` as *"Deliberately NOT synced (intent, not
+  released behavior — the projection rule)"* — which is exactly where the methodology doc lives.
+  A site results page therefore needs an owner decision about which synced tree it belongs in,
+  then a release tag, a sources-pin bump and a deploy. Recorded rather than attempted.
+- **RECOMMENDATION for the owner's `dag.json` edit.** `LV-7` stays `todo`. The `blocked_reason`
+  should stop saying "NEEDS AUTHORIZED MODEL SPEND" — that premise is now measured false. It is
+  gated on a cell being able to reach a bound provider at all (the sixth gap above), which is
+  EVALUATION-SUBSTRATE's spawn/isolation mechanism and not `LV-7`'s to grow a lever beside — the
+  same one-owner-per-mechanism ruling §7 G1 already applied to `arm_mask`. The publish clause is
+  additionally gated on the site's release-pin path.

@@ -100,9 +100,25 @@ run today** (`max_triggered` clamps to ≥1, a fresh home force-syncs 14 bundled
 
 ### `LV-7` — S4 benchmark implementation as an eval-substrate study + publish
 
-**Status:** todo
+**Status:** todo — 🟡 the benchmark has now been RUN twice end-to-end (2026-09-06); it measured nothing, for a reason that is not model spend
 
 Session 4 T4.2 (implement paired study on EVALUATION-SUBSTRATE S1-2 machinery + scripts/ runner producing results table + raw logs) and T4.3 (publish results page to site + honest README one-liner), V4 reproduction
+
+**[2026-09-06] 🟡 RUN, NOT MEASURED — the gate is provider reach inside the cell, not authorized
+model spend.** Two full 100-cell paired runs of the documented single command against fixture
+homes, backed by a local Ollama serving `gemma4:12b`, produced **0 measured tasks and 100/100
+`VERIFIER_ABSENT` cells, both times**, every cell failing identically with
+`ProviderResolutionError: no model provider resolves for use case 'chat'`. The cause is
+structural and independent of any model: `evals/runner.py` rewrites `PERSONALCLAW_HOME` to a
+per-cell temp dir which `evals/child.py` seeds from the scenario's `fixture_home`, and neither
+shipped fixture (`tests_fixtures/empty`, `tests_fixtures/demo-home`) carries a `providers[]`
+entry or an `active_models.json` — so the child's `AppConfig.load().create_provider_factory()`
+resolves against a home with no binding, and nothing carries the operator's across. Compounding
+it, core registers exactly one provider type for itself (`scripted`, an offline replay); every
+real type is registered by an installed app, and `apps/manager.py`'s `apps_dir()` is per-home, so
+installing a provider app in the invoking home does not place it in the cell home either. The V4
+check consequently lands **4 of 5 stated-variance conditions true** and refuses on the fifth by
+design. Numbers, commands and the arm-integrity probe are in the plan's `LV-7` execution log.
 
 **Done when:** paired runs are reproducible from one command against fixture homes; results page is live with a methodology link; an independent re-run reproduces within stated variance (V4)
 
