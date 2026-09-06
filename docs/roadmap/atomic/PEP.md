@@ -401,17 +401,34 @@ at a repo ROOT — which a bundle inside a multi-app repo does not have. `code-r
 precedent: no row. An earlier revision of this work staged the bundle in core's `scratch/` and added
 a row pointing at a `github.com/PersonalClaw/research-lab` repo; both were wrong and were reverted.
 
+**Local-Store install DRIVEN, 2026-09-06 — and this is the part to read for what is and is not
+proven.** The real sequence ran headlessly against the bundle on PR #76's branch in an isolated
+`PERSONALCLAW_HOME`: `catalog.add_local_source` → `available_catalog` (the app arrives as
+`sourceKind: local`, display name "Research Lab") → `app_manager.install` → `enable` → `disable`.
+That path is not a shim — `install` stages into `.quarantine` and runs the shared `SkillScanner`
+gate before anything reaches the live tree, so the quarantine and scan legs ARE exercised: verdict
+`CLEAN`, zero findings, and the install therefore needs no consent flag. Enable registers the tool
+provider and all five tools resolve off `tool_providers.registry`; disable deregisters it and
+`get_provider` returns `None`. `personalclaw doctor` renders the app's own section through core's
+renderer with zero issue lines. `reconcile_app_crons`' precondition holds: the permission checker
+grants cron and the manifest carries `advance-campaigns` with a schedule and a message.
+
+For contrast, the same drive over `code-review` (suite 1/9) scans `WARNING` — one finding, rule
+`python_exec` on its `app_cli.py`, which is the `subprocess.run` of `gh auth status` — and is
+correctly refused with "install needs consent: scanner raised warnings" until `confirm=True`. The
+gate working as designed on a genuine subprocess call, not a defect; recorded because it means that
+app's Store card carries a scanner warning pre-install and this one does not.
+
 **Not yet met, and the flip waits on them:** PersonalClawApps PR #76 is open, not merged, so "ships
-as its own validated PR" is one review away rather than done. "Driving it in the real UI" has not
-happened — the local-source install path (`add_local_source` → `available_catalog` → `install` →
-`enable`) was exercised headless against this bundle while it was still in core, but nobody has
-clicked it in a running dashboard, so the install/quarantine/scan path and the Settings → Tools
-rendering of this manifest are unverified. The cron has never fired: `reconcile_app_crons` was
-confirmed to accept the app, but no clock tick has driven a cycle, and the multi-cycle walk is
-exercised by calling the tools in the order the cron's prompt calls them. No host has spawned real
-per-sub-question subagents, and no live source has been fetched — every finding in every test is a
-fixture string, because the app has neither a model nor a network with which to get a real one.
-`test_server.py` has no subject: the app declares no backend, so `test_provider.py` is the
+as its own validated PR" is one review away rather than done. **"Driving it in the real UI" is
+VALIDATION-GATED, not done** — the install/quarantine/scan and enable/disable legs above ran through
+the real code path, but no human has clicked any of it in a browser, so the Store card as rendered,
+the consent dialog, and the Settings → Tools rendering of this manifest are unverified by eye. The
+cron has never fired: its precondition is confirmed but no clock tick has driven a cycle, and the
+multi-cycle walk is exercised by calling the tools in the order the cron's prompt calls them. No host
+has spawned real per-sub-question subagents, and no live source has been fetched — every finding in
+every test is a fixture string, because the app has neither a model nor a network with which to get a
+real one. `test_server.py` has no subject: the app declares no backend, so `test_provider.py` is the
 applicable half of that contract pair.
 
 ### `PEP-14` — Design Critique app (suite 3/9)
