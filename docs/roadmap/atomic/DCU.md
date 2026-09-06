@@ -16,7 +16,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `DCU-4` | ⬜ | Thin stdio shim, in-gateway dispatch, tool surface + ceilinged spawn | `DCU-1`, `DCU-2`, `DCU-3`, `EXT:PLATFORM-HARDENING-FLOORS:ceilinged driver subprocess`, `EXT:AUTONOMY-GUARDRAILS:approval ladder in dispatch` | The agent lists apps and clicks an element by index end-to-end; the shim holds no OS handles; the driver spawn carries the resource ceiling; V1 holds and is recorded — a real app driven by element index with the pointer staying put, a secure-field refusal, SEL records present, and an absent enable file blocking everything. |
 | `DCU-5` | ✅ | Approval-ladder integration for desktop drive | `DCU-4`, `EXT:AUTONOMY-GUARDRAILS:approval ladder + unattended-profile grant` | An unattended run without the grant refuses and notifies; an interactive run prompts; validated. |
 | `DCU-6` | ✅ | Windows/Linux honest typed refusals | `DCU-4` | On non-macOS, every computer-use tool returns a typed refusal naming the platform; no silent no-op; validated. |
-| `DCU-7` | ⬜ | Human-facing live-view + cursor-motion overlay | `DCU-4` | The views render; neither adds any agent capability — asserted by confirming the tool surface is unchanged with the views on; validated. |
+| `DCU-7` | ✅ | Human-facing live-view + cursor-motion overlay | `DCU-4` | The views render; neither adds any agent capability — asserted by confirming the tool surface is unchanged with the views on; validated. |
 
 ## Atom scopes
 
@@ -240,8 +240,7 @@ does **not** fire there.
 
 ### `DCU-7` — Human-facing live-view + cursor-motion overlay
 
-**Status:** todo — 🟡 IMPLEMENTATION LANDED 2026-09-05 (see the note below); the dag flip rides the
-roadmap-tracking PR, which owns status changes.
+**Status:** done
 
 Optional live-view (PiP) mirroring screenshots the model already read, and an optional cursor-motion overlay that draws a fake cursor (invisible to screen capture) so a watching human sees where a click will land, plus a dashboard view (§3.7). Both are observation-only and grant the agent nothing.
 

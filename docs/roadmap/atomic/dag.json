@@ -6079,7 +6079,7 @@
     {
       "plan": "MOBILE-COMPANION",
       "code": "MC",
-      "status": "in_progress",
+      "status": "done",
       "atoms": [
         {
           "id": "MC-1",
@@ -6188,16 +6188,17 @@
         {
           "id": "MC-10",
           "title": "S4 store packaging + mobile-release docs",
-          "status": "todo",
+          "status": "done",
           "scope": "Sessions 4-6 — T4.4 Store packaging + Owner tasks 3-4",
           "done_when": "Icons/splash from brand assets, truthful no-data-collection privacy declarations, and docs/maintainers/mobile-release.md produce installable TestFlight/internal-track builds via the documented steps (owner performs the actual store submissions).",
           "deps": [
             "MC-7",
             "MC-9"
-          ]
+          ],
+          "evidence": "Done (PR #2498, feat(mobile): store packaging assets + mobile-release runbook, MERGED 2026-09-05). mobile/assets/ carries the five source images @capacitor/assets consumes (1024px icon + adaptive layers, 2732px splash light/dark) built from docs/brand by the committed mobile/scripts/generate_store_assets.py; mobile/store/ carries the truthful no-collection declarations (PrivacyInfo.xcprivacy + play-data-safety.md — the shell is a WebView over the user's own gateway, push relay ids-only per tests/test_mc9_relay_push.py); docs/maintainers/mobile-release.md walks clean checkout → TestFlight / Play internal track, provenance-sectioned (Capacitor 8.5.0: cap add ios/android actually run — SPM project, 7 iOS + 74 Android generated resources — cap build --help flag names verified). Steps needing Xcode/Android SDK/store consoles are marked (not exercised); store enrollments and submissions are owner tasks 3-4 and stay on the owner checklist. This closes MOBILE-COMPANION's atom list."
         }
       ],
-      "summary": "Decomposed MOBILE-COMPANION into 10 todo atoms along the 2026-07-26 Amendment's session placement (push-to-approval is milestone 1). Nothing has shipped (DESIGNED, no execution log). Device sessions/tokens (MC-2) and QR pairing (MC-8) are SUPERSEDED — they consume COMPANION-APPS (plan 54) + REMOTE-USER-AUTH (plan 53) contracts rather than editing token_auth.py. Push atoms (MC-5/6/9) edge on INBOX-NOTIFICATIONS-UNIFICATION (plan 42) push target/rules. The pre-existing docs/guides/remote-access.md is plan 53's artifact, not MC-1 done-work."
+      "summary": "All 10 atoms done. S1-S3 companion PWA + device pairing + push (ntfy default, MC-9's content-free relay + APNs/FCM shell wiring), S4 Capacitor shell (MC-7), QR pairing (MC-8), and MC-10's store packaging (brand-derived assets, truthful no-collection declarations, docs/maintainers/mobile-release.md). Owner tasks 3-4 (store enrollments + actual TestFlight/Play submissions) remain on the owner checklist and are the only unexercised live legs (real-handset vendor push rides the first store build)."
     },
     {
       "plan": "DISCOVERABILITY-LAUNCH",
@@ -6839,7 +6840,8 @@
             "OU-4",
             "OU-8",
             "OU-10"
-          ]
+          ],
+          "blocked_reason": "OWNER-GATED remainder only. The agent-buildable half shipped: docs/maintainers/usability-kit.md is on main (facilitator script for the four T4.1 tasks, consent note, observation sheet with first-success timing delta vs the S1 baseline, session-close protocol) with the recorded self dry-run of 2026-08-25 in its §7, honestly labelled for what a headless environment could not exercise. Remaining per done-when: OWNER recruits and hosts the 3 stranger think-aloud sessions, empties the fix-now list by session close, files ux-finding issues, records the timing delta. Nothing further is agent-buildable."
         }
       ]
     },
@@ -7319,12 +7321,13 @@
         {
           "id": "DCU-7",
           "title": "Human-facing live-view + cursor-motion overlay",
-          "status": "todo",
+          "status": "done",
           "scope": "Optional live-view (PiP) mirroring screenshots the model already read, and an optional cursor-motion overlay that draws a fake cursor (invisible to screen capture) so a watching human sees where a click will land, plus a dashboard view (§3.7). Both are observation-only and grant the agent nothing.",
           "done_when": "The views render; neither adds any agent capability — asserted by confirming the tool surface is unchanged with the views on; validated.",
           "deps": [
             "DCU-4"
-          ]
+          ],
+          "evidence": "Done (PR #2495, feat(dashboard): desktop live-view + cursor-motion overlay, observation-only, MERGED 2026-09-05). DesktopLiveView widget: action feed off the SEL audit log (allowed AND refused attempts), optional live-view mirror of the last-walked accessibility tree, optional cursor-motion overlay drawing a FAKE cursor (exists only in this rendering — never on the driven desktop, invisible to any capture of it, which is §3 floor 7 satisfied by construction). Everything is one GET mirror; the widget observes and cannot exercise the capability, pinned by tests/test_computer_use_live_view.py (tool surface unchanged with views on). Own visibility-gated poll is an argued exception to the shared-poll doctrine (OFF by default, polled only while a view is toggled on and the tab visible). Tolerant wire reads (snapshots/trail/feed ?? []) so a version-skewed gateway degrades to the empty state instead of crashing the dashboard."
         }
       ]
     },
@@ -7897,16 +7900,6 @@
         "plan": "ES"
       },
       {
-        "id": "MC-10",
-        "title": "S4 store packaging + mobile-release docs",
-        "plan": "MC"
-      },
-      {
-        "id": "OU-11",
-        "title": "Stranger-validation facilitator kit + 3 think-aloud sessions",
-        "plan": "OU"
-      },
-      {
         "id": "PCS-9",
         "title": "V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs)",
         "plan": "PCS"
@@ -8065,6 +8058,14 @@
         "plan": "LV",
         "gate": [
           "ext"
+        ]
+      },
+      {
+        "id": "OU-11",
+        "title": "Stranger-validation facilitator kit + 3 think-aloud sessions",
+        "plan": "OU",
+        "gate": [
+          "owner"
         ]
       },
       {
@@ -10040,9 +10041,9 @@
         "code": "MC",
         "plan": "MOBILE-COMPANION",
         "total_atoms": 10,
-        "done": 9,
+        "done": 10,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
@@ -10130,9 +10131,9 @@
         "code": "DCU",
         "plan": "DESKTOP-COMPUTER-USE",
         "total_atoms": 7,
-        "done": 4,
+        "done": 5,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 0
       },
       {
