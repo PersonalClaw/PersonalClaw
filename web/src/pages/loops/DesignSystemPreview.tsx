@@ -29,7 +29,7 @@ export function DesignSystemPreview({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="PersonalClaw design system" icon={<Palette size={18} className="text-primary" />} onClose={onClose}>
       <div className="flex flex-col gap-l p-l">
-        <p className="text-on-surface-low text-[0.8125rem] max-w-[52rem]">
+        <p data-type="body-s" className="text-on-surface-low max-w-[52rem]">
           The canonical default tokens every Design loop starts from — variables for every look-and-feel
           axis. Launch a Design loop to override any of these and generate React components from the system.
         </p>
@@ -42,10 +42,10 @@ export function DesignSystemPreview({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         {err
-          ? <div className="text-on-surface-low text-[0.8125rem]">Could not load the default token set.</div>
+          ? <div data-type="body-s" className="text-on-surface-low">Could not load the default token set.</div>
           : tab === 'tokens'
             ? <TokensView tokens={tokens} scheme={scheme} readOnly />
-            : <div className="flex flex-col gap-2"><div className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide"><Contrast size={12} /> WCAG contrast</div><ContrastView tokens={tokens} scheme={scheme} /></div>}
+            : <div className="flex flex-col gap-2"><div data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low uppercase tracking-wide"><Contrast size={12} /> WCAG contrast</div><ContrastView tokens={tokens} scheme={scheme} /></div>}
       </div>
     </Modal>
   )

@@ -135,7 +135,7 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
           leaving both in the tree announces the confirmation twice. */}
       <span role="status" aria-live="polite" className="sr-only">{note}</span>
       {note && (
-        <div aria-hidden="true" className="pb-1 text-on-surface-var text-[0.8125rem]">{note}</div>
+        <div aria-hidden="true" data-type="body-s" className="pb-1 text-on-surface-var">{note}</div>
       )}
       {ordered.map(({ tag, depth }) => {
         const others = tags.filter((x) => x.id !== tag.id)
@@ -174,10 +174,10 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
                   text is complete, so assistive tech was the only reader getting the whole name. At
                   1440px nothing truncates (1041px available), which is why a desktop-only sweep sees
                   nothing here. `title` is what the six other truncating labels in this app use. */}
-              <span className="min-w-0 flex-1 truncate text-on-surface text-[0.875rem]" style={fvs(500)} title={tag.name}>
+              <span data-type="body-m" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(500)} title={tag.name}>
                 {tag.name}
               </span>
-              <span className="shrink-0 text-on-surface-low text-[0.75rem]">
+              <span data-type="caption" className="shrink-0 text-on-surface-low">
                 {tag.usage_count === 0
                   ? 'unused'
                   : `${tag.usage_count} item${tag.usage_count === 1 ? '' : 's'}`}
@@ -195,7 +195,7 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
           </ContextMenu>
         )
       })}
-      <p className="pt-1 text-on-surface-low text-[0.75rem]">
+      <p data-type="caption" className="pt-1 text-on-surface-low">
         {/* This is the ONLY place the app tells anyone how to reach nest/merge/delete — six surfaces
             wrap rows in `ContextMenu` and this is the one with a visible hint. It named the pointer
             gesture alone, while `ui/motion/ContextMenu` has carried a keyboard route since the cycle

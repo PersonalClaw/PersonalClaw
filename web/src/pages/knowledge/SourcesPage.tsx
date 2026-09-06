@@ -30,7 +30,7 @@ function Chip({ label, tone, icon: Icon, title }: {
 }) {
   const ink = tone && tone !== 'neutral' ? TONE_CLASS[tone] : 'text-on-surface-var'
   return (
-    <span title={title} className={`inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 text-[0.75rem] ${ink}`} style={fvs(500)}>
+    <span title={title} data-type="caption" className={`inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 py-0.5 ${ink}`} style={fvs(500)}>
       {Icon && <Icon size={11} aria-hidden />}
       {label}
     </span>
@@ -70,9 +70,9 @@ function Remediation({ source, onChanged }: { source: WatchedSource; onChanged: 
         <div className="min-w-0 flex-1">
           {/* The provider's own words. Rendered as text (never markup) — the string is a
               constant from `web_source.py`, and the UI holds no copy of it to drift. */}
-          <p className="text-on-surface text-[0.8125rem] leading-relaxed">{rem.guidance}</p>
+          <p data-type="body-s" className="text-on-surface leading-relaxed">{rem.guidance}</p>
           {rem.detail && (
-            <p className="mt-1 text-on-surface-low text-[0.75rem]">{rem.detail}</p>
+            <p data-type="caption" className="mt-1 text-on-surface-low">{rem.detail}</p>
           )}
 
           {rem.action === 'allow_render' && (
@@ -135,7 +135,7 @@ export function SourceRow({ source, index, kinds, onChanged }: {
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="min-w-0 truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{source.name}</span>
+            <span data-type="title-m" className="min-w-0 truncate text-on-surface" style={fvs(500)}>{source.name}</span>
             {/* `sources.health_status` DEFAULTS to `ok` in the store, so a source that has
                 never been polled reports a health it has not earned. Measured by driving the
                 real thing: a source saved seconds ago read "Healthy · never polled" side by
@@ -170,9 +170,9 @@ export function SourceRow({ source, index, kinds, onChanged }: {
               boolean through cadence/last-poll/count/next-poll is how a ` · ` ends up
               separating nothing. The poller line below is unchanged. */}
           {source.event_driven ? (
-            <p className="mt-1 text-on-surface-low text-[0.75rem]">{eventDrivenMetaLine()}</p>
+            <p data-type="caption" className="mt-1 text-on-surface-low">{eventDrivenMetaLine()}</p>
           ) : (
-          <p className="mt-1 text-on-surface-low text-[0.75rem]">
+          <p data-type="caption" className="mt-1 text-on-surface-low">
             {kind?.display_name ?? source.provider}
             {' · every '}{fmtInterval(source.poll_interval_secs)}
             {' · '}{source.last_poll_at ? `polled ${relPast(source.last_poll_at)}` : 'never polled'}
@@ -186,7 +186,7 @@ export function SourceRow({ source, index, kinds, onChanged }: {
           {!!source.last_escalations?.length && (
             // The expensive tier, made visible. WS-3 records escalations on success too,
             // because an escalation nobody can see is indistinguishable from a cheap poll.
-            <p className="mt-1 text-on-surface-low text-[0.75rem]">{source.last_escalations.join(' · ')}</p>
+            <p data-type="caption" className="mt-1 text-on-surface-low">{source.last_escalations.join(' · ')}</p>
           )}
           <Remediation source={source} onChanged={onChanged} />
         </div>

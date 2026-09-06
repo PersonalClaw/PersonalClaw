@@ -17,7 +17,7 @@ export function RunPhaseTrail({ plan, activePhase, active, complete, findings, c
   compact?: boolean
 }) {
   return (
-    <div className={`flex flex-wrap items-center ${compact ? 'gap-0.5' : 'gap-1'} text-[0.75rem]`}>
+    <div data-type="caption" className={`flex flex-wrap items-center ${compact ? 'gap-0.5' : 'gap-1'}`}>
       {plan.map((p, i) => {
         const on = i === activePhase && active
         const role = String(p.role || '').trim() || `Phase ${i + 1}`

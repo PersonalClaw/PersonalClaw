@@ -163,13 +163,13 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
                 // instead of painting OVER the action cluster (the overlap bug). This is
                 // container-relative — it tracks the header's flex width, not the viewport.
                 <div className="flex items-center gap-s min-w-0 overflow-hidden">
-                  <button type="button" onClick={onBack} className="text-on-surface-low hover:text-on-surface text-[0.9375rem] transition-colors whitespace-nowrap shrink-0">Knowledge</button>
+                  <button type="button" onClick={onBack} data-type="body-m" className="text-on-surface-low hover:text-on-surface transition-colors whitespace-nowrap shrink-0">Knowledge</button>
                   <span className="text-on-surface-low shrink-0">/</span>
                   {/* `canvasInk`, not `tm.tone`: this segment is 13px accent text on the CANVAS.
                       The icon travels with the label so the segment stays ONE ink — it passes at
                       either shade (3:1 non-text floor), and splitting them would read as two
                       colours for one breadcrumb crumb. */}
-                  {tm && item && <span className="shrink-0 inline-flex items-center gap-1.5 text-[0.8125rem] whitespace-nowrap" style={{ color: canvasInk(tm.tone) }}><tm.icon size={16} /> {typeLabel(item)}</span>}
+                  {tm && item && <span data-type="body-s" className="shrink-0 inline-flex items-center gap-1.5 whitespace-nowrap" style={{ color: canvasInk(tm.tone) }}><tm.icon size={16} /> {typeLabel(item)}</span>}
                   {/* `PageTitle`, not the bare span it replaced: this route's PATH identifies the
                       entity (`#/knowledge/item/<id>`), so by the rule cycle 162 settled — a
                       destination is named by its identity, not by its category — the item's name is
@@ -208,7 +208,7 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
           // Not "no longer exists": the load failed, so offer the retry rather than assert a deletion.
           <LoadError what="knowledge item" error={loadErr} onRetry={() => setReloadKey((k) => k + 1)} />
         ) : missing ? (
-          <div className="grid h-full place-items-center text-on-surface-low text-[0.8125rem]">This knowledge item no longer exists.</div>
+          <div data-type="body-s" className="grid h-full place-items-center text-on-surface-low">This knowledge item no longer exists.</div>
         ) : item ? (
           <KnowledgeDetail
             item={item}
@@ -235,7 +235,7 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
             ) : undefined}
           />
         ) : (
-          <div className="grid h-40 place-items-center text-on-surface-low text-[0.8125rem]">Loading…</div>
+          <div data-type="body-s" className="grid h-40 place-items-center text-on-surface-low">Loading…</div>
         )}
       </div>
     </WorkbenchLayout>
@@ -264,7 +264,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
   const showDuplicates = duplicates.length > 0 || !!duplicatesError
   if (pool.length === 0 && entities.length === 0 && relations.length === 0 && related.length === 0
     && annotations.length === 0 && !showDuplicates && !item.content) {
-    return <p className="text-on-surface-low text-[0.8125rem]">No extracted content, entities, or related items yet.</p>
+    return <p data-type="body-s" className="text-on-surface-low">No extracted content, entities, or related items yet.</p>
   }
   return (
     <div className="flex flex-col gap-l">
@@ -286,12 +286,12 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
           <div className="flex flex-col gap-1.5">
             {pool.map((ec) => (
               <details key={ec.id} className="rounded-md bg-surface-container px-m py-1.5">
-                <summary className="flex items-center gap-2 cursor-pointer text-[0.8125rem] text-on-surface-var">
-                  <span className="font-mono text-[0.75rem] text-on-surface-low">{ec.node_type}</span>
-                  {ec.backend && <span className="text-on-surface-low text-[0.75rem]">· {ec.backend}</span>}
-                  <span className="ml-auto text-on-surface-low text-[0.75rem]">{(ec.text || '').length} chars</span>
+                <summary data-type="body-s" className="flex items-center gap-2 cursor-pointer text-on-surface-var">
+                  <span data-type="caption" className="font-mono text-on-surface-low">{ec.node_type}</span>
+                  {ec.backend && <span data-type="caption" className="text-on-surface-low">· {ec.backend}</span>}
+                  <span data-type="caption" className="ml-auto text-on-surface-low">{(ec.text || '').length} chars</span>
                 </summary>
-                {ec.text && <div className="mt-1.5 max-h-72 overflow-y-auto text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{ec.text}</Markdown></div>}
+                {ec.text && <div data-type="body-s" className="mt-1.5 max-h-72 overflow-y-auto text-on-surface-var leading-relaxed"><Markdown>{ec.text}</Markdown></div>}
               </details>
             ))}
           </div>
@@ -302,7 +302,7 @@ function KnowledgeExtras({ item, pool, related, onOpenItem, annotations, onRemov
         <Section label={`Relations · ${relations.length}`}>
           <div className="flex flex-col gap-1">
             {relations.slice(0, 30).map((r) => (
-              <div key={r.id} className="text-on-surface-var text-[0.8125rem]"><span className="text-on-surface">{r.source_name}</span> <span className="text-on-surface-low">{r.relation_type}</span> <span className="text-on-surface">{r.target_name}</span></div>
+              <div key={r.id} data-type="body-s" className="text-on-surface-var"><span className="text-on-surface">{r.source_name}</span> <span className="text-on-surface-low">{r.relation_type}</span> <span className="text-on-surface">{r.target_name}</span></div>
             ))}
             <MoreRow total={relations.length} shown={30} />
           </div>
@@ -347,7 +347,7 @@ export function EntitiesSection({ entities }: { entities: NonNullable<KnowledgeI
     <Section label={`Entities · ${entities.length}`} icon={Network}>
       <div className="flex flex-wrap gap-1.5">
         {entities.slice(0, 60).map((e) => (
-          <span key={e.id} className="inline-flex items-center gap-1 rounded-pill bg-surface-container px-2 h-6 text-on-surface-var text-[0.75rem]" title={e.entity_type}>{e.name}{e.entity_type && <span className="text-on-surface-low">· {e.entity_type}</span>}</span>
+          <span key={e.id} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-container px-2 h-6 text-on-surface-var" title={e.entity_type}>{e.name}{e.entity_type && <span className="text-on-surface-low">· {e.entity_type}</span>}</span>
         ))}
         <MoreRow total={entities.length} shown={60} className="px-1" />
       </div>
@@ -367,7 +367,7 @@ export function RelatedSection({ related, onOpenItem }: {
         {related.slice(0, 15).map((r) => (
           <button key={r.id} type="button" onClick={() => onOpenItem(r.id)}
             className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-high">
-            <span className="truncate text-on-surface text-[0.8125rem]">{r.title || '(untitled)'}</span>
+            <span data-type="body-s" className="truncate text-on-surface">{r.title || '(untitled)'}</span>
             {/* The badge names whatever CHOSE this ordering. KL-13 replaced an unthresholded
                 shared-entity count with a cosine similarity edge above a real floor, so a
                 "3 shared" chip would no longer explain why this row sits where it does. The
@@ -375,7 +375,7 @@ export function RelatedSection({ related, onOpenItem }: {
                 score no longer ranks by — so the number stays accountable. Falls back to the
                 old chip when a response predates the edge table. */}
             {typeof r.score === 'number' ? (
-              <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]"
+              <span data-type="caption" className="ml-auto shrink-0 text-on-surface-low"
                 title={[
                   `${Math.round(r.score * 100)}% similar`,
                   typeof r.chunk_index === 'number' && typeof r.neighbour_chunk_index === 'number'
@@ -386,7 +386,7 @@ export function RelatedSection({ related, onOpenItem }: {
                 {Math.round(r.score * 100)}%
               </span>
             ) : typeof r.shared_entities === 'number' ? (
-              <span className="ml-auto shrink-0 text-on-surface-low text-[0.75rem]">{r.shared_entities} shared</span>
+              <span data-type="caption" className="ml-auto shrink-0 text-on-surface-low">{r.shared_entities} shared</span>
             ) : null}
           </button>
         ))}
@@ -486,7 +486,7 @@ function EgoGraphSection({ item, onOpenItem }: {
 function Section({ label, icon: Icon, children }: { label: string; icon?: typeof Network; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-1.5 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{Icon && <Icon size={12} />}{label}</div>
+      <div data-type="caption" className="mb-1.5 flex items-center gap-1.5 text-on-surface-low uppercase tracking-wide">{Icon && <Icon size={12} />}{label}</div>
       {children}
     </div>
   )

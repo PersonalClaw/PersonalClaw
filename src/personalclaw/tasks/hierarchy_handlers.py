@@ -611,9 +611,9 @@ async def _teardown_bound_loops(pid: str) -> None:
     branches littering the user's repo (the exact harm the 409 guard warns about, done
     anyway on force). Best-effort per loop; never raises."""
     try:
-        from personalclaw.autonudge import get_instance
         from personalclaw.loop import manager as loop_manager
         from personalclaw.loop import store as loop_store
+        from personalclaw.triggers.nudge import get_instance
 
         svc = get_instance()
         bound = [

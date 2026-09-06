@@ -131,6 +131,16 @@ EXPECTED = {
     # entry points to one answer.
     "best-of-n",
     "check-work",
+    # The deliberative fan-out/fan-in shape: one question, N members answering it independently
+    # from distinct roles, one synthesis that ATTRIBUTES each position rather than selecting one.
+    # Distinct from `best-of-n`, which fans the IDENTICAL prompt out N ways and picks a winner — a
+    # council's product is a judgement assembled out of named disagreements, so its fan-in merges
+    # and credits instead of choosing. Built entirely from engine primitives (`parallel` of `infer`
+    # → `transform` → `infer`): no action provider and no core, because the members' work IS model
+    # reasoning and a model call belongs in a node the engine meters, not inside an action.
+    # `tests/test_council_template.py` holds the shape (independence, full attribution, distinct
+    # roles) that a well-meaning edit would otherwise quietly collapse.
+    "council",
 }
 
 

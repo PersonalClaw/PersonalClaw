@@ -80,19 +80,19 @@ export function ReportRow({ report, index, onChanged }: {
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="min-w-0 truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{report.name}</span>
+            <span data-type="title-m" className="min-w-0 truncate text-on-surface" style={fvs(500)}>{report.name}</span>
             {report.last_status === 'error' && (
-              <span className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-6 text-[0.75rem] text-on-surface-var"
+              <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-6 text-on-surface-var"
                 title={report.last_error || 'The last run failed'}>
                 <AlertTriangle size={12} style={{ color: 'var(--color-warning)' }} aria-hidden />
                 last run failed
               </span>
             )}
-            <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-[0.75rem] text-on-surface-var">
+            <span data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">
               {report.citation_policy === 'cite-source-only' ? 'cites new material only' : 'may cite context'}
             </span>
           </div>
-          <p className="mt-0.5 truncate text-on-surface-low text-[0.8125rem]">{meta(report)}</p>
+          <p data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{meta(report)}</p>
         </div>
         <div className="flex shrink-0 items-center gap-s">
           <Toggle on={report.enabled} disabled={busy}

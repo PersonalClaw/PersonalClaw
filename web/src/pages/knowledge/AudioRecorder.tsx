@@ -133,14 +133,14 @@ export function AudioRecorder({ onRecorded, onClear }: { onRecorded: (file: File
       <div role="status" aria-live="polite" className="sr-only">
         {state === 'recording' ? 'Recording' : state === 'paused' ? 'Recording paused' : state === 'done' ? 'Recording complete' : ''}
       </div>
-      {err && <p role="alert" className="text-danger text-[0.8125rem] text-center">{err}</p>}
+      {err && <p role="alert" data-type="body-s" className="text-danger text-center">{err}</p>}
 
       {state === 'done' && url ? (
         <>
           <audio src={url} controls className="w-full max-w-md" />
-          <div className="flex items-center gap-3 text-on-surface-low text-[0.8125rem]">
+          <div data-type="body-s" className="flex items-center gap-3 text-on-surface-low">
             <span>Recorded · {fmtDuration(duration)}</span>
-            <button type="button" onClick={discard} className="inline-flex items-center gap-1.5 rounded-pill px-3 h-8 text-danger hover:bg-danger/10 transition-colors text-[0.8125rem]"><Trash2 size={14} /> Discard & re-record</button>
+            <button type="button" onClick={discard} data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-3 h-8 text-danger hover:bg-danger/10 transition-colors"><Trash2 size={14} /> Discard & re-record</button>
           </div>
         </>
       ) : (
@@ -164,22 +164,22 @@ export function AudioRecorder({ onRecorded, onClear }: { onRecorded: (file: File
 
           <div className="flex items-center gap-2">
             {state === 'idle' && (
-              <button type="button" onClick={start} className="inline-flex items-center gap-2 rounded-pill bg-primary text-on-primary px-5 h-10 text-[0.8125rem] hover:bg-primary-emphasis transition-colors"><Mic size={16} /> Start recording</button>
+              <button type="button" onClick={start} data-type="body-s" className="inline-flex items-center gap-2 rounded-pill bg-primary text-on-primary px-5 h-10 hover:bg-primary-emphasis transition-colors"><Mic size={16} /> Start recording</button>
             )}
             {state === 'recording' && (
               <>
-                <button type="button" onClick={pause} aria-label="Pause" className="inline-flex items-center gap-1.5 rounded-pill bg-surface-high px-4 h-10 text-on-surface text-[0.8125rem] hover:bg-surface-highest transition-colors"><Pause size={16} /> Pause</button>
-                <button type="button" onClick={stop} aria-label="Stop" className="inline-flex items-center gap-1.5 rounded-pill bg-primary text-on-primary px-4 h-10 text-[0.8125rem] hover:bg-primary-emphasis transition-colors"><Square size={15} /> Stop</button>
+                <button type="button" onClick={pause} aria-label="Pause" data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill bg-surface-high px-4 h-10 text-on-surface hover:bg-surface-highest transition-colors"><Pause size={16} /> Pause</button>
+                <button type="button" onClick={stop} aria-label="Stop" data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill bg-primary text-on-primary px-4 h-10 hover:bg-primary-emphasis transition-colors"><Square size={15} /> Stop</button>
               </>
             )}
             {state === 'paused' && (
               <>
-                <button type="button" onClick={resume} aria-label="Resume" className="inline-flex items-center gap-1.5 rounded-pill bg-surface-high px-4 h-10 text-on-surface text-[0.8125rem] hover:bg-surface-highest transition-colors"><Play size={16} /> Resume</button>
-                <button type="button" onClick={stop} aria-label="Stop" className="inline-flex items-center gap-1.5 rounded-pill bg-primary text-on-primary px-4 h-10 text-[0.8125rem] hover:bg-primary-emphasis transition-colors"><Square size={15} /> Stop</button>
+                <button type="button" onClick={resume} aria-label="Resume" data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill bg-surface-high px-4 h-10 text-on-surface hover:bg-surface-highest transition-colors"><Play size={16} /> Resume</button>
+                <button type="button" onClick={stop} aria-label="Stop" data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill bg-primary text-on-primary px-4 h-10 hover:bg-primary-emphasis transition-colors"><Square size={15} /> Stop</button>
               </>
             )}
           </div>
-          {state === 'idle' && <p className="text-on-surface-low text-[0.75rem]">Records in your browser · transcribed on ingest if a model is configured.</p>}
+          {state === 'idle' && <p data-type="caption" className="text-on-surface-low">Records in your browser · transcribed on ingest if a model is configured.</p>}
         </>
       )}
     </div>

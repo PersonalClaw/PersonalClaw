@@ -63,7 +63,7 @@ function ArtifactView({ kind, artifact, loopId, commentTarget }: { kind: string;
   const empty = !md && !subGoals.length && !roster.length && !phases.length && !sc && !tokenOverrides
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg bg-surface-high/40 p-3 text-[0.8125rem]">
+    <div data-type="body-s" className="flex flex-col gap-3 rounded-lg bg-surface-high/40 p-3">
       {md && <PlanningArtifactDoc markdown={md} docId={`plan-${loopId}-${kind}`} label={`${kind} plan`} commentTarget={commentTarget} />}
 
       {tokenOverrides && <DesignStepPreview loopId={loopId} stepKind={kind} overrides={tokenOverrides} />}
@@ -84,7 +84,7 @@ function ArtifactView({ kind, artifact, loopId, commentTarget }: { kind: string;
             {roster.map((r, i) => (
               <div key={i} className="rounded-md bg-surface p-2">
                 <div className="text-on-surface">{String(r.role || r.persona || `Member ${i + 1}`)}</div>
-                {!!(r.role_hint || r.persona) && <div className="text-on-surface-low text-[0.75rem]">{String(r.role_hint || r.persona)}</div>}
+                {!!(r.role_hint || r.persona) && <div data-type="caption" className="text-on-surface-low">{String(r.role_hint || r.persona)}</div>}
               </div>
             ))}
           </div>
@@ -97,10 +97,10 @@ function ArtifactView({ kind, artifact, loopId, commentTarget }: { kind: string;
               <div key={i} className="rounded-md bg-surface p-2.5">
                 <div className="flex items-center gap-1.5">
                   <span className="text-on-surface">{i + 1}. {String(p.role || 'phase')}</span>
-                  {!!p.min_cycles && <span className="rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">≥{String(p.min_cycles)} cycles</span>}
+                  {!!p.min_cycles && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 text-on-surface-low">≥{String(p.min_cycles)} cycles</span>}
                 </div>
-                {!!p.target && <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{String(p.target)}</div>}
-                {!!p.phase_exit && <div className="mt-0.5 text-on-surface-low text-[0.75rem]">Advance when: {String(p.phase_exit)}</div>}
+                {!!p.target && <div data-type="caption" className="mt-0.5 text-on-surface-low">{String(p.target)}</div>}
+                {!!p.phase_exit && <div data-type="caption" className="mt-0.5 text-on-surface-low">Advance when: {String(p.phase_exit)}</div>}
               </div>
             ))}
           </div>

@@ -86,7 +86,7 @@ export function DesignStepPreview({ loopId, stepKind, overrides }: {
     <div className="rounded-lg border border-outline-variant/40 bg-surface-low/40 p-2.5">
       <div className="mb-2 flex items-center gap-2">
         <Palette size={13} className="text-primary" />
-        <span className="text-on-surface text-[0.75rem]" style={fvs(600)}>
+        <span data-type="caption" className="text-on-surface" style={fvs(600)}>
           Live design system — net effect of every choice so far
         </span>
         <div className="ml-auto flex items-center gap-1.5">
@@ -96,11 +96,11 @@ export function DesignStepPreview({ loopId, stepKind, overrides }: {
             options={[{ key: 'light', label: 'Light' }, { key: 'dark', label: 'Dark' }]} />
         </div>
       </div>
-      <p className="mb-2 text-on-surface-low text-[0.75rem]">
+      <p data-type="caption" className="mb-2 text-on-surface-low">
         {stepKind === 'palette' ? 'The extracted palette is applied below.' : stepKind === 'typography' ? 'The extracted type + spacing are applied below.' : 'The extracted foundation tokens are applied below.'} Click a swatch / value to edit it — changes apply to the whole system instantly and carry into the cockpit.
       </p>
       {err
-        ? <div className="text-on-surface-low text-[0.75rem]">Couldn't load the live preview.</div>
+        ? <div data-type="caption" className="text-on-surface-low">Couldn't load the live preview.</div>
         : tab === 'tokens'
           ? <TokensView tokens={tokens} scheme={scheme} onOverride={setOverride} />
           : <ContrastView tokens={tokens} scheme={scheme} />}

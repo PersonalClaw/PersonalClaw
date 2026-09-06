@@ -802,6 +802,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/runs/{run_id}/outbox` — GET the run's published-artifact listing — the §2.5 outbox half of R17.
 - `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/pause` — _(no summary)_
+- `PUT /api/workflows/runs/{run_id}/policy-overrides` — PUT the run's sparse SupervisorPolicy overlay (PP-16 seam 4f) — prelaunch only.
 - `POST /api/workflows/runs/{run_id}/resume` — Answer a gate, or clear a pause.
 - `GET /api/workflows/runs/{run_id}/review` — GET this run's review findings, anchored against its workspace diff as it is right now.
 - `POST /api/workflows/runs/{run_id}/review/triage` — POST accept/reject decisions; dispatch the accepted subset to the originating worker.

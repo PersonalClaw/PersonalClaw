@@ -72,7 +72,7 @@ export function SourceCreatePage({ onBack, onCreated }: { onBack: () => void; on
           ) : (
             <>
               <RecipeLookup kinds={kinds} onUse={useRecipe} />
-              <p className="mb-l text-center text-on-surface-low text-[0.9375rem]">…or pick what PersonalClaw should keep an eye on.</p>
+              <p data-type="body-m" className="mb-l text-center text-on-surface-low">…or pick what PersonalClaw should keep an eye on.</p>
               <div className="grid grid-cols-1 gap-m sm:grid-cols-3">
                 {kinds.map((k) => {
                   const Icon = formIcon(k.form)
@@ -85,8 +85,8 @@ export function SourceCreatePage({ onBack, onCreated }: { onBack: () => void; on
                           accent tint measures 3.64–4.20:1 in light, below AA. The icon inherits
                           the pair's ink through `currentColor`. */}
                       <span className="inline-flex size-10 items-center justify-center rounded-xl" style={accentChip}><Icon size={20} aria-hidden /></span>
-                      <span className="mt-m text-on-surface text-[0.9375rem]" style={fvs(500)}>{k.display_name}</span>
-                      <span className="mt-1 text-on-surface-low text-[0.8125rem]">{kindBlurb(k)}</span>
+                      <span data-type="title-m" className="mt-m text-on-surface" style={fvs(500)}>{k.display_name}</span>
+                      <span data-type="body-s" className="mt-1 text-on-surface-low">{kindBlurb(k)}</span>
                     </TileButton>
                   )
                 })}
@@ -141,10 +141,10 @@ function RecipeLookup({ kinds, onUse }: { kinds: SourceKind[]; onUse: (r: Source
 
   return (
     <section aria-labelledby="recipe-lookup-heading" className="mb-2xl">
-      <h2 id="recipe-lookup-heading" className="mb-1 text-on-surface text-[0.9375rem]" style={fvs(500)}>
+      <h2 id="recipe-lookup-heading" data-type="title-m" className="mb-1 text-on-surface" style={fvs(500)}>
         Already have a link?
       </h2>
-      <p className="mb-m text-on-surface-low text-[0.8125rem]">
+      <p data-type="body-s" className="mb-m text-on-surface-low">
         Paste it and PersonalClaw will check whether this site is one it already knows how to watch.
       </p>
       <div className="flex flex-col gap-s sm:flex-row sm:items-start">
@@ -162,7 +162,7 @@ function RecipeLookup({ kinds, onUse }: { kinds: SourceKind[]; onUse: (r: Source
       </div>
       {err && <FieldError>{err}</FieldError>}
       {result && matches.length === 0 && (
-        <p className="mt-m text-on-surface-low text-[0.8125rem]">
+        <p data-type="body-s" className="mt-m text-on-surface-low">
           No recipe covers that URL yet — pick a kind below and describe it yourself. A web page works
           best when the URL LISTS entries (a changelog or blog index), not a single post.
         </p>
@@ -172,15 +172,15 @@ function RecipeLookup({ kinds, onUse }: { kinds: SourceKind[]; onUse: (r: Source
           {matches.map((m) => (
             <li key={m.id}>
               <TileButton ariaLabel={`Use the ${m.displayName} recipe`} onClick={() => onUse(m)} className="w-full p-m text-left">
-                <span className="inline-flex items-center gap-s text-on-surface text-[0.9375rem]" style={fvs(500)}>
+                <span data-type="title-m" className="inline-flex items-center gap-s text-on-surface" style={fvs(500)}>
                   <Sparkles size={16} aria-hidden /> {m.displayName}
                 </span>
-                <span className="mt-1 text-on-surface-low text-[0.8125rem]">{m.description}</span>
+                <span data-type="body-s" className="mt-1 text-on-surface-low">{m.description}</span>
                 {typeof m.spec.url === 'string' && m.spec.url !== url.trim() && (
                   // The recipe usually watches a DIFFERENT URL than the one pasted (a repo page
                   // becomes its releases feed), and hiding that would make the saved source look
                   // like it points where the user pointed it.
-                  <span className="mt-1 break-all font-mono text-on-surface-low text-[0.75rem]">{m.spec.url}</span>
+                  <span data-type="caption" className="mt-1 break-all font-mono text-on-surface-low">{m.spec.url}</span>
                 )}
               </TileButton>
             </li>
@@ -336,7 +336,7 @@ function SourceForm({ kind, seed, onBack, onClose, onCreated }: {
               <Field label="Detectors" hint="All of them run in order, most reliable first. Unticking one narrows the stack; it never re-orders it.">
                 <div className="flex flex-wrap gap-x-l gap-y-2 rounded-md bg-surface-container px-m py-2">
                   {(kind.detectors ?? []).map((d) => (
-                    <label key={d} className="inline-flex items-center gap-2 text-on-surface text-[0.8125rem]">
+                    <label key={d} data-type="body-s" className="inline-flex items-center gap-2 text-on-surface">
                       {/* The name keeps the raw key, NOT `d.replace(/_/g, ' ')`. The visible label is
                           the key itself in mono (below), so de-underscoring it here produced an
                           accessible name that no longer CONTAINED the visible text — measured 5 of 5
@@ -355,7 +355,7 @@ function SourceForm({ kind, seed, onBack, onClose, onCreated }: {
               <Field label="Render tier" hint="Off by default. A page that builds its content with JavaScript needs it; a plain page never does, and it costs a headless browser per poll.">
                 <div className="flex items-center gap-m">
                   <Toggle on={spec.allowRender} onChange={(v) => { set('allowRender', v); setPreview(null) }} label="Allow the render tier for this source" />
-                  <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]"><MonitorPlay size={13} aria-hidden /> {spec.allowRender ? 'Allowed' : 'Not allowed'}</span>
+                  <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><MonitorPlay size={13} aria-hidden /> {spec.allowRender ? 'Allowed' : 'Not allowed'}</span>
                 </div>
               </Field>
             </>
@@ -399,7 +399,7 @@ function SourceForm({ kind, seed, onBack, onClose, onCreated }: {
           <Field label="Enrichment">
             <Segmented ariaLabel="Enrichment for this source" value={enrichment} onChange={setEnrichment}
               options={[{ key: 'full', label: 'Enriched', icon: Sparkles }, { key: 'raw', label: 'Raw · no AI', icon: ShieldOff }]} />
-            <p className="mt-1 text-on-surface-low text-[0.75rem]">
+            <p data-type="caption" className="mt-1 text-on-surface-low">
               {enrichment === 'raw'
                 ? 'Items are indexed and embedded locally and never reach a model — the pipeline for raw sources has no model stages at all.'
                 : 'Items get the full pipeline: summaries, insights and entity extraction.'}
@@ -420,16 +420,16 @@ function SourceForm({ kind, seed, onBack, onClose, onCreated }: {
           {kind.previewable ? (
             <div className="flex flex-col gap-m rounded-lg bg-surface-container p-l">
               <div className="flex flex-wrap items-center justify-between gap-s">
-                <span className="text-on-surface text-[0.8125rem]" style={fvs(500)}>Dry run</span>
+                <span data-type="label-s" className="text-on-surface" style={fvs(500)}>Dry run</span>
                 <Button size="sm" variant="tonal" loading={previewing} disabled={!filled}
                   disabledReason={filled ? undefined : 'Enter a URL starting with http:// or https://'}
                   onClick={runPreview}><Eye size={15} /> Preview items</Button>
               </div>
-              <p className="text-on-surface-low text-[0.75rem]">Runs the detectors once and shows what would be saved. Nothing is stored — but it is a real request to that server.</p>
+              <p data-type="caption" className="text-on-surface-low">Runs the detectors once and shows what would be saved. Nothing is stored — but it is a real request to that server.</p>
               {preview && <PreviewResult result={preview} allowRender={spec.allowRender} onAllowRender={() => { set('allowRender', true); setPreview(null) }} />}
             </div>
           ) : (
-            <p className="inline-flex items-start gap-2 rounded-lg bg-surface-container p-m text-on-surface-low text-[0.8125rem]">
+            <p data-type="body-s" className="inline-flex items-start gap-2 rounded-lg bg-surface-container p-m text-on-surface-low">
               <Info size={14} className="mt-0.5 shrink-0" aria-hidden />
               {kind.display_name} has no dry run — its first poll is its preview. Save it, then check its health on the sources list.
             </p>
@@ -473,7 +473,7 @@ function PreviewResult({ result, allowRender, onAllowRender }: {
     <div role="status" className="flex flex-col gap-m">
       {result.items.length > 0 ? (
         <>
-          <p className="text-on-surface-var text-[0.8125rem]">
+          <p data-type="body-s" className="text-on-surface-var">
             Found <span style={fvs(600)}>{result.items.length}</span> item{result.items.length === 1 ? '' : 's'}
             {result.detector && <> via <span className="font-mono">{result.detector}</span></>}
             {' · '}{result.requests_used} request{result.requests_used === 1 ? '' : 's'}
@@ -481,10 +481,10 @@ function PreviewResult({ result, allowRender, onAllowRender }: {
           <ul className="flex flex-col gap-2">
             {result.items.map((it) => (
               <li key={it.guid} className="rounded-md bg-surface-high px-m py-2">
-                <p className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{it.title}</p>
+                <p data-type="label-s" className="truncate text-on-surface" style={fvs(500)}>{it.title}</p>
                 {/* Untrusted scraped text, clipped by the backend and rendered as TEXT. */}
-                {it.snippet && <p className="mt-0.5 line-clamp-2 text-on-surface-low text-[0.75rem]">{it.snippet}</p>}
-                {it.url && <p className="mt-0.5 truncate text-on-surface-low text-[0.75rem]">{it.url}</p>}
+                {it.snippet && <p data-type="caption" className="mt-0.5 line-clamp-2 text-on-surface-low">{it.snippet}</p>}
+                {it.url && <p data-type="caption" className="mt-0.5 truncate text-on-surface-low">{it.url}</p>}
               </li>
             ))}
           </ul>
@@ -494,7 +494,7 @@ function PreviewResult({ result, allowRender, onAllowRender }: {
           {needsRender ? <MonitorPlay size={15} className="mt-0.5 shrink-0 text-warn" aria-hidden />
             : <Info size={15} className="mt-0.5 shrink-0 text-warn" aria-hidden />}
           <div className="min-w-0">
-            <p className="text-on-surface text-[0.8125rem] leading-relaxed">{result.guidance || 'No items were found.'}</p>
+            <p data-type="body-s" className="text-on-surface leading-relaxed">{result.guidance || 'No items were found.'}</p>
             {needsRender && !allowRender && (
               <Button size="xs" variant="tonal" className="mt-m" onClick={onAllowRender}>Allow the render tier and retry</Button>
             )}
@@ -502,7 +502,7 @@ function PreviewResult({ result, allowRender, onAllowRender }: {
         </div>
       )}
       {result.escalations.length > 0 && (
-        <p className="text-on-surface-low text-[0.75rem]">{result.escalations.join(' · ')}</p>
+        <p data-type="caption" className="text-on-surface-low">{result.escalations.join(' · ')}</p>
       )}
     </div>
   )

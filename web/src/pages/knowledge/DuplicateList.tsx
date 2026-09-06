@@ -52,7 +52,7 @@ export function DuplicateList({ item, duplicates, error, onRetry, onOpenItem, on
         </FieldError>
         {/* Deliberately NOT "no duplicates found". The lookup did not answer, so this surface
             knows nothing about whether a second copy exists and must not imply that it does. */}
-        <p className="text-on-surface-low text-[0.75rem]">This item may still have duplicates.</p>
+        <p data-type="caption" className="text-on-surface-low">This item may still have duplicates.</p>
         <Button variant="secondary" size="xs" onClick={onRetry}>Try again</Button>
       </div>
     )
@@ -138,10 +138,10 @@ export function DuplicateList({ item, duplicates, error, onRetry, onOpenItem, on
               would trip the very rail this comment is explaining.)
               Opening the candidate is therefore its own primitive control below, which also drops
               the nested-interactive shape a clickable row containing a Merge button would have. */}
-          <p className="truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>
+          <p data-type="label-s" className="truncate text-on-surface" style={fvs(500)}>
             {dup.title || '(untitled)'}
           </p>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-on-surface-low text-[0.75rem]">
+          <div data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-on-surface-low">
             {dup.word_count > 0 && <span>{dup.word_count.toLocaleString()} words</span>}
             {dup.word_count > 0 && dup.created_at && <span aria-hidden>·</span>}
             {dup.created_at && <span>added {relPast(dup.created_at)}</span>}
@@ -150,7 +150,7 @@ export function DuplicateList({ item, duplicates, error, onRetry, onOpenItem, on
               destroy a document on the app's unexplained word — `find_duplicates` returns this
               precisely so the claim is reviewable. */}
           {dup.reason && (
-            <p className="mt-1 text-on-surface-var text-[0.75rem]">{dup.reason}</p>
+            <p data-type="caption" className="mt-1 text-on-surface-var">{dup.reason}</p>
           )}
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {/* Inspect BEFORE destroy. The two similarly-titled copies are the whole problem, so

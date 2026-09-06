@@ -43,7 +43,7 @@ function walk(dir: string, out: string[] = []): string[] {
 describe("an intent's goal survives truncation", () => {
   it('the truncating goal carries its full text in a title', () => {
     expect(CODE).toMatch(
-      /<span className="truncate text-on-surface text-\[0\.9375rem\]" title=\{it\.goal \|\| it\.id\}>\{it\.goal \|\| it\.id\}<\/span>/,
+      /<span data-type="body-m" className="truncate text-on-surface" title=\{it\.goal \|\| it\.id\}>\{it\.goal \|\| it\.id\}<\/span>/,
     )
   })
 

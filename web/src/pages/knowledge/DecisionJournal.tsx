@@ -82,7 +82,7 @@ export function DecisionJournal({ onOpenItem, onOpenChat }: { onOpenItem: (id: s
  *  than a label. */
 function DomainTag({ domain }: { domain: string }) {
   return (
-    <span className="shrink-0 rounded-full px-2 py-[1px] text-[0.75rem] text-on-surface-low"
+    <span data-type="caption" className="shrink-0 rounded-full px-2 py-[1px] text-on-surface-low"
       style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>{domain}</span>
   )
 }
@@ -112,7 +112,7 @@ function CalibrationStrip({ view }: { view: Parameters<typeof calibrationCaption
       {/* The caption is the claim. It is rendered in every state including the two with no
           number, because a strip that goes silent when it has nothing to say leaves the reader
           to assume the chart above it means something. */}
-      <p className="mt-1 text-on-surface-low text-[0.9375rem]" data-calibration-state={state}>
+      <p data-type="body-m" className="mt-1 text-on-surface-low" data-calibration-state={state}>
         {calibrationCaption(view)}
       </p>
       {domains.length > 0 && (
@@ -120,8 +120,8 @@ function CalibrationStrip({ view }: { view: Parameters<typeof calibrationCaption
           {domains.map(([domain, b]) => (
             <li key={domain} className="flex flex-col gap-1">
               <div className="flex items-baseline justify-between gap-s">
-                <span className="text-on-surface text-[0.9375rem]" style={fvs(500)}>{domain}</span>
-                <span className="text-on-surface-low text-[0.8125rem] tabular-nums">{bucketLabel(b, view.calibration_min_n)}</span>
+                <span data-type="title-m" className="text-on-surface" style={fvs(500)}>{domain}</span>
+                <span data-type="body-s" className="text-on-surface-low tabular-nums">{bucketLabel(b, view.calibration_min_n)}</span>
               </div>
               <Bar b={b} />
             </li>
@@ -141,7 +141,7 @@ function CalibrationStrip({ view }: { view: Parameters<typeof calibrationCaption
 function Bar({ b }: { b: CalibrationBucket }) {
   if (!bucketPlottable(b)) {
     return (
-      <p className="text-on-surface-low text-[0.8125rem] opacity-80">
+      <p data-type="body-s" className="text-on-surface-low opacity-80">
         Not enough resolved decisions in this domain to draw a rate.
       </p>
     )
@@ -173,10 +173,10 @@ function PendingRow({ d, index, onOpen }: { d: DecisionRow; index: number; onOpe
           <span className="truncate text-on-surface" style={fvs(500)}>{d.summary}</span>
           <DomainTag domain={d.domain} />
         </div>
-        <p className="line-clamp-2 text-on-surface-low text-[0.9375rem]">
+        <p data-type="body-m" className="line-clamp-2 text-on-surface-low">
           <span className="text-on-surface-low opacity-80">Expected: </span>{d.expectation}
         </p>
-        <div className="flex flex-wrap items-center gap-s text-[0.8125rem]" style={{ color: tone }}>
+        <div data-type="body-s" className="flex flex-wrap items-center gap-s" style={{ color: tone }}>
           <Icon size={13} aria-hidden />
           <span data-pending-state={state}>{horizonLabel(d)}</span>
           <span className="text-on-surface-low opacity-80">· {confidenceLabel(d)}</span>
@@ -200,19 +200,19 @@ function ResolvedRow({ d, index, onOpen }: { d: DecisionRow; index: number; onOp
           {/* Words, not the wire enum — and an empty grade renders `ungraded`, never the middle
               grade: a decision the user resolved without grading is not one that came out as
               expected. `gradeLabel` owns both halves. */}
-          <span className="shrink-0 text-[0.8125rem]" style={{ color: tone }}>{gradeLabel(grade)}</span>
+          <span data-type="body-s" className="shrink-0" style={{ color: tone }}>{gradeLabel(grade)}</span>
         </div>
         <dl className="grid gap-s sm:grid-cols-2">
           <div className="min-w-0">
-            <dt className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Expected</dt>
-            <dd className="mt-1 text-on-surface text-[0.9375rem]">{d.expectation}</dd>
+            <dt data-type="caption" className="text-on-surface-low uppercase tracking-wide">Expected</dt>
+            <dd data-type="body-m" className="mt-1 text-on-surface">{d.expectation}</dd>
           </div>
           <div className="min-w-0">
-            <dt className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">What happened</dt>
-            <dd className="mt-1 text-on-surface text-[0.9375rem]">{d.outcome || '—'}</dd>
+            <dt data-type="caption" className="text-on-surface-low uppercase tracking-wide">What happened</dt>
+            <dd data-type="body-m" className="mt-1 text-on-surface">{d.outcome || '—'}</dd>
           </div>
         </dl>
-        <div className="flex flex-wrap items-center gap-s text-[0.8125rem] text-on-surface-low">
+        <div data-type="body-s" className="flex flex-wrap items-center gap-s text-on-surface-low">
           <span>{confidenceLabel(d)}</span>
           {/* The lesson chip is a SOFT reference into the memory store, so its absence is a real
               state (the lesson write was refused) and is said rather than hidden. */}

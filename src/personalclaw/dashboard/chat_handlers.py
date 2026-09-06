@@ -320,11 +320,10 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         user_meta = _redact_meta(user_meta)
     session.append("user", message, "msg msg-u", ts=client_ts, meta=user_meta)
 
-    # ── AutoNudge: user input cancels any pending nudge timer (user wins). ──
+    # ── AutoNudge: user input defers any pending nudge (user wins). Lazy import + fail-open
+    # kept deliberately: this is a hot path and a broken nudge service must never block a send.
     try:
-        from personalclaw.autonudge import (  # circular: autonudge -> dashboard.chat -> chat_handlers  # noqa: E501
-            get_instance as _autonudge_get,
-        )
+        from personalclaw.triggers.nudge import get_instance as _autonudge_get
 
         _autonudge = _autonudge_get()
         if _autonudge is not None:
