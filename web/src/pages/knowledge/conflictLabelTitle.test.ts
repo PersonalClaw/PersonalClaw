@@ -32,7 +32,7 @@ const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//
 describe("a claim's source label survives truncation", () => {
   it('the truncating label carries its full text in a title', () => {
     expect(CODE).toMatch(
-      /<div className="mt-0\.5 truncate text-\[0\.75rem\] text-on-surface-low" title=\{label\}>\{label\}<\/div>/,
+      /<div data-type="caption" className="mt-0\.5 truncate text-on-surface-low" title=\{label\}>\{label\}<\/div>/,
     )
   })
 

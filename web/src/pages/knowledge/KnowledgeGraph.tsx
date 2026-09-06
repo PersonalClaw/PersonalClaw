@@ -413,7 +413,7 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
 
       {/* Zoom controls */}
       <GraphZoomControls onZoomIn={() => zoomBy(1.25)} onZoomOut={() => zoomBy(1 / 1.25)} onReset={reset} />
-      <div className="absolute bottom-3 left-3 rounded-pill bg-surface-high/80 px-2 py-0.5 text-on-surface-low text-[0.75rem] tabular-nums backdrop-blur">{Math.round(view.scale * 100)}%</div>
+      <div data-type="caption" className="absolute bottom-3 left-3 rounded-pill bg-surface-high/80 px-2 py-0.5 text-on-surface-low tabular-nums backdrop-blur">{Math.round(view.scale * 100)}%</div>
     </div>
   )
 }

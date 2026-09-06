@@ -152,7 +152,7 @@ describe('the two canvas-painted accent texts use the emphasis shade', () => {
 
 describe('accent chips on surface-high use the emphasis shade', () => {
   const SITES: [string, RegExp][] = [
-    ['pages/knowledge/KnowledgeListPage.tsx', /bg-surface-high px-1\.5 text-primary-emphasis text-\[0\.75rem\]/],
+    ['pages/knowledge/KnowledgeListPage.tsx', /data-type="caption" className="[^"]*bg-surface-high px-1\.5 text-primary-emphasis/],
     ['ui/Markdown.tsx', /bg-surface-high px-1\.5 align-baseline text-\[0\.8em\] text-primary-emphasis/],
     ['ui/Markdown.tsx', /text-\[0\.85em\] font-mono text-primary-emphasis underline/],
     ['pages/chat/PasteChip.tsx', /text-\[0\.92em\] text-primary-emphasis/],
