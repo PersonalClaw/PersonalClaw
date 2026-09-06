@@ -42,18 +42,20 @@ export function PromptEditFields({ draft, onChange, Section }: {
   const updateVar = (i: number, patch: Partial<PromptVariable>) => set('variables', draft.variables.map((v, idx) => idx === i ? { ...v, ...patch } : v))
   const removeVar = (i: number) => set('variables', draft.variables.filter((_, idx) => idx !== i))
 
-  const inputCls = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
+  // The type role (body-s) can't live in this element-less class const — data-type is an
+  // attribute, so each consumer input below carries it (same treatment as chat's VarInput).
+  const inputCls = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
 
   return (
     <div className="flex flex-col gap-l">
       <Section label="Title">
         <input value={draft.title} onChange={(e) => set('title', e.target.value)} aria-label="Prompt title"
-          placeholder="A human-readable label" className={inputCls} />
+          placeholder="A human-readable label" data-type="body-s" className={inputCls} />
       </Section>
 
       <Section label="Description">
         <input value={draft.description} onChange={(e) => set('description', e.target.value)} aria-label="Prompt description"
-          placeholder="One line: what this prompt does" className={inputCls} />
+          placeholder="One line: what this prompt does" data-type="body-s" className={inputCls} />
       </Section>
 
       <Section label="Tags">
@@ -80,21 +82,22 @@ export function PromptEditFields({ draft, onChange, Section }: {
             so nothing here can claim one. Each control names itself after its section. */}
         <textarea ref={taRef} value={draft.content} onChange={(e) => set('content', e.target.value)} rows={12}
           aria-label="Prompt template" spellCheck={false} placeholder={'The prompt body. {{variable}} placeholders, {% if %}/{% for %} logic, {{ fn() }} functions, and {{> snippet}} includes.'}
-          className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono text-[0.8125rem] leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-y" />
+          data-type="body-s"
+          className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-y" />
         {includes.length > 0 && (
           <div className="mt-2 rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 10%, transparent)' }}>
-            <div className="flex items-center gap-1.5 text-on-surface-var text-[0.8125rem] mb-1.5"><Puzzle size={13} className="text-info" /> Includes snippets (their variables merge in):</div>
+            <div data-type="body-s" className="flex items-center gap-1.5 text-on-surface-var mb-1.5"><Puzzle size={13} className="text-info" /> Includes snippets (their variables merge in):</div>
             <div className="flex flex-wrap gap-1.5">
-              {includes.map((n) => <span key={n} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var text-[0.75rem]"><Puzzle size={11} /> <span className="font-mono">{n}</span></span>)}
+              {includes.map((n) => <span key={n} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var"><Puzzle size={11} /> <span className="font-mono">{n}</span></span>)}
             </div>
           </div>
         )}
         {undeclared.length > 0 && (
           <div className="mt-2 rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
-            <div className="flex items-center gap-1.5 text-on-surface-var text-[0.8125rem] mb-1.5"><Wand2 size={13} className="text-primary" /> Placeholders not yet declared:</div>
+            <div data-type="body-s" className="flex items-center gap-1.5 text-on-surface-var mb-1.5"><Wand2 size={13} className="text-primary" /> Placeholders not yet declared:</div>
             <div className="flex flex-wrap gap-1.5">
               {undeclared.map((n) => (
-                <button key={n} type="button" onClick={() => addVar(n)} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface text-[0.75rem] hover:bg-surface-highest transition-colors">
+                <button key={n} type="button" onClick={() => addVar(n)} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface hover:bg-surface-highest transition-colors">
                   <Plus size={12} /> <span className="font-mono">{n}</span>
                 </button>
               ))}
