@@ -202,6 +202,148 @@ def _recorded_pid(fd: Any) -> int:
 
 # ── subprocess execution (setup/teardown steps) ──
 
+#: Fixed shell plumbing for one durable step (EI-6 §5.1's SPAWN half). The step's own argv is
+#: NEVER interpolated into this text — it arrives as positional parameters (`"$@"`) — so the
+#: no-quoting-injection stance of the bare path survives even though a shell does the fd
+#: plumbing here. The rc file is written LAST, which is what makes its existence the
+#: completion signal the poll below reads.
+_DURABLE_STEP_SH = 'rc="$1"; out="$2"; shift 2; "$@" >"$out" 2>&1; printf %s "$?" >"$rc"'
+
+#: Durable-step poll cadence. A stat plus (occasionally) a bounded tmux probe — cheap enough
+#: to run for the whole life of a cold `npm install`, tight enough that a finished step does
+#: not sit unnoticed while its run appears busy.
+_DURABLE_POLL_SECS = 0.3
+
+
+def _durable_enabled() -> bool:
+    """The §5.1 gate, read at use — the same flag+binary AND the recovery sweep consults.
+
+    Fail-open OFF: an unreadable gate means the step runs as a bare subprocess, exactly as it
+    did before durable sessions existed. Durability is an enhancement to a run, never a
+    precondition — the doctrine `runner_lifecycle.durable_sessions_enabled` sets and every
+    caller of this seam inherits.
+    """
+    try:
+        from personalclaw.agents import runner_lifecycle
+
+        return runner_lifecycle.durable_sessions_enabled()
+    except Exception:
+        logger.debug("durable-sessions gate unreadable; treating as off", exc_info=True)
+        return False
+
+
+async def _run_step_durable(
+    argv: list[str],
+    cwd: str | Path,
+    *,
+    name: str,
+    step: str,
+    session_env: dict[str, str],
+    timeout: float,
+) -> tuple[bool, str] | None:
+    """Run one setup step INSIDE the run's durable tmux session. ``None`` → bare fallback.
+
+    The mechanism: ``tmux new-session -d`` hands the step to the tmux DAEMON, so a gateway
+    killed mid-`npm install` leaves the install running — and the boot sweep's §5.1 pre-step
+    recomputes *name*, finds the session alive, and suspends the run instead of tombstoning
+    it. That is SC5's spawn half: the sweep finally has a writer to reattach to.
+
+    The exit code and output come back through two content-addressed files next to the step's
+    own setup marker (same digest recipe, so the plumbing inherits the marker's edit-reruns
+    property). Files rather than pipes, deliberately: a pipe ties the worker's life to this
+    process — the exact coupling durability exists to remove.
+
+    Every failure to arrange durability returns ``None`` and the caller runs the step bare.
+    A step re-run after a partial durable attempt is safe by the setup contract (steps are
+    marker-guarded and re-runnable on every resume). Only two outcomes return a real result:
+    the rc file (the step genuinely finished, with that code) and the deadline (mirrors the
+    bare path's kill-and-fail).
+    """
+    import asyncio
+    import time
+
+    from personalclaw import tmux_substrate
+
+    deadline = time.monotonic() + timeout
+
+    # Adopt-before-spawn. A session already holding this run's name is a PREVIOUS gateway
+    # life's step still executing — the very worker the recovery sweep suspended this run
+    # for. Two copies of one setup command interleaving in a single tree is the corruption
+    # the workspace lock exists to prevent, so this waits for the survivor to end and then
+    # runs the step fresh (its marker was never written — the dead gateway could not have
+    # written it — so re-running is the contract, and sequential is the property).
+    while await tmux_substrate.has_session(name):
+        if time.monotonic() >= deadline:
+            await tmux_substrate.kill_session(name)
+            return False, f"timed out after {timeout}s (waiting on a surviving durable step)"
+        await asyncio.sleep(_DURABLE_POLL_SECS)
+
+    marker = Path(cwd) / worktrees.setup_marker(step)
+    rc_path = marker.with_suffix(".rc")
+    out_path = marker.with_suffix(".out")
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        rc_path.unlink(missing_ok=True)
+        out_path.unlink(missing_ok=True)
+    except OSError:
+        return None
+
+    from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
+
+    # The ceiling still applies INSIDE the session: the worker argv is shim-prepended here,
+    # so the tmux server execs our post-exec shim which setrlimits and then execs the step.
+    # Without this, routing a step through tmux would quietly shed the tool ceiling the bare
+    # path delivers — a resource-limit downgrade nobody chose.
+    worker = spawn_shim_argv(list(argv), PROFILE_TOOL)
+    command = [
+        "/bin/sh",
+        "-c",
+        _DURABLE_STEP_SH,
+        "pclaw-step",
+        str(rc_path),
+        str(out_path),
+        *worker,
+    ]
+    if not await tmux_substrate.new_session(
+        name, workspace=str(cwd), command=command, env=session_env
+    ):
+        return None
+
+    while not rc_path.exists():
+        if not await tmux_substrate.has_session(name):
+            # One grace re-check: the shell writes rc as its LAST act, so there is a sliver
+            # between that write and the session leaving the server. Gone with no rc after
+            # the grace means the wrapper never ran to completion — fall back bare.
+            await asyncio.sleep(_DURABLE_POLL_SECS)
+            if rc_path.exists():
+                break
+            logger.debug("durable session %s ended without a status; bare fallback", name)
+            return None
+        if time.monotonic() >= deadline:
+            await tmux_substrate.kill_session(name)
+            return False, f"timed out after {timeout}s"
+        await asyncio.sleep(_DURABLE_POLL_SECS)
+
+    # The redirection creates rc before printf fills it; wait out that (tiny) window rather
+    # than misread an empty file as a failure of a step that succeeded.
+    raw = ""
+    for _ in range(10):
+        try:
+            raw = rc_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            raw = ""
+        if raw:
+            break
+        await asyncio.sleep(0.05)
+    code = int(raw) if raw.lstrip("-").isdigit() and raw else 1
+    try:
+        detail = out_path.read_text(encoding="utf-8", errors="replace")[:2000]
+    except OSError:
+        detail = ""
+    if code == 0:
+        return True, detail
+    return False, f"exited {code}: {detail}"
+
 
 async def run_step(
     command: str,
@@ -210,6 +352,7 @@ async def run_step(
     env: dict[str, str] | None = None,
     runner: Any = None,
     timeout: float = STEP_TIMEOUT_SECS,
+    durable_session: str = "",
 ) -> tuple[bool, str]:
     """Run one setup/teardown step in `cwd`. Returns `(ok, detail)`.
 
@@ -222,6 +365,11 @@ async def run_step(
 
     `runner` is the injection seam `EngineServices.teardown_runner` already established, so a
     controller test never runs a real subprocess.
+
+    `durable_session` (EI-6 §5.1) names the run's durable tmux session; non-empty AND the
+    durable gate on → the step executes inside that session (`_run_step_durable`) so it
+    outlives this gateway, with the bare subprocess below as the unconditional fallback. The
+    injected `runner` seam still wins outright — a test double is a request to run nothing.
     """
     if runner is not None:
         try:
@@ -239,6 +387,35 @@ async def run_step(
     if not found:
         return False, f"command not found: {binary}"
     spawn_env = {**os.environ, **(env or {})}
+
+    if durable_session and _durable_enabled():
+        # Only what the worker needs crosses into the session: the explicit step env plus the
+        # gateway's PATH/PYTHONPATH (the two whose absence makes a step fail under tmux that
+        # succeeds bare). The daemon inherited the rest from the gateway that first touched
+        # our socket.
+        session_env = {**(env or {})}
+        for key in ("PATH", "PYTHONPATH"):
+            if key in spawn_env:
+                session_env.setdefault(key, spawn_env[key])
+        try:
+            durable = await _run_step_durable(
+                argv,
+                cwd,
+                name=durable_session,
+                step=command,
+                session_env=session_env,
+                timeout=timeout,
+            )
+        except Exception:
+            # The fail-open doctrine, enforced at the seam: no durable-path defect may cost
+            # the step. The bare subprocess below is today's behaviour, verbatim.
+            logger.debug(
+                "durable step path failed for %s; bare fallback", durable_session, exc_info=True
+            )
+            durable = None
+        if durable is not None:
+            return durable
+
     from personalclaw.sandbox import PROFILE_TOOL, create_subprocess_limited
 
     try:
@@ -385,6 +562,7 @@ async def provision(
     issues: list[SpecIssue] | None = None,
     runner: Any = None,
     from_snapshot: str = "",
+    durable_session: str = "",
 ) -> Provisioned:
     """Stand the workspace up: create → preserve → setup, in that order.
 
@@ -432,7 +610,16 @@ async def provision(
         out.preserved, out.preserve_skipped = copied.copied, copied.skipped
 
     if spec.setup:
-        await _run_setup(spec, root, out, runner=runner)
+        # The durable name only travels with an ISOLATED workspace (EI-6 §5.1). An in-place
+        # run's substrate IS the gateway process — a durable session for it would be a worker
+        # the sweep suspends a run for whose work was never separable in the first place.
+        await _run_setup(
+            spec,
+            root,
+            out,
+            runner=runner,
+            durable_session=durable_session if out.isolated else "",
+        )
     return out
 
 
@@ -612,7 +799,12 @@ def _scratch_dir(run_id: str, name: str, run_dir: Path | None) -> str:
 
 
 async def _run_setup(
-    spec: WorkspaceSpec, root: str, out: Provisioned, *, runner: Any = None
+    spec: WorkspaceSpec,
+    root: str,
+    out: Provisioned,
+    *,
+    runner: Any = None,
+    durable_session: str = "",
 ) -> None:
     """Execute the pending setup steps, marking each done as it succeeds.
 
@@ -628,7 +820,9 @@ async def _run_setup(
     out.setup_skipped = list(done)
     env = worktrees.worktree_env(root)
     for step in to_run:
-        ok, detail = await run_step(step, root, env=env, runner=runner)
+        ok, detail = await run_step(
+            step, root, env=env, runner=runner, durable_session=durable_session
+        )
         if ok:
             out.setup_ran.append(step)
             worktrees.mark_setup_done(root, step)
@@ -693,6 +887,18 @@ async def teardown(
     spec_teardown = str(state.get("teardown", "") or "")
     isolated = bool(state.get("isolated", False))
     alive = bool(path) and Path(path).is_dir()
+
+    # EI-6 §5.1: the run's durable worker dies WITH the run, FIRST — before teardown steps and
+    # long before the directory goes. A session left behind would be a detached process still
+    # working in a tree this function is about to delete. Best-effort and unconditional:
+    # `kill_session` on a name nothing holds (or with no tmux at all) is a no-op by contract.
+    try:
+        from personalclaw import tmux_substrate
+        from personalclaw.workflows.containers import durable_worker_name
+
+        await tmux_substrate.kill_session(durable_worker_name(run))
+    except Exception:
+        logger.debug("durable session kill failed at teardown", exc_info=True)
 
     container_id = str(state.get("container_id", "") or "")
     container_binary = str(state.get("container_backend", "") or "")

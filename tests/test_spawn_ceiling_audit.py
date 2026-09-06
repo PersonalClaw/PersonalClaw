@@ -132,6 +132,16 @@ _CEILING_WRAPPED: dict[str, str] = {
     "workflows/provisioning.py::run_step::create_subprocess_limited": (
         "workspace setup/teardown step → tool ceiling via create_subprocess_limited"
     ),
+    # EI-6 §5.1's durable-worker spawn. The immediate child is our own tmux client on the
+    # dedicated socket, but the session COMMAND embeds an author-declared setup step — the
+    # same agent-influenced text as `run_step` above — so this is ceiling-wrapped, not
+    # operator-exempt like the substrate's read probes: `provisioning._run_step_durable`
+    # shim-prepends the step argv via `spawn_shim_argv` before handing it to `new_session`,
+    # so the tmux server execs the post-exec shim and the tool ceiling arrives inside the
+    # session exactly as it does on the bare path.
+    "tmux_substrate.py::new_session::asyncio.create_subprocess_exec": (
+        "durable worker spawn → tool ceiling via spawn_shim_argv inside the tmux session"
+    ),
     # The ``none`` sandbox provider's handle exec (EI-1) — the single seam every routed spawn
     # now funnels through. EI-1 moved the direct create_subprocess_limited call out of
     # AcpProcess.spawn (session_host profile — the EMFILE fix, NOFILE raised, no OOM bias) and

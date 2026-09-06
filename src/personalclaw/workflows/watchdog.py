@@ -475,9 +475,9 @@ class WorkflowWatchdog:
         # spawned and the sweep behaves exactly as it did before this existed.
         if not runner_lifecycle.durable_sessions_enabled():
             return None
-        name = tmux_substrate.durable_session_name(
-            run.project_id or "default", run.id, run.workflow_name or "run"
-        )
+        # The shared run→name derivation — the SAME function the spawn side names its session
+        # with, so the writer and this reader cannot drift apart on the fallback components.
+        name = containers.durable_worker_name(run)
         if tmux_substrate.has_session_sync(name):
             return containers.Substrate(
                 kind="tmux", alive=True, detail=f"durable session {name} is still running"
