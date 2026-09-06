@@ -6,7 +6,7 @@ import { Toggle } from '../../ui/Toggle'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type Trigger as WireTrigger } from '../../lib/api'
 import { RunHistory } from '../schedule/ScheduleDetail'
-import { triggerHealthMeta } from '../schedule/scheduleMeta'
+import { triggerHealthMeta, explainsCause } from '../schedule/scheduleMeta'
 import { actionLabel } from './triggerMeta'
 import { reportingWrite } from '../../app/reportingWrite'
 import { BUSY_REASON } from '../../ui/unavailable'
@@ -64,7 +64,6 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
   // Reuses S164's shared `triggerHealthMeta` for the dot + label rather than inventing a third
   // vocabulary mapper on a third surface.
   const lc = triggerHealthMeta(trigger.health, trigger.state)
-  const stopped = trigger.state === 'autopaused' || trigger.state === 'quarantined'
   const statusLine =
     trigger.state === 'autopaused'
       ? 'Stopped by the system after repeated failures'
@@ -136,8 +135,16 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
           {/* 🔴 The CAUSE, which this panel never showed (S169). `last_error` has been on the wire
               all along and had no reader here, so an autopaused automation offered no way to learn
               WHY — the user had to go digging, which is exactly what `attention_card`'s docstring
-              says the error text exists to prevent. */}
-          {stopped && trigger.last_error && (
+              says the error text exists to prevent.
+              🔴 AND IT WAS GATED TOO NARROWLY (issue 496). The gate was `autopaused || quarantined`,
+              so a DEGRADED automation — health non-ok, still firing, and precisely what the reaper
+              writes when it kills an overrunning turn — showed the dot and withheld the reason.
+              Measured on a live gateway: `Docs mirror`, `health: degraded`, `last_error: "Reaped
+              after 1811s (exceeded 1800s deadline)"`, nothing on screen.
+              `explainsCause` is the shared gate, and it stays a gate rather than "always show"
+              because `last_error_summary` is never cleared on recovery: printing it beside a green
+              tick would report a fault that is already fixed. */}
+          {explainsCause(lc) && trigger.last_error && (
             <div className="mt-0.5 font-mono text-on-surface-low text-[0.75rem] break-all">
               {trigger.last_error}
             </div>

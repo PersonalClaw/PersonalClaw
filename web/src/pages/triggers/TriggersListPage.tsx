@@ -25,9 +25,10 @@ import { StoreTriggerDetail } from './StoreTriggerDetail'
 import { scheduleToTrigger, hookToTrigger, storeToTrigger, eventToTrigger, eventPatternMeta, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
-import { statusMeta, triggerHealthMeta, lastRunMeta, relFuture } from '../schedule/scheduleMeta'
+import { triggerStatusMeta, explainsCause, relFuture } from '../schedule/scheduleMeta'
 import { PageTitle } from '../../ui/PageTitle'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { Eyebrow } from '../../ui/Eyebrow'
 
 // One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store.
 // `Data events` was missing, so an event trigger — creatable from this page's own form — had no
@@ -46,12 +47,23 @@ const FILTERS: Array<{ key: string; label: string }> = [
 ]
 
 // 🔴 The local `statusDot` was DELETED (S164). It handled four values and defaulted the rest to a
-// neutral grey circle — and for a store trigger this page feeds it `t.health`, whose vocabulary is
+// neutral grey circle — and for a store trigger this page fed it `t.health`, whose vocabulary is
 // `ok | degraded | parked | failing`. Measured: `degraded`, `parked` and `failing` ALL rendered as
 // the same grey circle, so a FAILING automation was pixel-identical to a parked (self-healing) one
 // on the single page a user manages automations from. Second instance of S163's defect shape in a
-// second local copy, which is why the vocabulary now has one mapper: `statusMeta` for run outcomes,
-// `triggerHealthMeta` for health + lifecycle state.
+// second local copy, which is why the vocabulary has one mapper per language: `statusMeta` for run
+// outcomes, `triggerHealthMeta` for health + lifecycle state.
+//
+// 🔴 AND THEN THE CALL SITE BECAME THE COPY (issue 496). Deleting the local mapper left a per-kind
+// TERNARY choosing between them, so each new kind picked a vocabulary again — and measured on a live
+// gateway, both directions were wrong at once: the `event` branch picked the run-outcome mapper for a
+// row with no run outcome (a PARKED event trigger rendered "never run", with the reason on the wire
+// and unread), while the `schedule` branch reached around `triggerMeta`'s never-run guard by passing
+// the raw wire pair, so **6 of 11 schedule rows** — five of them the SYSTEM triggers every fresh home
+// registers — drew an ok-GREEN tick beside the word "never".
+//
+// One row, one call: `triggerStatusMeta(t)`. The converters put each fact in the field named for its
+// vocabulary and `scheduleMeta` owns the precedence, so a fifth kind cannot re-open this.
 
 /** Unified Triggers list — schedule + lifecycle triggers in one view, with a
  *  type filter. Detail opens the right inspector per kind (ScheduleDetail reused
@@ -244,15 +256,16 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
             ) : (
               <div className="flex flex-col gap-s">
                 {triggers.map((t, i) => {
-                  const sd = t.kind === 'store'
-                    ? triggerHealthMeta(t.lastStatus, t.state)
-                    // A schedule row still carries the raw pair — reconcile health vs run
-                    // row in the ONE shared place, so a reaped run (health=degraded, run
-                    // row 'success') cannot dot green here while the detail says degraded
-                    // (#685; the schedule half of #496's dot gap).
-                    : t.schedule
-                      ? lastRunMeta(t.schedule.last_run_status, t.schedule.last_status)
-                      : statusMeta(t.lastStatus)
+                  // ONE call for every kind. The per-kind ternary that used to live here was the
+                  // defect: each branch chose a MAPPER, so adding a kind meant picking a vocabulary
+                  // again — and the event branch picked the run-outcome mapper for a row that has no
+                  // run outcome, rendering a PARKED event trigger as "never run". The converters now
+                  // put each fact in its own field and `triggerStatusMeta` owns the precedence.
+                  const sd = triggerStatusMeta(t)
+                  // The cause, shown only where it is still true — see `explainsCause`: the backend
+                  // never clears `last_error_summary` on recovery, so a healthy row still carries the
+                  // old reason and printing it would report a fixed fault.
+                  const reason = explainsCause(sd) ? t.lastError : ''
                   // Right-click / long-press → the scoped actions this list performs on
                   // a row (open the inspector, or open it straight into edit mode). Both
                   // route through the same `setQuery` the row's click uses — destructive
@@ -332,11 +345,38 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                           {t.kind === 'lifecycle' && t.runCount != null && <span>ran {t.runCount}×</span>}
                           {/* An event trigger has no clock, so `fired N×` is its one live number. */}
                           {t.kind === 'event' && t.runCount != null && <span>fired {t.runCount}×</span>}
+                          {/* 🔴 THE CAUSE, which this row never showed (issue 496). `last_error` has
+                              been on the wire for all three store-backed kinds and the LIST — the one
+                              page a user manages automations from — read none of them. The issue was
+                              filed because a digest reaped for blowing an 1800-second deadline said
+                              "Reaped after 1811s (exceeded 1800s deadline)" on the wire and nothing
+                              at all on screen; that reaper hang went unexplained for cycles purely
+                              because the evidence was fetched and dropped.
+                              Neutral ink, not danger: the DOT carries the alarm, and a second red
+                              thing on the row would compete with it. Truncated with the full text in
+                              the title — a 200-character reason must not reflow the list. */}
+                          {reason && (
+                            <span data-type="caption" className="min-w-0 max-w-full truncate text-on-surface-low" title={reason}>{reason}</span>
+                          )}
                         </div>
                       </div>
                       <div className="hidden sm:flex shrink-0 items-center gap-1.5 text-on-surface-low text-[0.75rem]">
                         <sd.icon size={13} style={{ color: sd.tone }} />
-                        <span>{t.lastRunTs ? relPast(t.lastRunTs) : 'never'}</span>
+                        {/* 🔴 THE WORD, not just the tone. After the dot stopped collapsing four
+                            states into one grey circle, three of them were still distinguished only
+                            by hue + glyph — which fails WCAG 1.4.1 and asks the user to learn a
+                            colour key. The label is the same string the mapper already computed.
+                            Suppressed for "never run", where the timestamp beside it says it. */}
+                        {sd.label && sd.label !== 'never run' && (
+                          <span data-type="caption" style={{ color: sd.tone }}>{sd.label}</span>
+                        )}
+                        {/* 🔴 "never" is a CLAIM, so it is only made when it is true. A store or event
+                            row carries no last-run timestamp on the wire, so this cell printed
+                            "never" for an automation with `run_count: 9` — the exact confusion this
+                            issue is about, in the text beside the dot. `hasRun` is the honest
+                            discriminator: no timestamp AND no fires is "never"; no timestamp with
+                            fires recorded says nothing rather than something false. */}
+                        <span>{t.lastRunTs ? relPast(t.lastRunTs) : t.hasRun ? '' : 'never'}</span>
                       </div>
                     </ListRow>
                     </ContextMenu>
@@ -360,6 +400,13 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
 export function EventTriggerSummary({ t, onDeleted }: { t: Trigger; onDeleted: () => void }) {
   const [busy, setBusy] = useState(false)
   const pm = eventPatternMeta(t.eventPattern)
+  // 🔴 THE LIFECYCLE, which this inspector had no row for (issue 496). `_serialize_event` sends
+  // `state`/`health`/`last_error` and its docstring says why: *"a row that shows only
+  // `enabled: true` while never firing is the 'backend truth, frontend silence' shape — the panel
+  // needs the state AND the reason to say anything true."* This panel showed neither, so an event
+  // trigger PARKED because the app that owns its event was uninstalled read as a working one.
+  // Rendered through the same mapper the list and the store panel use, not a fourth vocabulary.
+  const lc = triggerStatusMeta(t)
   const rows: Array<[string, string]> = [
     ['Fires on', pm.label],
     ...(pm.matcher ? [[pm.matcherLabel, t.eventMatcher || 'anything'] as [string, string]] : []),
@@ -383,6 +430,27 @@ export function EventTriggerSummary({ t, onDeleted }: { t: Trigger; onDeleted: (
   return (
     <div className="flex flex-col gap-l p-l">
       <p className="text-on-surface-var text-[0.8125rem]">{pm.desc}</p>
+      {/* Status first, because it decides whether anything else on this panel matters: a parked
+          trigger's pattern and action are what it WOULD do, not what it does.
+          The eyebrow is the `Eyebrow` primitive, not the older raw-size-plus-uppercase-tracking
+          shape the sibling panels still carry: DESIGN.md §3/§6's Weight-First rule bans
+          uppercase-with-tracking, and both design ratchets (`eyebrowWeightRole`, `typeScaleRatchet`)
+          count SOURCE TEXT — so even naming the old class literal in a comment trips them. */}
+      <div>
+        <Eyebrow className="mb-xs">Status</Eyebrow>
+        <div className="flex items-center gap-1.5">
+          <lc.icon size={13} style={{ color: lc.tone }} />
+          <span data-type="body-m" className="text-on-surface">
+            {lc.label === 'parked'
+              ? 'Parked — the source this listens to went away; it resumes if it returns'
+              : lc.label && lc.label !== 'never run' ? lc.label
+              : t.enabled ? 'Listening' : 'Paused — it will not fire until re-enabled'}
+          </span>
+        </div>
+        {explainsCause(lc) && t.lastError && (
+          <div data-type="caption" className="mt-0.5 font-mono text-on-surface-low break-all">{t.lastError}</div>
+        )}
+      </div>
       {rows.map(([label, value]) => (
         <div key={label}>
           <div className="mb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</div>

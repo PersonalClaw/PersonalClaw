@@ -239,9 +239,24 @@ export interface Trigger {
    *  governs it, which is the same thing the backend dispatch seams hold. */
   actionProvider?: string
   lastRunTs: number | null
-  lastStatus: string | null
-  /** Lifecycle state, store triggers only — `active | paused | autopaused | parked | …` (S164). */
+  /** 🔴 THE RUN-OUTCOME vocabulary ONLY — `Outcome` / the run store's `status` / a hook's
+   *  `last_status`. NEVER a `TriggerHealth` value: this field and `health` speak two different
+   *  languages and the one dot that renders them collapsed them into each other (issue 496).
+   *  `null` means "no run has reported an outcome", which is a fact, not a gap to fill. */
+  runStatus: string | null
+  /** The `TriggerHealth` ROLLUP — `ok | degraded | parked | failing`, plus the legacy `error`.
+   *  Populated for EVERY kind that has one; `ok` on a row that has never fired is the dataclass
+   *  DEFAULT, not an observation, which is why `triggerStatusMeta` gates it on `hasRun`. */
+  health?: string | null
+  /** Lifecycle state — `active | paused | autopaused | parked | quarantined | retired`. Sent by all
+   *  three store-backed projections (schedule/store/event). */
   state?: string | null
+  /** WHY the trigger is in a non-ok state, in words the user can act on ("Reaped after 1811s
+   *  (exceeded 1800s deadline)"). Redacted server-side at the projection boundary. */
+  lastError?: string | null
+  /** Has this trigger EVER fired? `triggerStatusMeta` needs it to refuse a DEFAULT health rollup as
+   *  a stand-in for a run outcome — the green-tick-beside-"never" half of issue 496. */
+  hasRun?: boolean
   runCount: number | null
   usedBy: string[]           // lifecycle only
   /** lifecycle only — whether this hook's event CAN block the loop, and whether this hook
@@ -290,23 +305,23 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     actionIcon: provider ? actionIcon(provider) : mm.icon,
     actionProvider: provider,
     lastRunTs: j.last_run_ts ?? null,
-    // Honest last-run status (T7): prefer the newest run record's status (persists
-    // across restarts; carries launched/failure/timeout) over last_status (only
-    // ok/error — a fire-and-forget run shows "ok" there, overstating it).
+    // Honest last-run status (T7): the newest run record's status — it persists across restarts and
+    // carries launched/failure/timeout. The wire's `last_status` is NOT a second source for this
+    // field: it is `health_status` under an alias (`schedule_view.py`), a different vocabulary, and
+    // mixing the two here is what manufactured an ok-green CheckCircle beside the word "never" on
+    // rows that had never fired (2 of 7 when first measured).
     //
-    // 🪤 AND THE FALLBACK OVERSTATED HARDEST WHEN THERE WAS NO RUN AT ALL. `last_status` is
-    // job-level health, not a run outcome, and the backend reports `'ok'` for a job that has never
-    // fired: measured on #/triggers, `schedule:clock:photographer-nudge…` returns
-    // `last_status: 'ok'` with `last_run_ts: null, run_count: 0`. The row therefore drew the
-    // ok-green CheckCircle next to the words "never" — 2 of 7 rows did — asserting a successful
-    // last run for a trigger that has never had one. That is the one pair `scheduleMeta` says a
-    // user must never confuse, and it was being manufactured HERE, by mixing two fields.
-    //
-    // So the health fallback only applies once a run exists. With no run the value stays null and
-    // `statusMeta` renders its own honest 'never run' state (neutral Circle). The backend claiming
-    // `'ok'` for a never-fired job is a separate data defect, recorded in the ledger — this stops
-    // the UI from repeating it as a claim about a run.
-    lastStatus: j.last_run_status || (j.last_run_ts ? j.last_status : null) || null,
+    // 🔴 The health rollup now travels in `health`, unmixed, and `triggerStatusMeta` owns the
+    // precedence for every kind — including the `hasRun` gate that used to live in this expression.
+    // It moved because the LIST reached around it: `TriggersListPage` passed the raw wire pair
+    // (`j.last_run_status, j.last_status`) straight to the reconciler, so the guard protected
+    // `t.runStatus` while the rendered dot never read it, and 6 of 11 rows drew the green tick
+    // again (issue 496). One gate, in the one place that renders the dot.
+    runStatus: j.last_run_status || null,
+    health: j.last_status || null,
+    state: j.state || null,
+    lastError: j.last_error || null,
+    hasRun: j.last_run_ts != null || (j.run_count ?? 0) > 0,
     runCount: null, usedBy: [],
     schedule: j,
     // Parse errors carried, not hidden (S87 lenient load) — same as `storeToTrigger`, so a
@@ -329,7 +344,13 @@ export function hookToTrigger(h: HookItem): Trigger {
     kind: 'lifecycle', id: `lifecycle:${h.id}`, rawId: h.id, name: h.name, enabled: h.enabled,
     whenLabel: humanizeEvent(h.event), whenIcon: Anchor, whenTone: 'var(--color-primary)',
     actionLabel: actionLabel(h.provider), actionIcon: actionIcon(h.provider), actionProvider: h.provider,
-    lastRunTs: h.last_run || null, lastStatus: h.last_status || null, runCount: h.run_count, usedBy: h.used_by,
+    // A hook keeps no run store and no health rollup — `last_status` here IS the run outcome, from
+    // the nine-member vocabulary `hooks.py::_record` closes (`ok`/`error`/`timeout`/`launched`/
+    // `queued`/`blocked`/`advisory`/`held_for_rung`/`skipped_incident`). So it lands in `runStatus`,
+    // and `health`/`state` stay absent rather than fabricated.
+    lastRunTs: h.last_run || null, runStatus: h.last_status || null,
+    hasRun: h.last_run != null || (h.run_count ?? 0) > 0,
+    runCount: h.run_count, usedBy: h.used_by,
     blocking: h.blocking, enforcement: h.enforcement,
     schedule: undefined, hook: h,
   }
@@ -348,7 +369,13 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     actionLabel: provider ? actionLabel(provider) : 'Action',
     actionIcon: provider ? actionIcon(provider) : Zap,
     actionProvider: provider,
-    lastRunTs: null, lastStatus: t.health || null, state: t.state || null,
+    // 🔴 `t.health` used to land in `runStatus` and the list then read that field with the HEALTH
+    // mapper — the one-field-two-vocabularies shape itself. It now travels as `health`; a store row
+    // carries no run-outcome field at all, so `runStatus` is honestly null and `run_count` answers
+    // "has it ever fired" for the `hasRun` gate.
+    lastRunTs: null, runStatus: null,
+    health: t.health || null, state: t.state || null, lastError: t.last_error || null,
+    hasRun: (t.run_count ?? 0) > 0,
     runCount: t.run_count ?? null, usedBy: [],
     storeKind: t.store_kind, broken: t.broken ?? [], warnings: t.warnings ?? [], store: t,
     author: t.author, readOnly: t.read_only === true,
@@ -374,8 +401,22 @@ export function eventToTrigger(t: WireTrigger): Trigger {
     actionIcon: provider ? actionIcon(provider) : Zap,
     actionProvider: provider,
     // A data event has no clock, so there is no next run and no duration to show. `runCount` is
-    // the fire count — the one live number an event row can honestly report.
-    lastRunTs: null, lastStatus: null, state: null,
+    // the fire count — the one live number an event row can honestly report, and the `hasRun`
+    // signal for the dot.
+    //
+    // 🔴 `state: null` AND `runStatus: null` WERE HARDCODED (issue 496). `_serialize_event` sends
+    // `state`, `health` and `last_error`, and its docstring says why: *"`health` rides along so the
+    // shared `triggerHealthMeta` mapper works here exactly as it does for store triggers, rather
+    // than a third vocabulary on a third surface."* This converter threw all three away, so the
+    // backend's whole point was inert. Measured on a live gateway: an event trigger PARKED because
+    // the app that owns its event was uninstalled rendered the neutral "never run" dot —
+    // indistinguishable from a healthy active one — with the reason on the wire, unread.
+    //
+    // `runStatus` stays null on purpose: this store keeps no run records, so there IS no run
+    // outcome. The rollup goes in `health`, where the mapper that speaks its vocabulary reads it.
+    lastRunTs: null, runStatus: null,
+    health: t.health || null, state: t.state || null, lastError: t.last_error || null,
+    hasRun: (t.fire_count ?? 0) > 0,
     runCount: t.fire_count ?? null, usedBy: [],
     // Carried so the inspector can show the pattern + matcher without refetching.
     eventPattern: t.pattern, eventMatcher: eventMatcherValue(t, pm.matcher), event: t,

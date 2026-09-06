@@ -76,7 +76,45 @@ export function deriveMode(j: ScheduleJob): ScheduleExecMode {
 
 // ── last-run status dot ──
 export interface StatusMeta { label: string; tone: string; icon: LucideIcon }
+
+/** A hook's `last_status` → the `Outcome` the BACKEND maps it to.
+ *
+ * 🔴 WHY AN ALIAS RATHER THAN FOUR MORE BRANCHES (issue 496). A lifecycle hook records one of nine
+ * statuses (`hooks.py::_record` closes that vocabulary at a single choke point) and `statusMeta`
+ * handled five. Censused against the source: `queued`, `blocked`, `advisory` and `held_for_rung` ALL
+ * rendered "never run" in neutral grey — including `blocked`, which the DELETED `statusDot` used to
+ * tone danger, so consolidating the two copies silently dropped it.
+ *
+ * The values are not a fresh opinion: `triggers/history.py::HOOK_STATUS_TO_OUTCOME` already decides
+ * what each hook status MEANS, and this table is that decision, so the dot cannot disagree with the
+ * runs feed about the same fire. `triggerStatusVocabulary.test.ts` reads that dict out of the Python
+ * source and asserts the tone of every hook status equals the tone of the outcome it maps to — a new
+ * hook status, or a re-mapped one, reds there instead of turning grey in front of a user.
+ *
+ * The LABEL stays the hook's own word where that word carries information a user acts on
+ * ("blocked" is why their tool call failed; "ran" would not explain it).
+ */
+const HOOK_STATUS_ALIAS: Record<string, { outcome: string; label: string }> = {
+  // → Outcome.REFUSED — a verdict on THIS action ("you may not do that").
+  //
+  // 🪤 Labelled "refused", NOT "blocked", and the rail is what caught it. `blocked_injection`
+  // already renders the word "blocked" in DANGER, and a hook refusal is WARN — so reusing the word
+  // would have put two different alarm levels behind one label, which is this issue's own defect in
+  // miniature. The two states also mean the same thing to the backend (both map to
+  // `Outcome.REFUSED`), so sharing `refused`'s label is honest, and it leaves the scarcer, louder
+  // word to the screened payload that never auto-retries.
+  blocked: { outcome: 'refused', label: 'refused' },
+  // → Outcome.RAN — "the script really did run … the tool it objected to went ahead."
+  advisory: { outcome: 'ran', label: 'advisory' },
+  // → Outcome.DEFERRED — a queued start has run nothing.
+  queued: { outcome: 'deferred', label: 'queued' },
+  // → Outcome.SKIPPED_GATE — the rung ladder held it; nothing ran and nothing was spent.
+  held_for_rung: { outcome: 'skipped_gate', label: 'held for rung' },
+}
+
 export function statusMeta(s?: string | null): StatusMeta {
+  const alias = s ? HOOK_STATUS_ALIAS[s] : undefined
+  if (alias) return { ...statusMeta(alias.outcome), label: alias.label }
   // job.last_status is "ok"/"error"; run.status is "success"/"failure"/"timeout"/"launched".
   if (s === 'ok' || s === 'success') return { label: 'ok', tone: 'var(--color-ok)', icon: CheckCircle2 }
   if (s === 'error' || s === 'failure') return { label: 'error', tone: 'var(--color-danger)', icon: XCircle }
@@ -150,8 +188,8 @@ export function partitionRunsByFold<T extends { outcome?: string | null; status?
  * 🔴 WHY THIS IS SHARED. `TriggersListPage` carried its own `statusDot` handling four values
  * (`ok`/`success`, `error`/`timeout`/`blocked`, `launched`) and defaulting everything else to a
  * neutral grey circle. Measured against the real `TriggerHealth` vocabulary, which is what that
- * page actually feeds it for a store trigger (`triggerMeta.storeToTrigger` sets
- * `lastStatus: t.health`):
+ * page actually fed it for a store trigger (`triggerMeta.storeToTrigger` put `t.health` in the
+ * run-outcome field — the field that now carries only run outcomes and is named for it):
  *
  *     health=ok        -> ok green, check
  *     health=degraded  -> grey, circle
@@ -187,28 +225,76 @@ export function triggerHealthMeta(health?: string | null, state?: string | null)
   return { label: '', tone: 'var(--color-on-surface-low)', icon: Circle }
 }
 
-/** The Last-run badge for a SCHEDULE trigger: the health rollup dominates the run row.
+/** The three facts a trigger row's ONE dot has to reconcile. Named, because they are three
+ *  DIFFERENT vocabularies and the whole defect class comes from letting one stand in for another. */
+export interface TriggerStatusFacts {
+  /** The RUN-OUTCOME vocabulary: `Outcome` / the run store's `status` / a hook's `last_status`. */
+  runStatus?: string | null
+  /** The `TriggerHealth` rollup (`ok | degraded | parked | failing`), plus the legacy `error`. */
+  health?: string | null
+  /** The `TriggerState` lifecycle (`active | paused | autopaused | parked | quarantined | retired`). */
+  state?: string | null
+  /** Has this trigger EVER fired? Required, and the reason is the whole of rule 3 below. */
+  hasRun?: boolean
+}
+
+/** The ONE dot for a trigger row, whatever its kind. Every surface calls this and nothing else.
  *
- * 🔴 WHY THIS RECONCILES IN ONE PLACE. The reaper kills an overrunning turn and writes
- * `health_status=degraded` + the reap reason into `last_error` — while the run-store row it
- * launched still says `success`. Two renderers read the two fields through a bare
- * `last_run_status || last_status` chain, so the ONE record where the fields disagree — the
- * reaped run — rendered a green "ok" badge two lines above the red reap banner (#685), and the
- * list's schedule-row dot fell through `statusMeta` to "never run" grey for the same value.
+ * 🔴 THE DEFECT CLASS (issue 496). One renderer was being fed two vocabularies, in BOTH directions:
  *
- * The serializer aliases `health_status` onto the wire's `last_status`, so `health` here speaks
- * `TriggerHealth`'s vocabulary (ok/degraded/parked/failing — see `triggers/models.py`) plus the
- * legacy `error`. Precedence: a non-ok health renders through the shared health mapper; the
- * legacy `error` keeps its `statusMeta` shape; an ok/absent health defers to the run row exactly
- * as before, so `launched`/`ran_late`/the suppression family are untouched.
+ *   * UNDERSTATED. The list's own `statusDot` handled run outcomes and was passed the health rollup,
+ *     so `degraded`/`parked`/`failing` all fell to the neutral "no data" dot — a failing automation
+ *     pixel-identical to one that had never run. S164 fixed that for the store kind and #685 for the
+ *     schedule kind, each by adding a branch at the call site; the EVENT kind was still broken when
+ *     this was measured, because `eventToTrigger` dropped `health`/`state`/`last_error` on the floor
+ *     while the backend had been sending all three specifically so this mapper could read them.
+ *   * OVERSTATED, which is the same mistake and was live on more rows. `lastRunMeta(null, 'ok')`
+ *     returned ok-GREEN, so a trigger that had never fired drew a green tick beside the word
+ *     "never". Measured on a live gateway: **6 of 11 schedule rows**, five of them the SYSTEM
+ *     triggers every fresh home registers. `triggerMeta.ts` had a guard for exactly this and the
+ *     call site reached around it by passing the raw wire pair.
+ *
+ * So precedence lives here, once, and every call site passes FACTS instead of picking a branch:
+ *
+ *   1. A lifecycle STATE that stops the trigger firing outranks everything. "It has stopped" is
+ *      more urgent than "how it has been going", and quarantine in particular cannot be undone
+ *      with the toggle the row offers.
+ *   2. A NON-OK health rollup outranks the run row. This is the reaper case (#685): a killed turn
+ *      writes `health=degraded` while the run store row it launched still says `success`.
+ *   3. Otherwise the RUN OUTCOME speaks — and a healthy rollup may NOT stand in for one unless
+ *      something has actually run. `Trigger.health_status` DEFAULTS to `ok` (`triggers/models.py`),
+ *      so on a never-fired row `ok` is not an observation, it is the absence of one; treating it as
+ *      a run outcome is how the green-tick-beside-"never" got manufactured. `hasRun` is the same
+ *      `last_run_ts || run_count` test `triggerMeta.ts` used, hoisted here so all four kinds get it.
  */
-export function lastRunMeta(runStatus?: string | null, health?: string | null): StatusMeta {
-  if (health && health !== 'ok' && health !== 'success') {
-    const hm = triggerHealthMeta(health)
+export function triggerStatusMeta(f: TriggerStatusFacts): StatusMeta {
+  const stopped = Boolean(f.state) && f.state !== 'active'
+  const unhealthy = Boolean(f.health) && f.health !== 'ok' && f.health !== 'success'
+  if (stopped || unhealthy) {
+    const hm = triggerHealthMeta(f.health, f.state)
+    // A token neither vocabulary knows falls to the run-outcome mapper rather than inventing a
+    // tone here. `triggerStatusVocabulary.test.ts` reads the backend enums and proves this is
+    // unreachable for every value the backend actually emits.
     if (hm.label) return hm
-    return statusMeta(health)
+    return statusMeta(f.health)
   }
-  return statusMeta(runStatus || health)
+  return statusMeta(f.runStatus || (f.hasRun ? f.health : null))
+}
+
+/** May this status carry a CAUSE beside it (`last_error`)?
+ *
+ * 🔴 GATED, NOT ALWAYS SHOWN, and the reason is a measured contradiction. `last_error_summary` is
+ * written on a failing exit (`gateway.py`) and NEVER CLEARED on the next success — `unpark_due` even
+ * resets `health_status` to `ok` and leaves the text in place. So a row that has recovered still
+ * carries the old reason, and printing it beside a green tick would report a fault that is fixed.
+ * `isInertOutcome`'s docstring names the same failure from the other side: a row must not contradict
+ * itself, and the alarming half is the one a user reacts to.
+ *
+ * "never run" is excluded for the same reason from the opposite direction: a trigger that has not
+ * fired since the daemon last wrote an error has nothing to explain YET.
+ */
+export function explainsCause(m: StatusMeta): boolean {
+  return m.tone !== 'var(--color-ok)' && m.label !== 'never run' && m.label !== ''
 }
 
 // ── time helpers ──

@@ -92,7 +92,12 @@ def _serialize_event(t) -> dict[str, Any]:
         # exactly as it does for store triggers, rather than a third vocabulary on a third surface.
         "state": t.state,
         "health": _event_health(t),
-        "last_error": t.park_reason,
+        # Redacted like its siblings (`_serialize_store`, `_schedule_row_for`). It was raw because
+        # nothing read it: issue 496 measured that `eventToTrigger` dropped `state`/`health`/
+        # `last_error` on the floor, so this projection's whole point was inert. Giving it a reader
+        # makes it a disclosure surface, and `_redact`'s own rule is to defend AT the projection
+        # boundary rather than trust the caller — a park reason is free text a credential can reach.
+        "last_error": _redact(t.park_reason or ""),
     }
 
 
