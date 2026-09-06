@@ -1343,6 +1343,11 @@ export interface WorkflowRunDetailData {
   // judge-guidance control on this, since that guidance writes through the project and is
   // what reaches this run's worker and judge sessions (LOOPS-EVOLUTION R14).
   project_id?: string
+  // The sparse per-run SupervisorPolicy overlay (PP-16 seam 4d): ONLY the knobs the user
+  // overrode, from the five overridable keys (attended, autopilot, max_cycles, idle_secs,
+  // success_criteria). `{}` means every knob follows the kind/template default. The
+  // prelaunch policy editor renders and PUTs this; frozen once the run launches.
+  policy_overrides?: Record<string, unknown>
   nodes: WorkflowNodeState[]
 }
 // One pending human-input gate. `ask` is the typed payload ONE renderer covers
@@ -6865,6 +6870,14 @@ export const api = {
   startWorkflowRun: (body: { name: string; inputs?: Record<string, unknown>; mode?: 'blocking' | 'background'; project_id?: string; idempotency_key?: string }) =>
     post<{ run_id: string; status: string; blocking?: boolean; needs_input?: WorkflowContinuation[] }>('/api/workflows/runs', body),
   workflowRun: (id: string) => get<WorkflowRunDetailData>(`/api/workflows/runs/${encodeURIComponent(id)}`),
+  /** Replace the run's sparse SupervisorPolicy overlay (PP-16 seam 4f). PUT with REPLACE
+   *  semantics — the body IS the overlay, so `{}` clears every override. Prelaunch only:
+   *  a launched run answers 409 `run_not_prelaunch` (the engine's own saves would silently
+   *  revert a live edit), and an unknown knob is a 400 `unknown_policy_key` naming the
+   *  offending keys and the overridable set. */
+  setWorkflowRunPolicyOverrides: (id: string, overrides: Record<string, unknown>) =>
+    put<{ run_id: string; status: string; policy_overrides: Record<string, unknown> }>(
+      `/api/workflows/runs/${encodeURIComponent(id)}/policy-overrides`, overrides),
   /** Resolve a pending confirmation by VERB — the backend the DagView's Approve/Deny binds to.
    *  Separate from `resumeWorkflowRun` because the verb vocabulary is the point: an unknown verb is
    *  REFUSED server-side rather than treated as a reject, so a typo cannot silently decline work the

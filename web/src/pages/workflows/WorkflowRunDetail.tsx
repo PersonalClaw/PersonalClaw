@@ -9,7 +9,8 @@ import { api, type WorkflowContinuation, type WorkflowRunDetailData } from '../.
 import { notify } from '../../app/appSdk'
 import { confirm, promptForm } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
-import { fmtElapsed, isNodeTerminal, isTerminal, itemProgress, nodeLabel, nodeLook, runLook } from './workflowMeta'
+import { fmtElapsed, isNodeTerminal, isPrelaunch, isTerminal, itemProgress, nodeLabel, nodeLook, runLook } from './workflowMeta'
+import { PolicyOverridesPanel } from './PolicyOverridesPanel'
 import { byInstancePath } from './instancePathOrder'
 import { buildTree, initialCollapsed, summarize, summaryLabel, visibleRows } from './nodeTree'
 import { useWorkflowStream } from './useWorkflowStream'
@@ -357,6 +358,20 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
               {run.tokens ? <span className="tabular-nums">{run.tokens.toLocaleString()} tokens</span> : null}
               {run.elapsed_secs ? <span className="tabular-nums">{fmtElapsed(run.elapsed_secs)}</span> : null}
             </div>
+
+            {/* The prelaunch policy editor (PP-16 seam 4f). PRELAUNCH ONLY, mirroring the
+                backend's phase gate — once launched, the engine's whole-row saves would
+                silently revert a live overlay edit and the route 409s, so offering the
+                editor on a running run would teach the user the UI lies. Keyed on the run
+                id so navigating between runs re-seeds from that run's own overlay. */}
+            {isPrelaunch(run.status) && (
+              <PolicyOverridesPanel
+                key={run.run_id}
+                runId={runId}
+                initial={run.policy_overrides ?? {}}
+                onSaved={() => refetch()}
+              />
+            )}
 
             {/* The mode toggle sits ABOVE the nodes and is hidden when there is nothing to show —
                 a List/Graph switch over an empty run offers two ways to look at nothing. */}

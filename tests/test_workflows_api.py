@@ -939,3 +939,133 @@ class TestIntrospectRoute:
         # HEAD rides along with `add_get` and is equally a read. What must not appear is a
         # mutating verb: a POST here would invite a surface to "refresh" stats by writing.
         assert all(r.method in ("GET", "HEAD") for r in matched), [r.method for r in matched]
+
+
+# ── PP-16 seam 4f: the per-run policy-overrides write surface ────────────────
+
+
+class TestPolicyOverridesRoute:
+    """`PUT /api/workflows/runs/{run_id}/policy-overrides` — the prelaunch-gated write
+    surface over the seam-4d store (PP-16 seam 4f).
+
+    The load-bearing claims: the body IS the overlay and REPLACES it (`{}` clears); the
+    write is refused once the run has launched, with its OWN wire code — the engine's
+    whole-row `_save_run` would silently revert a live edit, and the loop side froze the
+    same five knobs at launch; the store's strict unknown-key refusal reaches the wire as
+    a 400 naming the offending keys AND the overridable set, so the retry is not blind.
+    """
+
+    def _put(self, run_id: str, body: dict):
+        req = _req(
+            "PUT",
+            f"/api/workflows/runs/{run_id}/policy-overrides",
+            state=_State(None),
+            body=body,
+        )
+        req.match_info["run_id"] = run_id  # type: ignore[index]
+        return H.api_run_policy_overrides(req)
+
+    async def test_a_draft_run_accepts_the_overlay_and_persists_it(self) -> None:
+        run = store.create(WorkflowRun(id="", workflow_name="w"))
+        resp = await self._put(run.id, {"attended": True, "max_cycles": 3})
+        assert resp.status == 200, _body(resp)
+        assert _body(resp)["policy_overrides"] == {"attended": True, "max_cycles": 3}
+        assert store.get(run.id).policy_overrides == {"attended": True, "max_cycles": 3}
+
+    async def test_the_put_replaces_rather_than_merges_and_empty_clears(self) -> None:
+        """REPLACE semantics are the store contract, and the wire must not soften them:
+        a PUT carrying one knob drops the other, and `{}` clears the whole overlay."""
+        run = store.create(WorkflowRun(id="", workflow_name="w"))
+        await self._put(run.id, {"attended": True, "max_cycles": 3})
+        resp = await self._put(run.id, {"idle_secs": 30})
+        assert _body(resp)["policy_overrides"] == {"idle_secs": 30}
+
+        resp = await self._put(run.id, {})
+        assert resp.status == 200
+        assert _body(resp)["policy_overrides"] == {}
+        assert store.get(run.id).policy_overrides == {}
+
+    async def test_a_launched_run_is_refused_with_its_own_wire_code(self) -> None:
+        """The gate is FORCED, not cautious: the engine's `_save_run` persists the whole
+        run row, so a live overlay edit would be silently reverted by the next engine
+        save — and the loop side froze these knobs at launch, so a run must not silently
+        gain a capability loops never had."""
+        run = store.create(WorkflowRun(id="", workflow_name="w", status=RunStatus.RUNNING))
+        resp = await self._put(run.id, {"max_cycles": 2})
+        assert resp.status == 409
+        body = _body(resp)
+        assert body["error"]["code"] == "run_not_prelaunch"
+        assert body["error"]["service_code"] == "WF_RUN_NOT_PRELAUNCH"
+        # Nothing was written through the refusal.
+        assert store.get(run.id).policy_overrides == {}
+
+    async def test_the_gate_reads_the_phase_not_the_draft_literal(self) -> None:
+        """Every non-prelaunch phase refuses — asserted across the whole status vocabulary
+        so a future status added to models.py inherits the gate by construction."""
+        from personalclaw.workflows.models import RUN_PHASES, LifecyclePhase
+
+        for status, phase in RUN_PHASES.items():
+            run = store.create(WorkflowRun(id="", workflow_name="w", status=status))
+            resp = await self._put(run.id, {"max_cycles": 1})
+            if phase is LifecyclePhase.PRELAUNCH:
+                assert resp.status == 200, status
+            else:
+                assert resp.status == 409, status
+                assert _body(resp)["error"]["code"] == "run_not_prelaunch"
+
+    async def test_an_unknown_key_is_a_400_naming_keys_and_the_overridable_set(self) -> None:
+        """The seam-4d strict write side, surfaced: the response must carry WHAT was wrong
+        (`unknown_keys`) and what would have been right (`overridable`)."""
+        from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
+
+        run = store.create(WorkflowRun(id="", workflow_name="w"))
+        resp = await self._put(run.id, {"max_cyclez": 9, "attended": True})
+        assert resp.status == 400
+        body = _body(resp)
+        assert body["error"]["code"] == "unknown_policy_key"
+        assert body["error"]["detail"]["unknown_keys"] == ["max_cyclez"]
+        assert body["error"]["detail"]["overridable"] == sorted(OVERRIDABLE_POLICY_KEYS)
+        # Refused BEFORE writing: the stored overlay is untouched.
+        assert store.get(run.id).policy_overrides == {}
+
+    async def test_a_missing_run_is_a_404(self) -> None:
+        resp = await self._put("no-such-run", {"max_cycles": 1})
+        assert resp.status == 404 and _body(resp)["error"]["code"] == "not_found"
+
+    async def test_a_non_object_body_is_a_400(self) -> None:
+        req = _req("PUT", "/api/workflows/runs/x/policy-overrides", state=_State(None))
+        req.match_info["run_id"] = "x"  # type: ignore[index]
+
+        async def _json():
+            return ["not", "a", "dict"]
+
+        req.json = _json  # type: ignore[method-assign]
+        resp = await H.api_run_policy_overrides(req)
+        assert resp.status == 400 and _body(resp)["error"]["code"] == "invalid_request"
+
+    async def test_the_route_is_registered_as_a_put(self) -> None:
+        app = web.Application()
+        H.register_workflow_routes(app)
+        matched = [
+            r
+            for r in app.router.routes()
+            if r.resource is not None
+            and r.resource.canonical == "/api/workflows/runs/{run_id}/policy-overrides"
+        ]
+        assert matched, "the policy-overrides route is not registered"
+        assert {r.method for r in matched} == {"PUT"}, [r.method for r in matched]
+
+    async def test_the_mutation_is_guarded_like_its_siblings(self) -> None:
+        import inspect
+
+        assert "_guard(" in inspect.getsource(H.api_run_policy_overrides)
+
+    async def test_the_status_read_carries_the_overlay_for_the_editor(self) -> None:
+        """The FE editor renders current values from the run-detail read — an overlay it
+        cannot see is one it can only clobber."""
+        run = store.create(WorkflowRun(id="", workflow_name="w"))
+        await self._put(run.id, {"success_criteria": "done means merged"})
+        req = _req("GET", f"/api/workflows/runs/{run.id}")
+        req.match_info["run_id"] = run.id  # type: ignore[index]
+        body = _body(await H.api_run_status(req))
+        assert body["policy_overrides"] == {"success_criteria": "done means merged"}

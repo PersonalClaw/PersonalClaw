@@ -46,9 +46,11 @@ from personalclaw.workflows import (
     template_lint,
 )
 from personalclaw.workflows.models import (
+    RUN_PHASES,
     TERMINAL_RUN_STATUSES,
     TERMINAL_STATES,
     InstanceState,
+    LifecyclePhase,
     Node,
     OriginKind,
     RunOrigin,
@@ -722,7 +724,64 @@ def status(run_id: str) -> dict[str, Any]:
         # run's worker and judge sessions). Empty for an unscoped run — the view hides the
         # control rather than writing to a project that does not exist.
         project_id=run.project_id,
+        # The sparse per-run SupervisorPolicy overlay (PP-16 seam 4d) — only the knobs the
+        # user overrode; an empty dict means "kind/template defaults throughout". The run
+        # view's prelaunch policy editor renders and writes this (seam 4f).
+        policy_overrides=run.policy_overrides,
         nodes=_nodes_of(run_id),
+    )
+
+
+def set_policy_overrides(run_id: str, overrides: dict[str, Any]) -> dict[str, Any]:
+    """Replace a run's sparse ``SupervisorPolicy`` overlay (PP-16 seam 4f).
+
+    REPLACE semantics — the store's contract: the dict IS the new overlay, so ``{}``
+    clears every override and the run falls back to its kind/template defaults.
+
+    PRE-LAUNCH ONLY, gated on the run's lifecycle PHASE (``RUN_PHASES[...] is
+    LifecyclePhase.PRELAUNCH``) rather than the literal ``DRAFT`` status, so a future
+    prelaunch status inherits the gate without this function changing. The two reasons
+    the gate is FORCED (a write-write race with the engine's ``_save_run``, and parity
+    with the loop side's launch freeze) are recorded on the HTTP route,
+    :func:`personalclaw.workflows.handlers.api_run_policy_overrides`.
+
+    The store's strict unknown-key refusal surfaces here as ``WF_POLICY_KEY_UNKNOWN``
+    carrying the offending keys AND the overridable set — a typo'd knob must name what
+    was wrong and what would have been right, or the user retries blind.
+    """
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    if RUN_PHASES[run.status] is not LifecyclePhase.PRELAUNCH:
+        return _service_failure(
+            "WF_RUN_NOT_PRELAUNCH",
+            f"run {run_id!r} has launched ({run.status.value}) and its policy overlay is "
+            "frozen — the engine's own saves would silently revert a live edit. "
+            "Edit the overrides before launch.",
+        )
+    try:
+        updated = store.set_policy_overrides(run_id, dict(overrides))
+    except ValueError:
+        # Lazy for the same reason the store's own import is (the policy module pulls in
+        # the loop/guardrails import chains); the detail is re-derived from the SAME
+        # frozenset the store refused against, so the two cannot disagree.
+        from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
+
+        unknown = sorted(set(overrides) - OVERRIDABLE_POLICY_KEYS)
+        return _service_failure(
+            "WF_POLICY_KEY_UNKNOWN",
+            f"unknown policy override key(s) {unknown} — "
+            f"the overridable set is {sorted(OVERRIDABLE_POLICY_KEYS)}",
+            unknown_keys=unknown,
+            overridable=sorted(OVERRIDABLE_POLICY_KEYS),
+        )
+    if updated is None:
+        # The row vanished between the phase read and the UPDATE — a concurrent delete.
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    return _ok(
+        run_id=updated.id,
+        status=updated.status.value,
+        policy_overrides=updated.policy_overrides,
     )
 
 
