@@ -4741,6 +4741,11 @@ export interface PlanStep {
 }
 export interface PlanSession {
   project_id: string; created_at: number; steps: PlanStep[]
+  /** Epoch SECONDS of the session's last real progress (a step transition, an artifact,
+   *  a comment) — stamped server-side. Stall detection reads this instead of the client's
+   *  mount time, so the verdict survives a reload. Absent on a session written before the
+   *  field existed; the backend backfills it from `created_at` on read. */
+  updated_at?: number
   // Set when a design pass ran but produced no usable steps — the walkthrough shows
   // a failed state + explicit Retry instead of silently re-spawning a fresh pass.
   design_error?: string
