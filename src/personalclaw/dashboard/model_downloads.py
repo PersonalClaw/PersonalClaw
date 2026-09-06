@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -187,20 +186,15 @@ def _list_models_for_provider(name: str) -> list:
 def _cache_root(name: str) -> Path:
     """The dir whose growth tracks a download for provider ``name`` (best-effort).
 
-    The provider MAY expose its cache dir via ``cache_dir()``; otherwise fall back to
-    the shared models root, so byte-progress degrades gracefully rather than coupling
-    core to a backend's cache layout."""
-    provider = _provider(name)
-    getter = getattr(provider, "cache_dir", None)
-    if callable(getter):
-        try:
-            got = getter()
-            if got:
-                return Path(got)
-        except Exception:
-            pass
-    home = os.environ.get("PERSONALCLAW_HOME", str(Path.home() / ".personalclaw"))
-    return Path(home) / "models"
+    Delegates to :func:`~personalclaw.local_models.layouts.cache_root_for`, which is the one
+    owner of "where does this provider's weights live". It used to be answered twice — here,
+    and (silently, by not answering at all) on the catalog-listing path, which is how a
+    downloaded catalog model could report itself absent while its own download job was
+    measuring progress against the very directory holding it.
+    """
+    from personalclaw.local_models.layouts import cache_root_for
+
+    return cache_root_for(_provider(name))
 
 
 def _expected_size_bytes(name: str, model: str) -> int:
@@ -240,6 +234,22 @@ def _is_downloaded(name: str, model: str) -> bool:
             return True
     except Exception:
         logger.debug("layout probe failed for %s/%s", name, model, exc_info=True)
+    return False
+
+
+def _is_truncated(name: str, model: str) -> bool:
+    """Whether ``model``'s on-disk copy is present but INCOMPLETE (LMMV §2.3).
+
+    Read off the provider's own catalog row, which is where the truncation verdict already
+    lives — this asks the same question the FE's ``integrity`` chip renders, so the Repair
+    button and the row it sits on can never disagree.
+
+    Only consulted once :func:`_is_downloaded` has said yes, so the extra catalog walk lands
+    on the path that is about to skip a fetch rather than on the path that performs one.
+    """
+    for m in _list_models_for_provider(name):
+        if getattr(m, "name", None) == model:
+            return str(getattr(m, "integrity", "") or "") == "truncated"
     return False
 
 
@@ -305,8 +315,16 @@ class ModelDownloadRegistry:
 
         Returns ``(job, None)`` on success, or ``(None, error)`` with a message
         for an unknown provider / unknown model. An already-running job for the same
-        ``(provider, model)`` is returned as-is (dedupe); an already-downloaded model
-        yields an immediately-``done`` job.
+        ``(provider, model)`` is returned as-is (dedupe); a model already downloaded
+        **intact** yields an immediately-``done`` job.
+
+        "Intact" is load-bearing. This route is also the Repair action for a
+        ``integrity="truncated"`` row, and a truncated model satisfies "is it downloaded"
+        (real bytes are present — just not enough of them), so skipping on that alone made
+        Repair answer ``202 {"state": "done", "downloaded_bytes": <full size>}`` in
+        milliseconds while re-fetching nothing. Measured on a 1800 MB card holding 3 MB: the
+        button reported success and the truncated chip was still there on reload — the
+        dead-click the issue describes, wearing a green tick.
         """
         if not provider:
             return None, "Missing 'provider'"
@@ -334,7 +352,7 @@ class ModelDownloadRegistry:
         self._jobs[job.id] = job
         self._by_model[(provider, model)] = job.id
 
-        if _is_downloaded(provider, model):
+        if _is_downloaded(provider, model) and not _is_truncated(provider, model):
             job.state = "done"
             job.downloaded_bytes = job.total_bytes
             _apply_progress(job)

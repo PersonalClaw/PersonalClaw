@@ -296,7 +296,6 @@ class LocalModelProvider(ABC):
         catalog_path: Path,
         *,
         cache_root: Path | None = None,
-        active_downloads: set[str] | None = None,
     ) -> list[LocalModel]:
         """Build the model list from a declarative ``catalog.json`` (LMMV §2.3).
 
@@ -306,11 +305,13 @@ class LocalModelProvider(ABC):
         malformed file logs a warning and yields ``[]``, and one bad card is skipped
         rather than blanking the whole list.
 
-        ``cache_root`` is where downloaded weights live; ``downloaded`` and the truncation
-        check probe it via :mod:`~personalclaw.local_models.layouts`. ``active_downloads``
-        is the set of model names with an in-flight fetch — a model mid-download is
-        legitimately partial on disk, so it is never flagged ``truncated``. (Injected, not
-        read from a global, so this stays layering-pure and unit-testable.)
+        **That one-liner carries the DISK verdict too**, and it did not use to. ``cache_root``
+        was an opt-in keyword that skipped :meth:`_apply_disk_state` entirely when omitted,
+        and the one shipped adopter omitted it — so ``downloaded`` read False for weights
+        sitting right there, and ``integrity`` (whose only writer is that method) was never
+        set, which left the FE's truncated chip and its Repair button unreachable in every
+        build. It now defaults to :func:`~personalclaw.local_models.layouts.cache_root_for`,
+        the same resolution the download runner already uses. Pass it only to override.
         """
         from personalclaw.local_models import layouts
 
@@ -325,7 +326,7 @@ class LocalModelProvider(ABC):
             return []
 
         host = host_platform_token()
-        in_flight = active_downloads or set()
+        root = cache_root
         out: list[LocalModel] = []
         for card in entries:
             if not isinstance(card, dict):
@@ -337,8 +338,11 @@ class LocalModelProvider(ABC):
                 continue
             if model is None:
                 continue  # filtered out for this host
-            if cache_root is not None:
-                self._apply_disk_state(model, cache_root, layouts, in_flight)
+            if root is None:
+                # Resolved on FIRST USE, never up front: an absent or unreadable catalog has
+                # no rows to probe, so it must not reach for a models root at all.
+                root = layouts.cache_root_for(self)
+            self._apply_disk_state(model, root, layouts)
             out.append(model)
         return out
 
@@ -383,23 +387,31 @@ class LocalModelProvider(ABC):
         model: LocalModel,
         cache_root: Path,
         layouts: Any,
-        active_downloads: set[str],
     ) -> None:
         """Fill ``downloaded`` and the ``truncated`` integrity flag from disk (LMMV §2.3).
 
         A finished, non-``config_only`` model whose on-disk bytes fall below
-        :data:`_TRUNCATION_FLOOR` of its declared footprint — and which has no in-flight
+        :data:`_TRUNCATION_FLOOR` of its declared footprint — and which has no unfinished
         fetch to explain the shortfall — is weights-missing, so it carries
         ``integrity="truncated"`` (the FE then offers Repair). ``config_only`` repos
         (pyannote's pipeline layout) have no local weights, so they are never flagged.
+
+        The shortfall is excused by a partial artifact IN THE SAME DIRECTORY the bytes were
+        counted from (:func:`~personalclaw.local_models.layouts.has_partial`), not by an
+        injected set of in-flight model names. That injected set was itself never filled by
+        anything but a test, so the moment the disk probe above started running for real it
+        would have been an unarmed guard: measured on a two-shard HF fetch (one blob renamed,
+        one still ``.incomplete``), the row came back ``integrity="truncated"`` mid-download —
+        a danger chip and a Repair button offered on a healthy download in progress.
         """
         model.downloaded = layouts.is_downloaded(cache_root, model.name)
         if not model.downloaded or model.config_only:
             return
-        if model.name in active_downloads:
-            return  # mid-download: partial on disk is expected, not truncation
         expected = model.size_mb * 1_000_000
         if expected <= 0:
             return  # no declared footprint → nothing to compare against
-        if layouts.on_disk_bytes(cache_root, model.name) < expected * _TRUNCATION_FLOOR:
-            model.integrity = "truncated"
+        if layouts.on_disk_bytes(cache_root, model.name) >= expected * _TRUNCATION_FLOOR:
+            return
+        if layouts.has_partial(cache_root, model.name):
+            return  # an unfinished fetch explains the shortfall — not truncation
+        model.integrity = "truncated"

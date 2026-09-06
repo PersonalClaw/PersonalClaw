@@ -17,6 +17,7 @@ suite invariant test_local_model_layouts.py asserts).
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -34,8 +35,17 @@ from personalclaw.local_models.provider import (
 
 
 class _CatalogProvider(LocalModelProvider):
-    """A minimal fixed-catalog provider — exactly the shape the migrated apps will take:
-    ``list_models`` is a one-liner over ``_models_from_catalog``."""
+    """A minimal fixed-catalog provider in the shape a migrated app ACTUALLY takes.
+
+    ``list_models`` is a bare one-liner over ``_models_from_catalog`` — no ``cache_root``
+    keyword — because that is what the one shipped adopter
+    (``PersonalClawApps/voice-clone-tts/provider.py``) writes, and what this helper's own
+    docstring tells the next app to write. This class used to pass ``cache_root=`` and so
+    exercised a path production never took: the helper skipped the disk probe entirely when
+    the keyword was absent, which is how ``integrity`` (and therefore the FE's Repair button)
+    stayed unreachable through a fully-green catalog suite. The root now arrives the way it
+    does in a real app, via ``cache_dir()``.
+    """
 
     def __init__(self, catalog_path: Path, cache_root: Path | None = None) -> None:
         self._catalog_path = catalog_path
@@ -52,8 +62,11 @@ class _CatalogProvider(LocalModelProvider):
     async def is_available(self) -> bool:
         return True
 
+    def cache_dir(self) -> str | None:
+        return str(self._cache_root) if self._cache_root is not None else None
+
     async def list_models(self) -> list[LocalModel]:
-        return self._models_from_catalog(self._catalog_path, cache_root=self._cache_root)
+        return self._models_from_catalog(self._catalog_path)
 
     async def download_model(self, model_name: str) -> bool:
         return True
@@ -122,8 +135,17 @@ def _write_catalog(tmp_path: Path, cards: dict | list) -> Path:
 async def _load(
     tmp_path: Path, *, cards: dict | list | None = None, cache_root: Path | None = None
 ):
+    """Drive the provider's real ``list_models()``.
+
+    ``cache_root`` defaults to an EMPTY dir under ``tmp_path`` rather than to None: with the
+    disk probe now unconditional, a provider naming no cache dir falls back to the shared
+    models root under the real home, which the suite's model-root rail refuses outright. An
+    empty tmp dir is the same answer ("nothing is downloaded") reached safely.
+    """
     catalog = _write_catalog(tmp_path, cards if cards is not None else _CARDS)
-    return await _CatalogProvider(catalog, cache_root=cache_root).list_models()
+    root = cache_root if cache_root is not None else tmp_path / "empty-cache"
+    root.mkdir(parents=True, exist_ok=True)
+    return await _CatalogProvider(catalog, cache_root=root).list_models()
 
 
 # ── host platform token ─────────────────────────────────────────────────
@@ -248,18 +270,47 @@ async def test_absent_model_not_downloaded_and_not_truncated(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_active_download_suppresses_truncation(tmp_path):
-    """A model mid-download is legitimately partial — never flag it truncated."""
+async def test_unfinished_fetch_suppresses_truncation(tmp_path):
+    """A model mid-download is legitimately partial — never flag it truncated.
+
+    The excuse is read off DISK (a `.incomplete` beside the finished bytes), so no caller has
+    to inject a set of in-flight names. The injected set this replaces was filled by nothing
+    but its own test, so it would have been an unarmed guard the moment the disk probe below
+    started running for real.
+    """
     cache = tmp_path / "cache"
-    cache.mkdir()
-    (cache / "active-model.bin").write_bytes(b"x" * 1_000_000)
-    catalog = _write_catalog(tmp_path, _CARDS)
-    models = _CatalogProvider(catalog)._models_from_catalog(
-        catalog, cache_root=cache, active_downloads={"active-model"}
-    )
+    # A two-shard HF fetch in progress: shard one renamed and finished, shard two still
+    # `.incomplete`. `is_downloaded` says yes (real bytes are present) and the total is far
+    # under the 60% floor — the exact shape that produced a false Repair button.
+    blobs = cache / layouts.hf_repo_dirname("active-model") / "blobs"
+    blobs.mkdir(parents=True)
+    (blobs / "aaaa").write_bytes(b"x" * 1_000_000)
+    (blobs / "bbbb.incomplete").write_bytes(b"x" * 500_000)
+    models = await _load(tmp_path, cache_root=cache)
     active = next(m for m in models if m.name == "active-model")
     assert active.downloaded is True
+    assert layouts.has_partial(cache, "active-model") is True
     assert active.integrity == ""
+
+
+@pytest.mark.asyncio
+async def test_a_crashed_fetchs_leftovers_are_swept_then_the_model_reads_truncated(tmp_path):
+    """Vacuity guard for the test above: the excuse must be the PARTIAL, not the layout.
+
+    Suppressing on any HF-shaped directory would pass the previous test while silencing the
+    detector for every hub-fetched model there is — which is most of them. So sweep the
+    partial and assert the same tree flips to ``truncated``.
+    """
+    cache = tmp_path / "cache"
+    blobs = cache / layouts.hf_repo_dirname("active-model") / "blobs"
+    blobs.mkdir(parents=True)
+    (blobs / "aaaa").write_bytes(b"x" * 1_000_000)
+    (blobs / "bbbb.incomplete").write_bytes(b"x" * 500_000)
+    (blobs / "bbbb.incomplete").unlink()  # what "Reclaim N GB" does
+    models = await _load(tmp_path, cache_root=cache)
+    active = next(m for m in models if m.name == "active-model")
+    assert active.downloaded is True
+    assert active.integrity == "truncated"
 
 
 # ── platform filtering (§4) ──────────────────────────────────────────────
@@ -315,6 +366,130 @@ async def test_bare_list_catalog_shape(tmp_path):
     """The loader tolerates a top-level list as well as {"models": [...]}."""
     models = await _load(tmp_path, cards=[{"name": "solo", "size_mb": 1}])
     assert [m.name for m in models] == ["solo"]
+
+
+# ── the rails: no catalog field may exist without a writer (#1776) ───────
+
+
+@pytest.mark.asyncio
+async def test_the_shipped_one_liner_reaches_the_repair_button(tmp_path):
+    """The regression rail for #1776, asserted on the WIRE shape the FE reads.
+
+    ``web/src/pages/settings/ModelsPanel.tsx`` gates its Repair action on
+    ``model.integrity === 'truncated'``, and ``integrity`` has exactly one writer:
+    ``_apply_disk_state``. Before the fix that writer was unreachable from the documented
+    one-liner (``self._models_from_catalog(path)``), so the button could not render in any
+    build no matter how many apps adopted a ``catalog.json``. Asserted through ``to_dict()``
+    rather than the dataclass because the dataclass field being set is not the same claim as
+    the key crossing ``/api/models/available``.
+    """
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "active-model.bin").write_bytes(b"x" * 1_000_000)  # declares 10 MB
+    catalog = _write_catalog(tmp_path, _CARDS)
+    provider = _CatalogProvider(catalog, cache_root=cache)
+
+    wire = [m.to_dict() for m in await provider.list_models()]
+    active = next(d for d in wire if d["name"] == "active-model")
+    assert active["downloaded"] is True, "weights are on disk; the row must not offer Download"
+    assert (
+        active["integrity"] == "truncated"
+    ), "the FE gates Repair on this exact string — an empty integrity is the whole bug"
+
+
+def test_every_local_model_field_has_a_writer(tmp_path):
+    """DERIVED: a field on ``LocalModel`` that neither a card nor the disk pass fills is dead.
+
+    ``#1776`` is one instance of a general shape — a key the frontend reads and nothing
+    writes. So partition ``LocalModel``'s fields BY EXECUTION rather than by a hand-kept
+    list: run a maximal card through ``_model_from_card`` to learn what a catalog can express,
+    run a truncated on-disk model through the default listing path to learn what disk adds,
+    and require the union to be every field. A new field wired into ``to_dict()`` and the
+    ``api.ts`` type but into no producer makes the residue non-empty and reds here.
+    """
+    maximal = {
+        "name": "wired",
+        "size_mb": 10,
+        "label": "described",
+        "capabilities": ["stt"],
+        "gated": True,
+        "source": "org/wired",
+        "matrix": {"word_timestamps": True},
+        "runtime": "ctranslate2",
+        "runtime_contract": "ctranslate2>=4",
+        "license": "CC-BY-NC-4.0",
+        "context_tokens": 448,
+        "output_tokens": 64,
+        "io_mime": {"input": ["audio/wav"]},
+        "status": "deprecated",
+        "config_only": True,
+    }
+    from_card = LocalModelProvider._model_from_card(maximal, host_platform_token())
+    default = LocalModel(name="")  # empty, so a written `name` reads as written
+    card_writes = {
+        f.name
+        for f in dataclasses.fields(LocalModel)
+        if getattr(from_card, f.name) != getattr(default, f.name)
+    }
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "active-model.bin").write_bytes(b"x" * 1_000_000)
+    catalog = _write_catalog(tmp_path, _CARDS)
+    truncated = next(
+        m
+        for m in _CatalogProvider(catalog, cache_root=cache)._models_from_catalog(catalog)
+        if m.name == "active-model"
+    )
+    disk_writes = {
+        f.name
+        for f in dataclasses.fields(LocalModel)
+        if getattr(truncated, f.name) != getattr(LocalModel(name="active-model"), f.name)
+    } - card_writes
+
+    # Vacuity: an empty partition on either side would make the residue check trivial, and
+    # `disk_writes` is the side that was empty in production for the whole life of the bug.
+    assert len(card_writes) >= 14, sorted(card_writes)
+    assert disk_writes == {"downloaded", "integrity"}, sorted(disk_writes)
+
+    residue = {f.name for f in dataclasses.fields(LocalModel)} - card_writes - disk_writes
+    assert not residue, (
+        f"LocalModel.{sorted(residue)} is read on the wire (to_dict) but no catalog card and "
+        f"no disk probe ever writes it — the #1776 shape. Give it a producer or delete it."
+    )
+
+
+@pytest.mark.parametrize("escaping", ["../SECRETS", "../../etc", "a/../../b"])
+def test_a_card_name_cannot_reach_outside_the_cache_root(tmp_path, escaping):
+    """A catalog card is APP-authored input joined onto a filesystem root (ARCC SAX-04).
+
+    Measured before the guard: a card named ``"../SECRETS"`` made ``downloaded_layouts``
+    return ``<root>/../SECRETS`` and ``on_disk_bytes`` sum 4096 bytes from it — and the same
+    candidate list is what ``delete_all_layouts`` sweeps with ``rmtree``. Fails closed: no
+    candidates, so the model simply reads as absent.
+    """
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    outside = tmp_path / "SECRETS"
+    outside.mkdir()
+    (outside / "id_rsa").write_bytes(b"x" * 4096)
+
+    assert layouts.escapes_root(escaping) is True
+    assert layouts.candidate_paths(cache, escaping) == []
+    assert layouts.is_downloaded(cache, escaping) is False
+    assert layouts.on_disk_bytes(cache, escaping) == 0
+    assert layouts.downloaded_layouts(cache, escaping) == []
+    assert layouts.delete_all_layouts(cache, escaping) == []
+    assert (outside / "id_rsa").exists(), "the refusal must happen before anything is touched"
+
+
+def test_an_ordinary_slashed_model_id_is_not_mistaken_for_an_escape(tmp_path):
+    """Vacuity guard: the containment check must not refuse a normal namespaced repo id."""
+    assert layouts.escapes_root("sentence-transformers/all-MiniLM-L6-v2") is False
+    native = tmp_path / "sentence-transformers" / "all-MiniLM-L6-v2"
+    native.mkdir(parents=True)
+    (native / "w.bin").write_bytes(b"x" * 10)
+    assert layouts.is_downloaded(tmp_path, "sentence-transformers/all-MiniLM-L6-v2") is True
 
 
 # ── the helpers, unit-tested (Part 3) ────────────────────────────────────
