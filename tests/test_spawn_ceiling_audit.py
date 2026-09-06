@@ -329,11 +329,12 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers/files.py::_content_search_rg::asyncio.create_subprocess_exec": (
         "operator: file search (rg)"
     ),
+    # The ONE git spawn in the file browser. The diff view's committed-side read had a
+    # second one of its own until #432, and that copy forgot the kill, the reap, the
+    # degrade-on-unexecutable-git and the blob-vs-tree check this one owns.
+    # `test_files_has_exactly_one_git_invoker` is what keeps it single.
     "dashboard/handlers/files.py::_git::asyncio.create_subprocess_exec": (
         "operator: file browser git read"
-    ),
-    "dashboard/handlers/files.py::api_file_git_original::asyncio.create_subprocess_exec": (
-        "operator: git show for diff view"
     ),
     # EI-9's review-triage diff read. Same class as the file browser's `_git` above: a fixed
     # read-only argv (`diff` / `ls-files`), `cwd` the run's OWN workspace path off the run record,
