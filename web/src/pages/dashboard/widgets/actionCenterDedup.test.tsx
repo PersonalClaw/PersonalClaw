@@ -47,7 +47,7 @@ function mockApi() {
       notifications: () => Promise.resolve({ notifications: [] }),
       discover: () => Promise.resolve({ items: [] }),
       approvals: () => Promise.resolve([]),
-      inboxPending: () => Promise.resolve(INBOX),
+      inboxOpen: () => Promise.resolve(INBOX),
       skillProposals: () => Promise.resolve({ proposals: PROPOSALS, lastReview: null }),
       uLoops: () => Promise.resolve([]),
       readyTasks: () => Promise.resolve([]),

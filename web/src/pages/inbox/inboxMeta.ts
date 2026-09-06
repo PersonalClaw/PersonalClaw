@@ -47,11 +47,15 @@ export function statusMeta(s?: string): StatusMeta {
   return STATUSES.find((x) => x.key === s) ?? STATUSES[0]
 }
 
-/** Statuses that still want the user: unresolved, whether or not already glanced at. */
-export const OPEN_STATUSES: InboxItemStatus[] = ['pending', 'seen']
-export function isOpen(s?: string): boolean {
-  return OPEN_STATUSES.includes((s || 'pending') as InboxItemStatus)
-}
+/** Statuses that still want the user: unresolved, whether or not already glanced at.
+ *
+ *  RE-EXPORTED, not defined here. `lib/attentionLanes` owns the exhaustive
+ *  `Record<InboxItemStatus, boolean>` these derive from, so this page's counts and Mission
+ *  Control's lane counts read ONE set. Spelling the pair out here was the frontend's half of
+ *  issue 493: the server published a PENDING-only `pending_count` for the header while this
+ *  predicate drove every filter and chip, so one screen showed 33 and 37, and a glance — which
+ *  marks a row SEEN — decremented the header without resolving anything. */
+export { OPEN_STATUSES, isOpenStatus as isOpen } from '../../lib/attentionLanes'
 
 /** TSE2-3 — whether *item* is attributed to somebody OTHER than *owner*.
  *

@@ -40,6 +40,7 @@ __all__ = [
     "InboxState",
     "UserResolver",
     "ItemKind",
+    "OPEN_STATUSES",
     "NON_CHANNEL_KINDS",
     "SOURCE_DECLARABLE_KINDS",
     "make_item_id",
@@ -117,6 +118,39 @@ class ItemStatus(str, Enum):
     DISMISSED = "dismissed"
     HANDLED = "handled"  # user replied at the source (or via inbox reply routing)
     FILTERED = "filtered"  # withheld by verification (INU-6); restorable to PENDING
+
+
+#: **The one definition of "open"** — a row that still wants the user. Every count, filter,
+#: chip, badge, sweep, dedup check and digest lane in the product reads THIS set, and nothing
+#: re-spells it (`test_inbox_open_status_is_one_owner` counts the spellings and fails at two).
+#:
+#: 🔴 It exists because two definitions coexisted on one screen. `/api/inbox/status` published
+#: `pending_count` (PENDING only) while every filter and kind chip used `pending|seen` — measured
+#: on a seeded store: header **33**, Open filter **37**, four `seen` rows apart. Neither number
+#: was wrong on its own terms, so neither side looked broken. Worse: the UI marks a row SEEN the
+#: moment you open it, so merely GLANCING at an item decremented the header (33 → 32, measured)
+#: without resolving anything, and the destructive `dismiss-all` confirm sized itself from the
+#: same field — it offered to "dismiss all 33 pending items" and swept 37 (issue 493).
+#:
+#: SEEN is IN, and that is the whole ruling: "I have looked at this" is not "I have dealt with
+#: this". Attention state must change when the user ACTS, never because they read a row — a count
+#: that falls when you look at it teaches the user the count means nothing. The read/unread
+#: distinction is real and keeps its own surface: the row-level accent rail and unread dot key off
+#: `status == PENDING` (see `InboxPage`), which is where "new" belongs — a row, not a total.
+#:
+#: It is a POSITIVE set rather than "everything except the resolved ones": the complement lives in
+#: `test_inbox_open_status_is_one_owner`, which asserts the two PARTITION :class:`ItemStatus`
+#: exactly. A new member therefore fails a test until someone decides which side it falls on,
+#: instead of silently defaulting into whichever half a subtraction happened to pick — and no
+#: second constant sits here with only a test to read it.
+#:
+#: Two functions also turn on it in OPPOSITE directions and must agree exactly:
+#: :func:`_find_open_by_dedup` SUPPRESSES a re-emission while a row is open, and
+#: :func:`resolve_attention_items` CLOSES rows that are open. If those sets ever diverged a row
+#: could be "resolved" and still swallow the next occurrence — the compounding failure #335
+#: measured (a stale demand that cannot be cleared, plus a real later demand that never
+#: arrives). One constant makes resolution and re-arming the same event by construction.
+OPEN_STATUSES: frozenset[str] = frozenset({ItemStatus.PENDING.value, ItemStatus.SEEN.value})
 
 
 class ItemKind(str, Enum):
@@ -578,21 +612,21 @@ class InboxStore:
         return [i for i in self.items.values() if i.status == ItemStatus.PENDING]
 
     def open_items(self) -> list[InboxItem]:
-        """Every item still awaiting a decision — PENDING **or** SEEN.
+        """Every item still awaiting a decision — :data:`OPEN_STATUSES`.
 
-        Distinct from :meth:`pending`, and both are needed. "How many are waiting for me" is a
-        count of `pending` (a badge should not keep counting a row you have read), but "clear
-        everything waiting for me" has to mean every OPEN row.
+        **The count surface.** "How many are waiting for me", "clear everything waiting for me"
+        and "which kinds have work in them" are all this one list, because they are all one
+        question. An earlier version of this docstring claimed the badge should instead count
+        `pending` so it "does not keep counting a row you have read" — that is exactly the split
+        that put 33 in the header and 37 in the filters of the same screen, and made a glance
+        decrement the total (issue 493). A row you have read but not answered is still your work.
 
-        🔴 `POST /api/inbox/dismiss-all` used `pending()`, and the UI marks a row SEEN the moment
-        you open it — so merely LOOKING at an item permanently removed it from the reach of the
-        only bulk control, and a queue you had browsed could not be cleared except one row at a
+        🔴 `POST /api/inbox/dismiss-all` used :meth:`pending`, and the UI marks a row SEEN the
+        moment you open it — so merely LOOKING at an item permanently removed it from the reach of
+        the only bulk control, and a queue you had browsed could not be cleared except one row at a
         time. Measured on an instance with 32 open proposal rows (#409).
-
-        The frontend already draws this distinction (`isOpen = pending | seen`); this is the same
-        predicate on the server, so the two agree about what "open" means.
         """
-        return [i for i in self.items.values() if i.status in (ItemStatus.PENDING, ItemStatus.SEEN)]
+        return [i for i in self.items.values() if i.status in OPEN_STATUSES]
 
     def _expired_ids(self, retention_days: int) -> list[str]:
         """IDs of items older than *retention_days* — the list behind both the count and the
@@ -886,16 +920,6 @@ def _verification_opted_in(source: str, kind: str) -> bool:
         return False
 
 
-#: An attention row still awaiting the user. **The one definition**, because two functions
-#: turn on it in opposite directions and they must agree exactly: :func:`_find_open_by_dedup`
-#: SUPPRESSES a re-emission while a row is open, and :func:`resolve_attention_items` CLOSES
-#: rows that are open. If those sets ever diverged, a row could be "resolved" and still
-#: swallow the next occurrence — which is precisely the compounding failure #335 measured
-#: (a stale demand that cannot be cleared, plus a real later demand that never arrives).
-#: One constant makes resolution and re-arming the same event by construction.
-OPEN_STATUSES: frozenset[str] = frozenset({ItemStatus.PENDING.value, ItemStatus.SEEN.value})
-
-
 def resolve_attention_items(
     state: Any, refs: dict[str, str], *, store: "InboxStore | None" = None
 ) -> int:
@@ -951,7 +975,7 @@ def resolve_attention_items(
 def _find_open_by_dedup(store: "InboxStore", dedup_key: str) -> "InboxItem | None":
     """An unresolved item carrying ``dedup_key``, newest first.
 
-    Only PENDING/SEEN count as open: once the user has HANDLED or DISMISSED a request, a
+    Only :data:`OPEN_STATUSES` count as open: once the user has HANDLED or DISMISSED a request, a
     later re-emission is genuinely new and should surface again rather than be swallowed.
     """
     matches = [

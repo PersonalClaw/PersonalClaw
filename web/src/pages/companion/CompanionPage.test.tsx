@@ -42,7 +42,7 @@ vi.mock('../../lib/api', async (orig) => {
       resolveApproval: (id: string, action: string) => resolveApproval(id, action),
       uLoops: () => Promise.resolve([]),
       tasks: () => Promise.resolve({ tasks: [], total: 0 }),
-      inboxPending: () => Promise.resolve([]),
+      inboxOpen: () => Promise.resolve([]),
       notifications: () => Promise.resolve({ notifications: [], unread: 0 }),
     },
   }

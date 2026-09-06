@@ -3267,7 +3267,7 @@ export interface InboxKindCount { kind: InboxItemKind; total: number; open: numb
  *  filter it drives, which excludes them. */
 export interface InboxOwnerCount { username: string; total: number; open: number; is_me: boolean }
 /** The owner census. `mine` is the owner-scoped count (`belongs_to`, so it DOES include the
- *  unattributed rows) — the same number `InboxStatus.my_pending_count` reports. */
+ *  unattributed rows) — the same number `InboxStatus.my_open_count` reports. */
 export interface InboxOwners { owner: string; mine: number; owners: InboxOwnerCount[] }
 export interface InboxProvider { name: string; display_name: string; source_name: string }
 export interface InboxHealth { running: boolean; last_poll_at?: number; last_poll_ok?: boolean; last_error?: string; poll_count?: number; stale?: boolean }
@@ -3276,13 +3276,19 @@ export interface InboxStatus {
   enabled: boolean; user_id?: string
   native_source_active?: boolean; sources?: InboxSourceHealth[]
   watched_channels?: Array<{ id: string; name: string }>
-  pending_count: number; total_count: number; health: InboxHealth
+  /** How many rows still want the user — PENDING **or** SEEN, `inbox.OPEN_STATUSES`. The ONE count
+   *  the inbox shows. It replaced `pending_count`, which excluded SEEN while every filter and kind
+   *  chip on the same screen included it (33 against 37, measured), and which a glance decremented
+   *  because opening a row marks it SEEN — attention state moving because the user LOOKED. There is
+   *  deliberately no second count: "new" is a per-ROW signal (the unread dot keys off
+   *  `status === 'pending'`), not a total (issue 493). */
+  open_count: number; total_count: number; health: InboxHealth
   poll_interval_seconds?: number
   // TSE2-3 — the owner-scoped counters, ALONGSIDE the shared totals above. Two numbers
   // because a shared inbox has two questions: how much is in it, and how much of it is mine.
   // Optional so a frontend built against an older gateway still renders the shared totals.
   owner?: string
-  my_pending_count?: number
+  my_open_count?: number
   my_total_count?: number
 }
 export interface InboxSettings {
@@ -6463,8 +6469,13 @@ export const api = {
     }),
   pushRelayUnregister: (device_id: string) =>
     post<{ ok: boolean }>('/api/push/relay-unregister', { device_id }),
-  // Inbox items awaiting a decision (richer than client-filtering /api/inbox).
-  inboxPending: () => get<InboxItem[]>('/api/inbox/pending'),
+  // Inbox rows awaiting a decision — PENDING **or** SEEN (richer than client-filtering /api/inbox).
+  // Was `inboxPending` on `/api/inbox/pending`, which returned PENDING only: because opening a row
+  // in the inbox marks it SEEN, merely glancing at an item deleted it from Mission Control's lanes,
+  // the Action Center and the hero pill — three surfaces whose own rules all call `seen` open
+  // (`STATUS_OPEN.seen === true`). Measured: 33 rows out of this endpoint, then 32 after one open,
+  // nothing resolved (issue 493).
+  inboxOpen: () => get<InboxItem[]>('/api/inbox/open'),
   // Cross-trigger run index (dashboard Schedule widget) — newest runs across all
   // schedules, distinct from the per-schedule history the trigger detail uses.
   // Returns §1.3's archive split alongside the rows: `did_ids` are fires that DID something,

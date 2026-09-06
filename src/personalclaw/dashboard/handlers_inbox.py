@@ -9,6 +9,7 @@ from aiohttp import web
 from personalclaw.http_errors import json_error
 from personalclaw.inbox import (
     NON_CHANNEL_KINDS,
+    OPEN_STATUSES,
     InboxFieldTypeError,
     InboxState,
     InboxStore,
@@ -285,7 +286,7 @@ async def api_inbox_owners(request: web.Request) -> web.Response:
     state: "DashboardState" = request.app["state"]
     _, inbox = _get_inbox(state)
     me = _current_owner()
-    open_states = {ItemStatus.PENDING.value, ItemStatus.SEEN.value}
+    open_states = OPEN_STATUSES
     counts: dict[str, dict[str, int]] = {}
     for item in inbox.items.values():
         entry = counts.setdefault(item.owner_username or "", {"total": 0, "open": 0})
@@ -309,16 +310,34 @@ async def api_inbox_owners(request: web.Request) -> web.Response:
     )
 
 
-async def api_inbox_pending(request: web.Request) -> web.Response:
-    """GET /api/inbox/pending — list pending items only (recency, optionally weighted).
+async def api_inbox_open_list(request: web.Request) -> web.Response:
+    """GET /api/inbox/open — every row still wanting the user (PENDING or SEEN).
 
-    ``?kind=`` narrows as on the list endpoint. Note this is PENDING only: an item the
-    user has seen but not resolved is deliberately excluded, because this endpoint feeds
-    the "needs attention now" surfaces.
+    The set is :data:`OPEN_STATUSES`, the one definition every inbox count reads. The first line
+    stays plain prose because the generated agent reference (`reference/routes.md`) quotes it
+    verbatim, and a Sphinx role renders there as noise.
+
+    ``_list``, because ``api_inbox_open`` is already taken by ``POST /api/inbox/{id}/open`` — the
+    engagement signal for opening ONE row. Naming this one ``api_inbox_open`` shadowed that handler
+    at import time and silently registered the wrong callable on this route; the collection and the
+    per-item verb are different things and now have different names.
+
+    ``?kind=`` narrows as on the list endpoint.
+
+    🔴 This was `GET /api/inbox/pending` and returned PENDING only, with a docstring claiming
+    the exclusion of SEEN was deliberate "because this endpoint feeds the needs-attention-now
+    surfaces". Every one of those surfaces disagreed: Mission Control's own status table says
+    `seen: true` ("surfaced, not yet resolved — still your turn"), the Action Center is the
+    unified triage queue, and the companion's inbox is resolve-only. So the endpoint could not
+    deliver a `seen` row to three consumers that all wanted one, and — because opening a row in
+    the inbox marks it SEEN — merely GLANCING at an item deleted it from the dashboard's lanes and
+    the hero pill (measured: 33 → 32 rows out of this endpoint after one open, nothing resolved).
+    Renamed rather than quietly widened: a route called `pending` that answers with `seen` rows is
+    the next reader's bug (issue 493).
     """
     state: "DashboardState" = request.app["state"]
     _, inbox = _get_inbox(state)
-    items = _rank_items(state, list(inbox.pending()))
+    items = _rank_items(state, list(inbox.open_items()))
     items = _filter_by_kind(items, request.query.get("kind"))
     return web.json_response([_redact_item(i.to_dict()) for i in items])
 
@@ -327,18 +346,18 @@ async def api_inbox_kinds(request: web.Request) -> web.Response:
     """GET /api/inbox/kinds — item kinds present, with open counts, for the filter chips.
 
     Driven by what is actually in the store rather than by the enum: a chip for a kind
-    with nothing behind it is a dead control. ``open`` counts PENDING+SEEN, which is what
-    a chip badge should show — an unresolved request, whether or not it's been glanced at.
+    with nothing behind it is a dead control. ``open`` counts :data:`OPEN_STATUSES`, the one
+    definition every count on this surface reads — an unresolved request, whether or not it has
+    been glanced at.
     """
     state: "DashboardState" = request.app["state"]
     _, inbox = _get_inbox(state)
-    open_states = {ItemStatus.PENDING.value, ItemStatus.SEEN.value}
     counts: dict[str, dict[str, int]] = {}
     for item in inbox.items.values():
         kind = item.item_kind or ItemKind.MESSAGE.value
         entry = counts.setdefault(kind, {"total": 0, "open": 0})
         entry["total"] += 1
-        if item.status in open_states:
+        if item.status in OPEN_STATUSES:
             entry["open"] += 1
     return web.json_response(
         {
@@ -784,7 +803,14 @@ async def api_inbox_status(request: web.Request) -> web.Response:
             "channel_names": inbox_state.channel_names,
             "poll_interval_seconds": sec.poll_interval_seconds,
             "style_rules": sec.style_rules,
-            "pending_count": len(inbox.pending()),
+            # 🔴 ONE count, and it is the OPEN one. This published `pending_count` while every
+            # filter, kind chip and bulk sweep on the same screen used PENDING|SEEN — measured on
+            # a seeded store: header 33, Open filter 37, `dismiss-all` sweeping 37 behind a confirm
+            # that said 33. And because opening a row marks it SEEN, a glance decremented this
+            # field (33 → 32) while resolving nothing. Publishing BOTH counts would not have fixed
+            # that; it would have licensed it. The "new" half of the distinction is a per-row
+            # signal (the unread dot keys off `status == PENDING`), not a total (issue 493).
+            "open_count": len(inbox.open_items()),
             "total_count": len(inbox.items),
             # TSE2-3 — the owner-scoped halves, alongside (never instead of) the shared
             # totals above. Two counts because they answer two questions: "how much is in
@@ -792,8 +818,14 @@ async def api_inbox_status(request: web.Request) -> web.Response:
             # number would mean a shared inbox either under-reports its contents or
             # over-reports the owner's queue. `owner_view` is the same predicate `?mine=1`
             # filters by, so the badge and the filter can never disagree.
+            # 🔴 `my_open_count`, not `my_pending_count`. TSE2-3 landed this half as a PENDING
+            # count while the shared half beside it is now OPEN — which would have put the two
+            # definitions of "open" back on one screen, in the very label that reads "N of M are
+            # yours" (the shared header would have claimed 9 of 37 where the Open filter showed
+            # 12). `open_items()` is the same owner the shared count reads, so both halves of the
+            # sentence and the `mine` chip move together (issue 493).
             "owner": owner,
-            "my_pending_count": len(owner_view(inbox.pending(), owner)),
+            "my_open_count": len(owner_view(inbox.open_items(), owner)),
             "my_total_count": len(owner_view(inbox.items.values(), owner)),
             "health": health,
         }
