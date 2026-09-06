@@ -21,6 +21,11 @@ Three things live here and nowhere else:
   answering garbage — all read as "no session", because the callers are a reaper and a boot
   sweep and neither may crash on a missing binary. Note the direction of that default:
   "no session" makes the sweep *more* conservative about claiming work survived, never less.
+* **The spawn** (:func:`new_session`, EI-6's §5.1 SPAWN half). The one writer of durable
+  sessions, so the reader above and the writer share a socket and a name discipline by
+  construction. Same never-raises stance, opposite default: a spawn that cannot happen
+  returns False and the caller runs the work as a bare subprocess — durability is an
+  enhancement to a run, never a precondition for one.
 
 Liveness semantics: ``has_session`` is the exit code of ``tmux has-session``, which is 0 only
 while the daemon still holds the session. That is the real question — a session whose shell
@@ -98,6 +103,55 @@ def durable_session_name(project_id: str, run_id: str, session_slug: str) -> str
 
 def _argv(*args: str) -> list[str]:
     return ["tmux", "-L", TMUX_SOCKET, *args]
+
+
+async def new_session(
+    name: str,
+    *,
+    workspace: str,
+    command: list[str],
+    env: dict[str, str] | None = None,
+) -> bool:
+    """Open a detached durable session running *command* in *workspace* — §5.1's SPAWN half.
+
+    ``tmux new-session -d -s <name> -c <workspace> [-e K=V …] <command…>`` on our socket. The
+    daemon — not the calling gateway — becomes the worker's owner, which is the entire point:
+    kill the gateway and the command keeps executing, and the boot sweep finds it again by
+    recomputing *name* (:func:`durable_session_name`) with zero persisted state.
+
+    The name is VALIDATED against :func:`sanitize`'s alphabet rather than rewritten by it.
+    Rewriting here would open a session under a name no recomputing reader derives — a worker
+    the sweep can never find, which is durability that lies. A caller must pass a name built
+    by :func:`durable_session_name`; anything else is refused.
+
+    *command* is an argv, executed by tmux WITHOUT a shell — same no-quoting-injection stance
+    as every spawn in this repo. *env* entries ride ``-e`` flags (plain argv elements, so a
+    hostile value is still just a value).
+
+    Returns True only when tmux reported the session created. False for every failure —
+    absent binary, refused name, timeout, non-zero exit — never a raise, because the caller's
+    contract is fall-back-to-a-bare-subprocess (runner_lifecycle's fail-open doctrine) and an
+    exception here would let durability break the run it exists to protect.
+    """
+    if not name or _UNSAFE.search(name) or not command:
+        return False
+    args: list[str] = ["new-session", "-d", "-s", name, "-c", str(workspace or ".")]
+    for key, value in (env or {}).items():
+        args += ["-e", f"{key}={value}"]
+    args += [str(part) for part in command]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *_argv(*args),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        rc = await asyncio.wait_for(proc.wait(), timeout=PROBE_TIMEOUT_S)
+        return rc == 0
+    except (FileNotFoundError, asyncio.TimeoutError, OSError):
+        return False
+    except Exception:  # pragma: no cover - defensive: a failed spawn must read as "no session"
+        logger.debug("tmux new-session failed for %s", name, exc_info=True)
+        return False
 
 
 async def has_session(name: str) -> bool:
