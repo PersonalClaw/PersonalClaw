@@ -77,14 +77,14 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
     return (
       <div className="flex flex-col gap-l">
         <div className="flex items-center gap-s">
-          <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]"><Pencil size={13} /> Editing</span>
+          <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Pencil size={13} /> Editing</span>
           {/* `toneChipSkin`, not a tint of the tone itself. `sourceTone` returns `--color-primary`
               for a USER-authored prompt — which is the DEFAULT and, in a real home, effectively all of
               them (47 of 47 here) — and coral ink over a 16% tint of itself measures **3.85:1** in
               light at 12px against a 4.5 floor. Measured by opening prompts on `#/prompts`. The other
               sources keep their tint and pass: `marketplace` is info, bundled/provider is
               `on-surface-low`. See `design/accentChipTone.test.tsx`. */}
-          <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source, full?.tags)}</span>
+          <span data-type="caption" className="ml-auto inline-flex items-center rounded-pill px-m h-6" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source, full?.tags)}</span>
         </div>
         {err && <FieldError>{err}</FieldError>}
         <PromptEditFields draft={draft} onChange={setDraft} Section={Section} />
@@ -117,33 +117,33 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
     <div className="flex flex-col gap-l">
       <div className="flex items-center gap-s">
         {readOnly ? (
-          <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]"><Lock size={13} /> {sourceLabel(prompt.source)} — read-only</span>
+          <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Lock size={13} /> {sourceLabel(prompt.source)} — read-only</span>
         ) : (
           <>
             <Button size="sm" variant="secondary" onClick={() => setEditing(true)}><Pencil size={14} /> Edit</Button>
             <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
           </>
         )}
-        {full.kind && <span className="inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>{full.kind} prompt</span>}
+        {full.kind && <span data-type="caption" className="inline-flex items-center rounded-pill px-m h-6" style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>{full.kind} prompt</span>}
         {full.launch_spec && Object.keys(full.launch_spec).length > 0 && (
-          <span className="inline-flex items-center gap-1 rounded-pill px-m h-6 text-[0.75rem]" style={accentChip}><Rocket size={11} /> runnable</span>
+          <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-m h-6" style={accentChip}><Rocket size={11} /> runnable</span>
         )}
-        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source, full?.tags)}</span>
+        <span data-type="caption" className="ml-auto inline-flex items-center rounded-pill px-m h-6" style={toneChipSkin(sourceTone(prompt.source), 16)}>{sourceLabel(prompt.source, full?.tags)}</span>
       </div>
       {err && <FieldError>{err}</FieldError>}
 
       {full.title && <h2 data-type="title-m" className="text-on-surface">{full.title}</h2>}
-      {full.description && <p className="text-on-surface text-[0.9375rem] leading-relaxed">{full.description}</p>}
+      {full.description && <p data-type="body-m" className="text-on-surface leading-relaxed">{full.description}</p>}
 
       {(full.tags?.length ?? 0) > 0 && (
-        <div className="flex flex-wrap gap-1.5">{full.tags!.map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{t}</span>)}</div>
+        <div className="flex flex-wrap gap-1.5">{full.tags!.map((t) => <span key={t} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{t}</span>)}</div>
       )}
 
       {includes.length > 0 && (
         <Section label={`Includes · ${includes.length}`}>
           <div className="flex flex-wrap gap-1.5">
             {includes.map((n) => (
-              <span key={n} className="inline-flex items-center gap-1 rounded-pill bg-surface-container px-2 h-7 font-mono text-on-surface-var text-[0.75rem]"><Puzzle size={12} className="text-info" /> {n}</span>
+              <span key={n} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-container px-2 h-7 font-mono text-on-surface-var"><Puzzle size={12} className="text-info" /> {n}</span>
             ))}
           </div>
         </Section>
@@ -155,12 +155,12 @@ export function PromptDetail({ prompt, onSaved, onDeleted, editing: editingProp,
             {vars.map((v) => (
               <div key={v.name} className="rounded-md bg-surface-container px-m py-1.5">
                 <div className="flex items-center gap-s">
-                  <span className="font-mono text-on-surface text-[0.8125rem]">{v.name}</span>
-                  <span className="text-on-surface-low text-[0.75rem]">{v.type}</span>
-                  {v.required && <span className="text-danger text-[0.75rem]">required</span>}
-                  {v.default != null && v.default !== '' && <span className="text-on-surface-low text-[0.75rem]">default: {String(v.default)}</span>}
+                  <span data-type="body-s" className="font-mono text-on-surface">{v.name}</span>
+                  <span data-type="caption" className="text-on-surface-low">{v.type}</span>
+                  {v.required && <span data-type="caption" className="text-danger">required</span>}
+                  {v.default != null && v.default !== '' && <span data-type="caption" className="text-on-surface-low">default: {String(v.default)}</span>}
                 </div>
-                {v.description && <p className="mt-0.5 text-on-surface-var text-[0.8125rem]">{v.description}</p>}
+                {v.description && <p data-type="body-s" className="mt-0.5 text-on-surface-var">{v.description}</p>}
               </div>
             ))}
           </div>
@@ -228,14 +228,16 @@ function RenderPanel({ name, vars, launchable, launchKind, onNavigate }: { name:
       </div>
       {err && <FieldError className="mt-2">{err}</FieldError>}
       {out != null && (
-        <div className="mt-2 rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{out}</Markdown></div>
+        <div data-type="body-s" className="mt-2 rounded-md bg-surface-container px-m py-2 text-on-surface-var leading-relaxed"><Markdown>{out}</Markdown></div>
       )}
     </Section>
   )
 }
 
 function RenderInput({ v, value, onChange }: { v: PromptVariable; value: unknown; onChange: (v: unknown) => void }) {
-  const base = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
+  // The type role (body-s) can't live in this element-less class const — data-type is an
+  // attribute, so each consumer element below carries it (same treatment as chat's VarInput).
+  const base = 'w-full rounded-md bg-surface-container px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   // Stable id/name per variable, for browser autofill and as a stable test/automation handle.
   //
   // The id alone does NOT name the field: nothing renders a `<label htmlFor={fid}>`, so it was a
@@ -250,19 +252,19 @@ function RenderInput({ v, value, onChange }: { v: PromptVariable; value: unknown
   }
   if (v.type === 'select') {
     return (
-      <select id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} className={`${base}`}>
+      <select id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={`${base}`}>
         <option value="">—</option>
         {(v.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
     )
   }
   if (v.type === 'textarea') {
-    return <textarea id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={v.description} className={`${base} resize-y`} />
+    return <textarea id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={v.description} data-type="body-s" className={`${base} resize-y`} />
   }
   if (v.type === 'number') {
-    return <input id={fid} name={v.name} aria-label={label} type="number" value={value === '' || value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))} placeholder={v.description} className={base} />
+    return <input id={fid} name={v.name} aria-label={label} type="number" value={value === '' || value == null ? '' : Number(value)} onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))} placeholder={v.description} data-type="body-s" className={base} />
   }
-  return <input id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={v.description} className={base} />
+  return <input id={fid} name={v.name} aria-label={label} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={v.description} data-type="body-s" className={base} />
 }
 
 /** The template body — rendered (defaults substituted, Markdown) by default,
@@ -273,20 +275,21 @@ function TemplateSection({ content, vars }: { content: string; vars: PromptVaria
   return (
     <div>
       <div className="mb-1.5 flex items-center gap-s">
-        <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Template</div>
+        <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">Template</div>
         <button
           type="button"
           onClick={() => setRaw((r) => !r)}
-          className="ml-auto inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-6 text-on-surface-low text-[0.75rem] hover:text-on-surface transition-colors"
+          data-type="caption"
+          className="ml-auto inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-6 text-on-surface-low hover:text-on-surface transition-colors"
           title={raw ? 'Show rendered' : 'Show raw template'}
         >
           {raw ? <><Eye size={12} /> Rendered</> : <><Code2 size={12} /> Raw</>}
         </button>
       </div>
       {raw ? (
-        <pre className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] font-mono overflow-x-auto whitespace-pre-wrap break-words">{content || '—'}</pre>
+        <pre data-type="body-s" className="rounded-md bg-surface-container px-m py-2 text-on-surface-var font-mono overflow-x-auto whitespace-pre-wrap break-words">{content || '—'}</pre>
       ) : (
-        <div className="rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] leading-relaxed">
+        <div data-type="body-s" className="rounded-md bg-surface-container px-m py-2 text-on-surface leading-relaxed">
           <Markdown>{rendered || '—'}</Markdown>
         </div>
       )}
@@ -295,5 +298,5 @@ function TemplateSection({ content, vars }: { content: string; vars: PromptVaria
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><div data-type="caption" className="text-on-surface-low uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
 }

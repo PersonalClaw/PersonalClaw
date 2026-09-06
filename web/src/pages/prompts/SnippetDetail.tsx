@@ -55,7 +55,7 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
     return (
       <div className="flex flex-col gap-l">
         <div className="flex items-center gap-s">
-          <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]"><Pencil size={13} /> Editing</span>
+          <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Pencil size={13} /> Editing</span>
         </div>
         {err && <FieldError>{err}</FieldError>}
         <SnippetForm draft={draft} onChange={setDraft} nameLocked />
@@ -79,34 +79,34 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
     <div className="flex flex-col gap-l">
       <div className="flex items-center gap-s">
         {readOnly ? (
-          <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]"><Lock size={13} /> {sourceLabel(snippet.source)} — read-only</span>
+          <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Lock size={13} /> {sourceLabel(snippet.source)} — read-only</span>
         ) : (
           <>
             <Button size="sm" variant="secondary" onClick={() => setEditing(true)}><Pencil size={14} /> Edit</Button>
             <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete</Button>
           </>
         )}
-        <span className="ml-auto inline-flex items-center rounded-pill px-m h-6 text-[0.75rem]" style={toneChipSkin(sourceTone(snippet.source), 16)}>{sourceLabel(snippet.source, full?.tags)}</span>
+        <span data-type="caption" className="ml-auto inline-flex items-center rounded-pill px-m h-6" style={toneChipSkin(sourceTone(snippet.source), 16)}>{sourceLabel(snippet.source, full?.tags)}</span>
       </div>
       {err && <FieldError>{err}</FieldError>}
 
       {full.title && <h2 data-type="title-m" className="text-on-surface">{full.title}</h2>}
-      {full.description && <p className="text-on-surface text-[0.9375rem] leading-relaxed">{full.description}</p>}
+      {full.description && <p data-type="body-m" className="text-on-surface leading-relaxed">{full.description}</p>}
 
       {(full.tags?.length ?? 0) > 0 && (
-        <div className="flex flex-wrap gap-1.5">{full.tags!.map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{t}</span>)}</div>
+        <div className="flex flex-wrap gap-1.5">{full.tags!.map((t) => <span key={t} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{t}</span>)}</div>
       )}
 
       {usedBy.length > 0 && (
         <Section label={`Used by · ${usedBy.length}`}>
-          <p className="mb-1 text-on-surface-low text-[0.75rem]">Prompts/snippets that include this — deleting it would break them.</p>
-          <div className="flex flex-wrap gap-1.5">{usedBy.map((n) => <span key={n} className="rounded-pill bg-surface-container px-2 h-7 inline-flex items-center font-mono text-on-surface-var text-[0.75rem]">{n}</span>)}</div>
+          <p data-type="caption" className="mb-1 text-on-surface-low">Prompts/snippets that include this — deleting it would break them.</p>
+          <div className="flex flex-wrap gap-1.5">{usedBy.map((n) => <span key={n} data-type="caption" className="rounded-pill bg-surface-container px-2 h-7 inline-flex items-center font-mono text-on-surface-var">{n}</span>)}</div>
         </Section>
       )}
 
       {includes.length > 0 && (
         <Section label={`Includes · ${includes.length}`}>
-          <div className="flex flex-wrap gap-1.5">{includes.map((n) => <span key={n} className="rounded-pill bg-surface-container px-2 h-7 inline-flex items-center font-mono text-on-surface-var text-[0.75rem]">{n}</span>)}</div>
+          <div className="flex flex-wrap gap-1.5">{includes.map((n) => <span key={n} data-type="caption" className="rounded-pill bg-surface-container px-2 h-7 inline-flex items-center font-mono text-on-surface-var">{n}</span>)}</div>
         </Section>
       )}
 
@@ -116,11 +116,11 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
             {vars.map((v) => (
               <div key={v.name} className="rounded-md bg-surface-container px-m py-1.5">
                 <div className="flex items-center gap-s">
-                  <span className="font-mono text-on-surface text-[0.8125rem]">{v.name}</span>
-                  <span className="text-on-surface-low text-[0.75rem]">{v.type}</span>
-                  {v.required && <span className="text-danger text-[0.75rem]">required</span>}
+                  <span data-type="body-s" className="font-mono text-on-surface">{v.name}</span>
+                  <span data-type="caption" className="text-on-surface-low">{v.type}</span>
+                  {v.required && <span data-type="caption" className="text-danger">required</span>}
                 </div>
-                {v.description && <p className="mt-0.5 text-on-surface-var text-[0.8125rem]">{v.description}</p>}
+                {v.description && <p data-type="body-s" className="mt-0.5 text-on-surface-var">{v.description}</p>}
               </div>
             ))}
           </div>
@@ -128,8 +128,8 @@ export function SnippetDetail({ snippet, onSaved, onDeleted, editing: editingPro
       )}
 
       <div>
-        <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">Content</div>
-        <pre className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] font-mono overflow-x-auto whitespace-pre-wrap break-words">{full.content || '—'}</pre>
+        <div data-type="caption" className="text-on-surface-low uppercase tracking-wide mb-1.5">Content</div>
+        <pre data-type="body-s" className="rounded-md bg-surface-container px-m py-2 text-on-surface-var font-mono overflow-x-auto whitespace-pre-wrap break-words">{full.content || '—'}</pre>
       </div>
 
       <SnippetRenderPanel name={snippet.name} vars={vars} />
@@ -161,19 +161,20 @@ function SnippetRenderPanel({ name, vars }: { name: string; vars: PromptVariable
                 PromptDetail's Try-it fields, so the two surfaces announce alike. */}
             <input value={String(values[v.name] ?? '')} aria-label={`${v.name} value`}
               onChange={(e) => setValues((s) => ({ ...s, [v.name]: e.target.value }))} placeholder={v.description}
-              className="w-full rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+              data-type="body-s"
+              className="w-full rounded-md bg-surface-container px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           </Field>
         ))}
         <Button size="sm" onClick={render} disabled={loading} className="self-start">{loading ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} Render</Button>
       </div>
       {err && <FieldError className="mt-2">{err}</FieldError>}
       {out != null && (
-        <div className="mt-2 rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed"><Markdown>{out}</Markdown></div>
+        <div data-type="body-s" className="mt-2 rounded-md bg-surface-container px-m py-2 text-on-surface-var leading-relaxed"><Markdown>{out}</Markdown></div>
       )}
     </Section>
   )
 }
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
+  return <div><div data-type="caption" className="text-on-surface-low uppercase tracking-wide mb-1.5">{label}</div>{children}</div>
 }

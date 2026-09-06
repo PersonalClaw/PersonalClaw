@@ -79,15 +79,15 @@ export function TriageDigestCard() {
         <div className="flex items-start gap-m">
           <Sparkles size={18} className="mt-0.5 shrink-0 text-primary" />
           <div className="min-w-0 flex-1">
-            <h2 className="text-on-surface text-[0.9375rem]" style={fvs(600)}>Morning triage</h2>
-            <p className="mt-1 text-on-surface-low text-[0.8125rem]">
+            <h2 data-type="title-m" className="text-on-surface" style={fvs(600)}>Morning triage</h2>
+            <p data-type="body-s" className="mt-1 text-on-surface-low">
               One scheduled digest: collect what accumulated across your inbox, channels and background runs,
               filter it through your own rules, and propose what to do. It proposes — it executes nothing
               unless you switch auto-execution on.
             </p>
             <div className="mt-m flex flex-wrap items-end gap-m">
               <label className="flex flex-col gap-1">
-                <span className="text-on-surface-low text-[0.75rem]">When (cron)</span>
+                <span data-type="caption" className="text-on-surface-low">When (cron)</span>
                 <div className="w-40">
                   <TextInput value={cron} onChange={setCron} placeholder="0 8 * * *" size="sm" mono ariaLabel="Digest schedule (cron)" />
                 </div>
@@ -96,7 +96,7 @@ export function TriageDigestCard() {
                 Install
               </Button>
             </div>
-            <p className="mt-s text-on-surface-low text-[0.75rem]">
+            <p data-type="caption" className="mt-s text-on-surface-low">
               Installing adds a schedule you can edit or pause any time. Turn the digest itself on under{' '}
               {/* `underline` at REST, not `hover:underline`. This link sits mid-sentence, so axe's
                   `link-in-text-block` (serious) fires when it is distinguishable from the surrounding
@@ -119,12 +119,12 @@ export function TriageDigestCard() {
           <Power size={18} className="mt-0.5 shrink-0 text-on-surface-low" />
           <div className="min-w-0 flex-1">
             <Header title="Morning triage" trailing={<Badge tone="muted">Off</Badge>} />
-            <p className="mt-1 text-on-surface-low text-[0.8125rem]">
+            <p data-type="body-s" className="mt-1 text-on-surface-low">
               The digest is switched off, so nothing is collected and nothing is spent. Your schedule
               {view.schedule?.cron ? <> (<code className="font-mono">{view.schedule.cron}</code>)</> : null} and your
               triage rules are kept — turning it back on picks up exactly where you left off.
             </p>
-            <p className="mt-s text-[0.8125rem]">
+            <p data-type="body-s" className="mt-s">
               <TextLink href="#/settings/inbox" ink="emphasis">Turn triage on in Settings → Inbox</TextLink>
             </p>
           </div>
@@ -140,13 +140,13 @@ export function TriageDigestCard() {
           <Clock size={18} className="mt-0.5 shrink-0 text-on-surface-low" />
           <div className="min-w-0 flex-1">
             <Header title="Morning triage" trailing={<Badge tone="muted">Scheduled</Badge>} />
-            <p className="mt-1 text-on-surface-low text-[0.8125rem]">
+            <p data-type="body-s" className="mt-1 text-on-surface-low">
               Installed and on. No digest has run yet
               {view.schedule?.cron ? <> — the schedule is <code className="font-mono">{view.schedule.cron}</code></> : null}.
               This is not an empty digest: there hasn't been one.
             </p>
             {view.schedule_drift && (
-              <p className="mt-s text-warn text-[0.75rem]">
+              <p data-type="caption" className="mt-s text-warn">
                 The schedule's own switch disagrees with your triage setting.{' '}
                 <Button size="xs" variant="ghost-accent" onClick={() => install()}>Reconcile it</Button>
               </p>
@@ -212,7 +212,7 @@ export function TriageDigestCard() {
           </div>
         }
       />
-      <p className="mt-1 text-on-surface-low text-[0.75rem]">
+      <p data-type="caption" className="mt-1 text-on-surface-low">
         {view.collected ?? 0} item{(view.collected ?? 0) === 1 ? '' : 's'} in this window
         {view.window_start ? <> since {view.window_start.slice(0, 16).replace('T', ' ')}</> : null}
         {view.dropped ? <> · {view.dropped} filtered by your rules</> : null}
@@ -222,15 +222,15 @@ export function TriageDigestCard() {
           WINDOW, not from a delivery flag: the run cannot know whether the gate held it back (see
           `handed_to_notify`), so the honest sentence names the setting and not an outcome. */}
       {view.quiet_hours?.known === false ? (
-        <p className="mt-s text-warn text-[0.75rem]">
+        <p data-type="caption" className="mt-s text-warn">
           Your notification settings could not be read, so whether this digest reached your notifications is unknown.
         </p>
       ) : view.quiet_hours?.mute_all ? (
-        <p className="mt-s text-on-surface-low text-[0.75rem]">
+        <p data-type="caption" className="mt-s text-on-surface-low">
           All notifications are muted, so this digest is here and in the run journal but was not announced.
         </p>
       ) : view.quiet_hours?.enabled ? (
-        <p className="mt-s text-on-surface-low text-[0.75rem]">
+        <p data-type="caption" className="mt-s text-on-surface-low">
           Quiet hours {view.quiet_hours.start}–{view.quiet_hours.end}: a digest that lands inside that window is
           held back from your notifications. It is still here, and in the run journal.
         </p>
@@ -248,11 +248,11 @@ export function TriageDigestCard() {
       <SectionHead icon={CheckCheck} title="What your machine did" />
       {!view.auto_stage_ran ? (
         // NOT "0 actions". The stage never ran, which is a different fact and the default one.
-        <p className="text-on-surface-low text-[0.8125rem]">
+        <p data-type="body-s" className="text-on-surface-low">
           Auto-execution is off — nothing ran without you. Everything below is a proposal.
         </p>
       ) : autoDone.length === 0 ? (
-        <p className="text-on-surface-low text-[0.8125rem]">
+        <p data-type="body-s" className="text-on-surface-low">
           Auto-execution ran and found nothing it was allowed to do on its own.
         </p>
       ) : (
@@ -260,11 +260,11 @@ export function TriageDigestCard() {
           {autoDone.map((row) => (
             <li key={`${row.ordinal}-${row.action_type}`} className="flex items-start gap-m rounded-lg bg-surface-high px-m py-s">
               <div className="min-w-0 flex-1">
-                <p className="truncate text-on-surface text-[0.8125rem]">
+                <p data-type="body-s" className="truncate text-on-surface">
                   <span style={fvs(600)}>{verbFor(row.action_type)}</span>{' '}
                   {row.title || `item ${row.ordinal}`}
                 </p>
-                <p className="mt-0.5 text-on-surface-low text-[0.75rem]">
+                <p data-type="caption" className="mt-0.5 text-on-surface-low">
                   {row.ok ? 'because of' : 'failed —'} <code className="font-mono">{row.rule}</code>
                   {row.error ? <> · {row.error}</> : null}
                 </p>
@@ -275,7 +275,7 @@ export function TriageDigestCard() {
                 </Button>
               ) : (
                 // Why there is no button, rather than a button that would fail.
-                <span className="shrink-0 text-on-surface-low text-[0.75rem]">no undo recorded</span>
+                <span data-type="caption" className="shrink-0 text-on-surface-low">no undo recorded</span>
               )}
             </li>
           ))}
@@ -285,7 +285,7 @@ export function TriageDigestCard() {
       {/* ── Needs you ── */}
       <SectionHead icon={AlertTriangle} title="Needs you" count={pending.length} />
       {pending.length === 0 ? (
-        <p className="text-on-surface-low text-[0.8125rem]">Nothing is waiting on you in this digest.</p>
+        <p data-type="body-s" className="text-on-surface-low">Nothing is waiting on you in this digest.</p>
       ) : (
         <ul aria-label="Proposals that need you" className="flex flex-col gap-s">
           {pending.map((row) => (
@@ -293,22 +293,22 @@ export function TriageDigestCard() {
           ))}
         </ul>
       )}
-      {help && <p className="mt-s text-warn text-[0.75rem]" role="status">{help}</p>}
+      {help && <p data-type="caption" className="mt-s text-warn" role="status">{help}</p>}
 
       {/* ── The ledger ── */}
       <SectionHead icon={ScrollText} title="In the run journal" count={ledger.length} />
       {!view.ledger_complete ? (
         // The provider reported rows it could NOT stamp with a run key. Reporting "none" here
         // would present a recording gap as a result.
-        <p className="text-warn text-[0.8125rem]">
+        <p data-type="body-s" className="text-warn">
           Some of this run's rationales were not recorded, so this list is incomplete.
         </p>
       ) : ledger.length === 0 ? (
-        <p className="text-on-surface-low text-[0.8125rem]">This run wrote no ledger rows.</p>
+        <p data-type="body-s" className="text-on-surface-low">This run wrote no ledger rows.</p>
       ) : (
         <ul aria-label="This run's ledger rows" className="flex flex-col gap-1">
           {ledger.map((row) => (
-            <li key={`${row.kind}-${row.seq}`} className="flex items-baseline gap-s text-[0.75rem]">
+            <li key={`${row.kind}-${row.seq}`} data-type="caption" className="flex items-baseline gap-s">
               <code className="shrink-0 font-mono text-on-surface-low">{row.kind}</code>
               <span className="min-w-0 flex-1 truncate text-on-surface-low">
                 {row.ordinal ? `#${row.ordinal} ` : ''}{row.action_type ? `${row.action_type} — ` : ''}
@@ -335,11 +335,11 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
   return (
     <li className="flex flex-col gap-s rounded-lg bg-surface-high px-m py-s sm:flex-row sm:items-center">
       <div className="min-w-0 flex-1">
-        <p className="truncate text-on-surface text-[0.8125rem]">
+        <p data-type="body-s" className="truncate text-on-surface">
           <span className="mr-1 text-on-surface-low">#{n}</span>
           <span style={fvs(600)}>{verbFor(row.action_type)}</span> {row.title || `item ${n}`}
         </p>
-        <p className="mt-0.5 flex flex-wrap items-center gap-s text-[0.75rem]">
+        <p data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-s">
           <TierBadge tier={row.tier} clamped={row.clamped} />
           {row.source && <span className="text-on-surface-low">{row.source}</span>}
           {/* Same reason as the install-hint link above: this sits in a `<p>` beside the tier badge
@@ -350,7 +350,7 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
         </p>
       </div>
       {row.answered ? (
-        <span className="shrink-0 text-on-surface-low text-[0.75rem]">
+        <span data-type="caption" className="shrink-0 text-on-surface-low">
           You answered <span style={fvs(600)}>{row.answer || 'this'}</span>
         </span>
       ) : (
@@ -368,7 +368,7 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
                 title={`Never allow ${row.pattern_key}`}>Never</Button>
             </>
           ) : (
-            <span className="self-center text-on-surface-low text-[0.75rem]">no pattern to remember</span>
+            <span data-type="caption" className="self-center text-on-surface-low">no pattern to remember</span>
           )}
         </div>
       )}
@@ -400,13 +400,13 @@ function Badge({ tone, children }: { tone: 'primary' | 'warn' | 'danger' | 'mute
     : tone === 'warn' ? 'bg-warn/15 text-warn'
       : tone === 'primary' ? 'bg-primary/15 text-on-primary-tint'
         : 'bg-surface-highest text-on-surface-low'
-  return <span className={`rounded-full px-2 py-0.5 text-[0.75rem] ${cls}`} style={fvs(500)}>{children}</span>
+  return <span data-type="caption" className={`rounded-full px-2 py-0.5 ${cls}`} style={fvs(500)}>{children}</span>
 }
 
 function Header({ title, trailing }: { title: string; trailing?: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-m">
-      <h2 className="min-w-0 truncate text-on-surface text-[0.9375rem]" style={fvs(600)}>{title}</h2>
+      <h2 data-type="title-m" className="min-w-0 truncate text-on-surface" style={fvs(600)}>{title}</h2>
       {trailing}
     </div>
   )
@@ -414,7 +414,7 @@ function Header({ title, trailing }: { title: string; trailing?: React.ReactNode
 
 function SectionHead({ icon: Icon, title, count }: { icon: typeof CheckCheck; title: string; count?: number }) {
   return (
-    <p className="mb-s mt-l flex items-center gap-s text-on-surface text-[0.8125rem]" style={fvs(600)}>
+    <p data-type="label-s" className="mb-s mt-l flex items-center gap-s text-on-surface" style={fvs(600)}>
       <Icon size={14} className="shrink-0 text-on-surface-low" aria-hidden="true" />
       {title}
       {count !== undefined && count > 0 && <span className="text-on-surface-low" style={fvs(400)}>{count}</span>}

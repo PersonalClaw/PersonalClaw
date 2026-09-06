@@ -66,7 +66,7 @@ export function ComposeNoteModal({ onClose, onCreated }: {
           label="Note"
           hint="Its first line becomes the subject in your inbox. Everything else is the body."
           right={trimmed.length >= COUNTER_FROM
-            ? <span className="tabular-nums text-[0.75rem]" style={{ color: tooLong ? 'var(--color-danger)' : 'var(--color-on-surface-low)' }}>{trimmed.length}/{MAX_CHARS}</span>
+            ? <span data-type="caption" className="tabular-nums" style={{ color: tooLong ? 'var(--color-danger)' : 'var(--color-on-surface-low)' }}>{trimmed.length}/{MAX_CHARS}</span>
             : undefined}>
           <TextArea value={text} onChange={(v) => { setText(v); setErr('') }} rows={7} autoFocus
             placeholder="Ask about the invoice discrepancy before Friday" />

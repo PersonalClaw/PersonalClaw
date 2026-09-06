@@ -149,7 +149,7 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
             ? `Approve ${selectedItems.length} from ${groupLabel(selectedItems[0])}`
             : 'Approve selected'}
         </Button>
-        <span className="text-on-surface-low text-[0.8125rem]">
+        <span data-type="body-s" className="text-on-surface-low">
           {selectedItems.length > 0
             ? `${selectedItems.length} selected`
             : 'Batch approve works within one source and kind.'}
@@ -174,10 +174,10 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                   ariaLabel={`Select proposal: ${p?.title || it.message}`}
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>
+                  <div data-type="label-m" className="truncate text-on-surface" style={fvs(500)}>
                     {p?.title || it.message}
                   </div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-s text-on-surface-low text-[0.75rem]">
+                  <div data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-s text-on-surface-low">
                     <span>{groupLabel(it)}</span>
                     {kase ? (
                       <span>· {APPLY_CASE_LABEL[kase]}</span>
@@ -189,7 +189,8 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                   </div>
                   {p?.preview && (
                     <pre
-                      className={`mt-s max-h-40 overflow-auto whitespace-pre-wrap text-on-surface-var text-[0.8125rem] ${p.preview_kind === 'diff' ? 'font-mono' : ''}`}
+                      data-type="body-s"
+                      className={`mt-s max-h-40 overflow-auto whitespace-pre-wrap text-on-surface-var ${p.preview_kind === 'diff' ? 'font-mono' : ''}`}
                     >
                       {p.preview}
                     </pre>
@@ -205,8 +206,9 @@ export function ProposalsLens({ items, onChanged }: { items: InboxItem[]; onChan
                   <div
                     role="status"
                     aria-live="polite"
+                    data-type="body-s"
                     className={outcome
-                      ? `mt-s text-[0.8125rem] ${outcome.ok ? 'text-ok' : 'text-danger'}`
+                      ? `mt-s ${outcome.ok ? 'text-ok' : 'text-danger'}`
                       : 'sr-only'}
                   >
                     {outcome ? (outcome.ok ? 'Applied.' : `Not applied — ${outcome.error}. Still pending.`) : ''}

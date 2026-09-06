@@ -76,24 +76,25 @@ export function SnippetForm({ draft, onChange, nameLocked, registerInsert }: { d
             primitive is a wider change than this pass — so it self-names instead. */}
         <textarea ref={taRef} value={draft.content} onChange={(e) => set('content', e.target.value)} rows={8}
           aria-label="Snippet content" spellCheck={false} placeholder={'— {{author}}, {{role}}'}
-          className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono text-[0.8125rem] leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-y" />
+          data-type="body-s"
+          className="w-full rounded-lg bg-surface-container px-3 py-2.5 font-mono leading-relaxed text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary resize-y" />
       </Field>
 
       {includes.length > 0 && (
         <div className="rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 10%, transparent)' }}>
-          <div className="flex items-center gap-1.5 text-on-surface-var text-[0.8125rem] mb-1.5"><Puzzle size={13} className="text-info" /> Includes these snippets:</div>
+          <div data-type="body-s" className="flex items-center gap-1.5 text-on-surface-var mb-1.5"><Puzzle size={13} className="text-info" /> Includes these snippets:</div>
           <div className="flex flex-wrap gap-1.5">
-            {includes.map((n) => <span key={n} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var text-[0.75rem]"><Puzzle size={11} /> <span className="font-mono">{n}</span></span>)}
+            {includes.map((n) => <span key={n} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var"><Puzzle size={11} /> <span className="font-mono">{n}</span></span>)}
           </div>
         </div>
       )}
 
       {undeclared.length > 0 && (
         <div className="rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)' }}>
-          <div className="flex items-center gap-1.5 text-on-surface-var text-[0.8125rem] mb-1.5"><Wand2 size={13} className="text-primary" /> Placeholders not yet declared:</div>
+          <div data-type="body-s" className="flex items-center gap-1.5 text-on-surface-var mb-1.5"><Wand2 size={13} className="text-primary" /> Placeholders not yet declared:</div>
           <div className="flex flex-wrap gap-1.5">
             {undeclared.map((n) => (
-              <button key={n} type="button" onClick={() => addVar(n)} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface text-[0.75rem] hover:bg-surface-highest transition-colors">
+              <button key={n} type="button" onClick={() => addVar(n)} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface hover:bg-surface-highest transition-colors">
                 <Plus size={12} /> <span className="font-mono">{n}</span>
               </button>
             ))}

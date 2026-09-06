@@ -648,6 +648,218 @@ def test_write_never_stamps_a_blocked_row(fixture_repos: Path, tmp_path: Path) -
     assert "last_validated" not in after["apps"][0]
 
 
+# ── signer identity: three facts a row can carry, kept three ──────────────────
+#
+# The whole risk in this field is the ABSENT case, so every test here asserts against
+# a two-state reading: a row that says nothing must not come out looking like a row
+# that said "unsigned", and neither may come out looking like a row that named a signer.
+
+
+def _renamed_clean_repo(tmp_path: Path, new_name: str) -> str:
+    """A clean-app clone whose manifest declares ``new_name``, so several rows can sit in
+    one candidate document without tripping the unique-name rule."""
+
+    def rename(tree: Path) -> None:
+        manifest = tree / "app.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        # Vacuity: if the fixture's name changes, fail loudly instead of renaming nothing.
+        assert data["name"] == "registry-fixture-clean", data.get("name")
+        data["name"] = new_name
+        manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    return _variant(tmp_path, mutate=rename, name=new_name)
+
+
+def _document(tmp_path: Path, rows: list[dict[str, Any]], *, name: str = "candidate") -> Path:
+    path = tmp_path / f"{name}.json"
+    path.write_text(json.dumps({"apps": rows}, indent=2), encoding="utf-8")
+    return path
+
+
+def test_a_declared_signer_is_named_in_the_verdict(tmp_path: Path) -> None:
+    row = _validate_one(_row(_variant(tmp_path), signer="AcmeSoftworks"))
+    assert row.listable, _codes(row.blocking)
+    assert row.signer_state == validator.SIGNER_NAMED
+    assert row.signer == "AcmeSoftworks"
+    assert row.to_dict()["signer"] == "AcmeSoftworks"
+
+
+def test_a_listing_that_omits_the_signer_lists_and_reads_as_no_claim(tmp_path: Path) -> None:
+    """The declared policy for the absent case: optional, listable, published as a
+    non-answer. Omission must not block and must not be reported as ``unsigned``."""
+    row = _validate_one(_row(_variant(tmp_path)))
+    assert row.listable, _codes(row.blocking)
+    assert row.signer_state == validator.SIGNER_UNDECLARED
+    assert row.signer is None
+    assert not [c for c in _codes(row.blocking) if c.startswith("signer")]
+
+
+def test_an_explicit_unsigned_declaration_lists_too(tmp_path: Path) -> None:
+    row = _validate_one(_row(_variant(tmp_path), signer="unsigned"))
+    assert row.listable, _codes(row.blocking)
+    assert row.signer_state == validator.SIGNER_UNSIGNED
+    # The identity is empty because there is no signer — but the STATE says the author
+    # took a position, which is the fact the empty identity cannot carry.
+    assert row.signer is None
+
+
+def test_declared_unsigned_and_an_omitted_field_are_different_facts(tmp_path: Path) -> None:
+    """The crux. Three rows, three states, three distinguishable cells in the comment
+    a reviewer actually reads. If any two of these collapse, this reds."""
+    rows = [
+        _row(_renamed_clean_repo(tmp_path, "signer-named"), name="signer-named", signer="Acme"),
+        _row(
+            _renamed_clean_repo(tmp_path, "signer-unsigned"),
+            name="signer-unsigned",
+            signer="unsigned",
+        ),
+        _row(_renamed_clean_repo(tmp_path, "signer-silent"), name="signer-silent"),
+    ]
+    # Vacuity: the third row must really have no 'signer' key, or this proves nothing.
+    assert "signer" not in rows[2]
+
+    path = _document(tmp_path, rows)
+    report = tmp_path / "report.json"
+    markdown = tmp_path / "report.md"
+    code = validator.main(
+        [str(path), "--allow-file-repos", "--report", str(report), "--markdown", str(markdown)]
+    )
+    assert code == 0
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["rows_validated"] == 3
+    states = {r["name"]: (r["signer_state"], r["signer"]) for r in payload["rows"]}
+    assert states == {
+        "signer-named": ("named", "Acme"),
+        "signer-unsigned": ("unsigned", None),
+        "signer-silent": ("undeclared", None),
+    }
+
+    body = markdown.read_text(encoding="utf-8")
+    cells = {
+        line.split("|")[1].strip(): line.split("|")[3].strip()
+        for line in body.splitlines()
+        if line.startswith("| `signer-")
+    }
+    assert cells == {
+        "`signer-named`": "`Acme` (declared)",
+        "`signer-unsigned`": "declared unsigned",
+        "`signer-silent`": "no claim",
+    }
+    # Three distinct renderings, asserted as a set too: equality above would still pass
+    # if two states were given the same phrase and the mapping were updated to match.
+    assert len(set(cells.values())) == 3
+    # And the comment says the named one is a claim rather than a verified fact.
+    assert "**Signer** is what the row *declares*" in body
+
+
+def test_the_existing_valid_sample_makes_no_signer_claim(
+    fixture_repos: Path, tmp_path: Path
+) -> None:
+    """The committed sample listing is unchanged by this field — it neither gained a
+    ``signer`` nor started needing one."""
+    raw = json.loads((FIXTURE_REGISTRIES / "valid.json").read_text(encoding="utf-8"))
+    assert all("signer" not in row for row in raw["apps"])
+    path = _candidate("valid", fixture_repos, tmp_path)
+    report = tmp_path / "report.json"
+    assert validator.main([str(path), "--allow-file-repos", "--report", str(report)]) == 0
+    row = json.loads(report.read_text(encoding="utf-8"))["rows"][0]
+    assert row["signer_state"] == "undeclared"
+    assert row["signer"] is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,  # JSON null: writing the key with no value is a statement, not an omission
+        "",
+        "   ",
+        "has space",
+        "../../etc/passwd",
+        "back`tick",
+        "-leading-dash",
+        "x" * 65,
+        123,
+        ["Acme"],
+        {"name": "Acme"},
+    ],
+)
+def test_a_refused_signer_is_never_read_as_unsigned_or_as_omitted(value: Any) -> None:
+    state, identity = validator.classify_signer({"signer": value})
+    assert state == validator.SIGNER_INVALID
+    assert identity is None
+    reasons = validator.check_row_schema(
+        _row("https://github.com/personalclaw/x", signer=value), allow_file_repos=False
+    )
+    assert "signer_invalid" in _codes(reasons), _codes(reasons)
+
+
+def test_a_signer_may_not_be_named_after_the_reserved_declaration() -> None:
+    """``unsigned`` is a legal identity shape, so it has to be spent on the declaration.
+    A row that writes it gets the declaration, never an identity called "unsigned"."""
+    assert validator.SIGNER_RE.match(validator.UNSIGNED_DECLARATION)
+    assert validator.classify_signer({"signer": "unsigned"}) == (validator.SIGNER_UNSIGNED, None)
+
+
+def test_the_signer_claim_is_echoed_on_a_blocked_row(tmp_path: Path) -> None:
+    """A refusal for some other reason must not swallow what the row said about signing —
+    otherwise a blocked row reads as a row that made no claim."""
+    row = _validate_one(_row(_variant(tmp_path), signer="Acme", license="Apache-2.0"))
+    assert not row.listable
+    assert row.signer_state == validator.SIGNER_NAMED
+    assert row.signer == "Acme"
+
+
+def test_adding_a_signer_to_an_existing_row_re_validates_it(tmp_path: Path) -> None:
+    """``signer`` is author-owned, so it belongs to a row's change identity. If it did
+    not, a PR that only edited the signer would be skipped as an untouched listing."""
+    repo = _variant(tmp_path)
+    base = _document(tmp_path, [_row(repo)], name="base")
+    head = _document(tmp_path, [_row(repo, signer="Acme")], name="head")
+    result = validator.validate_registry(
+        json.loads(head.read_text(encoding="utf-8"))["apps"],
+        allow_file_repos=True,
+        base_apps=json.loads(base.read_text(encoding="utf-8"))["apps"],
+    )
+    assert result.rows_validated == 1
+    assert result.rows_skipped_unchanged == 0
+    assert result.rows[0].signer == "Acme"
+
+
+def test_the_signer_field_is_optional_in_the_published_schema() -> None:
+    listing = validator.build_schema()["properties"]["apps"]["items"]
+    assert "signer" in listing["properties"]
+    assert "signer" not in listing["required"]
+    assert listing["properties"]["signer"]["pattern"] == validator.SIGNER_RE.pattern
+
+
+def test_the_validator_records_the_signer_without_verifying_anything() -> None:
+    """The credential-free half of the signing work stops here. Recording a claim needs
+    no key material; the moment this script grew a verifier it would need a trust store
+    and the split it was carved out of would be gone."""
+    source = (STAGED / "validate_registry.py").read_text(encoding="utf-8")
+    core_imports = sorted(
+        line.strip() for line in source.splitlines() if line.startswith("from personalclaw")
+    )
+    assert core_imports == [
+        "from personalclaw.apps.manifest import PROVIDER_TYPES, AppManifest",
+        "from personalclaw.supply_chain import ScanReport, SkillScanner, TrustTier, Verdict",
+    ], core_imports
+    assert "personalclaw.security" not in source
+    # The signer is read off the row and never derived, so it stays author-owned: nothing
+    # here stamps it, and no key material or trust store is reachable from this script.
+    assert "signer" not in validator.CI_OWNED_FIELDS
+    assert "signer" in validator.AUTHOR_FIELDS
+
+
+def test_the_listing_policy_declares_what_an_omitted_signer_means() -> None:
+    """The absent case is only "handled by the declared policy" if the policy is written
+    down where a contributor reads it."""
+    contributing = (STAGED / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "**`signer` is optional, and saying nothing is a supported answer.**" in contributing
+    assert '"signer": "unsigned"' in contributing
+    assert "does not verify any of this" in contributing
+
+
 # ── the schema, the live data, and the policy documents ───────────────────────
 
 

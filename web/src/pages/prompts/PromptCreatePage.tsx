@@ -65,15 +65,15 @@ export function PromptCreatePage({ onBack, onCreated, mode = 'user' }: {
           <div className="flex min-w-0 flex-1 flex-col gap-l lg:overflow-y-auto lg:pb-2xl lg:pr-1">
             {!isSnippet && (
               <div className="flex items-center gap-m">
-                <span className="text-on-surface-var text-[0.8125rem]">Kind</span>
+                <span data-type="body-s" className="text-on-surface-var">Kind</span>
                 <Segmented ariaLabel="Prompt kind" value={kind} onChange={(v) => setKind(v as PromptKind)} options={[{ key: 'user', label: 'User' }, { key: 'system', label: 'System' }]} />
-                <span className="text-on-surface-low text-[0.75rem]">{kind === 'system' ? 'Bound to a use-case, injected as the system prompt.' : 'Invoked in chat with filled-in variables.'}</span>
+                <span data-type="caption" className="text-on-surface-low">{kind === 'system' ? 'Bound to a use-case, injected as the system prompt.' : 'Invoked in chat with filled-in variables.'}</span>
               </div>
             )}
             {isSnippet
               ? <SnippetForm draft={snipDraft} onChange={setSnipDraft} registerInsert={(fn) => { insertRef.current = fn }} />
               : <PromptForm draft={draft} onChange={setDraft} registerInsert={(fn) => { insertRef.current = fn }} />}
-            {err && <p ref={errRef} role="alert" className="text-danger text-[0.8125rem]">{err}</p>}
+            {err && <p ref={errRef} role="alert" data-type="body-s" className="text-danger">{err}</p>}
           </div>
 
           <aside className="flex shrink-0 flex-col lg:w-[400px] lg:overflow-hidden">

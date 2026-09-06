@@ -65,7 +65,8 @@ function applyView(rows: Row[], q: string, sort: SortKey, source: string): Row[]
 function OpenFullPageBar({ onOpen }: { onOpen: () => void }) {
   return (
     <button type="button" onClick={onOpen}
-      className="mb-l inline-flex items-center gap-1.5 self-start rounded-md px-2 py-1 text-[0.8125rem] text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface">
+      data-type="body-s"
+      className="mb-l inline-flex items-center gap-1.5 self-start rounded-md px-2 py-1 text-on-surface-low transition-colors hover:bg-surface-high hover:text-on-surface">
       <Maximize2 size={13} /> Open full page
     </button>
   )
@@ -196,8 +197,8 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
                 <ListRow index={i} accent={sourceTone(r.source)} onClick={() => setQuery({ open: r.name, edit: null })} label={r.name}>
                   <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${sourceTone(r.source)} 16%, transparent)` }}><Icon size={19} style={{ color: sourceTone(r.source) }} /></span>
                   <div className="flex-1 min-w-0">
-                    <span className="truncate text-on-surface text-[0.9375rem] font-mono" style={fvs(500)}>{r.name}</span>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
+                    <span data-type="label-m" className="truncate text-on-surface font-mono" style={fvs(500)}>{r.name}</span>
+                    <div data-type="body-s" className="mt-0.5 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low">
                       <span>{sourceLabel(r.source, r.tags)}</span>
                       {vars.length > 0 && <span>{vars.length} var{vars.length > 1 ? 's' : ''}</span>}
                       {/* 🪤 NO LITERAL `· ` HERE, AND A CONDITIONAL ONE WOULD NOT HELP. This read
@@ -223,7 +224,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
                       {r.description && <span className="truncate">{r.description}</span>}
                     </div>
                   </div>
-                  {(r.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{r.tags!.slice(0, 2).map((t) => <span key={t} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{t}</span>)}</div>}
+                  {(r.tags?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{r.tags!.slice(0, 2).map((t) => <span key={t} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{t}</span>)}</div>}
                 </ListRow>
                 </ContextMenu>
                 </Disintegrate>

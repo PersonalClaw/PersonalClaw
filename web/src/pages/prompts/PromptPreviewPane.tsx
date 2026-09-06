@@ -63,7 +63,7 @@ export function PromptPreviewPane({ draft }: { draft: PromptDraft }) {
 
       {vars.length > 0 && (
         <div className="flex flex-col gap-2 rounded-lg bg-surface-container p-2.5">
-          <div className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Sample values</div>
+          <div data-type="caption" className="text-on-surface-low uppercase tracking-wide">Sample values</div>
           {vars.map((v) => (
             <SampleField key={v.name} v={v} value={values[v.name]} onChange={(x) => setVal(v.name, x)} />
           ))}
@@ -71,20 +71,20 @@ export function PromptPreviewPane({ draft }: { draft: PromptDraft }) {
       )}
 
       {includes.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 text-on-surface-low text-[0.75rem]">
+        <div data-type="caption" className="flex flex-wrap items-center gap-1.5 text-on-surface-low">
           <Puzzle size={12} /> includes:
           {includes.map((n) => <code key={n} className="rounded bg-surface-high px-1 font-mono">{n}</code>)}
         </div>
       )}
 
       {error ? (
-        <div role="alert" className="flex items-start gap-2 rounded-lg px-3 py-2 text-[0.8125rem]"
+        <div role="alert" data-type="body-s" className="flex items-start gap-2 rounded-lg px-3 py-2"
           style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}>
           <AlertTriangle size={15} className="mt-0.5 shrink-0" />
           <span>Couldn't render this template: {error}</span>
         </div>
       ) : (
-        <pre className="min-h-[120px] flex-1 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-container p-3 font-mono text-[0.8125rem] leading-relaxed text-on-surface">
+        <pre data-type="body-s" className="min-h-[120px] flex-1 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-container p-3 font-mono leading-relaxed text-on-surface">
           {rendered || <span className="text-on-surface-low">Type a template to see the assembled output.</span>}
         </pre>
       )}
@@ -93,9 +93,11 @@ export function PromptPreviewPane({ draft }: { draft: PromptDraft }) {
 }
 
 function SampleField({ v, value, onChange }: { v: PromptVariable; value: unknown; onChange: (v: unknown) => void }) {
-  const base = 'w-full rounded-md bg-surface px-2.5 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
+  // The type role (body-s) can't live in this element-less class const — data-type is an
+  // attribute, so each consumer control below carries it (same treatment as chat's VarInput).
+  const base = 'w-full rounded-md bg-surface px-2.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary'
   const label = (
-    <label className="flex items-center gap-1.5 text-on-surface-var text-[0.75rem]">
+    <label data-type="caption" className="flex items-center gap-1.5 text-on-surface-var">
       <code className="font-mono text-on-surface">{v.name}</code>
       {v.required && <span className="text-danger">*</span>}
     </label>
@@ -106,7 +108,8 @@ function SampleField({ v, value, onChange }: { v: PromptVariable; value: unknown
       <div className="flex items-center justify-between gap-2">
         {label}
         <button type="button" onClick={() => onChange(!value)} aria-label={v.name}
-          className="inline-flex items-center gap-1.5 rounded-pill px-2.5 h-7 text-[0.75rem] transition-colors"
+          data-type="caption"
+          className="inline-flex items-center gap-1.5 rounded-pill px-2.5 h-7 transition-colors"
           style={value ? { background: 'var(--color-primary)', color: 'var(--color-on-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
           {value ? 'true' : 'false'}
         </button>
@@ -116,7 +119,7 @@ function SampleField({ v, value, onChange }: { v: PromptVariable; value: unknown
   if (v.type === 'select') {
     return (
       <div className="flex flex-col gap-1">{label}
-        <select value={sval} onChange={(e) => onChange(e.target.value)} aria-label={v.name} className={`${base} h-8`}>
+        <select value={sval} onChange={(e) => onChange(e.target.value)} aria-label={v.name} data-type="body-s" className={`${base} h-8`}>
           <option value="">—</option>
           {(v.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
@@ -124,11 +127,11 @@ function SampleField({ v, value, onChange }: { v: PromptVariable; value: unknown
     )
   }
   if (v.type === 'textarea') {
-    return <div className="flex flex-col gap-1">{label}<textarea value={sval} onChange={(e) => onChange(e.target.value)} rows={2} aria-label={v.name} className={`${base} py-1.5 resize-y`} /></div>
+    return <div className="flex flex-col gap-1">{label}<textarea value={sval} onChange={(e) => onChange(e.target.value)} rows={2} aria-label={v.name} data-type="body-s" className={`${base} py-1.5 resize-y`} /></div>
   }
   return (
     <div className="flex flex-col gap-1">{label}
-      <input type={v.type === 'number' ? 'number' : 'text'} value={sval} onChange={(e) => onChange(e.target.value)} aria-label={v.name} className={`${base} h-8`} />
+      <input type={v.type === 'number' ? 'number' : 'text'} value={sval} onChange={(e) => onChange(e.target.value)} aria-label={v.name} data-type="body-s" className={`${base} h-8`} />
     </div>
   )
 }

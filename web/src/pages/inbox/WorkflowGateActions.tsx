@@ -68,12 +68,12 @@ export function WorkflowGateActions({ runId, nodeId, onChanged, navigate }: {
   }, [runId, onChanged, load])
 
   if (conts === null) {
-    return <p className="text-on-surface-low text-[0.8125rem]">Loading the request…</p>
+    return <p data-type="body-s" className="text-on-surface-low">Loading the request…</p>
   }
 
   if (conts.length === 0) {
     return (
-      <p className="text-on-surface-low text-[0.8125rem]">
+      <p data-type="body-s" className="text-on-surface-low">
         This request was already answered.{' '}
         <TextLink onClick={() => navigate(`workflows/${runId}`)}>
           Open the run

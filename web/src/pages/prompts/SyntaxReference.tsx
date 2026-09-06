@@ -31,7 +31,7 @@ export function SyntaxReference({ onInsert }: { onInsert?: (snippet: string) => 
   }, [fnsByCat])
 
   return (
-    <div className="flex flex-col gap-3 text-[0.8125rem]">
+    <div data-type="body-s" className="flex flex-col gap-3">
       <div className="flex items-center gap-1.5 text-on-surface-var"><BookOpen size={14} /> <span data-type="title-s">Syntax</span></div>
 
       {/* Constructs — the grammar. Each row inserts a working scaffold. */}
@@ -46,7 +46,7 @@ export function SyntaxReference({ onInsert }: { onInsert?: (snippet: string) => 
               <Icon size={13} className="mt-0.5 shrink-0 text-primary" />
               <span className="min-w-0 flex-1">
                 <span className="block text-on-surface">{c.label}</span>
-                <code className="block truncate font-mono text-[0.75rem] text-on-surface-low">{c.snippet.split('\n')[0]}</code>
+                <code data-type="caption" className="block truncate font-mono text-on-surface-low">{c.snippet.split('\n')[0]}</code>
               </span>
             </button>
           )
@@ -55,7 +55,7 @@ export function SyntaxReference({ onInsert }: { onInsert?: (snippet: string) => 
 
       {/* Functions — grouped by category, collapsible, click to insert fn(). */}
       <div className="flex flex-col gap-0.5 border-t border-outline-variant/40 pt-2">
-        <div className="px-2 pb-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide">Functions</div>
+        <div data-type="caption" className="px-2 pb-1 text-on-surface-low uppercase tracking-wide">Functions</div>
         {cats.map((cat) => {
           const fns = fnsByCat[cat] ?? []
           const open = openCat === cat
@@ -65,7 +65,7 @@ export function SyntaxReference({ onInsert }: { onInsert?: (snippet: string) => 
                 className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left hover:bg-surface-high transition-colors">
                 <ChevronRight size={13} className={`shrink-0 text-on-surface-low transition-transform ${open ? 'rotate-90' : ''}`} />
                 <span className="capitalize text-on-surface-var">{cat}</span>
-                <span className="ml-auto rounded-pill bg-surface-high px-1.5 text-[0.75rem] text-on-surface-low">{fns.length}</span>
+                <span data-type="caption" className="ml-auto rounded-pill bg-surface-high px-1.5 text-on-surface-low">{fns.length}</span>
               </button>
               {open && (
                 <div className="flex flex-col gap-0.5 pb-1 pl-5">
@@ -74,8 +74,8 @@ export function SyntaxReference({ onInsert }: { onInsert?: (snippet: string) => 
                       title={f.description}
                       className="group flex flex-col rounded-md px-2 py-1 text-left hover:bg-surface-high transition-colors disabled:cursor-default"
                       disabled={!onInsert}>
-                      <code className="font-mono text-[0.75rem] text-primary">{f.signature}</code>
-                      <span className="text-on-surface-low text-[0.75rem]">{f.description}</span>
+                      <code data-type="caption" className="font-mono text-primary">{f.signature}</code>
+                      <span data-type="caption" className="text-on-surface-low">{f.description}</span>
                     </button>
                   ))}
                 </div>
