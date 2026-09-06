@@ -1091,6 +1091,19 @@ class TestNotifMeta:
     def test_hook_key_returns_none(self):
         assert self._orch()._notif_meta("hook:h1") is None
 
+    def test_run_owned_key_is_not_parsed_as_a_channel(self):
+        """`workflow:<run>:<node>` is a namespace prefix, not a channel id (#259).
+
+        `chan, ts = key.split(":", 1)` reads any unrecognized prefix as a channel, so a
+        run-owned key asked the delivery provider for a thread link in a channel named
+        "workflow" — a vendor call on parsed garbage.
+        """
+        from personalclaw.workflows.ownership import owned_key
+
+        orch = self._orch()
+        assert orch._notif_meta(owned_key("11b9a34c", "synthesize")) is None
+        orch._channel_delivery.build_thread_link.assert_not_called()
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Tests: _init_dashboard and _init_mcp_discovery
@@ -1906,6 +1919,81 @@ class TestSubagentDone:
 
         await on_done([info])
         orch.dashboard_state.notify.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_run_owned_stage_is_not_injected_as_a_channel_session(self):
+        """A `workflow:<run>:<node>` completion must NOT be routed as a chat (#259).
+
+        The key is a RUN-OWNED session (`ownership.owned_key`), consumed by the run's own
+        controller polling `SubagentManager.get`. On `main` it matched the catch-all
+        `not parent_key.startswith(("cron:", "subagent:"))`, so a finished stage was treated as
+        a channel: `sessions.get_or_create("workflow:...")` created an ACP session for a session
+        that never existed and spent a full model turn injecting the result into it, retried
+        `_MAX_INJECT_ATTEMPTS` times. `dispatch_stage` sets `silent=True` and documents the
+        opposite intent — "completions belong in the run journal".
+        """
+        from personalclaw.workflows.ownership import owned_key
+
+        orch, mock_sm = self._setup_orch_with_subagent_mgr()
+        on_done = mock_sm.call_args[1]["on_done"]
+        orch.subagent_mgr.running = []
+
+        info = MagicMock()
+        info.id = "b961a327"
+        info.parent_session_key = owned_key("11b9a34c", "synthesize")
+        info.error = None
+        info.result = "the stage's answer"
+        info.result_path = ""
+        info.task = "synthesize the thing"
+        info.agent = ""
+        info.silent = True
+        info.elapsed = 902.0
+        info.started = 0.0
+
+        with patch(
+            "personalclaw.gateway.stream_and_collect",
+            new_callable=AsyncMock,
+            return_value="llm response",
+        ) as injected:
+            await on_done([info])
+
+        orch.sessions.get_or_create.assert_not_called()
+        injected.assert_not_called()
+        # And the tail it now lands in still honours `silent` — a run's stage completing is not
+        # a notification, it is a ledger row.
+        orch.dashboard_state.notify.assert_not_called()
+
+    def test_the_completion_router_reads_the_OWNED_PREFIX_not_a_literal(self):
+        """The rail: one definition of the run-owned key namespace.
+
+        `ownership.OWNED_PREFIX` is where that string lives; a literal `"workflow:"` copied into
+        the router is a second definition that a key-format change would silently strip the
+        exclusion from. Asserted over the SOURCE of `_init_subagents`, because the branch is a
+        closure inside it and there is no other way to see which spelling it used.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from personalclaw.gateway import GatewayOrchestrator
+        from personalclaw.workflows import ownership
+
+        src = textwrap.dedent(inspect.getsource(GatewayOrchestrator._init_subagents))
+        tree = ast.parse(src)
+        literals = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and node.value == ownership.OWNED_PREFIX
+        ]
+        assert not literals, (
+            f"`_init_subagents` hard-codes {ownership.OWNED_PREFIX!r} instead of reading "
+            "`ownership.OWNED_PREFIX`"
+        )
+        attrs = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+        assert "OWNED_PREFIX" in attrs, (
+            "the completion router no longer excludes the run-owned namespace at all — a "
+            "finished stage is being routed as a channel session again"
+        )
 
     @pytest.mark.asyncio
     async def test_slack_parent_injects(self):
