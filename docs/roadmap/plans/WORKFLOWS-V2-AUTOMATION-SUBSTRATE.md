@@ -1,6 +1,6 @@
 # WORKFLOWS-V2-AUTOMATION-SUBSTRATE
 
-**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2AUT.md`](../atomic/WF2AUT.md) as 13 atomic plan(s).
+**Status:** DECOMPOSED — the executable work now lives in [`../atomic/WF2AUT.md`](../atomic/WF2AUT.md) as 14 atomic plan(s).
 
 This plan was split because parts of it blocked on other plans, which forced it to sit half-done while other work ran. Each atom below its own file executes start-to-finish in one go; the dependency graph lives in [`../atomic/dag.json`](../atomic/dag.json).
 
@@ -6122,3 +6122,22 @@ own commit.
   normalized `resume_target_of` shape, wake-vs-resume dispatch, fail-closed missing-target dispositions;
   `node_id` descoped — run-targeting is the safe contract). The 🟡 landed-but-open ratchet marker in the
   atomic table is promoted to ✅ and `dag.json` flipped `todo` → `done` with `pr: "#2344"`.
+- **[2026-09-06][`WF2AUT-11`] FLIP → `done` (merged PR #2504).** Both halves, and the second one only
+  became reachable by correcting where the first was filed. The 2026-08-27 owner ruling re-scoped this
+  atom to "port the driver, THEN delete" and filed the port under LOOPS-EVOLUTION Phase 4, which owns
+  the loop-cycle driver. That plan then closed with every `WF2LOO` atom `done` and without ever doing
+  the port, leaving `autonudge.py` the live tick engine with production importers — a gate satisfied on
+  paper and void in fact, the same defect class the 2026-09-05 audit found on `AR-1` and `SH-4`. The
+  2026-09-05 addendum therefore re-homed the port to this atom's first half, and that is what shipped.
+  No new kind was minted: `idle` was already in `KINDS` with a runtime, and §2's disposition row says
+  ABSORBED *as* `kind:idle`. Nudge loops are now `Trigger{kind: idle}` rows (`SPEC_KEYS["idle"]` widened
+  by `message`/`max_cycles`/`stop_sentinel_path`); the per-loop asyncio timers gave way to
+  `loop.tick_once` → `idle_poll.due_fires`; a non-empty `spec.message` routes a due fire to the new
+  `triggers/nudge.py` adapter, whose `on_fire` is the gateway's unchanged loop-cycle driver.
+  `src/personalclaw/autonudge.py` is deleted with **no shim**, all 10 importers repointed, and
+  `manager.pause`'s private `svc._loops` peek replaced by a public `list_all()`. Backpressure contracts
+  are preserved exactly, `/api/autonudge` and `autonudge_state` stay byte-compatible under a new field
+  census, and legacy `autonudge.json` migrates losslessly at `start()`. One hardening the poll world
+  required: gateway `_fire` now also drops on `_suppress_autonudge_rearm`, the re-prompt-gap fence the
+  timers used to give for free. The 🟡 landed marker in the atomic table is promoted to ✅ and
+  `dag.json` flipped `blocked` → `done`.

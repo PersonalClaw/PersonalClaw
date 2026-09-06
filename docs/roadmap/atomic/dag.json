@@ -3803,7 +3803,7 @@
     {
       "plan": "WORKFLOWS-V2-AUTOMATION-SUBSTRATE",
       "code": "WF2AUT",
-      "status": "in_progress",
+      "status": "done",
       "atoms": [
         {
           "id": "WF2AUT-1",
@@ -3918,14 +3918,14 @@
         {
           "id": "WF2AUT-11",
           "title": "idle kind runtime for user automations + autonudge.py deletion (loop-ticker absorption)",
-          "status": "blocked",
+          "status": "done",
           "scope": "§2 autonudge.py ABSORBED as kind:idle (LAST); §7 step 9; §1.2 idle kind; Risks (Loops coupling)",
           "done_when": "kind:idle fires for user automations preserving reactive re-arm/delivered-only counting/mid-turn-drop; autonudge.py deleted and the loop tick engine rides kind:idle (this half only after LOOPS-EVOLUTION Phase 4)",
           "deps": [
             "WF2AUT-3",
             "EXT:LOOPS-EVOLUTION:Phase 4 loop-ticker before autonudge deletion"
           ],
-          "blocked_reason": "OWNER RULING 2026-08-27 (question 7 of 11). Q: the atom as scoped deletes a 358-line module, but autonudge.py is still the LIVE loop tick engine -- so deleting it breaks rather than retires. RULED: RE-SCOPE to 'port the driver, THEN delete', and file the port under LOOPS-EVOLUTION Phase 4, which owns the loop cycle driver. Reasoning: a retirement atom whose named thing is still load-bearing is mis-labelled work, not ready work -- the same shape the landed-atom census flags when a RETIREMENT atom's target still exists on the ref (that is evidence AGAINST completion, not for it). The deletion stays in this atom and becomes trivially true once the port lands. AUDIT ADDENDUM 2026-09-05: the ruling filed the port under LOOPS-EVOLUTION Phase 4, but that plan has since CLOSED (all WF2LOO atoms done) without the port — autonudge.py is still the live loop tick engine with production importers (gateway.py, triggers/idle_poll.py, tasks/hierarchy_handlers.py). Same defect class as AR-1's dead gate. The port therefore re-homes to THIS atom's first half: port the driver onto kind:idle, THEN delete autonudge.py. Real implementation work (M/L), sequenced after the PP-16 loop-drain seams it rides."
+          "evidence": "done 2026-09-06 (PR #2504): the port the 2026-09-05 audit addendum re-homed here landed whole, then the deletion became trivially true exactly as the 2026-08-27 owner ruling intended. No new kind was minted — `idle` was already in KINDS with a shipped runtime (triggers/idle_poll.py, this atom's first half), and the plan's own disposition row says ABSORBED *as* kind:idle. Nudge loops became Trigger{kind: idle} rows (SPEC_KEYS['idle'] widened by message/max_cycles/stop_sentinel_path; turn-churning counters in the idle sidecar); the per-loop asyncio timers died in favour of loop.tick_once -> idle_poll.due_fires; a non-empty spec.message routes a due fire to the new adapter triggers/nudge.py (AutoNudgeService.deliver — stop-sentinel/max_cycles/delivered-only preserved verbatim in meaning), whose on_fire is the gateway's unchanged loop-cycle driver. src/personalclaw/autonudge.py DELETED with NO shim; all 10 importers repointed; manager.pause's private svc._loops peek became public list_all(). Backpressure contracts preserved exactly (fail-open notify_user_input/notify_turn_complete at the chat hot paths, turn-end re-arm as an armed_at restamp, 3-consecutive-errors deactivation); /api/autonudge wire and autonudge_state WS payloads byte-compatible (field-census test added); legacy autonudge.json migrates losslessly at start(). One hardening the poll world required: gateway _fire also drops on _suppress_autonudge_rearm, the re-prompt-gap fence the timers gave for free. Verified on main: autonudge.py absent, triggers/nudge.py present, zero live importers (the one residual mention is a comment in triggers/disposition.py recording the removal). Gates: rewritten test_autonudge.py (26) + test_triggers_idle_poll.py (23), triggers suites (231), scheduling/loop (172), gateway (112), dashboard_chat (275), snapshot/portability/pp16 (240), wire/pack censuses (52)."
         },
         {
           "id": "WF2AUT-12",
@@ -9840,10 +9840,10 @@
         "code": "WF2AUT",
         "plan": "WORKFLOWS-V2-AUTOMATION-SUBSTRATE",
         "total_atoms": 14,
-        "done": 13,
+        "done": 14,
         "in_progress": 0,
         "todo": 0,
-        "blocked": 1
+        "blocked": 0
       },
       {
         "code": "CC",
