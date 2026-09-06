@@ -6434,7 +6434,7 @@
             "AR-9",
             "EXT:WORKFLOWS-V2:core slices own pipeline-shaped multi-agent orchestration; rooms are only the deliberative remainder"
           ],
-          "blocked_reason": "OWNER-GATED (correction 2026-09-06). The 2026-09-05 audit found this atom's ext gate named a council-template precursor owned by WORKFLOWS-V2-LOOPS-EVOLUTION, but that plan closed with every atom done and never shipped one — the edge resolved to a done atom (WF2LOO-3) while the deliverable it named did not exist, so the gate was satisfied on paper and void in fact, and it walled off AR-2..8. The blocked_reason asked the owner to either mint the precursor as a first-class atom or waive it; the first option is taken here, because the source plan's own header calls the council template the cheap precursor to 'build this first, on the engine' and makes it the input to owner task 1. It is minted as AR-9 and this atom now depends on it. What remains is genuinely the owner's: per owner task 1, re-confirm after AR-9 ships that DELIBERATION (not fan-out) is the missing capability. Note the plan states the honest cheap outcome plainly — 'if the council template satisfies demand, rooms may stay deferred indefinitely — that outcome is acceptable and cheap to discover' — so a 'no' here correctly closes AR-1..AR-9 as satisfied-by-precursor rather than leaving 8 atoms of phantom work on the board."
+          "blocked_reason": "OWNER-GATED — and now on exactly one question, nothing else. The precursor SHIPPED: AR-9's council template merged 2026-09-06 (PR #2507), closing the deliverable WORKFLOWS-V2-LOOPS-EVOLUTION had promised and never shipped, which is what made this atom's original ext gate void in fact (audit 2026-09-05). Every other deferral condition in the plan header is satisfied: WORKFLOWS-V2 core slices own pipeline-shaped orchestration, and ACP-AGENT-PARITY, AUTONOMY-GUARDRAILS and INBOX-NOTIFICATIONS-UNIFICATION have all landed. What is left is owner task 1 verbatim: re-confirm that DELIBERATION — open-ended, human-refereed, non-terminating conversation — rather than fan-out is the capability still missing, now that fan-out is actually available to try. The plan pre-authorises the cheap answer: 'if the council template satisfies demand, rooms may stay deferred indefinitely — that outcome is acceptable and cheap to discover.' So a NO closes AR-1..AR-8 as satisfied-by-precursor (8 atoms, ~17% of what remains open), and a YES additionally needs the 6 design questions plus owner tasks 2-3 resolved into a Contracts section before AR-2 can start."
         },
         {
           "id": "AR-2",
@@ -6512,10 +6512,11 @@
         {
           "id": "AR-9",
           "title": "Council fan-out/fan-in workflow template: the cheap precursor that makes the un-deferral decision answerable",
-          "status": "todo",
+          "status": "done",
           "scope": "The cheap precursor (build this first, on the engine)",
           "done_when": "A bundled 'council' workflow template ships on Workflows v2 primitives: N members independently answer the same brief, a synthesis step merges and contrasts their answers with each position attributed, and the human reads one artifact — zero new topology, registered in the template library beside its fan-out siblings (best-of-n, check-work) and railed by the bundled-template census. Homed here rather than reopening the closed LOOPS-EVOLUTION plan: this plan's header is where the precursor is specified, and AR-1 is its only consumer.",
-          "deps": []
+          "deps": [],
+          "evidence": "done 2026-09-06 (PR #2507): src/personalclaw/workflows/bundled/council/workflow.json — the deliverable WORKFLOWS-V2-LOOPS-EVOLUTION promised and closed without. Shape is `parallel` of three `infer` members -> zero-token `transform` collector -> one synthesis `infer`, i.e. the plan header's 'ordinary fan-out/fan-in workflow on Workflows v2 primitives, zero new topology' taken literally: NO action provider and no new core, because the library's convention puts a model call in a stage/infer and best-of-n's provider is a sanctioned exception only for wrapping a core its skill and MCP tool already share, which a council has none of. Members answer independently from distinct roles (advocate/skeptic/pragmatist, each overridable); the synthesis ATTRIBUTES every position, names disagreements instead of averaging them, and states the strongest position it did not follow. Three named seats rather than a dynamic foreach over N is an engine constraint, not a preference: controller._journal_collected_items records that containers have no output surface, so a foreach fan-out cannot be fanned back in through bindings. tests/test_council_template.py (16) pins the two properties no validator sees — the fan-out stays independent and the fan-in stays attributive — each with a vacuity floor against best-of-n, the sibling that must FAIL the attribution contract; both headline detectors were falsified on live lines and reverted. Gates: council 16, workflows_bundled 388 (census EXPECTED 32), all-template suites 829, roadmap doc gates 17, broad sweep 5627; manifest_reference no diff."
         }
       ]
     },
@@ -7895,11 +7896,6 @@
   "dag": {
     "ready_frontier": [
       {
-        "id": "AR-9",
-        "title": "Council fan-out/fan-in workflow template: the cheap precursor that makes the un-deferral decision answerable",
-        "plan": "AR"
-      },
-      {
         "id": "CRE-7",
         "title": "Owner real-world provisioning remainder",
         "plan": "CRE"
@@ -7986,6 +7982,15 @@
       }
     ],
     "gated_frontier": [
+      {
+        "id": "AR-1",
+        "title": "Un-defer the plan: ship the council precursor, re-confirm demand, and resolve the 6 design questions into contracts",
+        "plan": "AR",
+        "gate": [
+          "ext",
+          "owner"
+        ]
+      },
       {
         "id": "CA-8",
         "title": "S4 desktop connect-to-gateway mode + multi-gateway switcher (T4.1 + amendment T4.4)",
@@ -10074,9 +10079,9 @@
         "code": "AR",
         "plan": "AGENT-ROOMS",
         "total_atoms": 9,
-        "done": 0,
+        "done": 1,
         "in_progress": 0,
-        "todo": 9,
+        "todo": 8,
         "blocked": 0
       },
       {
