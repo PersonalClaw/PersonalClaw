@@ -56,8 +56,8 @@ export function PromptViewPage({ kind, name, onBack, navigate, query, setQuery }
           ) : loaded === 'missing' ? (
             <div className="flex flex-col items-center gap-2 py-16 text-center text-on-surface-low">
               {isSnippet ? <Puzzle size={26} className="opacity-40" /> : <FileText size={26} className="opacity-40" />}
-              <p className="text-[0.9375rem] text-on-surface">This {isSnippet ? 'snippet' : 'prompt'} no longer exists</p>
-              <p className="text-[0.8125rem]">It may have been deleted, or the link is stale.</p>
+              <p data-type="body-m" className="text-on-surface">This {isSnippet ? 'snippet' : 'prompt'} no longer exists</p>
+              <p data-type="body-s">It may have been deleted, or the link is stale.</p>
             </div>
           ) : isSnippet ? (
             <SnippetDetail snippet={loaded as PromptSnippet} editing={editing} onEditingChange={setEditing} onSaved={() => setSaveTick((t) => t + 1)} onDeleted={onBack} />

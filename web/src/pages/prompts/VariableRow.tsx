@@ -30,21 +30,21 @@ export function VariableRow({ v, onChange, onRemove, descriptionPlaceholder = 'D
     <div className="rounded-md bg-surface-container p-2 flex flex-col gap-2">
       <div className="flex items-center gap-s">
         <input value={v.name} onChange={(e) => onChange({ name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '_') })} placeholder="variable_name" aria-label={`Name of variable ${which}`} name={`var-name-${rid}`}
-          className="flex-1 h-8 rounded-md bg-surface px-m font-mono text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          data-type="body-s" className="flex-1 h-8 rounded-md bg-surface px-m font-mono text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <div className="relative">
           <select value={v.type} onChange={(e) => onChange({ type: e.target.value as PromptVarType })} aria-label={`Type of variable ${which}`} name={`var-type-${rid}`}
-            className="h-8 appearance-none rounded-md bg-surface pl-m pr-7 text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
+            data-type="body-s" className="h-8 appearance-none rounded-md bg-surface pl-m pr-7 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
             {VAR_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
           </select>
         </div>
-        <button type="button" onClick={() => onChange({ required: !v.required })} className="rounded-pill px-2 h-7 text-[0.75rem] transition-colors" style={v.required ? { background: 'color-mix(in srgb, var(--color-danger) 18%, transparent)', color: 'var(--color-danger)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>{v.required ? 'required' : 'optional'}</button>
+        <button type="button" onClick={() => onChange({ required: !v.required })} data-type="caption" className="rounded-pill px-2 h-7 transition-colors" style={v.required ? { background: 'color-mix(in srgb, var(--color-danger) 18%, transparent)', color: 'var(--color-danger)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>{v.required ? 'required' : 'optional'}</button>
         <SquareIconButton icon={X} tone="danger" label={`Remove variable ${which}`} onClick={onRemove} />
       </div>
       <div className="flex items-center gap-s">
         <input value={v.description ?? ''} onChange={(e) => onChange({ description: e.target.value })} placeholder={descriptionPlaceholder} aria-label={`Description of variable ${which}`} name={`var-desc-${rid}`}
-          className="flex-1 h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          data-type="body-s" className="flex-1 h-8 rounded-md bg-surface px-m text-on-surface-var placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <input value={v.default == null ? '' : String(v.default)} onChange={(e) => onChange({ default: e.target.value })} placeholder="default" aria-label={`Default value of variable ${which}`} name={`var-default-${rid}`}
-          className="w-28 h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          data-type="body-s" className="w-28 h-8 rounded-md bg-surface px-m text-on-surface-var placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       </div>
       {v.type === 'select' && <ChoicesInput options={v.options} onChange={onChange} name={`var-opts-${rid}`} which={which} />}
     </div>
@@ -79,6 +79,6 @@ function ChoicesInput({ options, onChange, name, which }: {
     <input value={draft} onChange={(e) => setDraft(e.target.value)}
       onBlur={() => onChange({ options: draft.split(',').map((s) => s.trim()).filter(Boolean) })}
       placeholder="Choices, comma-separated" aria-label={`Choices for variable ${which}`} name={name}
-      className="h-8 rounded-md bg-surface px-m text-on-surface-var text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+      data-type="body-s" className="h-8 rounded-md bg-surface px-m text-on-surface-var placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
   )
 }
