@@ -157,8 +157,8 @@ describe('accent chips on surface-high use the emphasis shade', () => {
     ['ui/Markdown.tsx', /text-\[0\.85em\] font-mono text-primary-emphasis underline/],
     ['pages/chat/PasteChip.tsx', /text-\[0\.92em\] text-primary-emphasis/],
     ['pages/chat/PasteChip.tsx', /text-\[0\.85em\] text-primary-emphasis/],
-    ['pages/loops/LoopPlanReview.tsx', /text-\[0\.75rem\] text-primary-emphasis hover:bg-surface-high/],
-    ['pages/loops/LoopPlanReview.tsx', /text-\[0\.8125rem\] text-primary-emphasis hover:bg-surface-high/],
+    ['pages/loops/LoopPlanReview.tsx', /data-type="caption" className="[^"]*text-primary-emphasis hover:bg-surface-high/],
+    ['pages/loops/LoopPlanReview.tsx', /data-type="body-s" className="[^"]*text-primary-emphasis hover:bg-surface-high/],
   ]
   for (const [rel, re] of SITES) {
     it(`${rel} pairs surface-high with the emphasis token (${re.source.slice(0, 34)}…)`, () => {

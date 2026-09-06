@@ -15,7 +15,7 @@ import { join } from 'node:path'
 // CEILING is the measured count on the day the ratchet landed. New code must use the
 // data-type roles from tokens.css. When you migrate existing sites onto roles, LOWER the
 // ceiling to the new count in the same change — never raise it.
-const CEILING = 1839
+const CEILING = 1586
 
 const RAW_SIZE = /text-\[0?\.[0-9]+rem\]/g
 

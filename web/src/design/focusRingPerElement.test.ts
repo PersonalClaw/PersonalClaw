@@ -155,7 +155,7 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
   },
   {
     file: 'pages/loop/LoopComposer.tsx',
-    anchor: 'min-w-0 flex-1 bg-transparent text-on-surface text-[0.8125rem]',
+    anchor: 'min-w-0 flex-1 bg-transparent text-on-surface outline-none',
     ring: CONTAINER_RING,
     what: 'codebase-path + reference-URL fields (identical chrome — both checked)',
   },
