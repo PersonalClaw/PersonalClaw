@@ -60,7 +60,7 @@ function MaturityBadge({ maturity }: { maturity: WorkflowMaturity }) {
   const tone = strong ? 'var(--color-primary)' : 'var(--color-on-surface-low)'
   return (
     <span
-      className="inline-flex shrink-0 items-center rounded-pill px-2 py-0.5 text-[0.75rem]"
+      data-type="caption" className="inline-flex shrink-0 items-center rounded-pill px-2 py-0.5"
       style={{ background: `color-mix(in srgb, ${tone} 14%, transparent)`, color: tone }}
       title={`Maturity L${maturity.level}: ${maturity.clean_runs} clean run${maturity.clean_runs === 1 ? '' : 's'}`
         + (maturity.evaluator_rejected ? ', gate has rejected a bad run' : ', gate not yet proven')}
@@ -211,7 +211,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
         left={<div className="flex min-w-0 items-center gap-m">
           <QuietButton onClick={onBack} title="Back to workflows"><ArrowLeft size={13} /> Workflows</QuietButton>
           <PageTitle className="truncate">{name}</PageTitle>
-          {def?.source === 'bundled' && <span className="shrink-0 text-on-surface-low text-[0.75rem]">bundled</span>}
+          {def?.source === 'bundled' && <span data-type="caption" className="shrink-0 text-on-surface-low">bundled</span>}
           {maturity && <MaturityBadge maturity={maturity} />}
         </div>}
         right={def ? (
@@ -236,10 +236,10 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
         {loading ? <Loading what="this workflow" /> : !def ? (
-          <p className="text-on-surface-low text-[0.8125rem]">This definition could not be loaded.</p>
+          <p data-type="body-s" className="text-on-surface-low">This definition could not be loaded.</p>
         ) : (
           <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">
-            {def.description && <p className="text-on-surface text-[0.8125rem]">{def.description}</p>}
+            {def.description && <p data-type="body-s" className="text-on-surface">{def.description}</p>}
 
             <Segmented
               ariaLabel="Definition view"
@@ -277,7 +277,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                 <div className="flex items-start justify-between gap-m">
                   <div className="min-w-0">
                     <span data-type="title-m" className="text-on-surface">Publish to A2A</span>
-                    <p className="text-on-surface-low text-[0.75rem]">
+                    <p data-type="caption" className="text-on-surface-low">
                       {published
                         ? 'External agents holding an A2A token can see this template on the agent card and start it.'
                         : 'Off. This template is not on the A2A agent card and cannot be started by an external agent.'}
@@ -302,11 +302,11 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                       className="flex items-baseline gap-m py-2xs"
                       style={{ paddingLeft: `calc(${r.depth} * 1rem)` }}
                     >
-                      <span className="shrink-0 font-mono text-on-surface-low text-[0.75rem]">{r.kind}</span>
+                      <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{r.kind}</span>
                       <div className="min-w-0 flex-1">
-                        {r.id && <span className="text-on-surface text-[0.8125rem]">{r.id}</span>}
-                        {r.label && <span className="ml-s text-on-surface-low text-[0.75rem]">{r.label}</span>}
-                        {r.summary && <div className="truncate text-on-surface-low text-[0.75rem]">{r.summary}</div>}
+                        {r.id && <span data-type="body-s" className="text-on-surface">{r.id}</span>}
+                        {r.label && <span data-type="caption" className="ml-s text-on-surface-low">{r.label}</span>}
+                        {r.summary && <div data-type="caption" className="truncate text-on-surface-low">{r.summary}</div>}
                       </div>
                     </div>
                   ))}
@@ -317,17 +317,17 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                     <span data-type="title-m" className="text-on-surface">Hands off to</span>
                     {handoffs.map((h) => (
                       <div key={h.target_def} className="flex items-baseline gap-m py-2xs">
-                        <span className="shrink-0 text-on-surface text-[0.8125rem]">{h.target_def}</span>
+                        <span data-type="body-s" className="shrink-0 text-on-surface">{h.target_def}</span>
                         <div className="min-w-0 flex-1">
-                          {h.condition && <span className="text-on-surface-low text-[0.75rem]">{h.condition}</span>}
+                          {h.condition && <span data-type="caption" className="text-on-surface-low">{h.condition}</span>}
                           {!!h.context_fields?.length && (
-                            <div className="text-on-surface-low text-[0.75rem]">
+                            <div data-type="caption" className="text-on-surface-low">
                               carries {h.context_fields.join(', ')}
                             </div>
                           )}
                         </div>
                         {h.requires_user_request && (
-                          <span className="shrink-0 text-on-surface-low text-[0.75rem]">only on request</span>
+                          <span data-type="caption" className="shrink-0 text-on-surface-low">only on request</span>
                         )}
                       </div>
                     ))}
@@ -338,7 +338,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                   <div className="flex flex-col gap-2xs">
                     <span data-type="title-m" className="text-on-surface">Requires</span>
                     {Object.entries(def.metadata.requirements).map(([group, items]) => (
-                      <span key={group} className="text-on-surface-low text-[0.75rem]">
+                      <span key={group} data-type="caption" className="text-on-surface-low">
                         {group}: {items.join(', ')}
                       </span>
                     ))}
@@ -352,17 +352,17 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                 <div className="flex flex-col gap-2xs">
                   <span data-type="title-m" className="text-on-surface">Versions</span>
                   {versions.length === 0 ? (
-                    <p className="text-on-surface-low text-[0.75rem]">No version history yet.</p>
+                    <p data-type="caption" className="text-on-surface-low">No version history yet.</p>
                   ) : (
                     [...versions].reverse().map((v) => (
                       <div key={v.version} className="flex items-baseline gap-m py-2xs">
-                        <span className="shrink-0 font-mono text-on-surface text-[0.8125rem]">v{v.version}</span>
+                        <span data-type="body-s" className="shrink-0 font-mono text-on-surface">v{v.version}</span>
                         <div className="min-w-0 flex-1">
-                          <span className="text-on-surface-low text-[0.75rem]">{v.source}</span>
-                          {v.created_at && <span className="ml-s text-on-surface-low text-[0.75rem]">{v.created_at}</span>}
+                          <span data-type="caption" className="text-on-surface-low">{v.source}</span>
+                          {v.created_at && <span data-type="caption" className="ml-s text-on-surface-low">{v.created_at}</span>}
                         </div>
                         {v.version === pinned ? (
-                          <span className="shrink-0 text-on-surface-low text-[0.75rem]">pinned</span>
+                          <span data-type="caption" className="shrink-0 text-on-surface-low">pinned</span>
                         ) : (
                           <QuietButton onClick={() => rollback(v.version)} title={`Roll back to v${v.version}`}>
                             <RotateCcw size={12} /> Roll back
@@ -378,8 +378,8 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                     <span data-type="title-m" className="text-on-surface">Latest change</span>
                     {diffOps.map((op, i) => (
                       <div key={`${op.op}-${op.node_id ?? ''}-${i}`} className="flex items-baseline gap-m py-2xs">
-                        <span className="shrink-0 font-mono text-on-surface-low text-[0.75rem]">{op.op}</span>
-                        <div className="min-w-0 flex-1 text-on-surface text-[0.8125rem]">
+                        <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{op.op}</span>
+                        <div data-type="body-s" className="min-w-0 flex-1 text-on-surface">
                           {op.node_id}
                           {op.fields?.length ? <span className="text-on-surface-low"> — {op.fields.join(', ')}</span> : null}
                         </div>
@@ -396,16 +396,16 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                 {ledger === null ? (
                   <Loading what="the run ledger" />
                 ) : ledger.length === 0 ? (
-                  <p className="text-on-surface-low text-[0.75rem]">This template has no recorded runs yet.</p>
+                  <p data-type="caption" className="text-on-surface-low">This template has no recorded runs yet.</p>
                 ) : (
                   ledger.map((run) => (
                     <div key={run.run_id} className="flex items-baseline gap-m py-2xs">
-                      <span className="shrink-0 font-mono text-on-surface-low text-[0.75rem]">{run.run_id}</span>
+                      <span data-type="caption" className="shrink-0 font-mono text-on-surface-low">{run.run_id}</span>
                       <div className="min-w-0 flex-1">
-                        <span className="text-on-surface text-[0.8125rem]">{run.status}</span>
-                        <span className="ml-s text-on-surface-low text-[0.75rem]">v{run.spec_version}</span>
+                        <span data-type="body-s" className="text-on-surface">{run.status}</span>
+                        <span data-type="caption" className="ml-s text-on-surface-low">v{run.spec_version}</span>
                       </div>
-                      <span className="shrink-0 text-on-surface-low text-[0.75rem]">
+                      <span data-type="caption" className="shrink-0 text-on-surface-low">
                         {run.totals?.steps_completed ?? 0} done
                         {run.totals?.steps_failed ? `, ${run.totals.steps_failed} failed` : ''}
                       </span>

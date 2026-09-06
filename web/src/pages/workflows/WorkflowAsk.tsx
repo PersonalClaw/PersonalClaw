@@ -44,10 +44,10 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
   if (expired) {
     return (
       <div className="flex flex-col gap-s rounded-xl border border-outline-variant p-l">
-        <span className="inline-flex items-center gap-s text-on-surface-low text-[0.8125rem]">
+        <span data-type="body-s" className="inline-flex items-center gap-s text-on-surface-low">
           <TriangleAlert size={14} /> This request expired before it was answered.
         </span>
-        <p className="text-on-surface-low text-[0.75rem]">
+        <p data-type="caption" className="text-on-surface-low">
           Re-run the workflow from <span className="font-mono">{continuation.node_id}</span> to ask again.
         </p>
       </div>
@@ -69,19 +69,19 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
     <div className="flex flex-col gap-m rounded-xl border border-outline-variant p-l">
       {gateWidget ? (
         <>
-          {promptText && <p className="text-on-surface text-[0.9375rem]">{promptText}</p>}
+          {promptText && <p data-type="body-m" className="text-on-surface">{promptText}</p>}
           <GenUiHostCtx.Provider value={gateHost}>
             <GenUiWidget content={gateWidget.html} title={gateWidget.title} />
           </GenUiHostCtx.Provider>
         </>
       ) : (
-        <p className="text-on-surface text-[0.9375rem]">{ask.prompt || 'This run needs your input.'}</p>
+        <p data-type="body-m" className="text-on-surface">{ask.prompt || 'This run needs your input.'}</p>
       )}
 
       {/* The handoff bundle: what a returning human needs to re-acquire context without
           reading the whole journal. */}
       {hasContext && (
-        <div className="flex flex-col gap-2xs text-on-surface-low text-[0.75rem]">
+        <div data-type="caption" className="flex flex-col gap-2xs text-on-surface-low">
           {!!handoff.checks_run?.length && <span>Already done: {handoff.checks_run.length} step{handoff.checks_run.length === 1 ? '' : 's'}</span>}
           {!!handoff.outstanding?.length && <span>Still to do: {handoff.outstanding.length} step{handoff.outstanding.length === 1 ? '' : 's'}</span>}
           {handoff.risks?.map((r) => <span key={r} className="text-warning">Risk: {r}</span>)}
@@ -138,7 +138,7 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
         </div>
       )}
 
-      <label className="inline-flex items-center gap-s text-on-surface-low text-[0.75rem]">
+      <label data-type="caption" className="inline-flex items-center gap-s text-on-surface-low">
         <Checkbox checked={alwaysAllow} onChange={setAlwaysAllow} ariaLabel="Don't ask again for this step in this run" />
         Don&apos;t ask again for this step in this run
       </label>
