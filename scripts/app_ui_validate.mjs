@@ -284,16 +284,6 @@ async function toolGroupHeader(page, provider) {
   return (await label.locator('xpath=..').innerText().catch(() => '')).replace(/\s+/g, ' ').trim()
 }
 
-/** Narrow the Store grid to one app. The gateway ships a non-removable git source
- *  (the published apps repo), so the grid is never just the bundle under test. */
-async function searchStore(page, needle) {
-  const box = page.getByPlaceholder('Search the Store')
-  if (await box.count()) {
-    await box.first().fill(needle)
-    await page.waitForTimeout(900)
-  }
-}
-
 /** Click a candidate control if it is actually visible, then wait for the Manage
  *  Sources panel. Every step is visibility-gated: a hidden match (the overflow
  *  menu's copy of a header control) would otherwise burn a full click timeout. */
@@ -389,10 +379,20 @@ async function driveBundle({ browser, base, api, bundleDir, outDir, home, model 
     await closePanel(page)
 
     // ── leg 2: the Store card + detail panel ──────────────────────────────
-    await gotoRoute(page, base, '/apps?view=store')
-    await searchStore(page, appName)
+    // Filter the grid to THIS local source (the Store's own `ssrc` rail filter).
+    // Two reasons: the gateway ships a non-removable git source carrying the same
+    // app names, so an unfiltered grid can show the REMOTE copy of the bundle; and
+    // the catalog read behind the filter includes a network registry fetch, so the
+    // first read after registering a source can still be stale — hence the retry.
+    const srcKey = `local:${stagingRoot}`
     const card = cardFor(page, displayName)
-    const found = await card.count()
+    let found = false
+    for (let attempt = 0; attempt < 4 && !found; attempt++) {
+      if (attempt === 0) await gotoRoute(page, base, `/apps?view=store&ssrc=${encodeURIComponent(srcKey)}`)
+      else { await page.reload({ waitUntil: 'load' }); await page.locator(SHELL_SELECTOR).waitFor({ state: 'visible', timeout: 20_000 }) }
+      found = await card.first().waitFor({ state: 'visible', timeout: 12_000 }).then(() => true).catch(() => false)
+    }
+    await page.waitForTimeout(700)
     if (!found) {
       const missShot = await shot('store-card-missing')
       failLeg(legs, 'store-card', `no Store card for "${displayName}" after registering the source`, { screenshots: [missShot] })
@@ -458,30 +458,47 @@ async function driveBundle({ browser, base, api, bundleDir, outDir, home, model 
     let consentShot = ''
     let consentText = ''
     let sawConsent = false
-    await Promise.race([
-      anywayBtn.first().waitFor({ state: 'visible', timeout: 45_000 }).then(() => { sawConsent = true }),
-      page.waitForTimeout(45_000),
-    ])
+    let installedApp = null
+    // Three outcomes to watch for at once: the scanner's consent dialog, an install
+    // that went straight through, and a terminal refusal. Racing two fixed timeouts
+    // instead made the no-dialog path a coin flip between them.
+    for (let i = 0; i < 60; i++) {
+      if (await anywayBtn.first().isVisible().catch(() => false)) { sawConsent = true; break }
+      installedApp = ((await api.get('/api/apps')).json?.apps ?? []).find((a) => a.name === appName) ?? null
+      if (installedApp) break
+      if (await page.getByText(/cannot be installed|scanner flagged dangerous/i).count()) break
+      await page.waitForTimeout(1000)
+    }
     if (sawConsent) {
+      // The dialog animates in (opacity/scale). Screenshotting the frame the button
+      // first became visible captured a half-transparent ghost that reads as an
+      // unreadable dialog — a harness artifact, not a product defect. Let it settle.
+      await page.waitForTimeout(1200)
       consentText = (await consentModal.first().innerText().catch(() => '')).replace(/\s+/g, ' ').trim()
       consentShot = await shot('ui-install-consent')
       noteLeg(legs, 'ui-install', { screenshots: [consentShot], notes: ['the scanner raised a consent dialog; clicked through it as a user'] })
       await anywayBtn.first().click()
     }
     // Installation copies the bundle and may install python deps — give it room.
-    let installedApp = null
-    for (let i = 0; i < 90; i++) {
+    for (let i = 0; i < 90 && !installedApp; i++) {
       await page.waitForTimeout(2000)
       installedApp = ((await api.get('/api/apps')).json?.apps ?? []).find((a) => a.name === appName) ?? null
       if (installedApp) break
-      const terminal = await page.getByText(/cannot be installed|scanner flagged dangerous/i).count()
-      if (terminal) break
+      if (await page.getByText(/cannot be installed|scanner flagged dangerous/i).count()) break
+    }
+    // A TERMINAL refusal renders the same dialog with the findings and no "Install
+    // anyway". Capture its text before screenshotting: the findings are the whole
+    // reason the bundle cannot be driven, so a bare "not installed" is not a report.
+    let refusalText = ''
+    if (!installedApp) {
+      await page.waitForTimeout(1200)
+      refusalText = (await consentModal.first().innerText().catch(() => '')).replace(/\s+/g, ' ').trim()
     }
     const installShot = await shot('ui-install-result')
     if (!installedApp) {
       const errText = await page.locator('.text-negative, .text-danger').allInnerTexts().catch(() => [])
       failLeg(legs, 'ui-install', `the app is not installed after clicking Install${sawConsent ? ' and consenting' : ''}${errText.length ? `: ${errText.join(' | ').slice(0, 300)}` : ''}`,
-        { screenshots: [installShot], details: { consentText } })
+        { screenshots: [installShot], details: { consentText, refusalText } })
       notReached = 'the install never completed, so no post-install leg could run'
       throw new LegAbort()
     }
@@ -491,9 +508,16 @@ async function driveBundle({ browser, base, api, bundleDir, outDir, home, model 
     })
 
     // ── leg 4: Library + Tools page ───────────────────────────────────────
+    // Both pages fetch after mount, so both need a real wait rather than a count()
+    // on the first frame — otherwise a slow render reads as a missing card, which is
+    // exactly the false FAIL this harness exists to avoid.
     await gotoRoute(page, base, '/apps?view=library')
     const libCard = cardFor(page, displayName)
-    const inLibrary = await libCard.count()
+    const inLibrary = await libCard.first().waitFor({ state: 'visible', timeout: 20_000 })
+      .then(() => true).catch(() => false)
+    // Cards animate in (opacity 0 → 1 with a per-index delay); screenshotting the
+    // first visible frame captured a dimmed card that reads as "disabled".
+    await page.waitForTimeout(900)
     const libShot = await shot('library')
 
     const toolsAfter = (((await api.get('/api/tools')).json?.tools) ?? [])
@@ -504,6 +528,8 @@ async function driveBundle({ browser, base, api, bundleDir, outDir, home, model 
     const renderedToolNames = []
     const groupHeaders = {}
     if (contributed.length) {
+      await toolRow(page, contributed[0].name).first().waitFor({ state: 'attached', timeout: 20_000 })
+        .catch(() => {})
       for (const t of contributed) {
         if (await toolRow(page, t.name).count()) renderedToolNames.push(t.name)
       }
@@ -567,7 +593,10 @@ async function driveBundle({ browser, base, api, bundleDir, outDir, home, model 
     await page.close().catch(() => {})
     await context.close().catch(() => {})
     // Per-bundle cleanup so the next bundle sees a Store with only its own card.
-    await api.del(`/api/apps/${encodeURIComponent(appName)}`).catch(() => {})
+    // `force=1` because a plain DELETE is "deactivate, keep files" — the app would
+    // stay in the Library and the next bundle's Library assertion would read a
+    // neighbour's card. Only ever applied to what this run installed.
+    await api.del(`/api/apps/${encodeURIComponent(appName)}?force=1`).catch(() => {})
     await api.del(`/api/apps/local-sources?path=${encodeURIComponent(stagingRoot)}`).catch(() => {})
   }
 
@@ -621,6 +650,7 @@ async function runToolFromUi({ page, base, tool, shot }) {
   const search = page.getByPlaceholder('Search tools').first()
   if (await search.count()) { await search.fill(tool.name); await page.waitForTimeout(900) }
   const row = toolRow(page, tool.name)
+  await row.first().waitFor({ state: 'attached', timeout: 20_000 }).catch(() => {})
   if (!(await row.count())) {
     screenshots.push(await shot('tool-invoke-no-row'))
     return { status: 'blocked', output: `no clickable row for ${tool.name} on the Tools page`, args: {}, screenshots }
@@ -683,6 +713,7 @@ async function deactivateReactivate({ page, base, api, appName, displayName, sho
   const details = {}
   await gotoRoute(page, base, '/apps?view=library')
   const card = cardFor(page, displayName)
+  await card.first().waitFor({ state: 'attached', timeout: 20_000 }).catch(() => {})
   if (!(await card.count())) {
     screenshots.push(await shot('reactivate-no-card'))
     return { reason: 'the app has no Library card to open, so the state toggle is unreachable', screenshots, details }
@@ -812,6 +843,16 @@ async function main() {
   let gateway = null
   let bundles = []
   let model = null
+  // An interrupted run must not orphan a gateway or leave a home behind. `finally`
+  // does not run on a signal, so wire the two explicitly.
+  const onSignal = (sig) => {
+    if (gateway) gateway.kill('SIGKILL')
+    if (!opts.keep && !outDir.startsWith(home)) rmSync(home, { recursive: true, force: true })
+    warn(`interrupted by ${sig} — gateway stopped`)
+    process.exit(130)
+  }
+  process.once('SIGINT', () => onSignal('SIGINT'))
+  process.once('SIGTERM', () => onSignal('SIGTERM'))
   try {
     // Boot once for setup (installing a provider app registers a provider TYPE at
     // import time, which the running process may not pick up), then boot again so
