@@ -1,10 +1,7 @@
 import { useState } from 'react'
 import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote, ruleGloss } from '../../lib/scanFindings'
 import { trustTierLabel } from '../../lib/trustTier'
-import {
-  ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock,
-  Bot, Globe, Copy, Check, Loader2,
-} from 'lucide-react'
+import { ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock, Bot, Globe, Copy, Check } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
 import { SquareIconButton } from '../../ui/SquareIconButton'
@@ -218,8 +215,7 @@ export function ConsentModal({ label, result, busy, permissions, crons, onConfir
               they are never dismiss-only. */}
           <Button variant="ghost" onClick={onClose}>{refusal ? 'Done' : 'Cancel'}</Button>
           {!refusal && (
-            <Button variant="primary" disabled={busy} onClick={onConfirm}>
-              {busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Install anyway
+            <Button variant="primary" loading={busy} onClick={onConfirm}><ShieldAlert size={16} /> Install anyway
             </Button>
           )}
         </div>

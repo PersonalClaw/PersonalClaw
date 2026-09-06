@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Code2, Plus, Loader2, Trash2, FolderOpen, Search, Filter } from 'lucide-react'
 import type { CodeDraft } from './codeDraft'
+import { codeDeleteBody } from './codeMeta'
 import { CodePlanReview } from './CodePlanReview'
 import { CodePlanningView } from './CodePlanningView'
 import { CodeCockpitPage } from './CodeCockpitPage'
@@ -244,20 +245,15 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
 
   async function del(p: Loop) {
     setActionErr(null)
-    // Warn explicitly when the project is mid-flight — deleting it tears down the
-    // running worker. The files clause depends on WHERE the code lives: a bound
-    // (brownfield) workspace_dir is external + left untouched, but a greenfield
-    // project with no bound dir keeps its files in the loop's own managed folder —
-    // which delete DESTROYS — so don't falsely promise the files are safe there.
-    const body = `${['running', 'planning', 'intake'].includes(p.status)
-      ? `"${p.name}" is still working — deleting it stops the worker and removes its plan. `
-      : `"${p.name}" and its plan will be removed. `}${p.workspace_dir
-      ? 'Your workspace folder and its files are left untouched.'
-      : 'This project keeps its files in its own managed folder — deleting it also removes those files. Move anything you want to keep out first.'}`
     // Through the shared delete ritual (AUD-A11): confirmDelete composes the identical
     // title/danger/label, so hand-rolling confirm() here was drift, not a design choice.
-    // The custom body stays — it carries the file-destruction warning above.
-    if (!(await confirmDelete('project', p.name, { body }))) return
+    // The custom body stays — it carries the destruction warning `confirmDelete` has no room for.
+    //
+    // 🔴 THAT BODY USED TO BE BUILT HERE, and byte-identically again in `CodeCockpitPage` — which is
+    // how both copies came to promise "your workspace folder and its files are left untouched" while
+    // the handler force-deleted `pclaw/task-*` branches from the user's repo. One owner now:
+    // `codeMeta.codeDeleteBody`, whose doc comment carries the full chain.
+    if (!(await confirmDelete('project', p.name, { body: codeDeleteBody(p) }))) return
     try { await api.deleteULoop(p.id) }
     catch (e) { setActionErr(`Couldn't delete that project: ${(e as Error).message || 'unknown error'}`) }
     load()

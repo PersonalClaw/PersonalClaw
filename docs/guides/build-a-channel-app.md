@@ -323,8 +323,10 @@ If you find residue while touching a seam, scrub it in the same change.
 The reference for the completed pattern is the **slack-channel** app in the apps
 repository: one bundle, a channel transport plus an inbox `MessageSourceProvider` plus a
 `TriggerSourceProvider`, each built as an adapter over the transport's *existing* client or
-inbound stream (never a second connection), and its non-seam surface behind its own `ui`
-block.
+inbound stream (never a second connection). It ships no `ui` block — the generic
+provider-settings form renders its `settingsSchema`, which is the right default. If your
+vendor needs a surface that form cannot express, the worked examples of a bundle-owned
+`ui` block are the **growth** and **minutes** apps.
 
 ### Sharing one inbound stream between two providers
 

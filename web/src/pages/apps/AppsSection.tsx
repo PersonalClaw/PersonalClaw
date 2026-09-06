@@ -3,9 +3,9 @@ import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 import { motion } from 'framer-motion'
 import {
-  Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
+  Blocks, Plus, Download, Power, Trash2, Settings2, FolderOpen,
   ShieldAlert, ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
-  MoreVertical, Database, Sparkles, Archive, HardDrive,
+  MoreVertical, Database, Sparkles, Archive, HardDrive, MapPin, AlertTriangle,
 } from 'lucide-react'
 import { launchChat } from '../../app/appSdk'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -29,11 +29,13 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useIsMobile } from '../../app/useIsMobile'
 import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
 import {
-  api, type AppSummary, type AppDepClassification, type AppCatalogEntry,
+  api, type AppSummary, type AppDepClassification, type AppCatalogEntry, type AppCatalog,
 } from '../../lib/api'
 import {
   useGuardedInstall, guardedFromApp, isBlockingResult, terminalRefusalReason, type GuardedResult,
 } from '../../lib/useGuardedInstall'
+import { catalogApps } from '../../lib/appCatalog'
+import { provenance } from '../../lib/provenance'
 import { AppIcon } from './appIcon'
 import { QualityBadges } from './qualityBadges'
 import { StoreSideRail, type RailOption } from './StoreSideRail'
@@ -484,7 +486,6 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   //    UNION already-installed apps (deduped by name), so the Store shows every
   //    app it knows about regardless of install status — then search → filter →
   //    sort over that union. ──
-  const bundled = catalog?.bundled ?? []
   const storeUniverse = useMemo<StoreItem[]>(() => {
     // The Store lists ONLY apps that can still be INSTALLED (user decision
     // 2026-07-05) — already-installed apps live in the Library tab, not here. So
@@ -495,10 +496,11 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     const installedNames = new Set((apps ?? []).map((a) => a.name))
     const byName = new Map<string, StoreItem>()
     // bundled + local-dir-scanned + P20 registry-indexed (remoteApps) + git-scanned
-    // multi-app repos (gitApps) — the union of every installable app the catalog surfaced.
+    // multi-app repos (gitApps) — the union of every installable app the catalog surfaced,
+    // flattened by the ONE merge every consumer shares (`lib/appCatalog`) rather than by a
+    // concatenation order of this surface's own (#2528).
     // remoteApps/gitApps carry a `pointer` (repo[#sub]) that install uses instead of source.
-    const available = [...bundled, ...(catalog?.localApps ?? []), ...(catalog?.remoteApps ?? []), ...(catalog?.gitApps ?? [])]
-    for (const e of available) {
+    for (const e of catalogApps(catalog)) {
       if (installedNames.has(e.name) || byName.has(e.name)) continue
       byName.set(e.name, { ...e, installed: false, enabled: false, hasUI: false, native: false })
     }
@@ -783,7 +785,7 @@ function ResultCount({ n, total, noun }: { n: number; total: number; noun: strin
  *  consent is a claim only a driven render can make. It is the fastest install path in the
  *  product and the one that used to disclose the least. */
 export function StoreView({ catalog, catalogError, result, totalKnown, installedCount, onInstalled, reloadCatalog, onClearFilters, filtersActive, onOpen, onAction, onOpenSources }: {
-  catalog: { bundled: AppCatalogEntry[]; gitSources: string[]; defaultGitSources?: string[]; builtinGitSources?: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] } | null | undefined
+  catalog: AppCatalog | null | undefined
   /** The catalog fetch's rejection. A Store that cannot reach its catalog must say so rather than
    *  render as an empty shelf — "nothing to install" and "we could not ask" are different answers. */
   catalogError?: unknown
@@ -891,7 +893,7 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
  *  can be driven at the level a user meets it (`sourceLabels.test.tsx`) — a badge and a missing
  *  remove control are exactly the kind of claim no backend test can make. */
 export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
-  catalog: { bundled: AppCatalogEntry[]; gitSources: string[]; defaultGitSources?: string[]; builtinGitSources?: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] } | null | undefined
+  catalog: AppCatalog | null | undefined
   reloadCatalog: () => void
   onInstalled: () => void
 }) {
@@ -909,11 +911,11 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
    *  indexed source the manifest is already in hand. `undefined` for an un-indexed source,
    *  which the modal states plainly rather than showing an empty permission list. */
   function entryForSource(source: string): AppCatalogEntry | undefined {
-    const all = [
-      ...(catalog?.gitApps ?? []), ...(catalog?.remoteApps ?? []),
-      ...(catalog?.localApps ?? []), ...(catalog?.bundled ?? []),
-    ]
-    return all.find((e) => e.source === source || (e.pointer && e.pointer === source))
+    // 🔴 The ONE merge (`lib/appCatalog`), not a git-first concatenation of its own. This
+    // lookup used to put `gitApps` first while the card grid put `localApps` first, so for a
+    // name carried by both a local and a remote source the CONSENT modal disclosed the
+    // remote copy's permissions while the grid had shown the local copy's (#2528).
+    return catalogApps(catalog).find((e) => e.source === source || (e.pointer && e.pointer === source))
   }
 
   async function installFrom(source: string, label: string) {
@@ -984,6 +986,7 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
   const firstPartySources = new Set(catalog?.firstPartySources ?? [])
   const defaultSources = new Set(catalog?.defaultGitSources ?? [])
   const builtinSources = new Set(catalog?.builtinGitSources ?? [])
+  const networkSources = catalog?.networkSources ?? []
 
   return (
     <div className="flex flex-col gap-xl">
@@ -1035,8 +1038,7 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
                 {isDefault && (
                   <span className="shrink-0 rounded-pill bg-surface-highest px-2 py-0.5 text-on-surface-low text-[0.75rem]">Default</span>
                 )}
-                <Button variant="ghost" size="sm" disabled={busy === url} onClick={() => installFrom(url, url)}>
-                  {busy === url ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Install
+                <Button variant="ghost" size="sm" loading={busy === url} onClick={() => installFrom(url, url)}><Download size={14} /> Install
                 </Button>
                 {!isBuiltin && (
                   <SquareIconButton icon={Trash2} tone="danger" label="Remove source" className="shrink-0"
@@ -1045,6 +1047,21 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
               </div>
             )})}
           </div>
+        )}
+        {/* 🔴 The egress disclosure (issue 2528, finding 1). A brand-new home lists a shipped git
+            source, so opening the Store contacts github.com before the user has configured
+            anything. The hosts are named on the surface that triggers the fetch, and only when a
+            network source is actually listed — with an all-local configuration this says nothing
+            rather than warning about nothing.
+            The second sentence is the other half: a shipped source has no ROW to delete (it is
+            folded into every backend read), so a hidden remove button is not an explanation. It
+            appears only when such a source is listed, and it names where the switch is. */}
+        {networkSources.length > 0 && (
+          <p data-testid="store-egress-disclosure" data-type="caption" className="mt-2 text-on-surface-low">
+            Reading these listings contacts {networkSources.join(', ')}. Only listings are
+            fetched — nothing is installed or run without your consent.
+            {builtinSources.size > 0 && ' A source that ships with PersonalClaw has no remove button; turn it off in Settings → Apps.'}
+          </p>
         )}
         <p className="mt-2 text-on-surface-low text-[0.75rem]">
           Installing fetches the app behind the security scanner — a dangerous verdict is always refused.
@@ -1144,6 +1161,15 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
     </div>
   )
 
+  // 🔴 Provenance, as TEXT, BEFORE install (#2528). The only pre-install signal that a card
+  // came from a local source used to be the divider heading (a folder basename) and the
+  // Sources rail — nothing on the card itself said where its bytes came from, which is why a
+  // remote card standing in for a local bundle was invisible to the user and visible only to
+  // whoever read the catalog code. Rendered from the ONE provenance owner
+  // (`lib/provenance`), and only pre-install: an installed app's origin is already named in
+  // the detail panel, and repeating it in the Library's card row would be noise.
+  const origin = item.installed ? null : provenance({ sourceKind: item.sourceKind })
+
   return (
     <ContextMenu items={menuItems}>
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
@@ -1200,12 +1226,21 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
                   `on-primary-container`, 13.1:1 light and 10.43:1 dark, guaranteed for all 12 schemes
                   by `schemeContrast.test.ts`. This chip was the last accent-carrying TEXT left on the
                   old spelling. */}
-            {providerLabel && (
-              <span className="mt-0.5 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5" data-type="label-s"
-                style={accentChip}>
-                <Plug size={11} />{providerLabel}
-              </span>
-            )}
+            <div className="mt-0.5 flex flex-wrap items-center gap-1">
+              {providerLabel && (
+                <span className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5" data-type="label-s"
+                  style={accentChip}>
+                  <Plug size={11} />{providerLabel}
+                </span>
+              )}
+              {origin && (
+                <span data-testid="store-card-origin" title={origin.title}
+                  className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-var"
+                  data-type="label-s">
+                  <MapPin size={11} />{origin.label}
+                </span>
+              )}
+            </div>
           </div>
           {/* installed apps get the real ⋯ actions menu, top-right */}
           {item.installed && <span onClick={stop}><AppActionMenu item={item} onAction={onAction} /></span>}
@@ -1239,8 +1274,7 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
               <span onClick={stop}><Button variant="primary" size="sm" onClick={() => onAction(app, 'toggle')}><Power size={14} /> Activate</Button></span>
             )
           ) : (
-            <span onClick={stop}><Button variant="secondary" size="sm" disabled={busy} onClick={onInstall}>
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Install
+            <span onClick={stop}><Button variant="secondary" size="sm" loading={busy} onClick={onInstall}><Download size={14} /> Install
             </Button></span>
           )}
         </div>
@@ -1307,14 +1341,12 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {needsConsent ? (
-            <Button variant="primary" disabled={guarded.busy} onClick={() => doInstall(true)}>
-              {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Install anyway
+            <Button variant="primary" loading={guarded.busy} onClick={() => doInstall(true)}><ShieldAlert size={16} /> Install anyway
             </Button>
           ) : (
-            <Button variant="primary" disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doInstall(false)}
+            <Button variant="primary" loading={guarded.busy} disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doInstall(false)}
               // A terminal refusal is a SECURITY outcome, not a missing field — it needs its own sentence.
-              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}>
-              {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Install
+              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}><Download size={16} /> Install
             </Button>
           )}
         </div>
@@ -1354,13 +1386,11 @@ function UpdateModal({ name, onClose, onUpdated }: { name: string; onClose: () =
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {needsConsent ? (
-            <Button variant="primary" disabled={guarded.busy} onClick={() => doUpdate(true)}>
-              {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Update anyway
+            <Button variant="primary" loading={guarded.busy} onClick={() => doUpdate(true)}><ShieldAlert size={16} /> Update anyway
             </Button>
           ) : (
-            <Button variant="primary" disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doUpdate(false)}
-              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}>
-              {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} Update
+            <Button variant="primary" loading={guarded.busy} disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doUpdate(false)}
+              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}><RefreshCw size={16} /> Update
             </Button>
           )}
         </div>
@@ -1404,12 +1434,22 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
 
   const toggleNav = () => { const next = !inNav; setInNav(app.name, next); setInNavState(next) }
 
+  // `sourceKind` is resolved by the backend for installed apps too (`/api/apps`), so this
+  // surface never translates between the `origin` and `sourceKind` vocabularies itself.
+  const installedOrigin = provenance({ sourceKind: app.sourceKind })
+
   return (
     <>
       <div className="flex flex-col gap-l p-l">
         <div>
           <div data-type="body-s" className="text-on-surface-low">{app.description || app.name}</div>
-          <div data-type="label-s" className="mt-1 text-on-surface-low">v{app.version} · {app.origin || 'local'}</div>
+          {/* Provenance through the ONE owner (`lib/provenance`) rather than the raw `origin`
+              string with a `|| 'local'` fallback — that fallback CLAIMED "local" for an app
+              whose origin the record did not carry, which is the same false-provenance defect
+              as issue 2514 one surface over. No origin ⇒ the version stands alone. */}
+          <div data-type="label-s" className="mt-1 text-on-surface-low">
+            v{app.version}{installedOrigin ? ` · ${installedOrigin.label}` : ''}
+          </div>
           {/* Same badge row, same component, as the Store card and the pre-install
               panel — one declaration rendered one way across every surface that shows it. */}
           <div className="mt-2"><QualityBadges quality={app.quality} /></div>
@@ -1610,8 +1650,7 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
         </div>
       )}
       <div>
-        <Button variant="primary" size="sm" disabled={guarded.busy} onClick={() => install(false)}>
-          {guarded.busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Install
+        <Button variant="primary" size="sm" loading={guarded.busy} onClick={() => install(false)}><Download size={15} /> Install
         </Button>
       </div>
 
@@ -1690,6 +1729,15 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
   const [busy, setBusy] = useState(false)
   const kept = (data?.dependencies ?? []).filter((d) => d.disposition !== 'removable')
   const facts = data?.data
+  // Issue 2585. An earlier copy of this app's data/ still on disk makes the backend REFUSE
+  // — fail-closed, so it does not guess which copy the user wants kept. The endpoint
+  // renders that refusal as `404 app not installed`, so pressing Uninstall would produce a
+  // message that is false and tells the user nothing about the data it just protected.
+  // Stated here, before the click, with the paths. `?? []` is safe for the gate (an older
+  // gateway omitting the key leaves the button enabled and the backend still refuses
+  // safely); it must not be read as a positive "there are none".
+  const unconsumed = facts?.unconsumed ?? []
+  const blocked = unconsumed.length > 0
 
   async function remove() {
     setBusy(true)
@@ -1704,6 +1752,22 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
           This removes the app's files and providers from disk. To just turn it off and leave the
           files in place, use <span className="text-on-surface">Deactivate</span> instead.
         </div>
+        {blocked && (
+          <div role="alert" className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 p-m">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0 text-warning" />
+            <div data-type="body-s" className="min-w-0 text-on-surface-low">
+              <span className="font-medium">An earlier copy of this app's data is still here.</span>{' '}
+              Uninstalling would have to overwrite or delete it, so it is refused until you decide
+              what to keep. Move {unconsumed.length === 1 ? 'it' : 'them'} somewhere else (or delete
+              {unconsumed.length === 1 ? ' it' : ' them'}, if you already have what you need), then
+              try again. <span className="text-on-surface">Force uninstall</span> deletes
+              {unconsumed.length === 1 ? ' it' : ' them'} deliberately.
+              {unconsumed.map((p) => (
+                <div key={p} data-type="label-s" className="mt-1 break-all opacity-80">{p}</div>
+              ))}
+            </div>
+          </div>
+        )}
         {/* `present` and `entries` are separate facts — see AppDataFacts. Absent data/
             and empty data/ get different sentences on purpose. */}
         <div className="flex items-start gap-2 rounded-md border border-outline-variant bg-surface-high p-m">
@@ -1731,7 +1795,18 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
               existing population is a separate visual call — see
               ui/transientStateAnnouncement.test.tsx.) */}
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={busy} onClick={remove}>
+          {/* `disabledReason`, not `title`: this gate is a state the user CAN fix, so the
+              primitive swaps native `disabled` for `aria-disabled` and keeps the tab stop —
+              a keyboard user can land on the button and hear why. A wrapper title, or a
+              bare `title` on a natively-disabled button, is unreachable for exactly the
+              reader it was written for (see ui/disabledReasonTriage.test.ts). */}
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={blocked}
+            disabledReason={blocked ? 'An earlier copy of this app’s data is still on disk — resolve it first' : undefined}
+            onClick={remove}
+          >
             <Archive size={16} /> Uninstall
           </Button>
         </div>
@@ -1773,8 +1848,7 @@ function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () =
         <KeptDepsList kept={kept} />
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="danger" disabled={busy} onClick={forceUninstall}>
-            {busy ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />} Force uninstall
+          <Button variant="danger" loading={busy} onClick={forceUninstall}><Trash2 size={16} /> Force uninstall
           </Button>
         </div>
       </div>

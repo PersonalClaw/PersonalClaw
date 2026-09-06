@@ -155,14 +155,24 @@ describe("the notification row actions name their row, and stay bounded", () => 
     const bell = codeOf('ui/NotificationBell.tsx')
     expect(bell, 'the subject is computed once for the row and both actions')
       .toMatch(/const subject = rowSubject\(\[n\.title, firstLine\(n\.body \?\? ''\)\]\)/)
-    for (const verb of ['Mark read', 'Dismiss']) {
+    // 🔁 RE-POINTED "Dismiss" → "Delete", and the two rails now CONVERGE on the invariant this block
+    // already states above: *"they are ONE row shown on two surfaces: a notification must not announce
+    // itself differently depending on which surface renders it."* The assertion was pinning a violation
+    // of it — the page's loop a few lines up already reads `Delete`, because that control calls
+    // `api.deleteNotification` and the entry leaves disk, while the shade said "Dismiss", the app's word
+    // for a RESTORABLE hide (`ui/dialog/destructiveConfirmSaysWhatGoes.test.ts` pins that the inbox's
+    // dismiss must NOT claim irreversibility, *"because a dismissed inbox item can be restored"*).
+    // Same row, same call, one verb now — which is what this rail was written to guarantee.
+    for (const verb of ['Mark read', 'Delete']) {
       expect(bell, `${verb} must name its row`).toMatch(new RegExp(`aria-label=\\{\`${verb}: \\$\\{subject\\}\`\\}`))
     }
     expect(bell, 'the row itself shares that subject').toMatch(/<RowHitTarget label=\{subject\} \/>/)
     // 🪤 And the VISIBLE hint stays the bare verb — cycle 119's contract. A tooltip repeating the whole
     // subject on hover is noise for a sighted user who can already read the row.
     expect(bell).toMatch(/title="Mark read"/)
-    expect(bell).toMatch(/title="Dismiss"/)
+    expect(bell).toMatch(/title="Delete"/)
+    // 🔑 And the wrong verb is GONE from the shade, not merely joined by the right one.
+    expect(bell, 'a disk delete must not be called a dismiss').not.toMatch(/[Dd]ismiss/)
   })
 
   it('the composition and its cap live in the shared helper, not here', () => {

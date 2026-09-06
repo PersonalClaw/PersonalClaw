@@ -21,11 +21,21 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The install one-liner now verifies something, and stops claiming to verify what it does not ([#2582](https://github.com/PersonalClaw/PersonalClaw/issues/2582)).**
 - **The `runs` table no longer declares a `task_list_id` column and `WorkflowRun` no longer carries the field.**
 - **⚠️ TIMED TRIGGERS WITH NO EXPLICIT TIMEZONE NOW FIRE AT THEIR LOCAL WALL-CLOCK TIME, NOT AT UTC.**
+- **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Fixed
+- **Every channel's outbound reply now goes to that channel, so a multi-provider install stops losing answers.**
+- **A chat session's on-disk identity has one owner, so a send can no longer destroy a transcript or resurrect a deleted conversation.**
+- **A path containing a NUL byte is refused instead of crashing the request — and the credential guard now fails closed on it.**
+- **Five MCP paths ignored `PERSONALCLAW_HOME` and reached into the real home instead — one of them wrote there.**
 - The **Tools page no longer badges an installed community bundle `built-in`** — the same word core's own first-party providers get.
 - A successful local-source add now **shows up in the Manage Sources panel**.
 - **`--port` now reaches the tool subprocesses too.**
+- Every listing in the community app registry now carries a real **scan verdict** before you install it.
+- **The files surface now derives its credential blocklist from one declaration instead of a hand-copied list, and the PersonalClaw home's `auth/` directory is refused along with it.**
+- A provider's **sensitive settings are write-only again on the route the dashboard actually uses**.
+- **A keep-data uninstall (`Uninstall`, the middle removal rung) no longer destroys or silently overwrites an earlier copy of the app's `data/` that is still on disk.**
+- **The ledger's run totals now say whether a dollar figure was actually measured.**
 - **Set default**
 - A lifecycle trigger's **Test** button is now a rehearsal, not a fire: it no longer writes into the trigger's real `run_count`/`last run`/`last status` (“Ran 2× · ok” could previously describe a trigger that had never actually fired — both runs were Test clicks), and the action's payload is tagged the way the event-trigger test path already tags it, so a provider can tell a rehearsal from the real thing.
 - The **YOLO mode** toggle (Settings → Agent defaults) now applies immediately instead of at the next gateway start: the config field's only reader was the startup seed, so flipping it changed the file while the running instance kept its previous posture — worst in the OFF direction, where revoking the approval bypass silently did nothing and the UI read `false` while approvals stayed bypassed until restart.
@@ -37,6 +47,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The week grid and the server now agree on one projection window: the grid sends its exact local-week end (7 local calendar days = 167h/169h across a DST transition, not a fixed 168h), so a real fire is no longer dropped on spring-forward weeks and no phantom hour is drawn on fall-back weeks; any out-of-window occurrence is disclosed in the caption instead of vanishing.**
 - **The Files page keeps unsaved edits across a rename: it now owns the draft cache FileViewer documents, the cache entry moves with the file (no more "Rename and discard" consent — nothing is discarded), a confirmed close purges the draft so a discarded edit cannot resurrect on reopen, and the Code cockpit's two programmatic close paths (workspace switch, worker delete) purge theirs too.**
 - The **Speaking speed** slider (Settings → Speech & Transcription) no longer tells every provider the same story: its Fast/Slow ends and "lower is faster" hint were Piper's `--length-scale` semantics, which are exactly backwards for OpenAI-compatible remote voices (the same raw number is the API's multiplier, where higher is faster) — so dragging toward "Fast" made remote speech slower.
+- **Editing a prompt or snippet whose body contains a credential-shaped string no longer destroys it.**
 - **The app enable/disable toggle now reads Activate/Deactivate on every surface (card, menus, detail panel) — the detail panel's old "Install" implied a re-download that never happens, since a deactivated app's files stay on disk; "Install" is reserved for real store downloads.**
 - **Deleting a single notification now confirms first: the per-row Delete removed the entry from disk on one unconfirmed click with no undo, while Clear all on the same page confirms and every sibling per-row delete in the app gates on the shared confirm dialog.**
 - **The Settings → Apps tile now counts what its caption says: it read "0 installed apps" on an instance with 33 installed, because the stat deliberately filters to non-provider apps (providers configure under Settings › Providers) but captioned the filtered count with the unqualified noun.**

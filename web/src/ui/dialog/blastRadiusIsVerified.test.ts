@@ -564,19 +564,35 @@ describe('three more bodies, checked against their handlers', () => {
     expect(web('pages/tools/ToolsPage.tsx'), 'so the body stays as it is')
       .toContain('Its tools will no longer be available.')
   })
-  it('the two project deletes ride the shared ritual, with their file-destruction body intact', () => {
+  // 🪤 THIS ASSERTION WAS COUPLED TO A LOCATION, NOT A PROPERTY — the second rail in this campaign to
+  // fail that way (the project-delete case above was the first). It required the literal
+  // `confirmDelete('project', p.name, { body })`, which silently assumed the body was built INLINE in
+  // each page. All three properties it protects are intact; only the spelling moved. Hoisting the body
+  // to `pages/code/codeMeta.ts` was itself part of a fix — the two files' bodies were byte-identical and
+  // both wrongly promised "your workspace folder and its files are left untouched" while the handler
+  // force-deleted `pclaw/task-*` branches — so a rail that reds on the hoist is a rail that would have
+  // argued for keeping the duplication. Re-pointed to the property: rides the helper, passes a CUSTOM
+  // body, and that body still carries the destruction warning. Where the sentence LIVES is not the
+  // invariant; that it exists, is custom, and is verified against the handler is.
+  it('the two project deletes ride the shared ritual, with a custom destruction body', () => {
     // AUD-A11: both code surfaces hand-rolled `confirm({ title: `Delete project …`, danger })` —
     // composing exactly what confirmDelete() composes, so the hand-roll was drift, and it kept both
     // sites outside every ratchet keyed on `confirmDelete(` callers. They ride the helper now. The
-    // custom `body` is the point of these dialogs (it names whether delete destroys the managed
-    // folder's files), so the pin requires it to still be passed, not replaced by the default.
+    // custom body remains the point of these dialogs, so the pin still requires one to be passed
+    // rather than falling back to the default.
     for (const rel of ['pages/code/CodeSection.tsx', 'pages/code/CodeCockpitPage.tsx']) {
       const src = web(rel)
-      expect(src, `${rel} rides the shared ritual`).toMatch(/confirmDelete\('project', p\.name, \{ body \}\)/)
+      expect(src, `${rel} rides the shared ritual with a custom body`)
+        .toMatch(/confirmDelete\('project', p\.name, \{ body: \w+\(p\) \}\)/)
       expect(src, `${rel} keeps no hand-rolled project-delete dialog`)
         .not.toMatch(/confirm\(\{ title: `Delete project/)
-      expect(src, `${rel} still warns about the managed folder`)
-        .toContain('deleting it also removes those files')
+      // 🪤 And neither may rebuild the sentence locally again — the duplication is what let one wrong
+      // clause ship in two files at once.
+      expect(src, `${rel} must not hand-roll the body`).not.toContain('left untouched')
     }
+    // The managed-folder warning still exists — at its one owner now. `pages/code/codeMeta.ts` and
+    // `deleteNamesTheBranches.test.ts` own the copy's CONTENT; this rail owns the ritual.
+    expect(web('pages/code/codeMeta.ts'), 'the greenfield warning survives the hoist')
+      .toContain('deleting it also removes those files')
   })
 })

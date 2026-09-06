@@ -85,11 +85,26 @@ type Site = { key: string; rel: string; line: number }
 
 const siteKey = (rel: string, expr: string) => `${rel}  disabled={${expr}}`
 
+/** 🪤 Comments BLANKED IN PLACE — same character count, so every line number still matches the
+ *  file, while no comment text can satisfy a scan about CODE.
+ *
+ *  This was a real bypass, not a tidiness point. `REASON` is tested against the element's whole
+ *  region, so **writing the word `disabledReason` (or `title=`, or `aria-disabled`) in a comment
+ *  anywhere inside a control silently exempted it from this census.** Found when `ui/Button`'s own
+ *  two sites vanished from the classified remainder after a comment there cited `disabledReason` by
+ *  name — the census reported itself as satisfied because prose mentioned the fix. Blanking is the
+ *  pattern this repo already uses in `pages/settings/undoableDeleteSaysSo.test.ts` for the same
+ *  reason; the original-text note it replaces was solving only the line-number half. */
+const codeOf = (s: string): string => s
+  .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+  .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
+  .replace(/(^|[^:])\/\/[^\n]*/g, (m, p) => p + ' '.repeat(m.length - p.length))
+
 /** Every conditionally-disabled control with no reason in its element. */
 function unexplained(): Site[] {
   const out: Site[] = []
   for (const abs of walk(SRC)) {
-    const src = readFileSync(abs, 'utf8')          // ORIGINAL text: line numbers match the file
+    const src = codeOf(readFileSync(abs, 'utf8'))   // comments blanked; line numbers preserved
     for (const m of src.matchAll(/disabled=\{([^}]{1,90})\}/g)) {
       const expr = m[1].trim()
       const ids = (expr.match(/[A-Za-z_$][\w$]*/g) ?? []).filter((x) => !['true', 'false', 'null', 'undefined', 'length'].includes(x))
@@ -102,15 +117,32 @@ function unexplained(): Site[] {
   return out.sort((a, b) => a.key.localeCompare(b.key) || a.line - b.line)
 }
 
-/** The remainder, each with why it is not a defect. Thirteen sites, twelve keys.
+/** The remainder, each with why it is not a defect. Eleven sites, ten keys.
  *
  *  Keyed by the control's own `disabled=` expression (see `siteKey`), with `n` where one file has more
  *  than one site sharing an expression. The count is part of the exemption: a THIRD `disabled={readOnly}`
- *  in `TaskDetail.tsx` is a new unexplained control and must red, not inherit an excuse. */
+ *  in `TaskDetail.tsx` is a new unexplained control and must red, not inherit an excuse.
+ *
+ *  🔴 TWO `ui/Button.tsx` ENTRIES WERE DELETED HERE, AND THEY WERE NEVER REAL CENSUS MEMBERS. They
+ *  read:
+ *
+ *      'ui/Button.tsx  disabled={softOff || undefined}':      'the Button carrier implementing soft-off'
+ *      'ui/Button.tsx  disabled={softOff ? undefined : off}': 'the Button carrier implementing soft-off'
+ *
+ *  Both were artifacts of PROSE BEING READ AS MARKUP. `elementWithChildren` walks back to the
+ *  nearest `<`, and the nearest one before Button's `disabled=` was the `<span>` inside the comment
+ *  sentence *"an sr-only `<span>` in the button body is CONCATENATED into the accessible name"*. So
+ *  the "element" it measured was that imaginary span rather than `<motion.button`, and the region
+ *  therefore lacked the `title=` that would have skipped the site as explained. The real element
+ *  carries `title=` AND `aria-disabled=`, so with comments blanked both sites are correctly skipped
+ *  and this table must not name them.
+ *
+ *  🪤 THE RATIONALE IS THE PART TO LEARN FROM. Someone met two entries that should not have existed
+ *  and wrote a sentence that *sounds* right — the carrier does implement soft-off — so the artifact
+ *  acquired a justification and stopped looking like a bug. An exemption table is only as good as
+ *  the instrument that populates it; a plausible `why` next to a measurement error preserves the
+ *  error indefinitely. */
 const CLASSIFIED: Record<string, { n?: number; why: string }> = {
-  // The carrier itself: these two lines ARE the soft-off implementation `disabledReason` drives.
-  'ui/Button.tsx  disabled={softOff || undefined}': { why: 'the Button carrier implementing soft-off' },
-  'ui/Button.tsx  disabled={softOff ? undefined : off}': { why: 'the Button carrier implementing soft-off' },
   // LOADING, not missing input: `=== null` is "not fetched yet", which `unavailable.ts` sends natively
   // disabled on purpose. (Two copies because the inbox settings panel exists twice — an open taste call.)
   'pages/inbox/InboxSettingsPanel.tsx  disabled={sourcesOn === null}': { why: 'loading (sourcesOn === null)' },

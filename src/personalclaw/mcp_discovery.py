@@ -212,10 +212,19 @@ def _load_agent_config() -> dict[str, Any]:
             except (json.JSONDecodeError, OSError):
                 pass
 
-    # Installed agent config (always check for mcpServers)
+    # Installed agent config (always check for mcpServers). Resolved through `config_dir()`,
+    # not a `Path.home()` hardcode: this spelled the real home outright, so a gateway on a
+    # custom PERSONALCLAW_HOME discovered the OPERATOR's MCP servers.
+    #
+    # `config_dir()` rather than `agent.AGENTS_DIR`, even though four other modules use the
+    # latter for this same file: `AGENTS_DIR` is a module-level constant evaluated at IMPORT
+    # time, so it freezes whatever the home was then and cannot follow a later change. That
+    # is measurable — routing this through it made four `TestListServers` cases read the real
+    # installed config. `config_dir()` re-reads the env var per call.
     from personalclaw.agent import AGENT_FILENAME  # circular import: agent imports mcp_discovery
+    from personalclaw.config.loader import config_dir
 
-    installed = Path.home() / ".personalclaw" / "agents" / AGENT_FILENAME
+    installed = config_dir() / "agents" / AGENT_FILENAME
     if installed.is_file():
         try:
             configs.append(json.loads(installed.read_text(encoding="utf-8")))

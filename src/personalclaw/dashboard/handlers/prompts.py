@@ -9,7 +9,7 @@ from aiohttp import web
 
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
-from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.security import redact_for_display, restore_masked_spans
 
 from ._shared import _get_skills, _list_marketplace_skills
 
@@ -178,8 +178,7 @@ async def api_prompt_detail(request: web.Request) -> web.Response:
         )
         return web.json_response({"error": "not found"}, status=404)
 
-    content, _ = redact_credentials(tpl.content)
-    content, _ = redact_exfiltration_urls(content)
+    content = redact_for_display(tpl.content)
     # The full variable set the fill-in UI must render = the prompt's own vars ∪
     # the vars of every snippet it transitively includes (host wins on name clash).
     from personalclaw.prompt_providers.engine import included_snippet_names, merged_variables
@@ -202,6 +201,33 @@ async def api_prompt_detail(request: web.Request) -> web.Response:
             "includes": included_snippet_names(tpl.content),
         }
     )
+
+
+_MASK_CONFLICT = (
+    "The stored copy of this content no longer lines up with the redacted version you edited, "
+    "so the hidden value behind a [REDACTED: …] marker cannot be recovered. Nothing was saved. "
+    "Re-open it to load the current version, or replace the marker with the value you want "
+    "stored."
+)
+
+
+def _restore_masked_content(body: dict[str, Any], stored_content: str) -> dict[str, Any] | None:
+    """Return `body` with any echoed-back redaction mask in `content` restored from the store.
+
+    A write path that accepts a string the server itself generated as a mask overwrites the
+    real content with the mask. Both save handlers route their body through here so neither can
+    regress independently; a body with no `content` key is passed through untouched (a partial
+    update is not an attempt to rewrite the body).
+    """
+    submitted = body.get("content")
+    if not isinstance(submitted, str):
+        return body
+    restored = restore_masked_spans(submitted, stored_content)
+    if restored is None:
+        return None
+    if restored == submitted:
+        return body
+    return {**body, "content": restored}
 
 
 def _build_prompt_template(body: dict[str, Any], default_name: str = "") -> Any:
@@ -268,6 +294,16 @@ async def api_prompt_save(request: web.Request) -> web.Response:
     provider = _get_default_prompt_provider()
     if provider is None:
         return web.json_response({"error": "no prompt provider registered"}, status=503)
+    # The editor is seeded from the REDACTED read, so it echoes our own masks back. Restore
+    # them from the stored value before anything is written — otherwise a save (even a
+    # title-only one) persists `[REDACTED: …]` over the real content, and prompts keep no
+    # history to recover it from. See `restore_masked_spans`.
+    stored = provider.get_prompt(bare)
+    if stored is not None:
+        merged = _restore_masked_content(body, stored.content)
+        if merged is None:
+            return web.json_response({"error": _MASK_CONFLICT}, status=409)
+        body = merged
     try:
         tpl = _build_prompt_template(body, default_name=bare)
         provider.update_prompt(bare, tpl)
@@ -321,8 +357,7 @@ async def api_prompt_render(request: web.Request) -> web.Response:
         rendered = render_template(tpl, values, resolver=_snippet_resolver(provider))
     except PromptRenderError as exc:
         return web.json_response({"error": str(exc)}, status=400)
-    rendered, _ = redact_credentials(rendered)
-    rendered, _ = redact_exfiltration_urls(rendered)
+    rendered = redact_for_display(rendered)
     return web.json_response({"name": bare, "rendered": rendered})
 
 
@@ -507,8 +542,7 @@ async def api_prompt_preview(request: web.Request) -> web.Response:
                 "includes": includes,
             }
         )
-    rendered, _ = redact_credentials(rendered)
-    rendered, _ = redact_exfiltration_urls(rendered)
+    rendered = redact_for_display(rendered)
     return web.json_response(
         {
             "ok": True,
@@ -680,8 +714,7 @@ async def api_snippet_detail(request: web.Request) -> web.Response:
     snip = provider.get_snippet(bare) if provider is not None else None
     if snip is None:
         return web.json_response({"error": "not found"}, status=404)
-    content, _ = redact_credentials(snip.content)
-    content, _ = redact_exfiltration_urls(content)
+    content = redact_for_display(snip.content)
     return web.json_response(
         {
             **_snippet_to_listing(snip),
@@ -724,6 +757,13 @@ async def api_snippet_save(request: web.Request) -> web.Response:
     provider = _get_default_prompt_provider()
     if provider is None:
         return web.json_response({"error": "no prompt provider registered"}, status=503)
+    # Same read/write asymmetry as a prompt save — `api_snippet_detail` redacts too.
+    stored_snip = provider.get_snippet(bare)
+    if stored_snip is not None:
+        merged = _restore_masked_content(body, stored_snip.content)
+        if merged is None:
+            return web.json_response({"error": _MASK_CONFLICT}, status=409)
+        body = merged
     try:
         snip = _build_snippet(body, default_name=bare)
         provider.update_snippet(bare, snip)
@@ -790,8 +830,7 @@ async def api_snippet_render(request: web.Request) -> web.Response:
         rendered = render_snippet(snip, values, resolver=_snippet_resolver(provider))
     except PromptRenderError as exc:
         return web.json_response({"error": str(exc)}, status=400)
-    rendered, _ = redact_credentials(rendered)
-    rendered, _ = redact_exfiltration_urls(rendered)
+    rendered = redact_for_display(rendered)
     return web.json_response({"name": bare, "rendered": rendered})
 
 

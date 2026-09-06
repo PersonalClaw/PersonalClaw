@@ -12,6 +12,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.apps.secret_fields import mask_secrets, preserve_unchanged_secrets
 from personalclaw.providers.registry import get_provider_registry
 from personalclaw.providers.settings import ProviderSettings
 
@@ -160,8 +161,16 @@ async def handle_get_config(request: web.Request) -> web.Response:
     if not ext:
         return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
 
-    config = ProviderSettings.load(name)
-    return web.json_response({"name": name, "config": config})
+    # Sensitive fields are WRITE-ONLY: masked out, never handed back. This route returned
+    # them verbatim while ``/api/apps/{name}/config`` — reading the SAME file and honouring
+    # the SAME ``x-meta.sensitive`` flag — masked them. Since the Providers page calls THIS
+    # one, a configured app's credentials (e.g. slack-channel's Bot + App tokens) were
+    # shipped to the browser on every panel open, held in the form's state, and revealable
+    # on screen through its show/hide toggle. One policy now, in ``apps.secret_fields``.
+    config, secret_set = mask_secrets(
+        ProviderSettings.load(name), ext.provider_config.settingsSchema
+    )
+    return web.json_response({"name": name, "config": config, "_secret_set": secret_set})
 
 
 async def handle_patch_config(request: web.Request) -> web.Response:
@@ -180,6 +189,11 @@ async def handle_patch_config(request: web.Request) -> web.Response:
         return web.json_response({"error": "Body must be a JSON object"}, status=400)
 
     schema = ext.provider_config.settingsSchema
+    # The other half of masking on GET: the form PATCHes back whatever GET gave it, so a
+    # sensitive field arriving as the mask (or empty over a stored value) means "keep it".
+    # Without this, masking the GET would erase a working token the first time the operator
+    # saved an unrelated field on the same form.
+    body = preserve_unchanged_secrets(body, ProviderSettings.load(name), schema)
     errors = ProviderSettings.validate(body, schema)
     if errors:
         return web.json_response({"error": "Validation failed", "details": errors}, status=422)
@@ -200,7 +214,10 @@ async def handle_patch_config(request: web.Request) -> web.Response:
         _refresh_media_registries()
     except Exception:  # noqa: BLE001 — refresh is best-effort, never block a save
         pass
-    return web.json_response({"name": name, "config": updated})
+    # Mask on the way out too: echoing the freshly-saved token back would undo the GET fix
+    # for the one response most likely to be read from a log or a devtools panel.
+    masked, secret_set = mask_secrets(updated, schema)
+    return web.json_response({"name": name, "config": masked, "_secret_set": secret_set})
 
 
 async def handle_enable(request: web.Request) -> web.Response:

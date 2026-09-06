@@ -545,12 +545,32 @@ def validate_file_path(raw: str) -> str | None:
 
     Enforces: is_sensitive_path(), realpath canonicalization.
     Returns the canonical path or None if rejected.
+
+    A validator ANSWERS; it does not raise (issue 352). `os.path.realpath` on a path holding a
+    NUL byte raises `ValueError: embedded null character`, and this function had no guard — so
+    `?path=/tmp/a%00b` left an unhandled exception to become a raw 500 out of every endpoint
+    that funnels here (`file-read`, `file-write`, `file-move`, `create-dir`, uploads, prompts).
+    Measured: `validate_file_path("/tmp/a\\x00b")` raised rather than returning None.
+
+    The `except` is the whole guard, deliberately. A NUL is the instance that was reported; "the
+    OS refused to canonicalize this" is the class, so any future member gets the same refusal
+    rather than a new 500. Both `ValueError` and `OSError` are caught because `realpath` can raise
+    either depending on the input and platform.
+
+    An explicit `"\\x00" in raw` check sat here first and was removed: mutation testing showed it
+    could not change the answer, because the `except` already returns None for exactly those
+    inputs. The NUL check that IS load-bearing lives in `security.is_sensitive_path`, which
+    catches-and-continues rather than returning, and so needs to refuse on its own.
     """
     import os
 
     if not raw:
         return None
-    path = os.path.realpath(os.path.expanduser(raw))
+    try:
+        path = os.path.realpath(os.path.expanduser(raw))
+    except (ValueError, OSError):
+        logger.debug("validate_file_path: uncanonicalizable path rejected", exc_info=True)
+        return None
     if is_sensitive_path(path):
         return None
     return path
@@ -560,10 +580,18 @@ def safe_read_file(path: str) -> str:
     """Read a file after enforcing ``is_sensitive_path``.
 
     Raises ``PermissionError`` if the path is sensitive.
+
+    A NUL byte makes `Path.resolve()` raise `ValueError` (issue 352) — the same defect as in
+    `validate_file_path`, reached through a different call shape. Refused as `PermissionError`
+    so the answer is this function's OWN documented refusal: every caller already handles that,
+    and none of them expected a `ValueError` from a path argument.
     """
     from pathlib import Path
 
-    resolved = str(Path(path).expanduser().resolve())
+    try:
+        resolved = str(Path(path).expanduser().resolve())
+    except (ValueError, OSError) as exc:
+        raise PermissionError(f"Blocked: unusable path: {exc}") from exc
     if is_sensitive_path(resolved):
         raise PermissionError(f"Blocked: access to sensitive path: {resolved}")
     return Path(resolved).read_text(encoding="utf-8")

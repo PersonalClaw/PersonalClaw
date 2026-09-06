@@ -81,7 +81,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from personalclaw.evals import pinning
+from personalclaw.evals import pinning, provenance
 from personalclaw.evals import scenarios as scenario_lib
 from personalclaw.evals import store
 from personalclaw.evals.overlay import OverlayRefusedError, throwaway_home
@@ -561,8 +561,23 @@ def cell_spend(matrix_id: str) -> dict[str, Any]:
     ``observed`` is carried through and never inferred: ``False`` means no cell reported spend,
     which is NOT the same fact as zero spend, and a gate that reported "$0.00" for a
     measurement it never saw would be claiming the run was free.
+
+    ``tokens_recorded`` is carried through the same way, one step further in (#2540). A cell whose
+    provider omitted its ``usage`` block reports ``tokens: None``, and ``None or 0`` would have
+    summed it here as a measured zero. So one unrecorded cell makes the whole total's token count
+    :data:`~personalclaw.evals.provenance.UNRECORDED`: the sum of the cells that DID report is not
+    this matrix's token spend. ``dollars_est`` is unaffected — it is a real estimate over real
+    attempts, and only the token count is absent.
     """
-    total = {"observed": False, "attempts": 0, "tokens": 0, "dollars_est": 0.0, "estimated": False}
+    total: dict[str, Any] = {
+        "observed": False,
+        "attempts": 0,
+        "tokens": 0,
+        "tokens_recorded": True,
+        "unrecorded_attempts": 0,
+        "dollars_est": 0.0,
+        "estimated": False,
+    }
     try:
         root = store.matrix_dir(matrix_id)
     except OSError:
@@ -577,18 +592,36 @@ def cell_spend(matrix_id: str) -> dict[str, Any]:
             continue
         total["observed"] = True
         total["attempts"] += int(spend.get("attempts") or 0)
-        total["tokens"] += int(spend.get("tokens") or 0)
+        total["unrecorded_attempts"] += int(spend.get("unrecorded_attempts") or 0)
+        # The guard, BEFORE the arithmetic. An ABSENT `tokens_recorded` is unrecorded too, which
+        # is right: a cell artifact written before #2540 never recorded whether its provider
+        # reported usage, so its token count cannot be vouched for either.
+        if provenance.is_unrecorded(spend, "tokens_recorded") or not spend.get("tokens_recorded"):
+            total["tokens_recorded"] = False
+        elif total["tokens_recorded"]:
+            total["tokens"] = int(total["tokens"] or 0) + int(spend.get("tokens") or 0)
         total["dollars_est"] = round(
             float(total["dollars_est"]) + float(spend.get("dollars_est") or 0.0), 6
         )
         total["estimated"] = bool(total["estimated"]) or bool(spend.get("estimated"))
+    if not total["tokens_recorded"]:
+        total["tokens"] = None
     return total
 
 
 def _accumulate(into: dict[str, Any], one: dict[str, Any]) -> None:
     into["observed"] = bool(into.get("observed")) or bool(one.get("observed"))
     into["attempts"] = int(into.get("attempts") or 0) + int(one.get("attempts") or 0)
-    into["tokens"] = int(into.get("tokens") or 0) + int(one.get("tokens") or 0)
+    into["unrecorded_attempts"] = int(into.get("unrecorded_attempts") or 0) + int(
+        one.get("unrecorded_attempts") or 0
+    )
+    # One unrecorded matrix makes the RUN's token total unrecorded. Summed only while BOTH sides
+    # are recorded — `None or 0` here was the second site of #2540's silent zero.
+    recorded = bool(into.get("tokens_recorded", True)) and bool(one.get("tokens_recorded", True))
+    into["tokens_recorded"] = recorded
+    into["tokens"] = (
+        int(into.get("tokens") or 0) + int(one.get("tokens") or 0) if recorded else None
+    )
     into["dollars_est"] = round(
         float(into.get("dollars_est") or 0.0) + float(one.get("dollars_est") or 0.0), 6
     )
@@ -709,6 +742,8 @@ def run_gate(
         "observed": False,
         "attempts": 0,
         "tokens": 0,
+        "tokens_recorded": True,
+        "unrecorded_attempts": 0,
         "dollars_est": 0.0,
         "estimated": False,
     }
@@ -753,8 +788,15 @@ def run_gate(
             _accumulate(spend, one)
             # Charge the meter with what the child actually reported. This is the step that
             # makes the check above bind: without it `check_run` reads a total nothing wrote.
+            #
+            # An UNRECORDED token count (#2540) cannot be charged — there is no number to charge
+            # — so it charges 0 tokens and says so in the report rather than inventing one. The
+            # ceiling this gate binds on is DOLLARS (`Budget(max_dollars=budget)` above, and
+            # `dollars_est` is recorded for those same attempts), so the bound still bites; the
+            # token figure is observability, and an invented one would corrupt it silently.
+            charged_tokens = 0 if one.get("tokens") is None else int(one.get("tokens") or 0)
             meter.charge(
-                int(one.get("tokens") or 0),
+                charged_tokens,
                 float(one.get("dollars_est") or 0.0),
                 run_key=run_key,
             )

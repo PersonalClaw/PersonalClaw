@@ -120,7 +120,10 @@ describe('a card-grid install discloses the grants at consent', () => {
     grid()
     await openConsentFrom(screen.getByRole('button', { name: /^Install$/ }))
     const text = dialogText()
-    expect(text).toMatch(/The app runs an external program on your machine\./)
+    // "This code", not "The app": one gloss map serves both consent surfaces (#2535 wired the
+    // skills marketplace in), so the sentence cannot name one of them. See scanFindings.ts.
+    expect(text).toMatch(/This code runs an external program on your machine\./)
+    expect(text, 'the map must not name one of its two surfaces').not.toMatch(/The app runs an external/)
     // The gloss complements the evidence; it does not replace the real argv.
     expect(text).toMatch(/subprocess\.run/)
   })

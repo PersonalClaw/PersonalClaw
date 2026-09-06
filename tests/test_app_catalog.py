@@ -67,13 +67,25 @@ def _native(root: Path, name: str, *, native: bool, provider_type: str = "search
     (d / "app.json").write_text(json.dumps(mani), encoding="utf-8")
 
 
+def _store_available() -> set[str]:
+    """The names the Store would offer from the NATIVE dir — the enumerator's output run
+    through the one resolver that excludes the Library.
+
+    Asserted here rather than on ``available_catalog()`` because that call shallow-clones
+    every configured git source and the shipped default is the real published repo, so
+    these tests would reach github.com. ``available_bundled`` is a pure enumerator now
+    (issue 2528): the install-state filter lives in ``resolve_catalog_entries`` with every
+    other source's, so this is the composition the wire payload actually performs."""
+    return {e.name for e in catalog.resolve_catalog_entries(catalog.available_bundled())}
+
+
 def test_native_app_seeded_then_absent_from_available(tmp_path):
     """A native app seeds into the Library, so it's not 'available to install'.
-    (available_bundled surfaces only a native app MISSING from the Library — the
-    defensive self-heal case — which doesn't happen in normal operation.)"""
+    (The Store surfaces only a native app MISSING from the Library — the defensive
+    self-heal case — which doesn't happen in normal operation.)"""
     _native(tmp_path, "brave-search", native=True)
     app_manager.seed_builtin_apps()  # → now in the Library
-    assert "brave-search" not in {e.name for e in catalog.available_bundled()}
+    assert "brave-search" not in _store_available()
 
 
 def test_native_app_cannot_be_force_uninstalled(tmp_path):
@@ -83,7 +95,7 @@ def test_native_app_cannot_be_force_uninstalled(tmp_path):
     app_manager.seed_builtin_apps()
     assert app_manager.force_uninstall("brave-search") is False  # locked
     assert manager._read_installed("brave-search") is not None  # still installed
-    assert "brave-search" not in {e.name for e in catalog.available_bundled()}
+    assert "brave-search" not in _store_available()
 
 
 def test_missing_native_app_resurfaces_as_available(tmp_path):
@@ -95,6 +107,7 @@ def test_missing_native_app_resurfaces_as_available(tmp_path):
     assert entry is not None
     assert entry.isProvider is True and entry.providerType == "search"
     assert entry.sourceKind == "native" and entry.icon == "Plug"
+    assert "brave-search" in _store_available()
 
 
 def test_default_first_party_git_source_present():

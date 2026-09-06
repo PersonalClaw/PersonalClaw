@@ -37,23 +37,33 @@ is a deliberate, documented judgment (also recorded in-module at each site).
 | `constants.APP_LOGGER_ROOTS` (`"slack_runtime"`) | core | The list of app logger namespaces the CLI log setup (`cli.py`) and the dashboard log-level handler consume. Apps *registering* their own logger roots (instead of core listing them) is a post-publication roadmap item — deliberately not built yet. |
 | Everything else vendor-specific | `apps/` bundles | Endpoints, auth flows, catalogs, binary resolution, block/attachment formats, scraping — all bundle-resident. |
 
-## The app-bundle landscape (36 first-party bundles)
+## The app-bundle landscape
 
-- **16 model-provider apps** — 5 protocol-thin branded apps (built on
-  `sdk/provider_helpers.py` `register_branded_app`), 2 generic-endpoint apps,
-  4 full-protocol apps, 5 local-inference apps (faster-whisper, piper-tts,
-  sentence-transformers, diarization-onnx, diarization-pyannote).
-- **7 search-provider apps** — registered through `search_providers/`; the
-  zero-config floor is a declared `keyless` *capability*, not a vendor name
-  in core (`search_providers/registry.py::_keyless_provider`: first registered
-  keyless provider wins).
-- **3 agent apps** — `claude-code-agent`, `codex-agent`, `kiro-cli-agent`:
-  binary resolution, dialect selection, and login argv are all bundle-resident;
-  core `acp/` is the vendor-neutral protocol layer.
-- **1 channel app** — `slack-channel`, the full reference channel provider
-  (see [inbox-channels.md](inbox-channels.md)).
-- **3 tool apps, 1 action app, 1 skills app** (`skills-sh` marketplace),
-  **2 backend+UI apps** (Minutes, Growth — contributed dashboards).
+The families an app can belong to are not a list this document keeps — they are
+exactly `PROVIDER_TYPES` (`apps/manifest.py`), which a manifest is validated
+against at install time. Read that frozenset for what exists; read
+[PersonalClawApps](https://github.com/PersonalClaw/PersonalClawApps) for who
+implements it. What matters here is where the boundary sits inside each family:
+
+- **Model providers** come in three construction shapes, all bundle-resident:
+  protocol-thin branded apps (built on `sdk/provider_helpers.py`
+  `register_branded_app`), generic-endpoint apps taking a base URL, and
+  full-protocol apps owning their own wire translation. Local-inference apps
+  (whisper, TTS, embeddings, diarization) additionally implement the
+  `local_models/` management contract.
+- **Search providers** register through `search_providers/`; the zero-config
+  floor is a declared `keyless` *capability*, not a vendor name in core
+  (`search_providers/registry.py::_keyless_provider`: first registered keyless
+  provider wins).
+- **Agent apps** own binary resolution, dialect selection, and login argv; core
+  `acp/` is the vendor-neutral protocol layer.
+- **Channel apps** own the vendor transport and delivery both ways.
+  `slack-channel` is the completed reference — see
+  [inbox-channels.md](inbox-channels.md) and
+  [build-a-channel-app.md](../guides/build-a-channel-app.md).
+- **`skills-sh`** is a marketplace app rather than a single provider, and
+  **backend+UI apps** contribute their own dashboard pages behind a `ui` block
+  plus a subprocess backend.
 
 ## How resolution works (no vendor names in the path)
 
@@ -97,9 +107,9 @@ The clearest illustration of the tenet is the Slack extraction (originally
   `resolve_user_name`, `build_thread_link`, …). Core never constructs a vendor
   URL — even the "open this thread" deep link is produced by the app behind
   `build_thread_link`.
-- **The app got the vendor logic**: `apps/slack-channel/slack_runtime/`
-  (14 modules — transport, runtime facade, delivery, events, interactions,
-  blocks, files, settings with a loud one-time `migrate_from_core()`).
+- **The app got the vendor logic**: `apps/slack-channel/slack_runtime/` —
+  transport, runtime facade, delivery, events, interactions, blocks, files, and
+  settings with a loud one-time `migrate_from_core()`.
 - **Generic residue was extracted, not deleted**: LLM text utilities misfiled
   in the Slack module became core `textfmt.py`; the gateway orchestrator
   (which was ~95% core boot logic living in `slack/gateway.py`) became core

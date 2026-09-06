@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Search, RefreshCw, ShieldCheck, ShieldAlert, Archive, Loader2, Download, SlidersHorizontal } from 'lucide-react'
+import { Search, RefreshCw, ShieldCheck, ShieldAlert, Archive, Download, SlidersHorizontal } from 'lucide-react'
 import { api, type AuditFilters, type AuditPage, type SelEvent, type SelVerify } from '../../lib/api'
 import { invalidateKeys } from '../../lib/data'
 import { confirm } from '../../ui/dialog'
@@ -211,7 +211,7 @@ export function AuditPanel() {
             excess-property-checked, so the hyphenated form compiled and vanished. */}
         <Button variant="secondary" size="sm" onClick={() => setShowMore((s) => !s)} ariaExpanded={showMore}><SlidersHorizontal size={14} /> Filters</Button>
         {/* Icon-only, so it needs its own name — `title` is the kit's convention for a bare glyph. */}
-        <Button variant="secondary" size="sm" onClick={reload} disabled={busy} title={busy ? 'Refreshing the audit log' : 'Refresh the audit log'}>{busy ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={14} />}</Button>
+        <Button variant="secondary" size="sm" onClick={reload} loading={busy} title={busy ? 'Refreshing the audit log' : 'Refresh the audit log'}><RefreshCw size={14} /></Button>
         <Button variant="secondary" size="sm" onClick={runVerify}><ShieldCheck size={14} /> Verify</Button>
         {/* `!events.length` is a state the user can fix (clear a filter, or wait for activity),
             not an in-flight gate — so it carries a reason, which keeps the tab stop and lets a
@@ -270,8 +270,7 @@ export function AuditPanel() {
 
       <div className="mt-3 flex flex-col items-center gap-1.5">
         {cursor && (
-          <Button variant="secondary" size="sm" onClick={loadMore} disabled={busy}>
-            {busy ? <><Loader2 size={14} className="animate-spin" /> Loading</> : 'Load older events'}
+          <Button variant="secondary" size="sm" onClick={loadMore} loading={busy} loadingLabel="Loading">Load older events
           </Button>
         )}
         {!cursor && events.length > 0 && (

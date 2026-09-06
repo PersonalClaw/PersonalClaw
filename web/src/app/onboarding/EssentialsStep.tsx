@@ -8,6 +8,7 @@ import { TextLink } from '../../ui/TextLink'
 import { listItemEnter, stagger, spring } from '../../design/motion'
 import { useQuery } from '../../lib/data'
 import { useGuardedInstall, guardedFromApp } from '../../lib/useGuardedInstall'
+import { catalogApps } from '../../lib/appCatalog'
 import { ConsentModal, PermissionList, CronConsentList } from '../../pages/apps/installConsent'
 import { SchemaField } from '../../pages/settings/ModelBackends'
 import { api, type AppCatalogEntry, type ChatModelOption, type ModelProviderType, type OnboardingState, type OnboardingStatePatch } from '../../lib/api'
@@ -83,14 +84,15 @@ export function laneOf(e: AppCatalogEntry): LaneId | null {
 /** Every card array the catalog surfaces, deduped by app name. A first-party source
  *  reaches the Store as `localApps` (the dev dir / `PERSONALCLAW_FIRST_PARTY_APPS_DIR`)
  *  or as `gitApps`/`remoteApps` (the shipped default git source), so a step that read
- *  only one of them would show an empty lane on half the installs. */
+ *  only one of them would show an empty lane on half the installs.
+ *
+ *  Flattened by the ONE merge (`lib/appCatalog`) — this used to concatenate the four lists
+ *  in a THIRD order of its own, so with a name in two lists the onboarding step could offer
+ *  a different copy of an app than the Store card did (#2528). */
 export function candidatesByLane(c: Awaited<ReturnType<typeof api.appCatalog>> | undefined): Record<LaneId, AppCatalogEntry[]> {
   const out: Record<LaneId, AppCatalogEntry[]> = { model: [], search: [], speech: [], channel: [] }
-  const seen = new Set<string>()
-  const pool = [...(c?.bundled ?? []), ...(c?.localApps ?? []), ...(c?.gitApps ?? []), ...(c?.remoteApps ?? [])]
-  for (const e of pool) {
-    if (!e?.name || seen.has(e.name)) continue
-    seen.add(e.name)
+  for (const e of catalogApps(c)) {
+    if (!e?.name) continue
     const lane = laneOf(e)
     if (lane) out[lane].push(e)
   }

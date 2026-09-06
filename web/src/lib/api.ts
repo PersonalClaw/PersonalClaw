@@ -746,6 +746,10 @@ export interface AppQualityWire {
 export interface AppSummary {
   name: string; displayName: string; version: string; description: string
   enabled: boolean; origin: string; source?: string; icon: string
+  /** The Store's `sourceKind` reading of `origin`, resolved by the backend so no surface
+   *  translates between the two provenance vocabularies. `''` when the origin has no
+   *  reading — render nothing rather than guessing (see `lib/provenance`). */
+  sourceKind?: string
   heroUrl?: string  // resolved data: URI for the optional hero/banner image; absent/"" if none
   hasBackend: boolean; hasUI: boolean
   uiPages: AppUiPage[]
@@ -818,6 +822,26 @@ export interface AppCatalogEntry {
   // manifest hasn't been fetched) → no badges, which is honest either way.
   quality?: AppQualityWire
 }
+/** The `/api/apps/catalog` payload. Spelled ONCE — the shape used to be written out inline at
+ *  three call sites, which is how a new field (`networkSources`) reaches one consumer and not
+ *  the next. The four app lists carry at most one entry per name between them: the backend
+ *  resolves collisions before serialising (`apps/catalog.py: resolve_catalog_entries`), so no
+ *  consumer can resolve one differently from another (#2528). Flatten them with
+ *  `lib/appCatalog.catalogApps`, never by concatenating here. */
+export interface AppCatalog {
+  bundled: AppCatalogEntry[]
+  gitSources: string[]
+  defaultGitSources?: string[]
+  builtinGitSources?: string[]
+  localSources?: string[]
+  firstPartySources?: string[]
+  localApps?: AppCatalogEntry[]
+  remoteApps?: AppCatalogEntry[]
+  gitApps?: AppCatalogEntry[]
+  /** The remote HOSTS a Store read contacts, so the surface that triggers the egress can
+   *  disclose it. Empty ⇒ opening the Store reaches nothing off this machine. */
+  networkSources?: string[]
+}
 export interface AppScanFinding { surface: string; severity: string; rule: string; path: string; evidence: string }
 /** SH-3 contract C2. `state` is `signed` | `unsigned` | `invalid`; `signer` is the
  *  in-tree key's identity (only meaningful when signed); `reason` is the refusal text an
@@ -864,8 +888,16 @@ export interface AppDepClassification {
  *  entries:0` means it has a data dir that happens to be empty. A dialog that
  *  renders both as "nothing to keep" promises the wrong thing in one of the cases.
  *  `path` is where a keep-data uninstall parks it — the recovery information the
- *  screen owes the user. */
-export interface AppDataFacts { present: boolean; entries: number; path: string }
+ *  screen owes the user.
+ *
+ *  `unconsumed` (issue #2585) is earlier copies of this app's `data/` still on disk that
+ *  nothing consumed — a park a failed restore left behind, or a stage a failed park left
+ *  behind. Non-empty means the keep-data uninstall WILL refuse, so the dialog has to say
+ *  so and name them: `DELETE ?remove=1` reports every refusal as `404 app not installed`,
+ *  which is both false and the opposite of actionable. Optional on the wire because an
+ *  older gateway does not send the key — read `undefined` as "not reported", never as
+ *  "none", or the dialog goes back to promising a removal that will be refused. */
+export interface AppDataFacts { present: boolean; entries: number; path: string; unconsumed?: string[] }
 export interface AgentDef { name: string }
 export interface ChatSession {
   key: string; title: string; agent: string; model: string; reasoning_effort: string
@@ -1328,7 +1360,17 @@ export interface WorkflowLedgerRow {
   status: string
   spec_version: number
   created_at?: string
-  totals: { tokens?: number; cost_usd?: number; steps_completed?: number; steps_failed?: number }
+  // `priced: false` means `cost_usd` is a FLOOR — some completed step booked no cost, so the figure
+  // must render "not recorded"/"at least this much", never `$0.00`. Same word and same meaning as
+  // `LoopSpend.priced` and `UsageAgg.priced` (#2566). Declared here even though this tab renders no
+  // money today, so the column somebody adds later inherits the disclosure instead of the trap.
+  totals: {
+    tokens?: number
+    cost_usd?: number
+    priced?: boolean
+    steps_completed?: number
+    steps_failed?: number
+  }
 }
 export type WorkflowRunStatus =
   'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated'
@@ -1485,6 +1527,10 @@ export interface WorkflowRunStats {
   tokens: number
   cached_tokens: number
   cost_usd: number
+  // `false` ⇒ `cost_usd` is a FLOOR: some completed step booked no cost at all, so the float is a
+  // running sum over an incomplete sample. Render it as unknown / "at least this much", never
+  // `$0.00` — a measured zero (a free local model) reports `priced: true` (#2566).
+  priced: boolean
   steps_completed: number
   steps_failed: number
   steps_cached: number
@@ -1537,6 +1583,9 @@ export interface WorkflowTemplateCard {
   runs: number
   cost_p50: number
   cost_p95: number
+  // `false` ⇒ at least one run in the sample was unpriced, so BOTH percentiles are floors. One
+  // unpriced constituent taints the aggregate, exactly as it does in a `UsageAgg` rollup (#2566).
+  priced: boolean
   duration_p50: number
   duration_p95: number
   failure_rate: number
@@ -2382,6 +2431,19 @@ export interface BenchmarkTaskRow {
   /** Carried from `AttemptRecord.estimated`: tokens are heuristic, not provider-reported. Any
    *  published ratio must carry that word (protocol §4). */
   spend_estimated: boolean
+  /** `false` means a contributing cell's PROVIDER reported no token usage at all (#2540) — a
+   *  DIFFERENT fact from `spend_observed`, which is about whether the cell could read its own
+   *  audit file. `spend_observed: true` with `tokens_recorded: false` is the exact state that
+   *  published a silent zero: the cell ran, its rows were read, and the numbers were absent.
+   *
+   *  When this is `false` the runner REFUSES the ratio (`token_ratio: null`) and the verdict is
+   *  `tokens_unrecorded`, so `token_ratio: null` now carries two meanings and this flag is what
+   *  separates them: unmeasured arms, or a measured pair whose spend was never reported.
+   *  ABSENT (older report) is itself unrecorded — see `lib/unrecorded.ts`. */
+  tokens_recorded?: boolean
+  /** How many contributing cells that was. A count, so "one cell of ten" and "all ten" are not
+   *  the same published fact. */
+  unrecorded_spend_cells?: number
   notes: string[]
 }
 /** A task the runner refused to run at all, with the refusal's own sentence. Reported rather
@@ -2419,9 +2481,23 @@ export interface BenchmarkPin {
   config_snapshot_ref?: string
   model_fp?: string
   model_fingerprint?: Record<string, string>
+  /** What the CELLS could reach — the second fact, under its own name (#2561). One of a 12-hex
+   *  digest, `'no_model'` (recorded: the cells could reach none, so they resolved the offline
+   *  replay) or `'unrecorded'`. Never an empty string, and never confusable with `model_fp` above,
+   *  which is the invoking HOME's and was identical for a bound run and one where every cell
+   *  failed to resolve any provider. */
+  cell_model_fp?: string
+  /** The per-use-case refs behind `cell_model_fp`. `null` is UNRECORDED; `{}` is recorded and
+   *  means the cells could reach no model. */
+  cell_model_fingerprint?: Record<string, string> | null
 }
 export interface BenchmarkReport {
   run_id: string
+  /** The schema this report was written under, STATED by the report rather than inferred from
+   *  which keys are present (#2562). Read it through `lib/unrecorded.ts` — `reportSchema()` /
+   *  `provenanceRecorded()` — never with an `in` check. Optional only because a hand-edited or
+   *  truncated artifact can omit it, and that case is UNRECORDED, not v1. */
+  report_schema?: number
   created_at: string
   protocol_doc: string
   task_set_version: number
@@ -2442,10 +2518,20 @@ export interface BenchmarkReport {
   pin?: BenchmarkPin
   /** THREE states, and collapsing any two of them is the defect this field exists to prevent:
    *  an object = these cells called that named model; `null` = the run recorded that NO provider
-   *  was bound, so every cell resolved the offline replay; ABSENT = the report predates
-   *  provenance recording (ES-17 added the field without moving `report_schema`), so provenance
-   *  is UNRECORDED — which is not the same claim as "nothing was bound". */
+   *  was bound, so every cell resolved the offline replay; UNRECORDED = the report predates
+   *  provenance recording.
+   *
+   *  Which of the last two you have is answered by `provenanceRecorded(report)` from
+   *  `lib/unrecorded.ts`, reading the schema the report STATES — not by `'provider_binding' in
+   *  report`. #2562: that trick rendered the three states correctly and left every future consumer
+   *  to rediscover it, which made the workaround a second owner of the same fact. */
   provider_binding?: BenchmarkProviderBinding | null
+  /** `false` when any contributing cell's provider reported no token usage (#2540) — a property
+   *  of the RUN, so a reader knows before reading any row that no token ratio in this table is
+   *  evidence of a spend match. ABSENT is itself unrecorded (an older report). */
+  tokens_recorded?: boolean
+  /** How many cells across the whole run that was. */
+  unrecorded_spend_cells?: number
 }
 /** The (V4) reproduction judgement. The variance is NOT numeric and NOT invented by the
  *  code: `stated_variance` is the protocol's own list of conditions and `stated_variance_source`
@@ -2459,6 +2545,11 @@ export interface BenchmarkReproduction {
   conditions: Record<string, boolean>
   verdict_changes: { task_id: string; baseline: string | null; rerun: string | null }[]
   notes: string[]
+  /** WHICH schema each side was written under (#2562), beside the conditions and deliberately not
+   *  AS one: §8 states four equalities plus verdict class, and a fifth condition would be code
+   *  inventing variance the protocol did not state. `null` is UNRECORDED. */
+  baseline_report_schema?: number | null
+  rerun_report_schema?: number | null
 }
 export interface BenchmarkView {
   report: BenchmarkReport
@@ -3902,7 +3993,12 @@ export interface ProviderSchemaProp {
 export interface ProviderSchema { type?: string; properties?: Record<string, ProviderSchemaProp>; required?: string[] }
 // One configured instance of a multiInstance=true provider (generic store —
 // extensions/{name}/instances/{id}.json). Each carries its own config dict.
-export interface ProviderInstance { id: string; extension_name: string; display_name: string; config: Record<string, unknown>; enabled: boolean }
+// `_secret_set` names the sensitive fields of THIS instance that already hold a stored
+// secret. Its config arrives MASKED (write-only over the API — apps/secret_fields.py), so the
+// editor blanks those inputs and says "saved — leave blank to keep" instead of offering a row
+// of bullets for editing. Per-instance, not per-response: a list carries N configs, so a
+// single top-level list could not say which instance a named field belongs to.
+export interface ProviderInstance { id: string; extension_name: string; display_name: string; config: Record<string, unknown>; enabled: boolean; _secret_set?: string[] }
 export interface ModelProvider { name: string; type: string; model?: string; capabilities: string[]; credential_status: string }
 /** An installable model-provider type, from an installed model app's manifest.
  *  ``settingsSchema`` is JSON Schema (+ x-meta) describing the instance config
@@ -5450,7 +5546,10 @@ export const api = {
   settingsProviders: () => get<{ providers: SettingsProvider[] }>('/api/providers').then((d) => d.providers),
   // per-extension config: schema (for the dynamic form) + current values + save.
   providerSchema: (name: string) => get<{ schema: ProviderSchema }>(`/api/providers/${encodeURIComponent(name)}/schema`).then((d) => d.schema),
-  providerConfig: (name: string) => get<{ config: Record<string, unknown> }>(`/api/providers/${encodeURIComponent(name)}/config`).then((d) => d.config),
+  // `_secret_set` names the sensitive fields that already hold a stored secret. The GET
+  // masks those values (they are write-only), so the form needs this list to tell "saved"
+  // from "empty" — without it a masked field is indistinguishable from an unset one.
+  providerConfig: (name: string) => get<{ config: Record<string, unknown>; _secret_set?: string[] }>(`/api/providers/${encodeURIComponent(name)}/config`),
   saveProviderConfig: (name: string, config: Record<string, unknown>) =>
     patch<{ config: Record<string, unknown> }>(`/api/providers/${encodeURIComponent(name)}/config`, config),
   enableProvider: (name: string) => post<{ enabled: boolean }>(`/api/providers/${encodeURIComponent(name)}/enable`),
@@ -6300,7 +6399,9 @@ export const api = {
   // the generated self-description document (tools + routes + providers)
   manifest: () => get<Manifest>('/api/manifest'),
   // full catalog envelope incl. operator-visible load failures (broken providers/sources)
-  toolsIndex: () => get<{ tools: ToolItem[]; load_failures?: ToolLoadFailure[] }>('/api/tools'),
+  toolsIndex: () => get<{
+    tools: ToolItem[]; load_failures?: ToolLoadFailure[]
+  }>('/api/tools'),
   invokeTool: (tool: string, args: Record<string, unknown>, provider?: string) =>
     post<ToolInvokeResult>('/api/tools/invoke', { tool, arguments: args, provider }),
   mcpServers: () => get<McpServer[]>('/api/mcp'),
@@ -7345,7 +7446,7 @@ export const api = {
   // `defaultGitSources` = the rows PersonalClaw shipped (labelled "Default"); `builtinGitSources`
   // = the subset that cannot be removed (bundled into every read), so the UI hides a remove
   // control that would silently do nothing. The seeded registry is in the first, not the second.
-  appCatalog: () => get<{ bundled: AppCatalogEntry[]; gitSources: string[]; defaultGitSources?: string[]; builtinGitSources?: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] }>('/api/apps/catalog'),
+  appCatalog: () => get<AppCatalog>('/api/apps/catalog'),
   appSources: () => get<{ sources: string[] }>('/api/apps/sources').then((d) => d.sources),
   addAppSource: (url: string) => post<{ ok: boolean; sources: string[] }>('/api/apps/sources', { url }),
   removeAppSource: (url: string) => del(`/api/apps/sources?url=${encodeURIComponent(url)}`),

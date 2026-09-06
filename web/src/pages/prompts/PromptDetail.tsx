@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toneChipSkin } from '../../design/accent'
-import { Pencil, Trash2, Check, X, Play, Loader2, Lock, Code2, Eye, Puzzle, Rocket } from 'lucide-react'
+import { Pencil, Trash2, Check, X, Play, Lock, Code2, Eye, Puzzle, Rocket } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { Toggle } from '../../ui/Toggle'
@@ -218,10 +218,9 @@ function RenderPanel({ name, vars, launchable, launchKind, onNavigate }: { name:
           </Field>
         ))}
         <div className="flex items-center gap-2">
-          <Button size="sm" variant={launchable ? 'secondary' : 'primary'} onClick={render} disabled={loading} className="self-start">{loading ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} {launchable ? 'Preview' : 'Render'}</Button>
+          <Button size="sm" variant={launchable ? 'secondary' : 'primary'} onClick={render} loading={loading} className="self-start"><Play size={15} /> {launchable ? 'Preview' : 'Render'}</Button>
           {launchable && (
-            <Button size="sm" onClick={launch} disabled={launching} className="self-start">
-              {launching ? <Loader2 size={15} className="animate-spin" /> : <Rocket size={15} />} {launching ? 'Launching…' : `Launch ${launchKind ?? 'goal'} run`}
+            <Button size="sm" onClick={launch} loading={launching} className="self-start"><Rocket size={15} /> {launching ? 'Launching…' : `Launch ${launchKind ?? 'goal'} run`}
             </Button>
           )}
         </div>

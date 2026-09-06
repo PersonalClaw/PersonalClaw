@@ -80,11 +80,26 @@ export function MultiInstanceCard({ ext, onChanged }: { ext: SettingsProvider; o
   )
 }
 
+/** The instance's config with its already-stored secrets blanked for editing.
+ *
+ *  A sensitive field arrives MASKED (write-only over the API), and a row of bullets is both
+ *  indistinguishable from a real value and nonsense to edit. Blank it instead: the field then
+ *  says "saved — leave blank to keep", and a blank submit is what the PUT reads as "keep the
+ *  stored secret". Without this the editor would PUT the mask back over a working API key the
+ *  first time someone changed a model id — the same treatment `ProviderConfigForm` gives the
+ *  single-config form, applied to each instance's own `_secret_set`. */
+export function editableConfig(inst: ProviderInstance): Record<string, unknown> {
+  const next = { ...inst.config }
+  for (const k of inst._secret_set ?? []) next[k] = ''
+  return next
+}
+
 function InstanceRow({ ext, inst, schema, onChanged }: {
   ext: SettingsProvider; inst: ProviderInstance; schema: ProviderSchema | null | undefined; onChanged: () => void
 }) {
   const [editing, setEditing] = useState(false)
-  const [config, setConfig] = useState<Record<string, unknown>>(inst.config)
+  const [config, setConfig] = useState<Record<string, unknown>>(() => editableConfig(inst))
+  const secretSet = inst._secret_set ?? []
   const [test, setTest] = useState<ProviderTestResult | null>(null)
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -141,10 +156,12 @@ function InstanceRow({ ext, inst, schema, onChanged }: {
       )}
       {editing && props.length > 0 && (
         <div className="mt-3 flex flex-col gap-3 border-t border-outline-variant/30 pt-3">
-          {props.map(([k, p]) => <SchemaField key={k} fieldKey={k} prop={p} value={config[k]} onChange={(v) => setConfig((c) => ({ ...c, [k]: v }))} />)}
+          {props.map(([k, p]) => <SchemaField key={k} fieldKey={k} prop={p} value={config[k]}
+            secretAlreadySet={secretSet.includes(k)}
+            onChange={(v) => setConfig((c) => ({ ...c, [k]: v }))} />)}
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
-            <Button variant="ghost" size="sm" onClick={() => { setEditing(false); setConfig(inst.config) }}>Cancel</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setEditing(false); setConfig(editableConfig(inst)) }}>Cancel</Button>
           </div>
         </div>
       )}

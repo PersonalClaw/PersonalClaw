@@ -526,6 +526,28 @@ def _restore_provider_registry() -> object:
 
 
 @pytest.fixture(autouse=True)
+def _reset_channel_delivery_registry() -> object:
+    """Drop any channel-delivery handle a test registers into the process-global registry.
+
+    `channel_delivery` keys one handle per provider in a module-level dict (the writers are channel
+    transports reaching core through `GatewayServices`; the readers are both the gateway and the
+    dashboard, which is why it is not owned by either object — see #959). So a test that installs a
+    fake outlives itself and lands in whatever test shares the worker next.
+
+    Measured while landing that change: three `test_gateway.py` tests went red only in a mix —
+    `test_services_initially_none` asserts a fresh orchestrator has NO delivery, and a leaked
+    handle from an approval test makes the registry answer one. Cleared rather than
+    snapshot-restored, because unlike the provider registries nothing legitimately pre-registers a
+    channel at import time: outside a live gateway the correct state is empty.
+    """
+    from personalclaw.channel_delivery import register
+
+    register(None)
+    yield
+    register(None)
+
+
+@pytest.fixture(autouse=True)
 def _restore_workflow_def_registry() -> object:
     """Undo any workflow DEF provider a test registers into the process-global registry.
 

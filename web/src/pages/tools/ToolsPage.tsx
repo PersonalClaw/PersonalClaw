@@ -633,8 +633,7 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                       alternative is a row whose name recovers and whose address does not. */}
                   <p className="mt-0.5 truncate font-mono text-on-surface-low text-[0.75rem]" title={s.url || [s.command, ...(s.args ?? [])].join(' ')}>{s.url || [s.command, ...(s.args ?? [])].join(' ')}</p>
                 </div>
-                <Button variant="secondary" size="sm" onClick={() => importOne(s)} disabled={busy === s.name}>
-                  {busy === s.name ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} Import
+                <Button variant="secondary" size="sm" onClick={() => importOne(s)} loading={busy === s.name}><Download size={13} /> Import
                 </Button>
               </div>
             ))}

@@ -43,7 +43,7 @@ class TestSaveSessionToHistory:
         mock_state.conversation_log = MagicMock()
 
         with patch(
-            "personalclaw.dashboard.chat_persistence.resolve_history_key",
+            "personalclaw.dashboard.chat_persistence.persisted_history_key",
             side_effect=RuntimeError("reached"),
         ):
             from personalclaw.dashboard.chat import save_session_to_history
@@ -62,7 +62,7 @@ class TestSaveSessionToHistory:
         mock_state = MagicMock()
         mock_state.conversation_log = MagicMock()
         with patch(
-            "personalclaw.dashboard.chat_persistence.resolve_history_key",
+            "personalclaw.dashboard.chat_persistence.persisted_history_key",
             side_effect=RuntimeError("reached"),
         ):
             from personalclaw.dashboard.chat import save_session_to_history

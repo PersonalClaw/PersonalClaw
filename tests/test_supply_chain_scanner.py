@@ -301,9 +301,6 @@ class TestEvidenceWindow:
 # ── Every rule the scanner can emit reaches consent in plain language ──
 
 
-_SCAN_FINDINGS_TS = (
-    Path(__file__).resolve().parent.parent / "web" / "src" / "lib" / "scanFindings.ts"
-)
 _SUPPLY_CHAIN_PY = Path(personalclaw.supply_chain.__file__)
 
 
@@ -326,12 +323,14 @@ def _emittable_rules() -> set[str]:
 
 
 def _glossed_rules() -> set[str]:
-    """The keys of ``SCAN_RULE_GLOSS`` in web/src/lib/scanFindings.ts."""
-    src = _SCAN_FINDINGS_TS.read_text(encoding="utf-8")
-    m = re.search(r"export const SCAN_RULE_GLOSS[^{]*\{(.*?)\n\}", src, re.S)
-    assert m, "SCAN_RULE_GLOSS not found in web/src/lib/scanFindings.ts"
-    body = re.sub(r"//[^\n]*", "", m.group(1))  # drop comments before scanning
-    return set(re.findall(r"^\s*([a-z_]+):", body, re.M))
+    """The rules explained by the canonical gloss map.
+
+    Read through the loader, not by regexing a source file: the map moved out of
+    ``web/src/lib/scanFindings.ts`` into the packaged, language-neutral
+    ``personalclaw/scan_rule_gloss.json`` (#2633) so the Python CLI and the Vite build read
+    ONE literal. Asserting against the loader means this rail covers whatever every
+    consumer actually gets, not a copy of it."""
+    return set(personalclaw.supply_chain.load_scan_rule_gloss())
 
 
 def test_every_scanner_rule_has_a_plain_language_gloss():
@@ -356,10 +355,7 @@ def test_every_scanner_rule_has_a_plain_language_gloss():
 def test_no_gloss_merely_restates_its_rule_name():
     """A gloss that echoes the rule name is the defect wearing a sentence. Each must be
     prose about what the app can do, not ``python_exec`` with the underscores removed."""
-    src = _SCAN_FINDINGS_TS.read_text(encoding="utf-8")
-    m = re.search(r"export const SCAN_RULE_GLOSS[^{]*\{(.*?)\n\}", src, re.S)
-    assert m
-    entries = re.findall(r"^\s*([a-z_]+):\s*[\"'](.+?)[\"'],\s*$", m.group(1), re.M)
+    entries = sorted(personalclaw.supply_chain.load_scan_rule_gloss().items())
     assert len(entries) >= 15, "the gloss map did not parse"
     for rule, text in entries:
         words = rule.split("_")

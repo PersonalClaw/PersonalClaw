@@ -226,7 +226,7 @@ function SkillCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
         {err && <FieldError>{err}</FieldError>}
         <div className="flex justify-end gap-s">
           <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={create} disabled={busy}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Create skill</Button>
+          <Button size="sm" onClick={create} loading={busy}><Plus size={14} /> Create skill</Button>
         </div>
       </div>
     </Modal>

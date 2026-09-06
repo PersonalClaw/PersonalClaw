@@ -259,7 +259,13 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
     // `aria-pressed` false to true and STAYED true, with no toast, no live-region text, and the "Saved"
     // confirmation simply never appearing. Reported the way the eight sibling panels already report it
     // (`AccountPanel`, `AmbientPanel`, `AgentDefaultsPanel`, ...).
-    api.saveDashboardConfig(patch).then(() => { invalidateKeys('chat:stream-reveal'); flash() }).catch((e) => {
+    api.saveDashboardConfig(patch).then(() => {
+      // Every reader of this section's writes gets its own persisted key, so each needs busting here
+      // or the chat keeps the value you just changed until that key happens to go stale.
+      invalidateKeys('chat:stream-reveal')
+      invalidateKeys('chat:show-timestamps')
+      flash()
+    }).catch((e) => {
       notify(`Couldn't save this chat setting: ${String((e as Error)?.message || e)}`, 'error')
     })
   }

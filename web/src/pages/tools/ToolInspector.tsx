@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FieldError } from '../../ui/forms'
 import { fvs } from '../../design/fontWeight'
-import { ShieldAlert, Play, ChevronRight, Check, AlertTriangle, Loader2 } from 'lucide-react'
+import { ShieldAlert, Play, ChevronRight, Check, AlertTriangle } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
 import { api, type ToolItem, type ToolInvokeResult } from '../../lib/api'
@@ -101,7 +101,7 @@ function RunPanel({ tool }: { tool: ToolItem }) {
             <div className="rounded-md px-m py-2.5" style={{ background: 'color-mix(in srgb, var(--color-warn) 10%, transparent)' }}>
               <div data-type="label-s" className="flex items-center gap-1.5 text-warn mb-2" style={fvs(500)}><AlertTriangle size={14} /> This runs <span className="font-mono">{tool.name}</span> for real.</div>
               <div className="flex gap-s">
-                <Button size="sm" onClick={run} disabled={running}>{running ? <><Loader2 size={15} className="animate-spin" /> Running…</> : <><Check size={15} /> Confirm & run</>}</Button>
+                <Button size="sm" onClick={run} loading={running} loadingLabel="Running…"><Check size={15} /> Confirm & run</Button>
                 <Button size="sm" variant="ghost" onClick={() => setConfirming(false)} disabled={running}>Cancel</Button>
               </div>
             </div>

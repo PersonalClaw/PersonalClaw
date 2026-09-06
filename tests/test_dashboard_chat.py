@@ -2777,6 +2777,11 @@ class TestApiChatAgentPassing:
     async def test_agent_set_on_new_session(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
+        # "New" = a session with no agent bound yet, which is what this asserts. The
+        # session itself must EXIST: a send naming an unknown key is refused
+        # `session_not_found` (tests/test_chat_session_resurrection_audit.py), and the
+        # sibling test below already creates the session before sending.
+        state.get_or_create_session("external-my-skill")
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post(
                 "/api/chat?ws=1",
@@ -3946,34 +3951,54 @@ class TestFolderAssignmentPersistence:
                 "force=True must bypass the _resumed_count guard"
             )
 
-    def test_save_session_force_bypasses_resumed_guard(self, tmp_path, monkeypatch):
-        """Unit test: ``force=True`` must bypass the resumed-session guard.
+    def test_save_session_force_bypasses_overwrite_guard(self, tmp_path, monkeypatch):
+        """Unit test: ``force=True`` must bypass the OVERWRITE guard.
 
-        Without force, resumed sessions with no new messages skip the write.
-        With force, the metadata-only mutation reaches disk regardless.
+        The guard's job is to refuse a rewrite whose buffer holds less than the file
+        does, so its precondition is a fact about DISK — and this test builds that fact:
+        two messages are really persisted, then the in-memory buffer is shortened.
+        Without force the shorter buffer must not reach disk (and must not cost the
+        second message); with force it must, because the caller declared it
+        authoritative.
+
+        The earlier form of this test set ``session._resumed_count`` on a session with NO
+        file on disk and asserted the unforced save wrote nothing. That state cannot
+        occur — ``_resumed_count`` is only ever set from a seed that read a file — and
+        asserting it pinned the in-memory predicate this guard was rebuilt to remove: an
+        empty disk has nothing to protect, so the write must proceed.
         """
+        import json
+
         from personalclaw.dashboard.chat import save_session_to_history
 
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         session = state.get_or_create_session("forcesession")
         session.append("user", "hello")
+        session.append("assistant", "hi there")
         session.drain()
-        session._resumed_count = len(session.messages)
-        session.folder_id = "f-force"
-
-        # Without force — save is skipped by the guard, no file written.
         save_session_to_history(state, session)
         path = tmp_path / "dashboard_forcesession.jsonl"
-        assert not path.exists(), "guard must skip save when not forced"
+        assert path.exists(), "a first save with nothing on disk must write"
+        assert len(state.conversation_log.read_messages("dashboard:forcesession")) == 2
 
-        # With force — save bypasses the guard, file is written with folder_id.
+        # Shorten the buffer, then mutate metadata only.
+        del session.messages[1:]
+        session.folder_id = "f-force"
+
+        # Without force — the shorter buffer must not replace the richer file.
+        save_session_to_history(state, session)
+        assert (
+            len(state.conversation_log.read_messages("dashboard:forcesession")) == 2
+        ), "unforced save overwrote a 2-message transcript with a 1-message buffer"
+        assert json.loads(path.read_text().split("\n")[0]).get("folder_id") is None
+
+        # With force — the caller declares the buffer authoritative; it lands.
         save_session_to_history(state, session, force=True)
         assert path.exists(), "force=True must bypass the guard"
-        import json
-
         meta = json.loads(path.read_text().split("\n")[0])
         assert meta.get("folder_id") == "f-force"
+        assert len(state.conversation_log.read_messages("dashboard:forcesession")) == 1
 
 
 # ── Regenerate + variant switching ──
@@ -5174,6 +5199,9 @@ class TestColorTheme:
     async def test_color_theme_set_on_session(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
+        # The session must exist before a send names it — a send to an unknown key is
+        # refused `session_not_found`. The two sibling tests below already do this.
+        state.get_or_create_session("theme-session")
         with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
@@ -5218,6 +5246,7 @@ class TestColorTheme:
     async def test_invalid_color_theme_coerced_to_empty(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
+        state.get_or_create_session("theme-session")  # see the note above
         with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
@@ -5231,6 +5260,7 @@ class TestColorTheme:
     async def test_non_string_color_theme_coerced(self, tmp_path, monkeypatch):
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
+        state.get_or_create_session("theme-session")  # see the note above
         with patch("personalclaw.dashboard.chat_handlers.run_chat", new=AsyncMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(

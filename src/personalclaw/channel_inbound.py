@@ -20,8 +20,10 @@ door, and the door is guarded. The gate is reached through the gateway's
 **It is a chokepoint, not a second copy of the policy.**
 :func:`~personalclaw.channel_trust.guard_inbound` remains the one decision function and
 this module never re-derives a verdict: it calls the gate, caches the answer per message,
-and acts on it. Pairing redemption likewise delegates to the shipped
-:func:`~personalclaw.channel_trust.redeem_pairing_code`. Nothing here is a policy.
+and acts on it. Nothing here is a policy — including pairing redemption, which happens
+inside the gate under the provider's DM policy and *not* on the way to it. This module
+once redeemed a code before the gate and regardless of policy, which silently levelled
+``dm_policy="owner_only"`` down to ``pairing``; see :func:`_decide`.
 
 **Idempotent per message — the double-notification hazard.** A denied unknown sender has
 side effects: :func:`~personalclaw.channel_trust.note_unknown_sender` raises an actionable
@@ -59,12 +61,7 @@ import logging
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.channel_trust import (
-    TrustVerdict,
-    guard_inbound,
-    is_allowed_sender,
-    redeem_pairing_code,
-)
+from personalclaw.channel_trust import TrustVerdict, guard_inbound
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -82,11 +79,6 @@ _ADMISSION_CACHE_MAX = 512
 
 #: provider + message identity → the verdict already reached for it.
 _ADMITTED: "OrderedDict[str, TrustVerdict]" = OrderedDict()
-
-#: The reply a sender gets when the message they sent WAS a valid pairing code. The code
-#: is consumed and the sender becomes trusted, but this message is not a turn for the
-#: agent — so it is reported ``allowed=False`` with ``reason="paired"``.
-PAIRED_REPLY = "Paired — you can talk to me now."
 
 
 def _message_key(provider: str, msg: "ChannelMessage") -> str:
@@ -124,11 +116,8 @@ def admit(state: Any, provider: str, msg: "ChannelMessage", *, is_dm: bool = Tru
     the module docstring for why that is a property of this cache and not of the store's
     renotify window.
 
-    Before the gate, a DM from an unpaired sender whose entire text is an 8-digit-shaped
-    numeric code is offered to :func:`~personalclaw.channel_trust.redeem_pairing_code` —
-    the shipped redemption function, not a copy. A successful redemption trusts the sender
-    for every LATER message and consumes this one (``allowed=False``, ``reason="paired"``),
-    because a pairing code is not something the agent should be asked to answer.
+    Pairing redemption is NOT attempted here: it lives inside the gate, which applies the
+    provider's DM policy to it. See :func:`_decide`.
     """
     key = _message_key(provider, msg)
     cached = _ADMITTED.get(key)
@@ -140,20 +129,23 @@ def admit(state: Any, provider: str, msg: "ChannelMessage", *, is_dm: bool = Tru
 
 
 def _decide(state: Any, provider: str, msg: "ChannelMessage", *, is_dm: bool) -> TrustVerdict:
-    """One uncached trust decision. The ONLY place this module enters the trust gate."""
+    """One uncached trust decision — the gate, and nothing but the gate.
+
+    This function deliberately holds NO branch of its own. It unpacks the transport's
+    message into the gate's keyword shape and returns whatever the gate decided, so the
+    door cannot reach a verdict the gate would not have reached.
+
+    It used to redeem a pairing code here, *before* calling the gate and without consulting
+    the provider's ``dm_policy`` — so an 8-digit-shaped DM paired its sender even under
+    ``dm_policy="owner_only"``, where the owner's Allow is meant to be the only door. That
+    made ``owner_only`` no stronger than ``pairing``: a policy decision (the gate's) was
+    pre-empted by a credential-redemption side effect (this module's). Redemption now
+    happens only inside :func:`~personalclaw.channel_trust.guard_inbound`, which redeems
+    under policy ``pairing`` and refuses — without consuming the code — under ``owner_only``.
+    """
     sender_name = ""
     if isinstance(msg.metadata, dict):
         sender_name = str(msg.metadata.get("sender_name", "") or "")
-
-    if is_dm and not is_allowed_sender(provider, msg.sender):
-        candidate = (msg.text or "").strip()
-        if candidate.isdigit() and redeem_pairing_code(provider, msg.sender, candidate):
-            return TrustVerdict(
-                allowed=False,
-                reason="paired",
-                canned_reply=PAIRED_REPLY,
-                meta={"paired": True},
-            )
 
     return guard_inbound(
         state,

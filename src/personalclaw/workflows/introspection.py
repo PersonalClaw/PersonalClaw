@@ -81,12 +81,20 @@ class RunStats:
     questions: latency
     to first output is what a watching user feels, and total duration is what a scheduler budgets.
     A single "duration" would conflate a slow start with slow work.
+
+    `cost_usd` stays an accumulating float — the economics strip aggregates across a template's
+    runs and needs a number to sort by, which is a real trade and a decided one (#2566). `priced`
+    is what makes the trade honest instead of silent: it carries the SAME fact, in the same word,
+    as `ledger.reader.run_totals` and `usage_ledger` — False ⇒ this float is a FLOOR because some
+    completed step booked no cost, and a surface must say so rather than render `$0.00`.
     """
 
     run_id: str
     tokens: int = 0
     cached_tokens: int = 0
     cost_usd: float = 0.0
+    #: False when some `step_completed` carried no `cost_usd` key, so `cost_usd` is a FLOOR.
+    priced: bool = True
     steps_completed: int = 0
     steps_failed: int = 0
     steps_cached: int = 0
@@ -120,6 +128,7 @@ class RunStats:
             "tokens": self.tokens,
             "cached_tokens": self.cached_tokens,
             "cost_usd": round(self.cost_usd, 6),
+            "priced": self.priced,
             "steps_completed": self.steps_completed,
             "steps_failed": self.steps_failed,
             "steps_cached": self.steps_cached,
@@ -166,6 +175,10 @@ def run_stats(run_id: str, events: list[dict[str, Any]]) -> RunStats:
             stats.steps_completed += 1
             stats.tokens += int(event.get("tokens", 0) or 0)
             stats.cost_usd += float(event.get("cost_usd", 0.0) or 0.0)
+            # Same rule as `_carried` and `ledger.reader.run_totals`: a step that carries no cost
+            # key (or an explicit null) makes the running float a FLOOR, not a measurement.
+            if event.get("cost_usd") is None:
+                stats.priced = False
             stats.cached_tokens += int(event.get("cached_tokens", 0) or 0)
             model = str(event.get("model") or "")
             if model and model not in models:
@@ -778,12 +791,20 @@ class TemplateCard:
     p50 and p95 rather than a mean: a mean hides both the typical case and the bad one,
     since a single
     runaway run moves it and nothing tells you whether the usual run is cheap.
+
+    `priced` is the aggregate's version of `RunStats.priced` (#2566): False when ANY constituent run
+    was unpriced, so a percentile computed over a sample that includes work nobody costed says so
+    instead of presenting as complete. Folded exactly like `usage_ledger._fold` folds it — one
+    unpriced constituent taints the total — because a card and a turn rollup are the same claim
+    about the same dollars and must not disagree about what the word means.
     """
 
     template: str
     runs: int = 0
     cost_p50: float = 0.0
     cost_p95: float = 0.0
+    #: False when any run in the sample was unpriced, so both percentiles are FLOORS.
+    priced: bool = True
     duration_p50: float = 0.0
     duration_p95: float = 0.0
     failure_rate: float = 0.0
@@ -795,6 +816,7 @@ class TemplateCard:
             "runs": self.runs,
             "cost_p50": round(self.cost_p50, 6),
             "cost_p95": round(self.cost_p95, 6),
+            "priced": self.priced,
             "duration_p50": round(self.duration_p50, 2),
             "duration_p95": round(self.duration_p95, 2),
             "failure_rate": self.failure_rate,
@@ -817,6 +839,10 @@ def template_card(
     if not runs:
         return card
     costs = [r.cost_usd for r in runs]
+    # One unpriced run taints the card, the way one unpriced turn taints a `usage_ledger` rollup: a
+    # p95 drawn from a sample that includes work nobody costed is a FLOOR, and the card must be able
+    # to say that rather than let the number imply a complete sample.
+    card.priced = all(r.priced for r in runs)
     durations = [r.duration_secs for r in runs]
     card.cost_p50 = percentile(costs, 50)
     card.cost_p95 = percentile(costs, 95)
@@ -1293,12 +1319,14 @@ def rail_coverage(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 class RailTotals:
     """The verdict/ROI rail's aggregate, with every measured field absent-aware.
 
-    Distinct from `RunStats`, and the difference is the point: `RunStats.cost_usd` is a running
-    float seeded at ``0.0``, so a ledger whose steps carry no cost key is indistinguishable from
-    one whose steps were free. That is the right trade for the economics strip, which aggregates
-    across a template's runs and needs a number to sort by. It is the wrong trade for a rail whose
-    job is to say what THIS unit of work cost — so these fields stay ``None`` until some step
-    actually carried the key.
+    Distinct from `RunStats`, and the difference is still the point — but the difference is now
+    only in the SHAPE, not in the honesty. `RunStats.cost_usd` is a running float seeded at ``0.0``
+    with a `priced` flag beside it (#2566): the float is what the economics strip sorts by, and the
+    flag is what stops a ledger whose steps carry no cost key from reading as one whose steps were
+    free. A rail whose job is to say what THIS unit of work cost has no strip to feed and no
+    percentile to compute, so it can afford the stricter shape and carry the absence IN the field —
+    these stay ``None`` until some step actually carried the key. Two shapes, one fact; a caller of
+    either can tell a measured zero from an unrecorded one.
     """
 
     steps_completed: int = 0

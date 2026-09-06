@@ -736,5 +736,11 @@ def run_totals(run_id: str) -> dict[str, Any]:
 
     Budgets are PRE-CHARGED from this on resume (WF2-R4 invariant #1): a resumed run
     must inherit what it already spent, or a crash loop becomes an unbounded spend.
+
+    Carries ``priced`` beside ``cost_usd`` (#2566): ``False`` means the dollar figure is a FLOOR
+    because some completed step booked no cost, and a surface must render that as unknown rather
+    than ``$0.00``. Engine-written rows always book one, so a run reaching this facade reports
+    ``priced=True`` — the flag earns its keep for the LOOP producer today, and for loop-shaped rows
+    once PP-16 retires the loop noun onto this one.
     """
     return reader.run_totals(store, run_id)

@@ -18,7 +18,9 @@ user's ``data/`` — the notes they wrote, a campaign's ledger, an incident log:
 
 * **uninstall(name)** — DEACTIVATE. Nothing leaves disk; the app is turned off.
 * **uninstall_keep_data(name)** — the app's files go, ``data/`` is KEPT (parked at
-  ``apps/.{name}.data``) and a later ``install`` of the same name puts it back.
+  ``apps/.{name}.data``) and a later ``install`` of the same name puts it back. It
+  REFUSES while an earlier unconsumed copy of that ``data/`` is still on disk, rather
+  than deleting or overwriting one — :func:`_unconsumed_data_copies` owns that question.
 * **force_uninstall(name)** — everything goes, ``data/`` included.
 
 The middle rung exists because the first two alone force a choice between leaving a
@@ -901,6 +903,57 @@ def _preserved_data_dir(name: str) -> Path:
     return apps_dir() / f".{_validate_app_name(name)}{_PRESERVED_DATA_SUFFIX}"
 
 
+def _data_stage_dir(name: str) -> Path:
+    """The quarantine slot a keep-data uninstall copies ``data/`` into before parking it.
+
+    Extracted from :func:`uninstall_keep_data` so the name is guarded on the EXPRESSION
+    that builds the path, the same rule :func:`_preserved_data_dir` and
+    :func:`_rollback_dir` follow — this is an ``rmtree``/``rename`` target too, and it
+    was the one of the three built inline.
+
+    Reached only by that one function, which is exactly what made it dangerous: nothing
+    else creating it meant nothing else had to reason about finding one already there
+    (#2585).
+    """
+    return _quarantine_dir() / f"{_validate_app_name(name)}{_DATA_STAGE_SUFFIX}"
+
+
+def _unconsumed_data_copies(name: str) -> list[Path]:
+    """THE predicate: every directory holding a copy of *name*'s ``data/`` that nothing
+    else on disk holds. Empty list ⇒ the keep-data path is free to run.
+
+    ONE owner for the question "is there an earlier copy of this app's data still here?"
+    Before this, that question was answered implicitly in three places by call ORDER
+    rather than by looking — and each of the three answers was wrong in a state the
+    product can actually reach (#2585):
+
+    * :func:`uninstall_keep_data` treated an existing STAGE as leftover garbage and
+      ``rmtree``'d it. Only that function ever writes that path, and it leaves one behind
+      in exactly one case: a park that failed, where the stage is the user's LAST copy
+      (#2574). So the one state the sweep could ever find was the one it must not touch.
+    * the same function ``rmtree``'d an existing PARK before moving the new copy over it.
+      A park coexists with an installed app only when an earlier restore FAILED, so that
+      copy is data the user has never seen — and the delete was ``ignore_errors=True``,
+      so when it silently failed instead, ``shutil.move`` found a directory at the
+      destination and moved the stage INSIDE it, reporting success.
+    * :func:`force_uninstall` — which the middle rung calls to do its removal — discards
+      any park for the name. Reached from ``uninstall_keep_data``, that wipes the earlier
+      unconsumed copy before the new one is even made, and returns ``True``.
+
+    Both paths are checked together because both are the same kind of thing (a copy of
+    the user's ``data/`` that no live app tree holds) and the caller's decision is the
+    same for both: do not proceed, name them, let the user resolve it. Consulting one and
+    not the other is how the family got three members.
+
+    A name that cannot mint a path cannot hold a copy under one either, so it has none.
+    """
+    try:
+        candidates = (_preserved_data_dir(name), _data_stage_dir(name))
+    except ValueError:
+        return []
+    return [p for p in candidates if p.is_dir()]
+
+
 def _dir_entry_count(path: Path) -> int:
     """Top-level entries in *path*, or 0 if it cannot be read."""
     try:
@@ -944,9 +997,18 @@ def _restore_preserved_data(name: str, dest: Path) -> tuple[str, Path | None]:
     tree ships under ``data/``. A bundle's shipped ``data/`` is seed content; the
     parked copy is the user's own work, and the user's own work wins.
 
+    Treating the parked copy as AUTHORITATIVE is licensed by exactly one thing: the park
+    is a single :meth:`~pathlib.Path.rename` within one filesystem, so the directory
+    exists only if the whole copy landed (#2585). That is the guarantee, it lives on that
+    one line in :func:`uninstall_keep_data`, and ``tests/test_app_data_copy_owner.py``
+    fails if any other site learns to write or destroy that path. It is NOT "the parked
+    dir is non-empty, so it must be finished" — this function cannot check completeness
+    and does not try to.
+
     A restore failure does not abort the install (the user asked for the app), but it
     is never silent: the fact is ``preserved_data=restore_failed`` and the parked copy
-    stays on disk, so it is recoverable rather than lost.
+    stays on disk, so it is recoverable rather than lost. A keep-data uninstall of the
+    same app then REFUSES rather than parking over that copy.
     """
     try:
         parked = _preserved_data_dir(name)
@@ -1480,17 +1542,25 @@ def describe_app_data(name: str) -> dict[str, Any]:
     ``path`` is where a keep-data uninstall would park it, so the dialog can tell the
     user where their data goes — the recovery information a destructive-action screen
     owes them.
+
+    ``unconsumed`` is the same list :func:`_unconsumed_data_copies` gives the keep-data
+    rung: earlier copies of this app's ``data/`` still on disk that nothing consumed. Non-
+    empty means a keep-data uninstall will REFUSE (#2585), so the dialog states that and
+    where the copies are instead of letting the user press a button whose only feedback is
+    a ``False`` the HTTP layer renders as "not installed".
     """
     try:
         data = app_dir(name) / _APP_DATA_DIRNAME
         parked = str(_preserved_data_dir(name))
+        unconsumed = [str(p) for p in _unconsumed_data_copies(name)]
     except ValueError:
-        return {"present": False, "entries": 0, "path": ""}
+        return {"present": False, "entries": 0, "path": "", "unconsumed": []}
     present = data.is_dir()
     return {
         "present": present,
         "entries": _dir_entry_count(data) if present else 0,
         "path": parked,
+        "unconsumed": unconsumed,
     }
 
 
@@ -1549,6 +1619,24 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
     copy is LEFT in quarantine and the audit line names it, because by then it is the
     only copy there is. ``False`` with ``data=park_failed staged_copy=…`` means "the app
     is gone, your data is at that path"; it never means the data is gone (#2574).
+
+    FAIL-CLOSED on an EARLIER copy, too. Both of this rung's own paths can already hold a
+    copy of the user's data from a previous run that nothing consumed — a park that failed
+    leaves the stage, a restore that failed leaves the park — and every way of proceeding
+    over one destroys it. So :func:`_unconsumed_data_copies` is consulted FIRST, before
+    anything is copied or removed, and a non-empty answer refuses with
+    ``data=unconsumed_copy <paths>`` (#2585). This rung never resolves that itself: the
+    "cleanup" for each is a delete in a failure path, which is how #2574 happened.
+
+    Because that refusal comes first, the park below needs no ``rmtree`` of its own
+    destination — the destination is provably absent — so it is a single
+    :meth:`~pathlib.Path.rename`. Both paths live under ``apps/``, always the same
+    filesystem, so that rename is ATOMIC: there is no cross-device ``copytree`` fallback
+    to fail halfway and no ``shutil.move`` destination-is-a-directory case to nest the
+    stage inside an older park. A parked copy is now complete by CONSTRUCTION, which is
+    the guarantee :func:`_restore_preserved_data` relies on when it treats one as
+    authoritative — previously that guarantee lived only in the order these two functions
+    happened to be called in.
     """
     meta = _read_installed(name)
     if meta is None:
@@ -1569,6 +1657,40 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
         _audit("uninstall_keep_data", "refused", name, caller=caller, error=str(exc))
         return False
 
+    # FAIL-CLOSED on an earlier copy, BEFORE anything is copied or removed (#2585). One
+    # predicate answers it for both of this rung's paths; see
+    # `_unconsumed_data_copies` for what each leftover means and why proceeding over it
+    # destroys it. Nothing is deleted or moved aside here: leaving both copies where they
+    # are is the only option that cannot lose the user's work, and the audit line plus a
+    # `logger.error` name the paths so the refusal is recovery information rather than a
+    # dead end. The way out is by hand, deliberately: this rung is only reachable while the
+    # app IS installed, so `install` (which refuses an installed app) cannot be the
+    # recovery route — the user moves the copy aside, or removes it, or presses
+    # force_uninstall, which discards a park on purpose.
+    leftover = _unconsumed_data_copies(name)
+    if leftover:
+        paths = " ".join(str(p) for p in leftover)
+        logger.error(
+            "app %s: an earlier unconsumed copy of data/ is still on disk (%s); "
+            "keep-data uninstall refused so it cannot be overwritten",
+            name,
+            paths,
+        )
+        _audit(
+            "uninstall_keep_data",
+            "refused",
+            name,
+            caller=caller,
+            error=(
+                "an earlier copy of this app's data/ is still on disk and was never "
+                f"consumed: {paths}. Nothing was removed. Move it aside (or remove it, if "
+                "you have what you need from it) and retry; force_uninstall deletes a "
+                "parked copy deliberately."
+            ),
+            detail=f"data=unconsumed_copy {paths}",
+        )
+        return False
+
     live_data = app_dir(name) / _APP_DATA_DIRNAME
     # ABSENT vs EMPTY, kept apart on purpose. No data/ at all ⇒ nothing is staged and
     # no parked dir is created, so the next install starts clean. An EMPTY data/ IS
@@ -1576,10 +1698,11 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
     # is a different fact from "the app never had one", and the next install has to
     # reproduce the one that actually happened rather than a merged approximation.
     had_data = live_data.is_dir()
-    staged = _quarantine_dir() / f"{name}{_DATA_STAGE_SUFFIX}"
+    staged = _data_stage_dir(name)
+    # No pre-emptive `rmtree(staged)`: the refusal above proved nothing is there. Which
+    # also means every `rmtree(staged)` below acts on a stage THIS call created, while
+    # `live_data` is still on disk — never on one a previous call left as a last copy.
     try:
-        if staged.exists():
-            shutil.rmtree(staged, ignore_errors=True)
         if had_data:
             shutil.copytree(live_data, staged)
     except OSError as exc:
@@ -1614,20 +1737,28 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
             return False
         if had_data:
             target = _preserved_data_dir(name)
-            shutil.rmtree(target, ignore_errors=True)
+            # ATOMIC park, and the ONLY write to `target` in the codebase (#2585). The
+            # refusal at the top proved `target` does not exist, so there is no `rmtree`
+            # of it to swallow an error, and both paths are under `apps/` — one
+            # filesystem — so this rename either happens or does not. What that buys:
+            # `target` can never hold a HALF copy (the old `shutil.move` fell back to
+            # copytree + `rmtree(src)` on any `os.rename` failure, and a copytree that
+            # cannot read one file copies the rest and raises, leaving a partial park
+            # beside an intact stage), and can never hold the stage NESTED inside an
+            # older park (`shutil.move` moves INTO an existing destination directory).
+            #
             # NO cleanup of `staged` after this line, on either outcome (#2574).
             #
-            # Success needs none: `shutil.move` consumes its source on every path it
-            # takes — the `os.rename`, and the cross-device fallback, which is
-            # copytree + `rmtree(src)`. There is nothing left to GC.
+            # Success needs none: the rename consumed it.
             #
             # Failure must not have any: `force_uninstall` above has already removed the
             # app tree and the `data/` inside it, so `staged` is at that moment the ONLY
             # copy of the user's data on the machine. A `finally: rmtree(staged)` reads
             # as harmless GC and on this branch deletes the last copy — fail-OPEN on the
             # one branch this rung's whole promise is about. Left on disk instead, the
-            # way `_restore_preserved_data` leaves a park it could not restore.
-            shutil.move(str(staged), str(target))
+            # way `_restore_preserved_data` leaves a park it could not restore — and the
+            # next attempt at this rung now REFUSES rather than sweeping it (#2585).
+            staged.rename(target)
     except (OSError, ValueError) as exc:
         # The app is gone and the data is not parked, so name the surviving copy: a fact
         # the user cannot act on is a diagnosis, not recovery information.

@@ -46,8 +46,8 @@ App bundles come in three tiers:
 
 | Tier | Location | Examples |
 |---|---|---|
-| Native | `src/personalclaw/apps/native/` (26 bundles, shipped in-package, seeded and locked on) | `native-agents`, `personalclaw-memory`, `bash-action` |
-| First-party | `apps/` at the workspace root (36 bundles) | `slack-channel`, `anthropic-models`, `faster-whisper` |
+| Native | `src/personalclaw/apps/native/` (shipped in-package, seeded and locked on) | `native-agents`, `personalclaw-memory`, `bash-action` |
+| First-party | `apps/` at the workspace root ([PersonalClawApps](https://github.com/PersonalClaw/PersonalClawApps)) | `slack-channel`, `anthropic-models`, `faster-whisper` |
 | Third-party | user-installed into `~/.personalclaw/apps/` | `third-party-apps/hello-search`, `demo-dashboard` (fixtures) |
 
 ## Process model: the gateway

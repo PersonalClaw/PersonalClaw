@@ -92,4 +92,25 @@ describe('the middle removal rung exists as a real control (issue 2541)', () => 
     expect(code).toMatch(/facts\.entries === 0/)
     expect(api).toContain('AppDataFacts')
   })
+
+  it('says an earlier unconsumed copy will BLOCK the removal, and names the paths (2585)', () => {
+    // The backend refuses fail-closed when a park or a stage from an earlier run is still
+    // on disk — and `DELETE ?remove=1` reports every refusal as `404 app not installed`.
+    // Pressing Uninstall there produces a false message that says nothing about the data
+    // it just protected, so the dialog has to state it BEFORE the click. Three parts, each
+    // load-bearing: the field is read, the primary button is gated on it, and the paths are
+    // rendered (a warning with no path is not recovery information).
+    expect(api).toContain('unconsumed?: string[]')
+    expect(code).toMatch(/facts\?\.unconsumed \?\? \[\]/)
+    expect(code).toMatch(/const blocked = unconsumed\.length > 0/)
+    expect(code).toMatch(/disabled=\{blocked\}/)
+    // …with a reason, not a bare title: the reason keeps the tab stop, so the keyboard user
+    // can land on the button and hear why. See ui/disabledReasonTriage.test.ts, which reds
+    // on a user-fixable gate carrying no `disabledReason`.
+    expect(code).toMatch(/disabledReason=\{blocked \?/)
+    // The paths themselves reach the DOM, not just a count.
+    expect(code).toMatch(/unconsumed\.map\(\(p\) => \([\s\S]{0,200}\{p\}/)
+    // …and it is an alert, so a screen reader is told rather than shown.
+    expect(code).toMatch(/role="alert"/)
+  })
 })

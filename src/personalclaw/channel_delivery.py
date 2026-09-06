@@ -3,19 +3,27 @@
 The gateway delivers cron/heartbeat/subagent results and interactive approval
 prompts to whatever channel a session came from. That delivery is
 channel-specific (Slack renders mrkdwn + Block Kit ack buttons + threads), so the
-rendering lives in the channel's own bundle, not core. The gateway holds an
-optional :class:`ChannelDelivery` handle — registered by the active channel
-transport at boot (``start_inbound``) — and calls these high-level methods with
-PLAIN text + structured intent; the implementation renders channel-specifically.
+rendering lives in the channel's own bundle, not core. Each channel transport registers its
+handle at boot (``start_inbound``) and core calls these high-level methods with PLAIN text +
+structured intent; the implementation renders channel-specifically.
 
-When no channel is configured the handle is ``None`` and the gateway delivers to
+When no channel is configured nothing is registered and the gateway delivers to
 the dashboard only. This is the outbound half of the core↔channel seam
 (:class:`~personalclaw.gateway_services.GatewayServices` is the inbound half).
+
+**One handle PER PROVIDER — see the registry at the bottom of this module.** A single shared
+handle was the shape until #959: with Discord, Slack and Telegram all connected, each
+transport wrote the same slot, so the last registration won (apps load alphabetically, so
+always Telegram) and every outbound reply went to that one provider carrying another
+provider's channel id.
 """
 
 from __future__ import annotations
 
-from typing import Callable, Protocol, runtime_checkable
+import logging
+from typing import Any, Callable, Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -201,3 +209,95 @@ class ChannelDelivery(Protocol):
         remains the rich approval surface, and rendering logic stays in the channel's
         own bundle."""
         ...
+
+
+# ── the registry: one handle per provider ────────────────────────────────────────────────
+#
+# Process-level, like `inbox_providers.native_source`'s dashboard-state hook and for the same
+# reason: the WRITERS are channel transports reaching core through `GatewayServices`, while the
+# READERS are both the gateway (owner notifications, cron results, subagent replies) and the
+# dashboard (the chat mirror, the channel-link picker). Two objects held two separate slots for
+# one fact before this — `GatewayOrchestrator._channel_delivery` and
+# `DashboardState.channel_delivery` — and every shipped transport wrote BOTH, which is how one
+# overwrite could take out delivery on two unrelated paths at once.
+#
+# A dict rather than a list: the routing key is the provider, because a channel id means nothing
+# without one. `deliver_text("C123", …)` is answerable only by the provider that issued `C123`.
+
+_REGISTRY: dict[str, "ChannelDelivery"] = {}
+
+
+def provider_of(delivery: Any) -> str:
+    """The provider name for a delivery that did not declare one.
+
+    The protocol has 18 methods and no provider member, so core cannot ask a handle what it is.
+    This derives a STABLE, DISTINCT key from the implementation's own module — `discord_runtime`
+    → `discord` — which is all the registry needs: two different apps must not collide. It is a
+    namespacing fallback, never a semantic guess.
+
+    A transport SHOULD pass `provider=` explicitly (it already passes exactly that string to
+    :meth:`GatewayServices.deliver_channel_inbound` on the way in, at the same lifecycle point),
+    and then this is not consulted at all. The fallback exists so a core upgrade cannot break an
+    app that has not been updated yet: three un-updated apps still land in three distinct keys.
+    """
+    module = getattr(type(delivery), "__module__", "") or ""
+    root = module.split(".")[0]
+    for suffix in ("_runtime", "_channel", "_delivery"):
+        if root.endswith(suffix):
+            root = root[: -len(suffix)]
+            break
+    return root or type(delivery).__name__.lower()
+
+
+def register(delivery: "ChannelDelivery | None", provider: str = "") -> str:
+    """Register (or with ``None``, clear) a provider's outbound handle. Returns the key used.
+
+    ``register(None)`` with no provider clears EVERY handle — the "shutting down, nothing is
+    reachable" case. ``register(None, provider="slack")`` clears just that one.
+    """
+    if delivery is None:
+        if provider:
+            _REGISTRY.pop(provider, None)
+            return provider
+        _REGISTRY.clear()
+        return ""
+    key = provider or provider_of(delivery)
+    previous = _REGISTRY.get(key)
+    _REGISTRY[key] = delivery
+    if previous is not None and previous is not delivery:
+        # Same provider re-registering (a reconnect) is normal and quiet at debug. What must
+        # never happen silently again is two DIFFERENT providers sharing a key, which is why the
+        # log names the key: if a derivation ever collides, this line is the evidence.
+        logger.debug("channel delivery re-registered for %s", key)
+    return key
+
+
+def delivery_for(provider: str) -> "ChannelDelivery | None":
+    """The handle for one provider, or None when that channel is not connected.
+
+    **The only correct resolver for a reply to an incoming message.** A reply carries the origin
+    channel's id, so it is deliverable by exactly one provider; returning a different one is not
+    a degraded delivery but a misdirected one. Callers must treat None as "do not send" — never
+    as "send via whatever is available".
+    """
+    return _REGISTRY.get(provider) if provider else None
+
+
+def owner_reachable() -> "ChannelDelivery | None":
+    """Any connected channel that can reach the owner, or None.
+
+    The second resolution policy, and deliberately a different question from
+    :func:`delivery_for`: a cron result, a heartbeat summary or a subagent reply is addressed to
+    the OWNER, not to a thread — those sites all call `open_dm(owner_id)` and have no origin
+    channel to honour. Sorted so the pick is deterministic rather than dict-insertion-ordered,
+    which would make the same home behave differently across restarts depending on app load
+    order — the property that made #959 hard to see.
+    """
+    for key in sorted(_REGISTRY):
+        return _REGISTRY[key]
+    return None
+
+
+def registered_providers() -> list[str]:
+    """The connected providers, sorted. For diagnostics and tests."""
+    return sorted(_REGISTRY)

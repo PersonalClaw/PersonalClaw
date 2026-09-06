@@ -188,9 +188,20 @@ describe('the hand-rolled row actions a primitive-shaped census could not see', 
     expect(code).toMatch(/>\s*See going back to here\s*<\/Button>/)
     expect(code).toMatch(/>\s*See undoing just this\s*<\/Button>/)
     expect(code).toMatch(/>\s*Merge-restore\s*<\/Button>/)
-    expect(code, 'the archive verb still renders through its busy branch').toMatch(/: 'Preview restore'}/)
+    // 🪤 THIS ONE USED TO BE PINNED TO THE TERNARY, not to the verb: it asserted `: 'Preview
+    // restore'}` — the else-arm complete with its quotes and closing brace — while the three
+    // siblings above correctly match the rendered BUTTON BODY. So it reddened when the button
+    // adopted `loading=` and the label stopped being a ternary arm, even though the verb it exists
+    // to protect renders byte-identically. The test's own title says "the visible verbs are
+    // unchanged"; matching source punctuation is not that.
+    expect(code).toMatch(/>\s*Preview restore\s*<\/Button>/)
+    // Both shared constants, braced — the form that renders their VALUE. `keep_local` is here
+    // because a conversion once unwrapped it to bare `CHOICE_LABELS.keep_local`, which renders the
+    // source text; this assertion covering only `take_remote` is why that shipped unnoticed.
     expect(code, 'the conflict choices still render their shared constants')
       .toMatch(/\{CHOICE_LABELS\.take_remote\}/)
+    expect(code, 'and the sibling choice, unwrapped once and rendered as source')
+      .toMatch(/\{CHOICE_LABELS\.keep_local\}/)
   })
 
   it('camelCase, because ui/Button spreads no rest', () => {

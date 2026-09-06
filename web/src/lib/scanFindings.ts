@@ -1,3 +1,5 @@
+import glossSource from '../../../src/personalclaw/scan_rule_gloss.json'
+
 /** The shared rules for listing security-scan findings on a consent surface.
  *
  *  🔑 BOTH CONSENT SURFACES TRUNCATE THE SAME LIST, and each had hardcoded its own `8`. An app
@@ -35,31 +37,21 @@ export function hiddenFindingsNote(total: number): string | null {
  *  verdict above it are untouched, and a `dangerous` finding reads as terminal either way. The
  *  vocabulary is closed (`supply_chain.py`'s pattern catalog), and a Python rail asserts this map
  *  covers every rule the scanner can emit — a new rule ships glossed or reds the suite, because
- *  the failure mode here is silence, and silence is what the user reads as "probably fine". */
-export const SCAN_RULE_GLOSS: Record<string, string> = {
-  // Terminal (dangerous) content.
-  destructive_root: 'The app deletes files from the root of the filesystem or your home directory.',
-  fork_bomb: 'The app spawns processes without limit until the machine stops responding.',
-  disk_wipe: 'The app writes straight to a raw disk device, destroying what is on it.',
-  remote_exec_pipe: 'The app downloads code from the internet and runs it immediately, unread.',
-  obfuscated_exec: 'The app decodes hidden text and runs it, so what runs cannot be read here.',
-  exfil_sensitive_path: 'The app reads a credential file and sends its contents off this machine.',
-  bidi_override: 'Direction-flipping characters hide text here, so what you read is not what runs.',
-  // Overridable (warning) content.
-  eval_exec: 'The app builds code as text while it runs, then executes it.',
-  pipe_to_shell: 'The app feeds output straight into a shell to be run as commands.',
-  curl_network: 'The app downloads from the internet while it runs.',
-  sudo_use: 'The app asks for administrator rights to act as root on this machine.',
-  python_exec: 'The app runs an external program on your machine.',
-  crontab_write: "The app edits this machine's scheduled-job table, so it can keep running later.",
-  reads_sensitive_path: 'The app reads a file where credentials and keys are kept.',
-  zero_width_chars: 'Invisible characters are present, which can hide text from a reviewer.',
-  // Prompt injection — prose aimed at the assistant that reads the app's own text.
-  injection_ignore: 'Text here addresses your assistant and tells it to ignore its own instructions.',
-  injection_disregard: 'Text here addresses your assistant and tells it to disregard what it was told.',
-  injection_coerce: 'Text here addresses your assistant and orders it to run or call something.',
-  injection_override: "Text here poses as a replacement for your assistant's instructions.",
-}
+ *  the failure mode here is silence, and silence is what the user reads as "probably fine".
+ *
+ *  🪤 THE SENTENCES ARE NOT DEFINED HERE ANY MORE (#2633). `personalclaw skills install` refuses
+ *  from Python and rendered the same findings BARE, so the third renderer needed the same map and
+ *  could not import TypeScript — the wheel ships `web/dist`, not `web/src`. The map moved to
+ *  `src/personalclaw/scan_rule_gloss.json`, which is packaged (pyproject `package-data`) and
+ *  imported here. One literal, two languages: duplicating it in Python would have re-created the
+ *  two-copies-of-one-fact defect this file's own header condemns. */
+export const SCAN_RULE_GLOSS: Record<string, string> = Object.fromEntries(
+  // `_comment` carries this file's rationale into the JSON, which cannot hold comments — the same
+  // convention as `apps/token_lint_rules.json`. Underscore keys are metadata, never rules.
+  Object.entries(glossSource).filter(
+    (e): e is [string, string] => !e[0].startsWith('_') && typeof e[1] === 'string',
+  ),
+)
 
 /** The plain-language sentence for a scanner rule, or `''` for a rule this build has no gloss
  *  for. Returning empty rather than echoing the rule name keeps the row honest: a name repeated

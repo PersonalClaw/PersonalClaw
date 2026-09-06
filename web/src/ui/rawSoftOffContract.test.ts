@@ -26,7 +26,12 @@ import { join } from 'node:path'
 // `Button` hides both because it computes its own class list; a hand-rolled control does not.
 //
 // 📌 WHAT IS DELIBERATELY STILL NATIVE, by class:
-//   • busy — an in-flight action must not be re-clickable, and `aria-busy` already says so.
+//   • busy — an in-flight action must not be re-clickable. 🔴 CORRECTION (cycle ux-796): this line
+//     used to append a second justification, that the state was already announced to assistive
+//     tech. That was FALSE and was never asserted here — `Button` publishes `aria-busy` from its
+//     `loading` prop only, so a busy-gated `disabled` announces nothing. Staying native is still
+//     right, for the re-clickability reason alone; the missing announcement is a real separate
+//     defect, measured and ratcheted down by `ui/busyIsNotAnnounced.test.ts`.
 //   • pass-through `disabled` on a PRIMITIVE (`Segmented`, `Toggle`, `TextLink`, `ProjectPicker`,
 //     `HeaderActions`) — the primitive cannot know the reason; the fix is for each to accept one,
 //     which is its own change.

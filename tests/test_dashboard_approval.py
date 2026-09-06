@@ -1,6 +1,7 @@
 """Tests for dashboard tool approval flow — normal/trust/yolo modes."""
 
 import asyncio
+import time
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,6 +23,51 @@ from personalclaw.llm.base import (
 async def _async_iter(items: list):  # type: ignore[type-arg]
     for item in items:
         yield item
+
+
+def _answer_approval(session, request_id: str, decision: str):
+    """Resolve the approval future for *request_id* as soon as `run_chat` registers it.
+
+    🔴 issue 2563. Four tests here each hand-rolled this as a fixed
+    ``await asyncio.sleep(0.05)`` followed by ``if fut and not fut.done()``. Two separate
+    defects, and the second is what made the first expensive:
+
+    * **50 ms is a race, not a wait.** Under CI load ``run_chat`` has not yet put
+      ``_approval_futures[request_id]`` in place when the sleep expires.
+    * **The guard could not observe its own failure.** On a miss ``fut`` is ``None``, so
+      ``if fut and …`` silently did nothing, nothing ever resolved the approval, and
+      ``run_chat`` blocked until pytest-timeout killed it at **120 s**. The reported failure
+      was therefore a timeout, and the actual cause never appeared in the log — a miss and a
+      healthy skip were indistinguishable. Measured in CI run 34070833025, where it reddened a
+      PR whose diff cannot reach this file.
+
+    So this polls for the future rather than guessing how long registration takes, and
+    **fails loudly** if it never appears. It is one helper rather than four copies on purpose:
+    four independent responders is what let one shape drift into a flake in the first place,
+    and a fifth test copying the old pattern would reintroduce it.
+    """
+
+    async def _responder() -> None:
+        # 2 s ceiling at 5 ms granularity: still resolves in one tick when the machine is
+        # idle, and survives a loaded runner. Deliberately not `sleep(2)` — the point is to
+        # be fast when it can be and patient when it must be.
+        for _ in range(400):
+            fut = session._approval_futures.get(request_id)
+            if fut is not None:
+                if not fut.done():
+                    fut.set_result(decision)
+                return
+            await asyncio.sleep(0.005)
+        raise AssertionError(
+            f"run_chat never registered an approval future for {request_id!r} within 2s, so "
+            f"nothing would have answered it. Without this raise the test would hang until "
+            f"pytest-timeout killed it and reported a timeout instead of this cause (#2563). "
+            f"Futures present: {sorted(session._approval_futures)}"
+        )
+
+    # `asyncio.create_task` rather than `get_event_loop().create_task` — the latter is
+    # deprecated and emits "There is no current event loop" under 3.12+.
+    return asyncio.create_task(_responder())
 
 
 @contextmanager
@@ -102,6 +148,35 @@ def _context_builder(hook_result: ToolHookResult = ToolHookResult.allow()) -> Ma
 # ── Tests ──
 
 
+@pytest.mark.asyncio
+async def test_the_approval_responder_fails_loudly_when_nothing_registers():
+    """The fix for #2563 is only a fix if the miss is LOUD. This is that proof.
+
+    The old responder's failure mode was silence: on a miss it did nothing, `run_chat` blocked,
+    and pytest-timeout reported a 120 s timeout with no trace of the cause. So the helper is
+    not merely "less racy" — it must turn that silence into a named failure, and this asserts
+    it directly rather than trusting the four callers to surface it.
+
+    Nothing here ever registers a future (no `run_chat` runs), which is exactly the state the
+    flake produced under load. Two things are asserted: the error NAMES the cause, and it
+    arrives on the helper's own ~2 s ceiling rather than on the 120 s test timeout — the
+    difference between a diagnosable failure and the one that reddened an unrelated PR.
+    """
+    session = _make_session()
+    assert not session._approval_futures, "precondition: nothing is registered"
+
+    started = time.monotonic()
+    task = _answer_approval(session, "req-1", "approved")
+    with pytest.raises(AssertionError, match="never registered an approval future"):
+        await task
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 30, (
+        f"the responder took {elapsed:.1f}s to give up. It must fail on its own ceiling, not "
+        "ride the 120s pytest-timeout — that timeout is what hid the cause in #2563."
+    )
+
+
 class TestApprovalModes:
     """Verify that normal/trust/yolo modes route permission requests correctly."""
 
@@ -112,13 +187,7 @@ class TestApprovalModes:
         session = _make_session()
         _set_stream(client, [_permission_event(), _complete_event()])
 
-        async def _auto_approve():
-            await asyncio.sleep(0.05)
-            fut = session._approval_futures.get("req-1")
-            if fut and not fut.done():
-                fut.set_result("approved")
-
-        asyncio.get_event_loop().create_task(_auto_approve())
+        _answer_approval(session, "req-1", "approved")
 
         with _patch_stats():
             await run_chat(state, session, "hello")
@@ -221,13 +290,7 @@ class TestApprovalModes:
         session = _make_session()
         _set_stream(client, [_permission_event(), _complete_event()])
 
-        async def _auto_reject():
-            await asyncio.sleep(0.05)
-            fut = session._approval_futures.get("req-1")
-            if fut and not fut.done():
-                fut.set_result("rejected")
-
-        asyncio.get_event_loop().create_task(_auto_reject())
+        _answer_approval(session, "req-1", "rejected")
 
         with _patch_stats():
             await run_chat(state, session, "hello")
@@ -241,13 +304,7 @@ class TestApprovalModes:
         session = _make_session()
         _set_stream(client, [_permission_event(), _complete_event()])
 
-        async def _auto_approve():
-            await asyncio.sleep(0.05)
-            fut = session._approval_futures.get("req-1")
-            if fut and not fut.done():
-                fut.set_result("approved")
-
-        asyncio.get_event_loop().create_task(_auto_approve())
+        _answer_approval(session, "req-1", "approved")
 
         with _patch_stats():
             await run_chat(state, session, "hello")
@@ -415,13 +472,7 @@ class TestBatchRejection:
         evt2.tool_call_id = "tc-2"
         _set_stream(client, [evt1, evt2, _complete_event()])
 
-        async def _reject_first():
-            await asyncio.sleep(0.05)
-            fut = session._approval_futures.get("req-1")
-            if fut and not fut.done():
-                fut.set_result("rejected")
-
-        asyncio.get_event_loop().create_task(_reject_first())
+        _answer_approval(session, "req-1", "rejected")
 
         with _patch_stats():
             await run_chat(state, session, "hello")

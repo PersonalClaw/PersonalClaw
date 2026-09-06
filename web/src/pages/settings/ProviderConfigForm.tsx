@@ -1,9 +1,14 @@
 import { useEffect, useId, useState } from 'react'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { api, type ProviderSchema, type ProviderSchemaProp } from '../../lib/api'
+// The SAME serialize/parse pair the Apps Configure dialog uses for structured fields —
+// imported rather than reimplemented, so the two schema-driven forms cannot disagree about
+// what a valid array/object entry is (they already disagreed about secrets).
+import { parseJsonField, serializeJsonField } from '../apps/appConfigForm'
 import { Button } from '../../ui/Button'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle } from '../../ui/Toggle'
+import { TextArea } from '../../ui/forms'
 import { SavedToast } from './settingsUI'
 
 /** Metrics + chrome only — the type size rides `data-type="body-s"` on each consumer,
@@ -27,6 +32,7 @@ export function schemaDefaults(schema: ProviderSchema | null | undefined): Recor
 export function ProviderConfigForm({ name }: { name: string }) {
   const [schema, setSchema] = useState<ProviderSchema | null>(null)
   const [values, setValues] = useState<Record<string, unknown>>({})
+  const [secretSet, setSecretSet] = useState<string[]>([])
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -35,7 +41,19 @@ export function ProviderConfigForm({ name }: { name: string }) {
   useEffect(() => {
     let live = true
     Promise.all([api.providerSchema(name), api.providerConfig(name)])
-      .then(([s, c]) => { if (live) { setSchema(s); setValues(c ?? {}) } })
+      .then(([s, c]) => {
+        if (!live) return
+        setSchema(s)
+        // A sensitive field with a stored secret arrives MASKED (write-only over the
+        // API). Start its input BLANK rather than pre-filled with the mask: editing dots
+        // is nonsense, and a blank submit means "keep the stored secret" — the same
+        // treatment the Apps Configure dialog already gives its own secrets (#43).
+        const set = c._secret_set ?? []
+        const next = { ...(c.config ?? {}) }
+        for (const k of set) next[k] = ''
+        setSecretSet(set)
+        setValues(next)
+      })
       .catch(() => { if (live) setSchema({ properties: {} }) })
     return () => { live = false }
   }, [name])
@@ -58,7 +76,10 @@ export function ProviderConfigForm({ name }: { name: string }) {
 
   return (
     <div className="mt-3 flex flex-col gap-3 border-t border-outline-variant/30 pt-3">
-      {props.map(([key, prop]) => <SchemaField key={key} fieldKey={key} prop={prop} value={values[key]} onChange={(v) => set(key, v)} />)}
+      {props.map(([key, prop]) => (
+        <SchemaField key={key} fieldKey={key} prop={prop} value={values[key]}
+          secretAlreadySet={secretSet.includes(key)} onChange={(v) => set(key, v)} />
+      ))}
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={save} disabled={!dirty || saving} disabledReason={!dirty && !saving ? 'No changes to save' : undefined}>{saving ? 'Saving…' : 'Save'}</Button>
         <SavedToast show={saved} />
@@ -69,8 +90,11 @@ export function ProviderConfigForm({ name }: { name: string }) {
   )
 }
 
-export function SchemaField({ fieldKey, prop, value, onChange }: {
+export function SchemaField({ fieldKey, prop, value, onChange, secretAlreadySet = false }: {
   fieldKey: string; prop: ProviderSchemaProp; value: unknown; onChange: (v: unknown) => void
+  /** This sensitive field already holds a stored secret the API withholds. The input is
+   *  blank by design, so it says "saved — leave blank to keep" instead of looking unset. */
+  secretAlreadySet?: boolean
 }) {
   const meta = prop['x-meta'] ?? {}
   const label = meta.label ?? fieldKey
@@ -79,9 +103,38 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
   // inputs/selects get `id` + a <label htmlFor>; the boolean Toggle takes an
   // accessible name via its own `label` prop (aria-label).
   const id = useId()
+  const [jsonText, setJsonText] = useState(() =>
+    serializeJsonField(value, prop.type === 'object' ? 'object' : 'array'))
+  const [jsonErr, setJsonErr] = useState<string | null>(null)
 
   let control: React.ReactNode
-  if (prop.enum && prop.enum.length) {
+  if (prop.type === 'array' || prop.type === 'object') {
+    // A structured field needs a JSON editor. It fell through to the text branch below,
+    // whose `String(value)` renders an array of objects as the literal
+    // "[object Object],[object Object]" — so slack-channel's **Allowed Users** (the very
+    // setting #953 is about), Tracking Channels, Open Channels and Reactions were not
+    // merely unhelpful here, they were unreadable and unfillable. The Apps Configure
+    // dialog has always rendered these as JSON; this reuses ITS exported
+    // serialize/parse helpers rather than growing a second parser.
+    const expected = prop.type === 'object' ? 'object' : 'array'
+    control = (
+      // The shared TextArea primitive rather than bespoke chrome: the design-system
+      // adoption ratchet counts raw form elements and may only shrink. (It counts them by
+      // regex over the file text, so do not spell the raw tag name in a comment here —
+      // that alone tripped the ratchet.) `ariaLabel` because this form names its rows with
+      // its own label element, not a Field context.
+      <TextArea value={jsonText} rows={4} mono ariaLabel={label}
+        onChange={(nv) => {
+          setJsonText(nv)
+          const res = parseJsonField(nv, expected)
+          // Invalid JSON updates the buffer and the hint but never the value: a half-typed
+          // entry must not be savable as a silent {} that wipes a working allowlist.
+          if ('error' in res) { setJsonErr(res.error); return }
+          setJsonErr(null)
+          onChange(res.value)
+        }} />
+    )
+  } else if (prop.enum && prop.enum.length) {
     control = (
       <select id={id} value={String(value ?? prop.default ?? '')} onChange={(e) => onChange(e.target.value)} data-type="body-s" className={inputCls + ' cursor-pointer'}>
         {prop.enum.map((o) => <option key={o} value={o}>{o}</option>)}
@@ -101,7 +154,8 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
       <div className="relative">
         <input id={id} type={showSecret ? 'text' : 'password'} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
           minLength={prop.minLength} maxLength={prop.maxLength}
-          placeholder={meta.placeholder ?? '••••••••'} data-type="body-s" className={inputCls + ' pr-10'} />
+          placeholder={secretAlreadySet ? 'saved — leave blank to keep' : meta.placeholder ?? '••••••••'}
+          data-type="body-s" className={inputCls + ' pr-10'} />
         <span className="absolute right-1.5 top-1/2 -translate-y-1/2">
           <SquareIconButton label={showSecret ? 'Hide' : 'Show'} onClick={() => setShowSecret((s) => !s)}>
             {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -130,10 +184,13 @@ export function SchemaField({ fieldKey, prop, value, onChange }: {
       </div>
     )
   }
+  // A JSON parse error rides the help line — the same place the Apps dialog puts it — so a
+  // half-typed entry explains itself instead of silently refusing to save.
+  const hint = jsonErr ? `${meta.help ? meta.help + ' — ' : ''}⚠ ${jsonErr}` : meta.help
   return (
     <div>
       <label htmlFor={id} data-type="body-s" className="mb-1 block text-on-surface">{label}</label>
-      {meta.help && <div data-type="caption" className="mb-1.5 text-on-surface-low">{meta.help}</div>}
+      {hint && <div data-type="caption" className="mb-1.5 text-on-surface-low">{hint}</div>}
       {control}
     </div>
   )

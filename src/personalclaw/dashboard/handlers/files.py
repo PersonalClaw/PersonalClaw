@@ -1105,18 +1105,27 @@ def _validate_dashboard_path(raw: str) -> str | None:
     # was refused by `/api/file-read` and unknown to `is_sensitive_path`, which the terminal
     # cwd guard and the bash read hook both consult (#643).
     #
-    # The extras stay local because they are this area's stricter, allowlist-scoped policy —
-    # a `.env` anywhere under a browsable root is a credential file by convention, while the
-    # bash guard covers the whole filesystem and would refuse a project's own `.env`.
-    from personalclaw.security import OWN_SECRET_BASENAMES
+    # 🔴 DERIVED, NOT RE-LISTED (#354). Both halves come from `security.py`:
+    #   `OWN_SECRET_BASENAMES`       — ours by NAME, wherever the file sits.
+    #   `HOME_SECRET_FILE_BASENAMES` — ours by LOCATION (`.env`, `session_key`,
+    #                                  `sessions.json`), applied here as a name rule because
+    #                                  this tier is already scoped to the browsable roots.
+    # Those three used to be spelled out here as literals, and that re-listing IS the mechanism
+    # of the bug: `session_key` was documented as the session SIGNING KEY in `session_store.py`
+    # and named a secret in `security.py`, and this list still did not have it — a hand-copied
+    # list only ever knows what someone remembered to copy. The set is unchanged today; what
+    # changes is that the NEXT name added to the one declaration is refused here without anyone
+    # having to notice. `test_secret_file_blocklist_rail.py` asserts exactly that by adding a
+    # synthetic name to the declaration and requiring this function to refuse it.
+    #
+    # The secret DIRECTORIES (`auth/`, `credentials/`, `governance/`) are deliberately NOT
+    # folded in: a subtree is not a basename, and they are already refused one layer up by
+    # `validate_file_path` → `is_sensitive_path`, which resolves them against the ACTIVE
+    # `PERSONALCLAW_HOME`. Naming them here too would refuse a user's own `credentials/`
+    # folder inside a workspace, which is an ordinary directory name.
+    from personalclaw.security import HOME_SECRET_FILE_BASENAMES, OWN_SECRET_BASENAMES
 
-    blocked_basenames = set(OWN_SECRET_BASENAMES) | {
-        ".env",
-        # The session signing key: reading it forges any session token.
-        "session_key",
-        # The minted-nonce records: reading them leaks live session nonces.
-        "sessions.json",
-    }
+    blocked_basenames = set(OWN_SECRET_BASENAMES) | set(HOME_SECRET_FILE_BASENAMES)
     # An over-long final component reaches the OS as `ENAMETOOLONG` and surfaced as a 500 from
     # `file-move` (over-long dest) and `create-dir`, which take a whole PATH rather than a name
     # and so never met the name rules (#652). Bounded here, at the one place every path-taking

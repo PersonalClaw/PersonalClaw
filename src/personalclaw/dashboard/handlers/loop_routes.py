@@ -579,7 +579,7 @@ async def _reap_loop_sessions(state, loop_id: str) -> None:
     worker (loop-<id>), the stepwise planner (loop-plan-<id>), and a code design
     planner (code-plan-<id>). Reuses the chat session-delete primitives so the
     in-memory _sessions entry AND the history .jsonl both go — no orphan leak."""
-    from personalclaw.dashboard.chat_utils import _history_key_for
+    from personalclaw.dashboard.chat_utils import persisted_history_key
     from personalclaw.dashboard.handlers.sessions import _remove_session_for_history_key
 
     keys = [f"loop-{loop_id}", f"loop-plan-{loop_id}", f"code-plan-{loop_id}"]
@@ -590,7 +590,11 @@ async def _reap_loop_sessions(state, loop_id: str) -> None:
             logger.debug("reap: in-memory session drop failed for %s", k, exc_info=True)
         if state.conversation_log is not None:
             try:
-                state.conversation_log.delete_session(_history_key_for(k))  # the .jsonl
+                # Through the one owner of on-disk identity — a hand-formed prefix leaves
+                # the transcript behind whenever the file is not under that shape.
+                state.conversation_log.delete_session(
+                    persisted_history_key(state.conversation_log, k)
+                )  # the .jsonl
             except Exception:
                 logger.debug("reap: transcript delete failed for %s", k, exc_info=True)
 

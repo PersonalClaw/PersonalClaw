@@ -36,6 +36,7 @@ import tokenize
 import unicodedata
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -266,6 +267,50 @@ _ELLIPSIS = "…"
 # positive); node_modules/venv are vendored deps the author didn't write. Skipping
 # them keeps the gate focused on first-party content (and faster).
 _SKIP_DIR_NAMES = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__", ".tox"}
+
+
+# ── What a rule MEANS, in words a non-expert can act on ─────────────────────
+
+#: The canonical plain-language gloss for every rule in the catalogs above, shared with
+#: ``web/src/lib/scanFindings.ts`` (which imports this same file). Packaged — see pyproject
+#: ``package-data`` — because ``personalclaw skills install`` reads it out of an installed
+#: wheel, where ``web/src`` does not exist.
+SCAN_RULE_GLOSS_PATH = Path(__file__).with_name("scan_rule_gloss.json")
+
+
+@lru_cache(maxsize=1)
+def load_scan_rule_gloss() -> dict[str, str]:
+    """Every rule name mapped to one sentence about what the content can then do.
+
+    RAISES rather than returning ``{}`` when the packaged file is missing or carries no
+    rules. An empty map is indistinguishable at the call site from "no rule is glossed",
+    which is the exact silence this map exists to remove — so a wheel that lost the file
+    fails loudly on the refusal path instead of quietly printing bare rows again. Same
+    posture as the baseline denylist: a missing packaged data file is a defect, not a
+    degradation.
+
+    Underscore keys are metadata (the file's ``_comment`` rationale — JSON cannot hold
+    comments), never rules; the same convention as ``apps/token_lint_rules.json``."""
+    try:
+        raw = json.loads(SCAN_RULE_GLOSS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"{SCAN_RULE_GLOSS_PATH} is missing or unreadable: {exc}") from exc
+    gloss = {k: v for k, v in raw.items() if not k.startswith("_") and isinstance(v, str)}
+    if not gloss:
+        raise RuntimeError(
+            f"{SCAN_RULE_GLOSS_PATH} carries no rule glosses — a reachable-but-empty map "
+            "would silently un-explain every finding on every consent surface"
+        )
+    return gloss
+
+
+def rule_gloss(rule: str) -> str:
+    """The sentence for ``rule``, or ``''`` for a rule this build has no gloss for.
+
+    Returning empty rather than echoing the rule name keeps the row honest: a name
+    repeated as though it were an explanation is the defect, not the fix. Mirrors
+    ``ruleGloss()`` in ``web/src/lib/scanFindings.ts`` exactly — same file, same answer."""
+    return load_scan_rule_gloss().get(rule, "")
 
 
 def _sensitive_path_pattern() -> "re.Pattern[str]":

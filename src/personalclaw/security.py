@@ -130,12 +130,49 @@ OWN_SECRET_BASENAMES: frozenset[str] = frozenset(
 #: own project may reasonably hold a ``sessions.json``, and blocking that name everywhere
 #: would make the agent's bash guard refuse an ordinary file. Reading OURS forges a session
 #: token or leaks live nonces, so the path is what has to be refused.
-_SENSITIVE_PCLAW_HOME_ENTRIES: tuple[str, ...] = (
-    ".env",
-    "credentials",
-    "governance",
-    "session_key",
-    "sessions.json",
+#:
+#: Split into FILES and DIRS, and both EXPORTED, so that ``handlers/files.py`` can DERIVE its
+#: basename tier from this declaration instead of re-listing the same three names. That
+#: re-listing is not a stylistic point: it is the mechanism of #354. ``session_key`` was
+#: documented as "the signing key" in ``session_store.py`` and named a secret here, and the
+#: dashboard blocklist still did not know about it, because a hand-copied list only knows what
+#: someone remembered to copy. One declaration, every consumer derived.
+#:
+#: Names go in :data:`HOME_SECRET_FILE_BASENAMES` when the file itself is the secret, and in
+#: :data:`HOME_SECRET_DIRS` when the whole subtree is (every entry beneath a dir is refused,
+#: so a new file added inside one is covered on the day it is written — the property that
+#: makes the omission structurally impossible rather than merely fixed once).
+HOME_SECRET_FILE_BASENAMES: frozenset[str] = frozenset(
+    {
+        ".env",
+        "session_key",
+        "sessions.json",
+    }
+)
+
+#: Secret-bearing DIRECTORIES in the PersonalClaw home. The whole subtree is refused.
+#:
+#: 🔴 ``auth`` was MEASURED missing (#354, this fix). ``auth/credentials.json`` holds the
+#: argon2id password hash, ``auth/enroll_codes.json`` and ``auth/pair_codes.json`` hold the
+#: live redeemable device codes — and all three answered ``200`` with their contents through
+#: ``GET /api/file-read``, because the home is a browsable dashboard root and nothing in any
+#: guard named this directory. That is the SAME omission as ``session_key``, one directory
+#: over, found by asking the auth layer what files it writes instead of trusting the list.
+#: A dir entry rather than three basenames deliberately: ``credentials.json`` and
+#: ``pair_codes.json`` are plausible names in a user's own project, and the fourth auth file
+#: nobody has written yet must be covered too.
+HOME_SECRET_DIRS: frozenset[str] = frozenset(
+    {
+        "auth",
+        "credentials",
+        "governance",
+    }
+)
+
+#: The union, in a stable order. Every consumer that wants "the secret-bearing entries of the
+#: active home" reads this; nothing re-lists its members.
+_SENSITIVE_PCLAW_HOME_ENTRIES: tuple[str, ...] = tuple(
+    sorted(HOME_SECRET_FILE_BASENAMES | HOME_SECRET_DIRS)
 )
 
 
@@ -289,6 +326,22 @@ def is_sensitive_path(path_str: str) -> bool:
     Works for both absolute paths and ~/relative paths.
     Used by hooks to block fs_read/ReadFile of credential files.
     """
+    # 🔴 A path the OS cannot even name is SENSITIVE, not safe (issue 352). A NUL byte makes
+    # every `os.path`/`pathlib` call raise `ValueError: embedded null character`, and the
+    # `except` below deliberately continues with the UNRESOLVED string — which then matches no
+    # sensitive prefix, so this answered False for `/tmp/a\x00b`. Measured.
+    #
+    # That answer is the dangerous half of this issue. The visible symptom was a 500 out of
+    # `validate_file_path`, and the tempting fix there is to catch the exception and carry on —
+    # which would hand this function a path it cannot classify and take False for an answer. So
+    # the refusal belongs HERE as well, ahead of every caller.
+    #
+    # Fail CLOSED, the direction this function already argues for below: casefolding "can only
+    # over-block ... the safe direction for a credential guard and the error a user can see and
+    # report". A NUL is never part of a legitimate filename — POSIX and Windows both forbid it
+    # in a path component — so over-blocking costs nothing real.
+    if "\x00" in path_str:
+        return True
     # Expand ~ and $HOME
     expanded = os.path.expanduser(os.path.expandvars(path_str))
     try:
@@ -788,6 +841,101 @@ def redact_credentials(text: str) -> tuple[str, list[str]]:
             warnings.append(f"Redacted base64-encoded credential ({len(chunk)} chars)")
 
     return result, warnings
+
+
+# Every mask this module writes. One expression, because `restore_masked_spans` has to
+# recognise exactly what `redact_for_display` produces — a mask the inverse cannot see is a
+# mask that gets persisted over real content.
+_MASK_RE = re.compile(r"\[REDACTED:[^\]\n]*\]")
+
+
+def redact_for_display(text: str) -> str:
+    """The display mask, defined once: credentials then exfiltration URLs.
+
+    Read paths that hand content to a UI apply BOTH redactors, in this order. Naming the
+    composition here is what lets `restore_masked_spans` be a true inverse instead of a
+    second, drifting guess at what a mask looks like.
+    """
+    masked, _ = redact_credentials(text)
+    masked, _ = redact_exfiltration_urls(masked)
+    return masked
+
+
+def _mask_pairs(masked: str, stored: str) -> list[tuple[str, str]] | None:
+    """Pair each mask in `masked` with the text it replaced in `stored`.
+
+    Deterministic rather than fuzzy: the literal segments AROUND the masks are unchanged by
+    redaction, so walking them through `stored` in order isolates each masked span exactly.
+    Returns None when the walk cannot account for the whole string — the caller must then
+    refuse the write rather than guess (a wrong guess writes a secret into the wrong place).
+    """
+    literals = _MASK_RE.split(masked)
+    masks = _MASK_RE.findall(masked)
+    pairs: list[tuple[str, str]] = []
+    pos = 0
+    for i, mask in enumerate(masks):
+        prefix = literals[i]
+        if not stored.startswith(prefix, pos):
+            return None
+        pos += len(prefix)
+        following = literals[i + 1]
+        # The masked span runs up to where the next unchanged literal resumes; for a mask at
+        # the very end of the content, to the end of the stored text.
+        end = stored.find(following, pos) if following else len(stored)
+        if end < pos:
+            return None
+        pairs.append((mask, stored[pos:end]))
+        pos = end
+    if stored[pos:] != literals[-1]:
+        return None
+    return pairs
+
+
+def restore_masked_spans(submitted: str, stored: str) -> str | None:
+    """Put back any span the client is echoing as one of OUR OWN masks.
+
+    Redaction is a display safeguard, so an editor seeded from a redacted read sends the mask
+    back verbatim — and a write path with no inverse persists `[REDACTED: credential]` over the
+    real content, irreversibly, on an edit the user never made to that span. This is the
+    inverse: each mask in `submitted` is restored from the corresponding span of `stored`, in
+    order, so every OTHER edit in the same save still lands.
+
+    The mask is never lifted onto the wire — the plaintext only ever moves from the store back
+    into the store — so the read path keeps masking unconditionally and no endpoint has to
+    serve a secret to un-break editing.
+
+    A mask is treated as a PLACEHOLDER standing for the n-th hidden value, so it restores
+    wherever the user left it, even in a heavily rewritten body: keeping the marker means
+    "keep the value it stands for". Deleting the marker deletes the value — that is a real
+    instruction and is honoured. Two identical markers are therefore interchangeable: reordering
+    them swaps which span each value lands in, which is why the mask text names its KIND.
+
+    Returns the content to persist, or None when the stored value cannot be walked to recover
+    what each mask replaced; the caller must then refuse the write rather than guess, since the
+    alternative is persisting a mask over real content.
+    """
+    if not _MASK_RE.search(submitted):
+        return submitted  # nothing echoed back → an ordinary edit, unchanged
+    masked = redact_for_display(stored)
+    if masked == stored:
+        # Nothing in the STORED value is masked, so any mask-looking text in the submission is
+        # the user's own writing. Hands off.
+        return submitted
+    if submitted == masked:
+        return stored  # an untouched round-trip (e.g. a title-only edit) → keep the store as-is
+    pairs = _mask_pairs(masked, stored)
+    if pairs is None:
+        return None
+    pending: dict[str, list[str]] = {}
+    for mask, original in pairs:
+        pending.setdefault(mask, []).append(original)
+
+    def _take(m: "re.Match[str]") -> str:
+        queue = pending.get(m.group(0))
+        # A mask with no original left to give is text the user typed themselves — leave it.
+        return queue.pop(0) if queue else m.group(0)
+
+    return _MASK_RE.sub(_take, submitted)
 
 
 # Suspicious bash patterns to flag during audit

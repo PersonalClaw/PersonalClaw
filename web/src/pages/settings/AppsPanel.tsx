@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, ExternalLink, Loader2 } from 'lucide-react'
+import { Check, ExternalLink } from 'lucide-react'
 import { api, type AppSummary } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
@@ -61,13 +61,20 @@ export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
   )
 }
 
-/** Store sources — the `apps.*` config section (one field today).
+/** Store sources — the `apps.*` config section.
  *
  *  `registry_source_enabled` is a SEED switch: with it on, first start writes the curated
  *  registry into the Store's git-source list as a removable row. Turning it off here stops a
  *  future seed; it does not retract a source already seeded (remove that in the Store, where
  *  the removal persists). Said plainly in the hint, because a toggle that reads like a live
- *  on/off but only gates seeding is exactly the control users mis-trust. */
+ *  on/off but only gates seeding is exactly the control users mis-trust.
+ *
+ *  `bundled_source_enabled` is a LIVE filter, and it is here because it is the ONLY way to
+ *  turn the bundled default off: that source is folded into every read of the git-source
+ *  list, so it has no row for the Store's remove control to delete. Before this, "cannot be
+ *  turned off" and "reaches github.com the first time you open the Store" held together
+ *  (#2528) — a stronger claim than this codebase makes anywhere else, given an app may
+ *  declare `"network": false`. */
 function StoreSourcesSection() {
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
   const { data, error, refresh } = useQuery('settings:apps-config', () =>
@@ -94,6 +101,8 @@ function StoreSourcesSection() {
   return (
     <Section title="Store sources" hint="Where the Store looks for installable apps. A source only ever contributes listings — installing still runs the security scanner, and nothing is installed without your consent.">
       <RowGroup>
+        <ToggleRow label="Bundled app source" cfg={cfg} field="bundled_source_enabled" patch={patch}
+          hint="List the published first-party apps repo in the Store. On, opening the Store contacts github.com to read what it offers; off, the Store reaches no network of its own and shows only sources on this machine. This source has no remove button because it ships with PersonalClaw — this switch is how you turn it off." />
         <ToggleRow label="Curated app registry" cfg={cfg} field="registry_source_enabled" patch={patch}
           hint="Ship the community app registry as a default Store source, so registry apps are discoverable out of the box. Added once as a removable source — turning this off stops it being added again, but does not remove one already there (do that in the Store)." />
       </RowGroup>
@@ -140,10 +149,9 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
           {cfg.err && <div data-type="body-s" className="text-negative">{cfg.err}</div>}
           <div className="flex items-center justify-end gap-2">
             {justSaved && <span data-type="caption" className="flex items-center gap-1 text-ok"><Check size={13} /> Saved</span>}
-            <Button variant="primary" size="sm" disabled={cfg.busy || !cfg.dirty || cfg.missing.length > 0}
+            <Button variant="primary" size="sm" loading={cfg.busy} disabled={cfg.busy || !cfg.dirty || cfg.missing.length > 0}
               disabledReason={cfg.missing.length > 0 ? `Fill in ${cfg.missingLabels.join(', ')}`
-                : !cfg.dirty && !cfg.busy ? 'No changes to save' : undefined} onClick={() => cfg.save()}>
-              {cfg.busy ? <Loader2 size={14} className="animate-spin" /> : null} Save
+                : !cfg.dirty && !cfg.busy ? 'No changes to save' : undefined} onClick={() => cfg.save()}>Save
             </Button>
           </div>
         </div>

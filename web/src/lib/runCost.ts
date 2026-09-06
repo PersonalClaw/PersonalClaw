@@ -21,12 +21,35 @@ export function runUsd(costUsd: number): string {
  *  ("Providers report token counts but not always a dollar cost"), so rendering it as an exact
  *  charge would claim a precision the number does not have.
  *
- *  Zero is its own case, and NOT "$0.00". Zero means the provider reported nothing and the model
- *  had no price row, or the model ran locally and was genuinely free — indistinguishable from
- *  this number alone. "$0.00 this run" would assert the second reading; the copy states both. */
-export function runCostText(costUsd: number): string {
-  if (!(costUsd > 0)) return 'Nothing recorded — a local model, or one with no price row'
+ *  `priced` splits what this sentence used to have to hedge about. It is the backend's own
+ *  disclosure (`ledger.reader.run_totals`, `RunStats.priced`, and the same word `LoopSpend` uses):
+ *  `false` means some completed step booked no cost at all, so the figure is a FLOOR. With it, a
+ *  genuinely-free local run and a run nobody costed stop sharing one sentence — they were
+ *  indistinguishable from the number alone, which is exactly why the flag exists (#2566). */
+export function runCostText(costUsd: number, priced: boolean): string {
+  if (!priced) {
+    return costUsd > 0
+      ? `At least ~${runUsd(costUsd)} this run — some step recorded no cost, so the real total is higher`
+      : 'Not recorded — no step on this run booked a cost, so nothing here says what it spent'
+  }
+  if (!(costUsd > 0)) return 'Nothing — every step was measured and cost nothing (a free local model)'
   return `~${runUsd(costUsd)} this run — estimated from model prices, not a provider-reported charge`
+}
+
+/** The compact stat-cell version of the same fact: a figure, or the words that replace it.
+ *
+ *  Separate from `runCostText` because a `<Stat>` cell has room for a value, not a sentence — but
+ *  it must NOT fall back to the raw number when the number is a floor. "~$0.0000" in a cell is the
+ *  precise defect #2566 names: a measured-looking figure standing in for "nobody recorded this". */
+export function runCostStat(costUsd: number, priced: boolean): string {
+  if (!priced) return costUsd > 0 ? `≥~${runUsd(costUsd)}` : 'not recorded'
+  return `~${runUsd(costUsd)}`
+}
+
+/** A template card's p50/p95 cell. Same rule, one sample wider: an unpriced run anywhere in the
+ *  sample makes every percentile drawn from it a floor. */
+export function templateCostStat(costUsd: number, priced: boolean): string {
+  return priced ? runUsd(costUsd) : `≥${runUsd(costUsd)}`
 }
 
 /** The loop cockpit's compact pill: "~$X this run", plus planning when there was any.

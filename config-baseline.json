@@ -202,6 +202,12 @@
   },
   {
     "default": true,
+    "path": "apps.bundled_source_enabled",
+    "sensitive": false,
+    "type": "bool"
+  },
+  {
+    "default": true,
     "path": "apps.registry_source_enabled",
     "sensitive": false,
     "type": "bool"

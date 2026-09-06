@@ -315,8 +315,11 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     useSearchText() { const { data } = useDashCfg(); const c = data; return `chat message session restore history send enter timestamps ${c ? `restore ${c.restore_sessions} send-on-enter ${c.send_on_enter} timestamps ${c.show_timestamps} density ${c.widget_density}` : ''}` },
     render(query, go) {
       const { data: c, refresh, stale: cStale } = useDashCfg()
+      // This card is the SECOND writer of these prefs (the Chat settings panel is the other), so it
+      // owes the same reader bust: chat reads the timestamp preference under its own persisted key,
+      // and refreshing only this card's copy would leave the transcript on the value you changed.
       const save = (patch: Record<string, unknown>) => mutate(
-        () => api.saveDashboardConfig(patch).then(refresh), 'settings:dashboard-config',
+        () => api.saveDashboardConfig(patch).then(refresh), 'settings:dashboard-config', 'chat:show-timestamps',
       )
       return (
         <BentoCard icon={MessageSquare} title="Chat" query={query} onClick={() => go('chat')} loading={c === undefined} rows={4} stale={cStale}>

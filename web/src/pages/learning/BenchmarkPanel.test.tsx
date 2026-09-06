@@ -109,6 +109,8 @@ function task(over: Partial<BenchmarkTaskRow> = {}): BenchmarkTaskRow {
     tool_calls: { skills_on: 6, skills_off: 2 },
     spend_observed: true,
     spend_estimated: false,
+    tokens_recorded: true,
+    unrecorded_spend_cells: 0,
     notes: [],
     ...over,
   }
@@ -117,6 +119,12 @@ function task(over: Partial<BenchmarkTaskRow> = {}): BenchmarkTaskRow {
 function report(over: Partial<BenchmarkReport> = {}): BenchmarkReport {
   return {
     run_id: 'learnbench-20260826T000000Z',
+    // Every report a run writes STATES its schema, and at 2 or above that is the panel's answer to
+    // "was provenance recorded?" (#2562). A fixture WITHOUT it is a pre-provenance report — a
+    // distinct case with its own test below, so the two are never conflated by a default here.
+    report_schema: 2,
+    tokens_recorded: true,
+    unrecorded_spend_cells: 0,
     created_at: '2026-08-26T00:00:00+00:00',
     protocol_doc: DOC,
     task_set_version: 1,
@@ -463,15 +471,20 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
     expect(screen.queryByText(/Cells called/)).toBeNull()
   })
 
-  /** 🔑 THE TRAP THIS BLOCK EXISTS FOR. An ABSENT `provider_binding` is a report written before
-   *  runs recorded provenance at all — ES-17 added the field without moving `report_schema`, so
-   *  version alone cannot tell the two apart. Rendering absent as "nothing was bound" would turn
-   *  "we never recorded it" into "we recorded that no model ran", which is this project's
-   *  recurring absent-versus-declared-false failure at the one surface that publishes. */
+  /** 🔑 THE TRAP THIS BLOCK EXISTS FOR. A report written before runs recorded provenance at all is
+   *  a different claim from one that recorded "nothing was bound". Rendering the first as the second
+   *  turns "we never recorded it" into "we recorded that no model ran" — this project's recurring
+   *  absent-versus-declared-false failure at the one surface that publishes.
+   *
+   *  The DISCRIMINATOR changed with #2562 and this test changed with it. It used to be
+   *  `'provider_binding' in report`, which worked and made the panel a second owner of the fact; it
+   *  is now the schema the report STATES, which is what `REPORT_SCHEMA` was always for. So the
+   *  legacy fixture is a report that states schema 1 — the value ES-17 left it at — rather than one
+   *  with a key surgically removed. */
   it('distinguishes an UNRECORDED provenance from a recorded absence of one', () => {
-    const legacy = report()
-    // The fixture must genuinely lack the key, not carry `undefined` under it — `in` is what the
-    // panel branches on, and a fixture that set it to `undefined` would test nothing.
+    const legacy = report({ report_schema: 1 })
+    // The fixture must genuinely lack the key too: a pre-ES-17 report had no `provider_binding` at
+    // all, and the panel must reach the same conclusion from the SCHEMA rather than from that.
     expect('provider_binding' in legacy).toBe(false)
     const unrecorded = render(
       <BenchmarkPanel view={view({ report: legacy })} error={undefined} onRetry={() => {}} />,
@@ -494,6 +507,151 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
     )
     expect(screen.queryByText('Provenance was not recorded')).toBeNull()
     expect(screen.getByText('No model was bound — these cells called no model')).toBeTruthy()
+  })
+
+  /** #2562's ruling, at the surface that carried the workaround: the schema is what decides, so a
+   *  report that DOES state schema 2 and DOES carry `provider_binding: null` reads as recorded even
+   *  though its value is null — and a report at schema 1 reads as unrecorded even if a stray key
+   *  were present. The panel must not fall back to key presence for either. */
+  it('reads provenance from the STATED schema, not from whether the key is present', () => {
+    // Schema 1 with the key PRESENT: pre-provenance version, so still unrecorded. This is the case
+    // a key-presence check gets wrong in the opposite direction.
+    const stale = render(
+      <BenchmarkPanel
+        view={view({ report: report({ report_schema: 1, provider_binding: null }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText('Provenance was not recorded')).toBeTruthy()
+    expect(screen.queryByText('No model was bound — these cells called no model')).toBeNull()
+    stale.unmount()
+
+    // A report that states NO schema cannot certify what it recorded, and must not default to
+    // "recorded" — that would be the same collapse with an extra step.
+    render(
+      <BenchmarkPanel
+        view={view({ report: report({ report_schema: undefined, provider_binding: null }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText('Provenance was not recorded')).toBeTruthy()
+  })
+
+  /** #2561 at the page: the pin now records BOTH facts, so the panel shows both under labels that
+   *  say whose each is. `null` (unrecorded) must not render as `{}` (recorded: no model). */
+  it('renders what the CELLS could reach beside what the HOME was bound to', () => {
+    const bound = render(
+      <BenchmarkPanel
+        view={view({
+          report: report({
+            provider_binding: BINDING,
+            pin: {
+              model_fp: '5970c589da34',
+              model_fingerprint: { chat: 'LocalOllama:gemma4:12b', reasoning: 'LocalOllama:gemma4:12b' },
+              cell_model_fp: '709d87c51b62',
+              cell_model_fingerprint: { chat: 'LocalOllama:gemma4:12b' },
+            },
+          }),
+        })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    // Two lines, two labels. `could reach` is the cells' line; `not what the cells reached` is the
+    // home's — and both are present, which is the point: two facts, two fields, two sentences.
+    expect(screen.getByText(/could reach/)).toBeTruthy()
+    expect(screen.getByText(/not what the cells reached/)).toBeTruthy()
+    bound.unmount()
+
+    // Recorded-and-no-model says so in words; unrecorded says "not recorded". Two states, two
+    // strings, and neither is the other.
+    const none = render(
+      <BenchmarkPanel
+        view={view({ report: report({ pin: { cell_model_fingerprint: {} } }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText(/no model at all/)).toBeTruthy()
+    expect(screen.queryByText(/not recorded\./)).toBeNull()
+    none.unmount()
+
+    render(
+      <BenchmarkPanel
+        view={view({ report: report({ pin: { cell_model_fingerprint: null } }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText(/not recorded/)).toBeTruthy()
+    expect(screen.queryByText(/no model at all/)).toBeNull()
+  })
+
+  /** #2540 at the page. `token_ratio: null` now has TWO causes and only one of them is "not
+   *  measured": a run whose provider omitted its usage produced real scores and no spend match. */
+  it('renders an unrecorded token ratio as "not recorded", not as "not measured" or 0.0000', () => {
+    const unrecorded = render(
+      <BenchmarkPanel
+        view={view({
+          report: report({
+            tokens_recorded: false,
+            unrecorded_spend_cells: 3,
+            tasks: [
+              task({
+                verdict: 'tokens_unrecorded',
+                verdict_class: 'tokens_unrecorded',
+                token_ratio: null,
+                tokens_recorded: false,
+                unrecorded_spend_cells: 3,
+                reason: '3 contributing cell(s) reported no token usage',
+              }),
+            ],
+          }),
+        })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    // The verdict is a STRING, not "not measured": the scores were measured.
+    expect(screen.getByText('tokens_unrecorded')).toBeTruthy()
+    expect(screen.queryByText('not measured')).toBeNull()
+    // The ratio cell says which absence it is, and never 0.0000. Two matches: the run-level
+    // sentence and the cell itself — the run-level one is what a reader sees before any row.
+    expect(screen.getAllByText('not recorded').length).toBe(2)
+    expect(screen.queryByText('0.0000')).toBeNull()
+    // The delta survives, because it was measured.
+    expect(screen.getByText('+12.50')).toBeTruthy()
+    // And the run-level sentence appears once, before any row.
+    expect(screen.getByText(/every token ratio below is/)).toBeTruthy()
+    unrecorded.unmount()
+
+    // VACUITY FLOOR, in both directions. A RECORDED zero ratio still prints 0.0000 — a real and
+    // disqualifying observation that must not hide behind an absence…
+    const zero = render(
+      <BenchmarkPanel
+        view={view({ report: report({ tasks: [task({ token_ratio: 0 })] }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText('0.0000')).toBeTruthy()
+    expect(screen.queryByText('not recorded')).toBeNull()
+    zero.unmount()
+
+    // …and an unassembled pair still says "not measured", which is the third state.
+    render(
+      <BenchmarkPanel
+        view={view({
+          report: report({ tasks: [task({ verdict: null, token_ratio: null, delta_points: null })] }),
+        })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getAllByText('not measured').length).toBeGreaterThan(0)
+    expect(screen.queryByText('not recorded')).toBeNull()
   })
 
   /** The pin is NOT provenance, and the panel must not let it read as provenance. `model_fp` /

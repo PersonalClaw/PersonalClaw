@@ -13,11 +13,21 @@ import { join } from 'node:path'
 //                     13  a state the user can fix   ← this change
 //                      6  neither         ← named exclusions below
 //
-// **Busy-only is not a defect.** `Button`'s own contract says a reason turns the native
-// `disabled` into `aria-disabled` to keep the tab stop — deliberately NOT what you want for an
-// in-flight action, which must not be re-clickable, and whose state `aria-busy` already
-// announces. So a rail that demanded a reason everywhere would have broken 87 correct sites; it
-// asks only where the gate is a state the user can act on.
+// **Busy-only is not a defect *for this rail*.** `Button`'s own contract says a reason turns the
+// native `disabled` into `aria-disabled` to keep the tab stop — deliberately NOT what you want for
+// an in-flight action, which must not be re-clickable. So a rail that demanded a REASON everywhere
+// would have broken 87 correct sites; it asks only where the gate is a state the user can act on.
+//
+// 🔴 CORRECTION (cycle ux-796) — THIS PARAGRAPH USED TO JUSTIFY the busy class on the grounds that
+// the state was already announced to assistive tech, and used that as the exemption criterion for
+// all 87. **That justification was false, and this rail never checked it.** `Button` publishes
+// `aria-busy={loading || undefined}` — from the `loading` prop, never from `disabled` — so a
+// `<Button disabled={busy}>` announces nothing whatsoever. The exemption still holds on its OWN
+// terms (a busy gate does not owe a `disabledReason`; giving it one would make an in-flight action
+// re-clickable), but not on the announcement grounds it used to cite. The missing announcement is a
+// real, separate defect: `ui/busyIsNotAnnounced.test.ts` measures it and ratchets it down. Two
+// rails about two properties must not borrow each other's conclusions again — that borrowing is
+// what let ~180 sites read as certified.
 //
 // Verified on `#/settings/account`, the handle Save:
 //

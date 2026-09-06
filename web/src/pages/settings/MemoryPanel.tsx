@@ -1020,7 +1020,7 @@ function InspectTab() {
           <TextInput value={q} onChange={setQ} onKeyDown={(e) => { if (e.key === 'Enter') run() }}
             placeholder="A query, e.g. what's my timezone" ariaLabel="Query to preview injected memory context" size="md" surface="high" />
         </div>
-        <Button size="sm" onClick={run} disabled={busy}>{busy ? <Loader2 size={15} className="animate-spin" /> : 'Preview'}</Button>
+        <Button size="sm" onClick={run} loading={busy}>Preview</Button>
       </div>
       {result && (
         <div className="flex flex-col gap-3">
@@ -1067,8 +1067,8 @@ function RecallTab() {
           <TextInput value={q} onChange={setQ} onKeyDown={(e) => { if (e.key === 'Enter') run() }}
             placeholder="e.g. what did I decide about the TicTacToe deploy?" ariaLabel="Question for deep memory recall" size="md" surface="high" />
         </div>
-        <Button size="sm" onClick={run} disabled={busy || !q.trim()}
-          disabledReason={!q.trim() ? 'Type a question first' : undefined}>{busy ? <Loader2 size={15} className="animate-spin" /> : 'Recall'}</Button>
+        <Button size="sm" onClick={run} loading={busy} disabled={busy || !q.trim()}
+          disabledReason={!q.trim() ? 'Type a question first' : undefined}>Recall</Button>
       </div>
       {result !== null && (result
         ? <pre data-type="caption" className="overflow-x-auto rounded-lg bg-surface-container px-3 py-2 text-on-surface whitespace-pre-wrap">{result}</pre>
@@ -1109,7 +1109,7 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
       <Section title="Dreaming"
         hint="Like sleep consolidates memories, PersonalClaw reviews its episodic memories (raw conversation fragments) and promotes the recurring, cross-context ones into durable semantic facts — scored on frequency, diversity, recency, and richness. It runs automatically in the background; trigger a pass now to consolidate a recent burst of activity.">
         <div className="flex items-center gap-2">
-          <Button size="sm" onClick={promote} disabled={promoting}>{promoting ? <><Loader2 size={14} className="animate-spin" /> Dreaming…</> : <><Moon size={14} /> Dream now</>}</Button>
+          <Button size="sm" onClick={promote} loading={promoting} loadingLabel="Dreaming…"><Moon size={14} /> Dream now</Button>
           {dreamResult
             ? <span data-type="caption" className="text-ok">{dreamResult}</span>
             : <span data-type="caption" className="text-on-surface-low">Consolidate episodic memories → semantic facts</span>}
@@ -1333,11 +1333,9 @@ function EntityGraphSection({ onChanged }: { onChanged: () => void }) {
       hint="Memories linked to the people, projects and tools they name — so “what do I know about X?” follows links instead of hoping search finds everything. Matching is exact-name and costs nothing to run."
     >
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="ghost" onClick={rebuild} disabled={busy === 'rebuild'}>
-          {busy === 'rebuild' ? <><Loader2 size={14} className="animate-spin" /> Linking…</> : <><Share2 size={14} /> Rebuild links</>}
+        <Button size="sm" variant="ghost" onClick={rebuild} loading={busy === 'rebuild'} loadingLabel="Linking…"><Share2 size={14} /> Rebuild links
         </Button>
-        <Button size="sm" variant="ghost" onClick={exportGraph} disabled={busy === 'export'}>
-          {busy === 'export' ? <><Loader2 size={14} className="animate-spin" /> Rendering…</> : <><Download size={14} /> Export as HTML</>}
+        <Button size="sm" variant="ghost" onClick={exportGraph} loading={busy === 'export'} loadingLabel="Rendering…"><Download size={14} /> Export as HTML
         </Button>
       </div>
       <p data-type="caption" className="mt-2 text-on-surface-low">
@@ -1568,8 +1566,7 @@ function ProposalQueue({ proposals, onDecided }: { proposals: MemoryEntityPropos
           <Select value={types[p.name] ?? 'person'} onChange={(v) => setTypes((t) => ({ ...t, [p.name]: v as MemoryEntityType }))}
             options={ENTITY_TYPE_OPTIONS} ariaLabel={`What kind of thing is ${p.name}?`} />
           <div className="flex gap-1.5">
-            <Button size="sm" onClick={() => decide(p.name, 'accept')} disabled={busy === p.name} className="flex-1">
-              {busy === p.name ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Accept
+            <Button size="sm" onClick={() => decide(p.name, 'accept')} loading={busy === p.name} className="flex-1"><Check size={14} /> Accept
             </Button>
             <Button size="sm" variant="ghost" onClick={() => decide(p.name, 'reject')} disabled={busy === p.name} className="flex-1">
               <X size={14} /> Not a thing
@@ -1611,12 +1608,10 @@ function MemoryMaintenance({ stats, onChanged }: { stats: MemoryStats | null | u
     <Section title="Maintenance" hint="Migrate legacy memory or restore from an export.">
       <div className="flex flex-wrap items-center gap-2">
         {stats?.has_legacy_memory && (
-          <Button size="sm" variant="ghost" onClick={migrate} disabled={!!busy}>
-            {busy === 'migrate' ? <Loader2 size={14} className="animate-spin" /> : <ArrowRightLeft size={14} />} Migrate legacy → vector store
+          <Button size="sm" variant="ghost" onClick={migrate} loading={busy === 'migrate'} disabled={!!busy}><ArrowRightLeft size={14} /> Migrate legacy → vector store
           </Button>
         )}
-        <Button size="sm" variant="ghost" onClick={importJson} disabled={!!busy}>
-          {busy === 'import' ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14} />} Import from JSON
+        <Button size="sm" variant="ghost" onClick={importJson} loading={busy === 'import'} disabled={!!busy}><UploadCloud size={14} /> Import from JSON
         </Button>
       </div>
       {stats && !stats.has_legacy_memory && <p data-type="caption" className="mt-1.5 text-on-surface-low">No legacy markdown memory to migrate.</p>}
@@ -1731,8 +1726,7 @@ function SettingsTab({ stats, onConsolidated }: { stats: MemoryStats | null | un
 
       <Section title="Consolidation" hint="Force an immediate consolidation pass instead of waiting for idle rollup.">
         <div className="flex items-center gap-3">
-          <Button variant="secondary" size="sm" onClick={consolidate} disabled={consolidating}>
-            {consolidating ? <><Loader2 size={15} className="animate-spin" /> Consolidating…</> : 'Consolidate now'}
+          <Button variant="secondary" size="sm" onClick={consolidate} loading={consolidating} loadingLabel="Consolidating…">Consolidate now
           </Button>
           {consolidateMsg && <span data-type="body-s" className="text-on-surface-low">{consolidateMsg}</span>}
         </div>
@@ -1765,8 +1759,7 @@ function DailyDigestSection() {
   return (
     <Section title="Daily digests" hint="Per-day rollups of memory activity — 'what happened on day D'. Built automatically on the maintenance cadence; browsable in the Obsidian vault too.">
       <div className="mb-3 flex items-center gap-3">
-        <Button variant="secondary" size="sm" onClick={() => load(true)} disabled={busy}>
-          {busy ? <><Loader2 size={15} className="animate-spin" /> Building…</> : 'Build / refresh'}
+        <Button variant="secondary" size="sm" onClick={() => load(true)} loading={busy} loadingLabel="Building…">Build / refresh
         </Button>
         {digests && <span data-type="body-s" className="text-on-surface-low">{digests.length} digest{digests.length === 1 ? '' : 's'}</span>}
       </div>
@@ -1877,8 +1870,7 @@ function VaultSection({ settings, onMode, onPath, saved }: {
         </p>
       )}
       <div className="mt-1 flex items-center gap-3">
-        <Button variant="secondary" size="sm" onClick={sync} disabled={syncing}>
-          {syncing ? <><Loader2 size={15} className="animate-spin" /> Syncing…</> : 'Sync now'}
+        <Button variant="secondary" size="sm" onClick={sync} loading={syncing} loadingLabel="Syncing…">Sync now
         </Button>
         {msg && <span data-type="body-s" className="text-on-surface-low">{msg}</span>}
       </div>
