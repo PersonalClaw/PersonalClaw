@@ -117,7 +117,7 @@ element.
 | DCU1.2 | `policy.py` (target-app allowlist + `check_input_target` secure-field screen) + `gate.py` (SEL audit, no decision) | `computer_use/policy.py`, `gate.py` | driving a non-allowlisted app refuses; typing into a secure field refuses; every attempt (allowed or refused) has a SEL record |
 | DCU1.3 | macOS AX driver (element walk → indexed tree with TTL+fingerprint; `AXPress`; type/set/scroll/named-action; located coordinate path via `CGEventPostToPid`; the explicit `global` warp behind its own name+SEL) via ctypes FFI | `computer_use/macos_driver.py`, `macos_ffi.py`, `types.py` | on macOS with the enable on, snapshot a TextEdit window, `AXPress` a button by index, type into a field — pointer does not move; a stale index (post-TTL) refuses and forces re-snapshot |
 | DCU1.4 | The thin stdio shim + in-gateway dispatch + the tool surface registered; ceilinged spawn (PLATFORM-HARDENING-FLOORS §1 `tool` profile) | `computer_use/cli.py`, `service.py`, `tools.py`, MCP registration | the agent lists apps and clicks an element end-to-end; the shim holds no OS handles; the driver spawn carries the ceiling |
-| V1 | Validation (macOS, enable ON): drive a real app by element index; confirm the pointer stays put; confirm a secure-field refusal; confirm SEL records; confirm the enable file being absent blocks everything | — | holds; recorded |
+| V1 | Validation (macOS, enable ON): drive a real app by element index; confirm the pointer stays put; confirm a secure-field refusal; confirm SEL records; confirm the enable file being absent blocks everything | `scripts/dcu4_v1_validate.py` | **HOLDS — recorded 2026-09-06.** See the exec-log entry below. Re-runnable: `PYTHONPATH=src python scripts/dcu4_v1_validate.py` |
 
 ### Session 2 — Human-facing views + Windows/Linux refusal + approval integration
 
@@ -878,3 +878,59 @@ this. Two tests already flip branch on the grant. The `dag.json` dep edit follow
   checkout; installing was out of scope for the session), so the pre-push hook / CI web chain
   is the gate that runs them. BLOCKED-shaped note for the owner, not for the atom: the
   backend census — the load-bearing half of the done_when — is green locally.
+
+## Execution log — `DCU-4` V1 (the live as-a-user validation) — **HOLDS 2026-09-06**
+
+**THE RECORDED GATE WAS WRONG ABOUT ITS OWN NATURE, AND THAT IS THE WHOLE FINDING.** Every
+prior pass recorded V1 as unreachable because it "needs the macOS Accessibility (TCC) grant,
+which is SIP-protected and cannot be granted by code". True — of *granting* it. It says nothing
+about *using* one that is already there. `AXIsProcessTrusted()` is a one-line read
+(`macos_ffi.is_process_trusted`, written for exactly this) and on this workstation it answers
+**True**: the operator had already trusted the interpreter's host. So the gate was never
+"ungrantable", it was **unprobed** — the absent-vs-declared-false trap, applied to a permission.
+`scripts/dcu4_v1_validate.py` therefore probes the grant FIRST and refuses to report a pass
+without it, rather than skipping and reporting green.
+
+**WHAT RAN, AND AGAINST WHAT.** Two phases, two interpreters, one JSON artifact, exit 0.
+Every step goes through `service.computer_dispatch` — never the driver and never the FFI —
+because dispatching is the only entry point `DCU-4` shipped, and a validation that reached
+around it would prove the driver works and say nothing about the chain that restrains it.
+The absent-enable phase re-execs into its own process on purpose: `enable_state` reads the
+keystone once and caches it ("no mid-run flip"), so one process cannot honestly observe both
+states, and `reset_enable_state()` would have validated the test hook instead of the property.
+
+| V1 clause | How it was met, live |
+|---|---|
+| an absent enable file blocks everything | all **seven** tools dispatched with no enable file → seven `ERR_COMPUTER_USE_DISABLED` refusals and **seven** SEL `denied` rows. The population, not one sampled tool |
+| a real app driven by element index | `computer_click` on TextEdit's `AXCloseButton` **by index** (auto = `AXPress`) → the front window closed; `computer_set_value` on the `AXTextArea` **by index** → the live AX value read back byte-equal to the marker this run wrote |
+| the pointer stays put | `macos_ffi.pointer_position()` sampled immediately before and after each acting dispatch: identical both times. Sampled per action, not once per run — a wider window fails on a human nudging the mouse, and a false defect is as bad as a missed one |
+| a secure-field refusal | a **live** `AXSecureTextField` (Safari over a local page with `input[type=password]`), `computer_type` → `ERR_COMPUTER_USE_SECURE_FIELD` naming `AXSecureTextField`, and the field read back **still empty**. Not a fixture dictionary — the real AX element |
+| SEL records present | 8 dispatches → **8** rows, 6 `approved` + 2 `denied`. Counted against the attempts the run actually made, so a mismatch in *either* direction reds |
+
+Two extra screens were driven because they are free and they are what a reviewer will ask:
+`computer_list_apps` returned **2 of 80** running applications (the step-7 allowlist narrowing,
+non-vacuously — a narrowing that returned everything would red), and a snapshot of the
+non-allowlisted `Finder` refused `ERR_COMPUTER_USE_APP_NOT_ALLOWED` before any window was walked.
+
+**TWO FALSE NEGATIVES THE SCRIPT HAD TO SURVIVE, BOTH RECORDED IN IT.** (1) Pressing the close
+button of an **edited** document raises the save sheet instead of closing the window, so the
+clause read "the press had no effect" when the press had worked perfectly — the click is now
+ordered *before* the write, on a clean document. (2) `open -a` **restores the app's previously
+open windows**, so a second window was still there after the close and the effect was
+unobservable; both launches now use `open -F`. Both are validation-harness defects, not product
+defects, and both are the same shape: an observable that was never as observable as it looked.
+
+**Teardown is scoped to what the run started** (`launched_by_this_run`, captured before the
+launches) — quitting an app the operator already had open would destroy their unsaved work —
+and the scratch document is deliberately left unsaved, because quitting is what discards it.
+Cleanup deliberately avoids `osascript`: `tell application` needs the Apple Events (Automation)
+grant, a *different* TCC grant from Accessibility, and on a machine without it `osascript`
+blocks on a prompt nobody answers (measured on this host).
+
+**WHAT THIS DOES NOT CLOSE.** `DCU-3`'s own row still owns the *stale-index* half of its
+`done_when` (a past-TTL / changed-fingerprint refusal forcing a re-snapshot). This run
+exercised the fresh path only; the retry helper treats `ERR_COMPUTER_USE_STALE_INDEX` as a
+transient because on a live desktop it genuinely is one. The 108 tests across
+`test_computer_use_{dispatch,call_sites,macos_driver}.py` + `test_spawn_ceiling_audit.py` are
+green on this commit, which is where the shim-holds-no-OS-handles and ceilinged-spawn clauses
+continue to live.
