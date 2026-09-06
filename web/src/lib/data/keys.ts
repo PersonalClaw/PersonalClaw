@@ -52,6 +52,9 @@ export const CACHE_NAMESPACES: Record<string, NamespacePolicy> = {
   chat: COLLECTION,
   code: COLLECTION,
   companion: CONFIG,
+  /** The desktop computer-use live view (DCU-7): a mirror of what the agent is doing on the
+   *  desktop right now, so a seconds-old paint is already the past tense of a click. */
+  'computer-use': LIVE,
   config: CONFIG,
   dashboard: LIVE,
   dirtree: COLLECTION,

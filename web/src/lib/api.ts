@@ -2938,6 +2938,40 @@ export interface SelVerify {
   window?: number | null
   error?: string
 }
+// ── Desktop computer-use live view (DCU-7) ─────────────────────────────────────
+// One trail point of the cursor-motion overlay: where an APPROVED acting call was about to
+// land. `x`/`y` are screen coordinates and null when the driver reported no frame — the
+// overlay draws nothing for those rather than a phantom (0,0) landing. `method` is the
+// pointer story: 'ax_press' moved no real pointer; 'global' warped the operator's own.
+export interface ComputerUseTrailPoint {
+  seq: number; ts: number; tool: string; app: string
+  method: 'ax_press' | 'located' | 'global'
+  x: number | null; y: number | null; label: string
+}
+// One wireframe box of the live-view mirror: geometry and identity, never field contents.
+export interface ComputerUseElement {
+  index: number; role: string; title: string; enabled: boolean
+  frame: { x: number; y: number; width: number; height: number } | null
+}
+// One accessibility walk the model already read. Only the NEWEST snapshot carries
+// `elements` (the window the agent is acting in now); older ones are one-line facts.
+export interface ComputerUseSnapshot {
+  snapshot_id: string; app: string; age_secs: number; expired: boolean
+  element_count: number; elements?: ComputerUseElement[]
+}
+// One action-feed row — a computer-use SEL attempt, redacted and narrowed server-side.
+export interface ComputerUseFeedRow {
+  timestamp: string; operation: string; outcome: string; error: string
+  source: string; caller_identity: string; app: string
+}
+// GET /api/computer-use/live-view — everything here is a MIRROR of state that already
+// exists in the gateway (§3 floor 7: the views grant nothing). Renders on any posture:
+// `enabled: false` is itself the most useful thing the view can say on a disarmed machine.
+export interface ComputerUseLiveView {
+  enabled: boolean; allowed_apps: string[]; ttl_secs: number
+  snapshots: ComputerUseSnapshot[]; trail: ComputerUseTrailPoint[]; feed: ComputerUseFeedRow[]
+}
+
 // An archived chat session file (read-only browse). `key`=session key, `stamp`=
 // archive timestamp slug, `mtime`=epoch seconds.
 export interface SessionArchive { name: string; key: string; stamp: string; size: number; mtime: number }
@@ -6487,6 +6521,10 @@ export const api = {
     return get<AuditPage>(`/api/security/audit?${q}`)
   },
   auditVerify: (full = false) => get<SelVerify>(`/api/security/audit/verify${full ? '?full=1' : ''}`),
+  // desktop computer-use live view (DCU-7) — a read-only mirror of what the agent is doing
+  // on this desktop: keystone posture, the walked window, the cursor-motion trail, the
+  // attempt feed. GET only; the one route that can act stays the internal dispatch POST.
+  computerUseLiveView: () => get<ComputerUseLiveView>('/api/computer-use/live-view'),
   // Mirrors `SecurityEventLog.rotate()` (src/personalclaw/sel.py): the log is archived and a fresh
   // chain started. `archive_path` is the timestamped `.bak.jsonl` the old entries moved to (empty when
   // there was nothing to archive). The old `{ ok?: boolean }` shape silently dropped all of this.

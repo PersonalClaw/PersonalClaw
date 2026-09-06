@@ -240,9 +240,40 @@ does **not** fire there.
 
 ### `DCU-7` — Human-facing live-view + cursor-motion overlay
 
-**Status:** todo
+**Status:** todo — 🟡 IMPLEMENTATION LANDED 2026-09-05 (see the note below); the dag flip rides the
+roadmap-tracking PR, which owns status changes.
 
 Optional live-view (PiP) mirroring screenshots the model already read, and an optional cursor-motion overlay that draws a fake cursor (invisible to screen capture) so a watching human sees where a click will land, plus a dashboard view (§3.7). Both are observation-only and grant the agent nothing.
 
 **Done when:** The views render; neither adds any agent capability — asserted by confirming the tool surface is unchanged with the views on; validated.
+
+**IMPLEMENTATION LANDED (2026-09-05) — every clause met, with one wording deviation the execution log argues.**
+`overlay.py` records where each APPROVED acting call is about to land (the fresh element's
+frame centre, or a named coordinate method's own x/y) into a bounded in-memory trail —
+observation fed by the dispatch after the approved SEL row and *before* the acting driver
+call, so "where a click WILL land" is the true tense even for a driver that then wedges, and
+a refusal never paints a landing that will not happen. `render.py` builds the one view model:
+keystone posture as a displayed fact (never a gate — the view renders on a disarmed machine),
+the newest walked tree mirrored as a wireframe (geometry, role, title; field `value` text
+dropped outright, every surviving string through `redact_credentials` — the view's ceiling is
+the model's floor), the trail, and the recent computer-use SEL rows. One browser GET
+(`/api/computer-use/live-view`, owner-only like the audit surface) serves it; the dashboard's
+"Desktop live view" band renders it with the two views as OFF-by-default toggles, and the
+fake cursor + motion trail draw over the wireframe in the operator's browser.
+
+*The deviation:* the plan's "screenshots"/"PiP window" phrasing predates `DCU-3`'s decision
+to read accessibility trees, not pixels — there are no screenshots to mirror, so the live
+view mirrors the trees the model actually read, and the fake cursor is drawn in the dashboard
+rather than as a native overlay window. "Invisible to screen capture" thereby holds by
+construction (no pixel on the driven display, no AX element a `computer_snapshot` walk could
+index) instead of by `NSWindowSharingNone` earned in a second OS-drawing surface.
+
+*The invariant, asserted:* `tests/test_computer_use_live_view.py` pins the census three ways —
+`tools._list_tools()` byte-identical before/after the views have actually rendered (an
+observed dispatch, a built view model, a served GET), the `/api/computer-use/*` route surface
+pinned to exactly one acting POST plus one GET, and the view modules proven by AST to import
+no driver and reach no dispatch. The package's own rails were bumped, not bypassed: the
+public-surface census gains `overlay.py`/`render.py`/`service.live_snapshots`, and the
+screen-caller census (`test_computer_use_call_sites`) sweeps the new modules automatically
+and still counts one caller per screen.
 

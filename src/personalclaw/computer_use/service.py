@@ -63,7 +63,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
-from personalclaw.computer_use import enable_state, gate, policy
+from personalclaw.computer_use import enable_state, gate, overlay, policy
 from personalclaw.computer_use.tools import TOOLS_BY_NAME, ToolSpec
 from personalclaw.errors import AgentError
 
@@ -176,6 +176,18 @@ _SNAPSHOTS: dict[str, Snapshot] = {}
 def reset_snapshots() -> None:
     """Drop every live snapshot. For tests, and for a keystone re-read after a restart."""
     _SNAPSHOTS.clear()
+
+
+def live_snapshots() -> tuple[Snapshot, ...]:
+    """The live snapshots, oldest first — a READ-ONLY handle for the live view (`DCU-7`).
+
+    Exists so :mod:`personalclaw.computer_use.render` can mirror what the model already read
+    without reaching into ``_SNAPSHOTS`` — a private a view module holding would be a view
+    module that can also mutate the store an acting index resolves against. Returns an
+    immutable tuple of frozen dataclasses: the caller can render everything and change
+    nothing, which is the §3 floor 7 property stated as a type.
+    """
+    return tuple(_SNAPSHOTS.values())
 
 
 def _refuse(
@@ -596,6 +608,15 @@ async def computer_dispatch(
         source=source,
         identity=caller_identity,
     )
+
+    if spec.acts:
+        # `DCU-7` — feed the cursor-motion overlay. Observation ONLY, after every screen and
+        # the approved audit row, BEFORE the driver acts (so "where a click WILL land" is the
+        # true tense even for a driver that then wedges). `observe_action` never raises and
+        # never returns a value this chain reads, so it cannot become a step of the decision;
+        # it is deliberately absent from the ordering rails' watched sets because it is not
+        # part of the chain — remove it and every screen still runs identically.
+        overlay.observe_action(tool=spec.name, app=app, element=element, params=args)
 
     driver_payload = dict(args)
     if snap is not None:

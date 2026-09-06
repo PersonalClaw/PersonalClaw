@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import {
   MessageSquare, History, type LucideIcon,
   MessageSquarePlus, ListTodo, BookOpen, FolderKanban, FileCode2, TerminalSquare, Sparkles, Compass,
-  Package, HardDrive, Orbit,
+  Package, HardDrive, Orbit, Monitor,
 } from 'lucide-react'
 import { DashboardLiveProvider } from './DashboardLive'
 import { PinnedTiles } from './PinnedTiles'
@@ -17,6 +17,7 @@ import { Suggestions } from './widgets/Suggestions'
 import { Discover } from './widgets/Discover'
 import { PinnedArtifacts } from './widgets/PinnedArtifacts'
 import { OnThisMachine } from './widgets/OnThisMachine'
+import { DesktopLiveView } from './widgets/DesktopLiveView'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
 import { SystemHealth } from './widgets/SystemHealth'
 import { TopBar } from '../../ui/TopBar'
@@ -167,6 +168,16 @@ export function DashboardPage(route: RouteProps) {
             <EntranceRegion className="min-w-0">
               <Section label="On this machine" icon={HardDrive}>
                 <OnThisMachine />
+              </Section>
+            </EntranceRegion>
+
+            {/* Desktop live view (DESKTOP-COMPUTER-USE §3.7, DCU-7) — what the agent is
+                doing on this desktop: the attempt feed, plus the optional live-view mirror
+                and cursor-motion overlay. Observation only; the toggles change what this
+                page draws, never what the agent can do. */}
+            <EntranceRegion className="min-w-0">
+              <Section label="Desktop live view" icon={Monitor}>
+                <DesktopLiveView />
               </Section>
             </EntranceRegion>
 

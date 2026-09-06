@@ -835,3 +835,46 @@ this. Two tests already flip branch on the grant. The `dag.json` dep edit follow
   `refusal(platform, accessibility_api, op)` used by both `linux_driver.py` and
   `windows_driver.py` — a typed refusal naming the platform, no silent no-op; 70 tests green
   across the computer-use suites referencing the refusal path.
+
+## Execution log — `DCU-7` (Human-facing live-view + cursor-motion overlay) — **DONE**
+
+- [2026-09-05][DCU-7] DONE: the three view surfaces shipped as `computer_use/overlay.py` (the
+  cursor-motion trail — where each APPROVED acting call is about to land, recorded by the
+  dispatch after the approved SEL row and before the acting driver call, fail-open like the
+  gate), `computer_use/render.py` (the one live-view model: keystone posture as a displayed
+  fact, the newest walked tree as a wireframe with `value` text dropped and every surviving
+  string through `redact_credentials`, the trail, the recent computer-use SEL rows),
+  `GET /api/computer-use/live-view` (browser GET, owner-only like the audit surface, wire code
+  `computer_use_view_owner_only`), and the dashboard's "Desktop live view" band
+  (`web/src/pages/dashboard/widgets/DesktopLiveView.tsx`) with both views as OFF-by-default
+  toggles drawing the fake cursor + motion trail over the wireframe.
+- [2026-09-05][DCU-7] DEVIATION: the DCU2.1 row's "screenshots"/"PiP"/"invisible to capture"
+  phrasing predates `DCU-3`'s substrate decision — this system reads accessibility trees, not
+  pixels, so there is no screenshot to mirror and no display to overlay. The live view mirrors
+  the trees the model actually read (narrower, never wider: geometry/role/title only), and the
+  fake cursor draws in the operator's dashboard, where §3 floor 7's constraint holds by
+  construction: it paints no pixel on the driven display and exposes no AX element a
+  `computer_snapshot` walk could index. A native `NSWindowSharingNone` overlay window would be
+  the package's second OS-drawing surface for zero capability payoff; if the owner wants the
+  on-desktop PiP anyway, it is additive on top of this data path.
+- [2026-09-05][DCU-7] The invariant clause is `tests/test_computer_use_live_view.py` (20
+  tests): `tools._list_tools()` byte-identical before/after the views have ACTUALLY rendered
+  (an observed dispatch, a built view model, a served GET — each floored against vacuity), the
+  `/api/computer-use/*` route surface pinned to exactly {POST dispatch, GET live-view}, the
+  view modules proven by AST to import no driver and reach no dispatch, and the
+  observation seam pinned by source order between the approved `_audit` and the acting
+  `_run_driver`. Package rails bumped, not bypassed: the public-surface census gains
+  `overlay.py`/`render.py`/`service.live_snapshots`; the screen-caller census sweeps the new
+  modules automatically and still counts one caller per screen; the wire-envelope census
+  forced the route's body to be spelled literally at the call site (kept, it is the honest
+  place for a wire shape).
+- [2026-09-05][DCU-7] *Real on this host:* the whole gateway leg — real keystone document,
+  real chain (with the dispatch-suite's in-process driver double at step 6, macOS TCC grant
+  still parked per `DCU-3`), real SEL rows read back off disk into the feed, and the real
+  route served over HTTP (aiohttp TestServer) including the app-token categorical refusal.
+  *Deferred to the web gate:* the SPA render tests
+  (`web/src/pages/dashboard/widgets/desktopLiveView.test.tsx`, 6 tests) and `tsc` — this
+  workstation has no web toolchain installed (empty `node_modules` shells in the main
+  checkout; installing was out of scope for the session), so the pre-push hook / CI web chain
+  is the gate that runs them. BLOCKED-shaped note for the owner, not for the atom: the
+  backend census — the load-bearing half of the done_when — is green locally.

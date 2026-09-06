@@ -565,6 +565,11 @@ def test_the_packages_public_surface_is_pinned():
             "ComputerUseRefusal",
             "Snapshot",
             "computer_dispatch",
+            # `DCU-7`'s one addition here: a read-only tuple of the live snapshots, for the
+            # live view's mirror. An accessor rather than render.py reaching into
+            # `_SNAPSHOTS`, and not named `computer_*` because reading a mirror cannot
+            # dispatch.
+            "live_snapshots",
             "reset_snapshots",
         ],
         "tools.py": ["ToolSpec"],
@@ -643,6 +648,19 @@ def test_the_packages_public_surface_is_pinned():
             "op_snapshot",
             "op_type",
         ],
+        # DCU-7's two modules — the human-facing views, and NOTHING here can dispatch:
+        # `overlay` records where an approved acting call will land (fail-open, like `gate`)
+        # and `render` mirrors what the model already read into one view model. Neither is
+        # named `computer_*` for the reason nothing else here is, and
+        # `tests/test_computer_use_live_view.py` additionally asserts by AST that neither
+        # imports a driver nor reaches the dispatch — the views-grant-nothing floor (§3.7).
+        "overlay.py": [
+            "TrailPoint",
+            "motion_trail",
+            "observe_action",
+            "reset_trail",
+        ],
+        "render.py": ["live_view"],
     }, (
         "the computer_use package grew a public function/class. If it is a dispatchable "
         "tool, name it computer_* so the keystone ratchet covers it and call "

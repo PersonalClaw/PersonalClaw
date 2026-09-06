@@ -181,6 +181,12 @@ describe('§3 the remaining hand-rolled server-data caches are a shrinking, name
     'pages/files/FilesSection.tsx': 'which files tab was last open',
     'pages/files/browse/useFileTabs.ts': 'the set of open file tabs and the active one',
     'pages/loops/DesignCockpitPage.tsx': 'canvas card order within one loop',
+    // DCU-7. Same discriminator, same verdict: the stored values are the user's own
+    // mirror/overlay TOGGLES for the desktop live view — booleans minted by a click, never a
+    // server response. The api calls in the module fetch the live feed each render through the
+    // widget's argued 1s poll; nothing fetched is ever written to storage, so nothing can paint
+    // stale.
+    'pages/dashboard/widgets/DesktopLiveView.tsx': 'the mirror/overlay view toggles',
     // MOBILE-COMPANION MC-5. The detector's own discriminator is "did the stored value come
     // from `api.*` in this module" — and here it did not: the id is MINTED locally
     // (`Math.random()`) and identifies this browser profile to the push-subscribe route. No
