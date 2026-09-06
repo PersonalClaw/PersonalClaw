@@ -165,6 +165,20 @@ _SCRIPT_EXTS = {".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".rb", ".p
 _MANIFEST_NAMES = {"skill.md", "app.json", "readme.md", "manifest.json"}
 _MAX_FILE_BYTES = 512 * 1024  # don't read huge blobs into the scanner
 _EVIDENCE_CAP = 120
+# How the evidence window is SHAPED (the cap above is the only length bound). The
+# window is anchored at the start of the matched line — so a call brings its callee
+# and what it is assigned to — and, when the construct opens a bracket, walks to the
+# matching close bracket so the ARGUMENTS come along. A window that merely hugged the
+# matched token showed `subprocess.run(  # noqa: S603` and cut the argv off on the
+# next line: the reader was warned about a subprocess and shown everything except
+# what it runs. These two bound that walk on a pathological or unbalanced file.
+_EVIDENCE_MAX_LINES = 8  # newlines a bracketed construct may span
+_EVIDENCE_SCAN_CHARS = 600  # raw chars the bracket walk may consume
+# Chars of same-line context kept BEFORE the match (`proc = ` in `proc = run(...)`),
+# capped so a long left-hand side can never push the construct itself out of budget.
+_EVIDENCE_LEAD_CAP = 40
+# Every cut is marked with this, so a truncated snippet is never read as the whole thing.
+_ELLIPSIS = "…"
 # Directories that are tooling/dependency noise, not the app's own content. A git
 # clone carries .git/ (whose hooks/*.sample trip the script rules — a false
 # positive); node_modules/venv are vendored deps the author didn't write. Skipping
@@ -228,11 +242,118 @@ _INVISIBLE_CHARS = {
 }
 
 
+_OPEN_BRACKETS = {"(": ")", "[": "]", "{": "}"}
+_CLOSE_BRACKETS = frozenset(")]}")
+
+
+def _unquoted_hash(line: str) -> int:
+    """Index of the first ``#`` in ONE line that starts a comment, else -1. Quote-aware,
+    so a ``#`` inside a string (a URL fragment, a colour escape) is not read as one."""
+    quote = ""
+    i = 0
+    while i < len(line):
+        c = line[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+        elif c in "\"'":
+            quote = c
+        elif c == "#":
+            return i
+        i += 1
+    return -1
+
+
+def _drop_trailing_comment(line: str) -> str:
+    """Trim a trailing ``#`` comment off ONE line of an evidence window. A lint pragma
+    is commentary ABOUT the code, not the code, and inside a capped window it crowds
+    out the substance. A comment-ONLY line is kept verbatim: there the comment is all
+    there is to show, and it may be the matched text itself."""
+    h = _unquoted_hash(line)
+    if h < 0 or not line[:h].strip():
+        return line
+    return line[:h].rstrip()
+
+
+def _construct_end(text: str, match: "re.Match[str]") -> tuple[int, bool]:
+    """Where the construct the match names ends, and whether that end is a CUT.
+
+    For a call this is the closing bracket of the argument list, so the argv travels
+    with the callee; otherwise it is the end of the matched line. ``clipped`` is True
+    when the walk hit its line/char budget before the bracket closed, so the caller
+    marks the snippet truncated rather than passing a fragment off as the whole call."""
+    line_end = text.find("\n", match.end())
+    line_end = len(text) if line_end < 0 else line_end
+    # The bracket the match itself opened (`exec(`), else the next non-blank char
+    # (`subprocess.run` matches without its paren).
+    i = match.end() - 1 if text[match.end() - 1 : match.end()] in _OPEN_BRACKETS else match.end()
+    while i < len(text) and text[i] in " \t":
+        i += 1
+    if text[i : i + 1] not in _OPEN_BRACKETS:
+        return line_end, False
+    limit = min(len(text), match.end() + _EVIDENCE_SCAN_CHARS)
+    lines_left = _EVIDENCE_MAX_LINES
+    depth = 0
+    quote = ""
+    j = i
+    while j < limit:
+        c = text[j]
+        if quote:
+            if c == "\\":
+                j += 2
+                continue
+            if c == quote:
+                quote = ""
+        elif c in "\"'":
+            quote = c
+        elif c == "#":  # skip the comment wholesale — its quotes are not code
+            nl = text.find("\n", j)
+            j = len(text) if nl < 0 else nl
+            continue
+        elif c in _OPEN_BRACKETS:
+            depth += 1
+        elif c in _CLOSE_BRACKETS:
+            depth -= 1
+            if depth <= 0:
+                return j + 1, False
+        elif c == "\n":
+            lines_left -= 1
+            if lines_left <= 0:
+                return j, True
+        j += 1
+    return limit, True
+
+
 def _evidence(text: str, match: "re.Match[str]") -> str:
-    s = max(0, match.start() - 20)
-    e = min(len(text), match.end() + 20)
-    snippet = text[s:e].replace("\n", "\\n").strip()
-    return snippet[:_EVIDENCE_CAP]
+    """The user-facing snippet for one finding: ``L<line>: <code>``.
+
+    Shaped so a reader can tell WHAT the flagged code does — for a call, the callee
+    AND its arguments, not just the token that matched — and where to find it. Folded
+    to one line because the consent dialog renders it inline (a literal ``\\n`` in a
+    security disclosure is noise, not a newline), and any cut is marked with ``…``.
+    This decides only how much surrounding code is SHOWN; it never changes what
+    matched or whether a rule fired."""
+    line_start = text.rfind("\n", 0, match.start()) + 1
+    prefix = f"L{_line_of(text, match.start()) + 1}: "
+    end, clipped = _construct_end(text, match)
+    head_raw = text[line_start : match.start()]
+    body_raw = text[match.start() : max(end, match.end())]
+    # When the match sits INSIDE a comment the comment IS the evidence, so trimming
+    # comments would delete the finding; a `#` before the match on its line is the tell.
+    if _unquoted_hash(head_raw) < 0:
+        body_raw = "\n".join(_drop_trailing_comment(ln) for ln in body_raw.split("\n"))
+    head = " ".join(head_raw.split())
+    body = " ".join(body_raw.split())
+    sep = " " if head and head_raw[-1:].isspace() else ""
+    if len(head) > _EVIDENCE_LEAD_CAP:
+        head = _ELLIPSIS + head[-(_EVIDENCE_LEAD_CAP - 1) :]
+    room = _EVIDENCE_CAP - len(prefix) - len(head) - len(sep)
+    if len(body) > room or clipped:
+        body = body[: max(0, room - 1)].rstrip() + _ELLIPSIS
+    return f"{prefix}{head}{sep}{body}".rstrip()
 
 
 # ── The scanner ─────────────────────────────────────────────────────────────
