@@ -4,7 +4,7 @@
 **Code:** `DL`  
 **Source status:** in_progress
 
-DISCOVERABILITY-LAUNCH decomposed into 11 atoms (DL-1..DL-11): 4 done (S1 migration/scaffold/sync; S2 docs site + llms.txt + landing + release flip, PR #20; S3 screenshots + README rework; T3.4 launch-post draft, published on a source-controlled blog tier in personalclaw.dev@cab5065), 7 todo (T3.1 demo-home seed [core], launch media GIF+social images, comparison pages, listing/checklist program, research republication, plus the two owner-only launch actions DL-10 listing submissions and DL-11 P0-gate clearance carved from DL-8). Verified against code: only the empty fixture ships (T3.1 open), screenshots+capture infra present, 14-topic learnings corpus at docs/research/learnings/, no live keyurgolani/ product URLs.
+DISCOVERABILITY-LAUNCH decomposed into 11 atoms (DL-1..DL-11): 8 done (S1 migration/scaffold/sync; S2 docs site + llms.txt + landing + release flip, PR #20; S3 screenshots + README rework; T3.1 demo-home seed fixture; T3.2+T2.4 launch media — 84s silent tour referenced from the site hero via personalclaw.dev#54, plus both 1280x640 social cards; T3.4 launch-post draft, published on a source-controlled blog tier in personalclaw.dev@cab5065; S4 T4.1 /compare capability matrix; S4 T4.2+T4.3 listing submissions + P0 launch checklist), 3 todo and ALL THREE OWNER-SIDE: DL-9's engineering is merged on the site's main (dec8113) with only its owner residual open, and DL-10 (community listing submissions, calendar-gated and human-contributor-only) and DL-11 (P0 launch-gate clearance before any public posting) are actions an agent must not take. Verified against code, not against this plan's log: the seeded fixture binds a local model (#2538), the capture is 83.7s / 1280x720 / one video stream / no audio track, both social cards re-measure 1280x640, the 14-topic learnings corpus is at docs/research/learnings/, and no live keyurgolani/ product URLs remain.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -14,7 +14,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `DL-2` | ✅ (#website #20) | S2: docs IA + llms.txt/llms-full.txt + landing page + sitemap/OG + release flip | `DL-1` | every core doc reachable <=2 clicks with link-check green; llms.txt + llms-full.txt serve at domain root as text/plain and regenerate per build; landing page copy matches Design (differentiator + zero-telemetry cards, threat-model/SECURITY footer); sitemap + OG meta ship; source manifest flipped to channel: released with core+apps pinned v0.1.3 |
 | `DL-3` | ✅ | S3: reproducible screenshot set + README/SHOWCASE rework | `DL-1` | docs/screenshots/{light,dark}/*.png ship reproducibly with capture.mjs + CAPTURE.md; core README reworked with badges, 3-command install, highlights, security section; apps-repo README carries badges + org links |
 | `DL-4` | ✅ | T3.1: build the demo-home seed fixture (core) | — | src/personalclaw/tests_fixtures/demo-home/ exists following the empty-fixture layout with believable non-personal data (project, tasks, knowledge docs, memory entries, one loop); `personalclaw gateway --seed demo-home` boots a demo-ready dashboard |
-| `DL-5` | ⬜ | T3.2 remainder + T2.4 residual: launch media assets (60-90s demo GIF + social-preview images) | `DL-4` | 60-90s silent capture (chat->approval->loop->knowledge->artifact) recorded on the seeded demo home and referenced from the site hero, with the click-path scripted; 1280x640 social-preview images produced per web/DESIGN.md palette ready for owner upload to both repos |
+| `DL-5` | ✅ | T3.2 remainder + T2.4 residual: launch media assets (60-90s demo GIF + social-preview images) | `DL-4` | 60-90s silent capture (chat->approval->loop->knowledge->artifact) recorded on the seeded demo home and referenced from the site hero, with the click-path scripted; 1280x640 social-preview images produced per web/DESIGN.md palette ready for owner upload to both repos |
 | `DL-6` | ✅ | T3.4: launch-post draft (architecture-receipts narrative) | `EXT:SECURITY-LEGIBILITY:threat model + scanner gate + egress chokepoint narrative` | src/content/blog/launch.md draft complete citing threat model, scanner gate, egress chokepoint, zero telemetry, plus an honest limitations paragraph; owner sign-off recorded |
 | `DL-7` | ✅ | S4 T4.1: released-version capability matrix at /compare | `DL-1`, `EXT:LEARNING-VISIBILITY:benchmark results for matrix rows` | A /compare page publishes a capability matrix about PersonalClaw ONLY — what it does and does not do, with every row sourced to the PINNED/RELEASED core version (verified at the tag, not against main) and the 'does not do' rows included; the page is registered in the site contract and the sitemap, held to the metadata, runtime, axe WCAG A/AA and Lighthouse contracts, and carries an anti-vacuity check that FAILS when the matrix data is non-empty but the page renders no rows; peer/competitor columns are deliberately OUT of scope at pre-1.0 (owner taste call 2026-08-27 — see blocked_reason). |
 | `DL-8` | ✅ | S4 T4.2+T4.3: listing submissions + P0 launch checklist | `DL-3`, `DL-6`, `EXT:CI-RELEASE:green main + CI badge`, `EXT:DISTRIBUTION:install one-liner verified working` | awesome-self-hosted + awesome-ai-agents PRs drafted per their CONTRIBUTING rules; selfh.st + AlternativeTo entries drafted; launch-checklist.md lists the P0 gate items each linking their proof (CI badge, install log, live screenshots) with Show HN / r/selfhosted / r/LocalLLaMA post drafts; gate all-green before any owner posting |
@@ -58,7 +58,7 @@ Session 3 — Launch assets (T3.1)
 
 ### `DL-5` — T3.2 remainder + T2.4 residual: launch media assets (60-90s demo GIF + social-preview images)
 
-**Status:** todo
+**Status:** done
 
 Session 3 — Launch assets (T3.2 GIF) + Session 2 T2.4 residual (social-preview images)
 
@@ -78,6 +78,21 @@ single change that would close this, and it belongs to the fixture, not the capt
 deliberately excludes core's asset trees, so the reference needs a commit there. The capture
 itself is deliberately not committed (~1.2 MB mp4, no LFS, no committed-media convention at
 that size); it is regenerated from the committed script.
+
+**2026-09-06 (later) — both open clauses closed; flipped.** The two things the note above measured
+as NOT met were each blocked on a different repo, and both landed. (1) The arc is now shown in
+full: #2538's `gateway --seed demo-home --seed-local-model` binds a local model into the fixture,
+so the re-capture plays all five specified beats for real — a `gemma4:12b` turn parking on the
+`artifact_save` gate, a human **Allow** under `--approval interactive`, and the resulting markdown
+artifact rendered from the home's `artifacts/` tree, with the audit chain
+`invoked → approved → success → completed`. 83.7s, 1280×720, one video stream and no audio track.
+(2) "Referenced from the site hero" landed as `personalclaw.dev` PR #54. The reference renders one
+click away rather than on `/` itself, and that is measured rather than convenient: `.home-hero` is
+a fixed-height clipped composition with `SystemWindow` absolutely positioned past the viewport
+edge, so there is no "beside" the carousel; and the embedded variant was built and measured at
+**+226ms LCP on `/`, leaving 90ms of a 2500ms budget**, because a `<video>` poster is fetched
+eagerly. The player lives at `/product#tour` and the hero spends one text row. Zero media bytes
+load on either route. The social-preview cards are unchanged and re-verified 1280×640.
 
 ### `DL-6` — T3.4: launch-post draft (architecture-receipts narrative)
 
