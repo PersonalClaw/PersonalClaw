@@ -7652,18 +7652,20 @@
         {
           "id": "PEP-12",
           "title": "Code Review app (suite 1/9)",
-          "status": "todo",
+          "status": "done",
           "scope": "Deep-review a GitHub PR: each changed file in its own isolated subagent, weighted by blast radius; findings kept locally. Uses git/gh. Highest leverage — dogfoods subagents + the SDK. Skeleton from ECOSYSTEM-TOOLING's shipped scaffold (cli_app_new.py).",
           "done_when": "The code-review app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a real PR is reviewed end to end with per-file subagents and locally persisted findings.",
-          "deps": []
+          "deps": [],
+          "evidence": "done 2026-09-06 (PersonalClawApps PR #75, merged edd7336). A `tool` provider deep-reviewing a GitHub PR one file at a time: diff fetched through the user's own `gh`, each changed file scored by blast radius (churn, path criticality, fan-in inside the changed set, add/delete/rename), reviewed heaviest-first with the weight buying both order and context budget, findings appended to a local JSONL log, nothing posted back. Declares `storage` with `network: false`. UI-DRIVE CLAUSE VERIFIED by the committed harness (core #2525): registered as a local Store source through the Manage Sources form, installed THROUGH the browser including a real 'Install anyway' click on the scanner's `python_exec` WARNING dialog, appeared in the Library, all 3 tools rendered on the Tools page, `review_findings` executed from the inspector and returned a real answer, Deactivate/Activate round-tripped — 6/6 legs PASS with screenshots read. REAL-PR CLAUSE VERIFIED separately: driven against PersonalClawApps#73 (7 files, weighted 54 -> 32) with 7 genuinely isolated per-file subagents producing 10 findings (1 high, 7 medium, 2 low) persisted to the findings JSONL, `source` separating static from subagent. Risk declarations corrected before flip (apps #84): `review_pr` and `record_finding` SAFE -> CAUTION, since one spawns `gh` and one writes to disk — the atom is NOT flipped over the self-contradiction the validation drive found. Exemplar recorded (core #2522)."
         },
         {
           "id": "PEP-13",
           "title": "Research Lab app (suite 2/9)",
-          "status": "todo",
+          "status": "done",
           "scope": "Multi-cycle autonomous research campaigns that keep working unattended: question -> sub-question tree -> agents -> synthesis. Dogfoods triggers + subagents; the flagship walk-away demo.",
           "done_when": "The research-lab app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; one campaign runs multiple unattended cycles producing a synthesized report.",
-          "deps": []
+          "deps": [],
+          "evidence": "done 2026-09-06 (PersonalClawApps PR #76, merged). Unattended multi-cycle research campaigns: a question becomes a sub-question tree that grows from findings, and a declared hourly headless cron advances exactly one cycle per tick. Its discipline is restraint — THE APP IS THE LEDGER, NOT THE RESEARCHER: no index, no embeddings, no network, no `agent` permission, declaring only `storage` + `cron`. Three bounds make an unattended campaign terminate rather than spin (cycle budget, follow-up depth cap, duplicate drop), and `research_next` reporting `done` is a SUCCESS, because an error there would read as transient and keep the cron retrying a finished campaign forever. UI-DRIVE CLAUSE VERIFIED by the committed harness (core #2525): 6/6 legs PASS — local Store source, clean scan so no consent prompt, Library, all 5 tools rendered, `research_list` executed from the inspector, Deactivate/Activate round-trip. CAMPAIGN CLAUSE verified headlessly TWICE by the builder (own suite and through the INSTALLED provider): a campaign driven through multiple unattended cycles to a synthesised report. Recorded honestly: those cycles advanced over recorded findings rather than model-generated ones, which is the app's actual contract — it calls no model by design, so the host supplies findings via `research_record`. Exemplar recorded (core #2522)."
         },
         {
           "id": "PEP-14",
@@ -7671,7 +7673,8 @@
           "status": "todo",
           "scope": "Pre-colleague design review from a screenshot / flow / URL: heuristic + a11y findings. Small, high-signal; uses the vision path + headless render.",
           "done_when": "The design-critique app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a screenshot and a URL each yield structured heuristic + a11y findings.",
-          "deps": []
+          "deps": [],
+          "blocked_reason": "PARTIAL — bundle merged, one clause unexercised. PersonalClawApps PR #77 is merged, the exemplar is recorded (core #2522), and the UI-DRIVE clause is VERIFIED by the committed harness (core #2525): 6/6 legs PASS, clean scan, all 3 tools rendered, `design_critique_rubric` executed from the inspector. UNMET is the app-specific clause 'a screenshot and a URL each yield structured heuristic + a11y findings' AS A LIVE PATH: both directions are proven by tests against fixtures (a test per direction asserts non-zero findings, plus a test that the rules stay SILENT on correct markup), but no live URL has ever been fetched, Playwright has never run, and the pixel thresholds are calibrated on synthetic canvases only. Also recorded: the atom's text says the app 'uses the vision path', which a `ToolProvider` structurally cannot — it is constructed with its settings dict and nothing else, so it can reach no vision model. The builder shipped the smaller honest thing (`design_critique_rubric`, an explicit checklist) and said so in both README and atom note rather than implying a capability. SMALLEST REMAINING UNIT: fetch one real URL and read one real screenshot through the shipped tools and record the findings — an agent CAN do this; it simply has not been done."
         },
         {
           "id": "PEP-15",
@@ -7679,7 +7682,8 @@
           "status": "todo",
           "scope": "Generate real .pptx and LaTeX/markdown documents from a brief. App front over the shipped DOCUMENT-HANDLING-TOOLS seam — reuse, don't rebuild backends.",
           "done_when": "The docs/slides app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a brief produces an openable .pptx and a compiled document through the existing doc-writer seam.",
-          "deps": []
+          "deps": [],
+          "blocked_reason": "PARTIAL — bundle merged, never driven in a browser. PersonalClawApps PR #79 and its core SDK seam (#2510, `personalclaw.sdk.documents`) are both merged and the exemplar is recorded (core #2522). The app-specific clause is MET and proven the right way: a brief produces an openable `.pptx` and a compiled document, measured by reading the bytes back through core's OWN `pptx_parser` / `docs_parser` rather than asserting a byte count, which would pass on 30 KB of unopenable zip. UNMET is the UI-DRIVE clause: validated headless through the real Store path (`apps.source.resolve` -> `install(origin=local)` -> `load_all_extensions` -> all three tools in `list_all_tools()` -> invoking them wrote a 3-slide `.pptx` and a 5-block `.docx` into the app's data dir, both read back correctly) but NOBODY HAS CLICKED IT. It is the one suite bundle the committed validation harness (core #2525) never drove, because it had not merged when that run was made. SMALLEST REMAINING UNIT: one harness run — `npm run validate:apps` against this bundle. Also unmet and owner-side: 'listed in the Store' observed in a running Store, which needs the published repo `ET-9` gates. Note a rendered `.pdf` carries a valid `%PDF-` header and `%%EOF` trailer but has never been opened in a reader; only the `.docx` half is parser-proven."
         },
         {
           "id": "PEP-16",
@@ -7687,15 +7691,17 @@
           "status": "todo",
           "scope": "A git-backed markdown notebook (versioned, portable). Scoped as a NOTEBOOK EDITOR app, not a second knowledge store — coordinates with Knowledge.",
           "done_when": "The notes app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; notes are versioned in git and survive app reinstall; no parallel knowledge store is created.",
-          "deps": []
+          "deps": [],
+          "blocked_reason": "PARTIAL — bundle merged, one clause proven only by proxy. PersonalClawApps PR #78 is merged, the exemplar is recorded (core #2522), and the UI-DRIVE clause is VERIFIED by the committed harness (core #2525): 6/6 legs PASS including a real consent click on its 3-finding WARNING scan, all 7 tools rendered, `note_list` executed from the inspector, Deactivate/Activate round-trip. Two app-specific clauses are fully met: notes are versioned in REAL git (the tests run `git` itself, not a stub) and no parallel knowledge store is created — asserted by a test that the notebook only ever holds `.md` + `.git`, with `note_search` a literal grep whose own description and empty-result copy point the user at `knowledge_search`. UNMET STRICTLY is 'survive app reinstall': the test rebinds a fresh `Notebook` over the same root and the notebook lives outside the bundle, but no gateway has ever actually uninstalled and reinstalled the app, so the claim currently leans on core's DOCUMENTED 'uninstall keeps data/' rather than on an observed cycle. The harness's Deactivate/Activate is a weaker operation than uninstall/reinstall and does not close it. SMALLEST REMAINING UNIT: one real uninstall/reinstall against a home holding notes, asserting the notes are still there — an agent CAN do this."
         },
         {
           "id": "PEP-17",
           "title": "Issue Radar app (suite 6/9)",
-          "status": "todo",
+          "status": "done",
           "scope": "GitHub/GitLab issue triage with AI-suggested labels + per-issue investigation notes kept locally. Pairs with Code Review; open-source-maintainer value.",
           "done_when": "The issue-radar app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a real repo's issues are triaged with suggested labels and locally persisted investigation notes.",
-          "deps": []
+          "deps": [],
+          "evidence": "done 2026-09-06 (PersonalClawApps PR #80, merged). A `tool` provider reaching a third-party system with `network: false`: it reads GitHub and GitLab only through the CLIs the user has already signed in (`gh`, `glab`), fixed argv and never a shell string, so the app never handles a credential. First bundle to normalise TWO foreign payload schemas behind one internal record, and first to constrain a model to a vocabulary the REMOTE system owns — the prompt asks for labels from the repository's own set and the parser then enforces it, dropping inventions while keeping the dropped name visible. The deterministic matcher must name a label the repo already has, must carry the phrase that fired it AND which field it fired on, and omits judgment labels by design; live data forced a precision rule worth keeping — a title is the reporter's own summary so `slow` is trustworthy there, while 'the slow path is not the problem here' mid-body is not. UI-DRIVE CLAUSE VERIFIED by the committed harness (core #2525): 6/6 legs PASS including a real consent click on its WARNING scan, all 4 tools rendered, `radar_status` executed from the inspector. REAL-REPO CLAUSE VERIFIED: three real repositories triaged through a live `gh` (`cli/cli`, `sharkdp/bat`, `python-poetry/poetry`, 25 open issues each, real label sets read — 83 on `cli/cli`), an investigation note written to and read back from a real filesystem, and the sweep replayed from disk. Known ceiling: the GitLab leg has never run against a live `glab` (absent on this machine) and the model leg never against a real provider, so suggestion QUALITY is unmeasured. Exemplar recorded (core #2522)."
         },
         {
           "id": "PEP-18",
@@ -7703,7 +7709,8 @@
           "status": "todo",
           "scope": "Idea -> Requirements -> Design -> Tasks, then hand to an autonomous run. App front over the WORKFLOWS-V2 engine — not a parallel planner.",
           "done_when": "The spec-builder app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; an idea walks to a task list that hands off to a real workflow run through the engine's own seams.",
-          "deps": []
+          "deps": [],
+          "blocked_reason": "BLOCKED on a core scanner decision, not on app work — see issue #2526. PersonalClawApps PR #81 is merged (172 tests) and the app-specific clause is MET: `spec_compile` emits a workflow definition in core's OWN format and stops, with zero scheduler, journal, retry policy or node executor in the bundle, and a test parses the output with core's `WorkflowDef` and runs `validate_node_tree` over it with zero issues. The UI-DRIVE clause CANNOT BE SATISFIED AS MERGED: `SkillScanner` returns `dangerous` — terminal and non-consentable — so the install dialog offers only 'Done'. Measured by the committed harness (core #2525): 2 legs PASS, `ui-install` FAIL, 3 SKIPPED. The dangerous content is this bundle's own adversarial TEST FIXTURES (`test_provider.py:492` a `curl | sh` string -> `remote_exec_pipe`; `:177` an `id_rsa` path -> `exfil_sensitive_path`) — the strings that prove its input validation works. `issue-radar` plants the same class of fixture and installs fine because its strings match only WARNING-tier rules, so the difference between installable and permanently blocked is WHICH RULE A TEST STRING HAPPENS TO MATCH. Measurement in #2530 shows the band is inverted: `shutil.rmtree('/')` scans CLEAN and `P = 'rm -' + 'rf / '` scans CLEAN, while this inert string is refused. ONE OWNER DECISION on the scanner floor unblocks this atom and PEP-19 together; re-validating afterwards is one harness command."
         },
         {
           "id": "PEP-19",
@@ -7711,15 +7718,17 @@
           "status": "todo",
           "scope": "On-call first responder: watch alarms/pages, claim, investigate, propose fixes. Largest and most heavily gated: every fix is confirm-gated and rides AUTONOMY-GUARDRAILS (shipped). Build last among 8/9.",
           "done_when": "The ops app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a simulated alarm is claimed, investigated, and a fix PROPOSED behind an explicit confirm gate — no ungated mutation path exists.",
-          "deps": []
+          "deps": [],
+          "blocked_reason": "BLOCKED on the same core scanner decision as PEP-18, not on app work — see issue #2526. PersonalClawApps PR #83 is merged (178 tests) and the app-specific clause is MET end to end against a real process: a simulated alarm swept in, claimed, investigated against a runbook, recorded, fix PROPOSED, then applying refused four separate ways (setting off / no confirm / wrong token / runbook edited since) before a confirmed apply ran for real, with replay refused. 'No ungated mutation path' is proven as a FILE-LAYOUT PROPERTY rather than a promise: an AST test pins that the only module importing `subprocess` is `runbooks.py`, that `run_action` is referenced from exactly one function, and that the single `shell=` keyword is `False`, backed by a runtime tripwire across all eight non-apply tools. The UI-DRIVE clause CANNOT BE SATISFIED AS MERGED: `SkillScanner` returns `dangerous` on this bundle's own adversarial fixture (`test_provider.py:1083`, shell-metacharacter soup including `rm -rf /` -> `destructive_root`), which is terminal and non-consentable. Measured by the committed harness (core #2525): 2 legs PASS, `ui-install` FAIL, 3 SKIPPED. Unblocked by the same single owner decision as PEP-18."
         },
         {
           "id": "PEP-20",
           "title": "Companion app (suite 9/9)",
-          "status": "todo",
+          "status": "done",
           "scope": "An optional desktop companion surface (watchlist, reminders, day-planning). Charm/retention; strictly opt-in; coordinates with COMPANION-APPS/DESKTOP surfaces.",
           "done_when": "The companion app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; every surface is opt-in and disabling it removes all its triggers.",
-          "deps": []
+          "deps": [],
+          "evidence": "done 2026-09-06 (PersonalClawApps PR #86, merged). Two providers in one manifest — a `tool` (6 tools) and a `trigger` store contributing `clock` rows for reminders and the day brief plus `file` rows for watches — across three surfaces, ALL THREE OFF BY DEFAULT. The structural idea: A STORED RECORD AND THE AUTOMATION IT BECOMES ARE DIFFERENT OBJECTS, and the gap is the security boundary. It persists ITEMS (title, note, time, path) and synthesises the row — `kind`, `workflow`, frozen `capabilities` — in code on every read, through one function with no parameter for an action. So there is no field anywhere in the file where an LLM action could be written, and a durable scheduled unattended fire structurally cannot carry an instruction; a test proves it by injecting `run-prompt`, `invoke-agent`, `kind: webhook` and a top-level `triggers` array and getting `clock`/`notify` out regardless. OPT-IN CLAUSE satisfied by construction: rows live only in this app's store and core re-reads it each pass, so disabling removes every trigger with the items preserved — no companion row ever enters core's `triggers.json`. UI-DRIVE CLAUSE VERIFIED by the committed harness (core #2525): 6/6 legs PASS — clean scan, Library, all 6 tools rendered, `companion_status` executed from the inspector, Deactivate/Activate round-trip. Two core traps found and reported while building: a `clock` trigger with no `spec.timezone` silently means UTC (issue #2520), and a row with no item behind it would get the store quarantined on a post-delete read-back. Known ceiling: nothing has actually fired — rows are proven acceptable to core's `parse_trigger` and the write-back contract is driven as core drives it, but no gateway tick has armed one. Exemplar recorded (core #2522)."
         }
       ]
     },
@@ -7935,16 +7944,6 @@
         "plan": "PCS"
       },
       {
-        "id": "PEP-12",
-        "title": "Code Review app (suite 1/9)",
-        "plan": "PEP"
-      },
-      {
-        "id": "PEP-13",
-        "title": "Research Lab app (suite 2/9)",
-        "plan": "PEP"
-      },
-      {
         "id": "PEP-14",
         "title": "Design Critique app (suite 3/9)",
         "plan": "PEP"
@@ -7960,11 +7959,6 @@
         "plan": "PEP"
       },
       {
-        "id": "PEP-17",
-        "title": "Issue Radar app (suite 6/9)",
-        "plan": "PEP"
-      },
-      {
         "id": "PEP-18",
         "title": "Spec Builder app (suite 7/9)",
         "plan": "PEP"
@@ -7972,11 +7966,6 @@
       {
         "id": "PEP-19",
         "title": "Ops app (suite 8/9)",
-        "plan": "PEP"
-      },
-      {
-        "id": "PEP-20",
-        "title": "Companion app (suite 9/9)",
         "plan": "PEP"
       },
       {
@@ -10178,9 +10167,9 @@
         "code": "PEP",
         "plan": "PRODUCT-EXPERIENCE-PARITY",
         "total_atoms": 20,
-        "done": 11,
+        "done": 15,
         "in_progress": 0,
-        "todo": 9,
+        "todo": 5,
         "blocked": 0
       },
       {

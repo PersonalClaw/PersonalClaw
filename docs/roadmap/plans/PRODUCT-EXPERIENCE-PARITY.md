@@ -965,3 +965,37 @@ Rows 1–3 are roughly two sessions and deliver the most visible "less daunting,
   exemplar-list entry is **not written by this branch** — that list has one editor and one authoritative
   section, and three app builders editing it in parallel is the conflict that forced the consolidation; the
   `docs-slides` bullet is handed over rather than placed here.
+
+- **[2026-09-06] FLIP → `done`: `PEP-12`, `PEP-13`, `PEP-17`, `PEP-20`. The other five suite atoms stay
+  ⬜ with the reason each is still open written down.** All nine bundles are merged and all nine exemplar
+  records are placed, so what separates the four from the five is nothing to do with app work — it is
+  whether every clause of a given atom has actually been *exercised*.
+
+  The four flipped had their UI-drive clause verified by the committed validation harness (core #2525),
+  which registers a bundle as a local Store source, installs it **through the browser** — including a real
+  "Install anyway" click where the scanner raises a warning, never a bypass — checks the Library and the
+  Tools page, invokes a tool from the inspector, and round-trips Deactivate/Activate. Six legs, screenshots
+  read rather than merely saved. Each also had its own app-specific clause independently evidenced: a real
+  PR reviewed with seven genuinely isolated per-file subagents and ten persisted findings; a campaign driven
+  through multiple unattended cycles to a synthesised report, twice, once through the *installed* provider;
+  three real repositories triaged through a live `gh` with their real label sets read; and an opt-in
+  guarantee that holds by construction because the rows never enter core's own store.
+
+  `PEP-12` was deliberately **not** flipped until apps #84 corrected its risk declarations. The validation
+  drive found it declaring every tool `SAFE` — including the one that spawns `gh`, which the installer had
+  just warned about. Flipping an atom over a self-contradiction its own bundle carries is how false-done
+  enters a roadmap.
+
+  The five held are held for five different, specific reasons, now recorded in each `blocked_reason` with
+  the smallest remaining unit named: `PEP-14` has never fetched a live URL (its rules are fixture-proven in
+  both directions, and its atom text claims a vision path a `ToolProvider` structurally cannot reach);
+  `PEP-15` merged after the harness run and so is the one bundle nobody has clicked; `PEP-16`'s
+  "survive app reinstall" currently leans on core's *documented* behaviour rather than an observed
+  uninstall/reinstall, which Deactivate/Activate does not substitute for; and `PEP-18` and `PEP-19` **cannot
+  be installed at all** — `SkillScanner` returns a terminal `dangerous` on their own adversarial test
+  fixtures, the strings that prove their input validation works. That last one is a core decision (issue
+  #2526, measurement in #2530), not app work: one ruling unblocks two atoms, and re-validating afterwards is
+  a single harness command.
+
+  Worth recording as the pattern: three of the five gates are cheap and agent-closable, and none of the five
+  is blocked on writing more product code. The suite is finished; the *evidence* is not.
