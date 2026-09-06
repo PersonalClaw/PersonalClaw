@@ -6892,12 +6892,14 @@
           "title": "Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing",
           "status": "todo",
           "scope": "Session 2 T2.3",
-          "done_when": "released bundles carry valid signatures verified in CI; registry validation script records signer per listing",
+          "done_when": "released bundles carry valid signatures verified in CI",
           "deps": [
             "SH-3",
             "EXT:CI-RELEASE-ENGINEERING:release.yml pipeline to sign artifacts",
-            "EXT:ECOSYSTEM-TOOLING:registry.json listings record signer identity"
-          ]
+            "SH-11",
+            "SH-12"
+          ],
+          "blocked_reason": "AUDIT CORRECTION 2026-09-06 (same defect class as AR-1). This atom's ext dep 'EXT:ECOSYSTEM-TOOLING:registry.json listings record signer identity' restated its OWN second done-when clause as a precondition: the dep text and the clause were word-for-word the same deliverable. It resolved to ET-3, which is done and whose done_when covers the registry schema, validation script, listing CI, CONTRIBUTING and delisting policy but says nothing about signer identity — and app-registry.schema.json carries zero signer/signature/publisher/identity keys. So the gate was void in fact while the real live blocker was not modelled at all: SH-11's own title says it 'gates DC-1/DCU-3/SH-4', yet SH-11 was absent from these deps. Both are fixed here. The credential-free half is split out as SH-12 (a listing records its signer with no secret required) and is startable now; what remains on SH-4 is the CI-signing clause, which genuinely cannot clear until the owner supplies the Apple Developer secrets and the production minisign key via SH-11."
         },
         {
           "id": "SH-5",
@@ -6969,6 +6971,16 @@
             "SH-3"
           ],
           "blocked_reason": "OWNER-ONLY (2026-09-03): supplying Apple Developer signing secrets and generating the production minisign key are owner actions an agent must never perform (SH-3 ships the trust store empty for exactly this reason). Gates DC-1, DCU-3, SH-4. Belongs on gated_frontier, never ready_frontier."
+        },
+        {
+          "id": "SH-12",
+          "title": "registry.json listings record signer identity: schema field + validation script captures it per listing",
+          "status": "todo",
+          "scope": "Split from SH-4 (audit 2026-09-06): the half of SH-4 that needs no signing credentials",
+          "done_when": "app-registry.schema.json declares a signer-identity field for a listing and the registry validation script records/echoes the signer per listing in its verdict, with the existing valid sample PR still passing and a listing that omits the field handled by the declared policy rather than crashing. Needs no Apple or minisign credential, so it does not wait on SH-11.",
+          "deps": [
+            "SH-3"
+          ]
         }
       ]
     },
@@ -7966,6 +7978,11 @@
         "id": "PP-16",
         "title": "A Loop becomes a WorkflowRun (retire the second work-unit noun)",
         "plan": "PP"
+      },
+      {
+        "id": "SH-12",
+        "title": "registry.json listings record signer identity: schema field + validation script captures it per listing",
+        "plan": "SH"
       }
     ],
     "gated_frontier": [
@@ -8077,14 +8094,6 @@
         "id": "PUBL-10",
         "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
         "plan": "PUBL",
-        "gate": [
-          "ext"
-        ]
-      },
-      {
-        "id": "SH-4",
-        "title": "Release pipeline signs first-party app bundles + core release artifacts; registry records signer identity per listing",
-        "plan": "SH",
         "gate": [
           "ext"
         ]
@@ -8612,7 +8621,6 @@
       "SH-1",
       "SH-2",
       "SH-3",
-      "SH-4",
       "SH-5",
       "SH-6",
       "SH-7",
@@ -8620,6 +8628,8 @@
       "SH-9",
       "SH-10",
       "SH-11",
+      "SH-12",
+      "SH-4",
       "SL-1",
       "SL-2",
       "SL-3",
@@ -9438,11 +9448,6 @@
         "to_atom": "CRE-4"
       },
       {
-        "atom": "SH-4",
-        "ext_ref": "EXT:ECOSYSTEM-TOOLING:registry.json listings record signer identity",
-        "to_atom": "ET-3"
-      },
-      {
         "atom": "EI-2",
         "ext_ref": "EXT:WORK-CONTAINERS:WORK-R3 workspace block call sites + WORK-R20 mode:container re-expression",
         "to_atom": "WF2WOR-12"
@@ -10104,10 +10109,10 @@
       {
         "code": "SH",
         "plan": "SECURITY-HARDENING",
-        "total_atoms": 11,
+        "total_atoms": 12,
         "done": 8,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 3,
         "blocked": 1
       },
       {
@@ -10165,6 +10170,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 846
+    "edge_count": 848
   }
 }
