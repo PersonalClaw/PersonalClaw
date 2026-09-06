@@ -48,6 +48,22 @@ is green, it gets merged.
      is not an audit.
 7. **One row per app.** `name` is unique across the registry and equals the
    manifest's `name`.
+8. **`signer` is optional, and saying nothing is a supported answer.** If you sign your
+   release bundles, put the signer identity in `signer` and CI echoes it on the PR. If
+   you deliberately do not sign, write `"signer": "unsigned"` and that becomes a
+   statement on the record. If you leave the field out, the registry publishes **"no
+   claim"** — a *different* published fact from `unsigned`, not a softer way of saying it.
+   Nobody is nudged toward a value: most community apps are not signed, and a mandatory
+   field would only collect whatever this document's example happened to suggest.
+
+   **The registry does not verify any of this, and cannot.** A signature verifies against
+   the verifier's own trust store, and a row carries no key; the shallow clone CI fetches
+   is a source repository, not the release bundle a signature covers, so nothing about
+   signing is inferred from it either. `signer` is a claim by the listing's author,
+   exactly like `maintainer` — recorded and echoed, never proven. Signatures are checked
+   where it counts: on the user's own machine, at install time. A `signer` that names
+   somebody else's project is impersonation, and impersonation is immediate
+   [delisting](DELISTING.md) grounds.
 
 `last_validated` and `last_scan_verdict` are written by CI. Leave them out of your
 PR; anything you put there is overwritten with what the run actually found.
@@ -93,8 +109,12 @@ PR; anything you put there is overwritten with what the run actually found.
    `types` and `permissions_declared` must match `app.json`. If you are not sure what
    your manifest declares, the CI output tells you exactly, with both lists side by
    side.
+
+   The example has no `signer` on purpose — see rule 8. Add one only if it is true of
+   your app; an omitted `signer` is published as "no claim" and is a green listing.
 3. Open the PR. CI validates the rows you added or changed — existing listings are
-   not re-fetched — and posts the result as a comment, including the scanner verdict.
+   not re-fetched — and posts the result as a comment, including the scanner verdict
+   and whatever the row said about its signer.
 4. Green means mergeable. Red tells you which check failed and why.
 
 To run the same validation locally before pushing:

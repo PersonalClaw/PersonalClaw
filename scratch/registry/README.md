@@ -73,6 +73,12 @@ Four things, on the rows a PR added or changed:
    `community` trust tier. `dangerous` blocks the listing and the rule that fired is
    recorded on the PR. `warning` and `low` are **displayed and never block**.
 
+Each row's optional `signer` is **recorded and echoed** alongside those four, and is not
+a fifth check: the registry cannot verify a signature and does not try, so a named signer
+reads as a claim by the listing's author. A row that omits `signer` is published as "no
+claim" — deliberately not the same fact as a declared `unsigned`. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) rule 8.
+
 "Dry-run" is literal. The scanner is static text inspection; neither it nor the
 validator executes a single line of a listed repository. Nothing is skipped on error
 either — an unreachable repo or an unparseable manifest is a *failed* validation with

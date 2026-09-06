@@ -93,6 +93,11 @@
             "pattern": "^\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2}))?$",
             "description": "ISO-8601 date the listing was first proposed."
           },
+          "signer": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+            "description": "OPTIONAL. Who signs this app's release bundles: a signer identity as it appears in a PersonalClaw trust store, or the reserved value 'unsigned' to state that the bundles are not signed. The registry RECORDS this claim and does not verify it \u2014 signatures are verified at install time on the user's own machine. Omitting the field is allowed and is published as 'no claim', which is a different fact from a declared 'unsigned'."
+          },
           "last_validated": {
             "type": "string",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2}))?$",

@@ -21,6 +21,14 @@ The four checks the front-door policy promises (``CONTRIBUTING.md``):
    "Dry-run" is literal: the scanner is static content inspection and this script
    never executes a single line of the fetched repo.
 
+Alongside the four checks, each row's **signer identity** (``signer``) is recorded and
+echoed in the verdict. That is a *claim*, not a check: this script never verifies a
+signature and cannot — a signature verifies against the verifier's own trust store, and
+a listing carries no key — so the verdict labels the value as declared and never as
+proven. The field is OPTIONAL, and the three things a row can say about signing stay
+three separate published facts: it names a signer, it declares ``unsigned``, or it left
+the field out and said nothing at all.
+
 There is no silent pass. Every check either succeeds or produces a blocking
 :class:`Reason` — an unreachable repo, an unparseable manifest or an unexpected
 exception all read as "not listable, here is why", never as "skipped".
@@ -59,10 +67,15 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "maintainer",
     "added",
 )
+#: Fields a listing PR MAY supply. Author-owned exactly like the required ones — they
+#: feed :func:`_identity`, so editing one re-validates the row instead of reading as an
+#: untouched listing.
+OPTIONAL_FIELDS: tuple[str, ...] = ("signer",)
+AUTHOR_FIELDS: tuple[str, ...] = REQUIRED_FIELDS + OPTIONAL_FIELDS
 #: Fields only this script writes (``--write``). A PR may leave them out, and a PR
 #: that supplies them is not trusted — they are overwritten from the actual run.
 CI_OWNED_FIELDS: tuple[str, ...] = ("last_validated", "last_scan_verdict")
-KNOWN_FIELDS: tuple[str, ...] = REQUIRED_FIELDS + CI_OWNED_FIELDS
+KNOWN_FIELDS: tuple[str, ...] = AUTHOR_FIELDS + CI_OWNED_FIELDS
 
 #: Capability types a row may claim. Derived from core's ``PROVIDER_TYPES`` so a new
 #: upstream capability type is listable the day core ships it, plus the two
@@ -94,6 +107,38 @@ MAX_REPO_BYTES = 50 * 1024 * 1024
 MAX_REPO_FILES = 5_000
 LS_REMOTE_TIMEOUT_SECS = 60
 CLONE_TIMEOUT_SECS = 180
+
+# ── signer identity: recorded per listing, verified nowhere in this script ────
+#
+# The field is OPTIONAL on purpose. Most community apps are not signed and that is a
+# supported state, not a defect, so a required field would be answered by whatever the
+# example in CONTRIBUTING.md happens to say — turning "this author never told us" into a
+# confident-looking answer nobody actually made. The cost of optional is that absence
+# must stay legible, which is what the four states below buy.
+#
+# Nothing is INFERRED either. A shallow clone of a source repository is not the release
+# bundle a signature covers, so "no signature file in the checkout" would not mean "the
+# release is unsigned" — recording that guess as a fact would be the same lie one step
+# further along.
+
+#: The reserved ``signer`` value an author writes to state, on the record, that this
+#: app's bundles are not signed. Reserved because it is also a legal identity shape: a
+#: signer may therefore not be *named* ``unsigned``.
+UNSIGNED_DECLARATION = "unsigned"
+
+#: What a row says about who signs its bundles. FOUR states, never two — "the author
+#: declared no signature" and "the author said nothing" are different published facts and
+#: a reader must be able to tell them apart, the same reason core's manifest emits
+#: ``network: false`` rather than omitting a false value.
+SIGNER_NAMED = "named"  # ``signer`` names an identity — the author's claim, not proof
+SIGNER_UNSIGNED = "unsigned"  # the author declared the reserved value: no signature
+SIGNER_UNDECLARED = "undeclared"  # the field was omitted: no claim in either direction
+SIGNER_INVALID = "invalid"  # present but refused; never read as any of the other three
+
+#: Upstream a signer identity IS a trust-store filename stem
+#: (``trusted_keys/<Signer>.pub``), so a row may only name something that could be one.
+#: The shape doubles as the reason the value is safe to echo into the PR comment verbatim.
+SIGNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 KEBAB_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 ISO_RE = re.compile(
@@ -131,6 +176,14 @@ class RowResult:
     #: ran. ``None`` is never "clean" — a row that never reached the scanner is
     #: blocked by whatever stopped it.
     verdict: str | None = None
+    #: What the ROW claims about who signs this app's bundles — one of the four
+    #: ``SIGNER_*`` states. Set on every row, including blocked ones, so a reviewer sees
+    #: the claim even when something else refused the listing. This is the authority:
+    #: never infer the state from ``signer``, which is ``None`` for three of the four.
+    signer_state: str = SIGNER_UNDECLARED
+    #: The declared identity, set only when ``signer_state`` is :data:`SIGNER_NAMED`. A
+    #: CLAIM — nothing here verified a signature, so it must never render as proof.
+    signer: str | None = None
     blocking: list[Reason] = field(default_factory=list)
     #: Recorded, shown, and deliberately NOT blocking (scanner warnings).
     display: list[Reason] = field(default_factory=list)
@@ -142,6 +195,8 @@ class RowResult:
             "repo": self.repo,
             "listable": self.listable,
             "verdict": self.verdict,
+            "signer_state": self.signer_state,
+            "signer": self.signer,
             "blocking": [r.to_dict() for r in self.blocking],
             "display": [r.to_dict() for r in self.display],
             "findings": list(self.findings),
@@ -494,6 +549,28 @@ def verdict_reasons(report: ScanReport) -> tuple[list[Reason], list[Reason]]:
 # ── row + document validation ───────────────────────────────────────────────
 
 
+def classify_signer(row: dict[str, Any]) -> tuple[str, str | None]:
+    """What one row says about who signs its bundles: ``(state, identity)``.
+
+    ``identity`` is filled only for :data:`SIGNER_NAMED`. The state is what callers must
+    branch on: three of the four states carry no identity, so reading the state off
+    ``identity is None`` would collapse "declared unsigned", "said nothing" and "said
+    something we refused" into one indistinguishable answer.
+
+    A ``signer`` of JSON ``null`` is :data:`SIGNER_INVALID`, not "absent" — writing the
+    key with an empty value is a statement, and an unreadable one, so it is refused
+    rather than quietly treated as omission.
+    """
+    if "signer" not in row:
+        return SIGNER_UNDECLARED, None
+    value = row["signer"]
+    if value == UNSIGNED_DECLARATION:
+        return SIGNER_UNSIGNED, None
+    if isinstance(value, str) and SIGNER_RE.match(value):
+        return SIGNER_NAMED, value
+    return SIGNER_INVALID, None
+
+
 def check_row_schema(row: object, *, allow_file_repos: bool) -> list[Reason]:
     """Structural validation. This is the authority ``app-registry.schema.json``
     mirrors (``test_registry_validation.py`` pins the two together)."""
@@ -558,6 +635,18 @@ def check_row_schema(row: object, *, allow_file_repos: bool) -> list[Reason]:
                 )
             )
 
+    if "signer" in row and classify_signer(row)[0] == SIGNER_INVALID:
+        out.append(
+            Reason(
+                "signer_invalid",
+                f"'signer' must be a signer identity matching {SIGNER_RE.pattern}, or the "
+                f"reserved value {UNSIGNED_DECLARATION!r} to state that this app's bundles "
+                f"are not signed; got {row['signer']!r}. Leave the field OUT if you do not "
+                "want to say either — omission is allowed and is published as 'no claim', "
+                "which is not the same thing as 'unsigned'.",
+            )
+        )
+
     verdict = row.get("last_scan_verdict")
     if "last_scan_verdict" in row and verdict not in {v.value for v in Verdict}:
         out.append(
@@ -573,6 +662,9 @@ def check_row_schema(row: object, *, allow_file_repos: bool) -> list[Reason]:
 def validate_row(row: dict[str, Any], *, allow_file_repos: bool) -> RowResult:
     """Validate one row end to end. Returns a result; never raises."""
     result = RowResult(name=str(row.get("name", "(unnamed)")), repo=str(row.get("repo", "")))
+    # Recorded before anything can return early, so the claim is echoed on blocked rows
+    # too — a reviewer reading a refusal still sees what the row said about signing.
+    result.signer_state, result.signer = classify_signer(row)
     schema_reasons = check_row_schema(row, allow_file_repos=allow_file_repos)
     if schema_reasons:
         result.blocking.extend(schema_reasons)
@@ -699,6 +791,21 @@ def build_schema() -> dict[str, Any]:
                             "pattern": ISO_RE.pattern,
                             "description": "ISO-8601 date the listing was first proposed.",
                         },
+                        "signer": {
+                            "type": "string",
+                            "pattern": SIGNER_RE.pattern,
+                            "description": (
+                                "OPTIONAL. Who signs this app's release bundles: a signer "
+                                "identity as it appears in a PersonalClaw trust store, or "
+                                f"the reserved value {UNSIGNED_DECLARATION!r} to state that "
+                                "the bundles are not signed. The registry RECORDS this "
+                                "claim and does not verify it — signatures are verified at "
+                                "install time on the user's own machine. Omitting the field "
+                                "is allowed and is published as 'no claim', which is a "
+                                "different fact from a declared "
+                                f"{UNSIGNED_DECLARATION!r}."
+                            ),
+                        },
                         "last_validated": {
                             "type": "string",
                             "pattern": ISO_RE.pattern,
@@ -738,10 +845,15 @@ def load_registry(path: Path) -> tuple[list[Any] | None, Reason | None]:
 
 def _identity(row: object) -> str:
     """A row's content identity over the AUTHOR-owned fields only, so a re-run that
-    only refreshed ``last_validated`` does not read as a changed listing."""
+    only refreshed ``last_validated`` does not read as a changed listing.
+
+    Keys are included only when the row actually carries them: an OMITTED optional field
+    is a different listing from one written out with a null, and a PR that adds a
+    ``signer`` to an existing row must re-validate rather than be skipped as unchanged.
+    """
     if not isinstance(row, dict):
         return json.dumps(row, sort_keys=True)
-    return json.dumps({k: row.get(k) for k in REQUIRED_FIELDS}, sort_keys=True)
+    return json.dumps({k: row[k] for k in AUTHOR_FIELDS if k in row}, sort_keys=True)
 
 
 def validate_registry(
@@ -800,6 +912,22 @@ def apply_validation_stamps(apps: list[Any], result: RegistryResult, *, now: str
 # ── reporting (this markdown IS the PR comment — read it as UI copy) ──────────
 
 
+#: How each signer state reads in the PR comment. Three distinguishable phrases plus a
+#: refusal: "no claim" must never be able to read as "declared unsigned", or the comment
+#: would attribute a statement to an author who never made one.
+_SIGNER_CELLS: dict[str, str] = {
+    SIGNER_UNSIGNED: "declared unsigned",
+    SIGNER_UNDECLARED: "no claim",
+    SIGNER_INVALID: "**refused**",
+}
+
+
+def _signer_cell(row: RowResult) -> str:
+    if row.signer_state == SIGNER_NAMED:
+        return f"`{row.signer}` (declared)"
+    return _SIGNER_CELLS[row.signer_state]
+
+
 def render_markdown(result: RegistryResult) -> str:
     lines: list[str] = ["## Registry listing validation", ""]
     if result.blocking:
@@ -816,11 +944,14 @@ def render_markdown(result: RegistryResult) -> str:
             )
         return "\n".join(lines) + "\n"
 
-    lines.append("| Listing | Scanner verdict | Listable |")
-    lines.append("|---|---|---|")
+    lines.append("| Listing | Scanner verdict | Signer | Listable |")
+    lines.append("|---|---|---|---|")
     for row in result.rows:
         verdict = f"`{row.verdict}`" if row.verdict else "not reached"
-        lines.append(f"| `{row.name}` | {verdict} | {'yes' if row.listable else '**no**'} |")
+        lines.append(
+            f"| `{row.name}` | {verdict} | {_signer_cell(row)} | "
+            f"{'yes' if row.listable else '**no**'} |"
+        )
     lines.append("")
 
     for row in result.rows:
@@ -847,6 +978,14 @@ def render_markdown(result: RegistryResult) -> str:
     lines.append(
         "Every listing is community-contributed. A `clean` verdict means no pattern in the "
         "scanner's catalog matched — it is not an audit, and never an endorsement."
+    )
+    lines.append("")
+    lines.append(
+        "**Signer** is what the row *declares*, and nothing above proved it. A named signer "
+        "is a claim by the listing's author, exactly like `maintainer`; `declared unsigned` "
+        "is that author stating this app's bundles are not signed; `no claim` means the row "
+        "left the field out and said neither. Signatures are verified where it counts — on "
+        "your own machine at install time, against PersonalClaw's own trust store."
     )
     return "\n".join(lines) + "\n"
 
