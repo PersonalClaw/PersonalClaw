@@ -2929,7 +2929,11 @@ export type KnowledgeType =
   // a label/icon/tone because a search result CAN be one — without it `resolveType` fell through
   // to `note` and every decision in the library read "Note".
   | 'decision'
-export interface KnowledgeEntity { id: string; name: string; entity_type?: string; description?: string }
+// `aliases` are the other surfaces a document used for this entity (handles, initialisms). The
+// backend has always serialized them as a real array (`_serialize_entity`); until #1779 nothing
+// ever WROTE one, so the field was omitted here and the chip could not explain why an item linked
+// to an entity it never names canonically.
+export interface KnowledgeEntity { id: string; name: string; entity_type?: string; description?: string; aliases?: string[] }
 export interface KnowledgeRelation { id: string; source_name?: string; target_name?: string; relation_type?: string; weight?: number }
 export interface KnowledgeItem {
   id: string; title?: string; content?: string; summary?: string
