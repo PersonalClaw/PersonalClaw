@@ -9,9 +9,9 @@ import { Combobox } from '../../ui/Combobox'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { Skeleton } from '../../ui/ListScaffold'
-import { useQuery } from '../../lib/data'
+import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type SavedAgent, type DiscoveredAgent, type McpActiveServer, type AgentHook } from '../../lib/api'
-import { useActiveChatModelOptions } from '../../lib/agents'
+import { useActiveChatModelOptions, canonicalAgentKey } from '../../lib/agents'
 import { providerMeta, isReservedAgent } from './agentMeta'
 import { AgentForm, toDraft, draftToPayload, type AgentDraft } from './AgentForm'
 import { accentChip, toneChipSkin } from '../../design/accent'
@@ -213,25 +213,35 @@ function RoutingNotesEditor({ agentName }: { agentName: string }) {
 /** Routing status: whether the auto-router has this agent MUTED (the user dismissed its
  *  suggestion chip enough times that it stopped being suggested), with an Unmute control.
  *  A muted agent is otherwise invisible on this page — the mute is a routing preference the
- *  user set implicitly, so surfacing it here is the one place they can see and reverse it. */
+ *  user set implicitly, so this is where they see it while looking at the agent itself.
+ *  It is not the ONLY place any more, and must not become one again: this view can only ask
+ *  "is THIS agent muted", and the store legitimately holds keys with no agent page to visit
+ *  (a name that was never an agent, an agent deleted while muted, a reserved built-in whose
+ *  panel renders no Advanced section at all). Settings › Chat › Agent routing › Muted agents
+ *  lists the store's own keys and reaches those; the two read one declared cache key. */
 export function RoutingStatusView({ agentName }: { agentName: string }) {
+  // 🪤 ONE DECLARED KEY, SHARED WITH SETTINGS › CHAT › AGENT ROUTING, and `canonicalAgentKey` is
+  // not cosmetic. The suppression store's agent identity is CASE-INSENSITIVE (`agents/routing.py`
+  // `canonical_agent`), so `routing_status()` returns canonical keys — and this view used to test
+  // `s.muted.includes(agentName)` with the RAW route name. Measured on a live gateway: three
+  // dismissals of the shipped default agent `PersonalClaw` produced `muted: ["personalclaw"]` and
+  // `is_suppressed("PersonalClaw") == True`, while this panel rendered "Active — eligible for
+  // auto-routing suggestions" and no Unmute button. A wrong claim plus no undo, from one `includes`.
+  const { data: status, refresh } = useQuery('agents:routing-mutes', () => api.routingStatus())
   const [muted, setMuted] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   useEffect(() => {
-    let alive = true
-    api.routingStatus()
-      .then((s) => { if (alive) setMuted((s.muted || []).includes(agentName)) })
-      .catch(() => { if (alive) setMuted(false) })
-    return () => { alive = false }
-  }, [agentName])
+    if (status === undefined) return
+    setMuted((status.muted || []).some((m) => canonicalAgentKey(m) === canonicalAgentKey(agentName)))
+  }, [status, agentName])
   const unmute = async () => {
     setBusy(true)
     setErr('')
     // Staying muted is right — `setMuted(false)` must never claim a state the backend refused. But
     // "the row stays so the user can retry" was the whole failure path, and the row staying is also
     // exactly what a click that never landed looks like. Retryable is not the same as legible.
-    try { await api.routingUnmute(agentName); setMuted(false) }
+    try { await api.routingUnmute(agentName); setMuted(false); invalidateKeys('agents:routing-mutes'); refresh() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Unmute failed') }
     setBusy(false)
   }

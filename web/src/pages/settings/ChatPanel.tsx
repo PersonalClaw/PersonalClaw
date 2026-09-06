@@ -3,12 +3,14 @@ import { api, type DashboardConfig, type SessionTemplate } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useAgentCatalog, ensureBindableAgentName } from '../../lib/agents'
 import { useQuery, invalidateKeys } from '../../lib/data'
-import { PanelHeader, Section, RowGroup, Row, Toggle, SegPills, SavedToast } from './settingsUI'
+import { reportingWrite } from '../../app/reportingWrite'
+import { PanelHeader, Section, RowGroup, Row, Field, Toggle, SegPills, SavedToast } from './settingsUI'
 import { Combobox } from '../../ui/Combobox'
 import { NumberField } from '../../ui/forms'
+import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { confirmDelete } from '../../ui/dialog'
-import { Trash2 } from 'lucide-react'
+import { Trash2, VolumeX } from 'lucide-react'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 
 const RESTORE_WINDOWS = [
@@ -198,10 +200,87 @@ function RoutingSection({ routing, setRouting }: { routing: Record<string, unkno
           <NumberRow label="Confidence threshold" hint="Minimum match confidence before a routing chip appears. Higher = fewer, surer suggestions." value={Number(routing.min_confidence ?? 0.62)} min={0.3} max={0.95} step={0.01} onCommit={(n, l) => patch('min_confidence', n, undefined, l)} saved={saved} />
         )}
         {enabled && (
-          <NumberRow label="Dismiss cooldown" hint="After you dismiss a suggestion for an agent, suppress it for this long (three dismissals mute it until you re-enable)." value={Number(routing.cooldown_hours ?? 24)} min={0} max={720} step={1} suffix="h" onCommit={(n, l) => patch('cooldown_hours', n, undefined, l)} saved={saved} />
+          <NumberRow label="Dismiss cooldown" hint="After you dismiss a suggestion for an agent, suppress it for this long. A third dismissal mutes the agent for good — Muted agents below is where you undo that; this field can't, and neither can the switch above." value={Number(routing.cooldown_hours ?? 24)} min={0} max={720} step={1} suffix="h" onCommit={(n, l) => patch('cooldown_hours', n, undefined, l)} saved={saved} />
         )}
+        {/* NOT gated on `enabled`, deliberately: a mute outlives the master switch. Measured on a
+            live gateway — with three dismissals recorded, PATCHing agents_routing.enabled false then
+            true left muted unchanged, and so did dragging cooldown_hours to 0, because is_suppressed
+            returns on the mute BEFORE it reads the cooldown. Hiding the only working undo behind the
+            switch would recreate the trap this row exists to close (issue 414). */}
+        <MutedAgentsField />
       </RowGroup>
     </Section>
+  )
+}
+
+/** Every agent the auto-router has stopped suggesting, with the undo.
+ *
+ *  🔑 THIS IS THE PROMISE THE PANEL ABOVE MAKES. "Dismiss cooldown" told the user that three
+ *  dismissals "mute it until you re-enable" and no re-enable existed anywhere in the frontend:
+ *  `api.routingUnmute` and `api.routingStatus` were defined in `lib/api.ts` and called by nothing,
+ *  so a muted agent was invisible AND permanent. The per-agent Unmute on the agent detail page
+ *  (AR2-8) closed half of it; this closes the half a per-agent control structurally cannot.
+ *
+ *  🪤 THE LIST IS THE STORE, NOT THE AGENT CATALOG. `record_dismiss` writes a key without checking
+ *  that an agent by that name exists, and an agent can be deleted while muted, so the store
+ *  legitimately holds keys with no detail page to visit — measured live: three dismissals of
+ *  `zz414-phantom-agent` produced a durable mute with no page anywhere in the app to clear it from.
+ *  Reserved built-ins are a second such class (their detail panel renders no Advanced section at
+ *  all). Rendering the store's own keys is what makes every one of them reachable; filtering to
+ *  known agents would silently re-orphan exactly the entries that need this row most. */
+function MutedAgentsField() {
+  const { data, refresh } = useQuery('agents:routing-mutes', () => api.routingStatus())
+  const [busy, setBusy] = useState('')
+  const muted = data?.muted ?? []
+  const unmute = async (agent: string) => {
+    setBusy(agent)
+    // Gated: a refused unmute must not drop the row, or the click reads as having worked.
+    if (await reportingWrite(`unmute ${agent}`, () => api.routingUnmute(agent))) {
+      invalidateKeys('agents:routing-mutes')
+      refresh()
+    }
+    setBusy('')
+  }
+  return (
+    <Field label="Muted agents" hint="Agents the router has stopped suggesting because you dismissed them three times. Unmuting clears the mute and the dismissal count, so the agent can be suggested again.">
+      {data === undefined ? (
+        <p data-type="body-s" className="text-on-surface-low">Checking…</p>
+      ) : muted.length === 0 ? (
+        <p data-type="body-s" className="text-on-surface-low">None — no agent is muted.</p>
+      ) : (
+        // One grid, not per-row flex: agent names vary in width, so a button placed after the
+        // name landed at a different x on every row and the actions read as scattered rather
+        // than as one column you can run down.
+        <ul className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1.5">
+          {muted.map((agent) => {
+            const count = data.dismissals?.[agent]?.count
+            return (
+              <li key={agent} data-type="label-s" className="col-span-3 grid grid-cols-subgrid items-center">
+                <VolumeX size={14} className="shrink-0 text-on-surface-low" />
+                <span className="truncate">
+                  <span className="text-on-surface">{agent}</span>
+                  {count ? <span className="text-on-surface-low"> · {count} dismissals</span> : null}
+                </span>
+                {/* `loading` + `loadingLabel`, never a hand-rolled `disabled={busy} + {busy ? 'Unmuting…'}`
+                    ternary. `aria-busy` is published from `loading` alone, so the hand-rolled shape trades
+                    the announcement for the word and a screen-reader user gets neither — see `ui/Button`'s
+                    note on the eight sites that had already made that trade. These rows sit in a column
+                    where several unmutes can be in flight, which is the case the progress verb exists for.
+                    Measured: the hand-rolled form raised `busyIsNotAnnounced`'s ceiling from 79 to 80.
+
+                    `ariaLabel` carries the subject because this is a COLUMN of identical buttons: the
+                    visible text is "Unmute" on every row, so a screen reader reading the actions list
+                    announces the same name N times with nothing to choose between. `design/rowActionNames`
+                    measures exactly this and holds the unnamed population at a ceiling of 5 — a sixth bare
+                    row action reds it by file and text, which is how this one was caught. */}
+                <Button size="sm" variant="secondary" onClick={() => unmute(agent)} ariaLabel={`Unmute ${agent}`}
+                  loading={busy === agent} loadingLabel="Unmuting…">Unmute</Button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </Field>
   )
 }
 

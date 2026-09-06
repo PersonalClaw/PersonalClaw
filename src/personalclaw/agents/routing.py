@@ -208,6 +208,21 @@ def _candidate_vector(name: str, specialty: str, hints: str, model: str, cache: 
 _STORE = "agent_routing"
 
 
+def canonical_agent(agent: str) -> str:
+    """The key an agent is stored under in the suppression store.
+
+    🔑 THE STORE'S AGENT IDENTITY IS CASE-INSENSITIVE, AND THAT HAS TO BE SAYABLE. Every
+    read/write below funnels through this, so ``PersonalClaw`` and ``personalclaw`` are one
+    muted agent rather than two. It used to be five inline ``.lower()`` calls with the rule
+    written down nowhere — which is exactly how the dashboard's agent detail page came to test
+    ``routing_status()["muted"].includes(agentName)`` with the RAW name and report a muted
+    ``PersonalClaw`` as "Active — eligible for auto-routing suggestions", with no Unmute
+    control, while ``is_suppressed`` was returning True for it. A consumer cannot honour a
+    convention it cannot name.
+    """
+    return str(agent).strip().lower()
+
+
 def _load_store() -> dict:
     from personalclaw.providers.entity_routes import _load_entity_settings
 
@@ -217,8 +232,8 @@ def _load_store() -> dict:
         return {}
     if not isinstance(raw, dict):
         return {}
-    raw["muted"] = list(dict.fromkeys(str(m).lower() for m in (raw.get("muted") or [])))
-    raw["dismissals"] = {str(k).lower(): v for k, v in (raw.get("dismissals") or {}).items()}
+    raw["muted"] = list(dict.fromkeys(canonical_agent(m) for m in (raw.get("muted") or [])))
+    raw["dismissals"] = {canonical_agent(k): v for k, v in (raw.get("dismissals") or {}).items()}
     return raw
 
 
@@ -233,7 +248,7 @@ def _save_store(store: dict) -> None:
 
 def is_suppressed(agent: str, *, now: float, cooldown_hours: float) -> bool:
     """True when *agent* is muted or inside its dismissal cooldown."""
-    agent_key = agent.lower()
+    agent_key = canonical_agent(agent)
     store = _load_store()
     if agent_key in (store.get("muted") or []):
         return True
@@ -247,7 +262,7 @@ def is_suppressed(agent: str, *, now: float, cooldown_hours: float) -> bool:
 def record_dismiss(agent: str, *, now: float, mute_at: int = 3) -> dict:
     """Bump *agent*'s dismissal counter; mute it once the count reaches ``mute_at``.
     Returns the updated status for the agent."""
-    agent_key = agent.lower()
+    agent_key = canonical_agent(agent)
     store = _load_store()
     dismissals = store.setdefault("dismissals", {})
     entry = dismissals.setdefault(agent_key, {"count": 0, "last_dismissed_at": 0.0})
@@ -260,9 +275,16 @@ def record_dismiss(agent: str, *, now: float, mute_at: int = 3) -> dict:
     return {"agent": agent_key, "count": entry["count"], "muted": agent_key in muted}
 
 
-def unmute(agent: str) -> None:
-    """Clear an agent's mute + dismissal history (from the agent detail page)."""
-    agent_key = agent.lower()
+def unmute(agent: str) -> str:
+    """Clear an agent's mute + dismissal history. Returns the key that was cleared.
+
+    Reachable from BOTH surfaces that can hold a mute: the agent's own detail page (per-agent)
+    and Settings › Chat › Agent routing (the whole list). The second one is not a convenience —
+    ``record_dismiss`` writes a key without checking that an agent by that name exists, and an
+    agent can be deleted after it was muted, so the store legitimately holds keys with no detail
+    page to visit. The list is the only surface that can reach those.
+    """
+    agent_key = canonical_agent(agent)
     store = _load_store()
     muted = store.get("muted") or []
     if agent_key in muted:
@@ -270,6 +292,7 @@ def unmute(agent: str) -> None:
         store["muted"] = muted
     (store.get("dismissals") or {}).pop(agent_key, None)
     _save_store(store)
+    return agent_key
 
 
 def routing_status() -> dict:
