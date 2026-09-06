@@ -23,6 +23,7 @@ import { fvs } from '../../design/fontWeight'
 import { confirm } from '../../ui/dialog'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { PartialCount } from '../../ui/MoreRow'
 
 /** Scheduled backups (DURABILITY-AND-SYNC §3).
  *
@@ -919,7 +920,10 @@ function ConflictsSection({ read, onChanged }: {
     )
   }
 
-  const { conflicts, counts, sync } = read.value
+  // `truncated` is computed by the endpoint (`len(selected) > limit`) and was read by nobody, so a
+  // queue past the cap rendered its newest page as the whole queue — the same silence as the
+  // knowledge graph's thinned relations (issue 808), on rows a user is being asked to decide about.
+  const { conflicts, counts, sync, truncated } = read.value
   const pending = conflicts.filter((c) => c.status === 'needs-review')
   const decided = conflicts.filter((c) => c.status !== 'needs-review')
   const elsewhere = Object.entries(counts.by_surface)
@@ -968,6 +972,12 @@ function ConflictsSection({ read, onChanged }: {
   return (
     <Section title="Conflicts to review" hint={hint}>
       <div className="rounded-lg bg-surface-container px-4 py-3">
+        {truncated && (
+          <p data-type="caption" className="mb-3 text-on-surface-low">
+            <PartialCount shown={conflicts.length} of={counts.selected} noun="conflicts" singular="conflict" />
+            {' '}— the most recent are kept. Resolve some to see the rest.
+          </p>
+        )}
         {pending.length === 0 ? (
           <div data-type="body-s" className="text-on-surface-low">
             {!sync.configured
