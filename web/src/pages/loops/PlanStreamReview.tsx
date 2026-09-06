@@ -54,10 +54,10 @@ export function PlanStreamReview({ buffer, complete, names, goal }: {
       <div className="flex items-start justify-between gap-m">
         <div className="min-w-0 flex flex-col gap-0.5">
           <h2 data-type="headline-s" className={`text-on-surface ${streaming && !names?.title ? 'text-shimmer' : ''}`}>{named.title}</h2>
-          <p className="text-on-surface-var text-[0.8125rem]">{named.description}</p>
+          <p data-type="body-s" className="text-on-surface-var">{named.description}</p>
         </div>
         {streaming && (
-          <span className="shrink-0 inline-flex items-center gap-1.5 text-on-surface-low text-[0.75rem]">
+          <span data-type="caption" className="shrink-0 inline-flex items-center gap-1.5 text-on-surface-low">
             <Loader2 size={13} className="animate-spin text-primary" /> Planning…
           </span>
         )}
@@ -65,7 +65,7 @@ export function PlanStreamReview({ buffer, complete, names, goal }: {
 
       {/* The three synchronized views — one parse behind all of them. */}
       <div className="flex items-center justify-between">
-        <span className="text-on-surface-low text-[0.75rem] tabular-nums">
+        <span data-type="caption" className="text-on-surface-low tabular-nums">
           {draft.steps.length} step{draft.steps.length === 1 ? '' : 's'}
         </span>
         <Segmented ariaLabel="Plan view" value={view} onChange={(v) => setView(v as typeof view)}
@@ -85,12 +85,12 @@ export function PlanStreamReview({ buffer, complete, names, goal }: {
             <DagView nodes={dag.nodes} edges={dag.edges} width={dag.width} height={dag.height} />
           </div>
         ) : (
-          <p className="text-on-surface-low text-[0.8125rem] px-m py-l">Waiting for the first step…</p>
+          <p data-type="body-s" className="text-on-surface-low px-m py-l">Waiting for the first step…</p>
         )
       ) : (
         // JSON is authoritative — show the raw growing buffer verbatim (not the reparse), so a
         // reviewer sees exactly what the planner emitted, malformed tail and all.
-        <pre className="overflow-x-auto rounded-lg bg-surface-low px-m py-2 text-[0.8125rem] leading-relaxed font-mono text-on-surface-var whitespace-pre-wrap break-words">
+        <pre data-type="body-s" className="overflow-x-auto rounded-lg bg-surface-low px-m py-2 leading-relaxed font-mono text-on-surface-var whitespace-pre-wrap break-words">
           {buffer.trim() || '{ }'}
         </pre>
       )}
@@ -102,7 +102,7 @@ export function PlanStreamReview({ buffer, complete, names, goal }: {
  *  closes — the streaming cue the plan review owes so a still-arriving step doesn't read as done. */
 function ProposalCards({ draft, labels }: { draft: PlanDraft; labels: Record<string, string> }) {
   if (draft.steps.length === 0) {
-    return <p className="text-on-surface-low text-[0.8125rem] px-m py-l">Waiting for the first step…</p>
+    return <p data-type="body-s" className="text-on-surface-low px-m py-l">Waiting for the first step…</p>
   }
   return (
     <div className="flex flex-col gap-1.5">
@@ -110,13 +110,13 @@ function ProposalCards({ draft, labels }: { draft: PlanDraft; labels: Record<str
         <motion.div key={s.id} variants={listItemEnter} initial="initial" animate="animate"
           className={`rounded-lg bg-surface-container px-m py-2.5 flex flex-col gap-0.5 ${s.pending ? 'ring-1 ring-primary/30' : ''}`}>
           <div className="flex items-center gap-s">
-            <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low text-[0.75rem] tabular-nums">{i + 1}</span>
-            <span className={`flex-1 min-w-0 truncate text-on-surface text-[0.8125rem] ${s.pending ? 'text-shimmer' : ''}`} style={fvs(550)}>
+            <span data-type="caption" className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low tabular-nums">{i + 1}</span>
+            <span data-type="label-s" className={`flex-1 min-w-0 truncate text-on-surface ${s.pending ? 'text-shimmer' : ''}`} style={fvs(550)}>
               {labels[s.id] ?? s.id}
             </span>
-            {s.role && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{s.role}</span>}
+            {s.role && <span data-type="caption" className="shrink-0 text-on-surface-low">{s.role}</span>}
           </div>
-          {s.target && <span className="pl-7 text-on-surface-var text-[0.8125rem]">{s.target}</span>}
+          {s.target && <span data-type="body-s" className="pl-7 text-on-surface-var">{s.target}</span>}
         </motion.div>
       ))}
     </div>

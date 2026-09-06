@@ -52,7 +52,7 @@ export function QuestionSlider({ questions, seed, onSubmit, onExit, submitLabel 
     <div className="flex flex-col gap-l max-w-[640px] mx-auto py-l">
       {/* progress: a dot per question, filled once answered — the "how many left" the walk owes. */}
       <div className="flex items-center justify-between">
-        <span className="text-on-surface-low text-[0.75rem]">Question {state.index + 1} of {total}</span>
+        <span data-type="caption" className="text-on-surface-low">Question {state.index + 1} of {total}</span>
         <div className="flex items-center gap-1.5" aria-hidden>
           {questions.map((x, i) => (
             <span key={x.id}
@@ -67,7 +67,7 @@ export function QuestionSlider({ questions, seed, onSubmit, onExit, submitLabel 
           initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }}
           transition={spring.spatialFast} className="flex flex-col gap-m">
           {phased && (
-            <span className="self-start inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6 text-[0.75rem]"
+            <span data-type="caption" className="self-start inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6"
               style={accentChip}>
               <Sparkles size={12} /> Phase {q.phaseIndex! + 1} of {q.phaseCount} · {q.phase}
             </span>
@@ -80,7 +80,7 @@ export function QuestionSlider({ questions, seed, onSubmit, onExit, submitLabel 
           <QuestionControl q={q} state={state} dispatch={dispatch} />
 
           {!q.required && (
-            <span className="text-on-surface-low text-[0.75rem]">
+            <span data-type="caption" className="text-on-surface-low">
               {q.kind === 'boundary'
                 ? 'Optional — leave blank if there are no hard limits.'
                 : "Optional — skip it and I'll investigate or assume during the run."}

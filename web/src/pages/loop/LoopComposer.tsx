@@ -276,7 +276,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
           undersized-target spacing exception does not rescue it either: the nearest other target sits
           0px away, so the 24px circles intersect. Same move as the small Toggle: grow the target, leave
           the control's drawn size alone. */}
-      <label className="inline-flex min-h-6 cursor-pointer items-center gap-1.5 text-[0.75rem] text-on-surface-low"
+      <label data-type="caption" className="inline-flex min-h-6 cursor-pointer items-center gap-1.5 text-on-surface-low"
         title="When done, reclaim this loop's scratch dir. Its report is saved to Artifacts first, so nothing is lost.">
         <input type="checkbox" disabled={busy} checked={scratch} onChange={(e) => setScratch(e.target.checked)}
           aria-label="Scratch (auto-clean when done)"
@@ -300,7 +300,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
             {/* The kind slider — the heart of the unified front door. */}
             <Segmented ariaLabel="Loop kind" value={kind} onChange={(v) => setKind(v as LoopKind)}
               options={KINDS.map((k) => ({ key: k.id, label: k.label, title: k.blurb }))} />
-            <p className="text-on-surface-low text-[0.9375rem] text-center max-w-[480px]">{cur.blurb}</p>
+            <p data-type="body-m" className="text-on-surface-low text-center max-w-[480px]">{cur.blurb}</p>
           </motion.div>
 
           <div className="flex w-full flex-col items-center gap-l" style={{ maxWidth: 'var(--content-width)' }}>
@@ -318,7 +318,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
             />
             {/* Reuse-codebase: the Code loop inherits the picked project's workspace. */}
             {kind === 'code' && inheritedWs && (
-              <p className="text-on-surface-low text-[0.75rem]">Working in <code className="text-on-surface-var">{inheritedWs.split('/').slice(-2).join('/')}</code> — this project's codebase.</p>
+              <p data-type="caption" className="text-on-surface-low">Working in <code className="text-on-surface-var">{inheritedWs.split('/').slice(-2).join('/')}</code> — this project's codebase.</p>
             )}
             {/* Brownfield with no project workspace: the codebase path field. Without it a
                 brownfield loop at minimal rigor (Plan Review skipped) has no way to bind a
@@ -328,7 +328,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                 <FolderGit2 size={13} className="shrink-0 text-on-surface-low" />
                 <input type="text" value={brownfieldWs} onChange={(e) => setBrownfieldWs(e.target.value)}
                   disabled={busy} placeholder="Codebase path (e.g. /Users/you/projects/app) — the repo to work in"
-                  className="min-w-0 flex-1 bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low/70" />
+                  data-type="body-s" className="min-w-0 flex-1 bg-transparent text-on-surface outline-none placeholder:text-on-surface-low/70" />
               </div>
             )}
             {/* Design-only: multi-modal intake — a reference URL + attachments (image/
@@ -340,7 +340,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                   <LinkIcon size={13} className="shrink-0 text-on-surface-low" />
                   <input type="url" value={designUrl} onChange={(e) => setDesignUrl(e.target.value)}
                     disabled={busy} placeholder="Reference a site to mimic (https://…) — optional"
-                    className="min-w-0 flex-1 bg-transparent text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low/70" />
+                    data-type="body-s" className="min-w-0 flex-1 bg-transparent text-on-surface outline-none placeholder:text-on-surface-low/70" />
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {/* 🔴 "Attach reference" WAS POINTER-ONLY. A `<label>` around a `hidden` input looks
@@ -350,31 +350,31 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
                       input stays `sr-only` so Tab reaches it and Space opens the picker natively, and
                       because it sits INSIDE the label it takes "Attach reference" as its name with no
                       `aria-label` needed. The ring is drawn on the label, keyed off the input. */}
-                  <label className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-high/50 px-2.5 h-7 text-[0.75rem] transition-colors has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-inset has-[input:focus-visible]:ring-primary ${busy ? 'opacity-50' : 'cursor-pointer hover:bg-surface-high'}`}>
+                  <label data-type="caption" className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-high/50 px-2.5 h-7 transition-colors has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-inset has-[input:focus-visible]:ring-primary ${busy ? 'opacity-50' : 'cursor-pointer hover:bg-surface-high'}`}>
                     <Paperclip size={13} /> Attach reference
                     <input type="file" multiple accept={DESIGN_ACCEPT} disabled={busy} className="sr-only"
                       onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) setDesignFiles((cur) => [...cur, ...fs]); e.currentTarget.value = '' }} />
                   </label>
                   {designFiles.map((f, i) => (
-                    <span key={i} className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var text-[0.75rem]">
+                    <span key={i} data-type="caption" className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-2 h-7 text-on-surface-var">
                       <span className="max-w-[140px] truncate">{f.name}</span>
                       <button type="button" disabled={busy} onClick={() => setDesignFiles((cur) => cur.filter((_, j) => j !== i))}
                         className="text-on-surface-low hover:text-on-surface" aria-label={`Remove ${f.name}`}><X size={12} /></button>
                     </span>
                   ))}
                   <button type="button" onClick={() => setPreviewDesignSystem(true)}
-                    className="ml-auto inline-flex items-center gap-1.5 text-on-surface-low hover:text-on-surface text-[0.75rem] transition-colors">
+                    data-type="caption" className="ml-auto inline-flex items-center gap-1.5 text-on-surface-low hover:text-on-surface transition-colors">
                     <Palette size={13} /> Default system
                   </button>
                 </div>
               </div>
             )}
             {task.trim().length > 0 && task.trim().length < MIN_CHARS && (
-              <p className="text-on-surface-low text-[0.75rem]">A few more words — then press send to plan it.</p>
+              <p data-type="caption" className="text-on-surface-low">A few more words — then press send to plan it.</p>
             )}
-            {busy && <p className="text-on-surface-low text-[0.8125rem]">Analyzing…</p>}
+            {busy && <p data-type="body-s" className="text-on-surface-low">Analyzing…</p>}
             {error && (
-              <div role="alert" className="w-full max-w-[480px] rounded-lg px-4 py-3 text-[0.8125rem] text-center" style={{ background: 'color-mix(in srgb, var(--color-error) 8%, transparent)', color: 'var(--color-error)' }}>{error}</div>
+              <div role="alert" data-type="body-s" className="w-full max-w-[480px] rounded-lg px-4 py-3 text-center" style={{ background: 'color-mix(in srgb, var(--color-error) 8%, transparent)', color: 'var(--color-error)' }}>{error}</div>
             )}
           </div>
         </div>

@@ -80,7 +80,7 @@ function RoiRail({ points, granularity }: { points: RoiPoint[]; granularity: str
   return (
     <div className="flex gap-s">
       {/* y-axis ticks */}
-      <div className="relative w-5 shrink-0 text-on-surface-low text-[0.75rem] tabular-nums" style={{ height: H }}>
+      <div data-type="caption" className="relative w-5 shrink-0 text-on-surface-low tabular-nums" style={{ height: H }}>
         <span className="absolute right-0 -translate-y-1/2" style={{ top: 0 }}>5</span>
         <span className="absolute right-0 -translate-y-1/2" style={{ top: H / 2 }}>2.5</span>
         <span className="absolute right-0 -translate-y-1/2" style={{ top: H }}>0</span>
@@ -92,7 +92,7 @@ function RoiRail({ points, granularity }: { points: RoiPoint[]; granularity: str
           {threshold != null && (
             <div className="absolute left-0 right-0 border-t border-dashed" title={`Stop threshold (${granularity})`}
               style={{ top: H * (1 - threshold / max), borderColor: 'color-mix(in srgb, var(--color-primary) 55%, transparent)' }}>
-              <span className="absolute right-0 -top-3.5 text-[0.75rem] tabular-nums text-primary">thr {threshold.toFixed(0)}</span>
+              <span data-type="caption" className="absolute right-0 -top-3.5 tabular-nums text-primary">thr {threshold.toFixed(0)}</span>
             </div>
           )}
           {/* bars — one column per scored cycle, labeled by its true cycle #.
@@ -116,7 +116,7 @@ function RoiRail({ points, granularity }: { points: RoiPoint[]; granularity: str
         <div className="flex gap-[3px] mt-1">
           {recent.map((p, i) => {
             const show = recent.length <= 16 || i === 0 || i === recent.length - 1 || p.cycle % 5 === 0
-            return <span key={p.cycle} className="flex-1 min-w-[5px] text-center text-on-surface-low text-[0.75rem] tabular-nums">{show ? p.cycle : ''}</span>
+            return <span key={p.cycle} data-type="caption" className="flex-1 min-w-[5px] text-center text-on-surface-low tabular-nums">{show ? p.cycle : ''}</span>
           })}
         </div>
       </div>
@@ -143,7 +143,7 @@ function shortModel(m: string): string {
 function MetaPill({ icon, text, tone, title }: { icon?: React.ReactNode; text: string; tone?: 'primary'; title?: string }) {
   return (
     <span title={title}
-      className="inline-flex items-center gap-1 rounded-pill px-2 h-5 text-[0.75rem] max-w-[14rem] truncate"
+      data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-5 max-w-[14rem] truncate"
       style={tone === 'primary'
         ? accentChip
         : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
@@ -416,7 +416,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
     if (notFound) return (
       <div className="flex h-full flex-col items-center justify-center gap-m px-l text-center">
         <div className="text-on-surface text-[1.0625rem]" style={fvs(500)}>Loop not found</div>
-        <p className="max-w-md text-on-surface-low text-[0.8125rem]">This loop doesn’t exist — it may have been deleted, or the link is out of date.</p>
+        <p data-type="body-s" className="max-w-md text-on-surface-low">This loop doesn’t exist — it may have been deleted, or the link is out of date.</p>
         <Button size="sm" onClick={onBack}><ArrowLeft size={15} /> Back to loops</Button>
       </div>
     )
@@ -526,7 +526,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
 
   // Header status line (status dot/spinner + cycle + elapsed + rubric score).
   const statusLine = (
-    <span className="inline-flex items-center gap-s text-on-surface-var text-[0.8125rem] truncate">
+    <span data-type="body-s" className="inline-flex items-center gap-s text-on-surface-var truncate">
       {running ? (
         <span className="relative inline-flex items-center justify-center size-4">
           <motion.span aria-hidden className="absolute inset-[-7px] rounded-pill" style={{ background: thinkingGlow() }}
@@ -568,7 +568,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       {/* progress — phase trail for planned loops, else the cycle counter */}
       {execPlan.length > 0
         ? <RunPhaseTrail plan={execPlan} activePhase={activePhase} active={active} complete={c.status === 'complete'} findings={findings} compact />
-        : <span className="text-on-surface-var text-[0.75rem] tabular-nums">{cycleLabel}</span>}
+        : <span data-type="caption" className="text-on-surface-var tabular-nums">{cycleLabel}</span>}
       {c.started_at != null && <MetaPill icon={<Clock size={11} />} text={fmt(totalElapsed)} title="Elapsed (running time)" />}
       {/* What this loop cost (MRT-3). Rendered only once the detail response has arrived — a
           money pill that appears as "~$0.0000" while loading would read as "this was free",
@@ -588,7 +588,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       {/* scope: containing project (clickable) + bound workspace */}
       {projId && projName && (onOpenProject
         ? <button type="button" onClick={() => onOpenProject(projId)} title={`Project: ${projName} — open`}
-            className="inline-flex items-center gap-1 rounded-pill px-2 h-5 text-[0.75rem] max-w-[14rem] hover:brightness-110"
+            data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-5 max-w-[14rem] hover:brightness-110"
             style={accentChip}>
             <FolderKanban size={11} className="shrink-0" /><span className="truncate">{projName}</span>
           </button>
@@ -619,10 +619,10 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               {editingTitle ? (
                 <input autoFocus aria-label="Rename this loop" value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
                   onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); else if (e.key === 'Escape') abortRename() }}
-                  className="min-w-[16rem] h-7 rounded-md bg-surface-high px-2 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+                  data-type="body-m" className="min-w-[16rem] h-7 rounded-md bg-surface-high px-2 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
               ) : (
                 <button type="button" onClick={startRename} title="Rename loop"
-                  className="truncate text-on-surface text-[0.9375rem] leading-tight text-left hover:text-on-surface-var" style={fvs(600)}>
+                  data-type="title-m" className="truncate text-on-surface leading-tight text-left hover:text-on-surface-var" style={fvs(600)}>
                   {c.name || c.goal}
                 </button>
               )}
@@ -679,16 +679,16 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               <Eyebrow as="span" className="shrink-0">Prompt</Eyebrow>
               {/* first line of the prompt, shown only while collapsed */}
               {!promptOpen && (
-                <span className="min-w-0 flex-1 truncate text-on-surface-var text-[0.8125rem]">
+                <span data-type="body-s" className="min-w-0 flex-1 truncate text-on-surface-var">
                   {(c.goal || '').split('\n').map((l) => l.trim()).find(Boolean) || '—'}
                 </span>
               )}
             </button>
             {promptOpen && <div className="mt-2" />}
             {promptOpen
-              ? <div className="max-h-[40vh] overflow-y-auto text-on-surface text-[0.9375rem]">
+              ? <div data-type="body-m" className="max-h-[40vh] overflow-y-auto text-on-surface">
                   <Markdown>{c.goal}</Markdown>
-                  {c.success_criteria && <p className="mt-2 text-on-surface-low text-[0.8125rem]"><span className="text-on-surface-var">Done when:</span> {c.success_criteria}</p>}
+                  {c.success_criteria && <p data-type="body-s" className="mt-2 text-on-surface-low"><span className="text-on-surface-var">Done when:</span> {c.success_criteria}</p>}
                   {/* Sub-goals live inside the expanded prompt — they're part of
                       how the goal is decomposed, not a separate concern. */}
                   {c.sub_goals.length > 0 && (
@@ -696,7 +696,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                       <Eyebrow className="mb-1.5">Sub-goals · {c.sub_goals.length}</Eyebrow>
                       <ul className="flex flex-col gap-1.5">
                         {c.sub_goals.map((s, i) => (
-                          <li key={i} className="flex items-start gap-s text-on-surface-var text-[0.8125rem]">
+                          <li key={i} data-type="body-s" className="flex items-start gap-s text-on-surface-var">
                             <span className="mt-1.5 size-1 shrink-0 rounded-pill bg-primary" />{asText(s)}
                           </li>
                         ))}
@@ -714,16 +714,16 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                       <div className="flex flex-col gap-1.5">
                         {c.roster!.map((m, i) => (
                           <div key={i} className="flex flex-col gap-0.5 rounded-lg bg-surface-container px-m py-2">
-                            <span className="text-on-surface text-[0.8125rem]" style={fvs(550)}>{m.role}</span>
-                            {m.persona && <span className="text-on-surface-var text-[0.8125rem]">{m.persona}</span>}
-                            {m.role_hint && <span className="text-on-surface-low text-[0.75rem] mt-0.5">↳ {m.role_hint}</span>}
+                            <span data-type="label-s" className="text-on-surface" style={fvs(550)}>{m.role}</span>
+                            {m.persona && <span data-type="body-s" className="text-on-surface-var">{m.persona}</span>}
+                            {m.role_hint && <span data-type="caption" className="text-on-surface-low mt-0.5">↳ {m.role_hint}</span>}
                           </div>
                         ))}
                       </div>
                     </div>
                   )}
                 </div>
-              : <div className="pl-[22px] text-on-surface-var text-[0.8125rem] line-clamp-2 break-words"><Markdown>{c.goal}</Markdown></div>}
+              : <div data-type="body-s" className="pl-[22px] text-on-surface-var line-clamp-2 break-words"><Markdown>{c.goal}</Markdown></div>}
           </div>
 
           {c.error_message && (() => {
@@ -734,7 +734,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             const tone = info ? 'var(--color-on-surface-low)' : 'var(--color-danger)'
             const Icon = info ? FileText : AlertTriangle
             return (
-            <motion.div variants={messageEnter} initial="initial" animate="animate" className="rounded-md px-m py-2.5 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${tone} 12%, transparent)`, color: tone }}>
+            <motion.div variants={messageEnter} initial="initial" animate="animate" data-type="body-s" className="rounded-md px-m py-2.5" style={{ background: `color-mix(in srgb, ${tone} 12%, transparent)`, color: tone }}>
               <div className="flex items-center gap-1.5 mb-1" style={fvs(500)}>
                 <Icon size={14} className="shrink-0" /> {c.status === 'failed' ? 'This loop stopped on an error' : info ? 'Completed on its cycle budget' : 'Last cycle hit an error'}
               </div>
@@ -748,12 +748,12 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             </motion.div>
           )})()}
           {judgeDegraded && running && (
-            <div className="rounded-md px-m py-2 text-[0.8125rem] flex items-center gap-2" style={{ background: 'color-mix(in srgb, var(--color-warning) 12%, transparent)', color: 'var(--color-warning)' }}>
+            <div data-type="body-s" className="rounded-md px-m py-2 flex items-center gap-2" style={{ background: 'color-mix(in srgb, var(--color-warning) 12%, transparent)', color: 'var(--color-warning)' }}>
               <AlertTriangle size={14} className="shrink-0" /> Done-ness check was unavailable on a recent cycle — the loop keeps running on its cycle budget. It’ll resume quality assessment automatically.
             </div>
           )}
           {c.status === 'needs_input' && c.pending_question && (
-            <div className="rounded-md px-m py-2.5 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
+            <div data-type="body-s" className="rounded-md px-m py-2.5" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
               <div className="flex items-center gap-1.5 text-info mb-1" style={fvs(500)}><HelpCircle size={14} /> The agent needs your input</div>
               <div className="text-on-surface">{c.pending_question}</div>
               {/* Offer the answer inline — the question IS the call to action, so
@@ -777,12 +777,12 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                       else if (e.key === 'Escape') { e.preventDefault(); setNudgeOpen(false); setNudgeText(''); setNudgeError(false) }
                     }}
                     placeholder="Guide the next cycle — focus an angle, or answer the agent's question."
-                    className="w-full bg-transparent outline-none text-on-surface placeholder:text-on-surface-low text-[0.8125rem] min-h-[60px] resize-y" />
+                    data-type="body-s" className="w-full bg-transparent outline-none text-on-surface placeholder:text-on-surface-low min-h-[60px] resize-y" />
                   {nudgeError && (
-                    <p role="alert" className="mt-1 text-[0.8125rem]" style={{ color: 'var(--color-error)' }}>Couldn’t send the nudge — your text is kept, try again.</p>
+                    <p role="alert" data-type="body-s" className="mt-1" style={{ color: 'var(--color-error)' }}>Couldn’t send the nudge — your text is kept, try again.</p>
                   )}
                   <div className="flex items-center justify-end gap-s mt-2">
-                    <span className="mr-auto text-on-surface-low text-[0.75rem]">⌘↵ to send · Esc to cancel</span>
+                    <span data-type="caption" className="mr-auto text-on-surface-low">⌘↵ to send · Esc to cancel</span>
                     <Button variant="ghost" size="sm" onClick={() => { setNudgeOpen(false); setNudgeText(''); setNudgeError(false) }}>Cancel</Button>
                     <Button size="sm" onClick={sendNudge} disabled={!nudgeText.trim() || nudgeSending}
                       disabledReason={!nudgeText.trim() ? 'Write a nudge first' : undefined}>{nudgeSending ? 'Sending…' : 'Send nudge'}</Button>
@@ -843,7 +843,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                    />
                  )}
                  {pending.length > 0 && (
-                   <div className="rounded-lg px-m py-2 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)', border: '1px dashed color-mix(in srgb, var(--color-info) 30%, transparent)' }}>
+                   <div data-type="body-s" className="rounded-lg px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)', border: '1px dashed color-mix(in srgb, var(--color-info) 30%, transparent)' }}>
                      <Eyebrow tone="info" className="flex items-center gap-1.5 mb-1"><MessageSquarePlus size={12} /> nudge queued — applies next cycle</Eyebrow>
                      {pending.map((n, i) => <p key={i} className="text-on-surface-var">{n.text}</p>)}
                    </div>
@@ -866,8 +866,8 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                            {running && <motion.span aria-hidden className="absolute inset-[-6px] rounded-pill" style={{ background: thinkingGlow() }} animate={{ opacity: [0.3, 0.7, 0.3] }} transition={{ duration: 3, repeat: Infinity }} />}
                            <span className={running ? '' : 'text-on-surface-low'}><Spark size={13} /></span>
                          </span>
-                         <span className="flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>Cycle {c.total_cycles + 1} · {running ? (statusText || 'working') : loopStatusLabel(effectiveLoopStatus(c.status, c.error_message)).toLowerCase()}</span>
-                         {running && <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{fmt(curCycleElapsed)}</span>}
+                         <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>Cycle {c.total_cycles + 1} · {running ? (statusText || 'working') : loopStatusLabel(effectiveLoopStatus(c.status, c.error_message)).toLowerCase()}</span>
+                         {running && <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">{fmt(curCycleElapsed)}</span>}
                        </div>
                        {running && activity.length > 0 && <LiveSubsteps activity={activity} />}
                      </div>
@@ -886,7 +886,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                        : null
                      return (<>
                        {liveCycle}
-                       {emptyNote && <p className="text-on-surface-low text-[0.8125rem] px-m py-1">{emptyNote}</p>}
+                       {emptyNote && <p data-type="body-s" className="text-on-surface-low px-m py-1">{emptyNote}</p>}
                        {findings.map((f, idx) => cycleNode(f, idx))}
                      </>)
                    }
@@ -906,7 +906,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                // ── drilled-in detail: full rail height (Back returns to list) ──
                selected.kind === 'roi'
                  ? (<div className="flex flex-col gap-m">
-                     <p className="text-on-surface-var text-[0.8125rem]">The judge's marginal value per cycle, against your <span className="text-on-surface">{c.granularity}</span> stop threshold. A run of bars below the line is what trips the auto-stop.</p>
+                     <p data-type="body-s" className="text-on-surface-var">The judge's marginal value per cycle, against your <span className="text-on-surface">{c.granularity}</span> stop threshold. A run of bars below the line is what trips the auto-stop.</p>
                      <div className="rounded-lg bg-surface-container px-m py-l">
                        <RoiRail points={roiPoints} granularity={c.granularity} />
                      </div>
@@ -919,10 +919,10 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                        </div>
                        <Markdown>{log}</Markdown>
                      </div>)
-                   : <p className="text-on-surface-low text-[0.8125rem]">No findings logged yet — the cumulative trail appears here as cycles complete.</p>)
+                   : <p data-type="body-s" className="text-on-surface-low">No findings logged yet — the cumulative trail appears here as cycles complete.</p>)
                  : (() => {
                      const f = findings.find((x) => x.cycle === selected.cycle)
-                     if (!f) return <p className="text-on-surface-low text-[0.8125rem]">Cycle not found.</p>
+                     if (!f) return <p data-type="body-s" className="text-on-surface-low">Cycle not found.</p>
                      return (<>
                        {/* Investigate (plan 60): "what happened on this cycle?" —
                            the finding, its judge verdict, and any nudge, in run context. */}
@@ -1013,7 +1013,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, 
                 return (
                   <button key={t.id} type="button" onClick={() => setActiveId(t.id)} role="tab" aria-selected={on}
                     tabIndex={on ? 0 : -1}
-                    className={`shrink-0 inline-flex items-center gap-1.5 px-m h-9 text-[0.8125rem] max-w-[14rem] border-b-2 transition-colors ${on ? 'border-primary text-on-surface' : 'border-transparent text-on-surface-low hover:text-on-surface-var'}`}
+                    data-type="body-s" className={`shrink-0 inline-flex items-center gap-1.5 px-m h-9 max-w-[14rem] border-b-2 transition-colors ${on ? 'border-primary text-on-surface' : 'border-transparent text-on-surface-low hover:text-on-surface-var'}`}
                     style={on ? fvs(600) : undefined}
                     title={t.label}>
                     <Icon size={13} className="shrink-0" /><span className="truncate">{t.label}</span>
@@ -1040,7 +1040,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, 
 
       <div className="flex-1 min-h-0 overflow-y-auto px-l py-l">
         {!current ? (
-          <p className="text-on-surface-low text-[0.8125rem]">
+          <p data-type="body-s" className="text-on-surface-low">
             {active
               ? (loop.goal_type === 'verifiable'
                   ? 'This goal produces a passing check, not a document — outcomes will appear as the worker saves them.'
@@ -1059,19 +1059,19 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, 
                 <span className="shrink-0 inline-flex size-4 items-center justify-center rounded-sm border" style={{ borderColor: done ? 'var(--color-ok)' : 'var(--color-outline-variant)', background: done ? 'var(--color-ok)' : 'transparent' }}>{done && <Check size={11} className="text-on-primary" />}</span>
               )
               const label = <span className={`flex-1 min-w-0 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{t.title}</span>
-              const status = <span className="shrink-0 text-on-surface-low text-[0.75rem]">{t.status}</span>
+              const status = <span data-type="caption" className="shrink-0 text-on-surface-low">{t.status}</span>
               // When a task-open handler is wired, each row is a button that
               // deep-links to that task on the Tasks page (read its detail, edit,
               // see deps) — parity with the artifact tab's "Open" affordance.
               return onOpenTask ? (
                 <button key={t.id} type="button" onClick={() => onOpenTask(t.id)}
-                  className="group flex w-full items-center gap-s rounded-md px-2 py-1 -mx-2 text-left text-[0.8125rem] hover:bg-surface-2 transition-colors"
+                  data-type="body-s" className="group flex w-full items-center gap-s rounded-md px-2 py-1 -mx-2 text-left hover:bg-surface-2 transition-colors"
                   title="Open task">
                   {box}{label}{status}
                   <ChevronRight size={14} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
                 </button>
               ) : (
-                <div key={t.id} className="flex items-center gap-s text-[0.8125rem]">
+                <div key={t.id} data-type="body-s" className="flex items-center gap-s">
                   {box}{label}{status}
                 </div>
               )
@@ -1129,7 +1129,8 @@ function ArtifactTab({ artifact, onOpen, loopId }: { artifact: Artifact; onOpen?
   const eyebrow = (
     <>
       <FileText size={12} className="text-primary" />
-      <span className="normal-case tracking-normal text-[0.75rem]">{artifact.kind}{artifact.version > 1 ? ` · v${artifact.version}` : ''}</span>
+      {/* size/weight inherit from the surrounding Eyebrow's caption role */}
+      <span className="normal-case tracking-normal">{artifact.kind}{artifact.version > 1 ? ` · v${artifact.version}` : ''}</span>
       {onOpen && <TextLink onClick={() => onOpen(artifact.slug)} icon={ExternalLink} iconPosition="trailing" iconSize={12} className="ml-auto normal-case tracking-normal">Open in Artifacts</TextLink>}
     </>
   )
@@ -1156,13 +1157,13 @@ function LiveSubsteps({ activity }: { activity: { kind: string; label: string; d
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-1.5 pl-7">
-      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="flex items-center gap-1.5 text-[0.75rem] text-on-surface-low hover:text-on-surface">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} data-type="caption" className="flex items-center gap-1.5 text-on-surface-low hover:text-on-surface">
         <Search size={12} /> {activity.length} steps <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
       </button>
       {open && (
         <ul className="mt-1 flex flex-col gap-1">
           {activity.slice(-12).map((e, i) => (
-            <li key={i} className="flex items-start gap-s text-[0.75rem] text-on-surface-low">
+            <li key={i} data-type="caption" className="flex items-start gap-s text-on-surface-low">
               <span className="mt-1.5 size-1 shrink-0 rounded-pill" style={{ background: e.kind === 'tool' ? 'var(--color-secondary)' : 'var(--color-on-surface-low)' }} />
               <span className="truncate">{e.label}{e.detail ? ` · ${e.detail}` : ''}</span>
             </li>
@@ -1181,8 +1182,8 @@ function RailRow({ icon, label, hint, onClick }: {
     <button type="button" onClick={onClick}
       className="group w-full text-left rounded-lg px-m py-2.5 flex items-center gap-s hover:bg-surface-high transition-colors">
       <span className="shrink-0 text-primary">{icon}</span>
-      <span className="flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{label}</span>
-      {hint && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{hint}</span>}
+      <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>{label}</span>
+      {hint && <span data-type="caption" className="shrink-0 text-on-surface-low">{hint}</span>}
       <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
     </button>
   )
@@ -1211,39 +1212,39 @@ function PhaseGroup({ phase, index, active, minCycles, cycles, renderCycle, live
     <div className={`rounded-lg ${active ? 'ring-1 ring-primary' : ''}`} style={{ background: 'color-mix(in srgb, var(--color-surface-container) 55%, transparent)' }}>
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex items-center gap-s px-m py-2 text-left">
         <ChevronRight size={13} className={`shrink-0 text-on-surface-low transition-transform ${open ? 'rotate-90' : ''}`} />
-        <span className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low text-[0.75rem] tabular-nums">{index + 1}</span>
+        <span data-type="caption" className="shrink-0 inline-flex size-5 items-center justify-center rounded-pill bg-surface-high text-on-surface-low tabular-nums">{index + 1}</span>
         {/* role + the agent definition backing it this phase (always visible). */}
         <span className="flex-1 min-w-0 flex flex-col">
-          <span className="truncate text-on-surface text-[0.8125rem]" style={fvs(550)}>{role || `Phase ${index + 1}`}</span>
-          <span className="truncate text-on-surface-low text-[0.75rem]">{agent ? <><Bot size={9} className="inline -mt-0.5 mr-0.5" />{agent}</> : 'default worker'}</span>
+          <span data-type="label-s" className="truncate text-on-surface" style={fvs(550)}>{role || `Phase ${index + 1}`}</span>
+          <span data-type="caption" className="truncate text-on-surface-low">{agent ? <><Bot size={9} className="inline -mt-0.5 mr-0.5" />{agent}</> : 'default worker'}</span>
         </span>
         {active && <Eyebrow as="span" tone="primary" className="shrink-0 self-start">● active</Eyebrow>}
         {/* Count: "done/min" while still inside the minimum; once the phase has
             met (or exceeded) its minimum, show just the cycle count so it never
             reads as a broken fraction like "4/1". */}
-        <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums" title={`${cycles.length} cycle${cycles.length !== 1 ? 's' : ''} run · minimum ${minCycles}`}>
+        <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums" title={`${cycles.length} cycle${cycles.length !== 1 ? 's' : ''} run · minimum ${minCycles}`}>
           {cycles.length >= minCycles ? `${cycles.length} ${cycles.length === 1 ? 'cycle' : 'cycles'}` : `${cycles.length}/${minCycles}`}
         </span>
       </button>
       {/* phase DETAIL — only behind expansion */}
       {open && (
         <div className="px-m pb-2 pl-[42px] flex flex-col gap-1">
-          {target && <span className="text-on-surface-var text-[0.8125rem]">{target}</span>}
-          {exit && <span className="text-on-surface-low text-[0.75rem]">↳ advances when: {exit}</span>}
+          {target && <span data-type="body-s" className="text-on-surface-var">{target}</span>}
+          {exit && <span data-type="caption" className="text-on-surface-low">↳ advances when: {exit}</span>}
           {/* agent shows in the header; here we detail the loaded capabilities. */}
           {(skills.length || wfs.length) ? (
-            <div className="flex flex-wrap items-center gap-1 mt-0.5 text-[0.75rem]">
+            <div data-type="caption" className="flex flex-wrap items-center gap-1 mt-0.5">
               {skills.map((s) => <span key={s} className="inline-flex items-center rounded-pill px-1.5 h-5 bg-surface-high text-on-surface-low" title="Skill loaded this phase">{s}</span>)}
               {wfs.map((w) => <span key={w} className="inline-flex items-center rounded-pill px-1.5 h-5 bg-surface-high text-on-surface-low" title="Workflow loaded this phase">{w}</span>)}
             </div>
-          ) : <span className="text-on-surface-low text-[0.75rem]">baseline capabilities only</span>}
+          ) : <span data-type="caption" className="text-on-surface-low">baseline capabilities only</span>}
         </div>
       )}
       {/* cycles ALWAYS shown under the phase (live first, then newest→oldest) */}
       <div className="px-m pb-2 flex flex-col gap-1">
         {liveCycle}
         {orderedCycles.map((f, i) => renderCycle(f, i))}
-        {!liveCycle && orderedCycles.length === 0 && <p className="text-on-surface-low text-[0.75rem]">Not started.</p>}
+        {!liveCycle && orderedCycles.length === 0 && <p data-type="caption" className="text-on-surface-low">Not started.</p>}
       </div>
     </div>
   )
@@ -1254,13 +1255,13 @@ function CycleNode({ f, verdict, dur, hasNudge, onClick, delay }: { f: LoopFindi
     <motion.button initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialFast, delay }} onClick={onClick}
       className="group w-full text-left rounded-lg bg-surface-container px-m py-m hover:bg-surface-high transition-colors">
       <div className="flex items-center gap-s">
-        <span className="shrink-0 inline-flex items-center justify-center size-5 rounded-pill text-[0.75rem] tabular-nums" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-on-surface)' }}>{f.cycle}</span>
-        <span className="flex-1 truncate text-on-surface text-[0.8125rem]" style={fvs(500)}>{asText(f.key_insight) || asText(f.summary) || `Cycle ${f.cycle}`}</span>
+        <span data-type="caption" className="shrink-0 inline-flex items-center justify-center size-5 rounded-pill tabular-nums" style={{ background: 'color-mix(in srgb, var(--color-primary) 20%, transparent)', color: 'var(--color-on-surface)' }}>{f.cycle}</span>
+        <span data-type="label-s" className="flex-1 truncate text-on-surface" style={fvs(500)}>{asText(f.key_insight) || asText(f.summary) || `Cycle ${f.cycle}`}</span>
         {hasNudge && <MessageSquarePlus size={13} className="text-info shrink-0" />}
-        {typeof verdict?.marginal_value === 'number' && <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums" title="judge's marginal value (return this cycle)">▲{verdict.marginal_value.toFixed(1)}</span>}
+        {typeof verdict?.marginal_value === 'number' && <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums" title="judge's marginal value (return this cycle)">▲{verdict.marginal_value.toFixed(1)}</span>}
         <ChevronRight size={15} className="shrink-0 text-on-surface-low opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" />
       </div>
-      {dur != null && dur > 0 && <div className="mt-1 pl-7 text-on-surface-low text-[0.75rem] tabular-nums">took {fmt(dur)}</div>}
+      {dur != null && dur > 0 && <div data-type="caption" className="mt-1 pl-7 text-on-surface-low tabular-nums">took {fmt(dur)}</div>}
     </motion.button>
   )
 }
@@ -1272,21 +1273,21 @@ function CycleDetail({ f, verdict, nudges, activity }: { f: LoopFinding; verdict
   return (
     <div className="flex flex-col gap-l">
       <div className="flex flex-wrap gap-s">
-        {typeof verdict?.marginal_value === 'number' && typeof verdict?.quality_score === 'number' && <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${verdict.done ? 'var(--color-ok)' : 'var(--color-primary)'} 18%, transparent)`, color: verdict.done ? 'var(--color-ok)' : 'var(--color-primary)' }}>{verdict.done ? <Check size={13} /> : null} judge ▲{verdict.marginal_value.toFixed(1)} · ★{verdict.quality_score.toFixed(1)}</span>}
-        {verdict?.adversarial && <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem] bg-surface-high text-on-surface-var" title="A second, skeptical judge independently cross-checked this verdict (adversarial review)."><ShieldCheck size={13} className="text-on-surface-low" /> cross-checked</span>}
-        {f.metric && typeof f.metric.value === 'number' && <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem] bg-surface-high text-on-surface-var">{asText(f.metric.name) || 'metric'}: {f.metric.value}</span>}
-        {typeof f.new_findings_count === 'number' && <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem] bg-surface-high text-on-surface-var">{f.new_findings_count} new this cycle</span>}
+        {typeof verdict?.marginal_value === 'number' && typeof verdict?.quality_score === 'number' && <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${verdict.done ? 'var(--color-ok)' : 'var(--color-primary)'} 18%, transparent)`, color: verdict.done ? 'var(--color-ok)' : 'var(--color-primary)' }}>{verdict.done ? <Check size={13} /> : null} judge ▲{verdict.marginal_value.toFixed(1)} · ★{verdict.quality_score.toFixed(1)}</span>}
+        {verdict?.adversarial && <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 bg-surface-high text-on-surface-var" title="A second, skeptical judge independently cross-checked this verdict (adversarial review)."><ShieldCheck size={13} className="text-on-surface-low" /> cross-checked</span>}
+        {f.metric && typeof f.metric.value === 'number' && <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7 bg-surface-high text-on-surface-var">{asText(f.metric.name) || 'metric'}: {f.metric.value}</span>}
+        {typeof f.new_findings_count === 'number' && <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7 bg-surface-high text-on-surface-var">{f.new_findings_count} new this cycle</span>}
       </div>
-      {f.key_insight && <Section label="Key insight"><p className="text-on-surface text-[0.9375rem] leading-relaxed">{asText(f.key_insight)}</p></Section>}
-      {f.summary && <Section label="Summary"><p className="text-on-surface-var text-[0.8125rem] leading-relaxed">{asText(f.summary)}</p></Section>}
-      {f.evidence && <Section label="Evidence"><p className="text-on-surface-var text-[0.8125rem] leading-relaxed whitespace-pre-wrap">{asText(f.evidence)}</p></Section>}
+      {f.key_insight && <Section label="Key insight"><p data-type="body-m" className="text-on-surface leading-relaxed">{asText(f.key_insight)}</p></Section>}
+      {f.summary && <Section label="Summary"><p data-type="body-s" className="text-on-surface-var leading-relaxed">{asText(f.summary)}</p></Section>}
+      {f.evidence && <Section label="Evidence"><p data-type="body-s" className="text-on-surface-var leading-relaxed whitespace-pre-wrap">{asText(f.evidence)}</p></Section>}
       {f.files_touched?.length ? (
         <Section label="Files written">
           <div className="flex flex-col gap-1.5">
             {f.files_touched.map((s, i) => (
-              <div key={`f${i}`} className="flex items-start gap-s text-on-surface text-[0.8125rem]">
+              <div key={`f${i}`} data-type="body-s" className="flex items-start gap-s text-on-surface">
                 <FileText size={13} className="text-on-surface-low shrink-0 mt-0.5" />
-                <span className="font-mono text-[0.75rem] break-words">{asText(s)}</span>
+                <span data-type="caption" className="font-mono break-words">{asText(s)}</span>
               </div>
             ))}
           </div>
@@ -1294,14 +1295,14 @@ function CycleDetail({ f, verdict, nudges, activity }: { f: LoopFinding; verdict
       ) : null}
       {(verdict?.done_reason || verdict?.evidence_refs?.length) ? (
         <Section label="Judge verdict">
-          {verdict.done_reason ? <p className="text-on-surface-var text-[0.8125rem]">{asText(verdict.done_reason)}{typeof verdict.band_used === 'number' && <span className="text-on-surface-low"> · returns band {verdict.band_used.toFixed(1)}</span>}</p> : null}
+          {verdict.done_reason ? <p data-type="body-s" className="text-on-surface-var">{asText(verdict.done_reason)}{typeof verdict.band_used === 'number' && <span className="text-on-surface-low"> · returns band {verdict.band_used.toFixed(1)}</span>}</p> : null}
           {/* Ground truth the SUPERVISOR observed itself — ran the verify command, read the
               named deliverable — rather than the worker's account of its own work. Absent on a
               transcript-only cycle and on verdicts stored before WF2LOO-16, hence the guard. */}
           {verdict.evidence_refs?.length ? (
             <div className="mt-1.5 flex flex-col gap-1">
-              <span className="text-on-surface-low text-[0.75rem]">Observed independently</span>
-              {verdict.evidence_refs.map((ref, i) => <span key={i} className="flex items-start gap-s text-on-surface text-[0.8125rem]"><Check size={13} className="text-ok shrink-0 mt-0.5" /><span className="font-mono text-[0.75rem] break-words">{asText(ref)}</span></span>)}
+              <span data-type="caption" className="text-on-surface-low">Observed independently</span>
+              {verdict.evidence_refs.map((ref, i) => <span key={i} data-type="body-s" className="flex items-start gap-s text-on-surface"><Check size={13} className="text-ok shrink-0 mt-0.5" /><span data-type="caption" className="font-mono break-words">{asText(ref)}</span></span>)}
             </div>
           ) : null}
         </Section>
@@ -1309,8 +1310,8 @@ function CycleDetail({ f, verdict, nudges, activity }: { f: LoopFinding; verdict
       {(f.sources_checked?.length || f.sources_empty?.length) ? (
         <Section label="Sources">
           <div className="flex flex-col gap-1.5">
-            {f.sources_checked?.map((s, i) => <div key={`c${i}`} className="flex items-start gap-s text-on-surface text-[0.8125rem]"><Check size={13} className="text-ok shrink-0 mt-0.5" /><span className="font-mono text-[0.75rem] break-words">{asText(s)}</span></div>)}
-            {f.sources_empty?.map((s, i) => <div key={`e${i}`} className="flex items-start gap-s text-on-surface-low text-[0.8125rem]"><X size={13} className="shrink-0 mt-0.5" /><span className="font-mono text-[0.75rem] break-words">{asText(s)} <span className="opacity-60">(empty)</span></span></div>)}
+            {f.sources_checked?.map((s, i) => <div key={`c${i}`} data-type="body-s" className="flex items-start gap-s text-on-surface"><Check size={13} className="text-ok shrink-0 mt-0.5" /><span data-type="caption" className="font-mono break-words">{asText(s)}</span></div>)}
+            {f.sources_empty?.map((s, i) => <div key={`e${i}`} data-type="body-s" className="flex items-start gap-s text-on-surface-low"><X size={13} className="shrink-0 mt-0.5" /><span data-type="caption" className="font-mono break-words">{asText(s)} <span className="opacity-60">(empty)</span></span></div>)}
           </div>
         </Section>
       ) : null}
@@ -1322,7 +1323,7 @@ function CycleDetail({ f, verdict, nudges, activity }: { f: LoopFinding; verdict
                 <CornerDownRight size={14} className="text-info shrink-0 mt-1" />
                 <div className="flex-1 rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)' }}>
                   <Eyebrow tone="info" className="mb-1">sent cycle {n.sent_at_cycle} · applied cycle {n.applied_cycle}</Eyebrow>
-                  <p className="text-on-surface text-[0.8125rem] leading-relaxed whitespace-pre-wrap">{n.text}</p>
+                  <p data-type="body-s" className="text-on-surface leading-relaxed whitespace-pre-wrap">{n.text}</p>
                 </div>
               </div>
             ))}
@@ -1333,7 +1334,7 @@ function CycleDetail({ f, verdict, nudges, activity }: { f: LoopFinding; verdict
         <Section label="Live activity">
           <div className="flex flex-col gap-1.5">
             {activity.slice(-20).map((e, i) => (
-              <div key={i} className="flex items-start gap-s text-[0.8125rem]">
+              <div key={i} data-type="body-s" className="flex items-start gap-s">
                 <span className="mt-1.5 size-1 shrink-0 rounded-pill" style={{ background: e.kind === 'tool' ? 'var(--color-secondary)' : 'var(--color-on-surface-low)' }} />
                 <span className="text-on-surface-var"><span className="text-on-surface">{e.label}</span>{e.detail ? ` · ${e.detail}` : ''}</span>
               </div>
