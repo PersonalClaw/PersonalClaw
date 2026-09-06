@@ -107,6 +107,14 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     # client can fix it — and it must NOT be defaulted through, because a decision whose
     # outcome we could not read is neither an accept nor a reject.
     "WF_TRIAGE_BAD_DECISIONS": (400, "invalid_request"),
+    # 409, not 400: the request is well-formed — it is the run's STATE (launched, so the
+    # overlay is frozen; see `api_run_policy_overrides`) that refuses it, the same class as
+    # `run_not_live`/`already_terminal`. Its own wire code rather than a reuse, so a client
+    # can say "edit before launch" instead of a generic state complaint.
+    "WF_RUN_NOT_PRELAUNCH": (409, "run_not_prelaunch"),
+    # 400: a typo'd knob is the client's to fix, and the detail carries `unknown_keys` +
+    # `overridable` so the retry is not blind (PP-16 seam 4d's strict write side).
+    "WF_POLICY_KEY_UNKNOWN": (400, "unknown_policy_key"),
 }
 
 #: A validation-shaped service code we did not map explicitly still must not read as a
@@ -931,6 +939,48 @@ async def api_run_edit(request: web.Request) -> web.Response:
     return _reply(result)
 
 
+async def api_run_policy_overrides(request: web.Request) -> web.Response:
+    """PUT the run's sparse SupervisorPolicy overlay (PP-16 seam 4f) — prelaunch only.
+
+    REPLACE semantics, matching the store contract (`store.set_policy_overrides`): the JSON
+    body IS the overlay — only the knobs the user overrode, drawn from the five ruled
+    per-instance keys (`supervisor_policy.OVERRIDABLE_POLICY_KEYS`) — and ``{}`` clears every
+    override. A PUT, not a PATCH, because the wire verb should say what the store does.
+
+    PRE-LAUNCH ONLY, and the gate is FORCED, not cautious (dev-lane measurement 2026-09-05):
+
+    1. **A live edit would lose a write-write race with the engine.** The controller's
+       ``_save_run`` (`controller.py`) persists the WHOLE run row via ``store.save``,
+       rewriting `policy_overrides` from the controller's in-memory run — so an overlay
+       edited under a live run is silently reverted by the engine's next save. (The store's
+       narrow single-column UPDATE protects only the other direction.) Honoring a live edit
+       would need an engine re-read or the steer-path machinery — out of this seam's scope.
+    2. **Parity with the loop side.** ``loop/store.py::update_spec`` freezes the same five
+       knobs at launch (its PRELAUNCH_STATUSES gate). PP-16 is a noun retirement: a run must
+       not silently gain a capability loops never had.
+
+    The gate lives in the service and reads the lifecycle PHASE (``RUN_PHASES[...] is
+    LifecyclePhase.PRELAUNCH``), never the literal DRAFT status, so a future prelaunch
+    status inherits it. Guarded and SEL-audited like every other run mutation: a policy
+    override changes how much an unattended run may spend and whether a human gates it.
+    """
+    denied = _guard(request, "workflow_run_policy_overrides")
+    if denied is not None:
+        return denied
+    run_id = request.match_info.get("run_id", "")
+    body = await _json_body(request)
+    if isinstance(body, web.Response):
+        return body
+    result = service.set_policy_overrides(run_id, body)
+    _audit(
+        request,
+        "workflow_run_policy_overrides",
+        "success" if result.get("ok") else "failure",
+        run_id,
+    )
+    return _reply(result)
+
+
 async def api_run_cancel(request: web.Request) -> web.Response:
     denied = _guard(request, "workflow_run_cancel")
     if denied is not None:
@@ -1248,6 +1298,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/runs/{run_id}/outputs/{node_id}", api_run_output)
     app.router.add_get("/api/workflows/runs/{run_id}/nodes/{node_id}/inspect", api_run_node_inspect)
     app.router.add_post("/api/workflows/runs/{run_id}/edit", api_run_edit)
+    app.router.add_put("/api/workflows/runs/{run_id}/policy-overrides", api_run_policy_overrides)
     app.router.add_post("/api/workflows/runs/{run_id}/cancel", api_run_cancel)
     app.router.add_post("/api/workflows/runs/{run_id}/pause", api_run_pause)
     app.router.add_post("/api/workflows/runs/{run_id}/resume", api_run_resume)

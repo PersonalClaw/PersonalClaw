@@ -62,6 +62,15 @@ export const TERMINAL_RUN_STATUSES = new Set<string>(['complete', 'failed', 'can
 
 export const isTerminal = (status: string) => TERMINAL_RUN_STATUSES.has(status)
 
+/** Statuses BEFORE anything has executed — the run's spec and policy overlay are still
+ *  editable (mirrors `workflows/models.py:RUN_PHASES`' PRELAUNCH phase, deliberately a set
+ *  rather than a `=== 'draft'` literal so a future prelaunch status inherits every gate that
+ *  reads this). The policy-overrides editor shows only here: once launched, the engine's own
+ *  whole-row saves would silently revert a live overlay edit (PP-16 seam 4f). */
+export const PRELAUNCH_RUN_STATUSES = new Set<string>(['draft'])
+
+export const isPrelaunch = (status: string) => PRELAUNCH_RUN_STATUSES.has(status)
+
 /** Node-INSTANCE states after which a node will not run again without an explicit mutation —
  *  the exact set the `/inspect` endpoint accepts (mirrors `workflows/models.py:TERMINAL_STATES`).
  *  A node in any other state has nothing to reconstruct yet, so the endpoint 409s; the run view

@@ -516,6 +516,20 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "A provider instance's connection test failed unexpectedly; the underlying error is "
         "in the server log."
     ),
+    # ── per-run policy overrides (workflows/handlers.py — PP-16 seam 4f) ──
+    # Emitted through the workflows `_STATUS_MAP`/`_fail` translation rather than a
+    # `json_error` call site, but registered here all the same: these are wire codes a
+    # client branches on, and the registry is the append-only record of that surface.
+    # `run_not_prelaunch` is a 409 state refusal (the run launched, so the overlay is
+    # frozen — edit before launch); `unknown_policy_key` is a 400 whose detail carries
+    # `unknown_keys` + `overridable` so the retry is not blind.
+    "run_not_prelaunch": (
+        "The run has launched, so its policy overrides are frozen; edit them before launch."
+    ),
+    "unknown_policy_key": (
+        "A policy override key is not in the overridable set; the detail names the "
+        "offending keys and the keys a run may override."
+    ),
 }
 
 

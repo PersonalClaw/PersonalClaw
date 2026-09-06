@@ -364,9 +364,12 @@ def set_policy_overrides(run_id: str, overrides: dict[str, Any]) -> WorkflowRun 
     newer key on re-save. A narrow single-column UPDATE, like `loop/store.py`'s
     ``update_spec``, so a concurrent engine save of the row's other columns is not clobbered.
 
-    No production caller yet, and this docstring says so (the WF2LOO-12 convention): the
-    per-run policy editor is a later PP-16 seam; until it lands, the seam is exercised by
-    `tests/test_pp16_policy_overlay.py`.
+    The production caller is the prelaunch write surface (PP-16 seam 4f): ``PUT
+    /api/workflows/runs/{run_id}/policy-overrides`` (`handlers.api_run_policy_overrides`),
+    via `service.set_policy_overrides` — which owns the prelaunch PHASE gate and records
+    the two reasons that gate is forced. This function stays gate-free on purpose: it is
+    the storage contract, and the lifecycle ruling lives one layer up where the run's
+    status is already being read.
 
     Returns the updated run, or ``None`` when no such row exists.
     """
