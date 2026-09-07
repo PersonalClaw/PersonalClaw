@@ -1509,6 +1509,11 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
     FAIL-CLOSED on preservation. If ``data/`` cannot be copied out, NOTHING is
     removed. An operation whose entire promise is "your data survives this" must not
     proceed to the delete having failed to keep that promise.
+
+    And past that point — the removal has happened and the PARK then fails — the staged
+    copy is LEFT in quarantine and the audit line names it, because by then it is the
+    only copy there is. ``False`` with ``data=park_failed staged_copy=…`` means "the app
+    is gone, your data is at that path"; it never means the data is gone (#2574).
     """
     meta = _read_installed(name)
     if meta is None:
@@ -1560,6 +1565,9 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
     fact = _data_fact("data", staged if had_data else None)
     try:
         if not force_uninstall(name, caller=caller):
+            # Nothing was removed, so `live_data` is still there and the stage is a
+            # redundant duplicate of it: the one failure below that may still GC.
+            shutil.rmtree(staged, ignore_errors=True)
             _audit(
                 "uninstall_keep_data",
                 "error",
@@ -1572,19 +1580,32 @@ def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
         if had_data:
             target = _preserved_data_dir(name)
             shutil.rmtree(target, ignore_errors=True)
+            # NO cleanup of `staged` after this line, on either outcome (#2574).
+            #
+            # Success needs none: `shutil.move` consumes its source on every path it
+            # takes — the `os.rename`, and the cross-device fallback, which is
+            # copytree + `rmtree(src)`. There is nothing left to GC.
+            #
+            # Failure must not have any: `force_uninstall` above has already removed the
+            # app tree and the `data/` inside it, so `staged` is at that moment the ONLY
+            # copy of the user's data on the machine. A `finally: rmtree(staged)` reads
+            # as harmless GC and on this branch deletes the last copy — fail-OPEN on the
+            # one branch this rung's whole promise is about. Left on disk instead, the
+            # way `_restore_preserved_data` leaves a park it could not restore.
             shutil.move(str(staged), str(target))
     except (OSError, ValueError) as exc:
+        # The app is gone and the data is not parked, so name the surviving copy: a fact
+        # the user cannot act on is a diagnosis, not recovery information.
+        logger.error("app %s: data/ could not be parked; the copy is at %s", name, staged)
         _audit(
             "uninstall_keep_data",
             "error",
             name,
             caller=caller,
-            error=f"app removed but data/ could not be parked: {exc}",
-            detail="data=park_failed",
+            error=f"app removed but data/ could not be parked: {exc}; the copy is at {staged}",
+            detail=f"data=park_failed staged_copy={staged}",
         )
         return False
-    finally:
-        shutil.rmtree(staged, ignore_errors=True)  # GC — a successful move consumed it
 
     _audit("uninstall_keep_data", "ok", name, caller=caller, detail=fact)
     return True
