@@ -486,23 +486,32 @@ async def api_app_get(request: web.Request) -> web.Response:
     from personalclaw.apps.app_config import read_config
     from personalclaw.apps.app_manager import _manifest_of
     from personalclaw.apps.manager import _read_installed
+    from personalclaw.apps.secret_fields import mask_secrets
 
     name = request.match_info["name"]
     meta = _read_installed(name)
     if meta is None:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
     manifest = _manifest_of(name)
+    # Effective schema (setup.configSchema OR a provider app's provider.settingsSchema) —
+    # same source the dedicated /config endpoint uses, so a provider app's detail view shows
+    # its real config surface, not empty (the #29 class: reading only setup.configSchema
+    # hides provider settings).
+    schema = _effective_config_schema(manifest) if manifest else {}
+    # This route serves the SAME stored config as ``GET /api/apps/{name}/config``, which has
+    # masked since #43 — and it did not, so an app's credentials travelled in the clear here
+    # while the neighbouring route two functions below withheld them. Measured on a live
+    # gateway: ``GET /api/apps/openai-models`` returned the stored api_key verbatim. One
+    # policy, one owner; a route that carries a config is not exempt for being a detail view.
+    masked, secret_set = mask_secrets(read_config(name), schema)
     return web.json_response(
         {
             "name": name,
             "installed": meta.to_dict(),
             "manifest": manifest.to_dict() if manifest else None,
-            "config": read_config(name),
-            # Effective schema (setup.configSchema OR a provider app's provider.
-            # settingsSchema) — same source the dedicated /config endpoint uses, so a
-            # provider app's detail view shows its real config surface, not empty (the
-            # #29 class: reading only setup.configSchema hides provider settings).
-            "configSchema": _effective_config_schema(manifest) if manifest else {},
+            "config": masked,
+            "configSchema": schema,
+            "_secret_set": secret_set,
             **_app_status(name),
         }
     )
@@ -722,44 +731,10 @@ def _effective_config_schema(manifest) -> dict[str, Any]:
     return {}
 
 
-# A field whose schema marks ``x-meta.sensitive: true`` (api keys, tokens, …) is
-# WRITE-ONLY over the API: its stored value is never returned to the client on GET
-# (only this masked sentinel + a "set" flag), and a PUT that carries the sentinel
-# back is treated as "keep the stored secret". This keeps a configured key from
-# leaving the backend in cleartext on every config-panel open (#43), while still
-# letting the user save unrelated field edits without re-typing the key.
-_SECRET_MASK = "••••••••"  # ••••••••
-
-
-def _sensitive_field_names(schema: dict[str, Any]) -> set[str]:
-    """Property names flagged ``x-meta.sensitive: true`` in a config schema."""
-    props = (schema or {}).get("properties") or {}
-    out: set[str] = set()
-    for key, spec in props.items():
-        if isinstance(spec, dict) and (spec.get("x-meta") or {}).get("sensitive"):
-            out.add(key)
-    return out
-
-
-def _mask_secret_config(
-    config: dict[str, Any], schema: dict[str, Any]
-) -> tuple[dict[str, Any], list[str]]:
-    """Return (masked_config, set_field_names): sensitive fields with a stored
-    non-empty value are replaced by the mask sentinel; the second element lists
-    which sensitive fields are currently set (so the UI can show "saved")."""
-    sensitive = _sensitive_field_names(schema)
-    masked = dict(config or {})
-    were_set: list[str] = []
-    for key in sensitive:
-        if str(masked.get(key, "") or ""):
-            masked[key] = _SECRET_MASK
-            were_set.append(key)
-    return masked, were_set
-
-
 async def api_app_config_get(request: web.Request) -> web.Response:
     from personalclaw.apps.app_config import read_config
     from personalclaw.apps.app_manager import _manifest_of
+    from personalclaw.apps.secret_fields import mask_secrets
 
     name = request.match_info["name"]
     manifest = _manifest_of(name)
@@ -768,7 +743,7 @@ async def api_app_config_get(request: web.Request) -> web.Response:
     schema = _effective_config_schema(manifest)
     # Write-only sensitive fields: mask the stored secret, never send it in the clear
     # (#43). ``_secret_set`` tells the UI which sensitive fields are already set.
-    masked, secret_set = _mask_secret_config(read_config(name), schema)
+    masked, secret_set = mask_secrets(read_config(name), schema)
     return web.json_response(
         {
             "name": name,
@@ -782,6 +757,7 @@ async def api_app_config_get(request: web.Request) -> web.Response:
 async def api_app_config_put(request: web.Request) -> web.Response:
     from personalclaw.apps.app_config import AppConfigError, read_config, write_config
     from personalclaw.apps.app_manager import _manifest_of
+    from personalclaw.apps.secret_fields import mask_secrets, preserve_unchanged_secrets
 
     name = request.match_info["name"]
     manifest = _manifest_of(name)
@@ -794,19 +770,7 @@ async def api_app_config_put(request: web.Request) -> web.Response:
     schema = _effective_config_schema(manifest)
     # A sensitive field carrying the mask sentinel (or empty when it was already set)
     # means "keep the stored secret" — don't overwrite it with the placeholder (#43).
-    if isinstance(values, dict):
-        existing = read_config(name)
-        for key in _sensitive_field_names(schema):
-            if key not in values:
-                continue
-            incoming = str(values.get(key, "") or "")
-            had_value = bool(str(existing.get(key, "") or ""))
-            if incoming == _SECRET_MASK or (incoming == "" and had_value):
-                # Preserve the existing secret rather than clobbering it.
-                if had_value:
-                    values[key] = existing[key]
-                else:
-                    values.pop(key, None)
+    values = preserve_unchanged_secrets(values, read_config(name), schema)
     try:
         saved = write_config(name, values, schema)
     except AppConfigError as exc:
@@ -814,7 +778,7 @@ async def api_app_config_put(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=400)
     _sel_log("apps.config", "ok", name, request)
     # Never echo the freshly-saved secret back either — mask on the response too.
-    masked, secret_set = _mask_secret_config(saved, schema)
+    masked, secret_set = mask_secrets(saved, schema)
     return web.json_response(
         {"ok": True, "name": name, "config": masked, "_secret_set": secret_set}
     )

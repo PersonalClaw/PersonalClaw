@@ -20,6 +20,25 @@ Every failure answers with the one wire error envelope
 only success keeps its ``{"ok": true, ...}`` shape. A "test connection" failure in
 particular is a real 4xx/5xx so the frontend's shared error funnel (which fires on
 ``!response.ok``) surfaces guidance instead of a raw Python exception.
+
+**A sensitive instance setting is write-only on every one of these routes.** An instance's
+``to_dict()`` is the store's DISK serializer, and each of the four config-bearing routes
+handed it straight to a response body — so an ``x-meta.sensitive`` field came back in
+cleartext on create, on update, on read, and on every list. Measured against a live
+gateway with ``openai-models`` (``multiInstance: true``, ``api_key`` sensitive): all four
+returned the stored key verbatim, and the list route returned EVERY configured instance's
+key in one body. Eleven bundled model apps have exactly that shape.
+
+**Who reaches these routes — measured, not assumed.** A cold Settings → Providers load calls
+``GET .../instances`` once per enabled multi-instance provider; measured, that is
+``mcp-tools`` and ``openai-tools``. It does NOT call them for a **model** provider, which
+renders through ``ModelBackends.tsx`` off ``/api/model-providers`` and never asks for an
+instance config. So the eleven model apps leaked to any API client holding a token (CLI,
+script, another app) rather than through the shipped dashboard page. That changes who was
+exposed, not whether the routes leak — which is why the mask belongs at the route rather
+than in a view. The masking policy is
+:mod:`personalclaw.apps.secret_fields` — the same one the two single-config routes use, not
+a second copy — reached here through :func:`~personalclaw.apps.secret_fields.mask_instance`.
 """
 
 import logging
@@ -27,6 +46,7 @@ import logging
 import aiohttp
 from aiohttp import web
 
+from personalclaw.apps.secret_fields import mask_instance, preserve_unchanged_secrets
 from personalclaw.http_errors import json_error
 from personalclaw.providers import mcp_instances as _mcp
 from personalclaw.providers.failure_copy import connectivity_guidance
@@ -108,15 +128,26 @@ async def handle_list_instances(request: web.Request) -> web.Response:
             status=400,
         )
 
+    # Every instance is serialized for the WIRE, not for disk: `mask_instance` withholds
+    # each `x-meta.sensitive` field. This route is the worst of the four because it is the
+    # only one that needs no operator action: N instances' secrets in ONE body, and a cold
+    # Settings → Providers load calls it once per enabled multi-instance provider (measured:
+    # `mcp-tools`, `openai-tools`). A model app's instances are NOT fetched here by the
+    # dashboard — see the module docstring — so for those the exposure is to any
+    # token-holding API client rather than to the browser.
+    schema = ext.provider_config.settingsSchema
+
     # The mcp-tools card reads/writes the ONE store the native loop consumes
     # (~/.personalclaw/mcp.json), not the generic instance store.
     if name == _mcp.MCP_TOOLS_EXTENSION:
-        return web.json_response({"instances": [i.to_dict() for i in _mcp.list_instances()]})
+        return web.json_response(
+            {"instances": [mask_instance(i, schema) for i in _mcp.list_instances()]}
+        )
 
     instances = list_instances(name)
     return web.json_response(
         {
-            "instances": [inst.to_dict() for inst in instances],
+            "instances": [mask_instance(inst, schema) for inst in instances],
         }
     )
 
@@ -153,8 +184,17 @@ async def handle_create_instance(request: web.Request) -> web.Response:
             "invalid_body", message="The 'config' field must be a JSON object.", status=400
         )
 
-    # Validate against schema
     schema = ext.provider_config.settingsSchema
+    # Nothing is stored yet, so there is no secret to preserve — but a client that has been
+    # handed a mask by any of the read routes must not be able to persist the SENTINEL as a
+    # credential. Against an empty "existing" the shared helper drops such a field, which is
+    # the only correct reading of ``SECRET_MASK`` arriving where no value exists. (Spelled by
+    # NAME, not as the sentinel's literal value: test_provider_config_secrets.py's one-owner
+    # rail is keyed on that value appearing in exactly one module, and it does not — and should
+    # not — make an exception for comments.)
+    config = preserve_unchanged_secrets(config, {}, schema)
+
+    # Validate against schema
     errors = ProviderSettings.validate(config, schema)
     if errors:
         return json_error(
@@ -170,33 +210,49 @@ async def handle_create_instance(request: web.Request) -> web.Response:
         except ValueError as exc:
             return json_error("bad_request", message=str(exc), status=400)
         _rebuild_agent_config_safe()
-        return web.json_response({"instance": inst.to_dict()}, status=201)
+        return web.json_response({"instance": mask_instance(inst, schema)}, status=201)
 
     inst = create_instance(name, display_name=display_name, config=config)
     _refresh_tool_provider_safe(name)
-    return web.json_response({"instance": inst.to_dict()}, status=201)
+    return web.json_response({"instance": mask_instance(inst, schema)}, status=201)
 
 
 async def handle_get_instance(request: web.Request) -> web.Response:
     """GET /api/providers/{name}/instances/{id}"""
     from personalclaw.providers.instances import get_instance
+    from personalclaw.providers.registry import get_provider_registry
 
     name = request.match_info["name"]
     instance_id = request.match_info["id"]
+
+    # The registry lookup is what makes masking possible: which fields are sensitive is a
+    # property of the provider's settingsSchema, so without the extension there is no way to
+    # know what to withhold. This route was the only one of the six that never resolved the
+    # provider, and it answered with the raw stored config as a result. Refusing an
+    # unregistered provider — what list/create/update/test already do — is the fail-CLOSED
+    # reading; treating "no schema" as "nothing is sensitive" would hand the secret back.
+    registry = get_provider_registry()
+    ext = registry.get(name)
+    if not ext:
+        return json_error(
+            "not_found", message="No provider is registered under that name.", status=404
+        )
+    schema = ext.provider_config.settingsSchema
+
     if name == _mcp.MCP_TOOLS_EXTENSION:
         inst = _mcp.get_instance(instance_id)
         if not inst:
             return json_error("not_found", message="No instance exists with that id.", status=404)
-        return web.json_response({"instance": inst.to_dict()})
+        return web.json_response({"instance": mask_instance(inst, schema)})
     inst = get_instance(name, instance_id)
     if not inst:
         return json_error("not_found", message="No instance exists with that id.", status=404)
-    return web.json_response({"instance": inst.to_dict()})
+    return web.json_response({"instance": mask_instance(inst, schema)})
 
 
 async def handle_update_instance(request: web.Request) -> web.Response:
     """PUT /api/providers/{name}/instances/{id}"""
-    from personalclaw.providers.instances import update_instance
+    from personalclaw.providers.instances import get_instance, update_instance
     from personalclaw.providers.registry import get_provider_registry
     from personalclaw.providers.settings import ProviderSettings
 
@@ -215,6 +271,9 @@ async def handle_update_instance(request: web.Request) -> web.Response:
     except Exception:
         return json_error("invalid_json", status=400)
 
+    schema = ext.provider_config.settingsSchema
+    is_mcp = name == _mcp.MCP_TOOLS_EXTENSION
+
     # Validate config if provided
     config = body.get("config")
     if config is not None:
@@ -222,7 +281,14 @@ async def handle_update_instance(request: web.Request) -> web.Response:
             return json_error(
                 "invalid_body", message="The 'config' field must be a JSON object.", status=400
             )
-        schema = ext.provider_config.settingsSchema
+        # The other half of masking the reads, and NOT optional: the instance editor seeds its
+        # form from the list route's config and PUTs the whole dict back, so once that config
+        # arrives masked, saving an unrelated field (a model id, an endpoint) would write the
+        # mask sentinel over a working API key and silently break the provider. That would be
+        # a worse bug than the leak. Runs BEFORE validation so the restored real value is what
+        # gets validated — a sentinel has no reason to satisfy a pattern or a minLength.
+        existing = _mcp.get_instance(instance_id) if is_mcp else get_instance(name, instance_id)
+        config = preserve_unchanged_secrets(config, existing.config if existing else {}, schema)
         errors = ProviderSettings.validate(config, schema)
         if errors:
             return json_error(
@@ -232,12 +298,12 @@ async def handle_update_instance(request: web.Request) -> web.Response:
                 error_extra={"details": errors},
             )
 
-    if name == _mcp.MCP_TOOLS_EXTENSION:
+    if is_mcp:
         inst = _mcp.update_instance(instance_id, config=config, enabled=body.get("enabled"))
         if not inst:
             return json_error("not_found", message="No instance exists with that id.", status=404)
         _rebuild_agent_config_safe()
-        return web.json_response({"instance": inst.to_dict()})
+        return web.json_response({"instance": mask_instance(inst, schema)})
 
     inst = update_instance(
         name,
@@ -249,7 +315,7 @@ async def handle_update_instance(request: web.Request) -> web.Response:
     if not inst:
         return json_error("not_found", message="No instance exists with that id.", status=404)
     _refresh_tool_provider_safe(name)
-    return web.json_response({"instance": inst.to_dict()})
+    return web.json_response({"instance": mask_instance(inst, schema)})
 
 
 async def handle_delete_instance(request: web.Request) -> web.Response:
