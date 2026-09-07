@@ -4164,7 +4164,7 @@ export interface DashboardConfig {
   username: string
   // server-stored message display prefs (consistent across browsers)
   send_on_enter: boolean; show_timestamps: boolean; show_thinking_inline: boolean
-  simplified_tool_names: boolean; confirm_close_session: boolean
+  simplified_tool_names: boolean
   // Follow-up chips after each reply (default on) + streaming reveal cadence.
   followup_chips: boolean; offer_check_work: boolean; stream_reveal: 'smooth' | 'immediate'
   // MI-4 master opt-in for the composer's screen-share control. OFF by default; the

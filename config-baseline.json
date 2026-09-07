@@ -303,12 +303,6 @@
     "type": "bool"
   },
   {
-    "default": false,
-    "path": "dashboard.confirm_close_session",
-    "sensitive": false,
-    "type": "bool"
-  },
-  {
     "default": {},
     "path": "dashboard.dashboard_layout",
     "sensitive": false,

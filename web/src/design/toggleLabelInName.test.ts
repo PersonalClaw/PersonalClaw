@@ -15,7 +15,13 @@ import { join } from 'node:path'
 //   #/settings/notifications   "Mute all notifications"          → name "Mute all"
 //   #/settings/notifications   "Enable quiet hours"              → name "Quiet hours"
 //   #/settings/chat            "Restore sessions on startup"     → name "Restore sessions"
-//   #/settings/chat            "Confirm before closing a session" → name "Confirm before closing"
+//
+// A FIFTH chat row, "Confirm before closing a session", was in this census and is GONE — the toggle
+// was removed, not reworded. It was a preference with no reader whose stated action did not exist:
+// the sidebar has no "close a session", only a permanent DELETE that already confirms
+// unconditionally, and the setting defaulted to false — so honouring it would have stripped that
+// confirmation from every default user. Dropped here because the row it asserted on is gone, which
+// is the only reason a census entry may leave.
 //
 // A FIFTH lives in `NotificationRulesMatrix`: visible "Escalate on name mention" → name "Name mention".
 // The runtime census could not see it, because those rows sit inside a COLLAPSED per-kind section and are
@@ -91,7 +97,6 @@ describe('a toggle’s accessible name contains its visible row label', () => {
     expect(notif).toMatch(/label="Mute all notifications" \/>/)
     expect(notif).toMatch(/label="Enable quiet hours" \/>/)
     expect(chat).toMatch(/label="Restore sessions on startup" \/>/)
-    expect(chat).toMatch(/label="Confirm before closing a session" \/>/)
     expect(readFileSync(join(SRC, 'pages/settings/NotificationRulesMatrix.tsx'), 'utf8'))
       .toMatch(/label="Escalate on name mention" \/>/)
   })
@@ -103,7 +108,6 @@ describe('a toggle’s accessible name contains its visible row label', () => {
     expect(notif).toMatch(/<Row label="Mute all notifications" hint="Pause every notification regardless of severity\.">/)
     expect(notif).toMatch(/<Row label="Enable quiet hours">/)
     expect(chat).toMatch(/<Row label="Restore sessions on startup"/)
-    expect(chat).toMatch(/<Row label="Confirm before closing a session"/)
   })
 
   it('the quote-glyph pair is deliberately left alone', () => {

@@ -1461,13 +1461,6 @@ class DashboardConfig:
             enum=["smooth", "immediate"],
         ),
     )
-    confirm_close_session: bool = field(
-        default=False,
-        metadata=_meta(
-            "Confirm Before Closing Session",
-            "Ask for confirmation when closing a session from the sidebar.",
-        ),
-    )
     auto_open_browser: bool = field(
         default=True,
         metadata=_meta(
@@ -3488,7 +3481,6 @@ class AppConfig:
                 followup_chips=dashboard_data.get("followup_chips", True),
                 offer_check_work=bool(dashboard_data.get("offer_check_work", True)),
                 stream_reveal=dashboard_data.get("stream_reveal", "smooth"),
-                confirm_close_session=dashboard_data.get("confirm_close_session", False),
                 auto_open_browser=dashboard_data.get("auto_open_browser", True),
                 update_dev_mode=dashboard_data.get("update_dev_mode", False),
                 # Opt-in, read with a False default: a config.json that is missing the
