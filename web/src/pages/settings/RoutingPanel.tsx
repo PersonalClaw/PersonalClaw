@@ -472,12 +472,18 @@ function RoutingPolicySection({ useCase, queryClass }: { useCase: string; queryC
                     <span className="flex-1 truncate font-mono text-on-surface" title={ref}>{ref}</span>
                     <span data-type="caption" className="text-on-surface-low">{local ? 'local' : 'cloud'}</span>
                     {/* `size-7` (28px), not `p-1` (21px): an icon-only control needs 24px of target.
-                        These deliberately keep `unavailableWhen` rather than adopting
-                        `SquareIconButton` — the primitive maps `disabled` to `aria-disabled` and never
-                        to the native attribute, but `unavailableWhen` goes NATIVELY disabled while
-                        `busy` on purpose, so an in-flight save cannot be fired twice. Borrowing the
-                        primitive's geometry keeps that semantic while matching how every other
-                        icon-button in the app measures. */}
+                        These keep `unavailableWhen` rather than adopting `SquareIconButton`, and the
+                        reason recorded here USED TO BE FACTUALLY WRONG — worth correcting rather than
+                        deleting, because it was steering future work away from the primitive on a
+                        premise that does not hold. It said the primitive "never" sets the native
+                        attribute so an in-flight save could be fired twice. It cannot: `IconButton`
+                        guards with `off = !!disabled || loading` and drops `onClick` entirely, which
+                        its own comment states exists so that "`loading` would [not] trade a false
+                        'unavailable' for a double-fire". So the primitive refuses the second click too.
+                        What actually keeps these on `unavailableWhen` is the missing-input REASON: a
+                        soft-off with a title ("Already tried first") on a control that stays tabbable,
+                        which is this helper's whole purpose. Its busy branch now also carries
+                        `aria-busy`, so the two paths no longer disagree about what in-flight means. */}
                     <button type="button"
                       {...unavailableWhen(i === 0, 'Already tried first', { busy })}
                       onClick={() => move(i, -1)}

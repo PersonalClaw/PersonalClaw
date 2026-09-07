@@ -54,12 +54,58 @@ describe('unavailableWhen', () => {
     expect(unavailableWhen(false, 'x', { title: 'Add' })).toEqual({ title: 'Add' })
   })
 
-  it('goes NATIVELY disabled while busy, and says nothing extra', () => {
-    // An in-flight action must not be re-clickable; aria-busy already announces the state.
+  // 🔴 THIS TEST CERTIFIED THE DEFECT IT WAS NAMED AFTER. It read "goes NATIVELY disabled while busy,
+  // and says nothing extra", under the comment *"aria-busy already announces the state"* — then
+  // asserted `disabled`, `aria-disabled` undefined and `title` undefined, and **never asserted
+  // `aria-busy`**, which the helper did not return. A test that names the property it does not check
+  // reads as coverage of it. The claim was false too: `ui/Button` records that the same spinner is
+  // `aria-hidden`, "so sighted users see the action is in flight and everyone else got NO signal at
+  // all", and two of the nine `busy` call sites render no spinner at all.
+  it('goes natively disabled while busy AND announces itself as busy', () => {
     const props = unavailableWhen(true, 'Enter a host first', { busy: true })
+    // Native `disabled` stops the second click — a raw <button> has no `off = disabled || loading`
+    // guard of its own, so the attribute is what prevents the double-fire.
     expect(props.disabled).toBe(true)
+    // 🔑 …and this is what says WHY. Without it the control announces "unavailable", which to a
+    // screen-reader user is indistinguishable from a gate they can never satisfy.
+    expect(props['aria-busy'], 'busy must announce as working, not as unavailable').toBe(true)
+    // Busy takes precedence: a control cannot coherently be both "working" and "you have not filled
+    // this in", so the missing-input reason must not also fire.
     expect(props['aria-disabled']).toBeUndefined()
-    expect(props.title, 'the busy reason is self-evident from the spinner').toBeUndefined()
+    expect(props.title, 'no reason is appended on the busy branch').toBeUndefined()
+  })
+
+  it('🪤 the NON-busy branches carry no aria-busy — it is not a blanket addition', () => {
+    // The over-correction this guards: `aria-busy` on a control that is merely unavailable would
+    // claim work is happening when nothing is.
+    expect(unavailableWhen(true, 'Enter a host first')['aria-busy']).toBeUndefined()
+    expect(unavailableWhen(false, 'x')['aria-busy']).toBeUndefined()
+    expect(unavailableWhen(false, 'x', { title: 'Add' })['aria-busy']).toBeUndefined()
+  })
+
+  it('the fix REACHES the busy call sites, measured — not assumed from one unit test', () => {
+    // The one-line change is only worth anything if the sites that pass `busy` actually spread the
+    // result. Measured rather than asserted: 9 sites across 8 files at the time of the fix.
+    // 🪤 Comments blanked in place — this file and `RoutingPanel` both DISCUSS `busy` in prose.
+    const SRC = join(__dirname, '..')
+    const strip = (s: string) => s
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
+      .replace(/^(\s*)\/\/.*$/gm, '$1')
+    const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
+      const p = join(d, n)
+      if (statSync(p).isDirectory()) return walk(p)
+      return /\.tsx?$/.test(n) && !/\.(test|doc)\.tsx?$/.test(n) ? [p] : []
+    })
+    let busySites = 0
+    for (const abs of walk(SRC)) {
+      const code = strip(readFileSync(abs, 'utf8'))
+      // Every call form in the tree spreads the result directly into the element.
+      for (const m of code.matchAll(/\{\.\.\.unavailableWhen\([\s\S]{0,200}?\)\}/g)) {
+        if (/busy/.test(m[0])) busySites += 1
+      }
+    }
+    expect(busySites, 'busy-passing call sites, all of which now announce').toBeGreaterThanOrEqual(9)
   })
 
   it('busy wins even when nothing is missing', () => {
