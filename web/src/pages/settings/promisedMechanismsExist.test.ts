@@ -214,6 +214,14 @@ describe('the census: every empty-state promise is accounted for', () => {
       // background mechanism that might be descoped:
       'pages/ChatPage.tsx',                           // "start a conversation — your sessions will appear": the user's own action makes the row
       'pages/code/CodeCockpitPage.tsx',               // gated on `running`; the files come from the run in flight, and the panel lists the workspace
+      // PP-16 seam 4: "the rail fills as the run works" is the LIVE-RUN class above, and the
+      // mechanism is named rather than hoped for — the engine's own `RunJournal.step_completed`
+      // appends one ledger event per completed step, and this panel projects exactly that kind
+      // (`introspection.findings_rail`). Traced in the same change:
+      // `tests/test_pp16_ledger_rails.py::test_the_rails_agree_with_the_ledgers_own_step_aggregate`
+      // pins the rail's row count to `ledger.reader.run_totals`' `steps_completed`, so the copy is
+      // backed by an assertion rather than by a comment — checked
+      'pages/workflows/LedgerRailsPanel.tsx',
     ]
     const unverified: string[] = []
     for (const abs of walk(SRC)) {

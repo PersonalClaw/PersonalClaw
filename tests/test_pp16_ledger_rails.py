@@ -509,12 +509,16 @@ def test_the_rails_project_the_same_kinds_the_loop_rails_do(run_home):
     assert findings_rail([{"kind": STEP_COMPLETED, "ts": "t", "node_id": "n"}]) == findings
 
 
-def test_the_payload_carries_no_secret_from_a_degraded_reason(run_home):
-    """The rails route through the journal's own redactor — findings carry free text.
+def test_a_secret_written_through_the_journal_never_reaches_the_rails(run_home):
+    """End-to-end floor: a credential in a degraded reason does not leave the process.
 
-    A degraded reason and a model id are exactly where a credential surfaces in a screenshot, and
-    `api_run_node_inspect` already established that reusing the writer's redactor (rather than
-    re-deriving one) is how the two cannot drift.
+    NOTE ON WHAT PROTECTS THIS, because a mutation test measured it rather than assuming: the
+    guarantee here comes from the WRITE path. `ledger/writer.py::_append` redacts every record
+    before it touches disk, so a row written through `Journal` is already safe by the time any
+    rail reads it — deleting the rails' read-side `redact` leaves this test green. That makes this
+    test a real end-to-end assertion and NOT a test of the read-side redaction; the test below is
+    the one that pins that. Keeping both is the point: this one catches a writer that stops
+    redacting, that one catches a reader that starts trusting the file.
     """
     from personalclaw.workflows import service
 
@@ -530,6 +534,63 @@ def test_the_payload_carries_no_secret_from_a_degraded_reason(run_home):
     payload = service.ledger_rails(run_id)
     assert payload["findings"], "vacuity floor: nothing was projected to redact"
     assert "sk-ABCDEF1234567890abcdef" not in str(payload), "a secret reached the rails payload"
+
+
+#: A credential shape `ledger/redaction.py` really does catch, asserted before it is relied on.
+_SECRET = "sk-ZYXWVU9876543210zyxwvuQP"
+
+
+@pytest.mark.parametrize(
+    ("rail", "raw_row"),
+    [
+        (
+            "findings",
+            {
+                "kind": "step_completed",
+                "node_id": "raw",
+                "degraded_reason": f"token {_SECRET} fell",
+            },
+        ),
+        (
+            "verdicts",
+            {"kind": "judge_verdict", "node_id": "raw", "verdict": f"REJECT because {_SECRET}"},
+        ),
+    ],
+)
+def test_a_raw_row_that_bypassed_the_writer_is_still_redacted_on_read(run_home, rail, raw_row):
+    """The read-side redaction, railed against a row the writer never saw — on BOTH rails.
+
+    A ledger is append-only history: `events.jsonl` accumulates rows written by whatever core was
+    installed at the time, and `store.append_jsonl` is the raw seam BELOW the redacting writer
+    (`_append` redacts, then calls it). So a row can exist on disk that write-time redaction never
+    touched — an older core, a hand-repaired ledger, a producer that appended directly. Planted
+    exactly that way here, which is what makes the rails' own `journal_mod.redact` load-bearing
+    rather than decorative, and it is the same reason `introspection_timeline` and
+    `api_run_node_inspect` redact on read too.
+
+    PARAMETRIZED over both rails because a mutation test measured that it had to be: with only the
+    findings leg covered, deleting the verdict leg's `redact` left the suite green.
+
+    Reuses the writer's redactor rather than re-deriving one, so the two cannot drift.
+    """
+    from personalclaw.ledger import EVENTS_FILE
+    from personalclaw.ledger.redaction import redact
+    from personalclaw.workflows import service, store
+
+    # Floor for the floor: if the redactor does not recognise this shape, every assertion below
+    # would pass on a payload that leaked. Measured here rather than assumed — a shorter token was
+    # not matched, which is exactly how this test first passed while proving nothing.
+    assert _SECRET not in redact(f"token {_SECRET} fell"), "the fixture is not a redactable shape"
+
+    run_id = _run_with(f"rails-raw-{rail}", [("step_completed", _RUN_STEP)])
+    # BELOW the writer: no `redact`, no `seq`, no `event_id` — the file as a foreign core left it.
+    store.append_jsonl(run_id, EVENTS_FILE, {"ts": "2026-09-06T00:00:00Z", **raw_row})
+    payload = service.ledger_rails(run_id)
+    planted = [row for row in payload[rail] if row["node_id"] == "raw"]
+    assert planted, f"vacuity floor: the planted raw row reached no {rail} row"
+    assert _SECRET not in str(
+        payload
+    ), f"a {rail} row that bypassed the writer reached the payload un-redacted"
 
 
 def test_introspection_stays_pure_over_event_lists(run_home):

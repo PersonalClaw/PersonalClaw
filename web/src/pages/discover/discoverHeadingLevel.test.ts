@@ -105,11 +105,19 @@ describe("Discover's area headings sit one rung under the page title", () => {
     //     `data-type="label-s"` rather than the tag. Same shape as `VoicePanel`'s own
     //     "Learned corrections" h3 two lines below. Panel-level, correctly nested: the
     //     classification above still holds.
+    // 2026-09-06, re-done again:
+    //   · `workflows/LedgerRailsPanel` JOINED it — PP-16's run-side ledger rails render inside a
+    //     `SidePanel`, whose title is the h2, so its "Rail totals" / "Findings rail" / "Verdict /
+    //     ROI rail" section headings sit at exactly the rung nesting calls for (`H1 > H2 > H3`).
+    //     Identical shape to the three `workflows/` panels already beside it, which are its
+    //     siblings on the same run-detail surface. Panel-level, correctly nested: the
+    //     classification above still holds.
     expect(withH3.sort(), 'files still using h3').toEqual([
       'pages/code/CodeCockpitPage.tsx',
       'pages/settings/VoicePanel.tsx',
       'pages/settings/VoiceProfilesSection.tsx',
       'pages/workflows/IntrospectPanel.tsx',
+      'pages/workflows/LedgerRailsPanel.tsx',
       'pages/workflows/NodeInspectorDrawer.tsx',
       'pages/workflows/OutboxPanel.tsx',
       'pages/workflows/WorkspacePanel.tsx',
