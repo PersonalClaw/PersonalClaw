@@ -4,6 +4,7 @@ import { api, type ExternalAccessClient, type ExternalAccessSurface } from '../.
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { Button } from '../../ui/Button'
 import { PanelHeader, Section, RowGroup, Row, Toggle, NumberRow, StrListField } from './settingsUI'
+import { LoadError, Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 
 // Named `CACHE_KEY`, not `KEY`. `dataLayerAdoption.test.ts` resolves an identifier
 // handed to `useQuery` by matching `const <NAME> = '…'` across the WHOLE tree, so a
@@ -50,7 +51,19 @@ const SURFACE_COPY: Record<string, { label: string; hint: string }> = {
  *  reveal respectively. A control that is absent by design is noted in prose where a
  *  user would otherwise hunt for it. */
 export function ExternalAccessPanel() {
-  const { data, refresh } = useQuery(CACHE_KEY, () => api.externalAccess().catch(() => null), {
+  // 🔴 THE READ MUST REJECT, OR THIS PAGE ASSERTS A SECURITY POSTURE IT NEVER READ.
+  // This fetcher used to end `.catch(() => null)`. `useQuery` derives `status` from
+  // `data === undefined && error != null`, so swallowing the rejection made `error` permanently
+  // null and `status` permanently 'loading' — the error branch below could not have fired even
+  // if it had existed. With `data` absent, `master` computed `Boolean(undefined?.enabled)` ===
+  // false, the master switch rendered OFF, and every surface below explained itself with "the
+  // master switch is off". A failed read therefore told the user that nothing is exposed.
+  //
+  // That is the precise outcome `act()`'s own comment below calls the worst on this page — "the
+  // user believes a surface is off when it is serving" — reasoned out for the WRITE path while
+  // the READ path did it silently. Fail-reassuring is worse than failing loudly here: someone
+  // checking whether anything is exposed gets "no" when the truth is unknown.
+  const { data, status, error: readError, refresh } = useQuery(CACHE_KEY, () => api.externalAccess(), {
     persist: false,
   })
   const [busy, setBusy] = useState('')
@@ -102,11 +115,46 @@ export function ExternalAccessPanel() {
   const surfaces = data?.surfaces ?? []
   const clients = data?.clients ?? []
 
+  // The header stays in both gated states below: its hint is the one thing on this page that is
+  // true regardless of what the read returned, and it orients someone who has just been told the
+  // state could not be fetched.
+  const header = (
+    <PanelHeader
+      title="External Access"
+      hint="Ways for something outside this machine to reach PersonalClaw. Every surface is off until you turn it on AND give it its own token, and every one is loopback-only unless you deliberately widen it in config.json. Nothing here is on by default." />
+  )
+
+  // 🔑 GATE BEFORE ANY SWITCH RENDERS. Not cosmetic sequencing: every control below reports a
+  // boolean, and a boolean derived from an absent response is a claim about this machine's
+  // exposure that nobody verified. Neither branch may render a switch.
+  if (status === 'error') {
+    return (
+      <div>
+        {header}
+        <LoadError what="external access settings" error={readError} onRetry={refresh} />
+      </div>
+    )
+  }
+  if (status === 'loading') {
+    return (
+      <div>
+        {header}
+        {/* `LoadingStatus` is not optional decoration: `design/busyRegionAnnounced` requires every
+            aria-busy region to carry it, because skeleton boxes announce nothing to a screen reader —
+            and on THIS panel the thing being announced is that the exposure state is not known yet. */}
+        <div className="flex flex-col gap-3 py-2" role="status" aria-busy="true">
+          <LoadingStatus what="external access settings" />
+          <Skeleton className="h-14 w-full rounded-lg" />
+          <Skeleton className="h-14 w-full rounded-lg" />
+          <Skeleton className="h-14 w-full rounded-lg" />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div>
-      <PanelHeader
-        title="External Access"
-        hint="Ways for something outside this machine to reach PersonalClaw. Every surface is off until you turn it on AND give it its own token, and every one is loopback-only unless you deliberately widen it in config.json. Nothing here is on by default." />
+      {header}
 
       {error && (
         <div

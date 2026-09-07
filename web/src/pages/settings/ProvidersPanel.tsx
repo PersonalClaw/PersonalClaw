@@ -8,7 +8,7 @@ import { useQuery, invalidateKeys } from '../../lib/data'
 import { requestRunInTerminal } from '../terminal/terminalBridge'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { Section, PanelHeader } from './settingsUI'
-import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
+import { Skeleton, LoadingStatus, LoadError } from '../../ui/ListScaffold'
 import { ProviderCard } from './ProviderCard'
 import { MultiInstanceCard } from './MultiInstanceCard'
 import { RemoteModelProviders } from './ModelBackends'
@@ -67,8 +67,19 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
   // paints instantly from cache and revalidates in the background — no long
   // "Loading…". The two fetches are independent: the provider list renders as soon
   // as IT lands, without waiting on the slower agent-runtime readiness probe.
-  const { data: providers, refresh: refreshProviders } = useQuery(
-    'settings:providers', () => api.settingsProviders().catch(() => [] as SettingsProvider[]), { persist: true },
+  // 🔴 THIS READ MUST REJECT — IT IS THE ONE THE ZERO-CARD RENDER MAKES A CLAIM ABOUT.
+  // It used to end `.catch(() => [] as SettingsProvider[])`, and `[]` is TRUTHY, so the
+  // `if (!providers) return <ProvidersSkeleton />` gate below could never fire on a failure: the
+  // page rendered its header over zero cards, which reads as a confident "you have no providers
+  // configured" produced by a request that never landed.
+  //
+  // The three reads below KEEP their `.catch` deliberately — the same split
+  // `pages/agents/agentsData.ts` makes, and its rail records the reasoning: the read an empty
+  // state makes a claim about has to propagate, while enrichment reads (runtime readiness, model
+  // catalogs, live channel health) stay tolerant so one dead subsystem renders as its own unready
+  // card instead of taking the whole page down.
+  const { data: providers, status: providersStatus, error: providersError, refresh: refreshProviders } = useQuery(
+    'settings:providers', () => api.settingsProviders(), { persist: true },
   )
   const { data: runtimesData, refresh: refreshRuntimes } = useQuery(
     'settings:agent-runtimes', () => api.agentRuntimes().catch(() => [] as AgentRuntime[]), { persist: true },
@@ -124,6 +135,13 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
       const rt = rts.find((r) => r.provider_id === id || r.name === id)
       if (rt && rt.state !== 'needs_login') return  // signed in (ready) or a new state
     }
+  }
+
+  // 🔑 THE FAILURE BRANCH COMES FIRST, and it has to: `providers` is `undefined` both while
+  // loading and after a rejection, so the skeleton below would otherwise claim "still loading"
+  // forever on a dead read — the same never-resolving state the `useQuery` docstring warns about.
+  if (providersStatus === 'error') {
+    return <LoadError what="provider settings" error={providersError} onRetry={refreshProviders} />
   }
 
   // First load with nothing cached: render the section SHAPE (skeleton) so the
