@@ -309,9 +309,6 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
           <SegPills ariaLabel="Widget density" value={cfg.widget_density} onChange={(v) => save({ widget_density: v as 'more' | 'less' })}
             options={[{ key: 'more', label: 'More' }, { key: 'less', label: 'Less' }]} />
         </Row>
-        <Row label="Confirm before closing a session" hint="Ask for confirmation when closing a session from the sidebar.">
-          <Toggle on={cfg.confirm_close_session} onChange={(v) => save({ confirm_close_session: v })} label="Confirm before closing a session" />
-        </Row>
       </RowGroup>
     </Section>
   )
