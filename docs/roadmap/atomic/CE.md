@@ -4,7 +4,7 @@
 **Code:** `CE`  
 **Source status:** proposed
 
-CHANNEL-EXPANSION is DESIGNED and fully unstarted (no core trust seam, no channel apps, no kit/guide/CLI). 9 atoms, all todo: 1 core trust seam, 1 Slack migration, 3 channel apps (Telegram/Discord/email), plus a conformance kit, guide, Slack full-pattern, and ramp-coordination atom. Cross-plan edges to INBOX-NOTIFICATIONS-UNIFICATION (agent_request inbox kind), ECOSYSTEM-TOOLING (channel scaffold), and WORKFLOWS-V2-AUTOMATION-SUBSTRATE (trigger source).
+CHANNEL-EXPANSION decomposed into 10 atoms (CE-1..CE-10): 8 done (core trust seam; Slack migration; three channel apps Telegram/Discord/email; conformance kit; channel guide; Slack brought to the full vendor-completeness pattern), 1 blocked (CE-9 ramp coordination — its scaffold-registration and trigger-source clauses are MET and evidenced in-tree per PR #2559; only the owner's risk-policy approval and the posting of the three community issues remain), 1 todo (CE-10, minted 2026-09-07: adopt the trigger-source seam in the shipped channel apps, because WF2AUT-8's seam landed with 0/4 adopters and no atom in the whole dag required one — issue #2557). Cross-plan edges to INBOX-NOTIFICATIONS-UNIFICATION (agent_request inbox kind) and WORKFLOWS-V2-AUTOMATION-SUBSTRATE (trigger source). The former edge to ECOSYSTEM-TOOLING's bounty board was CUT per the owner's 2026-08-28 ruling in this plan — the ruling whose own follow-up line was never executed — which is what broke the CE-9 ⇄ ET-7 cycle.
 
 Each atom below executes start-to-finish in one go. If an atom lists dependencies, they must be `done` before it starts — that is the whole point of the split: no atom should ever need pausing to go execute other work.
 
@@ -18,7 +18,8 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `CE-6` | ✅ | Channel conformance kit in core, wired into slack/telegram/discord/email test suites | `CE-1`, `CE-2`, `CE-3`, `CE-4`, `CE-5`, `EXT:INBOX-NOTIFICATIONS-UNIFICATION:emit_attention_item(kind=agent_request) for the unknown-sender inbox assertion (uses existing notification path until it lands)` | tests/channel_conformance.py::assert_channel_contract asserts connect/send/receive echo shapes, capabilities() completeness, health/test shapes, unknown-sender flow (canned reply + attention item), fence_channel_content applied to non-owner content, streaming throttle where declared; export-path decision recorded; all four apps pass the kit in apps-repo CI |
 | `CE-7` | ✅ | build-a-channel-app.md guide (from Telegram) + vendor-completeness section, and the kit's inbox-source check | `CE-3`, `CE-6`, `CE-8` | guide maps every ChannelDelivery/ChannelTransport method to a must/should/may obligation and documents transport lifecycle, trust integration, linking, conformance-kit usage, packaging; vendor-completeness section spells out the seam checklist (channel + inbox + trigger-source-when-available + contributed UI) and rule-2 'your UI, not core's' doctrine; conformance kit flags a channel-only app that does not also register an inbox source with a warning; S2-6 app tasks cite the checklist |
 | `CE-8` | ✅ | Bring Slack to the full vendor-completeness pattern: register the inbox MessageSourceProvider, move non-seam UI behind app ui block, scrub core vendor-name residue | `CE-2` | slack-channel app.json registers >=2 providers incl. an inbox MessageSourceProvider over the existing runtime client; Slack messages flow through the generic inbox source seam with no core slack string (inbox_providers docstring + native_source.py comment residue scrubbed); non-seam Slack surface lives behind the app's own ui block; boundary tests green |
-| `CE-9` | ⬜ | Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note | `CE-7`, `EXT:ECOSYSTEM-TOOLING:channel scaffold template + bounty board`, `EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:app-registered trigger source types` | WhatsApp/Signal/Matrix GitHub issues live and labeled community-tier with the risk-policy paragraph and guide+kit links (after owner approves the risk-policy paragraph); the `channel` template is registered with ECOSYSTEM-TOOLING's scaffold (or a DISCOVERY note filed if the scaffold has not landed); a coordination line into WORKFLOWS-V2-AUTOMATION-SUBSTRATE records the app-registered trigger-source forward obligation with no bespoke early event glue shipped |
+| `CE-9` | ⬜ | Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note | `CE-7`, `EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:app-registered trigger source types` | WhatsApp/Signal/Matrix GitHub issues live and labeled community-tier with the risk-policy paragraph and guide+kit links (after owner approves the risk-policy paragraph); the `channel` template is registered with ECOSYSTEM-TOOLING's scaffold (or a DISCOVERY note filed if the scaffold has not landed); a coordination line into WORKFLOWS-V2-AUTOMATION-SUBSTRATE records the app-registered trigger-source forward obligation with no bespoke early event glue shipped |
+| `CE-10` | ⬜ | Adopt the trigger-source seam in the shipped channel apps (retire the 0/4 forward obligation) | `CE-8`, `EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:app-registered trigger source types` | Each shipped channel app declares a `trigger_source` provider so an `app:<name>:<event>` trigger arms from real inbound traffic rather than from a test fixture; adoption is MEASURED at 4/4 by a test that reads the installed manifests rather than asserting a count, so a regression reds in either direction; the conformance kit's completeness advisory stops firing on those apps for a missing source; and no bespoke event glue is added — the apps reach the bus only through WF2AUT-8's registered TriggerSourceTypeHandler, with the zero-hit set (emit_event, SourceEvent, event_bus, register_source, dispatch_event, triggers.json) still zero in the apps repo afterwards. |
 
 ## Atom scopes
 
@@ -96,7 +97,7 @@ Amendment 2026-07-26 — T7.4 (apps slack-channel + core inbox_providers docstri
 
 ### `CE-9` — Ramp coordination: community bounty issues + channel scaffold registration + trigger-source forward note
 
-**Status:** todo
+**Status:** blocked (scaffold + trigger-source clauses met in-tree; the risk-policy approval and posting the three issues are owner actions)
 
 Sessions 7-8 — Ramp: T7.3 + Amendment T7.6; Design §S7-8; owner task 5 (risk-policy approval)
 
@@ -104,3 +105,20 @@ Sessions 7-8 — Ramp: T7.3 + Amendment T7.6; Design §S7-8; owner task 5 (risk-
 
 🟡 IMPLEMENTATION LANDED — the agent-buildable half is in-tree; what remains is owner-gated. The three issue drafts plus the shared risk-policy paragraph (PENDING OWNER APPROVAL, owner task 5) live in `docs/maintainers/community-bounty-drafts.md` with a posting checklist. The `channel` "registration" turned out to be satisfied by construction: ET-1's type table is *derived* from `PROVIDER_TYPES` + the provider registry, and a live run of `personalclaw app new --type channel` emits the full six-file app with a real `ChannelTransportProvider` stub introspected from `personalclaw.sdk.channel` — no registration edit exists to make, so no DISCOVERY note either. The WF2AUT coordination line already exists in `docs/roadmap/plans/WORKFLOWS-V2-AUTOMATION-SUBSTRATE.md` ("app-contributed trigger SOURCES are a real seam, not a maybe" — the WF2AUT-8 seam), and no bespoke event glue shipped here. Remaining for the flip: owner approves the risk-policy paragraph and the three issues get posted.
 
+### `CE-10` — Adopt the trigger-source seam in the shipped channel apps (retire the 0/4 forward obligation)
+
+**Status:** todo
+
+Gap filled 2026-09-07 — WF2AUT-8's seam shipped with zero adopters and no atom in the dag required one (issue #2557)
+
+**Done when:** Each shipped channel app declares a `trigger_source` provider so an `app:<name>:<event>` trigger arms from real inbound traffic rather than from a test fixture; adoption is MEASURED at 4/4 by a test that reads the installed manifests rather than asserting a count, so a regression reds in either direction; the conformance kit's completeness advisory stops firing on those apps for a missing source; and no bespoke event glue is added — the apps reach the bus only through WF2AUT-8's registered TriggerSourceTypeHandler, with the zero-hit set (emit_event, SourceEvent, event_bus, register_source, dispatch_event, triggers.json) still zero in the apps repo afterwards.
+
+**Minted 2026-09-07 — this is a gap, not new scope.** `WF2AUT-8` shipped the app-registered
+trigger-source seam and `CE-9` recorded the forward obligation, but nothing in the dag ever required
+anybody to *use* it. Exactly three atoms name the seam: `WF2AUT-8` shipped it, `CE-7` wrote the
+"trigger-source-when-available" checklist, and `CE-9` records the note. `CE-8`'s `done_when` stops at
+`channel` + `inbox`, which was the whole bar available when it was written, and
+WORKFLOWS-V2-AUTOMATION-SUBSTRATE is `done`, so no atom picks it up. Measured state at minting:
+adoption **0/4**, and the only implementer anywhere is the test fixture `_SampleSource`. The
+"no bespoke event glue" half of `CE-9` therefore passes for the wrong reason — nothing exists at all —
+which is why that clause is recorded in two halves rather than as a single green. Filed as #2557.
