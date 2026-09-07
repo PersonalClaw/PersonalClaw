@@ -19,6 +19,7 @@ import { notify } from '../../app/appSdk'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { api, type ToolItem, type McpServer, type ImportableMcpServer, type ToolLoadFailure, type McpPoolStats, type ToolGroupsData } from '../../lib/api'
+import { isKnownTrustTier, trustTierHint, trustTierLabel } from '../../lib/trustTier'
 import { schemaProps } from './schema'
 import { ToolInspector } from './ToolInspector'
 import { ToolGroupsTile } from './ToolGroupsTile'
@@ -43,6 +44,9 @@ interface Group {
   providerDisabled?: boolean  // whole native provider turned off
   providerLocked?: boolean    // platform provider — not toggleable/removable
   group?: string              // activation group (Context Economy §5); unset when grouping is off
+  /** Where this provider CAME FROM — `supply_chain.TrustTier` off the wire (#2627).
+   *  Read off the group's tools, which all share a provider and therefore a tier. */
+  tier?: string
 }
 
 function serverHealth(s: McpServer): { state: string; tone: string; detail?: string } {
@@ -215,6 +219,9 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
         key: p, label: p, kind: 'native', tools: filtered,
         providerDisabled: provOff, providerLocked: p === LOCKED_NATIVE_PROVIDER,
         group: groupOf(list),
+        // Off the UNFILTERED list: a group can render with `tools: []` when nothing is
+        // narrowing the view, and provenance must not vanish with the last matching tool.
+        tier: list[0]?.tier,
       })
     }
     out.sort((a, b) => a.label.localeCompare(b.label))
@@ -354,17 +361,50 @@ export function McpPoolTile({ stats }: { stats: McpPoolStats | null }) {
   )
 }
 
+/** THE PROVENANCE BADGE on a native provider group — THREE states, not two (#2627).
+ *
+ *  🔑 IT USED TO BE A BINARY, AND THE BINARY WAS WRONG IN THE REASSURING DIRECTION.
+ *  `providerLocked ? 'platform' : 'built-in'` meant every native group that is not locked read
+ *  `built-in` — and an installed community bundle is exactly that shape: native kind, not locked.
+ *  So the install dialog disclosed "Unsigned — community tier", the user consented to *that*, and
+ *  the page they later audit from ("what is running here, and where did it come from?") answered
+ *  with the word core's own first-party providers get. The tiers exist to inform consent; erasing
+ *  one on the audit surface inverts their point.
+ *
+ *  So the third state derives from WHERE THE PROVIDER CAME FROM (`tier`, off the wire) rather than
+ *  from whether it happens to be locked:
+ *    • `platform`   — provider-locked core. Still the strongest statement, so it still wins.
+ *    • `built-in`   — core, unlocked. `tier === 'builtin'`, which is what the catalog reports for a
+ *                     provider no installed app contributed.
+ *    • the tier     — an installed bundle, spelled by `lib/trustTier` — the SAME map the install
+ *                     dialog's signature row reads. Not a second literal: two literals is how the
+ *                     two surfaces came to disagree, and would be how they drift again.
+ *
+ *  🪤 `null` when the tier is UNKNOWN, and that is deliberate — see `isKnownTrustTier`. Defaulting
+ *  absence to `built-in` is the defect itself; defaulting it to `community tier` cries wolf about
+ *  the platform's own providers. Exported for test: the three states are only observable by
+ *  rendering, and the whole point of the fix is which word comes out.
+ */
+export function providerBadge(g: Pick<Group, 'providerLocked' | 'tier'>): { label: string; title: string } | null {
+  if (g.providerLocked) {
+    return { label: 'platform', title: "Ships with PersonalClaw and is required by platform features — it can't be disabled" }
+  }
+  if (!isKnownTrustTier(g.tier)) return null
+  return { label: trustTierLabel(g.tier), title: trustTierHint(g.tier) }
+}
+
 function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, onToggleProvider, onReconnect, reconnecting }: { g: Group; onOpen: (name: string) => void; onToggleServer: (s: McpServer) => void; onRemoveServer: (s: McpServer) => void; onToggleTool: (g: Group, t: ToolItem) => void; onToggleProvider: (g: Group) => void; onReconnect: (s: McpServer) => void; reconnecting: string | null }) {
   const health = g.server ? serverHealth(g.server) : null
   // A native provider (not the locked platform one) gets a whole-provider toggle.
   const nativeToggleable = g.kind === 'native' && !g.providerLocked
+  const badge = g.kind === 'native' ? providerBadge(g) : null
   return (
     <div className={g.providerDisabled ? 'opacity-55' : ''}>
       <div className="mb-s flex items-center gap-s">
         {g.kind === 'mcp' ? <Server size={14} className="text-on-surface-low" /> : <Cpu size={14} className="text-on-surface-low" />}
         <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{g.label}</span>
         {g.kind === 'native'
-          ? <span data-type="caption" className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low">{g.providerLocked ? 'platform' : 'built-in'}</span>
+          ? badge && <span data-type="caption" title={badge.title} className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low">{badge.label}</span>
           : health && <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: health.tone }} title={health.detail}><Circle size={7} fill="currentColor" stroke="none" /> {health.state}</span>}
         <span data-type="caption" className="text-on-surface-low">· {g.tools.length}</span>
         {/* Which activation GROUP these tools belong to (Context Economy §5) — the

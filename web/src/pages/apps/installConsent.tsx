@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { SCAN_FINDINGS_SHOWN, hiddenFindingsNote, ruleGloss } from '../../lib/scanFindings'
+import { trustTierLabel } from '../../lib/trustTier'
 import {
   ShieldAlert, ShieldCheck, ShieldQuestion, BadgeCheck, AlertTriangle, Terminal, CalendarClock,
   Bot, Globe, Copy, Check, Loader2,
@@ -37,12 +38,17 @@ const sentence = (s: string) => (/[.!?…]$/.test(s.trim()) ? s.trim() : `${s.tr
  *  says". `invalid` is a refusal the user cannot override, so it renders as danger, not
  *  as a warning to click through. `unsigned` is stated plainly rather than hidden —
  *  community apps are unsigned by design and that is the honest, non-alarming default. */
-function SignatureRow({ signature, verdict }: {
+function SignatureRow({ signature, verdict, tier }: {
   signature: NonNullable<AppScanReport['signature']>
   /** The scan verdict on the SAME report. The unsigned note has to know it: on a
    *  `dangerous` verdict there is no install to reassure anyone about, and the sentence
    *  that reassured them sat five lines above "This app is blocked". */
   verdict: string
+  /** The trust tier the install gate computed for these exact bytes (`ScanReport.tier`).
+   *  Spelled through `trustTierLabel`, which is the SAME map the Tools page badge reads —
+   *  #2627: this row disclosed "community tier" while the Tools page then called the very
+   *  same bundle `built-in`, and two hardcoded literals is how that happens. */
+  tier?: string
 }) {
   const s = signature.state
   const blocked = verdict === 'dangerous'
@@ -51,7 +57,7 @@ function SignatureRow({ signature, verdict }: {
   const label =
     s === 'signed' ? `Signed by ${signature.signer || 'a trusted key'}`
       : s === 'invalid' ? 'Invalid signature — install refused'
-        : 'Unsigned — community tier'
+        : `Unsigned — ${trustTierLabel(tier)}`
   return (
     <div className="mt-2 flex flex-col gap-1">
       <div className={`flex items-center gap-2 ${tone}`} data-type="body-m">
@@ -87,7 +93,7 @@ export function ScanReport({ scan }: { scan: NonNullable<AppInstallResult['scan'
       <div className={`flex items-center gap-2 ${tone}`} data-type="body-m"><Icon size={16} /> Security scan: {v}
         {scan.findings.length > 0 && ` · ${scan.findings.length} finding${scan.findings.length === 1 ? '' : 's'}`}
       </div>
-      {scan.signature && <SignatureRow signature={scan.signature} verdict={v} />}
+      {scan.signature && <SignatureRow signature={scan.signature} verdict={v} tier={scan.tier} />}
       {scan.findings.length > 0 && (
         <ul className="mt-2 flex flex-col gap-1">
           {/* rule (severity) — path: evidence, then what the rule MEANS. The first line is
