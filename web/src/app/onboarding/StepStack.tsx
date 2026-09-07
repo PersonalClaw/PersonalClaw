@@ -62,7 +62,16 @@ export const StepRow = forwardRef<HTMLDivElement, {
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-s">
             <span className="text-on-surface" style={withWeight({ fontSize: active ? '1.0625rem' : '0.9375rem' }, 600)}>{title}</span>
-            {!active && <span className="text-on-surface-low text-[0.75rem]">Step {index + 1}</span>}
+            {/* 🔑 UNGATED ON PURPOSE — `!active &&` hid the number on exactly the row the user is
+                standing on, so the visible numbering always had a hole where the answer mattered
+                most: first load read "Your name · Step 2 · Step 3 · Step 4 · Step 5", and at step 3
+                it read "Step 2 · Essential apps · Step 4". "How far through am I" is a question
+                about the CURRENT step.
+                It was also a mismatch between the two channels: `stepProgressAnnounced.test.ts`
+                already has this screen announce `Step N of M: <title>` to assistive tech through a
+                live region, so a screen-reader user was told the position while the eye was not.
+                Showing it makes the visible label agree with what is already spoken. */}
+            <span className="text-on-surface-low text-[0.75rem]">Step {index + 1}</span>
           </div>
           <AnimatePresence initial={false} mode="wait">
             {active && subtitle
