@@ -514,7 +514,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       {selected.size > 0 && (
         <div className="pointer-events-none fixed inset-x-0 bottom-6 z-30 flex justify-center px-l">
           <div className="pointer-events-auto flex items-center gap-2 rounded-pill bg-surface-highest/95 px-3 py-2 shadow-sheet backdrop-blur">
-            <span className="pl-1 text-on-surface text-[0.8125rem] tabular-nums" style={fvs(600)}>{selected.size} selected</span>
+            <span data-type="label-s" className="pl-1 text-on-surface tabular-nums" style={fvs(600)}>{selected.size} selected</span>
             <span className="h-4 w-px bg-outline-variant/50" aria-hidden />
             <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={() => runBulk('update', { status: 'done' })}><CheckCircle2 size={14} /> Complete</Button>
             <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={async () => { if (await confirmDelete('task', `${selected.size} tasks`)) runBulk('delete') }}><Trash2 size={14} /> Delete</Button>
@@ -534,12 +534,12 @@ function TaskListBar({ lists, repeatableId, active, onPick, onReset }: {
 }) {
   return (
     <div className="mb-m flex flex-wrap items-center gap-s">
-      <span className="inline-flex items-center gap-1 text-on-surface-low text-[0.75rem] uppercase tracking-wide"><ListChecks size={12} /> Task lists</span>
+      <span data-type="caption" className="inline-flex items-center gap-1 text-on-surface-low uppercase tracking-wide"><ListChecks size={12} /> Task lists</span>
       {lists.map((l) => {
         const isActive = active === l.id
         const repeatable = !!repeatableId && l.project_id === repeatableId
         return (
-          <span key={l.id} className={`inline-flex items-center rounded-pill h-7 pl-3 ${repeatable ? 'pr-1' : 'pr-3'} text-[0.8125rem] transition-colors ${isActive ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}`}>
+          <span key={l.id} data-type="body-s" className={`inline-flex items-center rounded-pill h-7 pl-3 ${repeatable ? 'pr-1' : 'pr-3'} transition-colors ${isActive ? 'bg-primary text-on-primary' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}`}>
             {/* One-of-N: which task list the page is showing. `bg-primary text-on-primary` was the only
                 cue, so this takes the app's recorded form — `<dimension>: <value>` plus `aria-pressed`.
                 The name goes on the PICK button, not the pill wrapper, because the wrapper also holds the
@@ -613,7 +613,7 @@ function MetaLine({ t, onProject }: { t: TaskItem; onProject?: (p: string) => vo
   // line. Render nothing rather than a blank row that still spends its top margin.
   if (lead.length === 0 && tail.length === 0 && !comments) return null
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low text-[0.8125rem]">
+    <div data-type="body-s" className="mt-1 flex flex-wrap items-center gap-x-m gap-y-0.5 text-on-surface-low">
       {lead}
       {tail.map((x) => (
         <span key={x.key}>{x.node}</span>
@@ -699,7 +699,7 @@ function TaskRow({ t, index, onOpen, onProject, selected, selecting, onToggleSel
         <span className={`block truncate text-[0.9375rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)} title={t.title}>{t.title}</span>
         <MetaLine t={t} onProject={onProject} />
       </div>
-      {(t.labels?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{t.labels!.slice(0, 2).map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{l}</span>)}</div>}
+      {(t.labels?.length ?? 0) > 0 && <div className="hidden md:flex shrink-0 gap-1">{t.labels!.slice(0, 2).map((l) => <span key={l} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{l}</span>)}</div>}
     </motion.div>
     </ContextMenu>
   )
@@ -725,15 +725,15 @@ function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number;
       <RowHitTarget label={t.title} />
       <div className="flex items-start gap-s">
         <sm.icon size={18} className="shrink-0 mt-0.5" style={{ color: sm.tone }} />
-        <span className={`flex-1 text-[0.9375rem] leading-snug ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)}>{t.title}</span>
-        {t.assignee && <span className="shrink-0 inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem] bg-surface-high text-on-surface-var" title={`Assigned to ${t.assignee}`}>@{t.assignee}</span>}
+        <span data-type="label-m" className={`flex-1 leading-snug ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`} style={fvs(500)}>{t.title}</span>
+        {t.assignee && <span data-type="caption" className="shrink-0 inline-flex items-center rounded-pill px-2 h-6 bg-surface-high text-on-surface-var" title={`Assigned to ${t.assignee}`}>@{t.assignee}</span>}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${sm.tone} 16%, transparent)`, color: sm.tone }}>{sm.label}</span>
-        {pm && <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${pm.tone} 14%, transparent)`, color: pm.tone }}>{pm.label}</span>}
-        {t.project && <button type="button" onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }} title={`Filter by project “${t.project}”`} className="inline-flex items-center gap-1 rounded-pill px-2 h-6 text-[0.75rem] hover:brightness-125" style={accentChip}><FolderKanban size={10} /> {t.project}</button>}
-        {due && <span className="inline-flex items-center rounded-pill px-2 h-6 text-[0.75rem]" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
-        {(t.labels ?? []).slice(0, 2).map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{l}</span>)}
+        <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-6" style={{ background: `color-mix(in srgb, ${sm.tone} 16%, transparent)`, color: sm.tone }}>{sm.label}</span>
+        {pm && <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-6" style={{ background: `color-mix(in srgb, ${pm.tone} 14%, transparent)`, color: pm.tone }}>{pm.label}</span>}
+        {t.project && <button type="button" onClick={(e) => { e.stopPropagation(); onProject?.(t.project!) }} title={`Filter by project “${t.project}”`} data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-6 hover:brightness-125" style={accentChip}><FolderKanban size={10} /> {t.project}</button>}
+        {due && <span data-type="caption" className="inline-flex items-center rounded-pill px-2 h-6" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
+        {(t.labels ?? []).slice(0, 2).map((l) => <span key={l} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{l}</span>)}
       </div>
       {exit.length > 0 && (
         <div className="flex items-center gap-s">
@@ -745,7 +745,7 @@ function TaskCard({ t, index, onOpen, onProject }: { t: TaskItem; index: number;
           <Meter size="thin" className="flex-1" tone="var(--color-ok)"
             label={`Exit criteria: ${exitDone} of ${exit.length} met`}
             pct={(exitDone / exit.length) * 100} />
-          <span className="shrink-0 text-on-surface-low text-[0.75rem] tabular-nums">{exitDone}/{exit.length}</span>
+          <span data-type="caption" className="shrink-0 text-on-surface-low tabular-nums">{exitDone}/{exit.length}</span>
         </div>
       )}
     </motion.div>
