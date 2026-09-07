@@ -25,8 +25,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime, timezone, tzinfo
 
 from personalclaw.autonomous_framing import with_autonomous_framing
 
@@ -37,7 +36,7 @@ except ImportError:
     get_description = None  # type: ignore[assignment]
 from croniter import croniter  # type: ignore[import-untyped]
 
-from personalclaw.config.loader import AppConfig
+from personalclaw.timezones import resolve_zone, resolve_zone_name
 
 logger = logging.getLogger(__name__)
 
@@ -377,7 +376,9 @@ def _humanize_cron(expr: str, tz_name: str = "") -> str:
     parts = expr.split()
     if tz_name and len(parts) == 5 and parts[0].isdigit() and parts[1].isdigit():
         try:
-            tz = ZoneInfo(tz_name)
+            # Through the one owner (#2520), so the humanized string and the armed fire can
+            # never name different hours — this used to build its own `ZoneInfo`.
+            tz = resolve_zone(tz_name)
             # Evaluate in job timezone, same as the scheduler does
             base = datetime.now(tz)
             next_local = croniter(expr, base).get_next(datetime).astimezone(tz)
@@ -402,12 +403,9 @@ def _humanize_cron(expr: str, tz_name: str = "") -> str:
 
 def format_schedule(schedule: ScheduleDefinition, tz_name: str = "") -> str:
     """Human-readable schedule description."""
-    # Fallback: read timezone from config (callers in loops should pass tz_name)
-    if not tz_name:
-        try:
-            tz_name = AppConfig.load().timezone
-        except Exception:
-            pass
+    # No config read and no `astimezone()` branch any more: `resolve_zone` already walks
+    # explicit → config → machine → UTC, and having a display path resolve the zone its own
+    # way is how a schedule came to be *shown* in one zone and *fired* in another (#2520).
     if schedule.kind == "cron" and schedule.cron_expr:
         return _humanize_cron(schedule.cron_expr, tz_name)
     if schedule.kind == "every" and schedule.every_secs:
@@ -416,40 +414,44 @@ def format_schedule(schedule: ScheduleDefinition, tz_name: str = "") -> str:
             return f"every {secs // 3600}h"
         return f"every {secs}s"
     if schedule.kind == "at" and schedule.at_ts:
-        tz = ZoneInfo(tz_name) if tz_name else None
-        if tz:
-            now = datetime.now(tz)
-            dt = datetime.fromtimestamp(schedule.at_ts, tz)
-        else:
-            now = datetime.now().astimezone()
-            dt = datetime.fromtimestamp(schedule.at_ts).astimezone()
+        tz = resolve_zone(tz_name)
+        now = datetime.now(tz)
+        dt = datetime.fromtimestamp(schedule.at_ts, tz)
         if dt.date() == now.date():
             return f"at {dt:%I:%M %p %Z}"
         return f"at {dt:%I:%M %p %Z}, {dt:%b %-d}"
     return schedule.kind
 
 
-def get_local_tz() -> tuple[str, ZoneInfo]:
-    """Return (tz_name, ZoneInfo) from config, falling back to UTC."""
-    try:
-        tz_name = AppConfig.load().timezone or "UTC"
-        return tz_name, ZoneInfo(tz_name)
-    except Exception:
-        logger.warning(
-            "Failed to load timezone from config, falling back to UTC",
-            exc_info=True,
-        )
-        return "UTC", ZoneInfo("UTC")
+def get_local_tz() -> tuple[str, tzinfo]:
+    """This host's wall-clock zone as `(iana_name, tzinfo)` — the LOCAL one, at last.
+
+    🔴 IT RETURNED `('UTC', ZoneInfo('UTC'))` ON A PDT HOST (#2520). `config.timezone`
+    defaults to `""`, so a function whose name is "local" answered UTC on every stock
+    install — and it is what `GET /api/triggers` and the week-grid endpoint report to the
+    frontend as `server_tz`, so both pages told the user their server was on UTC while it
+    was seven hours away. Now delegates to `personalclaw.timezones`, which falls back to the
+    machine's own zone (`/etc/localtime`) before UTC.
+
+    Returns `tzinfo`, not `ZoneInfo`: the UTC last resort is `datetime.timezone.utc` so it
+    cannot itself fail on a host with no tz database.
+    """
+    return resolve_zone_name()[0], resolve_zone()
 
 
-def _job_tz(job: ScheduleJob) -> ZoneInfo:
-    """Return the job's timezone, falling back to config then UTC."""
-    try:
-        tz_name = job.timezone or AppConfig.load().timezone or "UTC"
-        return ZoneInfo(tz_name)
-    except Exception:
-        logger.warning("Failed to resolve timezone for job %s, using UTC", job.id, exc_info=True)
-        return ZoneInfo("UTC")
+def _job_tz(job: ScheduleJob) -> tzinfo:
+    """The job's timezone: its own, else config, else this machine's, else UTC (#2520).
+
+    The issue's lead was right — this shared `arm._trigger_tz`'s direction, one layer later:
+    it consulted `config.timezone` first, but that field defaults to `""`, so a stock
+    install still evaluated every cron in UTC. Measured before fixing: a `30 8 * * *` job
+    with no `timezone` computed `1788769800.0` = **01:30 PDT**.
+
+    An unknown zone on the job is a typo and `resolve_zone` refuses it; `compute_next_run_ts`
+    already converts any raise into `None` ("next run unknown") with a named warning, which
+    is the legacy scheduler's existing shape for an unusable schedule.
+    """
+    return resolve_zone(job.timezone)
 
 
 def compute_next_run_ts(job: ScheduleJob, now: float | None = None) -> float | None:

@@ -197,6 +197,11 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
         {
             "kind",
             "expr",
+            # `at` is EPOCH SECONDS (a float), not an ISO string (#2520). Written down because
+            # every OTHER timestamp on this entity — `next_fire_at`, `expires_at`,
+            # `last_fired_at`, `last_success_at` — IS ISO, so the field name gives an author
+            # exactly the wrong expectation, and the failure is silent: `arm._positive()`
+            # coerces through `float()`, so an ISO value reads as 0.0 = "never fires".
             "at",
             # The `interval` clock kind's payload (S87). Paired with `CLOCK_KINDS`' fourth member:
             # without this key a migrated `every` cron parses its own spec as an unknown field and

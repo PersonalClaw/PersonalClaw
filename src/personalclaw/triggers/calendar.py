@@ -562,36 +562,31 @@ MAX_OCCURRENCES_PER_TRIGGER = 200
 
 
 def _resolve_zone(tz_name: str):
-    """The zone a projected fire's calendar date is read in.
+    """The zone a projected fire's calendar date is read in — the ONE owner's answer.
 
-    Mirrors `schedule._job_tz`'s resolution order — the job's own zone, then the app config's, then
-    the server's — because the grid has to strike the same column the scheduler will skip. It is NOT
-    a call into that function: importing the scheduler here would pull the whole cron service into a
-    pure-decision module, and the ORDER is the contract, not the code.
+    🔴 THE ORDER-AS-CONTRACT EXPERIMENT FAILED, MEASURED (#2520). This function used to
+    re-implement `schedule._job_tz`'s order deliberately ("the ORDER is the contract, not the
+    code") to avoid pulling the cron service into a pure-decision module. It then diverged in
+    the last step, which is the step that matters: with no explicit zone and a blank
+    `config.timezone`, this returned `None` → `.astimezone(None)` → **server-local**, while
+    `arm._trigger_tz` returned **UTC**. So the grid struck one calendar column and the
+    scheduler skipped another — precisely the "confidently wrong grid" this module's own
+    docstring calls worse than a silent one.
 
-    An unparseable name falls back to server-local rather than raising. A trigger with a typo'd
-    timezone still has real fires, and a grid that 500s on one bad row shows nothing at all.
+    `personalclaw.timezones` is the fix that keeps the original objection intact: it is a leaf
+    with no scheduler in it, so importing it costs nothing this module was avoiding, and there
+    is now one implementation instead of two orders that agree by review.
+
+    An unknown EXPLICIT name still cannot 500 the grid: a trigger with a typo'd zone has real
+    fires, so the refusal degrades to the config/machine answer here rather than propagating.
+    `arm.semantic_spec_issues` is what tells the user about it, on the same page.
     """
-    from zoneinfo import ZoneInfo
+    from personalclaw.timezones import UnknownTimeZone, resolve_zone
 
-    names = [tz_name]
     try:
-        from personalclaw.config.loader import AppConfig
-
-        names.append(AppConfig.load().timezone or "")
-    except Exception:
-        # Silent by design: this module is pure decisions and carries no logger (adding one for a
-        # fallback path would be the first import of logging into it). An unreadable config timezone
-        # is not an error — it just means the next candidate applies.
-        pass
-    for name in names:
-        if not name:
-            continue
-        try:
-            return ZoneInfo(name)
-        except Exception:
-            continue
-    return None  # `.astimezone(None)` is server-local — the documented fallback.
+        return resolve_zone(tz_name)
+    except UnknownTimeZone:
+        return resolve_zone("")
 
 
 def project_occurrences(

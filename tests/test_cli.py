@@ -285,11 +285,15 @@ class TestCronCli:
         config = ((self._only(tmp_path).trigger.workflow or {})["inline"]).get("config") or {}
         assert config.get("approval_mode") == ""
 
-    def test_cron_update_cadence_re_arms(self, tmp_path):
+    def test_cron_update_cadence_re_arms(self, tmp_path, monkeypatch):
         """🔴 Found by driving: the cadence changed and the list showed the new time, but
         `next_fire_at` still held the OLD one — so the job would fire on the schedule the user had
         just replaced. `next_fire_at` is engine state the patch allowlist refuses, so the re-arm
         is a separate clear-then-arm."""
+        # Host zone pinned: the assertion reads the re-armed instant as UTC (`07:30:00+00:00` for
+        # `30 7 * * *`), and an absent `spec.timezone` resolves the machine's zone now (#2520).
+        # This test is about the RE-ARM happening at all.
+        monkeypatch.setenv("TZ", "UTC")
         store = self._seed(tmp_path, next_fire_at="2026-01-01T09:00:00+00:00")
         _cron(
             argparse.Namespace(

@@ -5,7 +5,6 @@ import os
 import socket
 import sys
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from personalclaw.app_cli import run_app_setup_steps
 from personalclaw.atomic_write import atomic_write
@@ -290,19 +289,16 @@ _CUSTOM_DOMAIN = "personalclaw.localhost"
 
 
 def _detect_system_timezone() -> str:
-    """Return IANA tz name from TZ env var or /etc/localtime symlink, or empty string."""
-    tz_env = os.environ.get("TZ", "").lstrip(":")
-    if tz_env and not tz_env.startswith("/"):
-        return tz_env
-    try:
-        p = Path("/etc/localtime")
-        if p.is_symlink():
-            target = str(p.resolve())
-            if "zoneinfo/" in target:
-                return target.split("zoneinfo/", 1)[1]
-    except Exception:
-        pass
-    return ""
+    """This machine's IANA zone name, or "" — through the one owner (#2520).
+
+    This used to be its own `/etc/localtime` reader, and it returned `TZ` unvalidated: a
+    `TZ=PDT` shell was "detected" as `PDT`, offered as the default, and then refused by the
+    retry loop below. `timezones.machine_zone_name` validates every candidate through
+    `ZoneInfo` first, so what is offered here is always something that can be saved.
+    """
+    from personalclaw.timezones import machine_zone_name
+
+    return machine_zone_name()
 
 
 def _setup_timezone() -> None:
@@ -337,7 +333,10 @@ def _setup_timezone() -> None:
     else:
         tz_val = _ask("  IANA timezone (e.g. America/Los_Angeles): ")
         if not tz_val:
-            print("  ⏭  Skipped. Cron schedules will show UTC.\n")
+            # Not "will show UTC" any more (#2520): with nothing configured AND nothing
+            # detectable, UTC is the last resort and `personalclaw doctor` warns about it by
+            # name. Naming that here keeps the two surfaces telling the same story.
+            print("  ⏭  Skipped — schedules fall back to UTC; `personalclaw doctor` warns.\n")
             return
 
     # Validate with retry
@@ -361,27 +360,30 @@ def _setup_timezone() -> None:
         "NZST": "Pacific/Auckland",
         "NZDT": "Pacific/Auckland",
     }
+    # The refusal point for a typo'd zone (#2520): `config.timezone` has no PATCH allowlist
+    # entry, so this prompt is the only authoring surface for it, and a name that lands in the
+    # file unvalidated is a silent hour-shift for every schedule that falls back to it.
+    from personalclaw.timezones import is_known_zone
+
     max_retries = 3
     for attempt in range(max_retries):
-        try:
-            ZoneInfo(tz_val)
+        if is_known_zone(tz_val):
             break  # valid
-        except (KeyError, Exception):
-            suggestion = abbrev_to_iana.get(tz_val.upper())
-            if suggestion:
-                print(f"  ❌ '{tz_val}' is an abbreviation, not an IANA timezone.")
-                print(f"     Did you mean: {suggestion}?")
-            else:
-                print(f"  ❌ Unknown timezone '{tz_val}'.")
-                print("     Use IANA format, e.g. America/Los_Angeles, Europe/London")
-            if attempt < max_retries - 1:
-                tz_val = _ask("  Timezone: ")
-                if not tz_val:
-                    print("  ⏭  Skipped.\n")
-                    return
-            else:
-                print("  ⏭  Skipped after too many attempts.\n")
+        suggestion = abbrev_to_iana.get(tz_val.upper())
+        if suggestion:
+            print(f"  ❌ '{tz_val}' is an abbreviation, not an IANA timezone.")
+            print(f"     Did you mean: {suggestion}?")
+        else:
+            print(f"  ❌ Unknown timezone '{tz_val}'.")
+            print("     Use IANA format, e.g. America/Los_Angeles, Europe/London")
+        if attempt < max_retries - 1:
+            tz_val = _ask("  Timezone: ")
+            if not tz_val:
+                print("  ⏭  Skipped.\n")
                 return
+        else:
+            print("  ⏭  Skipped after too many attempts.\n")
+            return
 
     data["timezone"] = tz_val
     atomic_write(cfg_file, json.dumps(data, indent=2) + "\n")

@@ -61,17 +61,16 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, tzinfo
 from pathlib import Path
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 from croniter import croniter  # type: ignore[import-untyped]
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import config_dir
 from personalclaw.knowledge.semantics import RESEARCH_FINDING_KIND as _RESEARCH_FINDING_KIND
-from personalclaw.schedule import ScheduleDefinition, get_local_tz, validate_cron_expr
+from personalclaw.schedule import ScheduleDefinition, validate_cron_expr
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
@@ -147,7 +146,9 @@ class ReportDefinition:
     name: str
     prompt: str
     schedule: ScheduleDefinition
-    tz: str = ""  # "" == host local (get_local_tz)
+    #: IANA zone the cron is evaluated in. `""` == resolved by `personalclaw.timezones`
+    #: (`config.timezone`, else this machine's zone, else UTC) — NOT UTC outright (#2520).
+    tz: str = ""
     source: Scope = field(default_factory=Scope)
     context: Scope | None = None
     citation_policy: str = CITE_SOURCE_ONLY
@@ -393,16 +394,26 @@ def _remove_schedule(report_id: str) -> str:
 # ── Dueness ──
 
 
-def _report_tz(defn: ReportDefinition) -> ZoneInfo:
-    """The report's timezone, falling back to host local then UTC. A cron
-    expression is a wall-clock statement; evaluating "0 7 * * *" in UTC for a
-    user in Los Angeles delivers their morning report at midnight."""
-    if defn.tz:
-        try:
-            return ZoneInfo(defn.tz)
-        except Exception:
-            logger.warning("Report %s has unusable tz %r, using host local", defn.id, defn.tz)
-    return get_local_tz()[1]
+def _report_tz(defn: ReportDefinition) -> tzinfo:
+    """The report's timezone, resolved by the one owner (`personalclaw.timezones`).
+
+    This docstring's own argument — "a cron expression is a wall-clock statement; evaluating
+    '0 7 * * *' in UTC for a user in Los Angeles delivers their morning report at midnight" —
+    was true and the code still delivered it at midnight (#2520): the fallback was
+    `get_local_tz()`, which itself answered UTC whenever `config.timezone` was blank, and it
+    is blank on a stock install. The owner now falls back to the machine's own zone.
+
+    An unusable `defn.tz` degrades to the resolved default with the value named, rather than
+    raising: `is_due` sweeps every definition on every tick and must never let one malformed
+    report wedge the others (rule 1 of this module).
+    """
+    from personalclaw.timezones import UnknownTimeZone, resolve_zone
+
+    try:
+        return resolve_zone(defn.tz)
+    except UnknownTimeZone as exc:
+        logger.warning("Report %s: %s — using this machine's zone instead", defn.id, exc)
+        return resolve_zone("")
 
 
 def _anchor_ts(defn: ReportDefinition) -> float | None:
