@@ -888,8 +888,16 @@ export interface AppDepClassification {
  *  entries:0` means it has a data dir that happens to be empty. A dialog that
  *  renders both as "nothing to keep" promises the wrong thing in one of the cases.
  *  `path` is where a keep-data uninstall parks it — the recovery information the
- *  screen owes the user. */
-export interface AppDataFacts { present: boolean; entries: number; path: string }
+ *  screen owes the user.
+ *
+ *  `unconsumed` (issue #2585) is earlier copies of this app's `data/` still on disk that
+ *  nothing consumed — a park a failed restore left behind, or a stage a failed park left
+ *  behind. Non-empty means the keep-data uninstall WILL refuse, so the dialog has to say
+ *  so and name them: `DELETE ?remove=1` reports every refusal as `404 app not installed`,
+ *  which is both false and the opposite of actionable. Optional on the wire because an
+ *  older gateway does not send the key — read `undefined` as "not reported", never as
+ *  "none", or the dialog goes back to promising a removal that will be refused. */
+export interface AppDataFacts { present: boolean; entries: number; path: string; unconsumed?: string[] }
 export interface AgentDef { name: string }
 export interface ChatSession {
   key: string; title: string; agent: string; model: string; reasoning_effort: string
