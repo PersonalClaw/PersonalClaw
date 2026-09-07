@@ -1014,7 +1014,11 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     # list but expose ZERO tools, since the live registry never reads that file.
     # Full upsert (overwrite an existing spec) + enabled (drop any disabled flag).
     async with _get_mcp_lock():
-        data = _load_json_or_empty(_canonical_mcp_json())
+        # `_load_json_for_update`, not `_load_json_or_empty`: an mcp.json that exists but cannot be
+        # read would otherwise load as `{}` and be written back holding ONLY this one server,
+        # erasing every MCP server the user had configured. Raising surfaces it as a failed request
+        # instead — see `ConfigUnreadable`.
+        data = _load_json_for_update(_canonical_mcp_json())
         data.setdefault("mcpServers", {})[name] = entry
         _atomic_write(_canonical_mcp_json(), data)
 
@@ -1049,12 +1053,54 @@ def _load_json_or_empty(path: Path) -> dict[str, Any]:
     ``PermissionError`` or ``IsADirectoryError`` on a user-owned file like
     ``~/.claude.json`` won't crash ``api_mcp_apply`` mid-batch and leave
     partially-applied changes without a rebuild.
+
+    ⚠️ READ-ONLY. Never feed the result of this into a write: see
+    ``_load_json_for_update`` for why collapsing "absent" and "unreadable" into ``{}`` is safe
+    for a lookup and destructive for a read-modify-write.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+class ConfigUnreadable(Exception):
+    """A config file EXISTS but could not be read or parsed — distinct from absent.
+
+    That distinction is the entire point. ``_load_json_or_empty`` collapses both into ``{}``,
+    which is right for a LOOKUP (a missing server is missing either way) and catastrophic for a
+    READ-MODIFY-WRITE: an empty dict that gains one key and is written back **replaces the
+    file's whole contents**.
+
+    The file most at risk is ``~/.claude.json``, which PersonalClaw does not own. Claude Code
+    keeps far more than ``mcpServers`` there — projects, history, auth state — so one transient
+    read failure (a permission blip, a lock, a concurrent write caught mid-flush and therefore
+    momentarily invalid JSON) turned "enable one MCP server" into "replace the user's entire
+    Claude Code config with a one-server dict", taking every other server's API keys with it.
+    The write is atomic, which is exactly why there was no partial-file evidence afterwards.
+    """
+
+
+def _load_json_for_update(path: Path) -> dict[str, Any]:
+    """Load JSON for a read-modify-write cycle. Absent → ``{}``; unreadable → raise.
+
+    ``{}`` is only safe when the file genuinely does not exist, because then writing it CREATES
+    rather than destroys. Every other failure mode must stop the write.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        raise ConfigUnreadable(f"{path} exists but could not be read: {exc}") from exc
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ConfigUnreadable(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ConfigUnreadable(f"{path} holds {type(data).__name__}, not a JSON object")
+    return data
 
 
 def _atomic_write(path: Path, data: dict) -> None:
@@ -1102,7 +1148,13 @@ def _set_personalclaw_entry(name: str, *, enabled: bool, spec: dict | None = Non
     Returns a short label describing what happened: ``"added"``, ``"enabled"``,
     ``"disabled"``, or ``"noop"``.
     """
-    data = _load_json_or_empty(_canonical_mcp_json())
+    try:
+        data = _load_json_for_update(_canonical_mcp_json())
+    except ConfigUnreadable as exc:
+        # Same refusal as `_set_scope_entry`: an unreadable file must not be REPLACED by a
+        # dict holding only the entry being written.
+        logger.warning("mcp: refusing to rewrite %s — %s", _canonical_mcp_json(), exc)
+        raise
     servers = data.setdefault("mcpServers", {})
     existing = servers.get(name)
     existing = existing if isinstance(existing, dict) else None
@@ -1139,7 +1191,13 @@ def _set_personalclaw_entry(name: str, *, enabled: bool, spec: dict | None = Non
 
 def _remove_personalclaw_entry(name: str) -> bool:
     """Delete the server from ``~/.personalclaw/mcp.json`` entirely.  Returns True on change."""
-    data = _load_json_or_empty(_canonical_mcp_json())
+    try:
+        data = _load_json_for_update(_canonical_mcp_json())
+    except ConfigUnreadable as exc:
+        # Same refusal as `_set_scope_entry`: an unreadable file must not be REPLACED by a
+        # dict holding only the entry being written.
+        logger.warning("mcp: refusing to rewrite %s — %s", _canonical_mcp_json(), exc)
+        raise
     servers = data.get("mcpServers", {})
     if name not in servers:
         return False
@@ -1174,8 +1232,19 @@ def _set_scope_entry(path: Path, name: str, *, enabled: bool, spec: dict | None 
     When enabled=True and the server is absent, adds the spec.  When
     enabled=False, removes the entry entirely (NOT soft-disable — the
     dashboard badge treats absent and disabled identically).
+
+    🔴 Returns ``"unreadable"`` and writes NOTHING when the target file exists but cannot be read
+    or parsed. This used to load ``{}`` and write it back with one server in it, which replaced
+    the file — and one of the two files this function is called with is ``~/.claude.json``,
+    which PersonalClaw does not own. See ``ConfigUnreadable``.
     """
-    data = _load_json_or_empty(path)
+    try:
+        data = _load_json_for_update(path)
+    except ConfigUnreadable as exc:
+        # Refusing is the fix. Reporting it is what makes the refusal actionable rather than a
+        # silent no-op the user reads as success.
+        logger.warning("mcp: refusing to rewrite %s — %s", path, exc)
+        return "unreadable"
     servers = data.setdefault("mcpServers", {})
     present = name in servers and isinstance(servers[name], dict)
 
@@ -1216,7 +1285,13 @@ def _set_tool_overrides(name: str, tool_overrides: dict[str, bool]) -> list[str]
     """
     if not tool_overrides:
         return []
-    data = _load_json_or_empty(_canonical_mcp_json())
+    try:
+        data = _load_json_for_update(_canonical_mcp_json())
+    except ConfigUnreadable as exc:
+        # Same refusal as `_set_scope_entry`: an unreadable file must not be REPLACED by a
+        # dict holding only the entry being written.
+        logger.warning("mcp: refusing to rewrite %s — %s", _canonical_mcp_json(), exc)
+        raise
     servers = data.setdefault("mcpServers", {})
     entry = servers.get(name)
     if not isinstance(entry, dict):

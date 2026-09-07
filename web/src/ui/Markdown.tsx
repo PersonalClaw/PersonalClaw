@@ -56,8 +56,11 @@ function DiffBlock({ code }: { code: string }) {
           `group` stops taking its name from its subtree. */}
       {/* leading-relaxed stays: code blocks read at the airier line-height on
           purpose, and the utility (utilities layer) wins over the role's own. */}
+      {/* `focus-visible:-outline-offset-2` completes the canonical scroll-region form — see
+          `pages/learning/LearningPage`. A code block fills its rounded wrapper, so the outward ring
+          is clipped left, right and bottom. */}
       <pre tabIndex={0} role="group" aria-label="Diff" data-type="body-s"
-        className="overflow-x-auto px-m py-2 leading-relaxed font-mono">
+        className="overflow-x-auto px-m py-2 leading-relaxed font-mono focus-visible:-outline-offset-2">
         {code.split('\n').map((ln, i) => {
           const add = /^\+(?!\+)/.test(ln), del = /^-(?!-)/.test(ln), hunk = /^@@/.test(ln)
           return (
@@ -180,8 +183,11 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
       </div>
       {/* Named by the fence's own language when it declares one — the same word this block already
           shows in its header — and "Code" when it does not. */}
+      {/* Inset ring, same reason as the diff block above — this is the one the sweep actually caught
+          ("bash code", clipped left/right/bottom), and it is the highest-traffic of the family since
+          every fenced block in every chat answer renders through it. */}
       <pre tabIndex={0} role="group" aria-label={lang ? `${lang} code` : 'Code'} data-type="body-s"
-        className="overflow-x-auto px-m py-2 leading-relaxed"><code className="hljs font-mono" dangerouslySetInnerHTML={{ __html: html }} /></pre>
+        className="overflow-x-auto px-m py-2 leading-relaxed focus-visible:-outline-offset-2"><code className="hljs font-mono" dangerouslySetInnerHTML={{ __html: html }} /></pre>
     </div>
   )
 }

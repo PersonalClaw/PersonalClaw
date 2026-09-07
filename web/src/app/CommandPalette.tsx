@@ -116,7 +116,18 @@ export function CommandPalette({ commands }: { commands: Command[] }) {
                   <button key={c.id} type="button" role="option" aria-selected={on}
                     id={`${cpId}-opt-${i}`}
                     data-cmd-idx={i} onMouseEnter={() => setActive(i)} onClick={() => run(c)}
-                    className="flex w-full items-center gap-3 px-l py-2.5 text-left"
+                    // 🔴 INSET RING. These rows are full-width inside the palette card, which is
+                    // `overflow-hidden rounded-2xl` (line 95), so an outward-drawn outline is clipped
+                    // LEFT AND RIGHT and the ring renders as two bars instead of a rectangle.
+                    // Measured on the opened palette: ring 2px + offset 2px = 4px of reach, 3px of it
+                    // clipped on each side.
+                    // 🪤 IT IS NOT THE SCROLL CONTAINER, which is the thing that looks guilty. The
+                    // results list is `overflow-y-auto`, and CSS computes the other axis to `auto`
+                    // too — but `scrollWidth === clientWidth` there, so nothing can be scrolled into
+                    // view horizontally. The clipper is the CARD, and its clip is permanent.
+                    // This is the app's primary keyboard surface, which is where a focus indicator
+                    // matters most.
+                    className="flex w-full items-center gap-3 px-l py-2.5 text-left focus-visible:-outline-offset-2"
                     style={{ background: on ? 'var(--color-surface-high)' : undefined }}>
                     <Icon size={16} className="shrink-0" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
                     <span className="flex-1 truncate text-on-surface text-[0.8125rem]">{c.label}</span>

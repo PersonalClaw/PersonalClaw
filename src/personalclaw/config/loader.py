@@ -2879,6 +2879,16 @@ class VoiceConfig:
     )
 
 
+class ConfigPreserveError(RuntimeError):
+    """`AppConfig.save()` could not read the existing config, so it refused to write.
+
+    Raised INSTEAD of silently dropping the `providers` / `use_cases` / `slack` blocks that live
+    outside `to_dict()`. A caller seeing this should surface it: the user's stored provider
+    credentials are intact on disk, and the save simply did not happen. Retrying once the file is
+    readable is the correct recovery — writing anyway is what destroyed them before.
+    """
+
+
 @dataclass
 class AppConfig:
     agent: AgentConfig = field(
@@ -4216,13 +4226,48 @@ class AppConfig:
         # migrate_from_core() lifts it into the app store and deletes it.
         p = config_path()
         if p.exists():
+            # 🔴 THIS READ IS LOAD-BEARING AND MUST NOT FAIL SILENTLY. It used to be wrapped in
+            # `except Exception: pass`, so a config.json that existed but could not be read or
+            # parsed — a permission blip, a concurrent write caught mid-flush and therefore
+            # momentarily invalid JSON — fell through to the `atomic_write` below with the three
+            # preserved keys ABSENT. That write then succeeded, deleting `providers` and
+            # `use_cases`: every configured model provider and every stored provider API key,
+            # on a path that every settings toggle in the app goes through.
+            #
+            # The swallow was reasonable-looking ("preservation is best-effort") and wrong in the
+            # one case that matters: a FAILED read is exactly when you cannot know what you are
+            # about to overwrite. Absent is safe to write over; unreadable is not.
             try:
-                existing = json.loads(p.read_text(encoding="utf-8"))
-                for key in ("providers", "use_cases", "slack"):
-                    if key in existing:
-                        d[key] = existing[key]
-            except Exception:
-                pass
+                raw = p.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise ConfigPreserveError(
+                    f"refusing to save config: {p} exists but could not be read, so the "
+                    f"providers/use_cases/slack blocks it holds cannot be preserved ({exc})"
+                ) from exc
+            # An EMPTY file is `absent` by this guard's own rule, not `unreadable`. Zero bytes
+            # hold no providers/use_cases/slack block, so there is nothing a write could
+            # destroy — and refusing here would be a dead end rather than a protection: a
+            # config truncated to nothing (a crashed write, a full disk, a bare `touch`) could
+            # never be saved again, with no recovery path in the product at all. The refusal
+            # exists for a file whose CONTENT cannot be known, which is a different thing from
+            # a file that has none.
+            if not raw.strip():
+                existing: object = {}
+            else:
+                try:
+                    existing = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    raise ConfigPreserveError(
+                        f"refusing to save config: {p} exists but could not be read, so the "
+                        f"providers/use_cases/slack blocks it holds cannot be preserved ({exc})"
+                    ) from exc
+            if not isinstance(existing, dict):
+                raise ConfigPreserveError(
+                    f"refusing to save config: {p} holds {type(existing).__name__}, not an object"
+                )
+            for key in ("providers", "use_cases", "slack"):
+                if key in existing:
+                    d[key] = existing[key]
         p.parent.mkdir(parents=True, exist_ok=True)
         from personalclaw.atomic_write import atomic_write
 

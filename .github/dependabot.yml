@@ -3,6 +3,14 @@
 version: 2
 updates:
   # Python — the packaging metadata + uv.lock (pip ecosystem covers pyproject/uv).
+  #
+  # 🔴 A pip PR here CANNOT be merged as-opened, and the reason is mechanical: dependabot
+  # rewrites `pyproject.toml` and does NOT regenerate `uv.lock`, so `uv sync --locked` — the
+  # first step of every Python job in ci.yml — fails with "The lockfile at `uv.lock` needs to
+  # be updated, but `--locked` was provided." Every Python lane then dies in its SETUP step in
+  # 10-20s while `web` and `client` pass, which reads like a broken repo rather than a
+  # dependency PR that is simply incomplete. Regenerate the lock on the branch (`uv lock`)
+  # before evaluating one, or close it.
   - package-ecosystem: pip
     directory: /
     schedule:
@@ -11,6 +19,22 @@ updates:
     groups:
       python-deps:
         patterns: ["*"]
+    # Two upper bounds in `pyproject.toml` are LOAD-BEARING, argued in comments beside them,
+    # and dependabot cannot read prose — so it re-proposes widening them every week and each
+    # such PR is unmergeable on the merits, not on CI. Ignoring only the MAJOR bump keeps
+    # minor/patch updates flowing, which is the half that is safe.
+    ignore:
+      # `mcp>=1.2,<2`: mcp 2.0.0 renamed `mcp.client.streamable_http.streamablehttp_client`,
+      # which `src/personalclaw/mcp_client.py:287` imports. Allowing 2.x makes a FRESH install
+      # resolve a version whose import fails, so moving this bound is a code migration (update
+      # the import with a fallback, verify the transport) and never a version bump.
+      - dependency-name: mcp
+        update-types: ["version-update:semver-major"]
+      # `isort>=8,<9`: isort 9 reorders imports this tree already formats to a byte-clean state
+      # under 8 — measured at 8 files flagged on an untouched tree — so a major here reds the
+      # lint gate for every contributor on a change none of them made.
+      - dependency-name: isort
+        update-types: ["version-update:semver-major"]
 
   # Frontend — the single root npm workspace (web + desktop share one lockfile).
   # Merge bar: every npm PR must pass ci.yml's `web` job INCLUDING the render

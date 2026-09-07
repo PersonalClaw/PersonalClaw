@@ -439,9 +439,23 @@ describe('the hand-laid bars reach the same idiom', () => {
     const mem = strip(readFileSync(join(SRC, 'pages/settings/MemoryPanel.tsx'), 'utf8'))
     expect((mem.match(/count=\{shown\.length\}/g) ?? []).length, 'both MemoryPanel lists').toBe(2)
     // A count read off the PRE-filter collection is the shape being excluded, everywhere.
+    //
+    // 🪤 SCOPED TO THE TAG, NOT THE FILE — the second time this rail has had to learn that, and the
+    // lesson is already written 100 lines below about `origin !== 'all'`: *"The rule belongs to the
+    // announcement's own expression."* This half never got it, and a file-wide scan for
+    // `count={capable.length}` failed on CORRECT code the moment `ModelsPanel`'s accordion shell moved
+    // into `ui/DisclosureCard`. That card takes a `count` prop too — the "N available" pill summarising
+    // how many models the use-case COULD bind, which is legitimately the pre-search pool and is what
+    // the header showed all along as inline text. A different component's identically-named prop is
+    // not this rail's subject; the `<ResultAnnouncement>` tag is.
     for (const [rel] of COUNTS) {
-      expect(strip(readFileSync(join(SRC, rel), 'utf8')), `${rel} must not count the unfiltered list`)
-        .not.toMatch(/count=\{(?:archives|entries|capable|SETTINGS_WIDGETS|items|events)\.length\}/)
+      const src = strip(readFileSync(join(SRC, rel), 'utf8'))
+      const tags = [...src.matchAll(/<ResultAnnouncement[\s\S]{0,260}?\/>/g)].map((m) => m[0])
+      expect(tags.length, `${rel} must render the announcement`).toBeGreaterThanOrEqual(1)
+      for (const tag of tags) {
+        expect(tag, `${rel} must not count the unfiltered list`)
+          .not.toMatch(/count=\{(?:archives|entries|capable|SETTINGS_WIDGETS|items|events)\.length\}/)
+      }
     }
   })
 

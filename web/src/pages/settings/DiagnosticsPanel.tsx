@@ -210,7 +210,11 @@ export function DiagnosticsPanel() {
               the fold. A tab stop hands scrolling to the browser; role+label keep it
               announced as a named container. Same resolution as the kanban columns, the
               shell denylist and the inbox procedure. */}
-          <div ref={scrollRef} data-type="caption" className="max-h-[60vh] min-h-[240px] overflow-y-auto p-3 font-mono leading-relaxed"
+          {/* `focus-visible:-outline-offset-2` completes the canonical scroll-region form — see
+              `LearningPage`. This one was the WORST of the family: it fills a rounded
+              `overflow-hidden` card, so the ring was clipped on all FOUR sides (4px lost per side,
+              its entire reach) and a keyboard user tabbing into the log saw nothing at all. */}
+          <div ref={scrollRef} data-type="caption" className="max-h-[60vh] min-h-[240px] overflow-y-auto p-3 font-mono leading-relaxed focus-visible:-outline-offset-2"
             tabIndex={0} role="group" aria-label="Log output"
             style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }}>
             {visible.length === 0 ? (

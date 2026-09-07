@@ -209,7 +209,14 @@ export function LearningPage() {
           instead of relying on Chrome auto-focusing scrollers.
           Named for what it HOLDS — the capture week, the health panel and the proposals list — rather
           than echoing the page's own "Learning" h1, which would add nothing to the announcement. */}
-      <div tabIndex={0} role="group" aria-label="Capture and proposals" className="flex-1 overflow-y-auto">
+      {/* 🔑 `focus-visible:-outline-offset-2` COMPLETES THE CANONICAL FORM. The trio above
+          (`tabIndex` + `role="group"` + `aria-label`) makes this region reachable and named; it does
+          not make the focus VISIBLE. The region fills its flex parent, so an outward-drawn ring is
+          clipped right and bottom — measured 4px lost on each, the ring's entire reach there. A region
+          deliberately given a tab stop, whose focus then cannot be seen, is WCAG 2.4.7. So the inset
+          offset belongs to the PATTERN, not to this site, and `scrollRegionNamed` now asserts the
+          quartet. */}
+      <div tabIndex={0} role="group" aria-label="Capture and proposals" className="flex-1 overflow-y-auto focus-visible:-outline-offset-2">
         <div className="mx-auto flex flex-col gap-xl px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
           {err && <InlineError icon onDismiss={() => setErr('')}>{err}</InlineError>}
 
