@@ -1,6 +1,7 @@
 import { FileText, StickyNote, BookMarked, Bookmark, Code2, Image, Music, Video, FileType2, FileSpreadsheet, Presentation, File, Shapes, Gavel } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { KnowledgeItem, KnowledgeType } from '../../lib/api'
+import { epochSeconds } from '../../lib/epoch'
 
 // ── typed knowledge formats (mirrors the OpenForge vision enum) ──
 export interface TypeMeta { key: KnowledgeType; label: string; icon: LucideIcon; tone: string; group: 'text' | 'link' | 'media' | 'document' }
@@ -153,13 +154,31 @@ export function fmtBytes(n?: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
+/** How long ago a library item was created or last touched.
+ *
+ *  🔴 THIS HAD NEITHER OF THE TWO GUARDS ITS SIBLINGS SHIP, and a knowledge library is the surface
+ *  where both bite. Censused across the eleven time formatters in `web/src`, `taskMeta.relTime` is
+ *  the reference — it has both — and this was the ONLY one with neither:
+ *
+ *   1. **No ceiling.** The day branch was unbounded, so an item created last year read
+ *      **"412d ago"**. Nobody communicates a date that way, and a library is long-lived BY
+ *      DEFINITION: `created_at` renders on `LibraryHome`, `KnowledgeListPage` rows and the detail
+ *      header, so an aged item is the normal case here rather than an edge one.
+ *   2. **No future guard.** A stamp ahead of now made `s` negative, which falls through `s < 60`
+ *      and renders **"just now"** — a confident wrong answer, not a blank.
+ *
+ *  Both now match `taskMeta`: past a week, show the actual date; a future stamp shows its date too,
+ *  because "in 3 days" is not what any of these four call sites mean. Parsing goes through
+ *  `epochSeconds`, the canonical parser, rather than a fourth local `Date.parse`. */
 export function relTime(iso?: string): string {
-  if (!iso) return ''
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return ''
-  const s = (Date.now() - t) / 1000
+  const secs = epochSeconds(iso)
+  if (secs === undefined) return ''
+  const t = secs * 1000
+  const s = Date.now() / 1000 - secs
+  if (s < 0) return new Date(t).toLocaleDateString()
   if (s < 60) return 'just now'
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return `${Math.floor(s / 86400)}d ago`
+  if (s < 604800) return `${Math.floor(s / 86400)}d ago`
+  return new Date(t).toLocaleDateString()
 }
