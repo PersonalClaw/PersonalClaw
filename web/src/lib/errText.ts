@@ -110,3 +110,43 @@ export async function errEnvelope(r: Response): Promise<ErrEnvelope> {
 export async function errText(r: Response): Promise<string> {
   return (await errEnvelope(r)).message
 }
+
+/** Messages that carry nothing a user can act on, so a surface with its own written fallback
+ *  should prefer that fallback.
+ *
+ *  🔑 THIS IS THE GAP `errEnvelope` CANNOT COVER, BY CONSTRUCTION. Everything above takes a
+ *  `Response`, so it shapes what the SERVER said. When `fetch` itself rejects there is no response
+ *  at all — only the browser's own `TypeError`, whose text is engine-specific and written for a
+ *  developer console: Chrome says "Failed to fetch", Safari "Load failed", Firefox "NetworkError
+ *  when attempting to fetch resource.". None of those passes through `errEnvelope`, so a surface
+ *  printing `error.message` prints them verbatim.
+ *
+ *  The other entry is `HTTP <status>`, which is `errEnvelope`'s own deliberate output for a body it
+ *  refused to show. Terse-but-honest is right in a one-line `FieldError` under an input. It is
+ *  wrong as the explanation beneath a headline that already read "Couldn't load your projects",
+ *  where it displaces a written sentence and offers a number the reader cannot use.
+ *
+ *  🪤 DELIBERATELY A CLOSED SET, NOT A HEURISTIC. Anything the backend actually authored
+ *  ("name is required", "evals_disabled") is information and must survive. A broad
+ *  "looks technical" guess would silently swallow the messages most worth reading, which is a
+ *  worse failure than the one this fixes. */
+const OPAQUE_FAILURE = [
+  /^failed to fetch$/i,
+  /^load failed$/i,
+  /^networkerror\b/i,
+  /^network ?error$/i,
+  /^typeerror: failed to fetch$/i,
+  /^the internet connection appears to be offline\.?$/i,
+  /^HTTP \d{3}$/,
+]
+
+/** The message from a rejection, or `''` when it says nothing a user can act on.
+ *
+ *  Callers with their own written fallback do `readableErrText(e) || 'their sentence'`. Returning
+ *  `''` rather than a fallback of its own keeps the sentence at the call site, which knows what it
+ *  was loading and can say so in its own voice. */
+export function readableErrText(error: unknown): string {
+  const raw = (error instanceof Error ? error.message : typeof error === 'string' ? error : '').trim()
+  if (!raw) return ''
+  return OPAQUE_FAILURE.some((re) => re.test(raw)) ? '' : raw
+}
