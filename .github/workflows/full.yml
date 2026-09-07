@@ -51,6 +51,20 @@ jobs:
         run: uv python install ${{ matrix.python }}
       - name: Install (locked)
         run: uv sync --locked --extra dev --python ${{ matrix.python }}
+      # Same reason as ci.yml's `test` job: EI-6's SC5 real-daemon leg is skipif-gated on a
+      # tmux binary and no stock runner image ships one, so it had been skipping on all six
+      # cells here. Installed per-OS rather than apt-only because this matrix spans macOS too;
+      # the already-present branch keeps the step a no-op if an image ever starts shipping it.
+      - name: Install tmux (EI-6 durable sessions — real-daemon test leg)
+        run: |
+          if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update -qq &&
+                   sudo apt-get install -y --no-install-recommends tmux ;;
+            macOS) brew install tmux ;;
+            *) echo "no tmux installer known for RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
+          esac
+          tmux -V
       - name: pytest (full suite)
         # The frontend URL-doctrine + config round-trip tests are part of this suite;
         # named here for legibility in the job summary.

@@ -637,7 +637,17 @@ class TestDurableWorkerName:
 @pytest.mark.skipif(not _REAL_TMUX, reason="tmux is not installed on this machine")
 class TestSC5RealTmux:
     """The same clauses with the real daemon: skipped honestly where tmux is absent, and
-    the shim classes above keep the logic railed on those machines."""
+    the shim classes above keep the logic railed on those machines.
+
+    THE SKIP WAS NEVER A CEILING — it was an UNASKED QUESTION. "tmux is absent" was read
+    for weeks as "SC5 cannot be validated", but nobody had asked a package manager: the
+    binary installs in seconds (`brew install tmux` / `apt-get install -y tmux`) and every
+    clause below then passes against a real daemon. Absent is not unavailable. The stock
+    GitHub runner images genuinely do not ship tmux (checked against the Ubuntu-24.04 and
+    macOS-15-arm64 image manifests — zero mentions), which is why `.github/workflows/ci.yml`
+    now INSTALLS it and asserts `tmux -V` in the same step: on that job the skipif can no
+    longer fire, so a regression here reds CI instead of vanishing into a skip count.
+    """
 
     async def test_live_reattaches_and_dead_tombstones_against_a_real_daemon(
         self, durable_on, tmp_path
@@ -681,3 +691,66 @@ class TestSC5RealTmux:
         finally:
             await tmux_substrate.kill_session(live_name)
             await tmux_substrate.kill_session(dead_name)
+
+    async def test_the_reattached_run_RESUMES_and_the_journal_flags_it_against_a_real_daemon(
+        self, durable_on, tmp_path
+    ):
+        """SC5's first clause to its END against the real daemon: suspended → **running**,
+        with the journal flagging `resumed`.
+
+        The sibling above stops at `suspended`, and `TestSC5SpawnToReattach` carries the
+        resume half only against the shim. That left the one transition SC5 names in full —
+        "run resumes suspended→running, journal flags `resumed`" — proven against a
+        substitute daemon and never against tmux itself. The shim is a faithful stand-in for
+        `has-session`/`list-panes`, but the whole point of a durable session is that a
+        PROCESS THE GATEWAY DOES NOT OWN keeps the work alive, and only the real server
+        reparents that way. So this runs the same chain — production spawn seam → abandoned
+        awaiter → boot sweep → controller resume → journal read — with tmux 3.x driving it.
+        """
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        run = _run(
+            project_id="proj",
+            started_at="2026-09-06T00:00:00Z",
+            extra={"worktree_path": str(tmp_path / "gone")},
+        )
+        name = containers.durable_worker_name(run)
+        try:
+            # `sleep 120` through run_step's durable branch: the worker is tmux's child, not
+            # ours, so cancelling the awaiter is a real gateway death and not a fixture flag.
+            task = asyncio.ensure_future(
+                provisioning.run_step("sleep 120", ws, env={}, durable_session=name)
+            )
+            try:
+                await _wait_for(
+                    lambda: tmux_substrate.has_session(name),
+                    what="the real durable worker to spawn",
+                )
+            finally:
+                task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert await tmux_substrate.has_session(
+                name
+            ), "the real worker died with the gateway — the session was not durable"
+
+            wd = WorkflowWatchdog(None, EngineServices())
+            await wd._poll_once()
+            await wd.stop()
+            assert (
+                store.get(run.id).status == RunStatus.PAUSED
+            ), "the sweep did not reattach to the still-alive real worker"
+
+            controller = RunController(store.get(run.id), SPEC, services=EngineServices())
+            assert await controller.run_to_completion(timeout=30) == RunStatus.COMPLETE
+            await controller.stop()
+            starts = [
+                e
+                for e in _journal_events(run.id)
+                if e.get("kind") == "run_started" and "resumed" in e
+            ]
+            assert (
+                starts and starts[-1]["resumed"] is True
+            ), "the run resumed off a real durable session but the journal did not flag it"
+        finally:
+            await tmux_substrate.kill_session(name)

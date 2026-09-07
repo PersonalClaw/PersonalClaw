@@ -136,6 +136,24 @@ jobs:
           enable-cache: true
       - name: Install (locked)
         run: uv sync --locked --extra dev
+      # EI-6's SC5 real-daemon leg (tests/test_ei6_durable_spawn.py::TestSC5RealTmux) is
+      # skipif-gated on a tmux binary, and NO stock runner image ships one — checked against
+      # the Ubuntu-24.04 and macOS-15-arm64 runner-image manifests: zero mentions each. So the
+      # one leg that proves a durable worker really outlives the gateway against the real
+      # server had been skipping silently on every run since it landed, and the roadmap
+      # recorded that skip as a MACHINE CEILING ("closes via a machine with tmux").
+      #
+      # It was never a ceiling, only an unasked question: apt has tmux and it installs in
+      # seconds. Absent is not unavailable — a skip is the absence of an answer, not a
+      # negative one, and reading it as a negative kept a shipped mechanism unproven.
+      #
+      # `tmux -V` runs in the SAME step deliberately: an install that fails must red the job
+      # HERE, not reappear downstream as a skip in a count nobody reads.
+      - name: Install tmux (EI-6 durable sessions — real-daemon test leg)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends tmux
+          tmux -V
       - name: pytest (full suite, xdist)
         run: uv run pytest
 
