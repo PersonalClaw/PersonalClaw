@@ -5,6 +5,7 @@ import { TopBar } from './TopBar'
 import { Spark } from './Spark'
 import { Button } from './Button'
 import { spring, expr } from '../design/motion'
+import { readableErrText } from '../lib/errText'
 import { PageTitle } from './PageTitle'
 import { Surface } from './Surface'
 
@@ -68,8 +69,17 @@ export function LoadError({ what, error, onRetry }: {
           {/* The fallback used to read "Your ${what} are safe", which is ungrammatical for the many
               singular nouns callers pass ("Your project are safe"). Nothing on this component reads
               the count, so the noun cannot be pluralized reliably — the reassurance is stated once,
-              noun-free, and it is just as true. The headline above already names what failed. */}
-          {(error as Error)?.message
+              noun-free, and it is just as true. The headline above already names what failed.
+
+              🔴 AND THE FALLBACK WAS UNREACHABLE IN THE COMMONEST FAILURE OF ALL. `?.message` is
+              truthy for a browser fetch rejection, so the written sentence lost to "Failed to
+              fetch" (Chrome) / "Load failed" (Safari) — engine-specific text meant for a developer
+              console — and to `HTTP 502`, which is `errText`'s own placeholder for a body it
+              refused to show. Both displaced a real sentence with something the reader cannot use,
+              directly under a headline that had already named what failed. `readableErrText`
+              returns '' for exactly that closed set and passes a backend-authored message through
+              untouched, so "name is required" still reaches the user. */}
+          {readableErrText(error)
             || "The server didn't respond — this is just a load error, and nothing was lost."}
         </p>
       </div>
@@ -219,8 +229,25 @@ export function Loading({ what }: {
 
 /** A single shimmering placeholder block. Use to render the SHAPE of content while
  *  a (cache-miss) fetch is in flight, so the page appears instantly instead of a
- *  bare "Loading…". `className` controls size/shape (height, width, rounding). */
-export function Skeleton({ className = '' }: { className?: string }) {
+ *  bare "Loading…". `className` controls size/shape (height, width, rounding).
+ *
+ *  🔑 `className` IS REQUIRED, AND THAT IS THE WHOLE POINT. This renders a `<div>` with
+ *  no content, so with no height it is a **0px invisible element** — the component
+ *  "succeeds" and the user sees nothing. Five call sites shipped exactly that
+ *  (`<Skeleton />` bare), one of them `if (loading) return <Skeleton />`, which showed an
+ *  empty panel for the entire fetch and read as broken rather than loading.
+ *
+ *  Making the prop required turns that class of defect into a compile error, and it cost
+ *  nothing to adopt: of 55 call sites, the 50 correct ones already passed a size, as do
+ *  all of this file's own internal uses. A default height was considered and rejected —
+ *  `className` is APPENDED, so `skeleton rounded-md h-4 h-72` would leave the winner to
+ *  stylesheet source order rather than to the caller, which is worse than the bug.
+ *
+ *  🪤 This change is `aria-hidden`, so it announces nothing by design. A composite built
+ *  from it needs its own `role="status"` + `<LoadingStatus>` — `ListSkeleton` /
+ *  `FormSkeleton` / `CardGridSkeleton` already do that, which is why they are the better
+ *  choice whenever the shape is a list, a form or a card grid. */
+export function Skeleton({ className }: { className: string }) {
   return <div className={`skeleton rounded-md ${className}`} aria-hidden="true" />
 }
 

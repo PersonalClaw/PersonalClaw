@@ -138,7 +138,7 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
       {preview && (
         <Block label="Preview">
           {preview.ports.length > 0 ? (
-            <ul data-testid="preview-ports" className="flex flex-col gap-2xs">
+            <ul data-testid="preview-ports" className="flex flex-col gap-xs">
               {preview.ports.map((p) => (
                 <li key={p.port} data-type="caption" className="flex items-center gap-s rounded-md bg-surface px-2.5 py-1.5">
                   <span className="min-w-0 flex-1 truncate font-mono text-on-surface">{p.url}</span>
@@ -193,7 +193,7 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
             {ws.alive ? 'Nothing changed in the workspace.' : 'The workspace is gone; its work is on the branch below.'}
           </p>
         ) : (
-          <ul data-testid="changed-files" className="flex max-h-72 flex-col gap-2xs overflow-auto">
+          <ul data-testid="changed-files" className="flex max-h-72 flex-col gap-xs overflow-auto">
             {ws.changed.map((c) => (
               <li key={c.path} data-type="caption" className="flex items-center gap-s rounded-md bg-surface px-2.5 py-1.5">
                 <FileDiff size={13} className="shrink-0 text-on-surface-low" />
@@ -213,7 +213,7 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
           missing dependency. */}
       {setup?.failed?.length ? (
         <Block label={`Setup failures (${setup.failed.length})`}>
-          <ul data-testid="setup-failed" className="flex flex-col gap-2xs">
+          <ul data-testid="setup-failed" className="flex flex-col gap-xs">
             {setup.failed.map((f, i) => (
               <li key={i} data-type="caption" className="rounded-md bg-surface px-2.5 py-1.5 font-mono text-on-surface-var break-words">
                 {f}
@@ -229,7 +229,7 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
 
       {conflicts.length > 0 && (
         <Block label={`Conflicts (${conflicts.length})`}>
-          <ul data-testid="workspace-conflicts" className="flex flex-col gap-2xs">
+          <ul data-testid="workspace-conflicts" className="flex flex-col gap-xs">
             {conflicts.map((p) => (
               <li key={p} data-type="caption" className="rounded-md bg-surface px-2.5 py-1.5 font-mono text-on-surface break-all">{p}</li>
             ))}
@@ -241,7 +241,7 @@ function WorkspaceBody({ data }: { data: WorkflowWorkspaceReview }) {
         <Block label="Take this work">
           <ul data-testid="reintegration-verbs" className="flex flex-col gap-s">
             {offer.verbs.map((v) => (
-              <li key={v.verb} className="flex flex-col gap-2xs rounded-md bg-surface px-3 py-2">
+              <li key={v.verb} className="flex flex-col gap-xs rounded-md bg-surface px-3 py-2">
                 <div className="flex items-center gap-s">
                   <span data-type="body-s" className="text-on-surface">{v.label}</span>
                   {!v.safe && (

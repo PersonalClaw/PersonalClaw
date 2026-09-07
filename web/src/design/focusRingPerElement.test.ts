@@ -159,6 +159,30 @@ const INVENTORY: { file: string; anchor: string; ring: RegExp; what: string }[] 
     ring: CONTAINER_RING,
     what: 'codebase-path + reference-URL fields (identical chrome — both checked)',
   },
+  // ── added 2026-09-07: two composers this rail could not have found ──
+  //
+  // 🔑 THESE ARE THE BLIND SPOT THIS FILE'S OWN DOCSTRING NAMES: "it cannot discover a NEW unringed
+  // control", only guard the ones already listed. Both sat unringed while `focusRingSurvival` credited
+  // their files, because OTHER controls in those same files are ringed. Extending the inventory in the
+  // same commit as the fix is the only thing that stops that repeating.
+  //
+  // 🪤 BOTH ARE TRANSPARENT INPUTS IN BOX-DRAWING CONTAINERS AND BOTH TAKE `ELEMENT_RING` ANYWAY —
+  // the one place this inventory's usual taxonomy does not decide the answer. Each container also
+  // holds a BUTTON ROW, so a container ring would light the whole composer when Send or Cancel takes
+  // focus. That is the ambiguity recorded above for `CodePlanReview`'s shared box, and it outranks the
+  // transparent-input idiom. Do not "correct" these two to `CONTAINER_RING`.
+  {
+    file: 'pages/ChatPage.tsx',
+    anchor: 'w-full resize-none bg-transparent px-s py-xs text-on-surface',
+    ring: ELEMENT_RING,
+    what: 'session-peek quick-reply composer',
+  },
+  {
+    file: 'pages/loops/LoopCockpitPage.tsx',
+    anchor: 'w-full bg-transparent outline-none focus:ring-2',
+    ring: ELEMENT_RING,
+    what: 'nudge / answer-the-agent composer (autoFocus hid only the arrival, not the return)',
+  },
 ]
 
 /** Controls that carry `outline-none` and correctly have NO treatment of their own, because an

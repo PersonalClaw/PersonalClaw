@@ -79,12 +79,14 @@ export function DocumentOutline({ entries, activeOffset, onSelect }: {
       <div data-type="caption" className="mb-1.5 flex items-center gap-1.5 text-on-surface-low uppercase tracking-wide">
         <List size={12} />Outline
       </div>
-      {/* `gap-xs`, NOT `gap-2xs`. The tree's dense-list idiom (7 files under pages/workflows)
-          writes `gap-2xs`, and `--spacing-2xs` DOES NOT EXIST — tokens.css defines
+      {/* `gap-xs`, NOT `gap-2xs`. `--spacing-2xs` DOES NOT EXIST — tokens.css defines
           xs/s/m/l/xl/2xl/3xl — so Tailwind emits no rule for it and the gap is silently 0.
           Confirmed against the built bundle: `.gap-2xs{` is absent, `.gap-xs{` is present.
-          `design/inertUtilities.test.ts` cannot see this family: it scans text-/bg-/border-
-          prefixes only. */}
+          This file got it right first; the dense-list idiom under pages/workflows did not,
+          and wrote `gap-2xs` at 49 sites that all rendered flush until they were respelled
+          to `gap-xs`. `design/inertUtilities.test.ts` now DOES see this family — its
+          SCANNED_PREFIX covers gap-/rounded- as well as the colour prefixes — so a
+          reintroduced `gap-2xs` fails CI rather than shipping a gap nobody can see. */}
       <ol className="flex min-h-0 flex-1 flex-col gap-xs overflow-y-auto">
         {shown.map((e) => (
           <li key={e.offset} ref={(el) => { if (el) rows.current.set(e.offset, el); else rows.current.delete(e.offset) }}>

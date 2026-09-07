@@ -27,7 +27,10 @@ import { ACTIVE_LOOP_STATUSES } from '../../../lib/loopStatus'
  *    greeting. */
 export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { variant?: 'header' | 'strip' }) {
   const header = variant === 'header'
-  const { approvals, inbox, tasks, loops, notifications } = useDashboardLive()
+  const {
+    approvals, inbox, tasks, loops, notifications,
+    approvalsErr, inboxErr, tasksErr, loopsErr, notificationsErr,
+  } = useDashboardLive()
 
   const runningLoops = useMemo(
     () => loops.filter((l) => ACTIVE_LOOP_STATUSES.has(l.status)).length,
@@ -40,12 +43,23 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
   // message + 30 mirrors, ~doubling the perceived backlog.
   const inboxMsgs = useMemo(() => inbox.filter((i) => i.item_kind !== 'proposal').length, [inbox])
 
-  const pills: { key: string; icon: LucideIcon; n: number; label: string; go: string; tone: string }[] = [
-    { key: 'loops', icon: Activity, n: runningLoops, label: runningLoops === 1 ? 'loop running' : 'loops running', go: 'projects', tone: 'var(--color-primary)' },
-    { key: 'appr', icon: ShieldCheck, n: approvals.length, label: approvals.length === 1 ? 'approval waiting' : 'approvals waiting', go: 'chat', tone: 'var(--color-warn)' },
-    { key: 'tasks', icon: ListTodo, n: tasks.length, label: tasks.length === 1 ? 'task ready' : 'tasks ready', go: 'tasks', tone: 'var(--color-info)' },
-    { key: 'inbox', icon: Inbox, n: inboxMsgs, label: 'inbox', go: 'inbox', tone: 'var(--color-secondary)' },
-    { key: 'notif', icon: Bell, n: unread, label: 'unread', go: 'notifications', tone: 'var(--color-on-surface-low)' },
+  // 🔴 A COUNT IS A CLAIM, AND `0` IS THE MOST REASSURING ONE THIS STRIP CAN MAKE.
+  // Every lane below arrives as `[]` when its read fails, so before this the hero — the FIRST
+  // thing the app shows — stated "0 loops running · 0 approvals waiting · 0 tasks ready · 0 inbox
+  // · 0 unread" as fact whenever the gateway was unreachable. Five confident zeros, and the
+  // `aria-label` spoke them too, so the screen-reader reading was just as wrong.
+  //
+  // `null` means "not read", and it renders as an em dash rather than a number. This is the
+  // doctrine `dashboard/healthUnknown.test.tsx` already states for the health strip — "on a health
+  // surface, silence is a claim" — applied to the counted lanes, including its nuance: the unknown
+  // pill keeps its NEUTRAL tone and is not styled as an alarm. We do not know anything is wrong,
+  // only that we could not look, and claiming a fault we have not measured is the mirror mistake.
+  const pills: { key: string; icon: LucideIcon; n: number | null; label: string; go: string; tone: string }[] = [
+    { key: 'loops', icon: Activity, n: loopsErr ? null : runningLoops, label: runningLoops === 1 ? 'loop running' : 'loops running', go: 'projects', tone: 'var(--color-primary)' },
+    { key: 'appr', icon: ShieldCheck, n: approvalsErr ? null : approvals.length, label: approvals.length === 1 ? 'approval waiting' : 'approvals waiting', go: 'chat', tone: 'var(--color-warn)' },
+    { key: 'tasks', icon: ListTodo, n: tasksErr ? null : tasks.length, label: tasks.length === 1 ? 'task ready' : 'tasks ready', go: 'tasks', tone: 'var(--color-info)' },
+    { key: 'inbox', icon: Inbox, n: inboxErr ? null : inboxMsgs, label: 'inbox', go: 'inbox', tone: 'var(--color-secondary)' },
+    { key: 'notif', icon: Bell, n: notificationsErr ? null : unread, label: 'unread', go: 'notifications', tone: 'var(--color-on-surface-low)' },
   ]
 
   return (
@@ -55,8 +69,10 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
           key={p.key}
           type="button"
           onClick={() => navigate(p.go)}
-          title={header ? `${p.n} ${p.label}` : undefined}
-          aria-label={`${p.n} ${p.label}`}
+          // An unknown lane must not SPEAK a number either — the aria-label was the second place
+          // the zeros were asserted, and a screen-reader user had no other cue at all.
+          title={header ? (p.n === null ? `${p.label} — couldn’t be read` : `${p.n} ${p.label}`) : undefined}
+          aria-label={p.n === null ? `${p.label} — couldn’t be read` : `${p.n} ${p.label}`}
           className={`group flex items-center rounded-pill bg-surface-low transition-colors hover:bg-surface-high ${header ? 'gap-xs px-m py-xs' : 'gap-s px-l py-s'}`}
         >
           <p.icon size={header ? 14 : 16} style={{ color: p.tone }} className="shrink-0" />
@@ -66,9 +82,11 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
             animate={{ scale: 1, opacity: 1 }}
             transition={physics.playful}
             data-type="title-m"
-            className="tabular-nums text-on-surface"
+            // The dash is dimmer than a real count, which is the whole visual message: this is
+            // an absence of information, not a measured value. Still not danger-toned.
+            className={`tabular-nums ${p.n === null ? 'text-on-surface-low' : 'text-on-surface'}`}
           >
-            {p.n}
+            {p.n === null ? '—' : p.n}
           </motion.span>
           {/* In the header the reading sheds below 2xl (icon + count stay, the
               tooltip carries the words); the body strip always keeps it. */}

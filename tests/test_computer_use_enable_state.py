@@ -612,6 +612,12 @@ def test_the_packages_public_surface_is_pinned():
             "type_text",
             "walk_window",
         ],
+        # #2569's module: WHICH process macOS resolved this session's Accessibility request
+        # against. Not part of `macos_ffi` because it is not an FFI call — no accessibility API
+        # reports the responsible process, so this reads back the attribution `tccd` wrote into
+        # the unified log. A READ that names a principal for a refusal's FIX and for the two live
+        # validators; it decides nothing and cannot dispatch, hence no `computer_*` prefix.
+        "macos_tcc.py": ["Responsible", "reset_cache", "responsible_process"],
         "macos_driver.py": [
             "op_click",
             "op_list_apps",

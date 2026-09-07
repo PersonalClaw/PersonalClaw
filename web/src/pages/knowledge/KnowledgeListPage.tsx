@@ -414,6 +414,21 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
       favorites: base.filter((i) => !!i.favorited).length,
     }
   }, [items])
+  // 🪤 STAYS ON `stats.items`, DELIBERATELY — do not "simplify" this to `items.length === 0`.
+  // `stats.items` is a WHOLE-LIBRARY count; `items` is the filtered/paged list for the current
+  // lens, search (`q`) and shelf (`collectionTok`). They are not interchangeable, and swapping them
+  // breaks two things at once: a search with no matches would render "Knowledge base is empty"
+  // (it is a no-match state, not an empty library), and `view === 'home' && !empty` above would
+  // suppress the Home shelves on any filtered-empty view. `libraryHomeReachable.test.tsx` catches
+  // exactly that, which is how the swap was caught here rather than in review.
+  //
+  // What DID change is upstream: `knowledgeStats()` no longer swallows its own failure into
+  // `items: 0`. That fabricated zero made this expression TRUE on any stats outage regardless of the
+  // real library, so a populated knowledge base was told it was empty and offered "Add knowledge".
+  // With the swallow gone, `stats` is null on a failed read, `empty` is falsy, and the actual item
+  // list renders instead — the user sees their items. The narrow remaining gap is stats-down AND a
+  // genuinely empty library, which now shows an empty list area rather than the empty-state card:
+  // no claim rather than a false one, which is the right trade.
   const empty = stats && stats.items === 0
 
   return (

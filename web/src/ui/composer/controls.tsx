@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { fvs } from '../../design/fontWeight'
 import { motion } from 'framer-motion'
-import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText, Feather } from 'lucide-react'
+import { Bot, Cpu, ShieldCheck, Gauge, ChevronDown, Plus, Search, Paperclip, BookText, Feather, RotateCcw } from 'lucide-react'
 import { Popover, MenuRow } from '../Popover'
+import { Button } from '../Button'
 import { spring, physics, expr } from '../../design/motion'
 import { cx } from '../cx'
 import type { ComposerData } from './types'
@@ -71,6 +72,13 @@ export function AgentPill({ data, value, onSelect, openSignal }: { data?: Compos
   const nativeAgents = data?.agents ?? []
   const discoveredEntries = Object.entries(data?.discovered ?? {})
   const total = nativeAgents.length + discoveredEntries.reduce((n, [, a]) => n + a.length, 0)
+  // 🪤 `ready` DEFAULTS TRUE when absent, not false. Callers that pass fixed lists
+  // (the goal composer, tests) never set it, and defaulting to false would leave
+  // them stuck on "Loading agents…" forever. Only a host that opted in by threading
+  // `useComposerData` can report not-yet-read, which is exactly the host that knows.
+  const ready = data?.ready ?? true
+  const agentsErr = data?.agentsErr
+  const retry = data?.retry
   // Long agent rosters (native + every discovered ACP agent) need a filter — 60+
   // entries is unscannable. Show the search box only once the list is big enough
   // to warrant it, so small setups stay clutter-free.
@@ -106,7 +114,24 @@ export function AgentPill({ data, value, onSelect, openSignal }: { data?: Compos
               </div>
             ))}
             {noMatches && <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents match “{q.trim()}”</div>}
-            {total === 0 && <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents available</div>}
+            {/* 🔑 THREE STATES, NOT ONE. `total === 0` used to print "No agents available" on all
+                three, and two of them are false. `useComposerData` seeds every list to `[]` and
+                readies via `Promise.allSettled`, so an unread roster and a REJECTED roster read are
+                both `[]` — indistinguishable from a user who genuinely has no agents installed.
+                "No agents available" is a statement about the user's own setup, the kind they
+                believe, so on an unreachable gateway it sent them looking for a problem in their
+                install. The order below is deliberate: not-yet-known, then could-not-be-read, then
+                the one real emptiness. */}
+            {total === 0 && (
+              !ready
+                ? <div data-type="body-s" className="px-m py-2 text-on-surface-low">Loading agents…</div>
+                : agentsErr
+                  ? <div role="alert" className="px-m py-2">
+                      <p data-type="body-s" className="text-on-surface-low">Couldn’t load your agents — this is a load error, nothing is missing from your setup.</p>
+                      {retry && <Button variant="ghost-accent" size="xs" onClick={() => retry()} className="mt-1"><RotateCcw size={13} /> Try again</Button>}
+                    </div>
+                  : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents available</div>
+            )}
           </div>
         </div>
       )}

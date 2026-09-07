@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Gavel, ListTree, Scale } from 'lucide-react'
 import { Segmented } from '../../ui/Segmented'
-import { Skeleton } from '../../ui/ListScaffold'
+import { FormSkeleton } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, type WorkflowLedgerRails } from '../../lib/api'
 import { fmtElapsed } from './workflowMeta'
@@ -60,7 +60,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 function RoiBars({ series }: { series: number[] }) {
   const peak = Math.max(...series)
   return (
-    <div className="flex h-16 items-end gap-2xs" role="img" aria-label={`Judge scores across ${series.length} verdicts`}>
+    <div className="flex h-16 items-end gap-xs" role="img" aria-label={`Judge scores across ${series.length} verdicts`}>
       {series.map((score, i) => (
         <div
           key={i}
@@ -91,7 +91,19 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
     return () => { live = false }
   }, [runId])
 
-  if (loading) return <Skeleton />
+  // 🔑 WAS `<Skeleton />` WITH NO className — a 0px invisible div, so this panel rendered
+  // NOTHING for the whole fetch and read as broken rather than loading. The shaped primitive also
+  // brings the `role="status"` + sr-only announcement the bare change cannot have (it is `aria-hidden`
+  // by design), so this goes from silent-and-invisible to visible and announced.
+  //
+  // 🪤 NO `what` NOUN, DELIBERATELY. My first draft passed `what="this run’s ledger"`, borrowed from
+  // this file's own `InlineError` copy — and `ui/loadingNounPairing.test.ts` red it as an INVENTED
+  // noun, correctly. That rail only accepts a noun sourced from a declaration it can verify: a
+  // sibling `LoadError what=`, a `results={{ noun }}`, or an empty-state title. Prose I judged
+  // similar is not one of those, and its whole point is that "no noun here is invented". This panel
+  // reports failure through `InlineError`, so there is no declaration to borrow — it announces the
+  // generic "Loading…" until someone adds one deliberately.
+  if (loading) return <FormSkeleton sections={1} rows={3} title={false} />
   if (error) return <InlineError>{error}</InlineError>
   if (!data) return <p data-type="body-s" className="text-on-surface-low">This run has no ledger to project.</p>
 
@@ -103,7 +115,7 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
       {/* The rail totals. Each measured cell can be absent, and the em dash is the honest render:
           this run's ledger carried no such key, which is not the same as a zero. */}
       <section className="flex flex-col gap-xs">
-        <h3 data-type="label-s" className="flex items-center gap-2xs text-on-surface fw-500">
+        <h3 data-type="label-s" className="flex items-center gap-xs text-on-surface fw-500">
           <Scale size={13} aria-hidden /> Rail totals
         </h3>
         <dl data-type="caption" className="grid grid-cols-2 gap-xs sm:grid-cols-3">
@@ -140,7 +152,7 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
 
       {tab === 'findings' && (
         <section className="flex flex-col gap-xs">
-          <h3 data-type="label-s" className="flex items-center gap-2xs text-on-surface fw-500">
+          <h3 data-type="label-s" className="flex items-center gap-xs text-on-surface fw-500">
             <ListTree size={13} aria-hidden /> Findings rail
           </h3>
           {findings.length === 0 ? (
@@ -152,7 +164,7 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
           ) : (
             <ul className="flex flex-col gap-xs">
               {findings.map((f, i) => (
-                <li key={`${f.node_id ?? ''}-${f.epoch ?? i}-${i}`} className="flex flex-col gap-2xs rounded-lg bg-surface-high p-s">
+                <li key={`${f.node_id ?? ''}-${f.epoch ?? i}-${i}`} className="flex flex-col gap-xs rounded-lg bg-surface-high p-s">
                   <div className="flex items-baseline justify-between gap-s">
                     <span data-type="label-s" className="text-on-surface">
                       {text(f.node_id)}
@@ -160,7 +172,7 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
                     </span>
                     <span data-type="caption" className="text-on-surface-low tabular-nums">{text(f.state)}</span>
                   </div>
-                  <dl data-type="caption" className="grid grid-cols-2 gap-2xs text-on-surface-low sm:grid-cols-4">
+                  <dl data-type="caption" className="grid grid-cols-2 gap-xs text-on-surface-low sm:grid-cols-4">
                     <div><dt className="inline">Cost </dt><dd className="inline tabular-nums">{cell(f.cost_usd, (n) => `~$${n.toFixed(4)}`)}</dd></div>
                     <div><dt className="inline">Tokens </dt><dd className="inline tabular-nums">{cell(f.tokens, (n) => n.toLocaleString())}</dd></div>
                     <div><dt className="inline">Took </dt><dd className="inline tabular-nums">{cell(f.duration_secs, fmtElapsed)}</dd></div>
@@ -180,7 +192,7 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
 
       {tab === 'verdicts' && (
         <section className="flex flex-col gap-xs">
-          <h3 data-type="label-s" className="flex items-center gap-2xs text-on-surface fw-500">
+          <h3 data-type="label-s" className="flex items-center gap-xs text-on-surface fw-500">
             <Gavel size={13} aria-hidden /> Verdict / ROI rail
           </h3>
           {/* The absent axis, named. Without this the chart below would look like the whole ROI
@@ -202,12 +214,12 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
           {verdicts.length > 0 && (
             <ul className="flex flex-col gap-xs">
               {verdicts.map((v, i) => (
-                <li key={`${v.node_id ?? ''}-${v.epoch ?? i}-${i}`} className="flex flex-col gap-2xs rounded-lg bg-surface-high p-s">
+                <li key={`${v.node_id ?? ''}-${v.epoch ?? i}-${i}`} className="flex flex-col gap-xs rounded-lg bg-surface-high p-s">
                   <div className="flex items-baseline justify-between gap-s">
                     <span data-type="label-s" className="text-on-surface">{text(v.node_id)}</span>
                     <span data-type="caption" className="text-on-surface-low">{text(v.verdict)}</span>
                   </div>
-                  <dl data-type="caption" className="grid grid-cols-2 gap-2xs text-on-surface-low sm:grid-cols-4">
+                  <dl data-type="caption" className="grid grid-cols-2 gap-xs text-on-surface-low sm:grid-cols-4">
                     <div><dt className="inline">Score </dt><dd className="inline tabular-nums">{cell(v.overall, (n) => n.toFixed(2))}</dd></div>
                     <div><dt className="inline">Samples </dt><dd className="inline tabular-nums">{cell(v.sample_count, String)}</dd></div>
                     <div><dt className="inline">Marginal </dt><dd className="inline tabular-nums">{cell(v.marginal_value, (n) => n.toFixed(2))}</dd></div>

@@ -81,7 +81,7 @@ export function WorkflowAsk({ continuation, runId, busy, onAnswer }: {
       {/* The handoff bundle: what a returning human needs to re-acquire context without
           reading the whole journal. */}
       {hasContext && (
-        <div data-type="caption" className="flex flex-col gap-2xs text-on-surface-low">
+        <div data-type="caption" className="flex flex-col gap-xs text-on-surface-low">
           {!!handoff.checks_run?.length && <span>Already done: {handoff.checks_run.length} step{handoff.checks_run.length === 1 ? '' : 's'}</span>}
           {!!handoff.outstanding?.length && <span>Still to do: {handoff.outstanding.length} step{handoff.outstanding.length === 1 ? '' : 's'}</span>}
           {handoff.risks?.map((r) => <span key={r} className="text-warning">Risk: {r}</span>)}

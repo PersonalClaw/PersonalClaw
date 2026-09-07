@@ -56,6 +56,41 @@ DENIED_HOST = "denied.local"
 #: Named once so the skip/fail message says which proof stopped running.
 PROOF = "LIVE PROOF"
 
+#: The CDP reply that means this session never attached to a page target. Chrome answers
+#: it to any ``Page.*`` message on a session with no attached page, so it is what the
+#: teardown's own ``Page.stopLoading`` / ``Page.navigate`` hit when the target the fixture
+#: picked out of ``/json/list`` went away between selection and use.
+_NOT_ATTACHED = "Not attached to an active page"
+
+
+def _refuse_unmeasured(obs: dict) -> None:
+    """Fail with the ENVIRONMENT cause when the browser never gave us a page to drive.
+
+    Every observation this module records is downstream of attachment, so an unattached
+    session does not weaken the policy assertions — it makes all three of them WRONG:
+
+    * the quarantine check reads as a teardown regression,
+    * the blanked-DOM check reads as ``stopLoading`` having been used on its own,
+    * and the allowed-redirect check reads as the guard eating a legal navigation.
+
+    All three are the same one line in a CDP reply, and chasing any of them as a guard
+    defect is wasted work — measured four times across two lanes before this existed
+    (see #2549). ``cdp._enforce`` is not implicated: it caught the failure, quarantined,
+    and refused all further navigation, which is the fail-closed behaviour it documents.
+
+    Deliberately a FAILURE and never a skip. A skip that reads as a pass is the shape
+    this repo keeps rediscovering, and this module's whole job is to prove a denied
+    document is torn down — an unproven teardown must not be able to look proven.
+    """
+    reason = (obs.get("redirect_denied") or {}).get("quarantined") or ""
+    if _NOT_ATTACHED in reason:
+        raise AssertionError(
+            f"{PROOF}: ENVIRONMENT, NOT POLICY — the CDP session never attached to a page "
+            f"target, so nothing in this module was measured. Quarantine reason: {reason!r}. "
+            "The teardown logic is not implicated; re-run once the browser exposes an "
+            "attachable page target."
+        )
+
 
 def _free_port() -> int:
     with socket.socket() as sock:
@@ -351,6 +386,9 @@ async def _scenario(page_ws: str, site: _Site, sel_rows: list) -> dict:
         }
     finally:
         await inner.close()
+    # Attribute an unattached session before any test reads these observations, so one
+    # accurate environment failure replaces three wrong policy conclusions.
+    _refuse_unmeasured(obs)
     return obs
 
 
@@ -509,3 +547,47 @@ def test_a_real_client_side_redirect_to_an_allowed_host_is_left_alone(live: dict
     assert red["new_blocks"] == 0, "an allowed redirect must not be blocked"
     assert red["sel"] == []
     assert red["final_url"].endswith("/landed"), red["final_url"]
+
+
+# ── the attribution rail itself, which needs no browser ───────────────────────
+
+
+def test_an_unattached_session_is_attributed_to_the_environment() -> None:
+    """The real CDP payload must be named as environment, not read as a guard defect.
+
+    Text taken from an actual failing run rather than paraphrased: a paraphrase is what
+    lets the discriminator drift away from the message Chrome actually sends.
+    """
+    obs = {
+        "redirect_denied": {
+            "quarantined": (
+                "could not enforce the block on 'denied.local' (the browser rejected the "
+                "command: {'code': -32000, 'message': 'Not attached to an active page'}); "
+                "this session no longer navigates"
+            )
+        }
+    }
+    with pytest.raises(AssertionError, match="ENVIRONMENT, NOT POLICY"):
+        _refuse_unmeasured(obs)
+
+
+def test_a_measured_run_and_a_real_guard_failure_both_pass_the_rail() -> None:
+    """The other direction, or the rail would swallow the defect it exists to expose.
+
+    A clean run has no quarantine at all, and a quarantine from a DIFFERENT cause is a
+    real finding this module must still be allowed to report — so neither may be
+    re-labelled as an environment problem.
+    """
+    _refuse_unmeasured({"redirect_denied": {"quarantined": ""}})
+    _refuse_unmeasured({"redirect_denied": {}})
+    _refuse_unmeasured({})
+    _refuse_unmeasured(
+        {
+            "redirect_denied": {
+                "quarantined": (
+                    "could not enforce the block on 'denied.local' (the CDP transport "
+                    "closed mid-teardown); this session no longer navigates"
+                )
+            }
+        }
+    )

@@ -50,6 +50,13 @@
       "loginItem.js",
       "nativeNotifications.js",
       "gatewayShutdown.js",
+      "gatewayUrl.js",
+      "endpointRegistry.js",
+      "shellStore.js",
+      "connectMode.js",
+      "connectDialog.js",
+      "connectPreload.js",
+      "connectDialog.html",
       "preload.js",
       "loading.html",
       "icon.png"

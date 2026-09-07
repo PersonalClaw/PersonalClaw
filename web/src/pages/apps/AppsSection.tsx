@@ -1348,7 +1348,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
         </div>
 
         {app.updateAvailable && (
-          <div className="flex items-center justify-between gap-3 rounded-m border border-primary/40 bg-surface-high p-m"
+          <div className="flex items-center justify-between gap-3 rounded-md border border-primary/40 bg-surface-high p-m"
             style={{ background: 'color-mix(in srgb, var(--color-primary) 8%, var(--color-surface-high))' }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-primary" data-type="body-s"><RefreshCw size={14} /> Update available</div>
@@ -1363,7 +1363,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
         <PermissionList perms={app.permissions} />
 
         {app.hasBackend && (
-          <div className="rounded-m border border-outline-variant bg-surface-high p-m" data-type="body-s">
+          <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
             <div className="flex items-center gap-2 text-on-surface"><Server size={14} /> Backend</div>
             <div className="mt-1 text-on-surface-low">
               {app.backendRunning ? `running on port ${app.backendPort}` : 'not running'}
@@ -1372,7 +1372,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
         )}
 
         {app.hasUI && app.enabled && (
-          <label className="flex items-center justify-between gap-3 rounded-m border border-outline-variant bg-surface-high p-m">
+          <label className="flex items-center justify-between gap-3 rounded-md border border-outline-variant bg-surface-high p-m">
             <span className="min-w-0">
               <span className="flex items-center gap-2 text-on-surface" data-type="body-s"><LayoutGrid size={14} /> Show in navigation</span>
               <span className="mt-0.5 block text-on-surface-low" data-type="label-s">Pin this app's page to the Apps section of the nav rail.</span>
@@ -1391,7 +1391,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
             Tools page. */}
         {app.native ? (
           <>
-            <div className="rounded-m border border-outline-variant bg-surface-high p-m" data-type="body-s">
+            <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
               <div className="flex items-center gap-2 text-on-surface"><Power size={14} /> Native app — always on</div>
               <div className="mt-1 text-on-surface-low" data-type="label-s">
                 {app.hasConfig
@@ -1436,7 +1436,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
               <ChevronDown size={14} className="transition-transform" style={{ transform: advancedOpen ? 'rotate(180deg)' : 'none' }} /> Advanced
             </button>
             {advancedOpen && (
-              <div className="mt-2 rounded-m border border-outline-variant bg-surface-high p-m">
+              <div className="mt-2 rounded-md border border-outline-variant bg-surface-high p-m">
                 <div data-type="body-s" className="text-on-surface">Force uninstall</div>
                 <div data-type="label-s" className="mt-0.5 text-on-surface-low">
                   Remove this app's files <span className="text-on-surface">and everything it stored for you</span> — notes, history,
@@ -1528,7 +1528,7 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
       )}
       {(item.crons ?? []).length > 0 && <CronConsentList crons={item.crons!} />}
 
-      <div className="rounded-m border border-outline-variant bg-surface-high p-m" data-type="body-s">
+      <div className="rounded-md border border-outline-variant bg-surface-high p-m" data-type="body-s">
         <div className="flex items-center gap-2 text-on-surface"><Download size={14} /> Not installed</div>
         <div className="mt-1 text-on-surface-low" data-type="label-s">
           Installing fetches this app behind the security scanner — a dangerous verdict is always refused.
@@ -1638,7 +1638,7 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
         </div>
         {/* `present` and `entries` are separate facts — see AppDataFacts. Absent data/
             and empty data/ get different sentences on purpose. */}
-        <div className="flex items-start gap-2 rounded-m border border-outline-variant bg-surface-high p-m">
+        <div className="flex items-start gap-2 rounded-md border border-outline-variant bg-surface-high p-m">
           <HardDrive size={15} className="mt-0.5 shrink-0 text-on-surface-low" />
           <div data-type="body-s" className="min-w-0 text-on-surface-low">
             {facts === undefined

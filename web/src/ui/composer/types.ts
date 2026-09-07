@@ -28,6 +28,17 @@ export interface ComposerData {
   providers: AgentProvider[]
   discovered: Record<string, DiscoveredAgent[]>
   models: ModelItem[]
+  /** False until the option lists have been read. Optional so a caller supplying
+   *  fixed lists (tests, the goal composer) need not fake it — but a picker MUST
+   *  NOT state an emptiness while this is false, because an unread list and an
+   *  empty one are the same `[]`. */
+  ready?: boolean
+  /** The rejection from the agents read, when it failed. Distinguishes "the roster
+   *  is empty" from "the roster could not be read" — `ready` alone cannot, since
+   *  `useComposerData` uses `Promise.allSettled` and readies even on a failed leg. */
+  agentsErr?: unknown
+  /** Re-runs the option reads. Present only when the host uses `useComposerData`. */
+  retry?: () => void
 }
 
 export interface ComposerProps {

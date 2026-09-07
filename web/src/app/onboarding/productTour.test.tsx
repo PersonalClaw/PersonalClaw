@@ -35,6 +35,19 @@ vi.setConfig({ testTimeout: 30_000 })
 vi.mock('../../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
 // The onboarding flow's 3D dot-wave is a canvas; jsdom has no 2D context.
 vi.mock('../../ui/DotGlow', () => ({ DotGlow: () => null }))
+// 🪤 SHELL NOISE INSIDE THE MEASUREMENT WINDOW — a different reason from DotGlow above, which is a
+// jsdom capability gap. `ui/DegradedChip` is mounted by the shell and reads `GET /api/onboarding` to
+// decide whether a model provider is bound. The "asks the gateway for nothing" test below brackets a
+// window and asserts `during.filter((c) => /onboarding/i.test(c))` is empty — a predicate that cannot
+// tell the TOUR's calls from the SHELL's — so that chip's read intermittently reddened a test about
+// the tour. The test already anticipates the hazard in its own comment ("The shell's own polls may
+// land in this window") while using a filter that cannot exclude them.
+//
+// Stubbing the chip removes the race without weakening the tour's claim by one word, which is
+// strictly better than loosening the assertion (that would cost real coverage to buy stability).
+// Nothing is lost: `ui/DegradedChip.test.tsx` and `ui/degradedChipUnknown.test.tsx` own that
+// component's own behaviour, including its unknown-state handling.
+vi.mock('../../ui/DegradedChip', () => ({ DegradedChip: () => null }))
 // The two middle steps are stubbed down to their escape hatch — this file is about what
 // happens AFTER the flow, and `essentialsStep.test.tsx` / `tryOneOutcome.test.tsx` own them.
 vi.mock('./ImportStep', () => ({

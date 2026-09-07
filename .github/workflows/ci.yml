@@ -117,6 +117,45 @@ jobs:
           name: lint-feedback
           path: /tmp/lint-feedback/
           retention-days: 3
+      # ── The install one-liner's linters, which the file has claimed since it landed ────────
+      # `deploy/website/install.sh` is what `curl -fsSL https://personalclaw.dev/install | sh`
+      # runs on a stranger's machine, and its header advertised "shellcheck-clean" plus a weekly
+      # container smoke. MEASURED 2026-09-06: no workflow mentioned the file at all — grepping
+      # .github/workflows/ for `website/install`, `install.sh` or `personalclaw.dev/install`
+      # returned nothing, and full.yml's four jobs (matrix/audit/security-corpus/coverage)
+      # touched none of it. The advertised coverage was the only artifact of itself.
+      #
+      # `!cancelled()` rather than the default success(): the lint step above ends in
+      # `exit "$status"`, so a black violation would otherwise SKIP this and the shell break
+      # would surface only on the next push — the same argument that step's own comment makes
+      # for running every tool before reporting.
+      #
+      # The tools are INSTALLED here, not assumed. Absent is not unavailable: this repo spent a
+      # month reading a skipped tmux-gated test class as a pass, so a runner image that drops
+      # shellcheck must red HERE rather than turn the cases below into quiet skips — which is
+      # precisely what PERSONALCLAW_REQUIRE_INSTALL_PROOF converts a missing linter into.
+      #
+      # This job carries the lever because it is the only one where both linters are guaranteed.
+      # The same module also rides `test` (leverless, so a laptop without dash gets a skip
+      # instead of a hostile red).
+      - name: install one-liner — shellcheck · sh -n · dash -n · offline contract
+        if: ${{ !cancelled() }}
+        env:
+          PERSONALCLAW_REQUIRE_INSTALL_PROOF: "1"
+        run: |
+          set -eu
+          for tool in shellcheck dash; do
+            command -v "$tool" >/dev/null 2>&1 || {
+              sudo apt-get update -qq
+              sudo apt-get install -y --no-install-recommends "$tool"
+            }
+          done
+          shellcheck --version | head -2
+          sh -n deploy/website/install.sh
+          dash -n deploy/website/install.sh
+          shellcheck -s sh deploy/website/install.sh
+          # -n0: the truncation sweep is ~170 tiny `sh` invocations; xdist buys nothing.
+          uv run pytest tests/test_website_installer.py -n0 --no-cov
 
   test:
     runs-on: ubuntu-latest
@@ -186,12 +225,16 @@ jobs:
       - name: test (desktop, node --test)
         # desktop/ is the OTHER member of this single root workspace, so the `npm ci`
         # above already installed it — this step costs ~0.2s and needs no extra runner.
-        # 92 cases / 16 suites over the pure shell-side modules (capabilities, pushToTalk,
-        # context-menu, find-bin) plus packaging.test.js, which asserts electron-builder's
-        # `build.files` still lists every local require() in main.js — a stale entry there
-        # ships a dmg that crashes on launch. Runs headless: every case injects its own
-        # platform/fs/os, none reads process.platform and none launches electron, so an
-        # `electron .` smoke test would need a display and deliberately is NOT here.
+        # 347 cases / 73 suites over the pure shell-side modules (capabilities, pushToTalk,
+        # context-menu, find-bin, and the gatewayUrl / endpointRegistry / connectMode /
+        # connectDialog) plus packaging.test.js, which asserts electron-builder's `build.files`
+        # still lists every local require() in main.js AND every sibling file loaded by
+        # `path.join(__dirname, …)` — a stale entry there ships a dmg that crashes on launch, or a
+        # switcher window that loads nothing. Two legs here open real sockets on loopback: the
+        # reconnect leg kills a listener and rebinds it, and the store leg writes real files into a
+        # temp dir. Still headless — every case injects its own platform/fs/os, none reads
+        # process.platform and none launches electron, so an `electron .` smoke test would need a
+        # display and deliberately is NOT here.
         run: npm run test:desktop
       - name: test (mobile, node --test)
         # mobile/ is the THIRD member of this single root workspace (the Capacitor shell that

@@ -77,6 +77,20 @@ const WEEK: StagingWeek = {
 }
 const DOC = 'docs/roadmap/research/learning-benchmark-protocol.md'
 
+/** The binding a real run records — the exact shape `cell_provider.CellProviderBinding.to_dict()`
+ *  emits, verified against a measured `report.json` from a run against a local Ollama. It carries
+ *  the NAME of a key variable, never a value; `api_key_env: ''` is the unauthenticated-endpoint
+ *  case, which is what a local runtime is. */
+const BINDING = {
+  use_case: 'chat',
+  provider_name: 'LocalOllama',
+  model: 'gemma4:12b',
+  protocol: 'openai',
+  base_url: 'http://127.0.0.1:11434/v1',
+  api_key_env: '',
+  max_tokens: null,
+}
+
 function arm(mean: number, spread = 1.5) {
   return { trials: 5, mean_score: mean, spread, tokens: 41000, tokens_per_point: 512.5 }
 }
@@ -410,5 +424,193 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
   it('omits the reproduction block entirely when no re-run was judged', () => {
     render(<BenchmarkPanel view={view()} error={undefined} onRetry={() => {}} />)
     expect(screen.queryByText(/reproduce within the stated variance/)).toBeNull()
+  })
+
+  // ── 4. WHICH MODEL produced the table ──────────────────────────────────────
+  //
+  // The two run kinds — cells bound to a real `Provider:model`, and cells that resolve the
+  // offline `scripted` replay — produce identically-shaped score tables. `provider_binding` is
+  // the only field that tells them apart, and it went unread by every surface after ES-17 added
+  // it. Publishing a table without its provenance is protocol the overclaim.
+
+  it('names the model the cells actually called', () => {
+    render(
+      <BenchmarkPanel
+        view={view({ report: report({ provider_binding: BINDING }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText('Cells called LocalOllama:gemma4:12b')).toBeTruthy()
+    expect(screen.getByText('http://127.0.0.1:11434/v1')).toBeTruthy()
+    // The refusal copy of the OTHER two states must be absent, or this case would pass on a
+    // panel that printed every state at once.
+    expect(screen.queryByText(/not a model measurement/)).toBeNull()
+    expect(screen.queryByText(/Provenance was not recorded/)).toBeNull()
+  })
+
+  it('says an unbound run measured no model, instead of publishing a bare table', () => {
+    render(
+      <BenchmarkPanel
+        view={view({ report: report({ provider_binding: null }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText('No model was bound — these cells called no model')).toBeTruthy()
+    expect(screen.getByText('not a model measurement')).toBeTruthy()
+    expect(screen.getByText(/resolved the offline/)).toBeTruthy()
+    expect(screen.queryByText(/Cells called/)).toBeNull()
+  })
+
+  /** 🔑 THE TRAP THIS BLOCK EXISTS FOR. An ABSENT `provider_binding` is a report written before
+   *  runs recorded provenance at all — ES-17 added the field without moving `report_schema`, so
+   *  version alone cannot tell the two apart. Rendering absent as "nothing was bound" would turn
+   *  "we never recorded it" into "we recorded that no model ran", which is this project's
+   *  recurring absent-versus-declared-false failure at the one surface that publishes. */
+  it('distinguishes an UNRECORDED provenance from a recorded absence of one', () => {
+    const legacy = report()
+    // The fixture must genuinely lack the key, not carry `undefined` under it — `in` is what the
+    // panel branches on, and a fixture that set it to `undefined` would test nothing.
+    expect('provider_binding' in legacy).toBe(false)
+    const unrecorded = render(
+      <BenchmarkPanel view={view({ report: legacy })} error={undefined} onRetry={() => {}} />,
+    )
+    expect(screen.getByText('Provenance was not recorded')).toBeTruthy()
+    expect(screen.getByText('provenance unrecorded')).toBeTruthy()
+    // …and it must NOT claim the run bound nothing, which is the collapse under test.
+    expect(screen.queryByText('No model was bound — these cells called no model')).toBeNull()
+    expect(screen.queryByText('not a model measurement')).toBeNull()
+    unrecorded.unmount()
+
+    // The other direction, so the case above is not merely asserting one string: a report that
+    // DID record the absence renders the declared-false copy and not the unrecorded copy.
+    render(
+      <BenchmarkPanel
+        view={view({ report: report({ provider_binding: null }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.queryByText('Provenance was not recorded')).toBeNull()
+    expect(screen.getByText('No model was bound — these cells called no model')).toBeTruthy()
+  })
+
+  /** The pin is NOT provenance, and the panel must not let it read as provenance. `model_fp` /
+   *  `model_fingerprint` come from the INVOKING home's `active_models.json`, so they name what the
+   *  operator configured whether or not any of it crossed into a cell. MEASURED against the code
+   *  on main: a bound run and an unbound run launched from the SAME bound home carry the identical
+   *  `pin.model_fp` (`5970c589da34`), so a page that showed only the pin would present the unbound
+   *  run as a real-model run. */
+  it('labels the pin as the HOME’s binding, not as what the cells reached', () => {
+    render(
+      <BenchmarkPanel
+        view={view({
+          report: report({
+            provider_binding: null,
+            pin: { model_fp: '5970c589da34', model_fingerprint: { chat: 'LocalOllama:gemma4:12b' } },
+          }),
+        })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    // The home's ref is shown — it is real information — but under a label that says whose it is,
+    // and beside the sentence saying the cells reached no model.
+    expect(screen.getByText(/chat=LocalOllama:gemma4:12b/)).toBeTruthy()
+    expect(screen.getByText(/not what the cells reached/)).toBeTruthy()
+    expect(screen.getByText('No model was bound — these cells called no model')).toBeTruthy()
+    expect(screen.queryByText('Cells called LocalOllama:gemma4:12b')).toBeNull()
+  })
+
+  // ── 5. §8: the verdict is published WITH its notes and its token ratio ─────
+  //
+  // "The verdict is published with its `notes`, its within-arm spread and its token ratio — never
+  // the verdict alone." The spread rode the two arm columns; the notes and the ratio were dropped.
+  // A `not_token_matched` row with neither is exactly "the verdict alone", and it is the row a
+  // real run produces most often.
+
+  it('publishes the note that says WHY a direction was withheld', () => {
+    // The sentence `harness/learning_verdict.py` actually emits for this verdict, taken from the
+    // measured run `learnbench-20260907T003211Z` (k=5, local Ollama, ratio 1.1365).
+    const note = 'token spend differs by 13.7% (skills_on 42517 vs skills_off 37409), over the 5% '
+      + 'match tolerance — the arms are not spend-matched, so no direction is offered.'
+    render(
+      <BenchmarkPanel
+        view={view({
+          report: report({
+            tasks: [task({
+              verdict: 'not_token_matched',
+              verdict_class: 'not_token_matched',
+              delta_points: 0,
+              token_ratio: 1.1365,
+              notes: [note],
+            })],
+          }),
+        })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText(note)).toBeTruthy()
+    expect(screen.getByText('1.1365')).toBeTruthy()
+  })
+
+  it('does not print the estimated/unobserved notes twice', () => {
+    // The producer appends these in the same branch that sets the booleans, so the flag-driven
+    // lines and the notes would both carry them. The flag lines stay (a producer that set the flag
+    // and forgot the note must still warn a reader); the duplicate note is filtered.
+    render(
+      <BenchmarkPanel
+        view={view({
+          report: report({
+            tasks: [task({
+              spend_estimated: true,
+              notes: ['tokens and dollars are ESTIMATED, not provider-reported'],
+            })],
+          }),
+        })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getAllByText(/estimated, not provider-reported/i)).toHaveLength(1)
+  })
+
+  it('shows a zero token ratio as a zero, not as "not measured"', () => {
+    // `Comparison.token_ratio` is 0.0 when the skills_off arm spent nothing. That is a real
+    // observation that disqualifies the comparison, not an absent one, and the two must not
+    // collapse — the whole point of the null/zero split everywhere else on this panel.
+    const zero = render(
+      <BenchmarkPanel
+        view={view({ report: report({ tasks: [task({ token_ratio: 0 })] }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText('0.0000')).toBeTruthy()
+    zero.unmount()
+
+    render(
+      <BenchmarkPanel
+        view={view({ report: report({ tasks: [task({ token_ratio: null })] }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.queryByText('0.0000')).toBeNull()
+    expect(screen.getAllByText('not measured').length).toBeGreaterThan(0)
+  })
+
+  it('renders provenance for a report with no pin at all, without inventing one', () => {
+    render(
+      <BenchmarkPanel
+        view={view({ report: report({ provider_binding: BINDING }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText('Cells called LocalOllama:gemma4:12b')).toBeTruthy()
+    expect(screen.queryByText(/the pin records this/i)).toBeNull()
   })
 })

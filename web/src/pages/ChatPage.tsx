@@ -400,7 +400,20 @@ function SessionPeekBody({ sessionKey, onOpen }: { sessionKey: string; onOpen: (
           placeholder="Quick reply…"
           rows={2}
           aria-label="Quick reply"
-          className="w-full resize-none bg-transparent px-s py-xs text-on-surface text-[0.8125rem] outline-none placeholder:text-on-surface-low"
+          // 🔑 `outline-none` WITH NO REPLACEMENT ON EITHER SIDE. It lives in `@layer utilities`,
+          // which beats the global `:focus-visible` rule in `@layer base` — so Tab into the session
+          // peek panel and the caret landed here with NO visible indicator at all.
+          // 🪤 THE RING GOES ON THE CONTROL, NOT THE CONTAINER, even though this is a transparent
+          // input inside a box-drawing container — normally `focusRingPerElement`'s `focus-within`
+          // case. The container also holds the button row directly below, so a container ring would
+          // paint the whole composer whenever Open or Send takes focus: the exact ambiguity that rail
+          // records for `CodePlanReview`'s shared box.
+          // The pre-existing raw 0.8125rem size on this control is deliberately left alone —
+          // converting it to a data-type role is a type-scale change, and moving that ratchet inside
+          // a focus fix would muddle both. (Written without spelling the utility: the type-scale
+          // scanner counts the pattern wherever it appears, comments included, so naming it here
+          // would have raised the ceiling by one. It did, on the first draft of this comment.)
+          className="w-full resize-none bg-transparent px-s py-xs text-on-surface text-[0.8125rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary placeholder:text-on-surface-low"
         />
         <div className="flex items-center gap-s">
           <Button variant="ghost" size="xs" onClick={onOpen} title="Open the full chat UI"
@@ -1644,15 +1657,39 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     //
     // The server decides and says which it did: `{steered:true}` when the running
     // turn has a live drain path, `{queued:true}` when it does not (an ACP-backed
-    // turn, or a turn that just ended). Either way nothing is dropped — a queued
-    // message still echoes `queue_push`, so the strip above the composer shows it
-    // with its cancel affordance. We render the outcome rather than assuming one.
+    // turn, or a turn that just ended). Either of those two OUTCOMES drops nothing —
+    // a queued message still echoes `queue_push`, so the strip above the composer
+    // shows it with its cancel affordance. We render the outcome rather than
+    // assuming one.
+    //
+    // 🔴 BUT THERE IS A THIRD OUTCOME, AND IT USED TO DESTROY THE USER'S TEXT. The
+    // sentence above says "either way nothing is dropped", and that was true of the
+    // two SUCCESS shapes and false on REJECTION — which the `.catch(() => {})` hid.
+    // `setInput('')` ran BEFORE the request, so a failed steer (gateway restart, a
+    // 500, a dropped connection) emptied the composer, never pushed a `steered`
+    // chip, and showed no error. The text was then nowhere: not on screen, not in
+    // `queued`, not on the server. Nothing to copy and nothing to retry, while the
+    // model kept streaming the answer the user was trying to correct.
+    //
+    // 🪤 THE DRAFT IS CLEARED ON SUCCESS, AND ONLY IF THE USER HAS NOT TYPED SINCE.
+    // Moving `setInput('')` into the success path unconditionally would swap one
+    // data-loss bug for another: the request is in flight for a round trip, and a
+    // user who starts their next message during it would have it wiped. The
+    // functional setter compares against exactly what was sent, so an untouched
+    // composer clears and a re-typed one is left alone.
+    //
+    // `reportActionFailure` is this file's own convention for a user-initiated write
+    // (11 other uses), and it is what `DesignCockpitPage.sendNudge` does for the
+    // same shape — a rule `loops/loopActionReported.test.ts` states in prose as
+    // "the nudge KEEPS its text on failure".
     if (isStreaming) {
-      setInput('')
       ensureSession()
         .then((s) => api.sendChat(t, s, undefined, 'steer'))
-        .then((r) => { if (r?.steered) setSteered((prev) => [...prev, t]) })
-        .catch(() => {})
+        .then((r) => {
+          setInput((cur) => (cur === t ? '' : cur))
+          if (r?.steered) setSteered((prev) => [...prev, t])
+        })
+        .catch(reportActionFailure('steer this turn'))
       return
     }
     // The bubble keeps the prompt as typed (paste markers shown as chips); the

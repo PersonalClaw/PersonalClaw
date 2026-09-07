@@ -28,9 +28,9 @@ import {
 // ── What this suite is actually measuring ────────────────────────────────────────────────────
 //
 // A companion shell holds N paired gateways — N independent brains — inside ONE storage scope.
-// (Measured, not assumed: `desktop/main.js:768` does `wc.loadURL(backendUrl)`, loading the SPA
-// from the active gateway's own origin, and `backendUrl` at `:143` is a single string from that
-// gateway's READY line; `grep -n partition desktop/main.js` finds nothing, so the SPA's own
+// (Measured, not assumed: `desktop/main.js:1246` does `wc.loadURL(localGatewayUrl)` and
+// `navigateToEndpoint` does the same for a paired gateway, so the SPA is always loaded from the
+// active gateway's own origin; `grep -n partition desktop/main.js` finds nothing, so the SPA's own
 // storage is already partitioned per-origin and cannot bleed. The shell's scope is the one that
 // spans all N.) So the headline claim under test is not "keys are prefixed" — it is:
 //

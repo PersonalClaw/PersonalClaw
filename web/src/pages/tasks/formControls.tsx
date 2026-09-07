@@ -150,7 +150,28 @@ export function ChecklistEditor<T extends { description?: string }>({ items, onC
   const rowInner = (it: T, i: number, dragHandle: ReactNode) => (
     <>
       {dragHandle}
-      <button type="button" onClick={() => toggle(i)} className="shrink-0 inline-flex size-5 items-center justify-center rounded-sm border transition-colors" style={{ borderColor: it[doneKey] ? 'var(--color-ok)' : 'var(--color-outline-variant)', background: it[doneKey] ? 'var(--color-ok)' : 'transparent' }}>{it[doneKey] ? <Check size={13} className="text-white" /> : null}</button>
+      {/* 🔑 THIS BUTTON HAD NO ACCESSIBLE NAME, AND WHEN UNTICKED IT HAD NO CONTENT AT ALL — the body
+          is `{done ? <Check/> : null}`, so a screen reader announced a bare "button", once per
+          checklist row, on a form whose entire purpose is authoring those rows. The ticked state was
+          carried only by the glyph and a border/background swap: by colour alone.
+
+          The name FLIPS rather than describing the control, and appends the row's own text, so the
+          reading is "Mark done: write the migration" instead of four identical "button"s. That is the
+          convention the sibling ticks at `TaskDetail.tsx:227` already use — this is CONFORMANCE, not
+          a new pattern. `aria-pressed` was considered and deliberately NOT added: the sibling does
+          not use it, and adding it to one of two twin controls would leave the product less
+          consistent than it is now. Whether the whole family should move to a checkbox role is a
+          product-wide call, not a drive-by.
+
+          🪤 `size-6` + `-mx-0.5` IS ONE DECISION, NOT TWO. 20px fails the 24px pointer-target floor
+          that `tickTargetSize.test.ts` already enforced for the sibling ticks — that rail hard-codes
+          `FILE = TaskDetail.tsx`, which is the only reason this file escaped it. The negative margin
+          reclaims 2px per side, so a 24px target keeps a 20px LAYOUT footprint and the `size-5`
+          alignment spacers at :230/:272 stay correct without being touched. Horizontal only — a
+          vertical reclaim would overlap the stacked target above. */}
+      <button type="button" onClick={() => toggle(i)}
+        aria-label={`${it[doneKey] ? 'Mark not done' : 'Mark done'}: ${String(it.description ?? '')}`}
+        className="-mx-0.5 shrink-0 inline-flex size-6 items-center justify-center rounded-sm border transition-colors" style={{ borderColor: it[doneKey] ? 'var(--color-ok)' : 'var(--color-outline-variant)', background: it[doneKey] ? 'var(--color-ok)' : 'transparent' }}>{it[doneKey] ? <Check size={13} className="text-white" /> : null}</button>
       <span data-type="body-s" className={`flex-1 ${it[doneKey] ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{String(it.description ?? '')}</span>
       {armed === i ? (
         // The shared primitive rather than bespoke chrome: the design-system ratchet caught the raw
