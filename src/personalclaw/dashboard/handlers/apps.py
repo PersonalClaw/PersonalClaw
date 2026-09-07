@@ -8,8 +8,9 @@ The lifecycle layer (A1–A3) exposed over HTTP, plus the backend reverse-proxy:
     POST   /api/apps/{name}/enable        — enable (run onEnable, register)
     POST   /api/apps/{name}/disable       — disable
     POST   /api/apps/{name}/update        — atomic update from source
-    DELETE /api/apps/{name}               — uninstall (consults dependency ledger)
-    GET    /api/apps/{name}/uninstall-preview — classify shared deps (A3)
+    DELETE /api/apps/{name}               — deactivate | ?remove=1 remove-keep-data
+                                            | ?force=1 remove-everything (dep ledger)
+    GET    /api/apps/{name}/uninstall-preview — classify shared deps (A3) + data/ facts
     GET    /api/apps/{name}/config        — read config + the configSchema
     PUT    /api/apps/{name}/config        — validate + persist config
     *      /apps/{name}/api/{tail:.*}      — reverse-proxy to the app's backend
@@ -631,37 +632,44 @@ async def api_app_disable(request: web.Request) -> web.Response:
 
 
 async def api_app_uninstall(request: web.Request) -> web.Response:
-    """DELETE /api/apps/{name} — uninstall = DEACTIVATE (keep files). Pass
-    ``?force=1`` for the destructive force-uninstall that removes files from disk.
+    """DELETE /api/apps/{name} — the three-rung removal ladder, selected by query:
+
+    * (no flag)     — uninstall = DEACTIVATE. Nothing leaves disk.
+    * ``?remove=1`` — remove the app's files, KEEP its ``data/`` (issue #2541).
+    * ``?force=1``  — remove everything, ``data/`` included.
+
+    ``force`` is read first, so ``?force=1&remove=1`` wipes: when a request asks for
+    two different promises about the user's data, the destructive one is the one that
+    was explicitly confirmed, and honouring the weaker flag would silently keep data a
+    caller asked to destroy. The default stays DEACTIVATE — an unflagged DELETE has
+    never removed files and must not start now.
     """
     from personalclaw.apps import app_manager
 
     name = request.match_info["name"]
     force = request.query.get("force") in ("1", "true", "yes")
+    remove = not force and request.query.get("remove") in ("1", "true", "yes")
     caller = request.get("user", "dashboard")
     if force:
-        ok = await asyncio.to_thread(
-            app_manager.force_uninstall,
-            name,
-            caller=caller,
-        )
-        op = "apps.force_uninstall"
+        fn, op = app_manager.force_uninstall, "apps.force_uninstall"
+    elif remove:
+        fn, op = app_manager.uninstall_keep_data, "apps.uninstall_keep_data"
     else:
-        ok = await asyncio.to_thread(
-            app_manager.uninstall,
-            name,
-            caller=caller,
-        )
-        op = "apps.uninstall"
+        fn, op = app_manager.uninstall, "apps.uninstall"
+    ok = await asyncio.to_thread(fn, name, caller=caller)
     _sel_log(op, "ok" if ok else "error", name, request)
     if not ok:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
     _reconcile_app_crons(request)  # prune the uninstalled app's crons immediately
-    return web.json_response({"ok": True, "name": name, "forced": force})
+    return web.json_response(
+        {"ok": True, "name": name, "forced": force, "removed": remove, "dataPreserved": remove}
+    )
 
 
 async def api_app_uninstall_preview(request: web.Request) -> web.Response:
-    """GET /api/apps/{name}/uninstall-preview — classify shared deps (A3)."""
+    """GET /api/apps/{name}/uninstall-preview — classify shared deps (A3), plus what
+    the app's ``data/`` holds so the removal-confirm dialogs can name the trade the
+    user is about to make instead of describing it in the abstract."""
     from personalclaw.apps import app_manager
 
     name = request.match_info["name"]
@@ -670,6 +678,7 @@ async def api_app_uninstall_preview(request: web.Request) -> web.Response:
         {
             "name": name,
             "dependencies": [c.to_dict() for c in classifications],
+            "data": app_manager.describe_app_data(name),
         }
     )
 

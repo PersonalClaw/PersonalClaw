@@ -12,7 +12,17 @@ lifecycle:
   ``installed.json``.
 * **enable / disable(name)** — run ``setup.onEnable``/``onDisable`` (bounded),
   flip the provider registration.
-* **uninstall(name)** — run ``setup.onUninstall`` → deregister → remove files.
+
+Removal is a THREE-rung ladder, and each rung is a different promise about the
+user's ``data/`` — the notes they wrote, a campaign's ledger, an incident log:
+
+* **uninstall(name)** — DEACTIVATE. Nothing leaves disk; the app is turned off.
+* **uninstall_keep_data(name)** — the app's files go, ``data/`` is KEPT (parked at
+  ``apps/.{name}.data``) and a later ``install`` of the same name puts it back.
+* **force_uninstall(name)** — everything goes, ``data/`` included.
+
+The middle rung exists because the first two alone force a choice between leaving a
+dead app installed forever and destroying the user's data (issue #2541).
 
 Every lifecycle action is SEL-audited. Executing a third-party ``setup`` hook is
 RCE-by-design, so a hook only runs after the scanner passes (or the caller gives
@@ -58,6 +68,11 @@ _QUARANTINE_DIRNAME = ".quarantine"
 _HOOK_DEFAULT_TIMEOUT = 60  # seconds; setup.onInstall/onUpdate cap
 _ROLLBACK_SUFFIX = ".rollback"  # ~/.personalclaw/apps/.{name}.rollback during update
 _APP_DATA_DIRNAME = "data"  # app-scoped state preserved across updates
+#: ``~/.personalclaw/apps/.{name}.data`` — where a keep-data uninstall parks the
+#: app's ``data/`` so the next install of the same name can put it back.
+_PRESERVED_DATA_SUFFIX = ".data"
+#: Quarantine staging slot holding that copy while the app tree is being removed.
+_DATA_STAGE_SUFFIX = ".data.staged"
 
 
 class AppLifecycleError(Exception):
@@ -735,6 +750,13 @@ def install(
             )
         shutil.move(str(staged), str(dest))
 
+        # Put back a data/ that an earlier keep-data uninstall parked for this name,
+        # BEFORE any hook runs — same ordering and same precedence as the update path.
+        # COPIED, not moved: the rollbacks below still `rmtree(dest)`, and a rolled-back
+        # install must not take the user's only copy of their data with it. `parked` is
+        # dropped further down, once the install is past its last rollback.
+        data_fact, parked = _restore_preserved_data(name, dest)
+
         # Ensure the app's data/ dir exists BEFORE any hook runs — apps write
         # state there (it's the dir preserved across updates), and an onInstall
         # hook commonly seeds it.
@@ -800,11 +822,23 @@ def install(
             logger.debug("app %s: dependency-ledger record failed", name, exc_info=True)
         _register_mcp(manifest)
         _start_backend(manifest)
+        # Past every rollback now — the parked copy has served its purpose and holding
+        # it any longer would let a LATER force-uninstall miss it.
+        if parked is not None:
+            shutil.rmtree(parked, ignore_errors=True)
         # The scanner outcome rides the SUCCESS event too. A warning the user overrode by
         # confirming is the most security-relevant decision in this flow and the first
         # thing an incident asks about; without it here, a waved-through install is
-        # byte-identical in the log to one that scanned clean.
-        _audit("install", "ok", name, caller=caller, detail=_scan_detail(report, consent=confirm))
+        # byte-identical in the log to one that scanned clean. `preserved_data=` rides it
+        # for the same reason on the data side: whether this install put a previous
+        # install's data back is not reconstructible after the fact.
+        _audit(
+            "install",
+            "ok",
+            name,
+            caller=caller,
+            detail=" ".join(x for x in (_scan_detail(report, consent=confirm), data_fact) if x),
+        )
         return InstallResult(ok=True, name=name, scan=report, restart_required=restart_required)
     except AppLifecycleError as exc:
         _audit("install", "error", name, caller=caller, error=str(exc))
@@ -823,6 +857,86 @@ def _rollback_dir(name: str) -> Path:
     (#455's class). The rule belongs on the expression that builds the path.
     """
     return apps_dir() / f".{_validate_app_name(name)}{_ROLLBACK_SUFFIX}"
+
+
+def _preserved_data_dir(name: str) -> Path:
+    """Where a keep-data uninstall parks an app's ``data/``: ``apps/.{name}.data``.
+
+    Guards the name on the EXPRESSION that builds the path, for the same reason
+    :func:`_rollback_dir` does: this is an ``rmtree``/``move`` target, and a guard
+    that lives only in the caller is one refactor away from being gone.
+
+    Dot-prefixed and carrying no ``installed.json``, so :func:`~apps.manager.list_apps`
+    (which skips any dir without one) never reports a parked copy as an installed app
+    — the app really is gone from every surface, which is the whole point of the rung.
+    """
+    return apps_dir() / f".{_validate_app_name(name)}{_PRESERVED_DATA_SUFFIX}"
+
+
+def _dir_entry_count(path: Path) -> int:
+    """Top-level entries in *path*, or 0 if it cannot be read."""
+    try:
+        return sum(1 for _ in path.iterdir())
+    except OSError:
+        return 0
+
+
+def _data_fact(key: str, path: Path | None) -> str:
+    """``key=absent`` | ``key=empty`` | ``key=N`` — three DISTINCT facts, never merged.
+
+    "the app had no ``data/`` at all" and "the app had a ``data/`` and it was empty"
+    are different facts about the user's state, and a log that renders both as
+    "nothing to keep" cannot answer the only question an incident asks: was there
+    something, and did we keep it? So absence of the directory and emptiness of the
+    directory get their own tokens, and a count gets a number.
+    """
+    if path is None or not path.is_dir():
+        return f"{key}=absent"
+    n = _dir_entry_count(path)
+    return f"{key}=empty" if n == 0 else f"{key}={n}"
+
+
+def _discard_preserved_data(name: str) -> None:
+    """Drop any parked ``data/`` held for *name*. Never raises."""
+    try:
+        target = _preserved_data_dir(name)
+    except ValueError:  # not a mintable app name ⇒ nothing was ever parked under it
+        return
+    shutil.rmtree(target, ignore_errors=True)
+
+
+def _restore_preserved_data(name: str, dest: Path) -> tuple[str, Path | None]:
+    """Put a parked ``data/`` back into a freshly installed tree at *dest*.
+
+    Returns ``(audit fact, the parked dir to drop once the install is past rollback)``.
+    ``None`` for the second element means "nothing to drop" — either nothing was
+    parked, or the restore failed and the parked copy must be LEFT where it is.
+
+    Precedence is the update path's: the user's data replaces whatever the incoming
+    tree ships under ``data/``. A bundle's shipped ``data/`` is seed content; the
+    parked copy is the user's own work, and the user's own work wins.
+
+    A restore failure does not abort the install (the user asked for the app), but it
+    is never silent: the fact is ``preserved_data=restore_failed`` and the parked copy
+    stays on disk, so it is recoverable rather than lost.
+    """
+    try:
+        parked = _preserved_data_dir(name)
+    except ValueError:
+        return _data_fact("preserved_data", None), None
+    if not parked.is_dir():
+        return _data_fact("preserved_data", None), None
+    fact = _data_fact("preserved_data", parked)
+    target = dest / _APP_DATA_DIRNAME
+    try:
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(parked, target)
+    except OSError:
+        logger.warning("app %s: could not restore preserved data/", name, exc_info=True)
+        return "preserved_data=restore_failed", None
+    logger.info("app %s: restored preserved data/ from %s", name, parked)
+    return fact, parked
 
 
 def update(
@@ -1318,15 +1432,48 @@ def preview_uninstall(name: str) -> list:
     return dependency_ledger.classify_uninstall(manifest)
 
 
+def describe_app_data(name: str) -> dict[str, Any]:
+    """Read-only: what this app's ``data/`` holds, for the removal-confirm UI.
+
+    ``{"present": bool, "entries": int, "path": str}``. ``present`` is whether the
+    directory EXISTS — an app with an empty ``data/`` reports ``present=True,
+    entries=0``, which is not the same claim as ``present=False`` and must not be
+    rendered as one: the first means "you have a data dir and it happens to be empty",
+    the second means "this app keeps no data". The confirm dialog needs to promise a
+    different thing in each case, so both facts are reported rather than one truthiness.
+
+    ``path`` is where a keep-data uninstall would park it, so the dialog can tell the
+    user where their data goes — the recovery information a destructive-action screen
+    owes them.
+    """
+    try:
+        data = app_dir(name) / _APP_DATA_DIRNAME
+        parked = str(_preserved_data_dir(name))
+    except ValueError:
+        return {"present": False, "entries": 0, "path": ""}
+    present = data.is_dir()
+    return {
+        "present": present,
+        "entries": _dir_entry_count(data) if present else 0,
+        "path": parked,
+    }
+
+
 def uninstall(name: str, *, caller: str = "app_manager") -> bool:
     """Uninstall = DEACTIVATE (keep files). An app the user 'uninstalls' is turned
     OFF, not deleted: its providers deregister, backend stops, MCP servers drop,
     and ``installed.json.enabled`` flips to false — but the files stay on disk so
     it can be re-activated instantly (no re-fetch) and its data/ is preserved.
 
-    True filesystem removal is :func:`force_uninstall` (the hidden 'Advanced →
-    Force uninstall'). This mirrors how a provider app's install IS its on-switch:
-    uninstall is the off-switch, force-uninstall is the eradicate."""
+    Removing the files while KEEPING ``data/`` is :func:`uninstall_keep_data`; total
+    removal including ``data/`` is :func:`force_uninstall`. This mirrors how a provider
+    app's install IS its on-switch: uninstall is the off-switch, uninstall_keep_data is
+    the remove, force-uninstall is the eradicate.
+
+    Kept as DEACTIVATE deliberately (issue #2541): repointing this name at the new
+    file-removing rung would silently convert every existing caller — the plain
+    ``DELETE /api/apps/{name}`` among them — from "turns the app off" to "deletes the
+    app", which is not a change a caller can consent to by not being edited."""
     meta = _read_installed(name)
     if meta is None:
         return False
@@ -1339,6 +1486,108 @@ def uninstall(name: str, *, caller: str = "app_manager") -> bool:
     if ok:
         _audit("uninstall", "ok", name, caller=caller)
     return ok
+
+
+def uninstall_keep_data(name: str, *, caller: str = "app_manager") -> bool:
+    """Remove the app's FILES and KEEP its ``data/`` — the middle lifecycle rung.
+
+    The app is gone from every surface; the data the user made with it is parked at
+    ``apps/.{name}.data``, and a later :func:`install` of the same name puts it back.
+    Closes the gap in issue #2541: before this, the ladder was "don't remove it"
+    (:func:`uninstall`) and "remove everything" (:func:`force_uninstall`), so a user
+    who wanted the app gone but their notes kept had no path at all.
+
+    Two pieces of machinery are REUSED rather than reimplemented, because a second
+    copy of either is a second thing that can drift:
+
+    * the preserving copy is the one :func:`update` already performs — ``live/data``
+      copied out before the tree it lives in is replaced — staged through the same
+      quarantine dir install/update stage through;
+    * the removal is :func:`force_uninstall` itself, unchanged: its hooks, its
+      deregistration, its dependency-ledger accounting, its ``rmtree``.
+
+    FAIL-CLOSED on preservation. If ``data/`` cannot be copied out, NOTHING is
+    removed. An operation whose entire promise is "your data survives this" must not
+    proceed to the delete having failed to keep that promise.
+    """
+    meta = _read_installed(name)
+    if meta is None:
+        return False
+    if _is_native(name):
+        logger.info("app %s is native (locked) — uninstall refused", name)
+        _audit("uninstall_keep_data", "refused_native", name, caller=caller)
+        return False
+    # Validate the name ONCE, up front, before anything derives a path from it: both the
+    # quarantine stage and the parked dir embed it as a path segment, and both are
+    # rmtree/move targets. `list_apps` iterates real on-disk dir names, so a name that is
+    # not a mintable app id can reach here — it simply cannot hold a parked copy, so this
+    # rung refuses rather than guessing a directory for the user's data. Such an app is
+    # still removable through `force_uninstall`.
+    try:
+        _validate_app_name(name)
+    except ValueError as exc:
+        _audit("uninstall_keep_data", "refused", name, caller=caller, error=str(exc))
+        return False
+
+    live_data = app_dir(name) / _APP_DATA_DIRNAME
+    # ABSENT vs EMPTY, kept apart on purpose. No data/ at all ⇒ nothing is staged and
+    # no parked dir is created, so the next install starts clean. An EMPTY data/ IS
+    # staged (as an empty dir), because "the app had a data dir and it held nothing"
+    # is a different fact from "the app never had one", and the next install has to
+    # reproduce the one that actually happened rather than a merged approximation.
+    had_data = live_data.is_dir()
+    staged = _quarantine_dir() / f"{name}{_DATA_STAGE_SUFFIX}"
+    try:
+        if staged.exists():
+            shutil.rmtree(staged, ignore_errors=True)
+        if had_data:
+            shutil.copytree(live_data, staged)
+    except OSError as exc:
+        shutil.rmtree(staged, ignore_errors=True)
+        _audit(
+            "uninstall_keep_data",
+            "error",
+            name,
+            caller=caller,
+            error=f"could not preserve data/, so nothing was removed: {exc}",
+            detail="data=preserve_failed",
+        )
+        return False
+
+    # Staged in QUARANTINE, not in place, because the removal below also drops a stale
+    # parked copy for this name — the fresh copy has to wait somewhere that step cannot
+    # reach.
+    fact = _data_fact("data", staged if had_data else None)
+    try:
+        if not force_uninstall(name, caller=caller):
+            _audit(
+                "uninstall_keep_data",
+                "error",
+                name,
+                caller=caller,
+                error="removal refused; nothing was deleted and data/ is untouched",
+                detail=fact,
+            )
+            return False
+        if had_data:
+            target = _preserved_data_dir(name)
+            shutil.rmtree(target, ignore_errors=True)
+            shutil.move(str(staged), str(target))
+    except (OSError, ValueError) as exc:
+        _audit(
+            "uninstall_keep_data",
+            "error",
+            name,
+            caller=caller,
+            error=f"app removed but data/ could not be parked: {exc}",
+            detail="data=park_failed",
+        )
+        return False
+    finally:
+        shutil.rmtree(staged, ignore_errors=True)  # GC — a successful move consumed it
+
+    _audit("uninstall_keep_data", "ok", name, caller=caller, detail=fact)
+    return True
 
 
 def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
@@ -1395,6 +1644,12 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
         except Exception:
             logger.debug("app %s: dependency-ledger uninstall failed", name, exc_info=True)
     shutil.rmtree(app_dir(name), ignore_errors=True)
+    # "Force uninstall removes everything" has to include a data/ copy that an earlier
+    # keep-data uninstall parked under this name (apps/.{name}.data). Leaving one behind
+    # would let the next install resurrect the very data this button exists to destroy.
+    # Unchanged for every caller: this path already deletes, and it now deletes the one
+    # thing it could previously miss.
+    _discard_preserved_data(name)
     _audit("force_uninstall", "ok", name, caller=caller)
     return True
 

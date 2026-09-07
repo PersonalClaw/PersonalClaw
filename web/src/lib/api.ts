@@ -857,6 +857,15 @@ export interface SkillInstallResult {
 export interface AppDepClassification {
   key: string; kind: string; id: string; disposition: string; remaining: string[]
 }
+/** What an app's `data/` holds, for the removal-confirm dialogs (issue #2541).
+ *
+ *  `present` and `entries` are SEPARATE facts and the copy must not collapse them:
+ *  `present:false` means the app keeps no data at all, while `present:true,
+ *  entries:0` means it has a data dir that happens to be empty. A dialog that
+ *  renders both as "nothing to keep" promises the wrong thing in one of the cases.
+ *  `path` is where a keep-data uninstall parks it — the recovery information the
+ *  screen owes the user. */
+export interface AppDataFacts { present: boolean; entries: number; path: string }
 export interface AgentDef { name: string }
 export interface ChatSession {
   key: string; title: string; agent: string; model: string; reasoning_effort: string
@@ -7206,11 +7215,17 @@ export const api = {
     _installReq(`/api/apps/${encodeURIComponent(name)}/update`, { source, confirm }),
   enableApp: (name: string) => post<{ ok: boolean }>(`/api/apps/${encodeURIComponent(name)}/enable`),
   disableApp: (name: string) => post<{ ok: boolean }>(`/api/apps/${encodeURIComponent(name)}/disable`),
-  // Uninstall = deactivate (keep files); force=true removes files from disk.
+  // The three removal rungs (issue #2541), each a different promise about `data/`:
+  //   uninstallApp(name)        → deactivate. Nothing leaves disk.
+  //   removeApp(name)           → the app's files go, the user's `data/` is KEPT.
+  //   uninstallApp(name, true)  → everything goes, `data/` included.
+  // Kept as two functions rather than one flag pair so a call site cannot land on the
+  // destructive rung by getting a boolean the wrong way round.
   uninstallApp: (name: string, force = false) =>
     del(`/api/apps/${encodeURIComponent(name)}${force ? '?force=1' : ''}`),
+  removeApp: (name: string) => del(`/api/apps/${encodeURIComponent(name)}?remove=1`),
   appUninstallPreview: (name: string) =>
-    get<{ name: string; dependencies: AppDepClassification[] }>(`/api/apps/${encodeURIComponent(name)}/uninstall-preview`),
+    get<{ name: string; dependencies: AppDepClassification[]; data?: AppDataFacts }>(`/api/apps/${encodeURIComponent(name)}/uninstall-preview`),
   appConfig: (name: string) =>
     get<{ name: string; config: Record<string, unknown>; schema: Record<string, unknown>; _secret_set?: string[] }>(`/api/apps/${encodeURIComponent(name)}/config`),
   saveAppConfig: (name: string, config: Record<string, unknown>) =>
