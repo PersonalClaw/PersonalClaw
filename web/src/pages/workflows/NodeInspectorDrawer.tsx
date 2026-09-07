@@ -189,7 +189,7 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
         {data.attempts.length === 0 ? (
           <p data-type="caption" className="text-on-surface-low">No attempt records.</p>
         ) : (
-          <ol data-testid="attempts" className="flex flex-col gap-2xs">
+          <ol data-testid="attempts" className="flex flex-col gap-xs">
             {data.attempts.map((a, i) => {
               const status = typeof a.status === 'string' ? a.status
                 : typeof a.state === 'string' ? a.state : 'attempt'
@@ -213,14 +213,14 @@ function NodeInspectBody({ data }: { data: NodeInspect }) {
         {data.ledger_events.length === 0 ? (
           <p data-type="caption" className="text-on-surface-low">No ledger events for this node.</p>
         ) : (
-          <ul data-testid="ledger-events" className="max-h-72 overflow-auto flex flex-col gap-2xs">
+          <ul data-testid="ledger-events" className="max-h-72 overflow-auto flex flex-col gap-xs">
             {data.ledger_events.map((e, i) => {
               const row = ledgerRowDetail(e)
               return (
                 <li
                   key={ledgerRowKey(e, i)}
                   data-testid="ledger-event"
-                  data-type="caption" className="flex flex-col gap-2xs rounded-md bg-surface px-2.5 py-1.5"
+                  data-type="caption" className="flex flex-col gap-xs rounded-md bg-surface px-2.5 py-1.5"
                 >
                   <div className="flex flex-wrap items-center gap-s">
                     <span data-testid="ledger-kind" className="font-mono text-on-surface-var">{row.kind}</span>

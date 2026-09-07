@@ -25,13 +25,24 @@ import { scanInertUtilities, loadUtilityOracle } from './consistencyAudit.report
 
 interface Allowlist { allow: Record<string, string[]> }
 
+/** Which token family a dead utility was reaching for, so the failure names the
+ *  right scale. Reporting `rounded-m` as "no --color-* token" sent a reader to
+ *  the wrong half of tokens.css — the whole cost of an inert utility is that it
+ *  is silent, so a misleading diagnostic keeps it silent for one round longer. */
+function tokenFamilyFor(utility: string): string {
+  const base = utility.replace(/^(?:[\w@/[\]().-]+:)+/, '').replace(/^!?-?/, '')
+  if (base.startsWith('rounded-')) return '--radius-*'
+  if (base.startsWith('gap-')) return '--spacing-*'
+  return '--color-*'
+}
+
 function loadAllowlist(): Allowlist {
   const raw = readFileSync(join(process.cwd(), 'src/design/inertUtilities.allowlist.json'), 'utf8')
   const j = JSON.parse(raw) as Allowlist
   return { allow: j.allow ?? {} }
 }
 
-describe('inert-utility rail (a text-*/bg-*/border-* class must emit CSS)', () => {
+describe('inert-utility rail (a text-/bg-/border-/rounded-/gap- class must emit CSS)', () => {
   it('the oracle agrees with the design tokens (it can tell live from inert)', async () => {
     // Guards the guard: if the loader ever silently produced an empty design
     // system, every candidate would look inert and the allowlist assertions
@@ -54,6 +65,22 @@ describe('inert-utility rail (a text-*/bg-*/border-* class must emit CSS)', () =
     ]) {
       expect(isLive(live), `${live} must not be reported as inert`).toBe(true)
     }
+    // The rounded-*/gap-* families, added to SCANNED_PREFIX after two whole families of
+    // dead CSS shipped unnoticed: `gap-2xs` at 49 sites (no `--spacing-2xs`, so every
+    // gap collapsed to 0) and `rounded-m` at 12 (the radius scale spells 12px `md`).
+    // Both directions are asserted on those exact names, because the two scales do NOT
+    // share spellings — `gap-m` is live while `rounded-m` is dead, and `gap-2xs` is dead
+    // while `gap-2xl` is live. That asymmetry is the whole trap, so it is pinned here.
+    for (const live of [
+      'rounded-md', 'rounded-lg', 'rounded-pill', 'rounded-squircle', 'rounded-l-md',
+      'rounded-none', 'gap-xs', 'gap-s', 'gap-m', 'gap-2xl', 'gap-1', 'gap-x-2',
+      'sm:gap-xs',
+    ]) {
+      expect(isLive(live), `${live} must not be reported as inert`).toBe(true)
+    }
+    for (const dead of ['rounded-m', 'gap-2xs', 'sm:gap-2xs', 'rounded-mdd', 'gap-nope']) {
+      expect(isLive(dead), `${dead} has no token and must NOT compile`).toBe(false)
+    }
   })
 
   it('no NEW inert utility outside the shrinking allowlist', async () => {
@@ -62,13 +89,15 @@ describe('inert-utility rail (a text-*/bg-*/border-* class must emit CSS)', () =
     for (const hit of await scanInertUtilities()) {
       if (allow[hit.file]?.includes(hit.base)) continue
       offenders[hit.file] ??= []
-      offenders[hit.file].push(`${hit.line}: ${hit.utility} — no --color-* token; emits NO CSS`)
+      offenders[hit.file].push(`${hit.line}: ${hit.utility} — no ${tokenFamilyFor(hit.utility)} token; emits NO CSS`)
     }
     expect(
       offenders,
       'These utilities compile to nothing, so their styling is silently absent. ' +
-        'Use a token that exists (see design/tokens.css — e.g. text-on-surface-low, ' +
-        'border-outline-variant, text-primary), or add the token if it is genuinely new:\n' +
+        'Use a token that exists (see design/tokens.css), or add the token if it is ' +
+        'genuinely new. Note the scales do NOT share spellings: spacing is ' +
+        'xs/s/m/l/xl/2xs/2xl/3xl while radius is xs/sm/md/lg/lgi/xl/xli/2xl — so ' +
+        '`rounded-m` is dead even though `gap-m` is live:\n' +
         JSON.stringify(offenders, null, 2),
     ).toEqual({})
   })

@@ -153,7 +153,7 @@ export function AppConfigFields({ appName, props, cur, set, secretSet = [], requ
               minLength={!isNum && typeof p.minLength === 'number' ? p.minLength : undefined}
               maxLength={!isNum && typeof p.maxLength === 'number' ? p.maxLength : undefined}
               pattern={!isNum && !meta.sensitive && typeof p.pattern === 'string' ? p.pattern : undefined}
-              className="w-full rounded-m border border-outline-variant bg-surface-high px-m py-s text-[0.8125rem] text-on-surface"
+              className="w-full rounded-md border border-outline-variant bg-surface-high px-m py-s text-[0.8125rem] text-on-surface"
               value={v === undefined || v === null ? '' : String(v)}
               onChange={(e) => {
                 const raw = e.target.value

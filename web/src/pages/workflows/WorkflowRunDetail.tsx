@@ -420,7 +420,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
               </div>
             ) : null}
 
-            <div className={`flex flex-col gap-2xs${view === 'graph' ? ' hidden' : ''}`}>
+            <div className={`flex flex-col gap-xs${view === 'graph' ? ' hidden' : ''}`}>
               {shownRows.map(({ node: n, depth, descendants, collapsible }) => {
                 const nl = nodeLook(n.state)
                 const NIcon = nl.icon
@@ -481,7 +481,7 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                     </div>
                     <span data-type="caption" className={`shrink-0 ${nl.tone}`}>{nl.label}</span>
                     {(canReenter || (isNodeTerminal(n.state) && !!n.node_id)) && (
-                      <span className="flex shrink-0 items-center gap-2xs opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                      <span className="flex shrink-0 items-center gap-xs opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                         {/* Inspect: the §5 reconstructability drawer (WV-10). Offered ONLY for a
                             terminal node — the endpoint 409s otherwise, so a button on a running
                             node would teach the user the UI lies. Available on a terminal run too,

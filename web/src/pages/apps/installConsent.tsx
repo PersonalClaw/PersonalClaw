@@ -83,7 +83,7 @@ export function ScanReport({ scan }: { scan: NonNullable<AppInstallResult['scan'
   const tone = v === 'dangerous' ? 'text-danger' : v === 'warning' ? 'text-warn' : 'text-ok'
   const Icon = v === 'clean' ? ShieldCheck : v === 'dangerous' ? ShieldAlert : AlertTriangle
   return (
-    <div className="rounded-m border border-outline-variant bg-surface-high p-m">
+    <div className="rounded-md border border-outline-variant bg-surface-high p-m">
       <div className={`flex items-center gap-2 ${tone}`} data-type="body-m"><Icon size={16} /> Security scan: {v}
         {scan.findings.length > 0 && ` · ${scan.findings.length} finding${scan.findings.length === 1 ? '' : 's'}`}
       </div>
@@ -363,7 +363,7 @@ export function PermissionList({ perms }: { perms: AppSummary['permissions'] }) 
           mediates every app→desktop call, so it can reach nothing native on this machine.
         </div>
       )}
-      <div className="mt-2 flex gap-2 rounded-m border border-outline-variant bg-surface-high p-m">
+      <div className="mt-2 flex gap-2 rounded-md border border-outline-variant bg-surface-high p-m">
         <Globe size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-on-surface-low" />
         <div data-type="body-s" className="text-on-surface-low">
           <span className="text-on-surface">Network access: {networkClaim(perms.network)}</span>
@@ -416,7 +416,7 @@ export function CronConsentList({ crons }: { crons: AppCronSummary[] }) {
       </div>
       <ul className="flex flex-col gap-1.5">
         {crons.map((c, i) => (
-          <li key={c.name || i} className="rounded-m border border-outline-variant bg-surface-high p-m">
+          <li key={c.name || i} className="rounded-md border border-outline-variant bg-surface-high p-m">
             <div className="flex items-center justify-between gap-2">
               <span data-type="body-s" className="text-on-surface">{c.name || 'job'}</span>
               <span data-type="label-s" className="shrink-0 text-on-surface-low" title={cadenceTitle(c)}>{fmtCadence(c)}</span>
