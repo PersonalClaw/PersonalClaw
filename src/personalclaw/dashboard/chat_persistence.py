@@ -10,10 +10,11 @@ from personalclaw.agent import AGENTS_DIR
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.chat_utils import (
-    _history_key_for,
     _normalize_model,
     _sync_dashboard_sessions,
     apply_task_mode,
+    candidate_history_keys,
+    persisted_history_key,
     resolve_history_key,
 )
 from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -147,6 +148,42 @@ def _validate_reasoning_effort(raw: object) -> str:
     return ""
 
 
+#: Roles that are STREAM BOOKKEEPING, never transcript. The write loop below has always
+#: dropped them; the save guard now counts what will actually be written, so the filter
+#: has to exist exactly once or the guard would compare a padded buffer length against a
+#: filtered disk length and let a shorter transcript through.
+_NON_TRANSCRIPT_ROLES = frozenset({"chunk", "done", "streaming", "queued", "permission"})
+
+
+def _persistable(msgs: list[dict]) -> list[dict]:
+    """The subset of *msgs* that :func:`save_session_to_history` will actually write."""
+    return [m for m in msgs if m.get("role", "assistant") not in _NON_TRANSCRIPT_ROLES]
+
+
+def _persisted_message_count(state: DashboardState, history_key: str) -> int:
+    """How many transcript messages the PERSISTED side already holds for *history_key*.
+
+    The disk-side half of "does this buffer hold more than the file does?" — the
+    question :func:`save_session_to_history` has to answer before overwriting a
+    transcript, and which it used to answer from ``session._resumed_count``, an
+    IN-MEMORY count. Reads the single file the write is about to replace (not
+    ``read_messages_chained``, which spans rotated siblings and would over-count into a
+    permanent refusal). ``ConversationLog`` mtime-caches the parse, so on the hot path
+    this is a ``stat``.
+
+    An unreadable file answers ``0`` — fail OPEN, never refuse a live write because the
+    disk misbehaved. Same posture as :func:`session_key_exists`, for the same reason.
+    """
+    log = state.conversation_log
+    if log is None:
+        return 0
+    try:
+        return len(log.read_messages(history_key))
+    except Exception:  # noqa: BLE001 — an unreadable log must not block a live write
+        logger.warning("persisted message count failed for %s", history_key, exc_info=True)
+        return 0
+
+
 def save_all_sessions_to_history(state: DashboardState) -> None:
     """Save all active sessions to history. Called on gateway shutdown."""
     for session in list(state._sessions.values()):
@@ -263,7 +300,7 @@ def _restore_runtime_binding(state: DashboardState, session: _ChatSession, meta:
 
 
 def _rehydrate_session_from_history(
-    state: DashboardState, session_name: str
+    state: DashboardState, session_name: str, *, include_archived: bool = False
 ) -> _ChatSession | None:
     """Rehydrate a single dashboard session from persisted history.
 
@@ -277,6 +314,16 @@ def _rehydrate_session_from_history(
 
     Intended for targeted resume paths (e.g. cron→origin injection after
     gateway restart). Bulk startup restore still uses ``restore_recent_sessions``.
+
+    *include_archived* loads a session whose metadata carries ``closed``. It exists for
+    exactly one caller — the ``POST /api/chat`` SEED, which has already asked
+    :func:`session_key_exists` "may I write this key?" and been told yes, because
+    "archival is not deletion" and an archived session stays WRITABLE. Writable but not
+    SEEDABLE is incoherent, and it is the incoherence that caused the data loss: the
+    seed returned ``None``, ``get_or_create_session`` minted a BLANK session for a key
+    holding a real transcript, and the save then wrote that blank buffer over it.
+    Readers keep the default (``False``) — for them ``closed`` still means "not
+    resident", which is what makes an archived chat absent from the UI.
     """
     if not state.conversation_log:
         return None
@@ -293,7 +340,7 @@ def _rehydrate_session_from_history(
     # No metadata → session was never persisted. Don't create a phantom session.
     if not meta:
         return None
-    if meta.get("closed"):
+    if meta.get("closed") and not include_archived:
         return None
     try:
         _restore_cfg = AppConfig.load()
@@ -443,9 +490,10 @@ def session_key_exists(state: DashboardState, name: str) -> bool:
 
     Provider-agnostic without assuming a key SHAPE: both candidate keys are tried — the
     bare one (a channel-provider thread persists under its own key, exactly as the
-    channel app wrote it) and the ``dashboard:`` form — which is the same pair
-    :func:`resolve_history_key` tries, so the two cannot disagree about which files
-    belong to a key.
+    channel app wrote it) and the ``dashboard:`` form. The pair now comes from
+    :func:`~personalclaw.dashboard.chat_utils.candidate_history_keys`, which
+    :func:`resolve_history_key` reads too, so the two cannot disagree about which files
+    belong to a key — it used to be built inline in both places.
     """
     if name in state._sessions:
         return True
@@ -453,7 +501,7 @@ def session_key_exists(state: DashboardState, name: str) -> bool:
         log = state.conversation_log
         if log is None:
             return True  # no log configured — absence is unprovable, so don't refuse
-        return any(log.has_log(k) for k in {name, _history_key_for(name)})
+        return any(log.has_log(k) for k in candidate_history_keys(name))
     except Exception:  # noqa: BLE001 — an unreadable log must not refuse a live send
         logger.warning("session existence check failed for %s", name, exc_info=True)
         return True
@@ -615,16 +663,58 @@ def save_session_to_history(
     msgs = messages if messages is not None else session.messages
     if not state.conversation_log or not msgs:
         return
-    if session._resumed_count > 0 and len(msgs) <= session._resumed_count:
-        if not closed and not force:
+    # Save back under the key this session is actually persisted under — the one owner
+    # of on-disk identity (a channel-provider thread keeps its own bare key; a dashboard
+    # session uses the dashboard: namespace; a brand-new session falls back to the
+    # dashboard form). Resolved BEFORE the overwrite guard below, because that guard's
+    # whole job is to compare against the file this key names.
+    history_key = persisted_history_key(state.conversation_log, session.key)
+    # 🔴 THE OVERWRITE GUARD. This function does not append — it REWRITES the whole
+    # transcript file from `msgs`. So it must not run when `msgs` holds less than the
+    # file does, or the difference is destroyed.
+    #
+    # It used to ask an IN-MEMORY question: `session._resumed_count > 0 and len(msgs) <=
+    # session._resumed_count`. `_resumed_count` is set from `len(session.messages)` right
+    # after a seed, so it means "this buffer was seeded from persisted content" — a fact
+    # about the BUFFER, not about the file. For a session that was never seeded it is 0,
+    # the predicate is false, and the guard does not fire *however much the file holds*.
+    # That is the data loss: a send to an archived session was seeded by nothing (the
+    # seed refuses `closed`), so a BLANK session was minted with `_resumed_count == 0`
+    # and its empty buffer was written straight over a real transcript — measured at
+    # 785 B / 2 turns → 693 B / 1 turn.
+    #
+    # The question is now put to the DISK. This is the same principle the `side` buffer
+    # twenty lines below already applies (prefer the persisted copy when the in-memory
+    # one was dropped) and the same comparison `chat_runner` already makes to decide
+    # whether to re-inject a history prefix (`mem_count > disk_count`); `messages` simply
+    # never got it. Counted over `_persistable` on both sides so the comparison is
+    # apples-to-apples with what actually reaches the file.
+    #
+    # `force` is the ONE escape hatch, and it means "my buffer is authoritative, write
+    # it even though it is shorter" — which is exactly what undo / regenerate /
+    # edit-resend / switch-variant need. They used to get it by lying to the old
+    # predicate (`session._resumed_count = 0`), which also corrupted the count
+    # `chat_fork` reads off the same field; they now pass `force` and say so.
+    outgoing = _persistable(msgs)
+    if not force:
+        _persisted = _persisted_message_count(state, history_key)
+        if _persisted and len(outgoing) <= _persisted:
+            if closed:
+                # An archive still has to land its flag — but never by trading the
+                # richer persisted transcript for this buffer. A metadata-only merge
+                # leaves every message byte on disk untouched.
+                try:
+                    state.conversation_log.update_metadata(history_key, {"closed": True})
+                except Exception:
+                    logger.warning("archive flag write failed for %s", history_key, exc_info=True)
+            else:
+                logger.debug(
+                    "save skipped for %s: buffer holds %d transcript message(s), disk holds %d",
+                    history_key,
+                    len(outgoing),
+                    _persisted,
+                )
             return
-    # Save back under the key this session is actually persisted under: a
-    # channel-provider thread keeps its own bare key; a dashboard session uses the
-    # dashboard: namespace. resolve_history_key returns the existing persisted key
-    # (channel thread) and falls back to the dashboard form for a brand-new session.
-    history_key = resolve_history_key(state.conversation_log, session.key) or _history_key_for(
-        session.key
-    )
     try:
         existing_meta = state.conversation_log.get_metadata(history_key)
 
@@ -635,7 +725,16 @@ def save_session_to_history(
             "created_at": existing_meta.get("created_at") or session.created_at,
             "last_consolidated": existing_meta.get("last_consolidated", 0),
         }
-        if closed:
+        # UN-ARCHIVING IS EXPLICIT. This function rebuilds the whole meta line from the
+        # in-memory session, so omitting `closed` silently CLEARED it on every save — a
+        # normal send, a title write, a shutdown flush. None of those is a user asking to
+        # un-archive; the shutdown flush in particular un-archived every still-resident
+        # archived session with no user in the loop at all. `_ChatSession.append` already
+        # draws this exact line on the S2 `lifecycle` axis (state.py: a live turn
+        # un-archives, a replay or a restore must not), and `closed` simply never got it.
+        # The single explicit un-archiver is `api_chat_session_resume`, which has a
+        # dedicated block that rewrites the meta line with `closed` popped.
+        if closed or existing_meta.get("closed"):
             meta_line["closed"] = True
         meta_line["memory_mode"] = session.memory_mode
         if session.title and session.title != session.key:
@@ -707,10 +806,8 @@ def save_session_to_history(
         if _app:
             meta_line["app"] = _app
         lines = [json.dumps(meta_line) + "\n"]
-        for m in msgs:
+        for m in outgoing:
             role = m.get("role", "assistant")
-            if role in ("chunk", "done", "streaming", "queued", "permission"):
-                continue
             content = m.get("content", "")
             if role not in ("user", "system"):
                 content, _ = redact_exfiltration_urls(content)

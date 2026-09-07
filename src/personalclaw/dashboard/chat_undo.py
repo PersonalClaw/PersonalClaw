@@ -81,9 +81,9 @@ async def api_chat_session_undo(request: web.Request) -> web.Response:
     session.messages = session.messages[:cut]
     # Persist the rollback: save_session_to_history rewrites the WHOLE transcript file
     # from session.messages (not append-only), so the truncated list becomes the on-disk
-    # state — a reload won't resurrect the undone turns. force=True since the shrunken
-    # list is ≤ _resumed_count (the guard at :402 would otherwise skip the write).
-    session._resumed_count = 0
+    # state — a reload won't resurrect the undone turns. force=True says the shrunken
+    # list is authoritative, which is what gets it past the overwrite guard (the guard
+    # compares against the file, so a truncation can only ever land by declaring intent).
     try:
         save_session_to_history(state, session, force=True)
     except Exception:

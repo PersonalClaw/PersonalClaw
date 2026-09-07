@@ -40,7 +40,7 @@ from personalclaw.dashboard.chat_utils import (
     _remove_queued_by_id,
     _sync_dashboard_sessions,
     apply_task_mode,
-    resolve_history_key,
+    persisted_history_key,
 )
 from personalclaw.dashboard.state import (
     DashboardState,
@@ -208,10 +208,17 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # (tests/test_session_detail_404.py). A client that wants a NEW conversation omits
     # `session` — that contract is unchanged and is what the dashboard's `ensureSession`
     # already uses.
+    #
+    # The seed takes `include_archived=True` because THIS caller has just been told the
+    # key may be written: `session_key_exists` passes an ARCHIVED key deliberately
+    # ("archival is not deletion"). Seeding refused the same key, so the two halves of
+    # one decision disagreed — and a blank session was minted for a key holding a real
+    # transcript, which `save_session_to_history` then wrote over. Writable implies
+    # seedable; the readers that want `closed` to mean "not resident" keep the default.
     if session_name:
         if not session_key_exists(state, session_name):
             return json_error("session_not_found", status=404)
-        _rehydrate_session_from_history(state, session_name)
+        _rehydrate_session_from_history(state, session_name, include_archived=True)
     session = state.get_or_create_session(session_name, app=request.get("app", ""))
 
     # App ownership check: deny-by-default for app tokens.
@@ -802,12 +809,9 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
     if not session:
         return web.json_response({"error": "not found"}, status=404)
 
-    # Canonical persisted key — a channel-provider thread keeps its own bare key;
-    # a dashboard session uses the dashboard: namespace. Resolve provider-agnostically
-    # (falls back to the dashboard form for a live session with no disk history yet).
-    resolved_key = resolve_history_key(state.conversation_log, session.key) or _history_key_for(
-        session.key
-    )
+    # Canonical persisted key, via the one owner of on-disk identity (falls back to the
+    # dashboard form for a live session with no disk history yet).
+    resolved_key = persisted_history_key(state.conversation_log, session.key)
 
     limit_raw = request.query.get("limit")
     before = request.query.get("before")
@@ -1627,7 +1631,13 @@ async def api_chat_session_delete(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
     session = state._sessions.get(name)
-    history_key = _history_key_for(name)
+    # The key whose FILE this delete must unlink — resolved, not prefixed. A session
+    # persisted under its own bare key (a channel-provider thread) used to have
+    # `dashboard:<name>` unlinked instead: the button answered 200, the session left
+    # memory, and the transcript survived on disk as an orphan that `session_key_exists`
+    # still reports as present — so "delete" quietly degraded back into the resurrection
+    # this route's own hard-delete contract exists to prevent.
+    history_key = persisted_history_key(state.conversation_log, name)
     # A chat is deletable if it's warm in memory OR only persisted on disk. After a
     # gateway restart only recent/pinned/foldered sessions are restored to memory, so
     # requiring an in-memory session here made "Delete" a silent 404 no-op for the
@@ -1911,7 +1921,7 @@ async def api_chat_session_agent(request: web.Request) -> web.Response:
     if state.conversation_log:
         try:
             state.conversation_log.update_metadata(
-                _history_key_for(name),
+                persisted_history_key(state.conversation_log, name),
                 {"agent": agent_name, "acp_provider": "", "acp_provider_agent": ""},
             )
         except Exception:
@@ -2033,7 +2043,7 @@ async def api_chat_session_acp_agent(request: web.Request) -> web.Response:
     if state.conversation_log:
         try:
             state.conversation_log.update_metadata(
-                _history_key_for(name),
+                persisted_history_key(state.conversation_log, name),
                 {
                     "acp_provider": provider,
                     "acp_provider_agent": session.acp_provider_agent,
@@ -2259,11 +2269,17 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         body = {}
+    # The client-supplied NAME of the session to resume. It is a session name, not a
+    # persisted key: everything below that touches disk must go through the one owner
+    # (`resolved_key`), and only the in-memory dedupe just below may compare the
+    # namespaced form directly.
     history_key = body.get("key", name)
 
     # If session already exists (active session), just return it — no duplicate.
     # Check both by session name AND by canonical session key to prevent two
-    # sessions sharing the same ACP agent process.
+    # sessions sharing the same ACP agent process. `_history_key_for` is the right tool
+    # HERE and only here: both sides of the comparison are in-memory session keys being
+    # normalised into one space, so no disk fact is being asserted.
     canonical = _history_key_for(history_key)
     existing = state._sessions.get(name)
     if not existing:
@@ -2326,6 +2342,16 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
     if not session_key_exists(state, history_key):
         return json_error("session_not_found", status=404)
     session = state.get_or_create_session(name, app=request.get("app", ""))
+    # 🔴 EVERY disk read below reads THIS key, not `history_key`. `history_key` is the
+    # BARE client-supplied name; a dashboard session's file lives under the
+    # `dashboard:` form, so `get_metadata`, `_path` and `read_messages_chained` all
+    # missed it and this endpoint answered 200 with `messages: []` and `meta_closed`
+    # still true for any non-resident dashboard session — the clear-`closed` block
+    # below silently no-opped too, which is what made archival irreversible. Masked in
+    # practice only because the startup restore usually makes the session resident
+    # first, so the early-return above fires. The canonical form was already being
+    # computed four lines up for the in-memory dedupe and simply never reached disk.
+    resolved_key = persisted_history_key(state.conversation_log, history_key)
     title = body.get("title", "")
     if title:
         session.title = title
@@ -2333,12 +2359,12 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
     else:
         sessions = state.conversation_log.list_sessions()
         for s in sessions:
-            if s.get("key") == history_key:
-                session.title = s.get("title", history_key)
+            if s.get("key") == resolved_key:
+                session.title = s.get("title", resolved_key)
                 session._titled = True
                 break
     # Restore original created_at from history metadata
-    meta = state.conversation_log.get_metadata(history_key)
+    meta = state.conversation_log.get_metadata(resolved_key)
     if meta.get("created_at"):
         session.created_at = meta["created_at"]
     if meta.get("agent"):
@@ -2370,10 +2396,13 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
         state._restricted_keys.discard(f"dashboard:{name}")
     if meta.get("forked_from") is not None:
         session.forked_from = meta["forked_from"]
-    # Clear closed flag so session restores on next gateway restart
+    # Clear closed flag so session restores on next gateway restart. This is now the
+    # ONLY un-archiver: `save_session_to_history` preserves `closed` instead of dropping
+    # it on every rebuild, so resume is what a user's explicit "reopen" runs through —
+    # which is exactly why it had to stop reading the bare key.
     if meta.get("closed"):
         try:
-            path = state.conversation_log._path(history_key)
+            path = state.conversation_log._path(resolved_key)
             if path.exists():
                 lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
                 if lines:
@@ -2381,10 +2410,10 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
                     first_line_data.pop("closed", None)
                     lines[0] = json.dumps(first_line_data) + "\n"
                     atomic_write(path, "".join(lines))
-                    state.conversation_log._meta_cache.pop(history_key, None)
+                    state.conversation_log._meta_cache.pop(resolved_key, None)
         except Exception:
-            logger.warning("Failed to clear closed flag for %s", history_key, exc_info=True)
-    all_messages = state.conversation_log.read_messages_chained(history_key)
+            logger.warning("Failed to clear closed flag for %s", resolved_key, exc_info=True)
+    all_messages = state.conversation_log.read_messages_chained(resolved_key)
     disk_total = len(all_messages)
     max_resume = 500
     messages = all_messages[-max_resume:] if disk_total > max_resume else all_messages

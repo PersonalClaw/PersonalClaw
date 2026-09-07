@@ -31,7 +31,13 @@ async def _persist_history_off_thread(
     """
     try:
         msgs_snapshot = list(session.messages)
-        await asyncio.to_thread(save_session_to_history, state, session, msgs_snapshot)
+        # force=True: every caller here has DELIBERATELY shortened or rewritten the buffer
+        # (regenerate truncates, edit-resend rewinds, switch-variant swaps content at the
+        # same length), so this snapshot is authoritative even though it holds no more
+        # than the file does. They used to obtain the same effect by setting
+        # `session._resumed_count = 0` — lying to a predicate that no longer exists, and
+        # corrupting the seeded-message count `chat_fork` reads off the same field.
+        await asyncio.to_thread(save_session_to_history, state, session, msgs_snapshot, force=True)
     except Exception:
         logger.warning("%s: failed to persist session history", label, exc_info=True)
 
@@ -93,7 +99,6 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
 
         del session.messages[u_idx + 1 :]
         session._dirty = True
-        session._resumed_count = 0
         session._pending_variants = variants
 
         await _persist_history_off_thread(state, session, "regenerate")
@@ -181,7 +186,6 @@ async def api_chat_session_switch_variant(request: web.Request) -> web.Response:
         target_dict["ts"] = chosen.get("ts", target_dict.get("ts", ""))
         target_dict["variant_idx"] = idx
         session._dirty = True
-        session._resumed_count = 0
         await _persist_history_off_thread(state, session, "switch-variant")
         sel().log_api_access(
             caller="dashboard",
@@ -279,7 +283,6 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
 
         del session.messages[index:]
         session._dirty = True
-        session._resumed_count = 0
 
         _bc, _ = redact_exfiltration_urls(content)
         _bc, _ = redact_credentials(_bc)

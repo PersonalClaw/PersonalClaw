@@ -456,7 +456,11 @@ class TestAColdKeyPostRehydratesItsBinding:
         from personalclaw.dashboard import chat_handlers
 
         src = inspect.getsource(chat_handlers.api_chat)
-        assert "_rehydrate_session_from_history(state, session_name)" in src
-        assert src.index("_rehydrate_session_from_history(state, session_name)") < src.index(
+        # Matched WITHOUT the closing paren: the claim is the ORDER of the two calls, not
+        # the rehydrate's argument list (it now also passes `include_archived=True`, so a
+        # send may seed an archived key — the same key `session_key_exists` above already
+        # declared writable).
+        assert "_rehydrate_session_from_history(state, session_name" in src
+        assert src.index("_rehydrate_session_from_history(state, session_name") < src.index(
             "state.get_or_create_session(session_name"
         ), "api_chat resolves the session before restoring its binding"

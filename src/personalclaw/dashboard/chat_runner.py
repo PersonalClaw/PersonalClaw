@@ -43,6 +43,7 @@ from personalclaw.dashboard.chat_utils import (
     _project_context_preamble,
     _redact_for_display,
     _validate_tool_name,
+    persisted_history_key,
     stream_slash_command,
     strip_status_sentinel,
     task_mode_denies,
@@ -2633,7 +2634,7 @@ async def run_chat(
                     _last_stop_soft = True
                 break
             if not _last_stop_soft:
-                history_key = _history_key_for(session.key)
+                history_key = persisted_history_key(state.conversation_log, session.key)
                 disk_count = 0
                 if state.conversation_log:
                     disk_count = len(state.conversation_log.read_messages(history_key))
