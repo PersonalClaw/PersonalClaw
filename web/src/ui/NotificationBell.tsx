@@ -12,13 +12,16 @@ import { rowSubject } from '../lib/rowSubject'
 import { fvs, withWeight } from '../design/fontWeight'
 import { accentChip } from '../design/accent'
 import { notify } from '../app/appSdk'
+import { confirmDelete } from './dialog'
+import { reportingWrite } from '../app/reportingWrite'
 
 const MAX_SHADE = 5
 
 /** Shell-corner notification control: a bell with an unread counter that opens a
- *  shade of the few most-recent notifications. Each can be marked read / dismissed
- *  in place, opened (jumps to the full feed, deep-linked to the item), and the
- *  footer navigates to the all-notifications page. */
+ *  shade of the few most-recent notifications. Each can be marked read or DELETED
+ *  in place (deleted, not "dismissed" — see the row's own note; the entry leaves
+ *  disk), opened (jumps to the full feed, deep-linked to the item), and the footer
+ *  navigates to the all-notifications page. */
 export function NotificationBell({ navigate }: { navigate: (path: string) => void }) {
   const [items, setItems] = useState<NotificationItem[] | null>(null)
   const [open, setOpen] = useState(false)
@@ -50,8 +53,24 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
     await api.ackNotification(n.ts).catch((e) => notify(`Couldn't mark this notification read: ${String((e as Error)?.message || e)}`, 'error'))
     load()
   }
+  // 🔴 THE SAME DELETE, THE SAME THREE DEFECTS — the twin #628 fixed on the full feed and this one
+  // was missed. `pages/notifications/NotificationsPage.remove()` carries the finding in its own words:
+  // *"one row's delete is as irreversible as Clear all four lines down — the entry leaves disk and
+  // `messaging.py` has no restore. Every per-row delete in the app gates on confirmDelete; this was
+  // the one that did not."* That sweep found one instance and stopped; this is the other one.
+  //
+  // Three things, all borrowed from that sibling rather than designed here:
+  //
+  //   1. `confirmDelete`, with the SUBJECT — rows in a five-item shade look alike, and the dialog has
+  //      to say which notification is about to leave disk.
+  //   2. `reportingWrite`, so the sentence comes from the one module that owns it instead of a
+  //      fourth hand-rolled copy of the same wording.
+  //   3. the tail is GATED. `load()` ran unconditionally after a swallowed failure, so a refused
+  //      delete re-rendered the identical row — "nothing happened, twice", which is exactly the
+  //      shape `reportingWrite` returns a boolean to prevent.
   async function remove(n: NotificationItem) {
-    await api.deleteNotification(n.ts).catch((e) => notify(`Couldn't delete this notification: ${String((e as Error)?.message || e)}`, 'error'))
+    if (!(await confirmDelete('notification', n.title || undefined))) return
+    if (!(await reportingWrite('delete this notification', () => api.deleteNotification(n.ts)))) return
     load()
   }
   async function ackAll() {
@@ -180,7 +199,15 @@ function ShadeRow({ n, now, onOpen, onAck, onDelete }: { n: NotificationItem; no
           <button type="button" onClick={onAck} aria-label={`Mark read: ${subject}`} title="Mark read"
             className="grid size-7 place-items-center rounded-pill text-on-surface-low hover:bg-surface-highest hover:text-on-surface transition-colors"><Check size={14} /></button>
         )}
-        <button type="button" onClick={onDelete} aria-label={`Dismiss: ${subject}`} title="Dismiss"
+        {/* 🔴 "DISMISS" IS THE WRONG WORD, AND IN THIS CODEBASE IT IS LOAD-BEARING. This button calls
+            `api.deleteNotification` — the entry leaves disk and `messaging.py` has no restore — but
+            "dismiss" is the app's word for a REVERSIBLE hide, pinned as such in
+            `ui/dialog/destructiveConfirmSaysWhatGoes.test.ts`, which asserts the inbox's dismiss must
+            NOT say "cannot be undone" precisely because *"a dismissed inbox item can be restored"*.
+            So this control borrowed the one verb that promises the opposite of what it does.
+            `pages/notifications` already names the identical call "Delete"; two surfaces, one action,
+            and the full feed had it right. */}
+        <button type="button" onClick={onDelete} aria-label={`Delete: ${subject}`} title="Delete"
           className="grid size-7 place-items-center rounded-pill text-on-surface-low hover:bg-surface-highest hover:text-on-surface transition-colors"><X size={14} /></button>
       </div>
     </motion.div>
