@@ -56,14 +56,25 @@ describe('unavailableWhen — the raw-button carrier', () => {
     expect(src, 'the reason rides in the title').toMatch(/title: \[opts\?\.title, reason\]\.filter\(Boolean\)\.join\(' — '\)/)
   })
 
-  it('goes NATIVELY disabled while busy — the documented exception', () => {
-    // This is why a `disabled={busy}` elsewhere is correct rather than a gap.
-    expect(src).toMatch(/if \(opts\?\.busy\) return \{ disabled: true/)
-    // 🪤 The sentence wraps across two comment lines, so a single-line regex missed it on correct code —
-    // the same "match the shape, not the meaning" trap as pinning a rail to markup. Allow the wrap.
-    expect(src, 'and the reason for that is stated in the file').toMatch(
-      /an in-flight action\s*\n?\s*\*?\s*must not be re-clickable/,
-    )
+  // 🪤 THIS RAIL PINNED A SENTENCE, AND THE SENTENCE WAS PART OF A DEFECT. It required the docstring to
+  // contain "an in-flight action must not be re-clickable" — true, and the surrounding claim was not:
+  // the same paragraph said the spinner "already carries that state", which `ui/Button` refutes for that
+  // very spinner (it is `aria-hidden`, so "everyone else got NO signal at all"). The busy branch returned
+  // no `aria-busy`, so it announced "unavailable" rather than "working". Fixing that meant rewriting the
+  // paragraph, which reddened this assertion on strictly better code.
+  //
+  // Re-pointed to the PROPERTY: the busy branch is natively disabled, it now also announces, and the
+  // file still explains why the native attribute is kept. Note the file this lives in already records
+  // the general lesson one screen up — "Fourth time this session a rail of mine checked a declaration
+  // instead of the supply" — and pinning prose is the same error one layer out: a rail should assert what
+  // the code DOES, not the words chosen to describe it.
+  it('goes natively disabled while busy AND announces it', () => {
+    // Both props, because they say different things: `disabled` stops the second click (a raw <button>
+    // has no `off = disabled || loading` guard), `aria-busy` says why the control is inert.
+    expect(src).toMatch(/if \(opts\?\.busy\) return \{ disabled: true, 'aria-busy': true/)
+    // The REASON the native attribute is kept must still be stated — matched on the mechanism it names
+    // rather than on a phrase, so a re-wording cannot red this while the reasoning survives.
+    expect(src, 'the file explains why native disabled is kept here').toMatch(/double-fire/)
   })
 
   it('returns nothing when nothing is missing', () => {
