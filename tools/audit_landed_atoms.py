@@ -45,6 +45,16 @@ vars) and looked up in a corpus built from the ref's tree. The corpus **delibera
 excludes ``docs/``**: the plan text that the keys came from lives there, so including it
 would make every atom look landed. That is the central false-positive trap.
 
+The ``docs/`` exclusion generalises to one rule — *evidence must be something that would be
+ABSENT if the work had not been done* — and it has a second application. A cited **path is a
+container**; a symbol, a make target or an env var is **content**. Only content had to be typed
+by the work; ``web/``, ``desktop/main.js`` and ``.github/workflows/ci.yml`` are matched by every
+atom that so much as mentions the surface, and an atom cites the file it READS as readily as the
+file it writes. So path-only evidence scores ``TRIVIAL`` rather than ``STRONG``: the signal is
+kept and printed, the label stops overstating it, and ``TRIVIAL`` can never reach
+LANDED-AND-CLEAN. Five ``todo`` atoms read STRONG off a pre-existing tree before this
+(``AR-8``/``CRE-7``/``CA-8``/``ET-8``/``SH-11``; see ``score_evidence``).
+
 ``log verdict`` — the owning plan's ``## Execution log`` is split into entries, each entry
 classified into a small closed set (``LogVerdict``), and each attributed to the atom ids it
 names. Only the atom's **own** plan adjudicates it, and an id in an entry's headline
@@ -929,8 +939,34 @@ class Verdict:
         return ", ".join(f"{k.text}@{(k.found_impl or ['?'])[0]}" for k in shown) + extra
 
 
+# A path is a CONTAINER; a symbol, a make target or an env var is CONTENT. Only content had to
+# be typed by the work. ``score_evidence``'s first branch used to award STRONG to an atom whose
+# ONLY keys are paths, because ``not named`` short-circuits the corroboration requirement — so
+# five ``todo`` atoms read STRONG off a tree that predates them (#2663, measured on
+# ``origin/main`` at ``2f0dffd37``):
+#
+#   AR-8    `web/`                                    → src/personalclaw/web/__init__.py
+#   CRE-7   `ci.yml`, `full.yml`                      → .github/workflows/*
+#   CA-8    `desktop/main.js`                         → desktop/main.js
+#   ET-8    `registry.json`                           → named inside .github/workflows/full.yml
+#   SH-11   `scripts/sign_app.py`, `trusted_keys/`    → both shipped by SH-3/SH-4
+#
+# ``SH-11`` is the clearest read of the principle: its scope says "run ``scripts/sign_app.py``
+# gen-key … drop the .pub into ``src/personalclaw/trusted_keys/``", and ``SH-3`` "ships the trust
+# store EMPTY on purpose". The two paths it cites are the tool it must RUN and the directory it
+# must drop INTO. They exist; its work has not happened. That is the whole shape: an atom cites
+# the surface it reads as readily as the thing it writes, and a container's existence would look
+# identical had the work never started — the same test the ``docs/`` exclusion already applies.
+#
+# So path-only evidence is capped at TRIVIAL: the signal is kept and printed, and the label stops
+# claiming more than presence. This is the mirror of the SYMBOL-ONLY caveat below, which names the
+# same hazard for the other half of the pair and is the weaker of the two — a symbol at least had
+# to be typed somewhere.
+TRIVIAL = "TRIVIAL"
+
+
 def score_evidence(keys: Sequence[Key]) -> tuple[str, str]:
-    """STRONG / WEAK / ABSENT / NO-KEYS, plus a one-line reason carrying the numbers."""
+    """STRONG / TRIVIAL / WEAK / ABSENT / NO-KEYS, plus a one-line reason carrying the numbers."""
     if not keys:
         return "NO-KEYS", "no deliverable name could be extracted from the atom's prose"
     paths = [k for k in keys if k.kind in ("path", "dir")]
@@ -941,8 +977,14 @@ def score_evidence(keys: Sequence[Key]) -> tuple[str, str]:
     detail = (
         f"{n_impl}/{len(named)} named symbols in impl, {paths_ok}/{len(paths)} cited paths exist"
     )
-    if paths and paths_ok == len(paths) and (not named or ratio >= 0.5):
-        return "STRONG", detail
+    if paths and paths_ok == len(paths):
+        if named and ratio >= 0.5:
+            return "STRONG", detail
+        if not named:
+            return TRIVIAL, detail + (
+                "; PATH-ONLY (the atom names a container and no symbol / make target / env var,"
+                " so this match would look identical had the work never started)"
+            )
     if ratio >= 0.65 and n_impl >= 3:
         if not paths:
             # Symbol-only evidence is the weakest kind that still scores STRONG, because an
@@ -1072,6 +1114,17 @@ def classify(
             if refuted_caveats:
                 where, _excerpt, proof = refuted_caveats[0]
                 why += f"; an inertness note in {where} is stale — REFUTED on the ref by {proof}"
+        elif evidence == TRIVIAL:
+            # TRIVIAL is deliberately NOT in the CLEAN set. A flip writes ``done`` onto the
+            # roadmap, so it must rest on evidence that would be ABSENT had the work not been
+            # done — and a container's existence is not that. This can only move an atom OUT
+            # of LANDED-AND-CLEAN, never into it, which is the same one-directional discipline
+            # the code-caveat signal already keeps.
+            bucket = UNKNOWN
+            why = (
+                "log says complete-but-unmerged, but the only evidence on the ref is "
+                f"NON-DISCRIMINATING ({detail}) — the two signals disagree"
+            )
         else:
             bucket = UNKNOWN
             why = (
@@ -1082,16 +1135,36 @@ def classify(
         label = (
             "an unmet clause" if log_verdict == LogVerdict.PARTIAL else "an owner call / BLOCKED"
         )
-        if evidence in ("STRONG", "WEAK"):
-            bucket, why = GATED, f"deliverable present but the log names {label}; {detail}"
+        # TRIVIAL groups with WEAK here, and that is the conservative direction rather than an
+        # oversight: when the LOG carries the ruling, presence only chooses GATED vs NOT-LANDED,
+        # and demoting a trivially-matched atom to "no deliverable on the ref" would swap one
+        # false claim for another. Measured on ``origin/main``: ``ET-4`` (`app-sources.json`) and
+        # ``LV-7`` (a bare `scripts/`) are path-only and genuinely part-built, and both keep the
+        # bucket their own plan log gives them.
+        if evidence in ("STRONG", "WEAK", TRIVIAL):
+            present = (
+                "only non-discriminating path evidence is present"
+                if evidence == TRIVIAL
+                else "deliverable present"
+            )
+            bucket, why = GATED, f"{present} but the log names {label}; {detail}"
         else:
             bucket, why = OPEN, f"log names {label} and no deliverable on the ref; {detail}"
-    elif evidence == "STRONG":
+    elif evidence in ("STRONG", TRIVIAL):
         bucket = UNKNOWN
         why = (
             f"deliverable names are on the ref ({detail}) but no execution-log entry "
             "adjudicates the done_when — grep cannot certify a criterion"
         )
+        if evidence == TRIVIAL:
+            why = (
+                "the paths the atom cites are on the ref but they are CONTAINERS that pre-exist "
+                "its work, and no execution-log entry adjudicates the done_when; "
+                f"{detail}"
+            )
+        # The retirement reading overrides BOTH strengths, and TRIVIAL does not soften it. For a
+        # deletion atom the container IS the deliverable's inverse: the file existing is the proof
+        # the atom is not done, whether or not the atom also named a symbol.
         if atom.is_retirement:
             why = (
                 f"RETIREMENT atom: the named thing still EXISTS on the ref ({detail}), which "
@@ -2466,6 +2539,18 @@ def self_check(
                 f"key extractor found only {len(v.keys)} keys in {atom_id}, a known "
                 "key-rich atom (expected >=3): extraction has regressed"
             )
+    # The vacuity floor on TRIVIAL. Path-only evidence is capped at TRIVIAL, so if the
+    # symbol/make/env half of the extractor dies, EVERY path-bearing atom degrades to TRIVIAL,
+    # no atom can reach STRONG or LANDED-AND-CLEAN, and the census reads as a clean roadmap —
+    # the same false zero the catalog-shape guard refuses. A single named key anywhere in the
+    # selection proves that half is alive; ``KNOWN_LANDED`` cannot be the fixture here because
+    # all five are ``done`` and a default ``--status todo`` run never selects them.
+    if verdicts and not any(k.kind in ("symbol", "make", "env") for v in verdicts for k in v.keys):
+        problems.append(
+            f"not one of {len(verdicts)} atoms yielded a symbol/make/env key: the named-key half "
+            "of the extractor is dead, so every path-bearing atom would degrade to TRIVIAL and "
+            "no atom could score STRONG"
+        )
     keyless = [v.atom.id for v in verdicts if not v.keys]
     if verdicts and len(keyless) > 0.6 * len(verdicts):
         problems.append(

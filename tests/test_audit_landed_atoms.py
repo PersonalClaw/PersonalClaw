@@ -46,6 +46,7 @@ from tools.audit_landed_atoms import (
     MUT_MARK,
     OPEN,
     RE_ANSI,
+    TRIVIAL,
     UNKNOWN,
     WIRE_RAILED,
     WIRE_REFUSED,
@@ -975,6 +976,170 @@ def test_an_atom_with_no_extractable_key_is_unknown_not_open() -> None:
 
 
 # ---------------------------------------------------------------------------
+# a container is not evidence (#2663) — the sibling of the docs/ exclusion
+# ---------------------------------------------------------------------------
+
+
+def _container_atom() -> Atom:
+    """``AR-8`` reduced to a fixture: names a package root and nothing else.
+
+    Its real prose is "A room renders in the ``web/`` UI (as a first-class sidebar peer of
+    sessions …)" — one directory citation, no symbol, no make target, no env var.
+    """
+    return make_atom(
+        title="Room UI surface: attributed messages, pause card, per-member status",
+        scope="Design questions #6 (UI surface)",
+        done_when="a room renders in the web/ UI as a first-class peer of sessions",
+    )
+
+
+def test_a_container_that_predates_the_atom_does_not_earn_strong() -> None:
+    """The path exists, the work does not, and the label must not say otherwise.
+
+    ``AR-8`` is ``todo`` in the *deferred* ARENA plan — ``AR-1`` ("un-defer the plan") is also
+    ``todo``, so by construction none of ``AR-8``'s work exists. It scored STRONG on
+    ``web/@src/personalclaw/web/__init__.py``, a file present since ``1b4a2bdd7``, the initial
+    public commit. ``score_evidence``'s first branch let ``not named`` short-circuit the
+    corroboration requirement, so one container hit was enough.
+    """
+    atom = _container_atom()
+    keys = extract_keys(atom)
+    probe(keys, make_corpus({"src/personalclaw/web/__init__.py": "# the SPA package, day one"}))
+
+    assert [k.text for k in keys] == ["web/"], "the fixture must be container-only"
+    strength, detail = score_evidence(keys)
+    assert strength == TRIVIAL, f"a lone container scored {strength}"
+    assert "PATH-ONLY" in detail
+
+    verdict = classify(atom, keys, [])
+    assert verdict.bucket == UNKNOWN, "the bucket was already right; only the label was wrong"
+    assert "CONTAINERS that pre-exist its work" in verdict.why
+    # TRIVIAL keeps the signal rather than discarding it: the hit is still reported.
+    assert verdict.impl_keys and "web/" in verdict.key_summary()
+
+
+def test_an_atom_with_genuine_evidence_still_earns_strong() -> None:
+    """The other half of the discriminator: content the work had to type still counts.
+
+    A path is a container; a symbol, a make target or an env var is content. This atom names
+    ``widgets/thing.py`` AND ``make_widget``/``WidgetThing``, and the corpus has all three.
+    """
+    atom = make_atom()
+    keys = extract_keys(atom)
+    probe(keys, make_corpus({"src/widgets/thing.py": "def make_widget(): return WidgetThing()"}))
+
+    assert {k.kind for k in keys} >= {"path", "symbol"}
+    strength, detail = score_evidence(keys)
+    assert strength == "STRONG", detail
+    assert "PATH-ONLY" not in detail
+
+
+@pytest.mark.parametrize("kind", ["make", "env"])
+def test_a_make_target_or_an_env_var_also_lifts_a_path_out_of_trivial(kind: str) -> None:
+    """``named`` is symbol OR make OR env — each on its own is content, so each corroborates."""
+    if kind == "make":
+        atom = make_atom(scope="adds widgets/thing.py", done_when="make widgetcheck passes")
+        corpus = make_corpus({"src/widgets/thing.py": "x", "Makefile": "widgetcheck:\n\techo hi\n"})
+    else:
+        atom = make_atom(scope="adds widgets/thing.py", done_when="reads PERSONALCLAW_WIDGET_MODE")
+        corpus = make_corpus({"src/widgets/thing.py": "os.environ['PERSONALCLAW_WIDGET_MODE']"})
+    keys = extract_keys(atom)
+    probe(keys, corpus)
+    assert any(k.kind == kind and k.in_impl for k in keys), [(k.text, k.kind) for k in keys]
+    assert score_evidence(keys)[0] == "STRONG"
+
+
+def test_trivial_evidence_can_never_reach_the_just_flip_it_bucket() -> None:
+    """A flip writes ``done`` onto the roadmap, so it needs falsifiable evidence.
+
+    This is the one place the fix changes a BUCKET rather than a label, and it moves only in the
+    safe direction: out of LANDED-AND-CLEAN, never into it.
+    """
+    atom = _container_atom()
+    keys = extract_keys(atom)
+    probe(keys, make_corpus({"src/personalclaw/web/__init__.py": "# day one"}))
+    flip = [LogHit(LogVerdict.FLIP, 1, "…", "ZZ-PLAN.md", headline=True)]
+
+    verdict = classify(atom, keys, flip)
+    assert verdict.bucket == UNKNOWN, "a container plus a flip phrase is not a flippable atom"
+    assert "NON-DISCRIMINATING" in verdict.why
+
+    # the same log entry over corroborated evidence still reaches CLEAN — the guard is scoped
+    real = make_atom()
+    real_keys = extract_keys(real)
+    probe(
+        real_keys, make_corpus({"src/widgets/thing.py": "def make_widget(): return WidgetThing()"})
+    )
+    assert classify(real, real_keys, flip).bucket == CLEAN
+
+
+@pytest.mark.parametrize("verdict_name", [LogVerdict.PARTIAL, LogVerdict.GATED])
+def test_trivial_evidence_keeps_the_bucket_its_own_plan_log_gives_it(verdict_name: str) -> None:
+    """When the LOG carries the ruling, TRIVIAL groups with WEAK — deliberately.
+
+    Demoting these to NOT-LANDED would assert "no deliverable on the ref", which is false in
+    letter: the paths do exist. Measured on ``origin/main``: ``ET-4`` and ``LV-7`` are path-only
+    and genuinely part-built, and both must keep the bucket their own plan log gives them.
+    """
+    atom = _container_atom()
+    keys = extract_keys(atom)
+    probe(keys, make_corpus({"src/personalclaw/web/__init__.py": "# day one"}))
+    hits = [LogHit(verdict_name, 1, "…", "ZZ-PLAN.md", headline=True)]
+
+    verdict = classify(atom, keys, hits)
+    assert verdict.bucket == GATED
+    assert "only non-discriminating path evidence" in verdict.why
+
+
+def test_a_retirement_atom_is_not_softened_by_the_trivial_label() -> None:
+    """For a deletion atom the container IS the deliverable's inverse.
+
+    ``SV-11`` ("retire the interim commit-watcher cron script") names one path and no symbol, so
+    it is TRIVIAL by strength — but the file existing is still the proof it is not done, and the
+    reading must not be weakened.
+    """
+    atom = make_atom(
+        title="Retire the interim commit-watcher cron script",
+        scope="delete the selfqa/scripts/watcher.py shim",
+        done_when="the script no longer exists",
+    )
+    keys = extract_keys(atom)
+    probe(keys, make_corpus({"src/personalclaw/selfqa/scripts/watcher.py": "x"}))
+    assert score_evidence(keys)[0] == TRIVIAL
+    assert "evidence AGAINST completion" in classify(atom, keys, []).why
+
+
+def test_no_atom_on_main_scores_strong_on_a_container_alone(real_verdicts: list) -> None:
+    """#2663's invariant, asserted over the real census rather than a fixture.
+
+    Measured on ``origin/main`` at ``2f0dffd37``, SEVEN atoms scored STRONG with ``0/0 named
+    symbols in impl``: the five in the issue (``AR-8`` off ``web/``; ``CRE-7`` off
+    ``ci.yml``/``full.yml``, first seen ``2dd907f47``; ``CA-8`` off ``desktop/main.js``; ``ET-8``
+    off a *mention* of ``registry.json`` inside ``.github/workflows/full.yml``; ``SH-11`` off
+    ``scripts/sign_app.py`` and a ``trusted_keys/`` that ``SH-3`` ships EMPTY on purpose) plus
+    ``ET-4`` and ``LV-7``, whose plan-log rulings were masking the same shape.
+    """
+    offenders = [
+        f"{v.atom.id}({v.evidence})"
+        for v in real_verdicts
+        if v.evidence == "STRONG"
+        and not any(k.kind in ("symbol", "make", "env") and k.in_impl for k in v.keys)
+    ]
+    assert offenders == [], f"container-only evidence still scores STRONG: {offenders}"
+
+
+def test_the_five_measured_2663_atoms_are_labelled_trivial_on_main(real_verdicts: list) -> None:
+    """The named instances, end to end, with the bucket held constant."""
+    by_id = {v.atom.id: v for v in real_verdicts}
+    selected = {a: by_id[a] for a in ("AR-8", "CRE-7", "CA-8", "ET-8", "SH-11") if a in by_id}
+    if not selected:
+        pytest.skip("all five #2663 atoms have left the census selection; see the invariant test")
+    for atom_id, v in selected.items():
+        assert v.evidence == TRIVIAL, f"{atom_id} scored {v.evidence}"
+        assert v.bucket == UNKNOWN, f"{atom_id} landed in {v.bucket}, not the honest-gap bucket"
+
+
+# ---------------------------------------------------------------------------
 # vacuity rails: plant the break, watch it fire
 # ---------------------------------------------------------------------------
 
@@ -1050,6 +1215,29 @@ def test_self_check_fires_when_gate_detection_dies(
     }
     problems = self_check(verdicts, real_corpus, no_gates)
     assert any("GATED pattern" in p for p in problems)
+
+
+def test_self_check_fires_when_the_named_key_half_of_the_extractor_dies(
+    real_verdicts: list, real_corpus: Corpus, real_log_hits: dict
+) -> None:
+    """The vacuity floor on TRIVIAL.
+
+    Path-only evidence is capped at TRIVIAL, so if the symbol/make/env half of the extractor
+    dies, EVERY path-bearing atom degrades to TRIVIAL, no atom can reach STRONG or
+    LANDED-AND-CLEAN, and the census reads as a clean roadmap — the same false zero the
+    catalog-shape guard refuses. ``KNOWN_LANDED`` cannot be the fixture: all five are ``done``,
+    so a default ``--status todo`` run never selects them and the rail would be inert.
+    """
+    # copied: the shared fixture must not be poisoned for other tests
+    stripped = [
+        replace(v, keys=[k for k in v.keys if k.kind in ("path", "dir")]) for v in real_verdicts
+    ]
+    problems = self_check(stripped, real_corpus, real_log_hits)
+    assert any("named-key half of the extractor is dead" in p for p in problems), problems
+    # and it must NOT fire on the real census
+    assert not any(
+        "named-key half" in p for p in self_check(real_verdicts, real_corpus, real_log_hits)
+    )
 
 
 def test_self_check_fires_when_key_extraction_regresses(
