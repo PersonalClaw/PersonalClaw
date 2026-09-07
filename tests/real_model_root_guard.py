@@ -16,11 +16,21 @@ The rail names the roots it forbids instead of forbidding all of ``$HOME``: a de
 checkout legitimately lives under ``$HOME`` (``~/Projects/...``), so a blanket
 home-rejection would fail on a relative path in a normal clone and get switched off. What
 it forbids is the set of places a real model actually lives.
+
+That paragraph described the intent, and for a long time the code did the opposite: bare
+``REAL_HOME`` was in ``forbidden_roots()`` and ``offending_root`` matches on ``parents``, so
+every absolute path under ``$HOME`` WAS rejected — a blanket home-rejection, the exact thing
+the paragraph says it avoids. The visible cost was 55 spurious ``test_local_model_*``
+failures on any machine whose ``TMPDIR`` lives under ``$HOME``, all of them reporting "a REAL
+model root" and none of them about a model root. The bare-home entry is still here, because a
+sweep of ``~`` really is never a test — but it no longer fires on a path inside the OS temp
+directory. See :func:`_test_path_root`.
 """
 
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 #: The user's real home, captured at import time — BEFORE any fixture repoints
@@ -42,9 +52,48 @@ FORBIDDEN_SUBPATHS: tuple[str, ...] = (
 )
 
 
+def named_forbidden_roots() -> tuple[Path, ...]:
+    """The real model roots. Forbidden UNCONDITIONALLY — these are the incident cases."""
+    return tuple(REAL_HOME / sub for sub in FORBIDDEN_SUBPATHS)
+
+
 def forbidden_roots() -> tuple[Path, ...]:
     """The real model roots, plus the bare home itself (a sweep of ``~`` is never a test)."""
-    return (REAL_HOME, *(REAL_HOME / sub for sub in FORBIDDEN_SUBPATHS))
+    return (REAL_HOME, *named_forbidden_roots())
+
+
+def _test_path_root() -> Path | None:
+    """The OS temp directory, when it can stand in for "this path belongs to a test".
+
+    🔑 WHY THE RAIL NEEDS THIS. The bare-``REAL_HOME`` entry above is a catch-all, and
+    ``offending_root`` matches anything with a forbidden root in its ``parents`` — so every
+    absolute path under ``$HOME`` was offending, **including pytest's own ``tmp_path``**
+    whenever the OS temp directory lives under the home directory. That is not exotic: a
+    harness or a user that exports ``TMPDIR=$HOME/...`` puts every ``tmp_path`` inside
+    ``$HOME``, and the rail then fires on the very fixture it tells you to use. Measured on
+    one such machine: ``pytest -k test_local_model`` went **55 failed / 188 passed** with
+    that ``TMPDIR`` and **243 passed** with a ``TMPDIR`` outside ``$HOME`` — same tree, same
+    commit, same host, and the host DID have real weights installed either way. So the
+    weights were never the trigger, and the message ("called with a REAL model root") sent
+    every reader looking at their model cache instead of at ``$TMPDIR``.
+
+    A path under the temp directory is a test path *by construction*, wherever the OS chose
+    to put that directory, which is why this is the right discriminator rather than a list
+    of blessed prefixes.
+
+    🪤 IT NEVER RELAXES A NAMED ROOT. The exemption applies to the bare-home catch-all only,
+    and ``offending_root`` checks the named roots FIRST, so ``~/.ollama`` stays forbidden
+    even if it somehow sat inside the temp directory. And when the temp directory IS the
+    real home, "under tmp" would exempt the whole of ``$HOME`` and the catch-all would mean
+    nothing — so this returns ``None`` and the rail keeps its original strictness.
+    """
+    try:
+        tmp = Path(tempfile.gettempdir()).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if tmp == REAL_HOME:
+        return None
+    return tmp
 
 
 def offending_root(cache_root: object) -> Path | None:
@@ -75,10 +124,21 @@ def offending_root(cache_root: object) -> Path | None:
     except (OSError, RuntimeError):
         pass
 
-    for root in forbidden_roots():
+    # NAMED roots first, and with no exemption: these are the places a real downloaded model
+    # actually lives, and they are the whole reason the rail exists.
+    for root in named_forbidden_roots():
         for candidate in candidates:
             if candidate == root or root in candidate.parents:
                 return root
+
+    # Then the bare-home catch-all, which a pytest ``tmp_path`` must not trip — see
+    # :func:`_test_path_root` for the measurement that made this necessary.
+    tmp_root = _test_path_root()
+    for candidate in candidates:
+        if candidate == REAL_HOME or REAL_HOME in candidate.parents:
+            if tmp_root is not None and (candidate == tmp_root or tmp_root in candidate.parents):
+                continue
+            return REAL_HOME
     return None
 
 
