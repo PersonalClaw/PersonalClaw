@@ -798,6 +798,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/workflows/runs/{run_id}/events` — Per-run event stream, snapshot-then-subscribe.
 - `POST /api/workflows/runs/{run_id}/fork` — _(no summary)_
 - `GET /api/workflows/runs/{run_id}/introspect` — The §6.4 nine-question introspection projection for one run (WORK-CONTAINERS R6).
+- `GET /api/workflows/runs/{run_id}/ledger-rails` — GET the run's two ledger rails — findings and verdict/ROI (PP-16 seam 4).
 - `GET /api/workflows/runs/{run_id}/nodes/{node_id}/inspect` — The §5 reconstructability set for one terminal node (WF2-A2).
 - `GET /api/workflows/runs/{run_id}/outbox` — GET the run's published-artifact listing — the §2.5 outbox half of R17.
 - `GET /api/workflows/runs/{run_id}/outputs/{node_id}` — _(no summary)_
