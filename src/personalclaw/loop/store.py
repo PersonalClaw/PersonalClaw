@@ -43,6 +43,17 @@ from personalclaw.sqlite_compat import sqlite3
 logger = logging.getLogger(__name__)
 
 _LOOP_ID_RE = re.compile(r"^[a-f0-9]{8}$")
+
+#: The worker's cumulative working log, by name. Named rather than inlined in
+#: :func:`read_log` so the RUN side can read the same filename from the same declaration
+#: (``workflows/deliverable.py``, PP-16 unit 1) instead of spelling it a second time — two
+#: string literals for one on-disk convention is exactly the drift PP-16 exists to remove.
+LOG_NAME = "FINDINGS.md"
+
+#: The document names :func:`read_deliverable` falls back across when the kind declares none,
+#: newest-convention first. Ends with the log so the cockpit's report panel is never blank
+#: while a loop warms up. Exported for the same reason as :data:`LOG_NAME`.
+DELIVERABLE_FALLBACKS: tuple[str, ...] = ("REPORT.md", "MONITOR_LOG.md", "DESIGN.md", LOG_NAME)
 _TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 STOP_SENTINEL = "STOP"
 
@@ -656,7 +667,7 @@ def read_deliverable(loop_id: str) -> str:
         name = (namer(loop) if namer else "") or ""
         if name:
             candidates.append(name)
-    candidates += ["REPORT.md", "MONITOR_LOG.md", "DESIGN.md", "FINDINGS.md"]
+    candidates += list(DELIVERABLE_FALLBACKS)
     seen: set[str] = set()
     for name in candidates:
         if name in seen:
@@ -676,7 +687,7 @@ def read_log(loop_id: str) -> str:
     d = files.safe_loop_dir(loop_id)
     if d is None:
         return ""
-    p = d / "FINDINGS.md"
+    p = d / LOG_NAME
     try:
         return files._redact_str(p.read_text()) if p.exists() else ""
     except OSError:

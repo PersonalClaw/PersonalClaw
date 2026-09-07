@@ -25,6 +25,7 @@ import { WorkspacePanel } from './WorkspacePanel'
 import { OutboxPanel } from './OutboxPanel'
 import { IntrospectPanel } from './IntrospectPanel'
 import { LedgerRailsPanel } from './LedgerRailsPanel'
+import { DeliverablePanel } from './DeliverablePanel'
 import { ReviewTriagePanel } from './ReviewTriagePanel'
 
 /** One workflow run, live (WORKFLOWS-V2 Slice 7b).
@@ -513,6 +514,16 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
                 )
               })}
             </div>
+
+            {/* The run's DOCUMENT deliverable + working log (PP-16 unit 1), the run-side answer to
+                `GET /api/loops/{id}/report`. In the BODY rather than a drawer, for two reasons: the
+                loop cockpit puts its Deliverable tab in the body too (so the two sides of PP-16 read
+                alike), and the COMMON case here is that there is no document yet — which a drawer
+                would hide behind a click and a body section states outright. Keyed on the run id so
+                navigating between runs refetches rather than showing the previous run's document,
+                which on a reading surface would be the worst kind of wrong: plausible prose about
+                someone else's work. Below the steps because it is what they produced. */}
+            <DeliverablePanel key={run.run_id} runId={runId} />
           </div>
         )}
       </div>
