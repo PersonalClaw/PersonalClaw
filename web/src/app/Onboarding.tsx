@@ -91,10 +91,12 @@ export function Onboarding() {
   const [showEverything, setShowEverything] = useState(false)
 
   // the active step's row drives the 3D glow focus (like the composer in chat)
+  // `HTMLLIElement` since the rows became real list items — tsc caught the mismatch, which is the
+  // useful half of a typed ref: the glow tracks whatever element the row actually renders.
   const rowRefs = {
-    name: useRef<HTMLDivElement>(null), import: useRef<HTMLDivElement>(null),
-    essentials: useRef<HTMLDivElement>(null),
-    try: useRef<HTMLDivElement>(null), ready: useRef<HTMLDivElement>(null),
+    name: useRef<HTMLLIElement>(null), import: useRef<HTMLLIElement>(null),
+    essentials: useRef<HTMLLIElement>(null),
+    try: useRef<HTMLLIElement>(null), ready: useRef<HTMLLIElement>(null),
   }
   const activeRef = rowRefs[step]
 
@@ -232,14 +234,23 @@ export function Onboarding() {
           </div>
 
           {/* vertical collapsing stepper — the centered focal element */}
-          <div className="flex w-full flex-col gap-2">
-            {/* Announces step progress to assistive tech. The rows are not focusable and the step
-                title is not in any focused control's accessible name, so without this a screen-reader
-                user is never told they advanced (WCAG 4.1.3). Always mounted so the text change is
-                observed; polite so it does not interrupt. */}
-            <p role="status" aria-live="polite" className="sr-only">
-              {`Step ${ORDER.indexOf(step) + 1} of ${ORDER.length}: ${TITLES[step]}`}
-            </p>
+          {/* Announces step progress to assistive tech: a step CHANGE is not a focus change, so
+              without this a screen-reader user is never told they advanced (WCAG 4.1.3). Always
+              mounted so the text change is observed; polite so it does not interrupt.
+              🪤 This comment used to justify itself with "the rows are not focusable" — true then,
+              FALSE now that a completed row's header is a real button, and it was never the reason
+              anyway: the live region is needed because advancing does not move focus, not because
+              focus was impossible. Keeping the stale clause would have argued for deleting a
+              still-necessary region the next time someone audited this file. */}
+          <p role="status" aria-live="polite" className="sr-only">
+            {`Step ${ORDER.indexOf(step) + 1} of ${ORDER.length}: ${TITLES[step]}`}
+          </p>
+          {/* 🔑 A REAL <ol>. Five numbered steps were a stack of divs, so `aria-current="step"` on a
+              row had no set to be current WITHIN, and a screen-reader user got no "list, 5 items" to
+              orient by. The live region is deliberately OUTSIDE it: only `<li>` may be an `<ol>`
+              child, and a `<p>` in there is invalid content an AT tree may drop — which would have
+              silently removed the announcement this screen already relies on. */}
+          <ol className="flex w-full list-none flex-col gap-2 p-0">
             <StepRow ref={rowRefs.name} index={ORDER.indexOf('name')} icon={User} title={TITLES.name}
               subtitle="How the system addresses you. Saved on the server, so it follows you across devices."
               state={stateOf('name')} doneSummary={savedName ? `${savedName}` : undefined}
@@ -287,7 +298,7 @@ export function Onboarding() {
                 showEverything={showEverything} onShowEverything={setShowEverything}
                 onFinish={finish} onTakeTour={takeTour} onExitTo={exitTo} />
             </StepRow>
-          </div>
+          </ol>
 
           {/* The one door out, on every step but the last — where "Start using" IS the door.
               Guidance never gates: this is what makes "skip at any step" land somewhere real.
