@@ -192,10 +192,26 @@ _DANGEROUS_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     # fork bomb :(){ :|:& };:
     ("fork_bomb", re.compile(r":\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:")),
     # disk wipe: mkfs, dd of=/dev/sdX, > /dev/sda
+    #
+    # The word boundary is spelled PER ALTERNATIVE, not once in front of the group. It used
+    # to sit outside — `\b(?:mkfs…|dd…|>…)` — which applied it to the redirect branch too,
+    # and `\b` before `>` demands a WORD character immediately to the left. So the branch
+    # fired only on `echo>/dev/sda`, where `>` is jammed against a word, and missed
+    # `cat /dev/zero > /dev/sda` — the way this is actually written (#2610). The two
+    # word-initial branches never noticed, because they satisfy a leading `\b` naturally;
+    # that is what let the third stay dead code. Unlike #2607 this is a LEADING-boundary
+    # bug, so it failed identically bare and embedded — no quoting involved.
+    #
+    # The redirect branch takes NO leading anchor. `(?:^|\s|;|&|\|)` was the other candidate
+    # and is measurably worse: it re-breaks `echo>/dev/sda`, since `o` is none of those. A
+    # `>` immediately left of `/dev/sd` IS the redirect regardless of what precedes it, which
+    # also picks up `2>/dev/sda`, `&>/dev/sda` and the `>>` append form for free. Precision is
+    # carried by the target, not the anchor: `/dev/null`, `/dev/stdout` and `/dev/tty` are
+    # not in `(?:sd|nvme|disk)`, so `> /dev/null` stays out of the terminal tier.
     (
         "disk_wipe",
         re.compile(
-            r"\b(?:mkfs\.\w+|dd\s+[^\n]*\bof=/dev/(?:sd|nvme|disk)|>\s*/dev/(?:sd|nvme|disk))"
+            r"(?:\bmkfs\.\w+|\bdd\s+[^\n]*\bof=/dev/(?:sd|nvme|disk)|>\s*/dev/(?:sd|nvme|disk))"
         ),
     ),
     # pipe-to-shell exec of remote content: curl|wget … | sh/bash
