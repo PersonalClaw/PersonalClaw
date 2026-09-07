@@ -165,13 +165,29 @@ class ScanReport:
 
 
 # ── Pattern catalog ─────────────────────────────────────────────────────────
+
+# What may legitimately FOLLOW a destructive target for the target to still BE the whole
+# target. The anchor exists to keep `rm -rf /tmp/build` and `rm -rf $HOME/.cache` out of
+# the terminal tier — the target has to END there, not merely start there. But whitespace,
+# `;` and end-of-input are only how a command ends when it is the whole LINE, and malice
+# does not arrive that way: it arrives inside a string literal, where the next character is
+# the closing quote. `os.system("rm -rf /")` was a consentable WARNING purely because a `"`
+# followed the `/`, while the same call with one trailing space was terminal (#2607). So the
+# set also closes on a quote (all three kinds — Python/shell, and a JS template literal), on
+# `)` for `$(rm -rf /)` and `execSync(...)`, and on `\` for an escape like `"rm -rf /\n"`.
+# This widens where the target may END; it does not widen what counts as a target, so the
+# `/tmp/build` and `$HOME/.cache` exclusions are untouched.
+_DESTRUCTIVE_TARGET_END = r"""(?:\s|;|["'`)\\]|$)"""
+
 # High-confidence DANGEROUS patterns (terminal). Reserved for unambiguous malice
 # so the non-overridable floor doesn't trap legitimate skills (risk #1).
 _DANGEROUS_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     # destructive-root: rm -rf / , rm -rf ~ , rm -rf $HOME, rm -fr /
     (
         "destructive_root",
-        re.compile(r"\brm\s+-[rf]{1,2}\s+(?:-[rf]{1,2}\s+)*(?:/|~|\$HOME|\*)(?:\s|$|;)"),
+        re.compile(
+            r"\brm\s+-[rf]{1,2}\s+(?:-[rf]{1,2}\s+)*(?:/|~|\$HOME|\*)" + _DESTRUCTIVE_TARGET_END
+        ),
     ),
     # fork bomb :(){ :|:& };:
     ("fork_bomb", re.compile(r":\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:")),
