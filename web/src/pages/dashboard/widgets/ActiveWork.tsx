@@ -5,6 +5,7 @@ import { api, type Loop } from '../../../lib/api'
 import { useDashboardLive } from '../DashboardLive'
 import { loopStatusLabel, loopStatusColor, effectiveLoopStatus, ACTIVE_LOOP_STATUSES } from '../../../lib/loopStatus'
 import { SlotEmptyState, RowAction, StatusDot } from './kit'
+import { ListSkeleton } from '../../../ui/ListScaffold'
 import { ProgressRing } from '../../../ui/ProgressRing'
 import { spring } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
@@ -20,13 +21,22 @@ function pendingText(l: Loop): string | null {
  *  `needs_input`. Long-running autonomous runs are the emphasis (double-height in
  *  the curated layout). Opening a row jumps to its cockpit. */
 export function ActiveWork({ navigate }: RouteProps) {
-  const { loops } = useDashboardLive()
+  const { loops, read } = useDashboardLive()
   const active = loops
     // Anything in flight or awaiting them — the ONE active-status set (lib/loopStatus).
     .filter((l) => ACTIVE_LOOP_STATUSES.has(l.status))
     .sort((a, b) => (b.started_at ?? b.created_at) - (a.started_at ?? a.created_at))
 
   if (active.length === 0) {
+    // 🔴 BEFORE THE FIRST READ LANDS, `loops` IS `[]` — and this branch reads that as a verdict. So a
+    // user with three running loops was told "No active work" for the whole round trip, on the first
+    // screen the app shows. An empty state is a CLAIM about a lane, and it is only earned once the
+    // lane has been read; until then this is a loading state, not a finding.
+    //
+    // Nested inside this branch because unread IMPLIES it (an unattempted read leaves `[]`), which
+    // also keeps the two arms of one gate adjacent — the shape `ui/loadingNounPairing` sources the
+    // noun from, here the empty sentence's own "active work".
+    if (!read.loops) return <ListSkeleton rows={2} what="active work" />
     return <SlotEmptyState icon={Coffee}>No active work. Loops you launch appear here as they run.</SlotEmptyState>
   }
 

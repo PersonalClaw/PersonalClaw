@@ -5,6 +5,7 @@ import { CheckCircle2, Circle, ListTodo, Plus } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, SlotAction, WidgetRow, RowAction } from './kit'
+import { ListSkeleton } from '../../../ui/ListScaffold'
 import { signalPriority } from '../../tasks/taskMeta'
 import type { RouteProps } from '../../../app/useQueryState'
 import { reportingWrite } from '../../../app/reportingWrite'
@@ -13,7 +14,7 @@ import { reportingWrite } from '../../../app/reportingWrite'
  *  task done (updateTask status → done) and it leaves the list; the live feed
  *  reconciles. "+ New task" and the list header jump to the Tasks page. */
 export function TasksWidget({ navigate }: RouteProps) {
-  const { tasks, refreshAll } = useDashboardLive()
+  const { tasks, refreshAll, read } = useDashboardLive()
   const [done, setDone] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<Set<string>>(new Set())
 
@@ -38,6 +39,15 @@ export function TasksWidget({ navigate }: RouteProps) {
   const visible = tasks.filter((t) => !done.has(t.id))
 
   if (visible.length === 0) {
+    // 🔴 THIS ONE PITCHED A CREATE FLOW AT SOMEONE WHO ALREADY HAS TASKS. Before the first read lands
+    // `tasks` is `[]`, so this branch fired — "No tasks ready to work" plus a "New task" button, for
+    // the whole round trip, to a user whose ready tasks were still in flight. An empty state offering
+    // an on-ramp is right once the lane is KNOWN empty, and actively misleading before that.
+    //
+    // Nested inside the branch because unread IMPLIES it, which also keeps the two arms of one gate
+    // adjacent — the shape `ui/loadingNounPairing` sources the noun from ("tasks", from the sentence
+    // just below).
+    if (!read.tasks) return <ListSkeleton rows={3} what="tasks" />
     return (
       <SlotEmptyState
         icon={ListTodo}

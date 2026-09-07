@@ -29,7 +29,7 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
   const header = variant === 'header'
   const {
     approvals, inbox, tasks, loops, notifications,
-    approvalsErr, inboxErr, tasksErr, loopsErr, notificationsErr,
+    approvalsErr, inboxErr, tasksErr, loopsErr, notificationsErr, read,
   } = useDashboardLive()
 
   const runningLoops = useMemo(
@@ -54,13 +54,35 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
   // surface, silence is a claim" — applied to the counted lanes, including its nuance: the unknown
   // pill keeps its NEUTRAL tone and is not styled as an alarm. We do not know anything is wrong,
   // only that we could not look, and claiming a fault we have not measured is the mirror mistake.
-  const pills: { key: string; icon: LucideIcon; n: number | null; label: string; go: string; tone: string }[] = [
-    { key: 'loops', icon: Activity, n: loopsErr ? null : runningLoops, label: runningLoops === 1 ? 'loop running' : 'loops running', go: 'projects', tone: 'var(--color-primary)' },
-    { key: 'appr', icon: ShieldCheck, n: approvalsErr ? null : approvals.length, label: approvals.length === 1 ? 'approval waiting' : 'approvals waiting', go: 'chat', tone: 'var(--color-warn)' },
-    { key: 'tasks', icon: ListTodo, n: tasksErr ? null : tasks.length, label: tasks.length === 1 ? 'task ready' : 'tasks ready', go: 'tasks', tone: 'var(--color-info)' },
-    { key: 'inbox', icon: Inbox, n: inboxErr ? null : inboxMsgs, label: 'inbox', go: 'inbox', tone: 'var(--color-secondary)' },
-    { key: 'notif', icon: Bell, n: notificationsErr ? null : unread, label: 'unread', go: 'notifications', tone: 'var(--color-on-surface-low)' },
+  // 🔴 …AND "NOT READ" HAS TWO CAUSES, OF WHICH ONLY ONE WAS HANDLED. `loopsErr ? null : n` covers a
+  // read that FAILED. It does not cover a read that has not happened YET — and on the dashboard's
+  // first frame every lane is `[]` with no error, so the strip still asserted five confident zeros,
+  // on the screen the app opens with, for the whole round trip. `read.<slice>` is the missing half.
+  //
+  // 🪤 AND THE TWO CAUSES MUST NOT SAY THE SAME THING. Both render the em dash, but "couldn't be
+  // read" is a FAULT while this is merely pending, so reusing that sentence would claim a failure
+  // nobody has measured — the same mirror mistake the note above warns about for tone. Hence three
+  // states, and only `failed` speaks of failure.
+  type Why = 'ok' | 'pending' | 'failed'
+  /** A lane's number, or `null` with the reason it is unknown. */
+  const pill = (n: number, err: unknown, wasRead: boolean): { n: number | null; why: Why } => {
+    if (err) return { n: null, why: 'failed' }
+    if (!wasRead) return { n: null, why: 'pending' }
+    return { n, why: 'ok' }
+  }
+  const pills: { key: string; icon: LucideIcon; n: number | null; why: Why; label: string; go: string; tone: string }[] = [
+    { key: 'loops', icon: Activity, ...pill(runningLoops, loopsErr, read.loops), label: runningLoops === 1 ? 'loop running' : 'loops running', go: 'projects', tone: 'var(--color-primary)' },
+    { key: 'appr', icon: ShieldCheck, ...pill(approvals.length, approvalsErr, read.approvals), label: approvals.length === 1 ? 'approval waiting' : 'approvals waiting', go: 'chat', tone: 'var(--color-warn)' },
+    { key: 'tasks', icon: ListTodo, ...pill(tasks.length, tasksErr, read.tasks), label: tasks.length === 1 ? 'task ready' : 'tasks ready', go: 'tasks', tone: 'var(--color-info)' },
+    { key: 'inbox', icon: Inbox, ...pill(inboxMsgs, inboxErr, read.inbox), label: 'inbox', go: 'inbox', tone: 'var(--color-secondary)' },
+    { key: 'notif', icon: Bell, ...pill(unread, notificationsErr, read.notifications), label: 'unread', go: 'notifications', tone: 'var(--color-on-surface-low)' },
   ]
+  /** What the pill says. `pending` borrows the app's loading voice (`ui/ListScaffold`'s
+   *  "Loading <what>…") rather than inventing a third phrasing for the same idea. */
+  const reading = (p: { n: number | null; why: Why; label: string }) =>
+    p.why === 'failed' ? `${p.label} — couldn’t be read`
+      : p.why === 'pending' ? `Loading ${p.label}…`
+        : `${p.n} ${p.label}`
 
   return (
     <div className={header ? 'flex items-center gap-xs' : 'flex h-full flex-wrap items-center gap-s'}>
@@ -71,8 +93,8 @@ export function HeroPulse({ navigate, variant = 'strip' }: RouteProps & { varian
           onClick={() => navigate(p.go)}
           // An unknown lane must not SPEAK a number either — the aria-label was the second place
           // the zeros were asserted, and a screen-reader user had no other cue at all.
-          title={header ? (p.n === null ? `${p.label} — couldn’t be read` : `${p.n} ${p.label}`) : undefined}
-          aria-label={p.n === null ? `${p.label} — couldn’t be read` : `${p.n} ${p.label}`}
+          title={header ? reading(p) : undefined}
+          aria-label={reading(p)}
           className={`group flex items-center rounded-pill bg-surface-low transition-colors hover:bg-surface-high ${header ? 'gap-xs px-m py-xs' : 'gap-s px-l py-s'}`}
         >
           <p.icon size={header ? 14 : 16} style={{ color: p.tone }} className="shrink-0" />
