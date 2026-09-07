@@ -557,7 +557,13 @@ function UseCaseRow({ useCase, activeModels, allModels, health, judgeRec, onChan
 
   return (
     <div className="mb-2 overflow-hidden rounded-lg bg-surface-container">
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-high">
+      {/* `focus-visible:-outline-offset-2`: this header fills the `overflow-hidden rounded-lg` card
+          above, so an outward ring is clipped on ALL FOUR sides — 4px lost per side, the ring's whole
+          reach, i.e. no visible focus indicator (WCAG 2.4.7).
+          🪤 This card + header is BYTE-IDENTICAL to `SearchPanel`'s, which had the same defect and
+          the same fix. Two copies of a collapsible card is the abstraction this pair is asking for;
+          extracting it is its own change, and is recorded rather than smuggled into an a11y fix. */}
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-high focus-visible:-outline-offset-2">
         <ChevronRight size={14} className="shrink-0 text-on-surface-low transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'none', color: open ? 'var(--color-primary)' : undefined }} />
         <span className="grid size-7 shrink-0 place-items-center rounded-md"
           style={activeModels.length > 0

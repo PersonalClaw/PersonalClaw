@@ -2,6 +2,9 @@ import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, THEMES } from './routes'
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
+// Two defects axe has no rule for, asserted on the SAME navigation this spec already performs —
+// see `nonAxeA11yChecks.ts` for why they live here rather than in a spec of their own.
+import { expectNoNonAxeA11yDefects } from './nonAxeA11yChecks'
 
 // ── a11y (WCAG 2 AA) scan — every nav route × both themes ───────────────────
 // axe-core over each route. PRODUCT.md targets AA (not AAA). We FAIL only on
@@ -68,6 +71,8 @@ for (const theme of THEMES) {
           `serious/critical a11y violations on #/${route} (${theme}):\n` +
             blocking.map((v) => `  [${v.impact}] ${v.id}: ${v.help} — ${v.nodes.length} node(s)`).join('\n'),
         ).toEqual([])
+
+        await expectNoNonAxeA11yDefects(page, `#/${route} (${theme})`)
       })
     }
 
@@ -104,6 +109,11 @@ for (const theme of THEMES) {
             `route-level scan never reaches:\n` +
             blocking.map((v) => `  [${v.impact}] ${v.id}: ${v.help} — ${v.nodes.length} node(s)`).join('\n'),
         ).toEqual([])
+
+        // The opened surfaces are the MOST likely home for a mouse-only control — a menu row or a
+        // dock header is exactly the shape that gets an `onClick` on a div — and a route-level sweep
+        // can never see them, which is the same gap Tier 3 exists to close for axe.
+        await expectNoNonAxeA11yDefects(page, `${opener.label} [opened] (${theme})`)
       })
     }
   })
