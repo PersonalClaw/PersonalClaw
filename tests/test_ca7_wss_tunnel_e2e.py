@@ -29,9 +29,15 @@ closable on one machine.
 * The tunnel is **loopback**. There is no public DNS name, no publicly-trusted CA, and no
   internet path. The topology (client → owner's tunnel → gateway, TLS terminated at the tunnel)
   is real; the *remoteness* is not. A clause needing a genuinely remote peer is still unobserved.
-* The client is a native `aiohttp` client, not a shipped desktop/mobile shell — the repo still
-  has none (`desktop/main.js` holds one `backendUrl`). It is native in the sense the admission
-  cares about: it has no document, so it sends no `Origin`.
+* The client is a native `aiohttp` client, not a shipped desktop/mobile shell. It is native in
+  the sense the admission cares about: it has no document, so it sends no `Origin`.
+  (Corrected by `CA-8`: this used to add "the repo still has none (`desktop/main.js` holds one
+  `backendUrl`)". The shell now holds two urls — `localGatewayUrl` for the gateway it spawned and
+  `activeUrl` for a paired one — and connects to gateways it did not spawn. It is still not the
+  client under test here, and deliberately never will be for THIS admission path: the desktop shell
+  **hosts the SPA in a WebView**, so the socket is opened by the page, origin-relative, and the
+  shell therefore sends an `Origin` like any browser. The `Origin`-less branch is for a client that
+  talks to the gateway directly instead of hosting its UI.)
 * "Degrades gracefully" is observed as *the socket dies promptly and the session reconnects*.
   The SPA's backoff ladder is reused by reference, not re-driven here.
 

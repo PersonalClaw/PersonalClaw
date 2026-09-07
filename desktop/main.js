@@ -21,6 +21,26 @@ const {
   registerNativeNotificationIpc,
 } = require("./nativeNotifications");
 const { shutdownGateway } = require("./gatewayShutdown");
+const { openShellStore } = require("./shellStore");
+const { loadRegistry } = require("./endpointRegistry");
+const {
+  LOCAL_ENDPOINT_ID,
+  HEALTH_REACHABLE,
+  adoptGatewayLabel,
+  assertLoopbackTarget,
+  shouldAttachBridge,
+  describeStartup,
+  prepareEndpoint,
+  currentFingerprintFor,
+  confirmEndpoint,
+  rememberLocalGateway,
+  forgetEndpoint,
+  switchTo,
+  probeEndpoint,
+  probeAll,
+  nextReconnectStep,
+} = require("./connectMode");
+const { describeList, makeConnectDialog } = require("./connectDialog");
 
 /**
  * Resolve the user's real login-shell PATH.
@@ -78,7 +98,37 @@ let mainWindow = null;
 let gatewayProcess = null;
 let isQuitting = false;
 let presenceTimer = null;
-let backendUrl = null; // resolved from the gateway's READY line once bound
+
+/**
+ * The gateway THIS shell spawned, resolved from its READY line once bound. Always loopback.
+ *
+ * 🔒 EVERY CREDENTIAL-BEARING CALL TARGETS THIS URL AND NOTHING ELSE. `.local_secret` and the
+ * capability `shell_token` prove "I am a process running as this user on this machine", a claim
+ * that is false for any other gateway by construction, so `postGateway`/`getGateway` are bound
+ * here and re-assert it with `assertLoopbackTarget` before every send. Connect-mode (CA-8) added
+ * a SECOND url to this file; keeping the two apart by name is what stops the day someone points a
+ * registration call at the one the user typed.
+ */
+let localGatewayUrl = null;
+
+/**
+ * What the WebView actually loads (CA-8). Defaults to `localGatewayUrl` — spawn-local is still
+ * the default connection model and nothing here changes it — and becomes a paired gateway's
+ * origin only when `describeStartup` or the switcher can fully justify it.
+ */
+let activeUrl = null;
+
+/** The shell's own storage scope (`shellStore.js`): the registry + per-endpoint state. */
+let shellStore = null;
+/** Last probe result per endpoint id. `{}` means "nothing probed yet", not "all unreachable". */
+let endpointHealth = {};
+/** The connect dialog / switcher, built in `whenReady` once Electron's classes exist. */
+let connectDialog = null;
+/** Reachability-probe bookkeeping for the ACTIVE endpoint. Bounded — see `scheduleReachProbe`. */
+let reachAttempt = 0;
+let reachTimer = null;
+/** Warnings from the last startup decision, shown in the dialog's banner area. */
+let startupWarnings = [];
 
 // ── Backend lifecycle ──
 
@@ -151,11 +201,11 @@ function startGateway() {
         if (m && !settled) {
           try {
             const payload = JSON.parse(m[1]);
-            backendUrl = `http://localhost:${payload.port}`;
+            localGatewayUrl = `http://localhost:${payload.port}`;
             settled = true;
             clearTimeout(timer);
             sendStatus("Connected ✓");
-            resolve(backendUrl);
+            resolve(localGatewayUrl);
           } catch {
             // Keep scanning later lines for a valid READY payload.
           }
@@ -332,14 +382,27 @@ function readLocalSecret() {
 }
 
 /** POST JSON to the loopback gateway. Resolves the parsed body, or null on any
- * failure — capability registration must never be able to break app startup. */
+ * failure — capability registration must never be able to break app startup.
+ *
+ * 🔒 THE TARGET IS RE-ASSERTED, NOT ASSUMED (CA-8). Every caller carries either `.local_secret` or
+ * the capability `shell_token`, both of which are claims about THIS machine. Connect-mode put a
+ * second, user-supplied URL in this file, so the loopback property is checked here rather than
+ * left to the reader of the variable name. A failed assertion resolves `null` — the same answer as
+ * any other failure, and crucially *nothing is sent* — instead of throwing into a startup path
+ * that has no handler for it. */
 function postGateway(pathname, body, headers = {}) {
   return new Promise((resolve) => {
-    if (!backendUrl) return resolve(null);
+    if (!localGatewayUrl) return resolve(null);
+    try {
+      assertLoopbackTarget(localGatewayUrl, `POST ${pathname}`);
+    } catch (err) {
+      console.error(`desktop: ${err.message}`);
+      return resolve(null);
+    }
     const payload = Buffer.from(JSON.stringify(body));
     let url;
     try {
-      url = new URL(pathname, backendUrl);
+      url = new URL(pathname, localGatewayUrl);
     } catch {
       return resolve(null);
     }
@@ -438,13 +501,42 @@ function checkBackend(healthUrl) {
 }
 
 function waitForBackend(targetWin) {
-  const healthUrl = `${backendUrl}/api/status`;
+  const healthUrl = `${localGatewayUrl}/api/status`;
   const start = Date.now();
   return new Promise((resolve, reject) => {
     const poll = () => {
       if (targetWin?.isDestroyed()) return reject(new Error("Window closed"));
       if (Date.now() - start > MAX_WAIT_MS) return reject(new Error("Backend timeout"));
       checkBackend(healthUrl).then(resolve).catch(() => setTimeout(poll, POLL_INTERVAL_MS));
+    };
+    poll();
+  });
+}
+
+/**
+ * Wait for a PAIRED gateway to answer (CA-8). Deliberately a second function rather than a
+ * generalisation of `waitForBackend`: the spawn-local readiness path is a `done_when` clause of
+ * this atom ("the spawn-local path is unchanged"), so it is left byte-identical above.
+ *
+ * The difference that matters is not the URL, it is the refusals. `waitForBackend` retries
+ * anything below a 500 because a gateway it just spawned is only ever slow. A gateway on the
+ * network can *answer and refuse* — a revoked device session (401/403), a redirect, or a host that
+ * is not a PersonalClaw gateway at all — and none of those becomes ready by waiting. Each rejects
+ * immediately, carrying the probe so the caller can say which happened.
+ */
+function waitForEndpoint(targetWin, url) {
+  const start = Date.now();
+  return new Promise((resolve, reject) => {
+    const poll = async () => {
+      if (targetWin?.isDestroyed()) return reject(new Error("Window closed"));
+      if (Date.now() - start > MAX_WAIT_MS) return reject(new Error("Endpoint timeout"));
+      const probe = await probeEndpoint(url, { timeoutMs: 2500 });
+      if (probe.status === HEALTH_REACHABLE) return resolve(probe);
+      const step = nextReconnectStep({ status: probe.status, attempt: 0 });
+      if (step.action !== "retry") {
+        return reject(Object.assign(new Error(`endpoint ${probe.status}`), { probe }));
+      }
+      setTimeout(poll, POLL_INTERVAL_MS);
     };
     poll();
   });
@@ -513,13 +605,34 @@ function syncNativeTheme(view, win) {
   }).catch(() => {});
 }
 
-function setupWindowContents(win) {
-  let customName = null;
+/**
+ * Build (or REBUILD) a window's content views.
+ *
+ * 🔒 `attachBridge` IS A SECURITY DECISION, NOT A FEATURE FLAG (CA-8). `preload.js` exposes the
+ * microphone chord, native notifications, the login item and the capability probes, and the
+ * gateway it registers against had to prove same-machine access with `.local_secret`. A gateway on
+ * the network cannot make that claim, so its origin gets a view with **no preload at all** — which
+ * `web/src/lib/desktopBridge.ts:123` already handles by answering `null` and reporting every
+ * capability unavailable. A preload cannot be detached from a live `WebContents`, which is why
+ * this function is re-callable: switching between a loopback gateway and a paired one replaces the
+ * view rather than re-pointing it.
+ */
+function setupWindowContents(win, { attachBridge = true } = {}) {
+  let customName = win._pcCustomName || null;
+
+  // Replace any views this function built earlier on this window (a bridge-state change).
+  if (typeof win._pcTeardown === "function") {
+    try {
+      win._pcTeardown();
+    } catch (err) {
+      console.warn(`could not tear down the previous view: ${err.message}`);
+    }
+  }
 
   // Create a WebContentsView positioned below the tab bar
   const view = new WebContentsView({
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      ...(attachBridge ? { preload: path.join(__dirname, "preload.js") } : {}),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -536,10 +649,20 @@ function setupWindowContents(win) {
   });
   win.contentView.addChildView(dragView);
 
-  win.on("closed", () => {
+  win._pcBridgeAttached = attachBridge;
+  win._pcTeardown = () => {
+    win._pcTeardown = null;
+    if (!win.isDestroyed()) {
+      try {
+        win.contentView.removeChildView(view);
+        win.contentView.removeChildView(dragView);
+      } catch {
+        /* the window may already be tearing down */
+      }
+    }
     view.webContents.close();
     dragView.webContents.close();
-  });
+  };
 
   // Position the content view below the tab bar area
   function updateViewBounds() {
@@ -550,9 +673,32 @@ function setupWindowContents(win) {
     view.setBounds({ x: 0, y: offset, width, height: height - offset });
   }
   updateViewBounds();
-  win.on("resize", updateViewBounds);
-  win.on("enter-full-screen", updateViewBounds);
-  win.on("leave-full-screen", updateViewBounds);
+  // Window-level listeners are registered ONCE per window. Re-registering them on a rebuild would
+  // leak a listener per gateway switch, and Electron caps them at ten before it starts warning.
+  win._pcBounds = updateViewBounds;
+  win._pcSyncTheme = () => syncNativeTheme(win._pcView, win);
+  win._pcView = view;
+  if (!win._pcWired) {
+    win._pcWired = true;
+    win.on("resize", () => win._pcBounds());
+    win.on("enter-full-screen", () => win._pcBounds());
+    win.on("leave-full-screen", () => win._pcBounds());
+    win.on("focus", () => win._pcSyncTheme());
+    win.on("closed", () => {
+      if (typeof win._pcTeardown === "function") win._pcTeardown();
+    });
+    win.on("system-context-menu", (e, point) => {
+      e.preventDefault();
+      Menu.buildFromTemplate([
+        { label: "Rename Tab…", click: () => renameCurrentTab() },
+        { type: "separator" },
+        { label: "New Tab", click: () => openNewTab() },
+        { label: "Merge All Windows", click: () => mergeAllWindows() },
+        { type: "separator" },
+        { label: "Gateways…", click: () => openConnectDialog() },
+      ]).popup({ window: win, x: point.x, y: point.y });
+    });
+  }
 
   win.webContents = view.webContents;
 
@@ -560,18 +706,12 @@ function setupWindowContents(win) {
     win.setTitle(customName ? `PersonalClaw ${customName}` : "PersonalClaw");
   }
 
-  win._pcSetCustomName = (name) => { customName = name; applyTitle(); };
+  win._pcSetCustomName = (name) => {
+    customName = name;
+    win._pcCustomName = name;
+    applyTitle();
+  };
   attachContextMenu(view.webContents);
-
-  win.on("system-context-menu", (e, point) => {
-    e.preventDefault();
-    Menu.buildFromTemplate([
-      { label: "Rename Tab…", click: () => renameCurrentTab() },
-      { type: "separator" },
-      { label: "New Tab", click: () => openNewTab() },
-      { label: "Merge All Windows", click: () => mergeAllWindows() },
-    ]).popup({ window: win, x: point.x, y: point.y });
-  });
 
   view.webContents.on("did-finish-load", applyTitle);
   view.webContents.on("page-title-updated", (e) => { e.preventDefault(); applyTitle(); });
@@ -604,13 +744,24 @@ function setupWindowContents(win) {
     syncNativeTheme(view, win);
   });
 
-  // Sync native tab bar to dashboard dark/light mode on focus (process-global setting)
-  win.on("focus", () => syncNativeTheme(view, win));
+  /** The origin this view is allowed to be, or `""` before anything is loaded. */
+  const allowedOrigin = () => {
+    const target = activeUrl || localGatewayUrl;
+    if (!target) return "";
+    try {
+      return new URL(target).origin;
+    } catch {
+      return "";
+    }
+  };
 
   view.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const u = new URL(url);
-      if (backendUrl && u.origin === new URL(backendUrl).origin) {
+      // Compare against the ACTIVE origin, not the spawned gateway's: in connect-mode the page
+      // being rendered belongs to the paired gateway, and a window it opens on its own origin is
+      // as legitimate there as it is on loopback.
+      if (allowedOrigin() && u.origin === allowedOrigin()) {
         return { action: 'allow' };
       }
       if (u.protocol === 'http:' || u.protocol === 'https:') {
@@ -618,6 +769,50 @@ function setupWindowContents(win) {
       }
     } catch {}
     return { action: 'deny' };
+  });
+
+  /**
+   * 🔒 THE VIEW MAY NOT LEAVE THE ORIGIN THE USER CONFIRMED (CA-8).
+   *
+   * This is the guard that matters most once a bridge exists. Without it, a link or a script in
+   * rendered content could navigate this same `WebContents` to any origin — and on the loopback
+   * path that `WebContents` is carrying `preload.js`, so the microphone, hotkey and notification
+   * bridge would follow it there. Same-origin navigations and the local loading document are
+   * allowed; everything else is handed to the system browser, where it belongs.
+   *
+   * `will-navigate` covers link clicks and `location` assignments; `will-redirect` covers a server
+   * 3xx, which is the shape the SSRF guidance singles out — a host that passes validation and then
+   * points the client somewhere it would never have accepted.
+   */
+  const guardNavigation = (event, url) => {
+    let u;
+    try {
+      u = new URL(url);
+    } catch {
+      event.preventDefault();
+      return;
+    }
+    if (u.protocol === "file:" || u.protocol === "about:") return; // loading.html, about:blank
+    const origin = allowedOrigin();
+    if (origin && u.origin === origin) return;
+    event.preventDefault();
+    console.warn(`blocked in-app navigation to ${u.origin} (allowed: ${origin || "none"})`);
+    if (u.protocol === "http:" || u.protocol === "https:") shell.openExternal(url);
+  };
+  view.webContents.on("will-navigate", guardNavigation);
+  view.webContents.on("will-redirect", guardNavigation);
+
+  /**
+   * A page that never loaded is the shell's problem; a page that loaded and lost its socket is the
+   * SPA's (its capped-backoff reconnect is the published contract, and a second timer racing it
+   * would duplicate every catch-up fetch). So the reachability probe starts HERE and nowhere else.
+   */
+  view.webContents.on("did-fail-load", (_e, errorCode, errorDescription, failedUrl, isMainFrame) => {
+    if (!isMainFrame) return;
+    if (errorCode === -3) return; // ERR_ABORTED — a navigation we superseded ourselves
+    if (!activeUrl || activeUrl === localGatewayUrl) return; // spawn-local has its own retry dialog
+    console.warn(`load failed for ${failedUrl}: ${errorDescription} (${errorCode})`);
+    scheduleReachProbe(win);
   });
 
   view.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -758,10 +953,10 @@ const trayPresence = makeTrayPresence({
  * refresh must never be able to throw into the app. */
 function getGateway(pathname) {
   return new Promise((resolve) => {
-    if (!backendUrl) return resolve(null);
+    if (!localGatewayUrl) return resolve(null);
     let url;
     try {
-      url = new URL(pathname, backendUrl);
+      url = new URL(pathname, localGatewayUrl);
     } catch {
       return resolve(null);
     }
@@ -822,6 +1017,221 @@ function stopPresenceRefresh() {
   }
 }
 
+// ── Connect mode: the shell pointed at a gateway it did not spawn (CA-8) ──
+
+/** Open (or focus) the connect dialog / switcher. */
+function openConnectDialog() {
+  if (!connectDialog) return;
+  connectDialog.open(mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+}
+
+/** Re-probe every row's health, credential-free. Never mutates the registry. */
+async function refreshHealth() {
+  if (!shellStore) return endpointHealth;
+  endpointHealth = await probeAll(loadRegistry(shellStore), { localBaseUrl: localGatewayUrl || "" });
+  return endpointHealth;
+}
+
+function cancelReachProbe() {
+  if (reachTimer) {
+    clearTimeout(reachTimer);
+    reachTimer = null;
+  }
+  reachAttempt = 0;
+}
+
+/**
+ * The shell's ONE reconnect job: notice that a paired gateway is not answering, say so, and load
+ * the page again when it comes back.
+ *
+ * 🔑 THIS PROBES; IT DOES NOT RETRY A CREDENTIAL, AND IT DOES NOT RELOAD ON A TIMER. The probe is
+ * `/api/healthz` with no cookie and no header (`connectMode.probeEndpoint`), so there is no
+ * credential in the loop to be retried in the first place. `nextReconnectStep` decides what
+ * happens next, and its three non-retry answers are the whole point:
+ *
+ *   - `needs_pairing` (the gateway answered 401/403 — a revoked device session) → **stop dead**.
+ *     Zero further attempts. The row says "needs pairing again" and the user decides. Hammering it
+ *     would also drive that gateway's own per-IP pairing lockout against its owner.
+ *   - `stop` (not a gateway / redirected / refused by policy) → stop. The host answered, and the
+ *     answer was not "try later".
+ *   - `give_up` (attempts exhausted) → stop and wait for a human. Bounded, so a machine that is
+ *     simply off does not leave a timer running all day.
+ *
+ * A reload happens only on a probe that came back `reachable`, which is also why this cannot race
+ * the SPA: while the SPA is loaded there is nothing here to run.
+ */
+function scheduleReachProbe(win, delayMs = 0) {
+  if (!activeUrl || activeUrl === localGatewayUrl) return;
+  const target = activeUrl;
+  if (reachTimer) clearTimeout(reachTimer);
+  reachTimer = setTimeout(async () => {
+    reachTimer = null;
+    if (!win || win.isDestroyed() || activeUrl !== target) return;
+    const probe = await probeEndpoint(target);
+    if (activeUrl !== target) return; // the user switched while we were waiting
+    const id = loadRegistry(shellStore).active;
+    if (id) endpointHealth = { ...endpointHealth, [id]: probe };
+
+    const step = nextReconnectStep({ status: probe.status, attempt: reachAttempt });
+    if (step.action === "stay") {
+      cancelReachProbe();
+      if (!win.isDestroyed()) win.webContents.loadURL(target);
+      return;
+    }
+    if (step.action === "retry") {
+      reachAttempt = step.attempt;
+      console.log(`gateway ${target} ${probe.status}; re-checking in ${step.delayMs}ms (attempt ${step.attempt})`);
+      scheduleReachProbe(win, step.delayMs);
+      return;
+    }
+    cancelReachProbe();
+    console.warn(`gateway ${target} ${probe.status}: ${step.reason} — stopping automatic re-checks`);
+    // A terminal outcome is a decision for the user, so it goes to the switcher rather than into a
+    // retry. The dialog reads `endpointHealth`, so the row already says which of them it was.
+    openConnectDialog();
+  }, delayMs);
+}
+
+/**
+ * Point the shell at `url` and load it.
+ *
+ * The bridge decision is re-taken here rather than inherited, and a change to it REPLACES the view
+ * (a preload cannot be detached from a live `WebContents`). That is the enforcement point for
+ * "the capability bridge only ever reaches loopback".
+ */
+async function navigateToEndpoint(win, url, { isLocal = false } = {}) {
+  if (!win || win.isDestroyed()) return false;
+  cancelReachProbe();
+  activeUrl = url;
+  const wantBridge = shouldAttachBridge(url);
+  if (win._pcBridgeAttached !== wantBridge) {
+    setupWindowContents(win, { attachBridge: wantBridge });
+    win._pcBounds();
+  }
+  const wc = win.webContents;
+  wc.loadFile(path.join(__dirname, "loading.html"));
+  try {
+    if (isLocal) await waitForBackend(win);
+    else await waitForEndpoint(win, url);
+    if (win.isDestroyed()) return false;
+    wc.loadURL(url);
+    if (!isLocal) wc.once("did-finish-load", () => adoptInstanceName(wc, url));
+    return true;
+  } catch (err) {
+    if (win.isDestroyed()) return false;
+    const probe = err && err.probe;
+    if (probe) {
+      const id = loadRegistry(shellStore).active;
+      if (id) endpointHealth = { ...endpointHealth, [id]: probe };
+    }
+    console.warn(`could not reach ${url}: ${err.message}`);
+    // Fall back to the gateway this shell owns rather than leaving a blank window. Spawn-local is
+    // the default connection model, and an unreachable paired gateway is exactly when that matters.
+    if (localGatewayUrl && url !== localGatewayUrl) {
+      openConnectDialog();
+      return navigateToEndpoint(win, localGatewayUrl, { isLocal: true });
+    }
+    return false;
+  }
+}
+
+/**
+ * Let a gateway name itself in the switcher (contract item 8: label from
+ * `companion.instance_name`, falling back to the hostname, user override wins).
+ *
+ * 🔑 THE PAGE FETCHES IT, NOT THIS PROCESS. `GET /api/companion/discovery` needs a session, and the
+ * session for a paired gateway is an httponly cookie in the WebView's jar — the main process cannot
+ * present it and must not go looking for a way to. So the loaded page fetches its own gateway's name
+ * and the answer comes back through `executeJavaScript`.
+ *
+ * The result is untrusted text from a machine the shell does not control, so it goes through
+ * `sanitizeLabel` (control characters out, clamped) and `adoptGatewayLabel` (a name the user typed
+ * is never overwritten). Best-effort throughout: a gateway with discovery disabled, an older
+ * gateway without the route, or a fetch that simply fails leaves the hostname label alone.
+ */
+async function adoptInstanceName(wc, url) {
+  if (!wc || wc.isDestroyed?.() || !shellStore) return;
+  const reg = loadRegistry(shellStore);
+  const row = reg.endpoints.find((e) => e.base_url === url && e.id !== LOCAL_ENDPOINT_ID);
+  if (!row) return;
+  try {
+    const name = await wc.executeJavaScript(
+      `fetch('/api/companion/discovery', {credentials: 'same-origin'})
+         .then(r => r.ok ? r.json() : null)
+         .then(j => (j && typeof j.instance_name === 'string') ? j.instance_name : '')
+         .catch(() => '')`
+    );
+    const result = adoptGatewayLabel(shellStore, row.id, name);
+    if (result.changed) console.log(`gateway ${row.id} named itself "${result.label}"`);
+  } catch (err) {
+    console.warn(`could not read the gateway's instance name: ${err.message}`);
+  }
+}
+
+/** The handler set the connect dialog drives. `main.js` owns them so the dialog module stays a
+ *  view, and so every one of them goes through `connectMode`'s decisions rather than around them. */
+function connectHandlers() {
+  return {
+    list: async () => {
+      const registry = loadRegistry(shellStore);
+      return describeList({
+        registry,
+        activeId: registry.active,
+        health: endpointHealth,
+        localBaseUrl: localGatewayUrl || "",
+        warnings: startupWarnings,
+        storeStatus: shellStore.status,
+        storeSafe: Boolean(shellStore.permissions && shellStore.permissions.safe),
+        readOnly: shellStore.readOnly,
+      });
+    },
+    prepare: (input) => prepareEndpoint(input),
+    confirm: async ({ input, label }) => {
+      const plan = await prepareEndpoint(input);
+      if (!plan.ok) return plan;
+      const { id } = confirmEndpoint(shellStore, plan, { label });
+      startupWarnings = [];
+      const ok = await navigateToEndpoint(mainWindow, plan.navigateTo, { isLocal: plan.trust === "loopback" && plan.navigateTo === localGatewayUrl });
+      if (ok) connectDialog.close();
+      return { ok, id, origin: plan.origin, navigateTo: plan.navigateTo };
+    },
+    switchTo: async (id) => {
+      // Resolve the row's host BEFORE deciding, so the confirmation's host-moved check has
+      // something to compare against. Passing nothing here skips that check silently.
+      const row = loadRegistry(shellStore).endpoints.find((e) => e.id === id);
+      const fingerprint = row && row.kind !== "local" ? await currentFingerprintFor(row.base_url) : "";
+      const result = switchTo(shellStore, id, { localBaseUrl: localGatewayUrl || "", currentFingerprint: fingerprint });
+      if (!result.ok) {
+        return {
+          ok: false,
+          code: result.reason,
+          message: result.needsConfirmation
+            ? "This gateway needs to be confirmed again before the app will connect to it."
+            : `That gateway could not be opened (${result.reason}).`,
+        };
+      }
+      startupWarnings = [];
+      const isLocal = result.endpoint.id === LOCAL_ENDPOINT_ID || result.endpoint.kind === "local";
+      const ok = await navigateToEndpoint(mainWindow, result.navigateTo, { isLocal });
+      if (ok) connectDialog.close();
+      return { ok, id };
+    },
+    forget: async (id) => {
+      const result = forgetEndpoint(shellStore, id);
+      if (result.ok) {
+        const next = { ...endpointHealth };
+        delete next[id];
+        endpointHealth = next;
+      }
+      return result;
+    },
+    refresh: async () => {
+      await refreshHealth();
+      return { ok: true };
+    },
+  };
+}
+
 // ── Loading screen ──
 
 async function showLoadingThenConnect(win) {
@@ -832,7 +1242,8 @@ async function showLoadingThenConnect(win) {
   try {
     await waitForBackend(win);
     if (win.isDestroyed()) return;
-    wc.loadURL(backendUrl);
+    activeUrl = localGatewayUrl;
+    wc.loadURL(localGatewayUrl);
   } catch {
     if (win.isDestroyed()) return;
     const { response } = await dialog.showMessageBox(win, {
@@ -852,21 +1263,27 @@ async function showLoadingThenConnect(win) {
   }
 }
 
-// ── New Tab — opens another view onto the running gateway ──
+// ── New Tab — opens another view onto the ACTIVE gateway ──
 
 async function openNewTab() {
-  if (!mainWindow || mainWindow.isDestroyed() || !backendUrl) return;
+  // A new tab follows the gateway the user is looking at, so in connect-mode it opens the paired
+  // gateway rather than silently dropping them back onto the local one. It takes the same bridge
+  // decision for the same reason the main window does.
+  const target = activeUrl || localGatewayUrl;
+  if (!mainWindow || mainWindow.isDestroyed() || !target) return;
   mainWindow.show();
 
+  const isLocal = target === localGatewayUrl;
   const tabWin = makeWindow();
-  setupWindowContents(tabWin);
+  setupWindowContents(tabWin, { attachBridge: shouldAttachBridge(target) });
   mainWindow.addTabbedWindow(tabWin);
 
   const wc = tabWin.webContents;
   wc.loadFile(path.join(__dirname, "loading.html"));
   try {
-    await waitForBackend(tabWin);
-    if (!tabWin.isDestroyed()) wc.loadURL(backendUrl);
+    if (isLocal) await waitForBackend(tabWin);
+    else await waitForEndpoint(tabWin, target);
+    if (!tabWin.isDestroyed()) wc.loadURL(target);
   } catch {
     if (!tabWin.isDestroyed()) tabWin.destroy();
   }
@@ -960,6 +1377,15 @@ if (!app.requestSingleInstanceLock()) {
           { label: "Merge All Windows", click: () => mergeAllWindows() },
         ],
       },
+      {
+        // The switcher's entrance (CA-8 / T4.4). One menu item rather than a submenu that mirrors
+        // the registry: the dialog IS the list, and a menu rebuilt on every pairing would be a
+        // second place the active gateway is drawn, free to disagree with the first.
+        label: "Gateway",
+        submenu: [
+          { label: "Gateways…", accelerator: "CmdOrCtrl+Shift+G", click: () => openConnectDialog() },
+        ],
+      },
       { role: "windowMenu" },
     ]);
     Menu.setApplicationMenu(appMenu);
@@ -981,6 +1407,18 @@ if (!app.requestSingleInstanceLock()) {
     // loads, like the rest: the first gateway note can arrive as soon as the WS opens.
     registerNativeNotificationIpc(ipcMain, nativeNotifications, IPC_CHANNELS);
 
+    // The shell's own storage scope (CA-8). Opened before any window so the startup decision below
+    // has the registry, and non-fatal by construction: a corrupt or unreadable store degrades to
+    // spawn-local with a warning rather than taking the app down with it.
+    shellStore = openShellStore({ home: PERSONALCLAW_HOME, log: (msg) => console.warn(`desktop: ${msg}`) });
+    connectDialog = makeConnectDialog({
+      BrowserWindowCtor: BrowserWindow,
+      ipcMain,
+      handlers: connectHandlers(),
+      log: (msg) => console.warn(msg),
+    });
+    connectDialog.registerIpc(ipcMain);
+
     // Menu-bar presence. A failed tray is reported, not fatal — and it changes the
     // window-close behavior below so the window can never become unreachable.
     if (!trayPresence.start()) {
@@ -994,14 +1432,36 @@ if (!app.requestSingleInstanceLock()) {
     } catch (err) {
       console.error("Gateway did not start:", err.message);
     }
-    // Needs backendUrl from the READY line, so it follows the gateway start. A
+    // Needs localGatewayUrl from the READY line, so it follows the gateway start. A
     // failure here leaves the gateway reporting "not connected" — degraded but
     // honest — and never blocks the window.
     await registerWithGateway();
-    // Counts need `backendUrl`, so the poll starts after the gateway is up. With no
+    // Counts need `localGatewayUrl`, so the poll starts after the gateway is up. With no
     // gateway the menu simply reads "not connected".
     startPresenceRefresh();
-    await showLoadingThenConnect(win);
+
+    // ── spawn-local vs connect (CA-8) ──
+    // `describeStartup` returns spawn-local for every reason it cannot fully justify doing
+    // something else, and names which reason. The spawn-local branch below is the ORIGINAL code
+    // path, unchanged.
+    if (localGatewayUrl) rememberLocalGateway(shellStore, localGatewayUrl);
+    // Resolve the active row's host first: `describeStartup` can only apply the host-moved check if
+    // it is handed a current fingerprint, so omitting this would leave that guard unreachable.
+    const activeRow = loadRegistry(shellStore).endpoints.find((e) => e.id === loadRegistry(shellStore).active);
+    const activeFingerprint =
+      activeRow && activeRow.kind !== "local" ? await currentFingerprintFor(activeRow.base_url) : "";
+    const startup = describeStartup({ store: shellStore, currentFingerprint: activeFingerprint });
+    startupWarnings = startup.warnings || [];
+    if (startup.mode === "connect") {
+      console.log(`connecting to a paired gateway: ${startup.origin} (${startup.trust})`);
+      await navigateToEndpoint(win, startup.origin, { isLocal: false });
+    } else {
+      console.log(`starting in spawn-local mode (${startup.reason})`);
+      await showLoadingThenConnect(win);
+    }
+    if (startupWarnings.length) openConnectDialog();
+    // Health is probed AFTER the window is up: it is switcher decoration, not a gate on booting.
+    refreshHealth().catch(() => {});
 
     app.on("activate", () => {
       if (!mainWindow?.isVisible()) mainWindow?.show();
@@ -1037,6 +1497,9 @@ app.on("before-quit", (event) => {
   pushToTalk.unbind();
   pushToTalk.clearCapturing();
   stopPresenceRefresh();
+  // A pending reachability re-check would otherwise fire during teardown and call `loadURL` on a
+  // window that is being destroyed (CA-8).
+  cancelReachProbe();
   unregisterFromGateway();
 
   stopGateway()

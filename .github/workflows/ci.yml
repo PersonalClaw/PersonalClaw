@@ -186,12 +186,16 @@ jobs:
       - name: test (desktop, node --test)
         # desktop/ is the OTHER member of this single root workspace, so the `npm ci`
         # above already installed it — this step costs ~0.2s and needs no extra runner.
-        # 92 cases / 16 suites over the pure shell-side modules (capabilities, pushToTalk,
-        # context-menu, find-bin) plus packaging.test.js, which asserts electron-builder's
-        # `build.files` still lists every local require() in main.js — a stale entry there
-        # ships a dmg that crashes on launch. Runs headless: every case injects its own
-        # platform/fs/os, none reads process.platform and none launches electron, so an
-        # `electron .` smoke test would need a display and deliberately is NOT here.
+        # 347 cases / 73 suites over the pure shell-side modules (capabilities, pushToTalk,
+        # context-menu, find-bin, and CA-8's gatewayUrl / endpointRegistry / connectMode /
+        # connectDialog) plus packaging.test.js, which asserts electron-builder's `build.files`
+        # still lists every local require() in main.js AND every sibling file loaded by
+        # `path.join(__dirname, …)` — a stale entry there ships a dmg that crashes on launch, or a
+        # switcher window that loads nothing. Two legs here open real sockets on loopback: the
+        # reconnect leg kills a listener and rebinds it, and the store leg writes real files into a
+        # temp dir. Still headless — every case injects its own platform/fs/os, none reads
+        # process.platform and none launches electron, so an `electron .` smoke test would need a
+        # display and deliberately is NOT here.
         run: npm run test:desktop
       - name: test (mobile, node --test)
         # mobile/ is the THIRD member of this single root workspace (the Capacitor shell that
