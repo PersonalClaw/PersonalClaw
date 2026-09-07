@@ -105,21 +105,37 @@ def _notebook(name: str) -> Path:
     return manager.app_dir(name) / "data" / "notebook"
 
 
-def _notes(name: str) -> dict[str, str]:
-    book = _notebook(name)
+def _staged(name: str) -> Path:
+    """Where the keep-data uninstall stages ``data/`` before parking it."""
+    return app_manager._quarantine_dir() / f"{name}{app_manager._DATA_STAGE_SUFFIX}"
+
+
+def _notes_at(book: Path) -> dict[str, str]:
+    """The notes in a notebook dir wherever it lives — the app's, or a copy of it.
+
+    Path-based so a surviving copy can be read back as NOTES, not merely counted as a
+    directory that exists: "the dir is there" is not evidence the user's work is in it.
+    """
     if not book.is_dir():
         return {}
     return {p.stem: p.read_text(encoding="utf-8") for p in sorted(book.glob("*.md"))}
 
 
-def _git_log(name: str) -> list[str]:
-    book = _notebook(name)
+def _notes(name: str) -> dict[str, str]:
+    return _notes_at(_notebook(name))
+
+
+def _git_log_at(book: Path) -> list[str]:
     if not (book / ".git").is_dir():
         return []
     proc = subprocess.run(
         ["git", "log", "--format=%s"], cwd=str(book), capture_output=True, text=True, timeout=60
     )
     return [ln for ln in proc.stdout.splitlines() if ln.strip()]
+
+
+def _git_log(name: str) -> list[str]:
+    return _git_log_at(_notebook(name))
 
 
 # ── the real cycle ────────────────────────────────────────────────────────────
@@ -160,6 +176,11 @@ def test_real_cycle_notes_and_git_history_survive_uninstall_and_reinstall(tmp_pa
     assert parked.is_dir(), "uninstall did not keep the app's data/"
     assert (parked / "notebook" / "alpha.md").is_file()
     assert (parked / "notebook" / ".git").is_dir(), "the git history was not preserved"
+
+    # There is exactly ONE copy: the successful ``shutil.move`` consumed the quarantine
+    # stage, so the success path leaves no orphan behind it. A second copy of the user's
+    # data nobody asked for is a disk leak, and it goes stale the moment they reinstall.
+    assert not _staged(name).exists(), "the keep-data uninstall left its staging copy behind"
 
     # 4. Reinstall — and read the notes back through the same paths as before.
     assert app_manager.install(src, confirm=True).ok
@@ -365,6 +386,7 @@ def test_an_empty_data_dir_is_preserved_as_an_empty_data_dir(tmp_path):
     parked = app_manager._preserved_data_dir(name)
     assert parked.is_dir(), "an empty data/ was treated as 'no data/' and was not parked"
     assert not any(parked.iterdir())
+    assert not _staged(name).exists(), "the empty-data/ park left its staging copy behind"
 
 
 def test_an_absent_data_dir_parks_nothing_and_reports_absent(tmp_path):
@@ -489,6 +511,81 @@ def test_preservation_failure_removes_nothing(tmp_path, monkeypatch):
     assert manager.app_dir(name).is_dir(), "the app was removed after preservation failed"
     assert (_notebook(name) / "precious.md").is_file(), "the note was destroyed anyway"
     assert manager._read_installed(name) is not None, "the app was deregistered anyway"
+
+
+def test_a_failed_park_keeps_the_last_copy_and_says_where_it_is(tmp_path, monkeypatch):
+    """The SECOND failure point: the park fails AFTER the app tree is already gone (#2574).
+
+    The ``copytree`` above is fail-closed because nothing has been removed yet. The park
+    is the other end: ``force_uninstall`` has run, the app's tree (and its ``data/``) are
+    off disk, and the staged copy in quarantine is the ONLY copy of the user's work left
+    on the machine. So it must be LEFT there — the policy ``_restore_preserved_data``
+    already applies to a failed restore, "recoverable rather than lost" — and the audit
+    line has to name it, or the record is a diagnosis with no recovery in it.
+
+    Driven through the real failure: one raising ``shutil.move`` on the real park. Not by
+    planting or deleting a directory, which would assert about a state the product cannot
+    reach, and not by checking the return value, which was already ``False`` while the
+    data was being destroyed.
+    """
+    name = "notes-fixture"
+    assert app_manager.install(_bundle(tmp_path), confirm=True).ok
+    _write_note(name, "alpha", "the first note")
+    _write_note(name, "beta", "the second note")
+    before_notes = _notes(name)
+    before_log = _git_log(name)
+    assert set(before_notes) == {"alpha", "beta"}, before_notes
+    assert before_log == ["note: beta", "note: alpha"], before_log
+
+    staged = _staged(name)
+    records: list[tuple[str, str, str, str]] = []
+    monkeypatch.setattr(
+        app_manager,
+        "_audit",
+        lambda op, outcome, nm, **kw: records.append(
+            (op, outcome, kw.get("detail", ""), str(kw.get("error", "")))
+        ),
+    )
+    real_move = app_manager.shutil.move
+
+    def _fail_park(s, d, *a, **k):
+        if Path(s) == staged:
+            raise OSError("[Errno 28] injected: could not park data/")
+        return real_move(s, d, *a, **k)
+
+    monkeypatch.setattr(app_manager.shutil, "move", _fail_park)
+
+    assert app_manager.uninstall_keep_data(name) is False
+
+    # The removal has already happened. That is what makes this the dangerous branch, and
+    # asserting it keeps the test honest: if the fixture ever stops reaching the park, the
+    # survival assertion below would pass on a machine where nothing was ever at risk.
+    assert not manager.app_dir(name).exists(), "the fixture no longer drives the park branch"
+    assert not app_manager._preserved_data_dir(name).exists(), "the park was meant to fail"
+
+    # So the stage is the last copy — and the user's notes and git history have to read
+    # back OUT of it. A dir that merely exists is not evidence their work is in it.
+    assert staged.is_dir(), (
+        "the failed park deleted the only remaining copy of the user's data: the app tree "
+        "is gone and the stage was GC'd behind it (#2574)"
+    )
+    assert (
+        _notes_at(staged / "notebook") == before_notes
+    ), "the surviving copy does not read back as the notes that went in"
+    assert (
+        _git_log_at(staged / "notebook") == before_log
+    ), "the surviving copy lost the git history the app wrote"
+
+    # And the record says WHERE it survived, so the fact is recovery information.
+    detail, error = next(
+        (d, e)
+        for op, outcome, d, e in records
+        if op == "uninstall_keep_data" and outcome == "error"
+    )
+    assert "data=park_failed" in detail, f"the fact token changed: {detail!r}"
+    assert (
+        str(staged) in detail or str(staged) in error
+    ), f"the audit line does not say where the surviving copy is: {detail!r} / {error!r}"
 
 
 def test_every_outcome_reaches_the_audit_channel(tmp_path, monkeypatch):
