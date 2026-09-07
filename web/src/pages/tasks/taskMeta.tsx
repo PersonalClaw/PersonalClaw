@@ -106,7 +106,7 @@ export const signalPriority = (k?: string): PriorityMeta | null =>
 
 /** Tiny muted badge marking a field the backend can't persist yet. */
 export function SoonTag() {
-  return <span className="rounded-pill px-1.5 py-0.5 text-[0.75rem] uppercase tracking-wide bg-surface-high text-on-surface-low" title="Designed ahead of the backend — not saved yet">soon</span>
+  return <span data-type="caption" className="rounded-pill px-1.5 py-0.5 uppercase tracking-wide bg-surface-high text-on-surface-low" title="Designed ahead of the backend — not saved yet">soon</span>
 }
 
 export function relTime(iso?: string): string {

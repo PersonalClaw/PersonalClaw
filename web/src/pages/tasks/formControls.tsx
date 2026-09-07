@@ -60,7 +60,7 @@ export function DependencyEditor({ selfId, allTasks, value, onChange }: {
             return (
               <div key={id} className="group flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5">
                 <sm.icon size={14} className="shrink-0" style={{ color: sm.tone }} />
-                <span className="flex-1 truncate text-on-surface text-[0.8125rem]">{t?.title ?? id}</span>
+                <span data-type="body-s" className="flex-1 truncate text-on-surface">{t?.title ?? id}</span>
                 <SquareIconButton icon={X} tone="danger" label="Remove prerequisite" onClick={() => onChange(value.filter((x) => x !== id))} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
               </div>
             )
@@ -78,7 +78,7 @@ export function DependencyEditor({ selfId, allTasks, value, onChange }: {
                 size="sm" surface="base" leadingIcon={<Search size={14} />} />
             </div>
             <div className="max-h-52 overflow-y-auto flex flex-col gap-0.5">
-              {candidates.length === 0 ? <div className="px-2 py-3 text-on-surface-low text-[0.8125rem]">No tasks to add.</div> : candidates.map(({ task, cyclic }) => {
+              {candidates.length === 0 ? <div data-type="body-s" className="px-2 py-3 text-on-surface-low">No tasks to add.</div> : candidates.map(({ task, cyclic }) => {
                 const sm = statusMeta(task.status)
                 // A row that would close a dependency loop. The visible `cycle` chip already told a
                 // sighted user why; natively disabled, the row left the tab order, so a keyboard user
@@ -91,13 +91,13 @@ export function DependencyEditor({ selfId, allTasks, value, onChange }: {
                     title={cyclic ? 'That would create a dependency cycle' : undefined}
                     className="flex items-center gap-s rounded-md px-2 py-1.5 text-left transition-colors enabled:hover:bg-surface-high aria-disabled:hover:bg-transparent disabled:opacity-40 disabled:cursor-not-allowed aria-disabled:opacity-40 aria-disabled:cursor-not-allowed">
                     <sm.icon size={14} className="shrink-0" style={{ color: sm.tone }} />
-                    <span className="flex-1 truncate text-on-surface text-[0.8125rem]">{task.title}</span>
-                    {cyclic && <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]" title="Would create a dependency cycle"><AlertTriangle size={11} /> cycle</span>}
+                    <span data-type="body-s" className="flex-1 truncate text-on-surface">{task.title}</span>
+                    {cyclic && <span data-type="caption" className="shrink-0 inline-flex items-center gap-1 text-warn" title="Would create a dependency cycle"><AlertTriangle size={11} /> cycle</span>}
                   </button>
                 )
               })}
             </div>
-            <div className="mt-1.5 flex justify-end"><button type="button" onClick={() => { setPicking(false); setQ('') }} className="text-on-surface-low text-[0.8125rem] hover:text-on-surface px-2 py-1">Done</button></div>
+            <div className="mt-1.5 flex justify-end"><button type="button" onClick={() => { setPicking(false); setQ('') }} data-type="body-s" className="text-on-surface-low hover:text-on-surface px-2 py-1">Done</button></div>
           </Bud>
         ) : (
           <motion.div key="addbtn" className="self-start"
@@ -151,7 +151,7 @@ export function ChecklistEditor<T extends { description?: string }>({ items, onC
     <>
       {dragHandle}
       <button type="button" onClick={() => toggle(i)} className="shrink-0 inline-flex size-5 items-center justify-center rounded-sm border transition-colors" style={{ borderColor: it[doneKey] ? 'var(--color-ok)' : 'var(--color-outline-variant)', background: it[doneKey] ? 'var(--color-ok)' : 'transparent' }}>{it[doneKey] ? <Check size={13} className="text-white" /> : null}</button>
-      <span className={`flex-1 text-[0.8125rem] ${it[doneKey] ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{String(it.description ?? '')}</span>
+      <span data-type="body-s" className={`flex-1 ${it[doneKey] ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{String(it.description ?? '')}</span>
       {armed === i ? (
         // The shared primitive rather than bespoke chrome: the design-system ratchet caught the raw
         // element (278 > 277 baseline), which is exactly what it is for — a one-off confirm chip
@@ -230,7 +230,7 @@ export function ChecklistEditor<T extends { description?: string }>({ items, onC
         {ordered ? <GripVertical size={14} className="text-on-surface-low shrink-0 opacity-40" /> : <span className="size-5 shrink-0" />}
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} aria-label={placeholder} name={`checklist-add-${addId}`}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }} onBlur={add}
-          className="flex-1 h-9 rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          data-type="body-s" className="flex-1 h-9 rounded-md bg-surface-container px-m text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <IconButton icon={Plus} label="Add" size={32} onClick={add} />
       </div>
     </div>
@@ -263,7 +263,7 @@ export function NotesEditor({ items, onChange, placeholder }: {
           animate={{ opacity: 1, scaleY: 1, borderRadius: 'var(--radius-md)' }}
           exit={{ opacity: 0, scaleY: 0.4 }} transition={spring.spatialDefault} style={{ originY: 0 }}
           className="group flex items-start gap-s rounded-md bg-surface-container px-2 py-1.5">
-          <span className="flex-1 text-on-surface text-[0.8125rem] whitespace-pre-wrap">{n.content}</span>
+          <span data-type="body-s" className="flex-1 text-on-surface whitespace-pre-wrap">{n.content}</span>
           <SquareIconButton icon={X} tone="danger" label="Remove note" onClick={() => remove(i)} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
         </motion.div>
       ))}
@@ -272,7 +272,7 @@ export function NotesEditor({ items, onChange, placeholder }: {
         <span className="size-5 shrink-0" />
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} aria-label={placeholder} name={`note-add-${addId}`}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }} onBlur={add}
-          className="flex-1 h-9 rounded-md bg-surface-container px-m text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+          data-type="body-s" className="flex-1 h-9 rounded-md bg-surface-container px-m text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
         <IconButton icon={Plus} label="Add note" size={32} onClick={add} />
       </div>
     </div>

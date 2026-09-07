@@ -130,7 +130,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
       {/* action row */}
       <div className="flex items-center gap-s">
         {readOnly ? (
-          <span className="inline-flex items-center gap-1.5 text-on-surface-low text-[0.8125rem]"><Lock size={13} /> Managed by project — read-only</span>
+          <span data-type="body-s" className="inline-flex items-center gap-1.5 text-on-surface-low"><Lock size={13} /> Managed by project — read-only</span>
         ) : (
           <>
             <Button size="sm" variant="secondary" onClick={() => setEditing(true)}><Pencil size={14} /> Edit</Button>
@@ -149,16 +149,16 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
 
       {/* chips */}
       <div className="flex flex-wrap gap-s">
-        <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${sm.tone} 18%, transparent)`, color: sm.tone }}><sm.icon size={13} /> {sm.label}</span>
-        <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}>{pm.label}</span>
-        {task.project && <span className="inline-flex items-center gap-1.5 rounded-pill px-m h-7 text-[0.8125rem]" style={accentChip}><FolderKanban size={13} /> {task.project}</span>}
-        {task.assignee && <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem] bg-surface-high text-on-surface-var">@{task.assignee}</span>}
-        {due && <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem]" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
+        <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${sm.tone} 18%, transparent)`, color: sm.tone }}><sm.icon size={13} /> {sm.label}</span>
+        <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${pm.tone} 16%, transparent)`, color: pm.tone }}>{pm.label}</span>
+        {task.project && <span data-type="body-s" className="inline-flex items-center gap-1.5 rounded-pill px-m h-7" style={accentChip}><FolderKanban size={13} /> {task.project}</span>}
+        {task.assignee && <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7 bg-surface-high text-on-surface-var">@{task.assignee}</span>}
+        {due && <span data-type="body-s" className="inline-flex items-center rounded-pill px-m h-7" style={{ background: `color-mix(in srgb, ${due.tone} 14%, transparent)`, color: due.tone }}>{due.label}</span>}
       </div>
 
       {(task.labels?.length ?? 0) > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {task.labels!.map((l) => <span key={l} className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var text-[0.75rem]">{l}</span>)}
+          {task.labels!.map((l) => <span key={l} data-type="caption" className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var">{l}</span>)}
         </div>
       )}
 
@@ -173,7 +173,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
           prerequisite finishes; `manual` is skipped by the reconciler entirely and waits for a
           person. `block_reason` remains the source for WHICH tasks are being waited on. */}
       {(blockKind || task.block_reason?.is_blocked) && (
-        <div className="rounded-md px-m py-2 text-[0.8125rem]" style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
+        <div data-type="body-s" className="rounded-md px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
           <div className="flex items-center gap-1.5 text-warn mb-1" style={fvs(500)}>
             <AlertTriangle size={14} /> {blockKind?.label ?? 'Blocked'}
           </div>
@@ -207,7 +207,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
           <Meter label="Exit criteria" pct={exit.length ? (exitDone / exit.length) * 100 : 0}
             tone="var(--color-ok)" className="mb-2" />
           <ul className="flex flex-col gap-1">
-            {exit.map((e, i) => { const m = isExitComplete(e); return <li key={i} className="flex items-start gap-s text-[0.8125rem]">
+            {exit.map((e, i) => { const m = isExitComplete(e); return <li key={i} data-type="body-s" className="flex items-start gap-s">
               {/* 🔴 A 16px TICK IN A 4px-GAPPED STACK. Found by the first audit of this surface that had
                   data: `tasks-detail` is `needsData` and the harness pinned a task id that 404s against
                   the shipped fixture, so every prior sweep measured an empty panel. Re-pointed at a real
@@ -239,7 +239,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
       {(task.action_plan?.length ?? 0) > 0 && (
         <SectionLabel label="Action plan">
           <ol className="flex flex-col gap-1">
-            {task.action_plan!.map((a, i) => <li key={i} className="flex items-start gap-s text-[0.8125rem]">
+            {task.action_plan!.map((a, i) => <li key={i} data-type="body-s" className="flex items-start gap-s">
               {/* Same fix as the criterion tick above, same reasoning: this numbered step marker was
                   `size-5` (20×20) against the 24px floor. axe does NOT flag it — the steps list is
                   `gap-1.5`, so the spacing exception rescues it — but 20px is still under the floor, and
@@ -247,7 +247,7 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
                   panel. The 24px box is the target, the 20px pill stays the paint. */}
               <button type="button" disabled={readOnly} onClick={() => toggleStep(i)} aria-label={a.completed ? 'Mark step incomplete' : 'Mark step done'}
                 className="group -mx-0.5 shrink-0 inline-flex size-6 items-center justify-center disabled:cursor-default">
-                <span className="inline-flex size-5 items-center justify-center rounded-pill text-[0.75rem] tabular-nums transition-shadow group-hover:ring-2 group-hover:ring-primary group-disabled:ring-0"
+                <span className="inline-flex size-5 items-center justify-center rounded-pill tabular-nums transition-shadow group-hover:ring-2 group-hover:ring-primary group-disabled:ring-0" data-type="caption"
                   style={{ background: a.completed ? 'var(--color-ok)' : 'color-mix(in srgb, var(--color-primary) 18%, transparent)' }}>{a.completed ? <Check size={11} className="text-white" /> : i + 1}</span>
               </button>
               <span className={a.completed ? 'text-on-surface-low line-through' : 'text-on-surface'}>{a.content ?? a.description}</span></li>)}
@@ -268,13 +268,13 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
                 <button key={d} type="button" disabled={!dep || !onOpenTask} onClick={() => dep && onOpenTask?.(d)}
                   className="flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5 text-left enabled:hover:bg-surface-high transition-colors disabled:cursor-default">
                   <dsm.icon size={14} className="shrink-0" style={{ color: dsm.tone }} />
-                  <span className={`flex-1 truncate text-[0.8125rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep?.title ?? d}</span>
-                  {dep && !done && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{dsm.label}</span>}
+                  <span data-type="body-s" className={`flex-1 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep?.title ?? d}</span>
+                  {dep && !done && <span data-type="caption" className="shrink-0 text-on-surface-low">{dsm.label}</span>}
                 </button>
               )
             })}
             {task.block_reason?.is_blocked && (
-              <div className="flex items-center gap-1.5 text-warn text-[0.75rem] mt-0.5"><AlertTriangle size={12} /> {task.block_reason.message || 'Has unfinished prerequisites'}</div>
+              <div data-type="caption" className="flex items-center gap-1.5 text-warn mt-0.5"><AlertTriangle size={12} /> {task.block_reason.message || 'Has unfinished prerequisites'}</div>
             )}
           </div>
         </SectionLabel>
@@ -296,8 +296,8 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
                   <button key={dep.id} type="button" disabled={!onOpenTask} onClick={() => onOpenTask?.(dep.id)}
                     className="flex items-center gap-s rounded-md bg-surface-container px-2 py-1.5 text-left enabled:hover:bg-surface-high transition-colors disabled:cursor-default">
                     <dsm.icon size={14} className="shrink-0" style={{ color: dsm.tone }} />
-                    <span className={`flex-1 truncate text-[0.8125rem] ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep.title}</span>
-                    {!done && <span className="shrink-0 text-on-surface-low text-[0.75rem]">{dsm.label}</span>}
+                    <span data-type="body-s" className={`flex-1 truncate ${done ? 'text-on-surface-low line-through' : 'text-on-surface'}`}>{dep.title}</span>
+                    {!done && <span data-type="caption" className="shrink-0 text-on-surface-low">{dsm.label}</span>}
                   </button>
                 )
               })}
@@ -312,13 +312,13 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
 
       {task.agent_instructions_template && (
         <SectionLabel label="Agent instructions">
-          <pre className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] font-mono whitespace-pre-wrap">{task.agent_instructions_template}</pre>
+          <pre data-type="body-s" className="rounded-md bg-surface-container px-m py-2 text-on-surface-var font-mono whitespace-pre-wrap">{task.agent_instructions_template}</pre>
         </SectionLabel>
       )}
 
       <Comments taskId={task.id} provider={task.provider} />
 
-      <div className="text-on-surface-low text-[0.75rem]">
+      <div data-type="caption" className="text-on-surface-low">
         {task.created_at && <>Created {relTime(task.created_at)}</>}{task.updated_at && task.updated_at !== task.created_at && <> · updated {relTime(task.updated_at)}</>}
       </div>
     </div>
@@ -335,9 +335,9 @@ function NoteChannel({ label, notes }: { label: string; notes?: TaskNote[] }) {
       <ul className="flex flex-col gap-1.5">
         {items.map((n, i) => (
           <li key={i} className="rounded-md bg-surface-container px-m py-2">
-            <p className="text-on-surface text-[0.8125rem] whitespace-pre-wrap">{n.content}</p>
+            <p data-type="body-s" className="text-on-surface whitespace-pre-wrap">{n.content}</p>
             {(n.timestamp || n.created_at) && (
-              <div className="mt-0.5 text-on-surface-low text-[0.75rem]">{relTime(n.timestamp || n.created_at)}</div>
+              <div data-type="caption" className="mt-0.5 text-on-surface-low">{relTime(n.timestamp || n.created_at)}</div>
             )}
           </li>
         ))}
@@ -347,7 +347,7 @@ function NoteChannel({ label, notes }: { label: string; notes?: TaskNote[] }) {
 }
 
 function SectionLabel({ label, right, children }: { label: string; right?: React.ReactNode; children: React.ReactNode }) {
-  return <div><div className="mb-1.5 flex items-center gap-s"><span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{label}</span>{right}</div>{children}</div>
+  return <div><div className="mb-1.5 flex items-center gap-s"><span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{label}</span>{right}</div>{children}</div>
 }
 
 function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
@@ -390,20 +390,20 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
           <div key={c.id} className="group flex gap-s">
             <CornerDownRight size={14} className="text-on-surface-low shrink-0 mt-1" />
             <div className="flex-1 rounded-md bg-surface-container px-m py-2">
-              <div className="flex items-center gap-s text-[0.75rem] text-on-surface-low mb-0.5">
+              <div data-type="caption" className="flex items-center gap-s text-on-surface-low mb-0.5">
                 <span className="text-on-surface-var">{c.author || 'you'}</span>
                 <span>{relTime(c.created_at)}</span>
                 <IconButton icon={Trash2} label="Delete comment" onClick={() => remove(c.id, c.body)} size={24} iconSize={13}
                   className="ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-danger" />
               </div>
-              <p className="text-on-surface text-[0.8125rem] whitespace-pre-wrap">{c.body}</p>
+              <p data-type="body-s" className="text-on-surface whitespace-pre-wrap">{c.body}</p>
             </div>
           </div>
         ))}
         <div className="flex items-end gap-s">
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add a comment…" rows={1}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send() } }}
-            className="flex-1 rounded-md bg-surface-container px-m py-2 text-on-surface text-[0.8125rem] placeholder:text-on-surface-low outline-none resize-none focus:ring-2 focus:ring-inset focus:ring-primary" />
+            data-type="body-s" className="flex-1 rounded-md bg-surface-container px-m py-2 text-on-surface placeholder:text-on-surface-low outline-none resize-none focus:ring-2 focus:ring-inset focus:ring-primary" />
           {/* Icon-only send, one per comment composer — a constant name is correct. */}
           <button type="button" aria-label="Post comment" onClick={send}
             {...unavailableWhen(!draft.trim(), 'Write a comment first', { busy: sending })} className="shrink-0 inline-flex size-9 items-center justify-center rounded-pill bg-primary text-on-primary disabled:opacity-40 aria-disabled:opacity-40 aria-disabled:cursor-not-allowed"><Send size={15} /></button>
