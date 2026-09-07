@@ -79,20 +79,14 @@ export function SidePanel({ title, icon, onClose, urlKey, storeKey = 'sidepanel-
   // to the same localStorage entry — no saved width is reset. Collapse is opt-out here (a
   // dock is opened/closed by its parent and separately EXPANDED to full-screen; it is never
   // "collapsed"), so the primitive writes no `-collapsed` key for it.
-  const { width, onHandleDown, onHandleKey, min, max } = useResizablePanel(
-    storeKey.replace(/-w$/, ''), { def: DEFAULT_W, min: MIN_W, max: MAX_W, side: 'right' })
+  // 🔁 The viewport clamp this file INVENTED now lives in `useResizablePanel` as `fitWidth`, so
+  // every resizable panel gets it instead of one. The local `viewportW` state + resize listener +
+  // `Math.min(width, viewportW - EDGE_PEEK)` are gone — `edgePeek` defaults to this file's original
+  // 32 and the behaviour is unchanged, which `ui/sidePanelClamp.test.tsx` verifies unmodified: the
+  // stored width still survives a narrow window and a re-widen still restores the user's choice.
+  const { width, fitWidth: dockW, onHandleDown, onHandleKey, min, max } = useResizablePanel(
+    storeKey.replace(/-w$/, ''), { def: DEFAULT_W, min: MIN_W, max: MAX_W, side: 'right', edgePeek: EDGE_PEEK })
   const [expanded, setExpanded] = useState(false)
-  // Track the viewport so the clamp follows a resize / rotation instead of only
-  // applying at mount — a phone rotated to portrait must re-clamp, and a desktop
-  // window dragged narrow must too.
-  const [viewportW, setViewportW] = useState(() => window.innerWidth)
-  useEffect(() => {
-    const onResize = () => setViewportW(window.innerWidth)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-  // Rendered dock width: the stored width until it stops fitting, then the screen.
-  const dockW = Math.min(width, Math.max(0, viewportW - EDGE_PEEK))
   // While a panel is DOCKED open, the screen's top-right shell corner floats
   // over the sidebar (not the page header), so the page TopBar no longer needs
   // to reserve right-padding for it. Publish a ref-counted flag on :root that
