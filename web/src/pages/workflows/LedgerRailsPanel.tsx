@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Gavel, ListTree, Scale } from 'lucide-react'
 import { Segmented } from '../../ui/Segmented'
-import { Skeleton } from '../../ui/ListScaffold'
+import { FormSkeleton } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, type WorkflowLedgerRails } from '../../lib/api'
 import { fmtElapsed } from './workflowMeta'
@@ -91,7 +91,19 @@ export function LedgerRailsPanel({ runId }: { runId: string }) {
     return () => { live = false }
   }, [runId])
 
-  if (loading) return <Skeleton />
+  // 🔑 WAS `<Skeleton />` WITH NO className — a 0px invisible div, so this panel rendered
+  // NOTHING for the whole fetch and read as broken rather than loading. The shaped primitive also
+  // brings the `role="status"` + sr-only announcement the bare atom cannot have (it is `aria-hidden`
+  // by design), so this goes from silent-and-invisible to visible and announced.
+  //
+  // 🪤 NO `what` NOUN, DELIBERATELY. My first draft passed `what="this run’s ledger"`, borrowed from
+  // this file's own `InlineError` copy — and `ui/loadingNounPairing.test.ts` red it as an INVENTED
+  // noun, correctly. That rail only accepts a noun sourced from a declaration it can verify: a
+  // sibling `LoadError what=`, a `results={{ noun }}`, or an empty-state title. Prose I judged
+  // similar is not one of those, and its whole point is that "no noun here is invented". This panel
+  // reports failure through `InlineError`, so there is no declaration to borrow — it announces the
+  // generic "Loading…" until someone adds one deliberately.
+  if (loading) return <FormSkeleton sections={1} rows={3} title={false} />
   if (error) return <InlineError>{error}</InlineError>
   if (!data) return <p data-type="body-s" className="text-on-surface-low">This run has no ledger to project.</p>
 
