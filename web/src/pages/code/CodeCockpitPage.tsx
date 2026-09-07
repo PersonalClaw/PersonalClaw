@@ -40,6 +40,7 @@ import { runInTerminalWhenReady } from '../terminal/terminalBridge'
 import type { TermTab } from '../terminal/TerminalPage'
 import { TypingReveal } from './TypingReveal'
 import { DiffReveal } from './DiffReveal'
+import { codeDeleteBody } from './codeMeta'
 import { useResizablePanel } from '../../ui/useResizablePanel'
 import { CockpitPromptBar } from '../loops/CockpitPromptBar'
 import { useMode } from '../../app/theme'
@@ -549,19 +550,15 @@ export function CodeCockpitPage({ id, onBack, onDeleted, onNewTarget, onOpenProj
     } finally { setActing(false) }
   }
   async function del() {
-    // A bound (brownfield) workspace_dir is external + left untouched; a greenfield
-    // project with no bound dir keeps its files in the loop's own managed folder,
-    // which delete DESTROYS (store.delete rmtree's the loop dir). Don't promise
-    // "files left untouched" there — it silently loses the generated code.
-    const body = `${['running', 'planning', 'intake'].includes(p.status)
-      ? `"${p.name}" is still working — deleting it stops the worker and removes its plan. `
-      : `"${p.name}" and its plan will be removed. `}${p.workspace_dir
-      ? 'Your workspace folder and its files are left untouched.'
-      : 'This project keeps its files in its own managed folder — deleting it also removes those files. Move anything you want to keep out first.'}`
     // Through the shared delete ritual (AUD-A11): confirmDelete composes the identical
     // title/danger/label, so hand-rolling confirm() here was drift, not a design choice.
-    // The custom body stays — it carries the file-destruction warning above.
-    if (!(await confirmDelete('project', p.name, { body }))) return
+    //
+    // 🔴 THE BODY WAS DUPLICATED FROM `CodeSection`, AND THE DUPLICATION IS WHY THE DEFECT SURVIVED.
+    // The comment that used to sit here reasoned about `store.delete`'s rmtree — accurately, about the
+    // wrong function — and so did its twin. Neither read `teardown_for_delete`, which runs FIRST and
+    // force-deletes `pclaw/task-*` branches in the user's repository. `codeMeta.codeDeleteBody` owns
+    // the sentence now, verified against the handler rather than the callee.
+    if (!(await confirmDelete('project', p.name, { body: codeDeleteBody(p) }))) return
     // Only navigate away on a CONFIRMED delete — a swallowed failure used to call
     // onDeleted() regardless, so a failed delete (teardown error, 404, network) sent
     // the user back to a list where the "deleted" project was still present, with no
