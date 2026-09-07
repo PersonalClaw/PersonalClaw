@@ -18,6 +18,7 @@ import { embedFor } from './content/contentTypes'
 import { MermaidBlock } from './widget/MermaidBlock'
 import type { MemoryCitation } from '../pages/chat/chatTypes'
 import 'katex/dist/katex.min.css'
+import { copyText } from '../app/clipboard'
 
 /** Full markdown renderer: react-markdown + remark-gfm (tables, task lists,
  *  strikethrough) + remark-math + rehype-katex (LaTeX) + rehype-raw (inline
@@ -32,7 +33,7 @@ const SHELL_LANGS = new Set(['shell', 'bash', 'sh', 'zsh', 'console', 'shellsess
 /** Render a unified-diff code block with +/- line tinting. */
 function DiffBlock({ code }: { code: string }) {
   const [copied, setCopied] = useState(false)
-  const copy = () => { navigator.clipboard?.writeText(code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }
+  const copy = async () => { if (await copyText(code, 'the code')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
   return (
     <div className="group/code my-3 overflow-hidden rounded-lg bg-surface-low">
       <div className="flex items-center gap-2 px-m pt-2">
@@ -152,7 +153,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   } catch { html = code.replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]!)) }
   const [copied, setCopied] = useState(false)
   const runnable = !!lang && SHELL_LANGS.has(lang.toLowerCase())
-  const copy = () => { navigator.clipboard?.writeText(code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }
+  const copy = async () => { if (await copyText(code, 'the code')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
   const run = () => requestRunInTerminal(code.trim())
   return (
     <div className="group/code my-3 overflow-hidden rounded-lg bg-surface-low">

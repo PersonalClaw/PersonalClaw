@@ -4,6 +4,7 @@
 import { sanitizeInlineHtml } from './sanitize'
 import { loadInfographicEngine } from './antvEngine'
 import { PROSE_MEASURE } from '../../design/measure'
+import { copyText } from '../../app/clipboard'
 
 function download(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob)
@@ -55,7 +56,7 @@ export function exportDocumentHtml(content: string, title: string): void {
 /** Copy a document's sanitized HTML to the clipboard (for pasting elsewhere). */
 export async function copyDocumentHtml(content: string): Promise<void> {
   const body = sanitizeInlineHtml(content, 'document')
-  try { await navigator.clipboard?.writeText(body) } catch { /* clipboard blocked */ }
+  await copyText(body, 'the document HTML')
 }
 
 /** An infographic → SVG. Renders the DSL headless via the AntV engine (already the

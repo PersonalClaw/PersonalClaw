@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Copy, Check, RotateCcw, GitBranch, Volume2, Square, Pencil, ChevronLeft, ChevronRight, Rewind } from 'lucide-react'
 import { unavailableWhen } from '../../ui/unavailable'
 import { clockTime, fullStamp, isoStamp } from '../../lib/epoch'
+import { copyText } from '../../app/clipboard'
 
 /** The reveal wrapper the action BUTTONS live in.
  *
@@ -58,7 +59,7 @@ export function AssistantActions({ text, isLast, speaking, canFork = true, varia
   onSwitchVariant?: (index: number) => void
 }) {
   const [copied, setCopied] = useState(false)
-  const copy = () => { navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}); onCopy() }
+  const copy = async () => { if (await copyText(text, 'this message')) { setCopied(true); setTimeout(() => setCopied(false), 1500) }; onCopy() }
   const hasVariants = variantCount > 1 && !!onSwitchVariant
   return (
     <div className="mt-m flex items-center gap-1.5">
@@ -114,7 +115,7 @@ function VariantSwitcher({ count, idx, onSwitch }: { count: number; idx: number;
  *  plain Edit & resend (nothing to retain). */
 export function UserActions({ text, canFork = true, canRewind = false, ts, onEdit, onRewind, onFork }: { text: string; canFork?: boolean; canRewind?: boolean; ts?: string; onEdit: () => void; onRewind?: () => void; onFork: () => void }) {
   const [copied, setCopied] = useState(false)
-  const copy = () => { navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }
+  const copy = async () => { if (await copyText(text, 'this message')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
   return (
     // Right-aligned to match the user bubble, so the stamp trails the buttons here and leads them on
     // an assistant turn — both end up on the same edge as the message they belong to.

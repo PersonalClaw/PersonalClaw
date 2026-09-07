@@ -13,6 +13,7 @@ import { PairingQr } from './PairingQr'
 import { Button } from '../../ui/Button'
 import { EmptyState, FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { relPast, absTime } from '../schedule/scheduleMeta'
+import { copyText } from '../../app/clipboard'
 
 /** The house form for a CAUGHT error (`lib/errText` takes a `Response`, not an exception).
  *  The api client has already turned the failed response into this message. */
@@ -54,17 +55,18 @@ function mmss(total: number): string {
 /** Copy one value, and SAY whether it worked. A clipboard write can be refused outright (no
  *  permission, or a non-secure context — which a LAN `http://` dashboard is), and this is a
  *  surface whose entire purpose is getting a code onto another screen: a silent failure here
- *  leaves the owner believing they hold a code they do not. */
+ *  leaves the owner believing they hold a code they do not.
+ *
+ *  🔑 THIS WAS THE ONLY SITE IN THE APP THAT GOT IT RIGHT — 1 of 13 — so its logic became
+ *  `app/clipboard.copyText` rather than staying a local exception, and this button is now the
+ *  helper's first consumer instead of its private prototype. The reasoning above is why the helper
+ *  exists; it is kept here because this surface is where the case was first understood. */
 function CopyButton({ value, label }: { value: string; label: string }) {
   const [done, setDone] = useState(false)
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
-      setDone(true)
-      setTimeout(() => setDone(false), 1500)
-    } catch (e) {
-      notify(`Couldn't copy the ${label} — select it and copy manually. ${msg(e)}`, 'error')
-    }
+    if (!(await copyText(value, `the ${label}`))) return
+    setDone(true)
+    setTimeout(() => setDone(false), 1500)
   }
   return (
     <Button size="xs" variant="secondary" onClick={copy} ariaLabel={done ? `${label} copied` : `Copy ${label}`}>

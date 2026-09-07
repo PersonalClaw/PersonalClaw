@@ -92,6 +92,7 @@ import { useComposerData } from '../lib/useComposerData'
 import type { ComposerControls, ComposerValue } from '../ui/composer/types'
 import { Popover, MenuRow } from '../ui/Popover'
 import { useQueryFlag, useQueryParam, type RouteProps } from '../app/useQueryState'
+import { copyText } from '../app/clipboard'
 
 // Instant-paint cache for opened chat sessions, held in the ONE data layer.
 //
@@ -2427,7 +2428,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const s = sessionRef.current
     if (!s) return
     const url = `${location.origin}${location.pathname}#/chat/${encodeURIComponent(s)}`
-    try { await navigator.clipboard.writeText(url) } catch { /* clipboard blocked */ }
+    // Gated, because it was NOT: the catch swallowed the failure and "Copied" was set anyway, so
+    // a blocked write left the button claiming a link the clipboard did not hold.
+    if (!(await copyText(url, 'the chat link'))) return
     setLinkCopied(true)
     window.setTimeout(() => setLinkCopied(false), 1600)
   }
@@ -3683,7 +3686,7 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
   return (
     <SelectionToolbar ref={barRef} x={pos.x} y={pos.y} actions={[
       { icon: Quote, label: 'Quote', onPress: () => { onQuote(pos.text, pos.attribution); clear() } },
-      { icon: Clipboard, label: 'Copy', onPress: () => { navigator.clipboard?.writeText(pos.text).catch(() => {}); clear() } },
+      { icon: Clipboard, label: 'Copy', onPress: () => { void copyText(pos.text, 'the selection'); clear() } },
     ]} />
   )
 }
