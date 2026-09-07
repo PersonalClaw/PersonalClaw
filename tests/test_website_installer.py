@@ -51,6 +51,15 @@ What this module asserts, and why each half exists:
 * **Header truth.** Every workflow file and job id the header names must exist, and the
   jobs must really name the installer. This is the direct rail over the defect above: the
   next person who writes "CI-smoke-tested" without writing the job gets a red.
+* **Integrity of the two things it downloads** (#2582, added 2026-09-07). The one-liner makes
+  two network fetches and used to verify neither. Three rails, one per fix that does not trade
+  away what the script is built around: the PyPI install carries a downgrade floor derived from
+  ``CHANGELOG.md`` so it cannot rot into a hand-typed constant (#2554's defect); the comment
+  attached to the unverified ``astral.sh`` fetch must not claim verification AND must disclose
+  the trust boundary, checked against the code either way; and the documented user verify path
+  must fetch its digest from an origin OTHER than the one serving the script, which is the only
+  reason that recipe is worth anything. The last one is asserted on the URL's host, because a
+  same-origin digest reads identically and proves nothing.
 * **Rail wiring.** ``full.yml``'s live leg must run BOTH the staged file and the served
   bytes, redirect uv's tool dirs, and report ``unproven`` (never green) when the fetch
   fails. Asserted here because the wiring is now the load-bearing part.
@@ -69,6 +78,7 @@ import pathlib
 import re
 import shutil
 import subprocess
+import tomllib
 
 import pytest
 
@@ -77,9 +87,46 @@ _INSTALLER = _ROOT / "deploy" / "website" / "install.sh"
 _PIN = _ROOT / "deploy" / "website" / "install.sh.sha256"
 _CI = _ROOT / ".github" / "workflows" / "ci.yml"
 _FULL = _ROOT / ".github" / "workflows" / "full.yml"
+_PYPROJECT = _ROOT / "pyproject.toml"
+_CHANGELOG = _ROOT / "CHANGELOG.md"
+#: The user-facing install guide — where the verify recipe is documented, because a verify path
+#: only maintainers can find is not a user-facing option.
+_GUIDE = _ROOT / "docs" / "guides" / "getting-started.md"
+_DEPLOY_README = _ROOT / "deploy" / "website" / "README.md"
+_REPO_README = _ROOT / "README.md"
 
 #: The URL the one-liner is served from. The live legs in ``full.yml`` must name it.
 SERVED_URL = "https://personalclaw.dev/install"
+
+#: The host that serves the script. A digest fetched from HERE would be worthless against a
+#: compromise of this host: it would serve the script and the matching digest. The documented
+#: verify recipe must therefore source its digest from some other origin — asserted, not hoped.
+SERVED_HOST = "personalclaw.dev"
+
+#: The installer's downgrade floor, as a shell constant. Its VALUE is not pinned here — it is
+#: derived from ``CHANGELOG.md`` (see :class:`TestInstallFloorTracksTheReleaseHistory`), because
+#: a hand-typed version in a shell script that nothing checks is the defect in #2554.
+FLOOR_CONST = "PC_MIN_VERSION"
+
+#: A line that pipes Astral's installer into ``sh`` — there are two, the curl and the wget
+#: branch, and neither verifies anything.
+UV_FETCH = r'UV_INSTALLER_URL"?\s*\|\s*sh\b'
+
+#: The line that OPENS that fetch. The comment #2582 found lying sits above the guard rather
+#: than above either branch, because it covers both, so this is where attachment is asserted —
+#: and ``test_the_block_is_attached_to_the_fetch`` checks that the guard really still performs
+#: the fetch, so the anchor cannot quietly drift off the thing it is documenting.
+UV_FETCH_GUARD = r"^\s*if have curl; then\s*$"
+
+#: The guide heading that owns the verify recipe. ``install.sh``, ``README.md`` and
+#: ``deploy/website/README.md`` all point at it; the slug is the anchor those links use.
+VERIFY_HEADING = "Verify the one-liner"
+
+#: Releases this project has already published to PyPI (measured 2026-09-07 against
+#: ``pypi.org/pypi/personalclaw/json``: exactly 0.1.0, 0.1.1, 0.1.2, 0.1.3). History cannot be
+#: rewritten, so these are permanent — the vacuity floor for :func:`released_versions`, in the
+#: spirit of :data:`LONG_STANDING_CI_JOBS`.
+LONG_STANDING_RELEASES = frozenset({"0.1.0", "0.1.1", "0.1.2", "0.1.3"})
 
 #: Turns "the tool this case needs is absent" from a skip into a failure. Set by the
 #: ``lint`` job, which installs shellcheck and dash first. NOT set on a contributor's
@@ -204,6 +251,136 @@ def top_level_calls(text: str, funcs: set[str]) -> list[tuple[int, str]]:
 def defined_funcs(text: str) -> set[str]:
     """Every function name the script defines (``name() {`` at column 0)."""
     return set(re.findall(r"^([A-Za-z_][\w]*)\s*\(\)", text, flags=re.MULTILINE))
+
+
+def installer_constant(text: str, name: str) -> str | None:
+    """The value of a top-level ``NAME="value"`` assignment, or ``None`` if there is none."""
+    match = re.search(rf'^{re.escape(name)}="([^"]*)"\s*$', text, flags=re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def uv_tool_install_lines(text: str) -> list[str]:
+    """Every line that really invokes ``uv tool install`` — comments excluded.
+
+    Comments MUST be excluded or this parser is worse than nothing: the installer's own header
+    tabulates the command it runs ("3. ``uv tool install --upgrade personalclaw>=…``"), so a
+    prose line already contains every token the assertions look for. Matching it would let the
+    header satisfy a rail about the code — the exact hole :func:`code_only` exists to close one
+    file over.
+    """
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#") and re.search(r"\buv tool install\b", line)
+    ]
+
+
+def released_versions(text: str) -> list[str]:
+    """Final releases a CHANGELOG records, newest first.
+
+    Only dated ``## [X.Y.Z] — date`` headings count. ``## [Unreleased]`` is not a release, and
+    a prerelease heading is not one either for this purpose: ``uv`` and ``pip`` do not resolve
+    to prereleases by default, so a floor derived from one would forbid everything the index
+    actually offers.
+    """
+    return re.findall(r"^##\s*\[(\d+\.\d+\.\d+)\]\s*[—\-]", text, flags=re.MULTILINE)
+
+
+def version_key(version: str) -> tuple[int, int, int]:
+    """Ordering key for a plain ``X.Y.Z`` release.
+
+    ``packaging`` is deliberately not used: measured, it appears in no dependency list in
+    ``pyproject.toml``, and importing it here would add a hidden test dependency to prove
+    something a triple of ints proves. Anything that is not a numeric triple RAISES rather than
+    sorting wrong — a silent mis-order would make the floor comparisons below compare the wrong
+    pair and still report green.
+    """
+    parts = version.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        raise ValueError(f"not a plain X.Y.Z release: {version!r}")
+    major, minor, patch = (int(part) for part in parts)
+    return (major, minor, patch)
+
+
+def pyproject_version(text: str) -> str:
+    """``[project].version`` — the version this tree BUILDS, which is not the same as the
+    newest version PyPI SERVES. The whole floor design turns on that distinction."""
+    return str(tomllib.loads(text)["project"]["version"])
+
+
+def comment_block_above(text: str, pattern: str) -> str:
+    """The ``#`` comment block immediately above the first line matching ``pattern``, joined.
+
+    Attachment is the point. A disclosure that drifted up into the file header would satisfy a
+    file-wide search while the line it is supposed to be defending sat bare, so the block is
+    walked UPWARDS from the matching line and stops at the first non-comment. Joined into one
+    string because these sentences are line-wrapped and a per-line match would miss them.
+    """
+    lines = text.splitlines()
+    index = next((n for n, line in enumerate(lines) if re.search(pattern, line)), None)
+    if index is None:
+        return ""
+    block: list[str] = []
+    cursor = index - 1
+    while cursor >= 0 and lines[cursor].lstrip().startswith("#"):
+        block.append(lines[cursor].lstrip().lstrip("#").strip())
+        cursor -= 1
+    return " ".join(reversed(block))
+
+
+def fenced_blocks(text: str) -> list[str]:
+    """Every fenced code block BODY in a markdown document (the fences themselves excluded).
+
+    Leading whitespace on the fence is allowed, and that is not cosmetic: MEASURED while
+    mutation-testing this module, an anchored ``^```` missed every block nested inside a
+    numbered list — which is how ``deploy/website/README.md`` writes its commands. A planted
+    duplicate recipe there survived
+    :meth:`TestDocumentedVerifyPathIsReal.test_the_recipe_is_not_duplicated_across_docs`
+    entirely, because the parser could not see the file's most likely place to grow one.
+    """
+    return re.findall(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```", text, flags=re.MULTILINE | re.DOTALL)
+
+
+def verify_recipes(text: str) -> list[str]:
+    """Fenced blocks that both fetch the served installer AND check a digest.
+
+    Both halves are required. A block that only fetches is the plain one-liner every doc
+    already shows, and a block that only hashes is the maintainer's pin-regeneration command in
+    ``deploy/website/README.md`` — counting either as a user verify path would make
+    :meth:`TestDocumentedVerifyPathIsReal.test_the_recipe_is_not_duplicated_across_docs`
+    report duplication that does not exist, and the origin assertion vacuous.
+    """
+    return [
+        body
+        for body in fenced_blocks(text)
+        if SERVED_URL in body and re.search(r"\bsha(?:sum|256sum)\b", body)
+    ]
+
+
+def markdown_section(text: str, heading: str) -> str:
+    """The body of the ``###`` section named ``heading``, up to the next ``##``/``###`` heading.
+
+    A single ``#`` does not end the section on purpose: fenced shell blocks contain column-0
+    ``# comment`` lines, and treating one as a heading would truncate the section right through
+    the recipe the assertions below read.
+    """
+    match = re.search(
+        rf"^###\s+{re.escape(heading)}\s*$(.*?)(?=^#{{2,3}}\s|\Z)",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    return match.group(1) if match else ""
+
+
+def urls(text: str) -> list[str]:
+    """Every http(s) URL in ``text``, trailing markdown/shell punctuation stripped."""
+    return [u.rstrip(").,;") for u in re.findall(r"https?://[^\s'\"<>)\\]+", text)]
+
+
+def host_of(url: str) -> str:
+    """The host part of ``url`` — the unit the digest-origin assertion is really about."""
+    match = re.match(r"https?://([^/]+)", url)
+    return match.group(1) if match else ""
 
 
 def _tool_or_skip(tool: str) -> str:
@@ -475,6 +652,336 @@ class TestServedDigestPin:
         digest, _, name = lines[0].partition(" ")
         assert re.fullmatch(r"[0-9a-f]{64}", digest), f"not a sha256 digest: {digest!r}"
         assert name.strip() == "install.sh", f"the pin must name install.sh, not {name.strip()!r}"
+
+
+# ── the PyPI install: a downgrade floor, and a rail that keeps it from rotting ───────
+
+
+class TestInstallFloorTracksTheReleaseHistory:
+    """``uv tool install --upgrade personalclaw`` had no floor, so a rolled-back index won.
+
+    MEASURED 2026-09-07 against the real index (uv 0.12.5, ``uv pip install --dry-run``):
+
+        no floor,  index offers only 0.1.0    exit 0   ``+ personalclaw==0.1.0``   silent
+        `>=0.1.2`, index offers only 0.1.0    exit 1   "unsatisfiable"             loud
+        `>=0.1.2`, healthy index + --upgrade  exit 0   ``+ personalclaw==0.1.3``   costs nothing
+
+    So the floor forbids nothing while PyPI is honest — ``--upgrade`` still resolves to the
+    newest release — and turns a yanked-and-replaced or rolled-back index from a silent old
+    install into a resolver error.
+
+    WHY THE FLOOR LAGS BY ONE RELEASE. A floor equal to ``pyproject``'s version is unsatisfiable
+    for as long as it takes that release to reach PyPI and its mirrors: measured the same day,
+    ``>=0.1.4`` exits 1 with "only personalclaw<=0.1.3 is available". That window would break
+    every user's install AND ``full.yml``'s ``install-smoke``, which runs this file for real on
+    every push to ``main``. The previous release has always shipped already, so a lagging floor
+    can never demand a version that does not exist yet. The price is exactly one unguarded step
+    — a rollback to the immediately-previous release still installs — which is the attacker's
+    weakest move and the cheapest thing to give up.
+
+    WHY THE VALUE IS NOT PINNED HERE. A hand-typed version in a shell script, checked by
+    nothing, is the defect in #2554 (two copies drifted for three weeks). So the constant is
+    derived: it must equal ``CHANGELOG.md``'s second-newest release heading, the repo's own
+    record of what has shipped. It reds the release after it goes stale, in both directions.
+    """
+
+    @staticmethod
+    def _floor(installer_text: str) -> str:
+        floor = installer_constant(installer_text, FLOOR_CONST)
+        assert floor, (
+            f"the installer defines no {FLOOR_CONST}, so nothing bounds how far back a "
+            "manipulated index can push a new user. See #2582 item 3."
+        )
+        return floor
+
+    def test_every_uv_tool_install_carries_the_floor(self, installer_text: str) -> None:
+        """Every invocation, not the first one found.
+
+        With a single assertion on ``lines[0]`` a future second install line — a retry path, a
+        client package, an extras variant — could ship unfloored and nothing would say so. The
+        non-empty assertion is the vacuity floor: a parser that stopped matching would otherwise
+        make this case pass by iterating nothing.
+        """
+        lines = uv_tool_install_lines(installer_text)
+        assert lines, (
+            "no `uv tool install` invocation found in the installer. Either the parser broke or "
+            "the install path moved — either way every assertion in this class is vacuous."
+        )
+        for line in lines:
+            assert f">=${FLOOR_CONST}" in line, (
+                f"this install runs without the {FLOOR_CONST} floor, so a rolled-back PyPI "
+                f"index installs old code silently:\n    {line}"
+            )
+
+    def test_the_floor_did_not_cost_the_idempotent_upgrade(self, installer_text: str) -> None:
+        """``--upgrade`` is the documented upgrade path and the reason #2582 was not just fixed.
+
+        The issue's own objection to pinning is that it would trade away re-runnability. It does
+        not have to: a ``>=`` floor and ``--upgrade`` compose, and the measurement in this class'
+        docstring shows the pair still resolving to the newest release. This case is here so a
+        later "let's pin it properly" cannot quietly take that away.
+        """
+        lines = uv_tool_install_lines(installer_text)
+        assert lines, "no `uv tool install` invocation found — see the case above"
+        for line in lines:
+            assert "--upgrade" in line, (
+                "the install lost --upgrade, so re-running the one-liner is no longer the "
+                f"documented upgrade path:\n    {line}"
+            )
+
+    def test_the_floor_is_the_previous_release(self, installer_text: str) -> None:
+        history = released_versions(_CHANGELOG.read_text(encoding="utf-8"))
+        assert len(history) >= 2, (
+            f"CHANGELOG.md yields {history!r} — fewer than two releases, so 'the previous "
+            "release' has no referent and the derivation below cannot mean anything."
+        )
+        floor = self._floor(installer_text)
+        assert floor == history[1], (
+            f"{FLOOR_CONST}={floor!r} is not the previous release ({history[1]!r}; newest is "
+            f"{history[0]!r}). Bump it in the same change as the version, and regenerate "
+            "install.sh.sha256 — see PC_MIN_VERSION in the installer for why it lags by one."
+        )
+
+    def test_the_floor_is_never_the_version_this_tree_builds(self, installer_text: str) -> None:
+        """Stated separately from the case above because it names a DIFFERENT failure.
+
+        The equality above keeps the floor from rotting. This one keeps it from being too
+        aggressive: the moment the floor reaches the version in ``pyproject.toml``, the window
+        between that version landing on ``main`` and PyPI serving it becomes a window in which
+        the one-liner cannot install anything at all (measured: ``>=0.1.4`` exits 1 today). If
+        the CHANGELOG derivation is ever relaxed, this is the property that must survive.
+        """
+        floor = self._floor(installer_text)
+        building = pyproject_version(_PYPROJECT.read_text(encoding="utf-8"))
+        assert version_key(floor) < version_key(building), (
+            f"{FLOOR_CONST}={floor!r} is not older than the version this tree builds "
+            f"({building!r}). A floor at or above the current version is unsatisfiable until "
+            "that release reaches PyPI, which breaks every install and install-smoke with it."
+        )
+
+    def test_the_floor_actually_forbids_something(self, installer_text: str) -> None:
+        """The other direction of vacuity: a floor that excludes nothing is decoration.
+
+        ``>=0.1`` and ``>=0.1.0`` both read like protection and forbid none of the four versions
+        PyPI actually holds. Measured against the release history rather than asserted, so the
+        number this prints is the real count of downgrade targets the floor closes.
+        """
+        floor = self._floor(installer_text)
+        history = released_versions(_CHANGELOG.read_text(encoding="utf-8"))
+        forbidden = [v for v in history if version_key(v) < version_key(floor)]
+        assert forbidden, (
+            f"{FLOOR_CONST}={floor!r} excludes none of the releases this project has published "
+            f"({history!r}), so it bounds no downgrade at all. A floor that forbids nothing is "
+            "the #2582 item-1 defect in a new place: copy asserting a capability that is absent."
+        )
+
+
+class TestUvBootstrapCommentIsHonestAboutWhatIsVerified:
+    """The comment defending the unverified ``curl … | sh`` must not claim verification.
+
+    It used to read: "The official installer is served over TLS from astral.sh and verifies its
+    own downloads (checksum-pinned per release)." That is true of the uv BINARIES that installer
+    goes on to fetch and false of the installer script this line pipes into ``sh``, which is the
+    thing the comment appears to defend (#2582 item 1). A comment that answers the question a
+    reader would otherwise go and check is worse than no comment — the same defect this module
+    was written for, one function lower down the same file.
+
+    Railed in both directions, because "reword the sentence" is not a fix that stays fixed: the
+    block must not re-assert verification, and it must disclose that these bytes are unverified.
+    The vocabulary only makes the red legible. The load-bearing case is the last one, which
+    checks that the comment and the CODE still agree.
+    """
+
+    def test_the_block_is_attached_to_the_fetch(self, installer_text: str) -> None:
+        """Vacuity floor, both halves: a block must exist, and it must sit on the real fetch.
+
+        With no block found every assertion below passes on an empty string. And an anchor that
+        drifted off the fetch — the guard kept, the download moved elsewhere — would leave the
+        disclosure defending a line that no longer downloads anything, so the guard is required
+        to still contain the pipe into ``sh``.
+        """
+        lines = installer_text.splitlines()
+        guard = next((n for n, line in enumerate(lines) if re.search(UV_FETCH_GUARD, line)), None)
+        assert guard is not None, (
+            "the installer no longer opens the uv bootstrap with `if have curl; then`, so the "
+            "comment this class checks has nothing to be attached to."
+        )
+        assert re.search(UV_FETCH, "\n".join(lines[guard : guard + 4])), (
+            "the guard the trust-boundary comment is attached to no longer pipes "
+            "UV_INSTALLER_URL into sh. The disclosure is documenting a line that moved."
+        )
+        assert comment_block_above(installer_text, UV_FETCH_GUARD), (
+            "no comment block sits immediately above the uv bootstrap fetch, so the cases below "
+            "are measuring an empty string. The unverified fetch must be documented AT the fetch."
+        )
+
+    def test_it_does_not_claim_the_piped_script_verifies_itself(self, installer_text: str) -> None:
+        """The literal claim #2582 found, so a straight revert of that line reds."""
+        block = comment_block_above(installer_text, UV_FETCH_GUARD)
+        assert not re.search(r"(?i)verifies its own downloads", block), (
+            "the comment above the uv fetch says the installer 'verifies its own downloads'. "
+            "That is true of the uv binaries it then fetches and false of this script, which we "
+            "pipe into sh unverified — the exact wording #2582 was filed about."
+        )
+
+    def test_it_discloses_that_the_piped_bytes_are_unverified(self, installer_text: str) -> None:
+        """Absence of a lie is not the same as presence of the truth.
+
+        Deleting the false sentence would satisfy the case above and leave a reader with no
+        statement of the trust boundary at all — which is how the claim got there in the first
+        place. One of a small vocabulary of disclosures must be present, attached to the fetch.
+        """
+        block = comment_block_above(installer_text, UV_FETCH_GUARD)
+        assert re.search(
+            r"(?i)(do not verify|not verified|unverified|no digest|no checksum)", block
+        ), (
+            "the comment above the uv fetch never says these bytes are unverified. State the "
+            "trust chain plainly — TLS plus the vendor's release hygiene — or say nothing:\n"
+            f"{block}"
+        )
+
+    def test_the_disclosure_still_matches_the_code(self, installer_text: str) -> None:
+        """Comment and code must agree, so this reds when verification is ADDED, not removed.
+
+        If a future change teaches the installer to check a digest before running Astral's
+        script, "we do not verify these bytes" becomes the new false claim and this case is
+        where that is caught. Comments are checked against the code, not trusted alongside it.
+        """
+        code = code_only(installer_text)
+        found = re.findall(r"\b(shasum|sha256sum|gpg|cosign|minisign)\b", code)
+        assert not found, (
+            f"the installer now runs {sorted(set(found))!r}, so it may really verify something. "
+            "If it verifies the uv bootstrap, the comment above that fetch must stop saying the "
+            "bytes are unverified; if it verifies something else, say which."
+        )
+
+
+class TestDocumentedVerifyPathIsReal:
+    """``install.sh.sha256`` becomes a user-facing integrity check — with its limits stated.
+
+    The pin already existed, documented purely as a maintainer drift-detection artifact
+    (``deploy/website/README.md`` §1). Documenting it as a user verification path costs nothing
+    and is the one option in #2582 that hands a cautious user a real choice today — but ONLY
+    because the digest is fetched from a different origin than the script. A digest served by
+    the host that serves the script proves almost nothing against that host: it hands you both,
+    consistently. So the assertion that carries the security property here is the ORIGIN of the
+    digest URL, not the presence of a ``shasum`` line.
+
+    And a recipe whose security property cannot be stated precisely would be item 1 of the same
+    issue in a third costume, so the prose is required to say what the check does NOT prove.
+    """
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def section(cls) -> str:
+        body = markdown_section(_GUIDE.read_text(encoding="utf-8"), VERIFY_HEADING)
+        assert body, (
+            f"{_GUIDE} has no `### {VERIFY_HEADING}` section, so the verify path is undocumented "
+            "where users read install instructions."
+        )
+        return body
+
+    def test_the_section_documents_exactly_one_recipe(self, section: str) -> None:
+        recipes = verify_recipes(section)
+        assert len(recipes) == 1, (
+            f"expected exactly one fenced verify recipe in `{VERIFY_HEADING}`, found "
+            f"{len(recipes)}. Two recipes in one section is two things to keep in step."
+        )
+
+    def test_the_digest_comes_from_a_different_origin_than_the_script(self, section: str) -> None:
+        """THE security property. Everything else in this class is hygiene around it.
+
+        A same-origin digest is defeated by the same compromise it is supposed to detect, so a
+        "simplification" to a personalclaw.dev digest would leave the recipe looking identical
+        and proving nothing. Asserted on the HOST of the URL that fetches the pin, so rehosting
+        the digest anywhere off the serving origin stays green and folding it back in reds.
+        """
+        (recipe,) = verify_recipes(section)
+        digest_urls = [u for u in urls(recipe) if u.endswith(_PIN.name)]
+        assert digest_urls, (
+            f"the recipe never fetches {_PIN.name} from a URL, so the digest it checks against "
+            f"can only have come from the same place as the script:\n{recipe}"
+        )
+        for url in digest_urls:
+            assert host_of(url) != SERVED_HOST, (
+                f"the digest is fetched from {host_of(url)}, the same host that serves the "
+                "script. That host can serve a modified script AND a matching digest, so the "
+                "check would prove nothing against exactly the attacker it appears to stop."
+            )
+
+    def test_the_recipe_checks_the_digest_instead_of_printing_it(self, section: str) -> None:
+        """``shasum -a 256 install.sh`` prints a hash a user must eyeball. ``-c`` decides."""
+        (recipe,) = verify_recipes(section)
+        assert re.search(r"\bsha(?:sum -a 256|256sum)\s+-c\b", recipe), (
+            "the recipe hashes the download but never runs a `-c` check, so the comparison is "
+            f"left to the reader's eyes:\n{recipe}"
+        )
+
+    def test_the_downloaded_filename_matches_the_pin(self, section: str) -> None:
+        """``shasum -c`` resolves the name INSIDE the digest file, so the two must agree.
+
+        This is not style: the pin reads ``<digest>  install.sh``, so a recipe that saved the
+        download as ``pc-install.sh`` would fail for every user with "No such file or
+        directory" while looking perfectly reasonable in review.
+        """
+        (recipe,) = verify_recipes(section)
+        pinned_name = _PIN.read_text(encoding="utf-8").split()[1]
+        match = re.search(rf"-o\s+(\S+)\s+\S*{re.escape(SERVED_HOST)}/install\b", recipe)
+        assert match, f"the recipe does not save the served script to a named file:\n{recipe}"
+        assert match.group(1) == pinned_name, (
+            f"the recipe saves the script as {match.group(1)!r} but the pin names "
+            f"{pinned_name!r}, so `shasum -c` cannot find the file it is asked to check."
+        )
+
+    def test_the_prose_states_what_the_check_does_not_prove(self, section: str) -> None:
+        """An overclaimed verify path is the #2582 item-1 defect wearing a new hat.
+
+        Two disclosures are required because two different readers get burned: the one who would
+        move the digest to the serving origin (needs the same-host caveat) and the one who would
+        read "verified" as "safe" (needs the explicit limit). Vocabulary again only makes the red
+        legible — the origin assertion above is what is load-bearing.
+        """
+        assert re.search(r"(?i)same (?:host|origin)", section), (
+            "the section never explains that a same-origin digest would prove almost nothing, "
+            "so the one property the recipe depends on reads as an arbitrary detail."
+        )
+        assert re.search(r"(?i)(does not defeat|does not prove|not by itself proof)", section), (
+            "the section never states a limit of the check. A digest that is not described "
+            "precisely gets read as end-to-end integrity, which it is not."
+        )
+
+    def test_the_recipe_is_not_duplicated_across_docs(self) -> None:
+        """#2554's lesson, applied to the thing that would repeat it.
+
+        Three files now point at this recipe (``README.md``, ``deploy/website/README.md``, and
+        the installer's own comment). If any of them grows its own copy of the commands, the
+        copies drift and the wrong one is the one someone runs.
+        """
+        counts = {
+            path.name: len(verify_recipes(path.read_text(encoding="utf-8")))
+            for path in (_REPO_README, _GUIDE, _DEPLOY_README)
+        }
+        assert sum(counts.values()) == 1, (
+            f"the verify recipe appears {sum(counts.values())} times across the docs "
+            f"({counts}). Keep one copy and link to it."
+        )
+
+    def test_every_pointer_to_the_recipe_resolves(self, section: str) -> None:
+        """A verify path a user cannot find is not a user-facing option.
+
+        The heading's slug is the anchor the two READMEs link to; renaming the heading without
+        updating them leaves three dead ends and a recipe nobody reaches.
+        """
+        anchor = "#" + VERIFY_HEADING.lower().replace(" ", "-")
+        for path in (_REPO_README, _DEPLOY_README):
+            assert anchor in path.read_text(encoding="utf-8"), (
+                f"{path.name} does not link to {anchor}, so a reader there is not told the "
+                "verify path exists."
+            )
+        assert VERIFY_HEADING in _INSTALLER.read_text(encoding="utf-8"), (
+            "the installer's uv-bootstrap comment points users at the verify path by name; "
+            f"it no longer names {VERIFY_HEADING!r}."
+        )
 
 
 # ── header truth: the rail over the defect this file was written for ─────────────────
@@ -868,3 +1375,115 @@ class TestParsersAreNotVacuous:
     def test_defined_funcs_finds_the_real_ones(self, installer_text: str) -> None:
         found = defined_funcs(installer_text)
         assert {"main", "ensure_uv", "install_personalclaw", "offer_setup"} <= found
+
+    def test_released_versions_reads_the_real_history_newest_first(self) -> None:
+        history = released_versions(_CHANGELOG.read_text(encoding="utf-8"))
+        assert LONG_STANDING_RELEASES <= set(history), (
+            f"parser lost published releases: {sorted(LONG_STANDING_RELEASES - set(history))}. "
+            "The floor derivation reads history[1], so a parser that drops a heading silently "
+            "moves the floor."
+        )
+        assert history == sorted(history, key=version_key, reverse=True), (
+            f"releases came back out of order ({history!r}), so history[1] is not 'the previous "
+            "release' and the floor would be pinned to the wrong version."
+        )
+
+    def test_released_versions_ignores_unreleased_and_prereleases(self) -> None:
+        text = "## [Unreleased]\n\n## [9.9.9] — 2030-01-01\n\n## [9.9.8-rc1] — 2029-12-01\n"
+        assert released_versions(text) == ["9.9.9"]
+
+    def test_installer_constant_reads_a_value_and_admits_absence(self) -> None:
+        assert installer_constant('X="1"\nPC_MIN_VERSION="0.9.9"\n', FLOOR_CONST) == "0.9.9"
+        assert installer_constant('PC_PACKAGE="personalclaw"\n', FLOOR_CONST) is None
+        # An assignment the shell would not see at load time is not the constant.
+        assert installer_constant('  PC_MIN_VERSION="0.9.9"\n', FLOOR_CONST) is None
+
+    def test_uv_tool_install_lines_ignores_a_commented_invocation(self) -> None:
+        """The measured hole this parser exists to close.
+
+        The installer's header tabulates the very command being asserted, so a parser that read
+        comments would let the header satisfy a rail about the code — the shell-script twin of
+        the :func:`code_only` finding.
+        """
+        script = (
+            "#   3. `uv tool install --upgrade personalclaw>=$PC_MIN_VERSION` (header prose)\n"
+            '    uv tool install --upgrade "$PC_PACKAGE>=$PC_MIN_VERSION"\n'
+        )
+        found = uv_tool_install_lines(script)
+        assert len(found) == 1 and found[0].startswith("uv tool install"), found
+        assert uv_tool_install_lines("#   uv tool install --upgrade personalclaw\n") == []
+
+    def test_uv_tool_install_lines_reports_an_unfloored_invocation(self) -> None:
+        """The mutant that matters: the pre-#2582 command, which the rail must not accept."""
+        (line,) = uv_tool_install_lines('    uv tool install --upgrade "$PC_PACKAGE"\n')
+        assert f">=${FLOOR_CONST}" not in line
+
+    def test_version_key_orders_releases_and_refuses_junk(self) -> None:
+        assert version_key("0.1.10") > version_key("0.1.9") > version_key("0.1.2")
+        assert version_key("0.2.0") > version_key("0.1.99")
+        for junk in ("0.1", "0.1.2rc1", "0.1.2.3", "latest"):
+            with pytest.raises(ValueError):
+                version_key(junk)
+
+    def test_pyproject_version_reads_the_project_table(self) -> None:
+        assert pyproject_version('[project]\nname = "x"\nversion = "1.2.3"\n') == "1.2.3"
+        # Not fooled by a version key in some other table — the reason this uses tomllib.
+        assert pyproject_version('[project]\nversion = "1.2.3"\n[tool.x]\nversion = "9.9.9"\n') == (
+            "1.2.3"
+        )
+
+    def test_comment_block_above_takes_only_the_attached_block(self) -> None:
+        text = "# far above\n\ncode_between\n# attached one\n# attached two\nif have curl; then\n"
+        block = comment_block_above(text, UV_FETCH_GUARD)
+        assert "attached one" in block and "attached two" in block
+        assert "far above" not in block, "the walk did not stop at the first non-comment line"
+
+    def test_comment_block_above_is_empty_when_the_line_is_absent(self) -> None:
+        """So the attachment case is a real floor rather than a formality."""
+        assert comment_block_above("# a comment\nsomething_else\n", UV_FETCH_GUARD) == ""
+
+    def test_fenced_blocks_returns_bodies_not_fences(self) -> None:
+        blocks = fenced_blocks("intro\n```bash\nfirst\n```\nmid\n```\nsecond\n```\nend\n")
+        assert blocks == ["first\n", "second\n"]
+
+    def test_fenced_blocks_sees_a_block_nested_in_a_list(self) -> None:
+        """The measured hole: a duplicate recipe indented inside a numbered list was invisible.
+
+        ``deploy/website/README.md`` writes its commands that way, so this is not a hypothetical
+        indentation — it is the shape a second copy would actually take, and it survived the
+        duplication rail until this case existed.
+        """
+        doc = "1. do this:\n\n   ```bash\n   nested command\n   ```\n\n2. then that\n"
+        assert fenced_blocks(doc) == ["   nested command\n"]
+
+    def test_verify_recipes_needs_both_halves(self) -> None:
+        fetch_only = f"```bash\ncurl -fsSL {SERVED_URL} | sh\n```\n"
+        hash_only = "```sh\nshasum -a 256 install.sh > install.sh.sha256\n```\n"
+        assert verify_recipes(fetch_only) == []
+        assert verify_recipes(hash_only) == [], (
+            "the maintainer's pin-regeneration command counts as a user verify recipe, which "
+            "would make the duplication count wrong and the origin assertion vacuous."
+        )
+        both = (
+            f"```bash\ncurl -o install.sh {SERVED_URL}\nshasum -a 256 -c install.sh.sha256\n```\n"
+        )
+        assert len(verify_recipes(both)) == 1
+
+    def test_markdown_section_stops_at_the_next_heading(self) -> None:
+        doc = "### Target\nbody\n\n### Next\nnot mine\n"
+        body = markdown_section(doc, "Target")
+        assert "body" in body and "not mine" not in body
+        assert markdown_section(doc, "Absent") == ""
+
+    def test_markdown_section_keeps_a_shell_comment_inside_a_fence(self) -> None:
+        """A column-0 ``#`` in a code block is not a heading — the recipe contains one."""
+        doc = "### Target\n```sh\n# a shell comment\nrun me\n```\n### Next\n"
+        assert "run me" in markdown_section(doc, "Target")
+
+    def test_host_of_isolates_the_host(self) -> None:
+        assert host_of("https://raw.githubusercontent.com/o/r/main/x.sha256") != SERVED_HOST
+        assert host_of(f"https://{SERVED_HOST}/install.sh.sha256") == SERVED_HOST
+        assert host_of("not a url") == ""
+
+    def test_urls_strips_trailing_markdown_punctuation(self) -> None:
+        assert urls("see (https://example.com/a.sha256), then") == ["https://example.com/a.sha256"]

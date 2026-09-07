@@ -46,6 +46,18 @@ and an unenforced instruction drifts the first time one side is edited.
 
    `tests/test_website_installer.py` reds if the pin and the file disagree. That red is the
    only moment anyone is reminded the mirror exists, which is exactly what it is for.
+
+   **The pin has a second consumer now, and it is a user.** Because it is committed here — a
+   *different origin* from personalclaw.dev — a cautious user can fetch the served script,
+   fetch this digest from `raw.githubusercontent.com`, and check one against the other before
+   executing anything. The recipe and the precise statement of what it does and does not prove
+   live in [docs/guides/getting-started.md § Verify the
+   one-liner](../../docs/guides/getting-started.md#verify-the-one-liner); it is deliberately
+   *not* repeated here, because two hand-maintained copies of one instruction is the defect in
+   #2554. Two consequences before you edit either file: the pin's `install.sh` filename is what
+   makes the user's `shasum -a 256 -c` resolve, so it must keep naming that file; and a mirror
+   you forget to re-apply now reads to a verifying user as a possible tamper rather than as
+   nothing at all.
 3. `full.yml`'s `install-smoke` job compares the pin against the bytes personalclaw.dev
    really serves and reds on any difference — so a forgotten step 1 surfaces on the next push
    to `main` or nightly run, rather than three weeks later in a bug report.
