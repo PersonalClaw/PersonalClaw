@@ -16,16 +16,25 @@ malware never is.
 Reuses ``history._SENSITIVE_TOOL_PATTERNS`` (the credential/secret path set) so
 "reads ~/.aws" detection has one source of truth. Not a sandbox — static
 inspection only; it reduces risk, it does not contain execution.
+
+The DANGEROUS band is additionally scoped by EXECUTION REACHABILITY (issue #2526) — the
+"Execution reachability" section below states the rule in full. In short: a matched
+literal nothing in the bundle can execute is *disclosed* as a ``warning`` rather than
+refused outright, because it is a string, not a payload. Default-deny throughout — a
+match stays DANGEROUS unless non-reachability is PROVED, so the failure mode is a false
+block and never a false pass.
 """
 
 from __future__ import annotations
 
+import ast
+import json
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 # One source of truth for "touches a credential/secret path" (IMDS, ~/.aws, …).
 from personalclaw.history import _SENSITIVE_TOOL_PATTERNS
@@ -60,16 +69,44 @@ class TrustTier(str, Enum):
     COMMUNITY = "community"  # arbitrary — full gate (the default)
 
 
+class Reachability(str, Enum):
+    """Whether the code a DANGEROUS match sits in can EXECUTE that match.
+
+    FOUR states, not two, and that is the point. "We could not tell" must never render
+    as "safe": a file the analysis could not read is reported as its own outcome
+    (:data:`UNPARSEABLE`) and treated exactly like :data:`REACHABLE`, so an unreadable
+    file can never be mistaken for a clean one by a reviewer reading the report.
+    """
+
+    #: Nothing was asked — the finding is not a DANGEROUS script match, or the caller
+    #: scanned a bare text blob with no bundle around it to reason over.
+    NOT_ANALYSED = "not_analysed"
+    #: A clause refused. The match is presumed executable and stays DANGEROUS.
+    REACHABLE = "reachable"
+    #: Every clause held. The match is a string the bundle cannot run → WARNING.
+    UNREACHABLE = "unreachable"
+    #: The file is not parseable Python, so there is no AST to reason over. Its own
+    #: state, and DANGEROUS — never folded into either of the two answers above.
+    UNPARSEABLE = "unparseable"
+
+
 @dataclass
 class Finding:
     """One matched signal. ``severity`` is this finding's own classification;
-    the report's verdict is the max across findings (after tier modulation)."""
+    the report's verdict is the max across findings (after tier modulation).
+
+    ``reachability`` records what the execution-reachability pass concluded about this
+    match and ``reachability_reason`` the sentence a reviewer needs to check it. Both are
+    disclosure, never a softener: a finding re-scored to WARNING keeps its rule, path,
+    surface and evidence byte-for-byte, so the user is still told and still consents."""
 
     surface: str  # "script" | "manifest" | "frontmatter" | "supply_chain"
     severity: Verdict
     rule: str  # stable short id, e.g. "destructive_root"
     path: str  # staged-relative file path ("" for whole-content surfaces)
     evidence: str  # the matched snippet (truncated, for the UX)
+    reachability: Reachability = Reachability.NOT_ANALYSED
+    reachability_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +115,8 @@ class Finding:
             "rule": self.rule,
             "path": self.path,
             "evidence": self.evidence,
+            "reachability": self.reachability.value,
+            "reachability_reason": self.reachability_reason,
         }
 
 
@@ -356,6 +395,598 @@ def _evidence(text: str, match: "re.Match[str]") -> str:
     return f"{prefix}{head}{sep}{body}".rstrip()
 
 
+# ── Execution reachability — scoping the DANGEROUS band (issue #2526) ───────
+#
+# THE DEFECT. The DANGEROUS rules above match a string SHAPE and are blind to whether
+# anything executes that string. So a bundle whose test fixture holds a real attack
+# string — the string that proves its input validation refuses the attack — was judged
+# identically to a bundle that runs it. DANGEROUS is terminal and non-consentable, so
+# the fixture permanently blocked the install: `spec-builder` and `ops`, the two most
+# security-conscious bundles in the suite, could not be installed AT ALL, while a
+# bundle that never tested its validation shipped clean. The rule as written taught
+# authors to delete their adversarial tests or obfuscate the strings until the scanner
+# stopped recognising them — both of which make the ecosystem less safe.
+#
+# WHY REACHABILITY AND NOT THE TWO EASIER FIXES. #2526 offered three directions.
+#
+#   * "Skip test files" was rejected there on the grounds that a `test_*.py` ships
+#     inside the bundle and is importable, so exempting it "would create a place to
+#     park a payload". THAT OBJECTION DOES NOT APPLY HERE, and the distinction is the
+#     whole basis of this code: parking a payload requires something that can execute
+#     it. A string nothing can execute is not a payload — it is a string. The predicate
+#     below is therefore stated on the AST and NEVER on a filename, so naming a file
+#     `test_evil.py` buys an attacker exactly nothing (asserted, in the reachability
+#     suite's attack table).
+#   * "Downgrade a match on a test surface to WARNING" was rejected because it leans on
+#     the install-consent dialog, and #2513 documents that surface as currently
+#     defective (an explicit `"network": false` printed as "not declared", cron cadence
+#     rendered as raw crontab, the rule never glossed). Turning a terminal block into a
+#     consentable warning the user may not reliably read trades a false-positive block
+#     for a real-payload pass. Reachability scoping ELIMINATES the false positive
+#     instead of downgrading it: the two blocked bundles stop matching the terminal
+#     band because their fixtures genuinely cannot run.
+#   * "Make authors build adversarial strings at runtime" was rejected because the
+#     workaround is exactly the obfuscation an attacker already uses (`"rm -" + "rf /"`
+#     scores CLEAN today), so it filters honest authors and nobody else — and it
+#     degrades the fixtures, whose entire job is to be read.
+#
+# THE RULE. A DANGEROUS match is re-scored to WARNING — never lower, never dropped —
+# iff ALL FIVE clauses below hold. Default-deny: fail any one, or fail to evaluate one,
+# and the finding stays DANGEROUS. The failure mode is a false BLOCK (annoying, and
+# fixable by the author) and never a false PASS.
+#
+#   L1  LITERAL, NOT CODE. The file parses as Python and every match of this rule that
+#       the scanner could have reported lies wholly inside a ``str`` constant. A `.sh`
+#       file is never eligible: its text IS its program. Decided on AST spans, not on
+#       text — a docstring or comment mentioning `rm -rf /` is not a call to it, and a
+#       text scan that counts it trains readers to ignore the rail.
+#   L2  NO EXECUTION SINK IN THE FILE. The file contains no sink that could receive a
+#       string: no ``os.system``/``popen``/``exec*``/``spawn*``/``fork``, no
+#       ``eval``/``exec``/``compile``/``__import__``, no ``subprocess`` call whose
+#       ``shell`` is anything but a literal ``False``, and every spawn site's argv[0] is
+#       a literal program name that is not a shell, not an interpreter and not a path.
+#       This is the clause that does the work, and it is deliberately stated at MODULE
+#       scope rather than on the literal's argument position. "Is this literal passed to
+#       a sink?" is defeated by two lines (`c = "rm -rf / " + x; os.system(c)`), so the
+#       question asked is the answerable one: can this file hand ANY string to an
+#       interpreter? If it can, the literal is treated as reachable.
+#   L3  NO EXPORT. Nothing else in the bundle can lift the literal out: no other module
+#       imports it, no sibling names its file or module stem in a string, no script or
+#       config in the bundle mentions it, and ``app.json`` does not declare it. Prose is
+#       deliberately excluded — a README saying "run pytest test_provider.py" is
+#       documentation, and counting it would make L3 unsatisfiable for every bundle that
+#       documents its own test command.
+#   L4  THE GRAPH IS TRUSTWORTHY. L3 is a static claim, so it is void if the bundle can
+#       rewrite its own import graph at runtime. Any ``eval``/``exec``/``compile``/
+#       ``__import__``/``importlib``/``runpy``/``pickle``/``marshal``/``ctypes``, any
+#       ``getattr`` with a computed name, any ``import *``, any ``sys.path`` mutation —
+#       or any Python/loader file the walk could not read — ANYWHERE in the bundle
+#       revokes the downgrade for the whole bundle.
+#   L5  IMPORTING IT IS A NO-OP. Unreachable is not never-imported: a test runner, or a
+#       curious user, may import the module. Its top level must contain no call outside
+#       a small pure allowlist, so the payload cannot fire on import.
+#
+# RESIDUAL, STATED NOT HIDDEN. A bundle can ship a module of pure inert data that
+# nothing references and get its literal disclosed-and-consentable instead of refused.
+# That is a real reduction in the floor for that one shape. The counterweight is
+# measured, not asserted: the shipped band already scores ``"rm -" + "rf /"`` as CLEAN
+# and ``os.system("rm -rf /")`` as WARNING, so the capability given up is refusing the
+# attacker who wrote their payload as a plain literal AND left it unreachable AND did
+# not obfuscate it — and even they still get the finding, the rule id, the evidence and
+# a required click. See ``tests/security/test_scanner_reachability.py``.
+
+#: argv[0] values that make the spawned process an interpreter OF ITS ARGUMENTS. A
+#: string handed to any of these becomes code, so a file with such a spawn site can run
+#: any literal it holds. The shell names are the same family the ``remote_exec_pipe`` /
+#: ``obfuscated_exec`` rules above already recognise (``(?:ba|z|da)?sh``); a rail in the
+#: reachability suite pins this set against the pattern catalog so the two cannot drift.
+_SHELL_ARGV0 = frozenset(
+    {
+        "sh",
+        "bash",
+        "zsh",
+        "dash",
+        "ksh",
+        "fish",
+        "ash",
+        "csh",
+        "tcsh",
+        "cmd",
+        "cmd.exe",
+        "powershell",
+        "powershell.exe",
+        "pwsh",
+        "env",
+        "python",
+        "python3",
+        "perl",
+        "ruby",
+        "node",
+        "deno",
+        "bun",
+        "php",
+        "awk",
+        "sed",
+        "osascript",
+        "xargs",
+        "eval",
+    }
+)
+
+#: Attribute names that execute a string (or a program) without going through
+#: ``subprocess``. ``os.system`` and ``os.popen`` are what the ``python_exec`` rule
+#: above already names; the ``exec*``/``spawn*``/``fork`` family is the same capability
+#: spelled differently, and default-deny means the whole family counts.
+_EXEC_ATTRS = frozenset(
+    {
+        "system",
+        "popen",
+        "execl",
+        "execle",
+        "execlp",
+        "execv",
+        "execve",
+        "execvp",
+        "execvpe",
+        "spawnl",
+        "spawnle",
+        "spawnlp",
+        "spawnv",
+        "spawnve",
+        "spawnvp",
+        "posix_spawn",
+        "posix_spawnp",
+        "fork",
+        "forkpty",
+        "spawn",
+    }
+)
+
+#: Builtins that turn a string into code, or that make a static name resolution a lie.
+#: ``eval``/``exec`` are what the ``eval_exec`` and ``python_exec`` rules name; ``compile``
+#: and ``__import__`` are the same capability one call earlier.
+_DYNAMIC_BUILTINS = frozenset({"eval", "exec", "compile", "__import__"})
+
+#: Modules whose mere presence means the import graph, or a byte string, can become code.
+_DYNAMIC_MODULES = frozenset(
+    {"importlib", "runpy", "pickle", "marshal", "dill", "ctypes", "cffi", "imp"}
+)
+
+#: Callables allowed at module level under L5 — pure, no execution, no I/O beyond
+#: resolving where the file is. Anything else at module level revokes the downgrade.
+_INERT_TOP_LEVEL_CALLS = frozenset(
+    {
+        "Path",
+        "Path(__file__).resolve",
+        "os.path.dirname",
+        "os.path.abspath",
+        "os.path.join",
+        "os.environ.get",
+        "os.getenv",
+        "re.compile",
+        "frozenset",
+        "set",
+        "dict",
+        "list",
+        "tuple",
+        "len",
+        "sorted",
+        "range",
+        "logging.getLogger",
+        "shutil.which",
+        "pytest.mark.skipif",
+        "pytest.importorskip",
+    }
+)
+
+#: Call prefixes that spawn a process. ``asyncio.create_subprocess_shell`` takes a
+#: command STRING and is separately fatal, which the shell check below catches.
+_SPAWN_FUNCS = ("subprocess.", "asyncio.create_subprocess_")
+
+#: ``subprocess`` names that are exceptions or constants, not spawns — ``ops``'s test
+#: module references ``subprocess.TimeoutExpired`` and spawns nothing, and calling that
+#: an execution sink would be false.
+_SUBPROCESS_NON_SPAWN = frozenset(
+    {"TimeoutExpired", "CalledProcessError", "SubprocessError", "PIPE", "STDOUT", "DEVNULL"}
+)
+
+#: Non-Python surfaces that can LOAD OR RUN a file, and so count as a reference under L3.
+_LOADER_SUFFIXES = frozenset(
+    {
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".fish",
+        ".ps1",
+        ".bat",
+        ".cmd",
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".rb",
+        ".pl",
+        ".php",
+        ".lua",
+        ".json",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".cfg",
+        ".ini",
+        ".mk",
+    }
+)
+_LOADER_NAMES = frozenset({"Makefile", "makefile", "Dockerfile", "Procfile", "justfile"})
+
+#: A re-scored finding never lands below this. WARNING keeps it on the consent surface
+#: with rule, path and evidence intact; the trust tier then modulates it exactly as it
+#: modulates any other warning (no special case, and no path to CLEAN).
+_REACH_FLOOR = Verdict.WARNING
+
+
+@dataclass
+class _FileFacts:
+    """What one Python file's AST says about executing strings and reaching modules."""
+
+    parsed: bool
+    str_spans: list[tuple[int, int]]  # (start, end) text offsets of every ``str`` constant
+    imports: set[str]
+    string_literals: set[str]
+    dynamic: set[str]  # L4 evidence: names that make the import graph untrustworthy
+    sinks: set[str]  # L2 evidence: sites in THIS file that could run a string
+    top_level_calls: set[str]  # L5 evidence: what importing this module would call
+
+
+def _offset_table(text: str) -> list[int]:
+    """Line-start offsets, so an AST ``(lineno, col_offset)`` becomes a flat offset."""
+    starts = [0]
+    for line in text.splitlines(keepends=True):
+        starts.append(starts[-1] + len(line))
+    return starts
+
+
+def _argv0_of(call: ast.Call) -> tuple[bool, str | None]:
+    """``(pinned, program)`` for a spawn site's argv[0].
+
+    ``pinned`` is False whenever the program name is not a plain string literal — the
+    default-deny answer, because an argv assembled at runtime can name anything. A bare
+    command STRING rather than a list is never pinned either: that form is only ever run
+    through a shell."""
+    if not call.args:
+        return False, None
+    first = call.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return False, first.value
+    if isinstance(first, (ast.List, ast.Tuple)) and first.elts:
+        head = first.elts[0]
+        if isinstance(head, ast.Constant) and isinstance(head.value, str):
+            return True, head.value
+    return False, None
+
+
+def _spawn_names(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """``(prefixes, bare_names)`` under which this file can reach a spawn API.
+
+    An import alias must not be a way out: ``import subprocess as sp`` and
+    ``from subprocess import run`` are the same capability as ``subprocess.run``, spelled
+    so a prefix match on the literal text ``"subprocess."`` would miss it. Collected in
+    its own pass so the answer does not depend on AST walk order.
+    """
+    prefixes: set[str] = set(_SPAWN_FUNCS)
+    bare: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] == "subprocess" and alias.asname:
+                    prefixes.add(f"{alias.asname}.")
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            if root not in {"subprocess", "asyncio"}:
+                continue
+            for alias in node.names:
+                if alias.name in _SUBPROCESS_NON_SPAWN:
+                    continue
+                if root == "asyncio" and not alias.name.startswith("create_subprocess_"):
+                    continue
+                bare.add(alias.asname or alias.name)
+    return prefixes, bare
+
+
+def _note_call(
+    node: ast.Call, facts: _FileFacts, spawn_prefixes: set[str], spawn_bare: set[str]
+) -> None:
+    """Record what one call site means for L2 (can it run a string?) and L4."""
+    name = ast.unparse(node.func)
+    if name == "getattr" and (len(node.args) < 2 or not isinstance(node.args[1], ast.Constant)):
+        facts.dynamic.add("getattr with a computed name")
+    # A bare call to an execution primitive — `from os import system; system(cmd)` — is
+    # the same sink as `os.system`, and reaches it without ever forming an Attribute.
+    if isinstance(node.func, ast.Name) and node.func.id in _EXEC_ATTRS:
+        facts.sinks.add(f"{node.func.id}()")
+        return
+    if name.startswith("subprocess.") and name.split(".")[-1] in _SUBPROCESS_NON_SPAWN:
+        return
+    if not (name.startswith(tuple(sorted(spawn_prefixes))) or name in spawn_bare):
+        return
+    if name.endswith("create_subprocess_shell"):
+        facts.sinks.add(name)
+        return
+    shell = next((kw.value for kw in node.keywords if kw.arg == "shell"), None)
+    if shell is not None and not (isinstance(shell, ast.Constant) and shell.value is False):
+        facts.sinks.add(f"{name}(shell=…)")
+        return
+    pinned, program = _argv0_of(node)
+    if not pinned:
+        facts.sinks.add(f"{name} with an argv the source does not pin")
+        return
+    leaf = (program or "").replace("\\", "/").rsplit("/", 1)[-1]
+    if "/" in (program or "") or leaf in _SHELL_ARGV0 or leaf.endswith((".sh", ".bash", ".py")):
+        facts.sinks.add(f"{name} spawning {program!r}")
+
+
+def _analyse_python(text: str) -> _FileFacts:
+    """AST facts for one Python file. An unparseable file returns ``parsed=False`` and
+    nothing else — the caller must treat that as its own outcome, never as "no sinks"."""
+    facts = _FileFacts(True, [], set(), set(), set(), set(), set())
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):  # ValueError: NUL bytes / oversized literals
+        return _FileFacts(False, [], set(), set(), set(), set(), set())
+
+    starts = _offset_table(text)
+    spawn_prefixes, spawn_bare = _spawn_names(tree)
+
+    def off(lineno: int, col: int) -> int:
+        return starts[lineno - 1] + col
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            facts.string_literals.add(node.value)
+            if node.end_lineno is not None and node.end_col_offset is not None:
+                facts.str_spans.append(
+                    (off(node.lineno, node.col_offset), off(node.end_lineno, node.end_col_offset))
+                )
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                facts.imports.update({root, alias.name})
+                if root in _DYNAMIC_MODULES:
+                    facts.dynamic.add(f"imports {root}")
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            facts.imports.add(root)
+            for alias in node.names:
+                facts.imports.add(alias.name)
+                if alias.name == "*":
+                    facts.dynamic.add("star import")
+            if root in _DYNAMIC_MODULES:
+                facts.dynamic.add(f"imports {root}")
+        elif isinstance(node, ast.Name) and node.id in _DYNAMIC_BUILTINS:
+            facts.dynamic.add(f"{node.id}()")
+            facts.sinks.add(f"{node.id}()")
+        elif isinstance(node, ast.Attribute):
+            if node.attr in _EXEC_ATTRS:
+                facts.sinks.add(f".{node.attr}")
+            if node.attr == "path" and isinstance(node.value, ast.Name) and node.value.id == "sys":
+                # `sys.path.insert(...)` makes any static import resolution a guess.
+                facts.dynamic.add("sys.path mutation")
+        if isinstance(node, ast.Call):
+            _note_call(node, facts, spawn_prefixes, spawn_bare)
+
+    for stmt in tree.body:
+        if isinstance(
+            stmt,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Import, ast.ImportFrom),
+        ):
+            continue
+        for inner in ast.walk(stmt):
+            if isinstance(inner, ast.Call):
+                facts.top_level_calls.add(ast.unparse(inner.func))
+
+    return facts
+
+
+def _is_loader_name(name: str) -> bool:
+    """True for a non-Python file that could load or run code (and so counts under L3)."""
+    return Path(name).suffix.lower() in _LOADER_SUFFIXES or name in _LOADER_NAMES
+
+
+def _manifest_tokens(manifest_text: str | None) -> set[str]:
+    """Every module-ish token ``app.json`` names, so a DECLARED entry point is never
+    mistaken for an unreferenced file just because no ``import`` statement mentions it.
+    An unreadable manifest yields ``{"*"}`` — assume every file is named (default-deny)."""
+    if manifest_text is None:
+        return set()
+    try:
+        data: Any = json.loads(manifest_text)
+    except ValueError:
+        return {"*"}
+    out: set[str] = set()
+    for token in re.findall(r"[A-Za-z_][A-Za-z0-9_./-]*", json.dumps(data)):
+        out.update({token, token.split(":")[0], Path(token).stem})
+    return out
+
+
+class _BundleReach:
+    """The per-bundle reachability analysis: built once from the texts the scan already
+    read, then queried per DANGEROUS finding.
+
+    Built from the walk's own bytes rather than by re-reading the tree, so the analysis
+    answers for exactly the content the scanner judged — there is no second read for a
+    payload to change under.
+    """
+
+    def __init__(
+        self,
+        *,
+        py_texts: dict[str, str],
+        loader_blobs: Iterable[str],
+        manifest_text: str | None,
+        opaque: Iterable[str],
+    ) -> None:
+        self._py_texts = py_texts
+        self._facts = {rel: _analyse_python(text) for rel, text in py_texts.items()}
+        self._loader_blob = "\n".join(loader_blobs)
+        self._manifest = _manifest_tokens(manifest_text)
+        # L4: a Python or loader file the walk could not read (oversize, unreadable) is a
+        # hole in the graph, not an absence of edges.
+        self._untrustworthy: str | None = next(
+            (f"{rel}: too large or unreadable to analyse" for rel in sorted(opaque)), None
+        )
+        if self._untrustworthy is None:
+            self._untrustworthy = next(
+                (
+                    f"{rel}: {sorted(f.dynamic)[0]}"
+                    for rel, f in sorted(self._facts.items())
+                    if f.dynamic
+                ),
+                None,
+            )
+
+    # ── L3 ──
+
+    def _referenced_elsewhere(self, rel: str) -> str | None:
+        stem = Path(rel).stem
+        name = Path(rel).name
+        for other, facts in sorted(self._facts.items()):
+            if other == rel:
+                continue
+            if stem in facts.imports:
+                return f"{other} imports it"
+            if stem in facts.string_literals or rel in facts.string_literals:
+                return f"{other} names it in a string"
+            if name in facts.string_literals:
+                return f"{other} names it in a string"
+        if "*" in self._manifest:
+            return "app.json is unreadable, so every file is assumed declared"
+        if stem in self._manifest:
+            return "app.json names it"
+        if name in self._loader_blob or f"{stem} " in self._loader_blob:
+            return "a script or config in the bundle names it"
+        return None
+
+    # ── the decision ──
+
+    def decide(self, finding: Finding) -> tuple[Reachability, str]:
+        """L1-L5 for one DANGEROUS finding, plus the sentence that justifies it."""
+        rel = finding.path
+        if not rel.endswith(".py"):
+            return Reachability.REACHABLE, "not Python — a script's text is its program (L1)"
+        facts = self._facts.get(rel)
+        text = self._py_texts.get(rel)
+        if facts is None or text is None:
+            return Reachability.REACHABLE, "file was not read as Python (L1)"
+        if not facts.parsed:
+            return Reachability.UNPARSEABLE, "file does not parse as Python (L1)"
+        spans = _rule_spans(text, finding.rule)
+        if not spans:
+            # No span means the pass cannot say WHERE the objection is, so it declines to
+            # have an opinion. The invisible-character rules land here by construction:
+            # a bidi override is a rendering attack, not a string a bundle merely holds.
+            return Reachability.REACHABLE, "rule has no locatable span (L1)"
+        if not all(
+            any(s <= start and end <= e for s, e in facts.str_spans) for start, end in spans
+        ):
+            return Reachability.REACHABLE, "match is code, not a string literal (L1)"
+        if facts.sinks:
+            return (
+                Reachability.REACHABLE,
+                f"file can execute a string: {sorted(facts.sinks)[0]} (L2)",
+            )
+        exported = self._referenced_elsewhere(rel)
+        if exported:
+            return Reachability.REACHABLE, f"literal is reachable — {exported} (L3)"
+        if self._untrustworthy:
+            return (
+                Reachability.REACHABLE,
+                f"bundle can rewrite its own graph — {self._untrustworthy} (L4)",
+            )
+        impure = sorted(facts.top_level_calls - _INERT_TOP_LEVEL_CALLS)
+        if impure:
+            return Reachability.REACHABLE, f"module runs {impure[0]} on import (L5)"
+        return (
+            Reachability.UNREACHABLE,
+            "inert literal: not code, this file cannot execute a string, nothing in the "
+            "bundle reaches it, and importing it runs nothing (L1-L5)",
+        )
+
+
+def _rule_spans(text: str, rule: str) -> list[tuple[int, int]]:
+    """Every span in ``text`` this rule could have reported, re-derived by re-running the
+    rule's own regex.
+
+    ALL of them, not just the one the finding names. ``_scan_script`` reports the first
+    match per rule, but a second match of the same rule sitting in CODE means the file
+    really can execute that shape — so L1 must see every candidate or it would clear a
+    file on the strength of its most innocent occurrence.
+
+    ``exfil_sensitive_path`` is derived from two regexes over comment-stripped text. The
+    span that matters for "is this a literal" is the credential path, located here in the
+    RAW text so the offsets line up with the AST; matches on a full-line comment are
+    dropped because ``_scan_script`` strips those before the rule can see them, so they
+    are not candidates for this finding at all.
+    """
+    if rule == "exfil_sensitive_path":
+        return [
+            (m.start(), m.end())
+            for m in _SENSITIVE_RE.finditer(text)
+            if not _on_comment_only_line(text, m.start())
+        ]
+    for name, pattern in _DANGEROUS_SCRIPT:
+        if name == rule:
+            return [(m.start(), m.end()) for m in pattern.finditer(text)]
+    return []
+
+
+def _on_comment_only_line(text: str, pos: int) -> bool:
+    """True when ``pos`` sits on a line whose first non-space char opens a comment — the
+    same predicate :func:`_strip_line_comments` uses, evaluated on raw offsets."""
+    start = text.rfind("\n", 0, pos) + 1
+    end = text.find("\n", pos)
+    stripped = text[start : len(text) if end < 0 else end].lstrip()
+    return stripped.startswith("#") or stripped.startswith("//")
+
+
+def _scope_by_reachability(
+    findings: list[Finding],
+    *,
+    py_texts: dict[str, str],
+    loader_blobs: list[str],
+    manifest_text: str | None,
+    opaque: list[str],
+) -> list[Finding]:
+    """Annotate every DANGEROUS script finding with its execution reachability, and
+    re-score the provably-unreachable ones to :data:`_REACH_FLOOR` (WARNING).
+
+    Order and count are preserved exactly; rule, path, surface and evidence are never
+    touched. Nothing is ever raised and nothing is ever dropped — the only edit is
+    DANGEROUS → WARNING on positive proof, which keeps the finding on the consent surface.
+
+    The analysis is built only when there is a DANGEROUS script finding to ask about, so a
+    clean bundle pays nothing, and once per scan rather than once per finding.
+    """
+    if not any(f.severity is Verdict.DANGEROUS and f.surface == "script" for f in findings):
+        return findings
+    reach = _BundleReach(
+        py_texts=py_texts,
+        loader_blobs=loader_blobs,
+        manifest_text=manifest_text,
+        opaque=opaque,
+    )
+    out: list[Finding] = []
+    for finding in findings:
+        if finding.severity is not Verdict.DANGEROUS or finding.surface != "script":
+            out.append(finding)
+            continue
+        state, reason = reach.decide(finding)
+        severity = _REACH_FLOOR if state is Reachability.UNREACHABLE else finding.severity
+        out.append(
+            replace(finding, severity=severity, reachability=state, reachability_reason=reason)
+        )
+    return out
+
+
 # ── The scanner ─────────────────────────────────────────────────────────────
 
 
@@ -371,6 +1002,13 @@ class SkillScanner:
         staged_dir = Path(staged_dir)
         findings: list[Finding] = []
         surfaces: set[str] = set()
+        # Kept for the reachability pass below, from the walk's OWN bytes: the analysis
+        # must answer for exactly the content the rules judged, with no second read for a
+        # payload to change under.
+        py_texts: dict[str, str] = {}
+        loader_blobs: list[str] = []
+        manifest_text: str | None = None
+        opaque: list[str] = []  # Python/loader files the walk could not read (L4)
 
         if staged_dir.is_dir():
             for path in sorted(staged_dir.rglob("*")):
@@ -380,14 +1018,27 @@ class SkillScanner:
                 # Skip VCS/dependency noise dirs (.git hooks etc. aren't app content).
                 if any(part in _SKIP_DIR_NAMES for part in rel_parts[:-1]):
                     continue
-                try:
-                    if path.stat().st_size > _MAX_FILE_BYTES:
-                        continue
-                    text = path.read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    continue
                 rel = str(path.relative_to(staged_dir))
+                text: str | None = None
+                try:
+                    if path.stat().st_size <= _MAX_FILE_BYTES:
+                        text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    text = None
+                if text is None:
+                    # An unread file (oversize, unreadable) is a HOLE in the reachability
+                    # graph, not an absence of edges — but only when it is a file that
+                    # could hold or run code. A skipped .png proves nothing either way.
+                    if path.suffix.lower() == ".py" or _is_loader_name(path.name):
+                        opaque.append(rel)
+                    continue
                 lname = path.name.lower()
+                if path.suffix.lower() == ".py":
+                    py_texts[rel] = text
+                elif _is_loader_name(path.name):
+                    loader_blobs.append(text)
+                if rel == "app.json":
+                    manifest_text = text
                 if path.suffix.lower() in _SCRIPT_EXTS or _is_under_scripts(rel):
                     surfaces.add("script")
                     findings.extend(self._scan_script(text, rel))
@@ -401,6 +1052,13 @@ class SkillScanner:
                     surfaces.add(surface)
                     findings.extend(self._scan_text(text, rel, surface))
 
+        findings = _scope_by_reachability(
+            findings,
+            py_texts=py_texts,
+            loader_blobs=loader_blobs,
+            manifest_text=manifest_text,
+            opaque=opaque,
+        )
         verdict = self._aggregate(findings, tier)
         return ScanReport(
             verdict=verdict,
@@ -413,7 +1071,11 @@ class SkillScanner:
         """Scan a single text blob. Community tier. ``surface="script"`` runs the
         full destructive-script ruleset (skill-install gate, S3); any other
         surface runs the prose/injection + invisible-char rules (the memory-write
-        injection gate, S5)."""
+        injection gate, S5).
+
+        NO reachability scoping here, by construction: a bare blob has no bundle around
+        it, so non-reachability cannot be proved and the default-deny answer stands. A
+        DANGEROUS blob stays DANGEROUS."""
         findings = (
             self._scan_script(text, "")
             if surface == "script"

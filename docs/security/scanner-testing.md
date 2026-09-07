@@ -160,10 +160,96 @@ Suppressing `_note_baseline_tamper` leaves detection *and* enforcement intact an
 removes the audit trail; that is still a failure, so the rail must red on it rather than
 only on a shrink.
 
+## Execution-reachability scoping of the `DANGEROUS` band
+
+The `DANGEROUS` rules match a string *shape* and are blind to whether anything executes
+that string. A bundle whose test fixture holds a real attack string — the string that
+proves its input validation refuses the attack — was therefore judged identically to a
+bundle that runs it. `DANGEROUS` is terminal and non-consentable, so the fixture
+permanently blocked the install: two first-party bundles could not be installed at all,
+while a bundle that never tested its validation shipped clean. The rule as written taught
+authors to delete their adversarial tests or obfuscate the strings until the scanner
+stopped recognising them.
+
+`supply_chain.py` closes that with a second pass that asks a narrower question: **can
+this matched literal be executed at all, anywhere in this bundle?** Only on a positive
+answer of *no* is the finding re-scored — to `WARNING`, never lower, never dropped, with
+rule, path, surface and evidence intact, so the user is still told and still consents.
+
+The predicate is stated on the AST and **never on a filename**. That is the whole basis
+of it: "skip test files" would create a place to park a payload, whereas "nothing here
+can execute this" cannot — parking a payload requires something that executes it.
+Renaming a payload `test_evil.py` therefore buys an attacker nothing, and the attack
+table in `tests/security/test_scanner_reachability.py` asserts exactly that.
+
+Five conjunctive clauses, default-deny. Fail any one — or fail to *evaluate* one — and
+the finding stays `DANGEROUS`:
+
+| Clause | What must hold | What it closes |
+|---|---|---|
+| **L1** literal, not code | The file parses as Python and *every* match of this rule lies wholly inside a `str` constant | A shell script (its text is its program); a payload in a comment; a second, live occurrence of the same shape that the scanner did not report |
+| **L2** no execution sink | The file contains no `os.system`/`popen`/`exec*`/`spawn*`/`fork`, no `eval`/`exec`/`compile`/`__import__`, no `subprocess` call whose `shell` is other than a literal `False`, and every spawn site's argv[0] is a literal non-shell, non-interpreter, non-path program | The literal being handed to an interpreter — **including after being concatenated into a larger string**, which is why the clause is stated at module scope rather than on the literal's argument position |
+| **L3** no export | No other module imports it, no sibling names its file or stem in a string, no script or config mentions it, `app.json` does not declare it | Another file lifting the literal out. Prose is excluded on purpose: a README saying "run pytest test_provider.py" is documentation |
+| **L4** the graph is trustworthy | No `eval`/`exec`/`compile`/`__import__`/`importlib`/`runpy`/`pickle`/`marshal`/`ctypes`, no computed `getattr`, no `import *`, no `sys.path` mutation, and no Python or loader file the walk could not read — anywhere in the bundle | L3 is a static claim; a bundle that can rewrite its own import graph, or a file nobody could read, makes it worthless |
+| **L5** importing it is a no-op | The module's top level calls nothing outside a small pure allowlist | The payload firing on import — unreachable is not never-imported |
+
+A file that does not parse is reported as its **own** outcome
+(`Reachability.UNPARSEABLE`), distinct from both `REACHABLE` and `UNREACHABLE`, and
+treated exactly like `REACHABLE`. "We could not tell" must never render as "safe".
+`scan_text` gets no scoping at all: a bare blob has no bundle around it, so
+non-reachability cannot be proved and the default-deny answer stands.
+
+Re-measure any checkout of bundles with:
+
+```bash
+PYTHONPATH=src:. python tools/measure_scanner_scope.py /path/to/PersonalClawApps
+```
+
+Every re-scored finding prints the clauses that granted it, so a downgrade nobody can
+check is not possible.
+
+### Proving each clause is load-bearing
+
+`TestRedsOnAWeakenedCheck` in `tests/security/test_scanner_reachability.py` neuters one
+clause at a time, in process via `monkeypatch`, and asserts the matching rail fails.
+Each row is also the recipe for reproducing it by hand.
+
+| Weaken this | And this reds |
+|---|---|
+| Replace `supply_chain.py::_scope_by_reachability` with the identity | the two blocked bundle shapes become uninstallable again |
+| Widen L1's `str_spans` to the whole file | `payload in a comment, which is not rescued` |
+| Clear L2's `_FileFacts.sinks` | `payload built at runtime and then executed`, and `payload passed straight to os.system` |
+| Stub L3's `_BundleReach._referenced_elsewhere` to `None` | `inert payload module that the provider imports` |
+| Clear L4's `_FileFacts.dynamic` | `inert payload module in a bundle that imports importlib` |
+| Clear L5's `_FileFacts.top_level_calls` | `inert-looking payload module that runs code on import` |
+| Report a parse failure as a parsed file with a whole-file span | the unparseable-file rail |
+| Force `_BundleReach.decide` to answer `UNREACHABLE` | every `verdict-evasion` corpus case |
+
+The L2 rows are the ones worth reading twice, and they are split for a reason. The
+simple shape — the literal sitting in the sink's own argument list — is not the shape
+that decides the design. The deciding shape is a literal that is *never* an argument to
+anything: it is concatenated into a command at runtime and that result is executed. A
+check that asked "is this literal passed to a sink?" clears that file. Asking instead
+"can this file hand *any* string to an interpreter?" does not, which is why the clause
+is stated at module scope and why both shapes are pinned separately.
+
 ## Residual risks
 
 The corpus pins what holds. These are the gaps it also pins, honestly, so they are
 auditable rather than invisible. They are accepted, not unnoticed.
+
+- **An unreferenced module of pure inert data becomes consentable rather than refused.**
+  A bundle can ship a file containing nothing but a literal attack string, referenced by
+  nothing, and get `WARNING` where it previously got `DANGEROUS`. That is a real
+  reduction in the floor for that one shape, and every route out of the file is closed by
+  a clause and tested — but "nothing in *this* bundle can reach it" is not "nothing can
+  ever reach it". The counterweight is measured, not asserted: the `DANGEROUS` band is a
+  literal matcher, so the same attacker already gets **`clean`** from
+  `P = "rm -" + "rf / "` and only **`warning`** from a live `os.system("rm -rf /")`. The
+  capability given up is refusing the attacker who wrote the payload plainly *and* left
+  it unreachable *and* did not obfuscate it — and even they get the finding, the rule id,
+  the evidence, and a required click. Scoping does **not** address the false-negative
+  side, and should not be read as doing so.
 
 - **Zero-width splitting degrades `DANGEROUS` to `WARNING`.** A zero-width space
   inside `rm` defeats the destructive-root regex; the invisible-codepoint rule still
