@@ -92,8 +92,23 @@ def spend_from_home() -> dict:
 
     ``observed`` is the load-bearing field: ``False`` means the audit file was absent or
     unreadable, which is NOT the same fact as zero spend. A reader that cannot tell those
-    apart would publish "this arm was free" about a measurement that never happened."""
-    tokens_in = tokens_out = attempts = 0
+    apart would publish "this arm was free" about a measurement that never happened.
+
+    ``tokens_recorded`` is the SECOND load-bearing field, and it exists because ``observed``
+    was not enough (#2540). An attempt that COMPLETED cleanly always consumed prompt tokens, so
+    a completed attempt reporting a zero total did not report its usage at all — Ollama's
+    OpenAI-compatible endpoint intermittently omits the ``usage`` block, ``llm/openai.py`` starts
+    its counters at 0, and ``guardrails/model_call.py`` coerces the absent value to 0 before the
+    audit row is written. Measured on ``main``: that cell came back
+    ``{observed: true, attempts: 2, tokens: 0}`` — byte-identical to a cell whose two attempts
+    genuinely spent nothing because neither completed. So the token totals here are ``None``
+    (:data:`~personalclaw.evals.provenance.UNRECORDED`, never ``0``) the moment one contributing
+    attempt did not report its usage, and ``unrecorded_attempts`` says how many.
+
+    ``dollars_est`` is NOT nulled with them, deliberately. It is a real estimate over a real
+    attempt; only the token count is absent. That asymmetry is exactly why #2630 refused to widen
+    ``priced`` to cover token counts, and why ``tokens_recorded`` is its own word."""
+    tokens_in = tokens_out = attempts = unrecorded_attempts = 0
     dollars = 0.0
     estimated = False
     try:
@@ -101,7 +116,13 @@ def spend_from_home() -> dict:
 
         path = Path(config_dir()) / "model_calls.jsonl"
         if not path.is_file():
-            return {"observed": False, "reason": "no model_calls.jsonl in the cell home"}
+            # UNRECORDED, not zero: there is no file to have recorded a token count in.
+            return {
+                "observed": False,
+                "reason": "no model_calls.jsonl in the cell home",
+                "tokens_recorded": False,
+                "tokens": None,
+            }
         for line in path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
@@ -113,18 +134,37 @@ def spend_from_home() -> dict:
             if not isinstance(row, dict):
                 continue
             attempts += 1
-            tokens_in += int(row.get("tokens_in") or 0)
-            tokens_out += int(row.get("tokens_out") or 0)
+            row_in = int(row.get("tokens_in") or 0)
+            row_out = int(row.get("tokens_out") or 0)
+            if bool(row.get("passed")) and row_in + row_out == 0:
+                # Completed and reported nothing ⇒ the provider omitted its usage block. A
+                # failed attempt reporting zero is a genuine zero (it never completed, so there
+                # was no usage to report), which is why `passed` gates this and not the total
+                # alone — otherwise a budget refusal or a timeout would read as an absence.
+                unrecorded_attempts += 1
+            tokens_in += row_in
+            tokens_out += row_out
             dollars += float(row.get("dollars_est") or 0.0)
             estimated = estimated or bool(row.get("estimated"))
     except Exception as exc:  # noqa: BLE001 - spend accounting never fails a measured cell
-        return {"observed": False, "reason": f"spend read failed: {exc}"[:400]}
+        return {
+            "observed": False,
+            "reason": f"spend read failed: {exc}"[:400],
+            "tokens_recorded": False,
+            "tokens": None,
+        }
+    recorded = unrecorded_attempts == 0
     return {
         "observed": True,
         "attempts": attempts,
-        "tokens_in": tokens_in,
-        "tokens_out": tokens_out,
-        "tokens": tokens_in + tokens_out,
+        "tokens_recorded": recorded,
+        "unrecorded_attempts": unrecorded_attempts,
+        # `None` rather than the partial sum: a sum over attempts where some reported and some
+        # did not is not a token count, and publishing it would restore the exact bias #2540
+        # names — a denominator that is quietly wrong while the cell reports success.
+        "tokens_in": tokens_in if recorded else None,
+        "tokens_out": tokens_out if recorded else None,
+        "tokens": (tokens_in + tokens_out) if recorded else None,
         "dollars_est": round(dollars, 6),
         "estimated": estimated,
     }

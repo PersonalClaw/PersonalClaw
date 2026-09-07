@@ -66,11 +66,13 @@ __all__ = [
     "MIN_TRIALS_PER_ARM",
     "SPEND_BASIS",
     "TOKEN_MATCH_TOLERANCE",
+    "UNRECORDED",
     "VERDICT_INCONCLUSIVE",
     "VERDICT_INSUFFICIENT_TRIALS",
     "VERDICT_NOT_TOKEN_MATCHED",
     "VERDICT_SKILLS_OFF_WINS",
     "VERDICT_SKILLS_ON_WINS",
+    "VERDICT_TOKENS_UNRECORDED",
     "VERDICTS",
     "Arm",
     "IncommensurableSpendError",
@@ -88,6 +90,29 @@ ARM_SKILLS_OFF = "skills_off"
 #: The two directional verdicts, renamed off `fanout`/`single` and nothing else changed.
 VERDICT_SKILLS_ON_WINS = "skills_on_wins"
 VERDICT_SKILLS_OFF_WINS = "skills_off_wins"
+
+#: The ONE word this repo uses for "this fact was never recorded", spelled here to match
+#: `src/personalclaw/evals/provenance.py` and `web/src/lib/unrecorded.ts`. Not IMPORTED from there:
+#: `harness` is a repo-root dev package outside the wheel and this module's whole point is that the
+#: dependency runs one way. `tests/test_evals_unrecorded_vocabulary.py` reds on a second spelling.
+UNRECORDED = "unrecorded"
+
+#: The SIXTH verdict, and the one member of this vocabulary that `fanout_measure` has no
+#: counterpart for — which is why the relabel map below cannot produce it.
+#:
+#: §5 offers a direction only when the two arms were spend-matched. When a contributing cell's
+#: provider did not report its usage (#2540) the token gate has no denominator to divide, so no
+#: direction may be offered — and none of the five existing verdicts can say that honestly:
+#:
+#: * `not_token_matched` asserts a comparison HAPPENED and came out unmatched. Here none happened.
+#:   Widening it would make "the arms differ by 40%" and "we cannot tell" the same published
+#:   string, and the second is the one a reader must not read as the first.
+#: * a `verdict` of `None` means the arms could not be ASSEMBLED (no cell scored). Here they were:
+#:   the scores are real and are published beside this verdict. Collapsing them would hide a
+#:   measured score delta behind "not measured".
+#:
+#: So this is a new word rather than a widened one — the same call #2630 made about `priced`.
+VERDICT_TOKENS_UNRECORDED = f"tokens_{UNRECORDED}"
 
 #: The denominator the token gate divides for THIS design, and the only knob this module declares.
 #: §3 runs `k` trials per arm on identical work, so per-trial and total spend are the same
@@ -110,6 +135,10 @@ class IncommensurableSpendError(RuntimeError):
     silently restore the totals comparison and publish an "N% spend difference" that is mostly
     missing trials. §8 publishes the ratio beside the verdict, so a wrong ratio is read as evidence
     — a crash the tests catch beats a number a reader believes.
+
+    Two bases are unusable, and this covers both. The second (#2540) is an UNRECORDED token count:
+    `Trial.tokens` is an `int`, so a cell whose provider omitted its `usage` block arrives carrying
+    a placeholder `0`, and a gate that divides it reports a spend match it never measured.
     """
 
 
@@ -124,7 +153,9 @@ _RELABEL: dict[str, str] = {
     VERDICT_INSUFFICIENT_TRIALS: VERDICT_INSUFFICIENT_TRIALS,
 }
 
-VERDICTS: frozenset[str] = frozenset(_RELABEL.values())
+#: This benchmark's closed verdict set: the five `fanout_measure` verdicts (two relabelled) plus
+#: the one state that design has and fan-out does not — see :data:`VERDICT_TOKENS_UNRECORDED`.
+VERDICTS: frozenset[str] = frozenset(_RELABEL.values()) | {VERDICT_TOKENS_UNRECORDED}
 
 #: The verdict classes V4 reproduction compares on (protocol §8). Two runs "land a verdict
 #: of the same class" when their verdicts are equal as STRINGS — the classes are the verdicts.
@@ -265,6 +296,14 @@ class TaskVerdict:
     spend_observed: bool = False
     #: Carried from `AttemptRecord.estimated`: tokens are heuristic, not provider-reported (§4).
     spend_estimated: bool = False
+    #: `False` when a contributing cell's PROVIDER did not report its usage (#2540) — a different
+    #: fact from `spend_observed`, which is about whether the cell could read its own audit file
+    #: at all. `spend_observed=True, tokens_recorded=False` is the exact state that published a
+    #: silent zero: the cell ran, its rows were read, and the provider omitted the numbers.
+    tokens_recorded: bool = True
+    #: How many contributing cells that was. A count, so the absence is legible rather than only
+    #: boolean, and so a reader can see it was one cell of ten rather than all ten.
+    unrecorded_spend_cells: int = 0
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -281,6 +320,8 @@ class TaskVerdict:
             "tool_calls": dict(self.tool_calls),
             "spend_observed": self.spend_observed,
             "spend_estimated": self.spend_estimated,
+            "tokens_recorded": self.tokens_recorded,
+            "unrecorded_spend_cells": self.unrecorded_spend_cells,
             "notes": list(self.notes),
         }
 
@@ -295,6 +336,8 @@ def verdict_task(
     tool_calls: dict[str, int] | None = None,
     spend_observed: bool = False,
     spend_estimated: bool = False,
+    tokens_recorded: bool = True,
+    unrecorded_spend_cells: int = 0,
 ) -> TaskVerdict:
     """Verdict one task's two arms through `fanout_measure.compare`, then relabel.
 
@@ -304,8 +347,56 @@ def verdict_task(
     Refuses BEFORE calling `compare` when an arm has no trials at all — `compare` would
     return `insufficient_trials`, which reads as "we measured too little" when the truth is
     "we measured nothing". §6's absent-cell count is the honest report of that state.
+
+    Refuses BEFORE calling `compare` a second time, and for the same kind of reason, when
+    `tokens_recorded` is `False` (#2540): `Trial.tokens` is an `int` by construction, so a cell
+    whose provider omitted its usage arrives here as a `0`, and `compare` would divide it as a
+    measurement. §4's token ratio exists to answer whether the arms were spend-matched — averaging
+    across cells that could not report is not a weaker answer to that question, it is not an
+    answer — so the ratio REFUSES (`None`) and the verdict is
+    :data:`VERDICT_TOKENS_UNRECORDED`. The score aggregates are still published, because they
+    were measured.
     """
     tool_calls = dict(tool_calls or {})
+    if not tokens_recorded and on_trials and off_trials:
+        # The score aggregates come off `Arm`, which is `fanout_measure`'s own accessor set — the
+        # means and spreads are not re-derived here. `.tokens` / `.spend()` / `token_ratio` are
+        # the ones that would read the placeholder zeros, and none of them is touched: the arm
+        # dicts below carry `None` where `compare()` would have carried a number.
+        on_arm = Arm(name=ARM_SKILLS_ON, trials=list(on_trials))
+        off_arm = Arm(name=ARM_SKILLS_OFF, trials=list(off_trials))
+        return TaskVerdict(
+            task_id=task_id,
+            skill=skill,
+            verdict=VERDICT_TOKENS_UNRECORDED,
+            reason=(
+                f"{unrecorded_spend_cells or 'one or more'} contributing cell(s) reported no token "
+                "usage — their provider omitted it — so the arms' spend cannot be compared and no "
+                "direction is offered. The scores below WERE measured; the token match was not"
+            ),
+            delta_points=round(on_arm.mean_score - off_arm.mean_score, 2),
+            token_ratio=None,
+            arms={
+                arm.name: {
+                    "trials": len(arm.trials),
+                    "mean_score": round(arm.mean_score, 2),
+                    "spread": round(arm.spread, 2),
+                    "tokens": None,
+                    "tokens_per_point": None,
+                }
+                for arm in (on_arm, off_arm)
+            },
+            absent_cells=absent_cells,
+            tool_calls=tool_calls,
+            spend_observed=spend_observed,
+            spend_estimated=spend_estimated,
+            tokens_recorded=False,
+            unrecorded_spend_cells=unrecorded_spend_cells,
+            notes=[
+                "the token ratio is REFUSED, not zero: a ratio over cells that could not report "
+                "their usage is not a weaker measurement of a spend match, it is not one"
+            ],
+        )
     if not on_trials or not off_trials:
         empty = [
             name
@@ -329,10 +420,22 @@ def verdict_task(
             tool_calls=tool_calls,
             spend_observed=spend_observed,
             spend_estimated=spend_estimated,
+            tokens_recorded=tokens_recorded,
+            unrecorded_spend_cells=unrecorded_spend_cells,
         )
 
     on_arm = Arm(name=ARM_SKILLS_ON, trials=list(on_trials))
     off_arm = Arm(name=ARM_SKILLS_OFF, trials=list(off_trials))
+    # The SECOND rail, and it guards the same class of edit as the basis rail below. `Trial.tokens`
+    # is an `int`, so a cell whose provider reported no usage arrives as a `0`; deleting the refusal
+    # above would hand those zeros to `compare()` and publish a ratio over them. A crash the tests
+    # catch beats a number a reader believes.
+    if not tokens_recorded:
+        raise IncommensurableSpendError(
+            f"the token-match gate was reached for {task_id!r} with {unrecorded_spend_cells} "
+            f"contributing cell(s) whose token usage is {UNRECORDED} — `Trial.tokens` carries a "
+            "placeholder 0 for those, and dividing it publishes an absence as a spend match"
+        )
     # `compare(work, a, b)` treats its second argument as the arm a positive delta favours.
     # Passing the treatment arm there is what makes a positive delta mean "the skill helped".
     comparison = compare(task_id, on_arm, off_arm, spend_basis=SPEND_BASIS)
@@ -371,5 +474,7 @@ def verdict_task(
         tool_calls=tool_calls,
         spend_observed=spend_observed,
         spend_estimated=spend_estimated,
+        tokens_recorded=True,
+        unrecorded_spend_cells=unrecorded_spend_cells,
         notes=notes,
     )

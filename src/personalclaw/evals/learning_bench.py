@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.evals import provenance
 from personalclaw.evals import scenarios as scenario_lib
 from personalclaw.evals import store
 
@@ -54,7 +55,51 @@ TASK_SET_VERSION = 2
 #: The report schema version. Separate from the task-set version because a schema change does
 #: not invalidate a measurement, and conflating them would either freeze the schema or silently
 #: retire results.
-REPORT_SCHEMA = 1
+#:
+#: **v2 (#2562):** ES-17 added ``provider_binding`` and left this at ``1``, so a consumer holding a
+#: report with no ``provider_binding`` key could not tell "provenance was never recorded" from
+#: "provenance was recorded and says nothing was bound" — the two states are different claims and
+#: the panel had to branch on ``'provider_binding' in report`` to keep them apart, which left every
+#: future consumer to rediscover the trick. Adding a field is a schema change; the report has
+#: stated ``report_schema`` since LV-7, so the fix is for consumers to read the STATED schema
+#: instead of inferring one from key presence. v2 also adds the run-level ``tokens_recorded`` /
+#: ``unrecorded_spend_cells`` (#2540) and the pin's ``cell_model_fingerprint`` / ``cell_model_fp``
+#: (#2561) — one bump for one schema change, not three.
+REPORT_SCHEMA = 2
+
+#: The schema at and above which a report RECORDS its provenance. Below it, an absent
+#: ``provider_binding`` means :data:`~personalclaw.evals.provenance.UNRECORDED` and NOT "nothing
+#: was bound". Named here (and mirrored in ``web/src/lib/unrecorded.ts``) so the answer lives in
+#: one place rather than in each consumer's key-presence check.
+PROVENANCE_SCHEMA = 2
+
+
+def report_schema(report: dict | None) -> int | None:
+    """The schema a report was written under, as the report itself states it.
+
+    ``None`` when the report does not state one — :data:`~personalclaw.evals.provenance.UNRECORDED`
+    — which no report this repo has ever written should be, because ``report_schema`` shipped with
+    LV-7. A hand-edited or truncated artifact can be, and it must not read as v1 by default: that
+    is the same absent-versus-declared collapse one level up.
+    """
+    if provenance.is_unrecorded(report, "report_schema"):
+        return None
+    try:
+        return int((report or {})["report_schema"])
+    except (TypeError, ValueError):
+        return None
+
+
+def provenance_recorded(report: dict | None) -> bool:
+    """Did this report record what its cells could reach?
+
+    ``True`` only at :data:`PROVENANCE_SCHEMA` or above. A report that states no schema at all is
+    ``False``: an unreadable schema cannot certify that a field is present, and "we do not know"
+    must never render as "nothing was bound".
+    """
+    schema = report_schema(report)
+    return schema is not None and schema >= PROVENANCE_SCHEMA
+
 
 PROTOCOL_DOC = "docs/roadmap/research/learning-benchmark-protocol.md"
 
@@ -334,6 +379,12 @@ class ReproductionCheck:
     conditions: dict[str, bool] = field(default_factory=dict)
     verdict_changes: list[dict] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: WHICH schema each side was written under (#2562), so a reader never has to infer one from
+    #: key presence. `None` is UNRECORDED. Reported BESIDE the conditions and deliberately not AS
+    #: one: §8 states four equalities plus verdict class, and a fifth condition invented here
+    #: would be this code inventing variance the protocol did not state.
+    baseline_report_schema: int | None = None
+    rerun_report_schema: int | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -345,6 +396,8 @@ class ReproductionCheck:
             "conditions": dict(self.conditions),
             "verdict_changes": [dict(c) for c in self.verdict_changes],
             "notes": list(self.notes),
+            "baseline_report_schema": self.baseline_report_schema,
+            "rerun_report_schema": self.rerun_report_schema,
         }
 
 
@@ -419,6 +472,30 @@ def reproduction_check(baseline: dict, rerun: dict) -> ReproductionCheck:
             "publish, not a run to discard"
         )
 
+    # #2562: say which schema each side was written under rather than leaving a reader to infer
+    # it. A v1 baseline recorded no provenance at all, so "reproduces" over it cannot also mean
+    # the two runs reached the same models — and the issue's interaction with #2540 is the same
+    # shape: two runs can satisfy all four equalities while one of them had unrecorded spend.
+    b_schema = report_schema(baseline)
+    r_schema = report_schema(rerun)
+    for label, schema in (("baseline", b_schema), ("re-run", r_schema)):
+        if schema is None:
+            notes.append(
+                f"the {label} states no report_schema, so which fields it recorded is "
+                f"{provenance.UNRECORDED} — not the same claim as a report that recorded them "
+                "and found nothing"
+            )
+        elif schema < PROVENANCE_SCHEMA:
+            notes.append(
+                f"the {label} was written under report_schema {schema}, before provenance and "
+                f"spend recording, so what its cells could reach is {provenance.UNRECORDED}"
+            )
+    if b_schema is not None and r_schema is not None and b_schema != r_schema:
+        notes.append(
+            f"the two reports were written under different schemas ({b_schema} vs {r_schema}) — "
+            "the §8 conditions above still hold or do not, but the two carry different facts"
+        )
+
     return ReproductionCheck(
         baseline_run_id=str(baseline.get("run_id") or ""),
         rerun_run_id=str(rerun.get("run_id") or ""),
@@ -426,4 +503,6 @@ def reproduction_check(baseline: dict, rerun: dict) -> ReproductionCheck:
         conditions=conditions,
         verdict_changes=changes,
         notes=notes,
+        baseline_report_schema=b_schema,
+        rerun_report_schema=r_schema,
     )

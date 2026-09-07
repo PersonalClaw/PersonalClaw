@@ -43,6 +43,14 @@ if TYPE_CHECKING:  # pragma: no cover - typing only; importing at runtime would 
 # must be appended, never inserted, so old rows stay parseable by position. The
 # trailing five are the ES-2 pin columns; ``model_fp`` (declared by ES-1, written by
 # nobody until now) is the pin's fingerprint digest rather than a sixth new column.
+#
+# ``cell_model_fp`` is APPENDED (#2561): ``model_fp`` names the INVOKING HOME's binding, so a
+# reader of a row could not tell an offline run from a real-model one — both carried the same
+# digest. It is the pin's :meth:`~personalclaw.evals.pinning.RunPin.cell_model_fp`, which is a
+# digest, ``no_model`` or ``unrecorded`` and never an empty string. An EMPTY cell therefore keeps
+# its own third meaning — "this row predates the column" — and ``read_results``' ``zip``
+# truncation leaves the key absent on those rows, so
+# :func:`personalclaw.evals.provenance.state_of` reads them as unrecorded without a special case.
 RESULTS_COLUMNS: tuple[str, ...] = (
     "study_id",
     "kind",
@@ -57,6 +65,7 @@ RESULTS_COLUMNS: tuple[str, ...] = (
     "prompt_pack_sha256",
     "config_snapshot_ref",
     "fixture_home",
+    "cell_model_fp",
 )
 
 
