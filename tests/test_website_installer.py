@@ -515,6 +515,50 @@ class TestHeaderClaimsAreTrue:
 # ── rail wiring: the live leg must exist, and must not be able to pass vacuously ─────
 
 
+def code_only(body: str) -> str:
+    """``body`` with whole-line ``#`` comments removed.
+
+    Every "the leg does X" assertion below must read the leg's actual YAML and shell, not its
+    prose. This job is heavily commented and those comments NAME the things being asserted —
+    ``UV_TOOL_DIR``, ``install.sh.sha256``, even ``continue-on-error`` (in a comment
+    explaining why it must not be used). Matching against the raw body let the commentary
+    satisfy the assertions: measured, ``test_it_redirects_uv_tool_dirs`` passed on a comment,
+    and the ``continue-on-error`` guard failed on one. Documenting a rail is not having it.
+    """
+    return "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
+
+
+def fetch_guards(body: str) -> list[str]:
+    """Every ``if ! curl …; then … fi`` block in a job body, as text.
+
+    The unit that matters for "an inconclusive run must not be green" is not the job and not
+    a word — it is each individual guard around a network fetch. A whole-body substring check
+    is too loose to notice a regression *inside* one guard: renaming the message while an
+    ``::error title=… unproven::`` annotation survived elsewhere in the same job left the
+    assertion passing, which is how this helper came to exist.
+
+    Nesting is not handled because these guards do not nest; the first ``fi`` at the guard's
+    own indent closes it.
+    """
+    lines = body.splitlines()
+    guards: list[list[str]] = []
+    current: list[str] | None = None
+    indent = 0
+    for line in lines:
+        if current is None:
+            if re.search(r"if\s+!\s+curl\b", line):
+                current = [line]
+                indent = len(line) - len(line.lstrip())
+            continue
+        current.append(line)
+        if line.strip() == "fi" and (len(line) - len(line.lstrip())) == indent:
+            guards.append(current)
+            current = None
+    if current is not None:  # unterminated — hand it back so the caller can fail on it
+        guards.append(current)
+    return ["\n".join(g) for g in guards]
+
+
 def _live_leg(full_text: str) -> tuple[str, str]:
     """The ``full.yml`` job that exercises the served one-liner — located by BEHAVIOUR.
 
@@ -549,35 +593,68 @@ class TestLiveInstallerLegIsWired:
         or PyPI regressed" (served red) — two different pages for two different people.
         """
         _jid, body = leg
-        assert "deploy/website/install.sh" in body, (
+        assert "deploy/website/install.sh" in code_only(body), (
             "the live leg runs only the served bytes. A staged edit that breaks the "
             "installer would then go green until someone copied it to the website repo."
         )
 
     def test_it_compares_served_against_the_pin(self, leg: tuple[str, str]) -> None:
         _jid, body = leg
-        assert "install.sh.sha256" in body, (
+        assert "install.sh.sha256" in code_only(body), (
             "the live leg does not compare the served bytes to install.sh.sha256, so the "
             "drift this rail exists for would still go unnoticed."
         )
 
-    def test_a_failed_fetch_is_unproven_not_green(self, leg: tuple[str, str]) -> None:
+    def test_every_fetch_failure_exits_nonzero_and_says_unproven(
+        self, leg: tuple[str, str]
+    ) -> None:
         """The ninth absent-vs-declared-false is what this case is here to prevent.
 
         A curl that cannot reach the host proves nothing. If that path exits zero — or
         merely warns — the job reports success for having tested nothing, which is how a
         missing tmux got read as a passing test class in this repo last month.
+
+        Asserted per GUARD, not per job: the first version of this case checked the whole
+        job body for the word "unproven", and a mutant that reworded the message inside a
+        guard still passed because an annotation title elsewhere in the job carried the word.
+        ``exit`` is the load-bearing half — the vocabulary only makes the red legible.
         """
         _jid, body = leg
-        assert "unproven" in body, (
-            "the live leg never uses the word `unproven`. A fetch failure must say so and "
-            "red; an inconclusive run must not be reported as a green check."
+        guards = fetch_guards(code_only(body))
+        assert len(guards) >= 2, (
+            "expected a guarded fetch for both the served smoke and the drift comparison; "
+            f"found {len(guards)}. An unguarded curl cannot report `unproven` at all."
+        )
+        for guard in guards:
+            assert re.search(r"^\s*exit\s+[1-9]", guard, flags=re.MULTILINE), (
+                "a fetch-failure branch does not exit nonzero, so an unreachable host would "
+                f"be reported as a passing check:\n{guard}"
+            )
+            assert "unproven" in guard, (
+                "a fetch-failure branch reds without saying it proved nothing. The red must "
+                f"be legible as `unproven`, not as a generic failure:\n{guard}"
+            )
+
+    def test_the_leg_is_not_continue_on_error(self, leg: tuple[str, str]) -> None:
+        """One line would make every red above invisible, and this workflow already uses it.
+
+        ``full.yml``'s ``audit`` job is deliberately ``continue-on-error: true`` (report-only
+        supply-chain scan). Copying that line onto this job — a plausible edit the first time
+        a flaky network annoys someone — turns the whole installer rail into decoration that
+        reports success while failing, which is the defect this file exists to end.
+        """
+        _jid, body = leg
+        assert "continue-on-error" not in code_only(body), (
+            "the live installer leg is marked continue-on-error, so its failures do not fail "
+            "the workflow. A rail that cannot go red is a comment. If network flakiness is "
+            "the problem, retry the fetch — do not silence the verdict."
         )
 
     def test_it_redirects_uv_tool_dirs(self, leg: tuple[str, str]) -> None:
         """The smoke must install into a scratch dir, not over whatever the runner has."""
         _jid, body = leg
-        assert "UV_TOOL_DIR" in body and "UV_TOOL_BIN_DIR" in body, (
+        code = code_only(body)
+        assert "UV_TOOL_DIR" in code and "UV_TOOL_BIN_DIR" in code, (
             "the live leg does not redirect uv's tool dirs, so the smoke writes into the "
             "runner's real tool directories."
         )
@@ -585,7 +662,7 @@ class TestLiveInstallerLegIsWired:
     def test_it_asserts_the_installed_binary_runs(self, leg: tuple[str, str]) -> None:
         """Installing without running proves the wheel downloaded, not that it works."""
         _jid, body = leg
-        assert "personalclaw --version" in body, (
+        assert "personalclaw --version" in code_only(body), (
             "the live leg never runs `personalclaw --version`, so a wheel that installs "
             "and then cannot start would pass."
         )
@@ -602,14 +679,15 @@ class TestLintJobChecksTheInstaller:
         return present["lint"]
 
     def test_lint_runs_shellcheck_on_the_installer(self, lint_body: str) -> None:
-        assert "shellcheck" in lint_body and "deploy/website/install.sh" in lint_body, (
+        code = code_only(lint_body)
+        assert "shellcheck" in code and "deploy/website/install.sh" in code, (
             "ci.yml's lint job does not shellcheck the installer, so the header's "
             "shellcheck-clean claim rests on nothing again."
         )
 
     def test_lint_sets_the_require_proof_lever(self, lint_body: str) -> None:
         """Without the lever, a runner image that drops shellcheck turns red into skip."""
-        assert REQUIRE_ENV in lint_body, (
+        assert REQUIRE_ENV in code_only(lint_body), (
             f"ci.yml's lint job does not set {REQUIRE_ENV}, so a missing shellcheck or "
             "dash would silently skip the cases that prove the installer lints."
         )
@@ -659,6 +737,60 @@ class TestParsersAreNotVacuous:
     def test_live_leg_absent_is_an_error(self) -> None:
         with pytest.raises(AssertionError, match="At least one|no job in full.yml"):
             _live_leg("jobs:\n  matrix:\n    runs-on: x\n")
+
+    def test_code_only_strips_prose_but_keeps_script(self) -> None:
+        """The measured hole: commentary that names the very thing being asserted."""
+        body = (
+            "    # UV_TOOL_DIR is redirected, and continue-on-error must never appear\n"
+            "    steps:\n"
+            "      - run: export UV_TOOL_DIR=/tmp/x\n"
+        )
+        code = code_only(body)
+        assert "continue-on-error" not in code, "a comment still satisfies the negative check"
+        assert "UV_TOOL_DIR" in code, "stripped too much — the real assignment is gone"
+
+    def test_code_only_leaves_a_comment_only_body_empty_of_claims(self) -> None:
+        """A leg that only TALKS about the rail must not satisfy the rail."""
+        assert (
+            code_only("      # runs personalclaw --version and pins install.sh.sha256\n").strip()
+            == ""
+        )
+
+    def test_fetch_guards_finds_the_real_ones(self) -> None:
+        """The live leg must really contain the guards the assertions iterate over."""
+        _jid, body = _live_leg(_FULL.read_text(encoding="utf-8"))
+        guards = fetch_guards(body)
+        assert len(guards) >= 2, f"parser found {len(guards)} fetch guards in the live leg"
+        assert all("curl" in g for g in guards)
+
+    def test_fetch_guards_isolates_each_block(self) -> None:
+        """Two guards must come back as two strings, not one run-together blob.
+
+        If they merged, an ``exit 1`` in the first would satisfy the assertion for a second
+        guard that had none — the per-guard check would silently become a per-job check
+        again, which is the looseness it was written to remove.
+        """
+        body = (
+            "        run: |\n"
+            "          if ! curl -o a URL; then\n"
+            "            echo first unproven\n"
+            "            exit 1\n"
+            "          fi\n"
+            "          echo between\n"
+            "          if ! curl -o b URL; then\n"
+            "            echo second only warns\n"
+            "          fi\n"
+        )
+        guards = fetch_guards(body)
+        assert len(guards) == 2, f"expected 2 guards, got {len(guards)}: {guards!r}"
+        assert "between" not in guards[0], "guards ran together — the isolation is fake"
+        assert "exit 1" in guards[0] and "exit 1" not in guards[1]
+
+    def test_fetch_guards_reports_a_warn_only_branch(self) -> None:
+        """The mutant that matters: a fetch failure that warns instead of exiting."""
+        body = "          if ! curl -o a URL; then\n            echo oh well\n          fi\n"
+        (guard,) = fetch_guards(body)
+        assert not re.search(r"^\s*exit\s+[1-9]", guard, flags=re.MULTILINE)
 
     def test_live_leg_found_by_url_not_by_name(self) -> None:
         jid, body = _live_leg(
