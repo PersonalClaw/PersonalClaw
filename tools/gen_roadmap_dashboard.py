@@ -72,6 +72,33 @@ DAG_JSON = CORE / "docs/roadmap/atomic/dag.json"
 EXEC_STATE = WORKSPACE / ".roadmap-exec-state.json"
 OUT = WORKSPACE / "roadmap-dashboard.html"
 REPO_URL = "https://github.com/PersonalClaw/PersonalClaw"
+#: Escape hatch for the workspace guard below — a scratch render from a detached worktree.
+ALLOW_DETACHED_ENV = "ROADMAP_DASHBOARD_ALLOW_DETACHED"
+
+
+def detached_workspace() -> str:
+    """Empty when `WORKSPACE` is the workspace this page describes; else WHY it is not.
+
+    `WORKSPACE` is derived as `CORE.parent`, so running this from a git worktree parked
+    outside the real workspace (`/private/tmp/wt/PersonalClaw`, say) silently re-points every
+    workspace-level INPUT and the OUTPUT: no `ROADMAP.md` §5 prose, no
+    `.roadmap-exec-state.json` (so "Working now" quietly degrades to the ready frontier), and
+    the page is written to `/private/tmp/wt/roadmap-dashboard.html`, where nobody will read
+    it. Nothing raises — a plausible-looking, degraded page appears at the wrong path, which
+    is the same defect class as the grey `blocked` bucket this module exists to fix: a
+    confident answer that is quietly wrong. Measured 2026-09-07: two builders regenerated
+    from worktrees and one nearly published the degraded page.
+
+    `ROADMAP.md` is the marker because it is the one workspace-level file that must exist for
+    the page to be complete, and it is versioned (unlike the exec-state file, which is
+    legitimately absent between runs and already degrades visibly on the page).
+    """
+    if WORKSPACE_ROADMAP.exists():
+        return ""
+    return (
+        f"{WORKSPACE_ROADMAP} does not exist, so {WORKSPACE} is not the workspace this page "
+        f"describes — most likely {CORE} is a git worktree parked outside it"
+    )
 
 
 def sh(cmd: str, cwd: Path = CORE, timeout: int = 20) -> str:
@@ -1722,6 +1749,19 @@ _PAGE = """<!doctype html>
 
 
 def main() -> int:
+    # Refuse BEFORE doing any work: writing a degraded page to a path nobody reads is worse
+    # than not writing one, and it is indistinguishable from a good run in the exit status.
+    detached = detached_workspace()
+    if detached:
+        if not os.environ.get(ALLOW_DETACHED_ENV):
+            logger_warn(f"refusing to write: {detached}")
+            logger_warn(
+                f"re-run from the real checkout, or set {ALLOW_DETACHED_ENV}=1 to write "
+                f"{OUT} anyway — that page has no ROADMAP §5 prose and no exec state"
+            )
+            return 2
+        logger_warn(f"{ALLOW_DETACHED_ENV} set: writing a DEGRADED page — {detached}")
+
     plans = parse_pillars()
     for p in plans:
         enrich_plan(p)

@@ -35,6 +35,7 @@ from tools.gen_roadmap_dashboard import (
     _CSS,
     _OWNER_TAG_RE,
     _STATE_ROLL_CALL,
+    ALLOW_DETACHED_ENV,
     DAG_STATES,
     AtomClassifier,
     DagState,
@@ -42,6 +43,8 @@ from tools.gen_roadmap_dashboard import (
     _state_css,
     assert_state_partition,
     classifier_for,
+    detached_workspace,
+    main,
     parse_atoms,
     render,
 )
@@ -343,3 +346,35 @@ def test_a_clean_catalog_renders_no_unclassified_strip() -> None:
     dag["atoms"].pop("P-6")
     html = render([], QueueStats(), {"pr_by_branch": {}}, [], dag, {}, {})
     assert "Unclassified — why these are stuck" not in html
+
+
+# ── the workspace guard ─────────────────────────────────────────────────────────────────
+
+
+def test_detached_workspace_detects_a_worktree_parked_outside_the_workspace(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``WORKSPACE = CORE.parent``, so a worktree elsewhere silently re-points the inputs."""
+    missing = tmp_path / "ROADMAP.md"
+    monkeypatch.setattr("tools.gen_roadmap_dashboard.WORKSPACE_ROADMAP", missing)
+    why = detached_workspace()
+    assert str(missing) in why, "the diagnosis must name the file it looked for"
+    missing.write_text("# ROADMAP\n", encoding="utf-8")
+    assert detached_workspace() == "", "a real workspace must not be flagged"
+
+
+def test_main_refuses_to_write_a_degraded_page_from_a_detached_worktree(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A page written where nobody reads it, with no exec state, must not look like success.
+
+    Nothing raised before this: the generator happily rendered a plausible page missing the
+    ROADMAP §5 prose and the whole "Working now" panel, wrote it beside the worktree, and
+    exited 0. Two builders hit that on 2026-09-07 and one nearly published it.
+    """
+    out = tmp_path / "roadmap-dashboard.html"
+    monkeypatch.setattr("tools.gen_roadmap_dashboard.WORKSPACE_ROADMAP", tmp_path / "nope.md")
+    monkeypatch.setattr("tools.gen_roadmap_dashboard.OUT", out)
+    monkeypatch.delenv(ALLOW_DETACHED_ENV, raising=False)
+    assert main() == 2, "a detached run must exit non-zero"
+    assert not out.exists(), "and must write nothing at all"
