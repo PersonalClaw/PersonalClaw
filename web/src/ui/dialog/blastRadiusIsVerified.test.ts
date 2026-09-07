@@ -257,20 +257,62 @@ describe('two more bodies: one corrected, one confirmed', () => {
 })
 
 describe('the project delete, and the two workflow bodies', () => {
-  it('says the LISTS go and the TASKS stay — which is the way round the code works', () => {
-    // 🪤 It said "task lists detached", which implies the lists survive unattached. They do not:
-    // `delete_project` unlinks each list file. What survives is the TASKS — separate files that become
-    // orphaned-by-list. The reassurance was pointed at the wrong noun.
+  // 🔴 THIS RAIL WAS THE REASON THE FALSE COPY SHIPPED, AND IT IS THE MOST INSTRUCTIVE FAILURE IN THIS
+  // FILE. Its previous form asserted `'task lists are removed — the tasks themselves stay'` and titled
+  // itself *"which is the way round the code works"* — then verified that against
+  // `tasks/hierarchy.py::delete_project`, **the callee**. Against that function every assertion was
+  // TRUE: it does unlink each list file, and its docstring does say "the task provider owns task
+  // deletion". So the rail was green, confident, and wrong about the operation.
+  //
+  // What it never read is the CALLER. `tasks/hierarchy_handlers.py::api_projects_delete` cascades
+  // before it delegates — `list_all_tasks(project=…, limit=10_000)` → `delete_task(t.id)` →
+  // `native.py`'s `path.unlink()` — added by #457 because orphaned rows pointing at dead list ids were
+  // "unreachable from every scoped view". So the tasks are hard-deleted, and this file, whose entire
+  // premise is that destructive copy is VERIFIED against the code, was the thing certifying the
+  // opposite.
+  //
+  // 🔑 THE GENERAL LESSON, and why the change below is a RE-POINT and not a relaxation: **a blast-radius
+  // rail must verify against the handler the button actually invokes, never against a function that
+  // handler calls.** A callee's contract is a true statement about a smaller thing. The assertions now
+  // read the caller; the old callee facts are KEPT, because they are still true and still worth pinning,
+  // just no longer mistaken for the whole story.
+  it('names the TASK deletion the handler performs — verified against the caller, not the callee', () => {
     const ui = web('pages/projects/ProjectsSection.tsx')
-    expect(ui).toContain('task lists are removed — the tasks themselves stay')
-    expect(ui, 'the misleading word must not come back').not.toContain('task lists detached')
+    // The copy must state the loss and its permanence.
+    expect(ui, 'the task loss is named').toMatch(/Every task in this project is permanently deleted/)
+    // 🪤 Both wrong forms are pinned out. "task lists detached" was the ORIGINAL defect (it implied the
+    // lists survive unattached); "the tasks themselves stay" was the fix that replaced it and asserted
+    // safety instead. Neither may return.
+    expect(ui, 'the original misleading word must not come back').not.toContain('task lists detached')
+    expect(ui, 'and neither may the false reassurance that replaced it')
+      .not.toContain('the tasks themselves stay')
+
+    // The CALLER — the operation the button runs. This is the assertion that was missing.
+    const handler = py('tasks/hierarchy_handlers.py')
+    const del = handler.match(/async def api_projects_delete[\s\S]*?(?=\nasync def |\ndef |$)/)?.[0] ?? ''
+    expect(del, 'found the delete handler').not.toBe('')
+    expect(del, 'it resolves every task in the project').toMatch(/list_all_tasks\(project=/)
+    expect(del, 'and deletes each one').toMatch(/delete_task\(t\.id\)/)
+
+    // The callee facts, kept: still true, and the list-unlink half of the copy still rests on them.
     const h = pyMethod(py('tasks/hierarchy.py'), '    def delete_project')
     expect(h, 'list files are unlinked, not detached').toMatch(
       /self\._list_path\(tl\.id\)\.unlink\(missing_ok=True\)/,
     )
-    expect(h, 'and the tasks are explicitly NOT the provider\'s job here').toMatch(
+    expect(h, 'and this FUNCTION genuinely does leave task rows to the provider').toMatch(
       /the task provider owns task deletion/,
     )
+  })
+
+  it('the force re-confirm names it too — the same cascade runs on that path', () => {
+    // It was incomplete rather than wrong, which is why it passed every earlier review: a careful,
+    // accurate enumeration of loops/workers/worktrees/branches/chats that simply never said "tasks",
+    // so its "can't be undone" read as being about the loops.
+    const ui = web('pages/projects/ProjectsSection.tsx')
+    const force = ui.match(/title: 'Project still has active work'[\s\S]*?body: `([^`]*)`/)?.[1] ?? ''
+    expect(force, 'found the force dialog').not.toBe('')
+    expect(force, 'the task loss is named on the force path too').toMatch(/task/i)
+    expect(force, 'and its existing enumeration survives').toMatch(/bound loops/i)
   })
 
   it('the workspace-untouched half holds for the dialog that says it', () => {
