@@ -31,7 +31,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from personalclaw.config.loader import DASHBOARD_PORT, config_dir
+from personalclaw import gateway_base
+from personalclaw.config.loader import config_dir
 from personalclaw.hooks import validate_file_path
 from personalclaw.mcp_core import _internal_secret
 from personalclaw.sandbox import PROFILE_TOOL, build_child_env, spawn_shim_argv, wrap_argv
@@ -249,12 +250,25 @@ def run_script_sandboxed(
     resolved, func = resolve_script_path(script_spec)
     timeout = timeout if timeout and timeout > 0 else _DEFAULT_SCRIPT_TIMEOUT
 
+    # The port is resolved AT CALL TIME from the ONE owner, never from
+    # ``config.loader.DASHBOARD_PORT``. That constant is evaluated at IMPORT, long before the
+    # gateway binds, so it is permanently the pre-bind value: a gateway on ``--port N`` wrote
+    # the stale port into this cfg and the launcher POSTed there. Measured on two isolated
+    # homes (#2539): instance B (bound ``127.0.0.1:10771``) fired a ``run-script`` action whose
+    # ``ctx.notify()`` was persisted into instance A's ``notifications.jsonl`` (bound
+    # ``127.0.0.1:10772``) — B's own store stayed empty, the child reported ``{'ok': True}``,
+    # and B's ``.local_secret`` travelled to A in the header. A refusal here fails the run with
+    # a named cause, which is the honest answer; a guessed port is a write into a stranger.
+    try:
+        _port = gateway_base.resolve_port()
+    except gateway_base.GatewayBaseUnresolved as exc:
+        return {"status": "error", "error": str(exc)}
     cfg = {
         "script_path": str(resolved),
         "func": func,
         "message": job_message,
         "secret": _internal_secret(),
-        "port": DASHBOARD_PORT,
+        "port": _port,
         "session_key": f"cron:{job_id}",
     }
     cfg_fd, cfg_path = tempfile.mkstemp(prefix="pc-cron-cfg-", suffix=".json")

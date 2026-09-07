@@ -40,7 +40,10 @@ server answers correctly at all, so neither may be left to inheritance:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 CORE_SERVER_NAME = "personalclaw-core"
 
@@ -66,22 +69,25 @@ def core_mcp_servers(*, session_key: str | None = None) -> list[dict[str, Any]]:
         return []
 
     from personalclaw.config import config_dir
-    from personalclaw.config.loader import AppConfig
 
     env: list[dict[str, str]] = [{"name": "PERSONALCLAW_HOME", "value": str(config_dir())}]
-    # The gateway's PORT, declared rather than assumed. ``mcp_core`` builds its API
-    # base from ``dashboard.url`` and falls back to 10000, so a gateway started with
-    # ``--port`` (or ``--port auto``, which ``--test-mode`` uses) spawned an MCP
-    # server that posted to a port nobody was listening on: every HTTP-bridged core
-    # tool answered with a raw ``<urlopen error [Errno 61] Connection refused>`` while
-    # the in-process tools beside it worked. Measured on a kiro ACP session (`K58`).
-    # ``parse_dashboard_url`` already honours ``PERSONALCLAW_PORT`` on both sides, and
-    # the gateway exports the bound port into its own environment, so reading it here
-    # yields the live port even when the config carries no URL at all.
-    from personalclaw.dashboard.origin import parse_dashboard_url
+    # The gateway's PORT, declared rather than assumed — and asked of the ONE owner of that
+    # answer (#2539). This read ``parse_dashboard_url(dashboard.url)``, which falls back to a
+    # fixed 10000: a gateway started with ``--port`` (or the ``--port auto`` that
+    # ``--test-mode`` uses) declared **10000** to its MCP child, and on a multi-instance host
+    # 10000 is a DIFFERENT instance's gateway, not a dead socket. Earlier symptom on a kiro ACP
+    # session (`K58`): every HTTP-bridged core tool answered ``<urlopen error [Errno 61]
+    # Connection refused>`` while the in-process tools beside it worked.
+    #
+    # If the base cannot be resolved we declare NOTHING rather than a guess — the child then
+    # refuses loudly at its first tool call, naming the cause, instead of quietly addressing a
+    # stranger. Unreachable in practice: a running gateway has published its bound port.
+    from personalclaw import gateway_base
 
-    _, _port = parse_dashboard_url(AppConfig.load().dashboard.url)
-    env.append({"name": "PERSONALCLAW_PORT", "value": str(_port)})
+    try:
+        env.append({"name": "PERSONALCLAW_PORT", "value": str(gateway_base.resolve_port())})
+    except gateway_base.GatewayBaseUnresolved as exc:
+        logger.warning("not declaring PERSONALCLAW_PORT to %s: %s", CORE_SERVER_NAME, exc)
     if session_key:
         env.append({"name": "PERSONALCLAW_SESSION_KEY", "value": str(session_key)})
 

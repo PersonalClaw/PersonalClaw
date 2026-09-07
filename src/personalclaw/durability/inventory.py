@@ -1051,6 +1051,14 @@ IGNORED: tuple[str, ...] = (
     "browse",
     "update_check.json",  # last update check — regenerated on the next poll
     "fixture.yaml",  # test-fixture marker written by `--seed`
+    # 🔴 #2539 — the socket this gateway bound, plus the pid that bound it
+    # (`gateway_base.RUNTIME_FILE`). MACHINE-LOCAL and process-lifetime-scoped: it is written
+    # after bind, removed on shutdown, and it is the record every child resolves its API base
+    # from. Carrying it into a snapshot is the precise shape of the bug it exists to fix — a
+    # restored home would hand its children a port another instance bound, which is how a tool
+    # call reaches a stranger's gateway. Ignored rather than declared for the same reason as
+    # `machine_id`: it must not travel at all, and it is regenerated on the next bind.
+    "gateway.runtime.json",
 )
 
 
