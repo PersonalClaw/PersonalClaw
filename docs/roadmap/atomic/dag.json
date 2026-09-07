@@ -5623,7 +5623,9 @@
           "status": "todo",
           "scope": "Session 1 — Rebuild + signing + updater (T1.1-T1.4, V1); Contract C4 (install-kind + updater)",
           "done_when": "CI mac-runner job builds `make desktop` -> electron-builder signed+notarized dmg/zip attached to the GitHub Release (spctl -a passes on a clean Mac); electron-updater checks Releases and prompts a one-version-behind install; shell sets PERSONALCLAW_INSTALL_KIND=desktop and the gateway Updates panel shows 'managed by the desktop app'; desktop/test/packaging.test.js green; V1 clean-machine install+update recorded. (Owner task 1 supplies the four Apple Developer signing secrets to the CI `release` environment.)",
-          "deps": [],
+          "deps": [
+            "SH-11"
+          ],
           "blocked_reason": "OWNER-GATED (2026-09-03): the mac-runner signed+notarized build path needs the four Apple Developer signing secrets supplied to the CI `release` environment — an owner action, now tracked as the explicit owner atom SH-11. DC-1 has no intra-repo deps, so before this annotation it read as ready-to-start; it is not truly startable by a tick until SH-11 lands. Recorded so the ready frontier reflects the gate instead of over-reporting DC-1."
         },
         {
@@ -6595,7 +6597,8 @@
           "scope": "Session 2 (T2.2); C2 — 'registry repo URL ships as a default git source'",
           "done_when": "registry URL seeds into app-sources.json on first run behind a config flag; Settings sources UI shows it as a removable default; a fresh dev home lists registry apps in the Store; removing the source persists across restart; the scanner gate at install is unchanged (no new install path)",
           "deps": [
-            "ET-3"
+            "ET-3",
+            "ET-9"
           ],
           "blocked_reason": "AUDIT REFRESH 2026-09-05: the sole live blocker is ET-9 (the github.com/PersonalClaw/registry repo does not exist — owner-only creation; live-verified 404). The previous clause citing an empty {\"apps\": []} index is STALE: ET-6 populated scratch/registry/app-registry.json with 4 exemplar apps on 2026-09-02, so the repo seeds non-vacuously the moment it exists. Code half is shipped and railed (catalog.py seed_default_git_sources, server.py startup wire, loader.py config flag, tests/test_gateway_boot_app_source_seed.py); the remainder is a small verify-on-fresh-home session once ET-9 lands."
         },
@@ -6994,7 +6997,7 @@
         },
         {
           "id": "SH-11",
-          "title": "Owner: supply Apple Developer signing + notarization secrets and the minisign release key to the CI `release` environment (gates DC-1/DCU-3/SH-4)",
+          "title": "Owner: supply Apple Developer signing + notarization secrets and the minisign release key to the CI `release` environment (gates DC-1/SH-4)",
           "status": "todo",
           "scope": "Owner provisioning of release-signing credentials, minted as an explicit atom so the signing gate blocking the desktop/release-signing atoms is legible. SH-3 (signing scheme + verifier, done) ships the trust store EMPTY on purpose — an agent must not generate the private key it would hand over. This is the owner half: run scripts/sign_app.py gen-key --signer PersonalClaw, drop the .pub into src/personalclaw/trusted_keys/, and load the four Apple Developer signing secrets into the CI release environment. NOTE the task groups DCU-3 here; DCU-3's actual blocker is a macOS Accessibility/TCC grant (a different owner action) tracked in DCU-3's own annotation — this atom directly unblocks the SIGNING side of DC-1 and SH-4.",
           "done_when": "the four Apple Developer signing secrets and the minisign signing key are present in the CI `release` environment and the PersonalClaw public key is in src/personalclaw/trusted_keys/; DC-1's signed+notarized mac build and SH-4's release-pipeline signing are unblocked on the credential side",
@@ -7968,14 +7971,6 @@
         ]
       },
       {
-        "id": "DC-1",
-        "title": "S1: Rebuild + signing + notarization + electron-updater + install-kind",
-        "plan": "DC",
-        "gate": [
-          "owner"
-        ]
-      },
-      {
         "id": "DCU-3",
         "title": "macOS accessibility driver (indexed AX tree)",
         "plan": "DCU",
@@ -8003,14 +7998,6 @@
         "id": "DL-11",
         "title": "Owner: P0 launch-gate clearance sign-off before any public posting (Show HN / r/selfhosted / r/LocalLLaMA)",
         "plan": "DL",
-        "gate": [
-          "owner"
-        ]
-      },
-      {
-        "id": "ET-4",
-        "title": "Default-source seeding: ship the registry URL as a removable default git source",
-        "plan": "ET",
         "gate": [
           "owner"
         ]
@@ -8049,7 +8036,7 @@
       },
       {
         "id": "SH-11",
-        "title": "Owner: supply Apple Developer signing + notarization secrets and the minisign release key to the CI `release` environment (gates DC-1/DCU-3/SH-4)",
+        "title": "Owner: supply Apple Developer signing + notarization secrets and the minisign release key to the CI `release` environment (gates DC-1/SH-4)",
         "plan": "SH",
         "gate": [
           "owner"
@@ -8205,12 +8192,10 @@
       "DAS-8",
       "DAS-9",
       "DAS-10",
-      "DC-1",
       "DC-2",
       "DC-3",
       "DC-4",
       "DC-5",
-      "DC-6",
       "DCU-1",
       "DCU-2",
       "DCU-3",
@@ -8319,12 +8304,12 @@
       "ET-1",
       "ET-2",
       "ET-3",
-      "ET-4",
-      "ET-5",
       "ET-6",
       "ET-7",
       "ET-8",
       "ET-9",
+      "ET-4",
+      "ET-5",
       "ET-10",
       "FM-1",
       "FM-2",
@@ -8579,6 +8564,8 @@
       "SH-9",
       "SH-10",
       "SH-11",
+      "DC-1",
+      "DC-6",
       "SH-12",
       "SH-4",
       "SL-1",
@@ -10101,6 +10088,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 848
+    "edge_count": 850
   }
 }
