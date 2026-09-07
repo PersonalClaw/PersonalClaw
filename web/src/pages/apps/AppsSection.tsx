@@ -5,7 +5,7 @@ import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
   ShieldAlert, ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
-  MoreVertical, Database, Sparkles, Archive, HardDrive, MapPin,
+  MoreVertical, Database, Sparkles, Archive, HardDrive, MapPin, AlertTriangle,
 } from 'lucide-react'
 import { launchChat } from '../../app/appSdk'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -1736,6 +1736,15 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
   const [busy, setBusy] = useState(false)
   const kept = (data?.dependencies ?? []).filter((d) => d.disposition !== 'removable')
   const facts = data?.data
+  // Issue 2585. An earlier copy of this app's data/ still on disk makes the backend REFUSE
+  // — fail-closed, so it does not guess which copy the user wants kept. The endpoint
+  // renders that refusal as `404 app not installed`, so pressing Uninstall would produce a
+  // message that is false and tells the user nothing about the data it just protected.
+  // Stated here, before the click, with the paths. `?? []` is safe for the gate (an older
+  // gateway omitting the key leaves the button enabled and the backend still refuses
+  // safely); it must not be read as a positive "there are none".
+  const unconsumed = facts?.unconsumed ?? []
+  const blocked = unconsumed.length > 0
 
   async function remove() {
     setBusy(true)
@@ -1750,6 +1759,22 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
           This removes the app's files and providers from disk. To just turn it off and leave the
           files in place, use <span className="text-on-surface">Deactivate</span> instead.
         </div>
+        {blocked && (
+          <div role="alert" className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 p-m">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0 text-warning" />
+            <div data-type="body-s" className="min-w-0 text-on-surface-low">
+              <span className="font-medium">An earlier copy of this app's data is still here.</span>{' '}
+              Uninstalling would have to overwrite or delete it, so it is refused until you decide
+              what to keep. Move {unconsumed.length === 1 ? 'it' : 'them'} somewhere else (or delete
+              {unconsumed.length === 1 ? ' it' : ' them'}, if you already have what you need), then
+              try again. <span className="text-on-surface">Force uninstall</span> deletes
+              {unconsumed.length === 1 ? ' it' : ' them'} deliberately.
+              {unconsumed.map((p) => (
+                <div key={p} data-type="label-s" className="mt-1 break-all opacity-80">{p}</div>
+              ))}
+            </div>
+          </div>
+        )}
         {/* `present` and `entries` are separate facts — see AppDataFacts. Absent data/
             and empty data/ get different sentences on purpose. */}
         <div className="flex items-start gap-2 rounded-md border border-outline-variant bg-surface-high p-m">
@@ -1777,7 +1802,18 @@ function RemoveAppModal({ name, onClose, onDone }: { name: string; onClose: () =
               existing population is a separate visual call — see
               ui/transientStateAnnouncement.test.tsx.) */}
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={busy} onClick={remove}>
+          {/* `disabledReason`, not `title`: this gate is a state the user CAN fix, so the
+              primitive swaps native `disabled` for `aria-disabled` and keeps the tab stop —
+              a keyboard user can land on the button and hear why. A wrapper title, or a
+              bare `title` on a natively-disabled button, is unreachable for exactly the
+              reader it was written for (see ui/disabledReasonTriage.test.ts). */}
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={blocked}
+            disabledReason={blocked ? 'An earlier copy of this app’s data is still on disk — resolve it first' : undefined}
+            onClick={remove}
+          >
             <Archive size={16} /> Uninstall
           </Button>
         </div>
