@@ -56,7 +56,16 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
   // key is already `chat-file-w`, so `'chat-file'` reconstructs it — no saved width reset.
   // Collapse is opt-out (the panel is opened/closed by ChatPage and separately expanded to
   // full-screen; it is never "collapsed"), so no `-collapsed` key is written.
-  const { width, onHandleDown, onHandleKey, min, max } = useResizablePanel(
+  // 🔑 `fitWidth`, not `width`, for anything rendered. `MAX_W` is 900 and this panel's width
+  // persists, so a user who drags it wide on a large monitor and then split-screens to 720px had
+  // BOTH its Expand and Close buttons clipped past the viewport edge — and the app sets
+  // `overflow: hidden` on the shell, so there is no horizontal scrollbar to reach them. Only
+  // Escape still closed it, which left pointer users with no way out at all.
+  //
+  // The clamp is `useResizablePanel`'s, the same one `SidePanel` has always had; this panel is the
+  // identical right-docked shape and simply never got it. `aria-valuenow` deliberately keeps the
+  // STORED `width` — that is the user's choice, and it is restored when the window widens again.
+  const { width, fitWidth: dockW, onHandleDown, onHandleKey, min, max } = useResizablePanel(
     'chat-file', { def: DEFAULT_W, min: MIN_W, max: MAX_W, side: 'right' })
   const [expanded, setExpanded] = useState(false)
   const [artModal, setArtModal] = useState<{ entry: FsEntry; content: string; name: string } | null>(null)
@@ -127,7 +136,7 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
 
   return (
     <motion.div className="relative shrink-0 overflow-hidden border-l border-outline-variant/40 bg-surface"
-      initial={{ width: 0, opacity: 0 }} animate={{ width, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
+      initial={{ width: 0, opacity: 0 }} animate={{ width: dockW, opacity: 1 }} exit={{ width: 0, opacity: 0 }} transition={spring.spatialDefault}>
       {/* left-edge resize handle — WAI-ARIA window-splitter: focusable, arrow-key operable,
           reports its width. Right-docked, so dragging/ArrowLeft grows it (side: 'right'). */}
       <div onPointerDown={onHandleDown} onKeyDown={onHandleKey} role="separator" aria-orientation="vertical"
@@ -136,7 +145,7 @@ export function ChatFilePanel({ path, onClose, commentTarget }: { path: string; 
         className="absolute left-0 top-0 bottom-0 z-20 w-1.5 cursor-ew-resize outline-none group">
         <span className="absolute left-0 top-0 bottom-0 w-px bg-outline-variant/40 group-hover:bg-primary group-focus-visible:bg-primary transition-colors" />
       </div>
-      <div className="h-full" style={{ width }}>{body}</div>
+      <div className="h-full" style={{ width: dockW }}>{body}</div>
     </motion.div>
   )
 }

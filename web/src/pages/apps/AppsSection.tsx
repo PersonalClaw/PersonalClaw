@@ -364,9 +364,36 @@ function tagOptions(tagLists: string[][], cap = 16): FilterOption[] {
  *  slugs — `productivity`, `dev-tools`, `local_model` — and a rail heading that reads
  *  "dev-tools" beside "All apps" looks like a leaked identifier. The KEY stays the raw
  *  tag (it is what the URL carries and what the grid matches); only the label changes. */
+/** Words whose correct rendering is not "capitalise the first letter" — acronyms, plus one brand.
+ *
+ *  🔑 The function below already exists because a raw slug in a rail heading "looks like a leaked
+ *  identifier". An ACRONYM sentence-cased is that same defect wearing a different hat: measured over
+ *  all 54 shipped manifests, the Categories rail rendered **`Llm` (16 apps), `Acp` (4), `Tts` (3),
+ *  `Stt` (2), `Onnx`** — and because the rail shows the 16 most common tags, four of its sixteen
+ *  entries read as typos. `Macos`, `Gemini cli` and `Kiro cli` are the same defect on rarer tags.
+ *
+ *  🪤 KEYED PER WORD, NOT PER TAG. A whole-tag allowlist fixes `llm` and leaves `gemini-cli` reading
+ *  "Gemini cli" — there the acronym is the SECOND word. Keying on words fixes both from one map.
+ *
+ *  🪤 AND THE RESULT STAYS SENTENCE CASE. Title-casing every word would turn `image_gen` into
+ *  "Image Gen", against a house convention that measures 1,122 of 1,130 multi-word labels in sentence
+ *  case. Only a word in this map departs from it — which is also what makes `macos` → `macOS` work:
+ *  the map supplies the entire spelling, including a deliberately lowercase first letter. */
+const TAG_WORD_CASING: Record<string, string> = {
+  llm: 'LLM', acp: 'ACP', tts: 'TTS', stt: 'STT', onnx: 'ONNX',
+  // In the shipped tag vocabulary today via `gemini-cli` / `kiro-cli` and `macos`.
+  cli: 'CLI', macos: 'macOS',
+  // Not in any shipped tag yet, but the same shape and cheap to be right about in advance.
+  mcp: 'MCP', a2a: 'A2A', api: 'API', ui: 'UI', sdk: 'SDK', http: 'HTTP',
+  url: 'URL', json: 'JSON', ocr: 'OCR', ios: 'iOS', s3: 'S3',
+}
+
 export function categoryLabel(tag: string): string {
-  const words = tag.replace(/[-_]+/g, ' ').trim()
-  return words.charAt(0).toUpperCase() + words.slice(1)
+  return tag.replace(/[-_]+/g, ' ').trim().split(' ')
+    .map((w, i) => TAG_WORD_CASING[w.toLowerCase()]
+      // Sentence case: capitalise the first word only, and only where the map does not own it.
+      ?? (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join(' ')
 }
 
 function matchesText(haystack: string, q: string): boolean {
@@ -1203,6 +1230,17 @@ const PROVIDER_ENTITY_LABEL: Record<string, string> = {
   // ("trigger_source provider", "duty_gate provider"). Named here so the install-consent card reads
   // as prose — the card is where a user decides what to grant, so its wording is part of the control.
   trigger_source: 'Trigger source', duty_gate: 'Duty gate', sync: 'Sync', sandbox: 'Sandbox',
+  // 🔴 AND `trigger` FELL THROUGH THE SAME WAY, which is why the comment above is now a pattern and
+  // not an anecdote. `shared-automations` ships `provider.type: "trigger"` (TSE-4 — a STORE of trigger
+  // rows, distinct from `trigger_source`, which supplies the stimulus), so its Store card read
+  // "trigger provider" and its rail facet read a bare lowercase "trigger".
+  //
+  // 🔑 The Python side is guarded — `test_manifest_types_match_handlers` pins `PROVIDER_TYPES` to the
+  // handler registry — but NOTHING guarded this map against `PROVIDER_TYPES`, which is exactly how a
+  // type reaches the UI unlabelled. `storeProviderLabels.test.ts` now closes that: it parses the
+  // Python set and requires an entry here for every member. Measured before adding this line: 19
+  // provider types, and `trigger` was the only one missing.
+  trigger: 'Trigger',
 }
 
 
