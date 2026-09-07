@@ -294,10 +294,17 @@ def test_the_harness_reports_unproven_rather_than_skipping_without_the_grant(mon
     answered True still does — macOS resolves the request against the RESPONSIBLE process, so it
     is a property of the session, not of the workstation. Either way the answer must never be
     green by omission.
+
+    ``platform.system`` is forced to Darwin so this reaches the grant branch on a Linux runner.
+    Without that the test passed on CI for the wrong reason: preflight refused on the PLATFORM
+    check first, and the assertion about the Accessibility fix never applied. Which is the same
+    shape as everything else in this file — an assertion that never ran reads exactly like one
+    that held.
     """
     harness = _harness()
     from personalclaw.computer_use import macos_ffi
 
+    monkeypatch.setattr(harness.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(macos_ffi, "is_process_trusted", lambda: False)
     with pytest.raises(harness.Failure) as excinfo:
         harness._preflight()
@@ -306,6 +313,21 @@ def test_the_harness_reports_unproven_rather_than_skipping_without_the_grant(mon
     assert "Privacy & Security > Accessibility" in detail
     assert "RESPONSIBLE" in detail, "the fix must name the identity macOS actually evaluates"
     assert "AXIsProcessTrusted" in detail
+
+
+def test_the_harness_refuses_on_a_non_macos_host_too(monkeypatch):
+    """The other preflight leg, and the one every CI runner actually takes.
+
+    A harness that measured a macOS-only capability and returned quietly on Linux would report
+    the absence of a driver as the absence of a problem.
+    """
+    harness = _harness()
+
+    monkeypatch.setattr(harness.platform, "system", lambda: "Linux")
+    with pytest.raises(harness.Failure) as excinfo:
+        harness._preflight()
+    assert excinfo.value.clause == "preflight"
+    assert "Linux" in excinfo.value.detail
 
 
 def _dotted(node: ast.AST) -> str:
