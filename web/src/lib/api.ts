@@ -1808,7 +1808,14 @@ export interface SkillFile { path: string; size: number }
 export interface SkillMarketplace { name: string; type: string }
 export interface SkillSearchResult { id: string; name: string; description: string; source: string; url?: string; installs?: number }
 export interface SkillMarketplaceDetail { id: string; name: string; audit_status?: string; files: Array<{ path: string; binary?: boolean }>; frontmatter?: Record<string, unknown>; body?: string; marketplace?: string }
-export interface ToolItem { name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean; group?: string }
+/** `tier` is the PROVENANCE of the provider behind this tool — the same
+ *  `supply_chain.TrustTier` string the install dialog discloses ("Unsigned — community
+ *  tier"). `builtin` for a native provider no installed app contributed, the app's own
+ *  recorded tier for one an app did, and `''` for an external MCP server (which never went
+ *  through the supply-chain gate and so has no tier to claim). Rendered through
+ *  `lib/trustTier` — the ONE map both the Tools badge and the install dialog read, after
+ *  #2627 found them describing the same bundle differently. */
+export interface ToolItem { name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean; group?: string; tier?: string }
 export interface ToolLoadFailure { provider: string; error: string }
 // The generated self-description document served at GET /api/manifest — the same
 // shape an agent driving this instance reads (personalclaw/manifest.py).

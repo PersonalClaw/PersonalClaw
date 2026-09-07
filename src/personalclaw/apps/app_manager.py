@@ -588,6 +588,30 @@ def _origin_of(name: str) -> str:
     return getattr(meta, "origin", "") or "local" if meta is not None else "local"
 
 
+def trust_tier_of(name: str) -> str:
+    """The supply-chain trust tier of an INSTALLED app, as a plain string.
+
+    The one read every surface that discloses provenance after the fact should use —
+    #2627: the Tools page badged an installed community bundle ``built-in``, the word
+    core's own first-party providers get, erasing the "Unsigned — community tier" the
+    install dialog had just made the user consent to.
+
+    Prefers the tier the gate RECORDED (``installed.json``), because that is the only
+    value that knows whether a maintainer signature raised the bundle above what its
+    origin alone earns. Falls back to :func:`_tier_for_origin` for an app installed
+    before the field existed — which can only ever UNDERSTATE trust (a signed local
+    bundle reads ``community``), never overstate it. An unknown app is ``community``:
+    "we cannot establish provenance" must not render as shipped-with-the-product.
+    """
+    meta = _read_installed(name)
+    if meta is None:
+        return TrustTier.COMMUNITY.value
+    recorded = getattr(meta, "tier", "") or ""
+    if recorded:
+        return recorded
+    return _tier_for_origin(getattr(meta, "origin", "") or "local").value
+
+
 def _seed_app_skills(manifest: AppManifest, name: str, *, origin: str | None = None) -> None:
     """Seed the app's declared SKILL.md skills THROUGH the supply-chain chokepoint
     (an app OWNS its skills; the gate is never bypassed). Best-effort: a seeding
@@ -799,6 +823,10 @@ def install(
             updatedAt=_now_iso(),
             source=str(source_ref if source_ref is not None else source),
             origin=origin if origin in {"builtin", "registry", "local", "external"} else "local",
+            # The tier the gate above settled on for these exact bytes — recorded so
+            # every later provenance surface (the Tools badge, #2627) reads the SAME
+            # value the install dialog just disclosed, rather than re-deriving one.
+            tier=tier.value,
         )
         _write_installed(name, meta)
         if manifest.all_providers():
@@ -1111,6 +1139,10 @@ def update(
         if meta is not None:
             meta.version = manifest.version
             meta.updatedAt = _now_iso()
+            # The update re-ran the signature gate on the NEW bytes, so the tier it
+            # produced is the one that now describes what is installed. Leaving the old
+            # value would let a version that dropped its signature keep reading `official`.
+            meta.tier = tier.value
             _write_installed(name, meta)
         if manifest.all_providers():
             _provider_registry().register(manifest, enabled=bool(meta and meta.enabled))
@@ -1240,6 +1272,9 @@ def seed_builtin_apps() -> list[str]:
                 updatedAt=_now_iso(),
                 source="builtin",
                 origin="builtin",
+                # A bundled app IS the platform — record it explicitly so the Tools badge
+                # reads `built-in` off the recorded tier rather than off an origin fallback.
+                tier=TrustTier.BUILTIN.value,
             )
             _write_installed(name, meta)
             _audit("seed", "ok", name)
