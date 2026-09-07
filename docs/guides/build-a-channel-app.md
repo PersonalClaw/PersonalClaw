@@ -309,7 +309,7 @@ that vendor touches.** The checklist:
 |---|---|---|
 | **Channel transport** | `provider` / `providers[]` `type: "channel"` | conversations in and out |
 | **Inbox message source** | `providers[]` `type: "inbox"` (a `MessageSourceProvider`) | messages that arrive while no session is live. Without it, anything sent to your channel outside a conversation is invisible to the owner's Inbox |
-| **Trigger source** — *when that seam exists* | (forward obligation) | vendor events driving automations. The workflows automation substrate owns this seam; until it lands, do **not** hand-roll early event glue. Add the provider when the seam ships |
+| **Trigger source** | `providers[]` `type: "trigger_source"` (a `TriggerSourceProvider` from `personalclaw.sdk.trigger_source`) | vendor events driving automations. **The seam is live** as of `WF2AUT-8`, so this row stopped being a forward obligation. `personalclaw app new --list-types` prints `trigger_source` next to `channel`. Your provider's `start(emit)` hands core typed events; core namespaces them `app:<name>:<event>`, fences them at origin, and `kind: event` triggers match on the existing `{source, pattern}` spec. Core never polls you. Still do **not** hand-roll event glue. There is a seam now, so there is no excuse for one |
 | **Contributed UI** | `ui` pages in your own bundle | anything the generic provider-settings form cannot express |
 
 **Rule 2 — your UI, not core's.** Anything that does not fit a pluggable seam becomes

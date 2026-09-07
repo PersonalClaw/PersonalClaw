@@ -519,3 +519,72 @@ registration, and `ET-7` then files `bounty`-labelled issues that point at it.
 Consequence: **`CE-9` becomes startable** on the scaffold half alone, and `ET-7` stays legitimately blocked
 until the wants-list lands — which is a real ordering rather than a deadlock. The `dag.json` dep edit
 follows in the next tracking batch.
+
+### COORDINATION — the trigger-source forward obligation, and which half of it is now discharged. 2026-09-06
+
+This is `T7.6`'s deliverable and `CE-9`'s third clause. It replaces the plan's earlier phrasing, which
+read as pending when the thing it waited on had already shipped.
+
+**What the earlier phrasing said, and why it now misleads.** The 2026-07-26 amendment (rule 1, above)
+wrote the trigger-source leg as "a **trigger source** once WORKFLOWS-V2-AUTOMATION-SUBSTRATE exposes
+app-registered source types", and Session placement called it "a *forward obligation* documented now,
+implemented per-app only after the substrate's seam exists". `docs/guides/build-a-channel-app.md` carried
+the same tense in its vendor-completeness table ("*when that seam exists*", "until it lands"). Every one of
+those clauses is conditional on an event that has since happened. A contributor reading the guide today was
+told to wait for a seam they could have used.
+
+**The core seam SHIPPED. The obligation is discharged at the substrate, not at the apps.** Measured against
+code on `origin/main`, not against `WORKFLOWS-V2-AUTOMATION-SUBSTRATE`'s execution log:
+
+- `WF2AUT-8` is `done` and the whole substrate plan is `done` at 14/14.
+- `trigger_source` is a live member of `PROVIDER_TYPES` (`src/personalclaw/apps/manifest.py`) **with a
+  registered runtime handler** (`providers/registry.py::TriggerSourceTypeHandler`, wired up in
+  `get_provider_registry()`). Membership alone would not prove a usable seam; the handler is what makes a
+  declared provider resolve. That distinction is the whole point of
+  `tests/test_manifest_types_match_handlers.py`.
+- The app-facing contract is `personalclaw.sdk.trigger_source:TriggerSourceProvider`, and
+  `personalclaw app new --list-types` prints it in the derived table next to `channel`.
+- `src/personalclaw/trigger_sources/registry.py` builds the namespaced source as
+  `app:<name>:<event>` from the **registered** name, never from anything the app supplies at emit time,
+  fences every payload at origin through `fence_untrusted`, and writes the provenance keys last so an app
+  cannot forge them. Disabling an app unregisters the source before parking its bound triggers with a typed
+  reason.
+- `tests/test_trigger_sources.py` is green (33 passed), including
+  `test_a_declared_source_fires_an_event_trigger_END_TO_END`,
+  `test_the_FROZEN_CAPABILITY_fence_is_honoured_for_an_app_sourced_fire`,
+  `test_disabling_the_app_PARKS_its_bound_triggers_with_a_typed_reason` and
+  `test_the_seam_names_NO_VENDOR`.
+
+**No bespoke early event glue shipped, and the reason matters.** Swept across every app in
+`PersonalClawApps`: `emit_event`, `SourceEvent`, `event_bus`, `register_source`, `dispatch_event` and
+`triggers.json` have **zero** hits. The four channel apps each run an inbound loop (Telegram `getUpdates`
+long-poll, Discord Gateway WS, IMAP poll, Slack Socket Mode), and every one of them terminates in
+`personalclaw.sdk.channel.run_chat`, which starts a conversation turn rather than firing a trigger. Nothing
+in the apps repo pushes events into the automation system by a private path. Core carries no
+vendor-specific ingestion glue
+either: `src/personalclaw/trigger_sources/` has zero vendor-name hits, and the vendor strings under
+`src/personalclaw/triggers/` are all delivery-destination rendering (`channel:slack` as a destination id
+prefix), never ingestion.
+
+**Read that negative honestly.** It holds because **nothing exists at all**, not because the apps adopted
+the seam. Adoption is `0/4`: not one channel app declares `trigger_source`, and no app in
+`PersonalClawApps` does. The seam's only implementer anywhere is the in-process test fixture
+`_SampleSource`. `CE-8` brought Slack to "full vendor-completeness" as `channel` + `inbox`, which was the
+whole bar available at the time, because the trigger seam had not landed yet.
+
+**So the obligation splits, and only the first half is closed:**
+
+| Half | Owner | State |
+|---|---|---|
+| Core exposes an app-registered trigger-source seam | `WF2AUT-8` (WORKFLOWS-V2-AUTOMATION-SUBSTRATE) | **DISCHARGED**, verified above |
+| Each vendor channel app declares its `trigger_source` provider | the apps repo, per app | **OUTSTANDING**, `0/4` |
+
+**The second half has no owner atom anywhere in `dag.json`.** Exactly three atoms name the seam:
+`WF2AUT-8` (shipped it), `CE-7` (wrote the "trigger-source-when-available" checklist into the guide), and
+`CE-9` (records this note). None of the three requires any app to actually declare one, and `CE-9`'s clause
+asks only for the coordination line. The substrate plan is `done`, so it will not pick the adoption up.
+Filed as [#2557](https://github.com/PersonalClaw/PersonalClaw/issues/2557) rather than minted here, since
+minting an atom is an owner edit.
+
+`CE-9`'s third clause is **MET** by this note plus the machine-checked negative. What is *not* met, and was
+never in the clause, is adoption.
