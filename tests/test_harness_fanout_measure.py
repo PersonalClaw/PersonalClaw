@@ -160,6 +160,132 @@ def test_the_report_names_the_TOKENS_PER_POINT_of_each_arm():
     assert payload["arms"]["single"]["tokens_per_point"] == pytest.approx(1500.0)
 
 
+# ── the spend basis: which denominator the gate divides (#2587) ──
+#
+# "The two arms spent the same" is not one quantity. Amendment (e) matches budget by giving the
+# cheaper arm more samples, so ITS arms' trial counts are unequal on purpose and TOTALS are the
+# question. A PAIRED design runs both arms over identical work the same number of times, so its
+# totals are commensurable only while the counts match. The default stays totals: this module's own
+# experiment is the fan-out one, and a paired caller must say so.
+
+
+def test_the_DEFAULT_basis_is_TOTALS_because_this_modules_own_design_matches_BUDGET():
+    """Amendment (e)'s shape, and the reason per-trial cannot be the default here: three fan-out
+    trials at 10,000 against ten single-agent samples at 3,000 is 30,000 both ways, which is what
+    "at equal token spend" MEANS in that design. Dividing by trial count would refuse the
+    comparison the amendment exists to make."""
+    result = fm.compare(
+        "identical work",
+        _arm("fanout", [70.0, 70.0, 70.0], 10_000),
+        _arm("single", [60.0] * 10, 3_000),
+    )
+    assert result.spend_basis == fm.SPEND_TOTAL
+    assert result.token_ratio == pytest.approx(1.0)
+    assert result.verdict == fm.VERDICT_FANOUT_WINS
+
+
+def test_the_SAME_arms_on_the_PER_TRIAL_basis_are_NOT_spend_matched():
+    """The other side of the same numbers, and the whole point of naming the basis: 10,000 per
+    attempt against 3,000 per attempt is 233% apart, so a PAIRED reading of those arms must refuse.
+    One pair of arms, two honest answers, because the two designs ask different questions."""
+    result = fm.compare(
+        "identical work",
+        _arm("fanout", [70.0, 70.0, 70.0], 10_000),
+        _arm("single", [60.0] * 10, 3_000),
+        spend_basis=fm.SPEND_PER_TRIAL,
+    )
+    assert result.spend_basis == fm.SPEND_PER_TRIAL
+    assert result.token_ratio == pytest.approx(10_000 / 3_000)
+    assert result.verdict == fm.VERDICT_NOT_TOKEN_MATCHED
+
+
+def test_the_per_trial_basis_leaves_an_EQUAL_pair_untouched():
+    """The vacuity floor. §3's paired design runs `k` trials per arm, so the basis only changes an
+    answer when a trial was lost — a basis that moved every equal-count verdict would be a
+    threshold change wearing a denominator's clothes."""
+    kwargs = dict(work="identical work")
+    on = _arm("fanout", [70.0, 70.0, 70.0], 10_200)
+    off = _arm("single", [60.0, 60.0, 60.0], 10_000)
+    totals = fm.compare(fanout=on, single=off, **kwargs)
+    per_trial = fm.compare(fanout=on, single=off, spend_basis=fm.SPEND_PER_TRIAL, **kwargs)
+    assert totals.verdict == per_trial.verdict == fm.VERDICT_FANOUT_WINS
+    assert totals.token_ratio == pytest.approx(per_trial.token_ratio)
+
+
+def test_an_ARMS_per_trial_spend_is_available_beside_its_total():
+    result = fm.compare(
+        "identical work",
+        _arm("fanout", [70.0, 70.0, 70.0], 10_000),
+        _arm("single", [60.0, 60.0, 60.0], 10_000),
+    )
+    assert result.fanout.tokens == 30_000
+    assert result.fanout.tokens_per_trial == pytest.approx(10_000.0)
+    assert result.fanout.spend(fm.SPEND_TOTAL) == pytest.approx(30_000.0)
+    assert result.fanout.spend(fm.SPEND_PER_TRIAL) == pytest.approx(10_000.0)
+
+
+def test_the_published_payload_NAMES_the_basis_it_divided():
+    """A ratio whose denominator has to be inferred was published once already, and it read as a
+    48.6% spend difference that was two missing trials."""
+    result = fm.compare(
+        "identical work",
+        _arm("fanout", [70.0, 70.0, 70.0], 10_000),
+        _arm("single", [60.0, 60.0, 60.0], 10_000),
+        spend_basis=fm.SPEND_PER_TRIAL,
+    )
+    assert result.to_dict()["spend_basis"] == fm.SPEND_PER_TRIAL
+
+
+def test_the_note_says_WHICH_spend_it_measured():
+    """§8-style: the sentence travels with the number. "differs by 26%" is a different claim per
+    trial than in total, and a reader cannot tell them apart from the percentage."""
+    unmatched = dict(
+        work="identical work",
+        fanout=_arm("fanout", [80.0, 80.0, 80.0], 40_000),
+        single=_arm("single", [60.0, 60.0, 60.0], 10_000),
+    )
+    totals = fm.compare(**unmatched)
+    per_trial = fm.compare(**unmatched, spend_basis=fm.SPEND_PER_TRIAL)
+    assert any("in total)" in n for n in totals.notes)
+    assert any("per trial)" in n for n in per_trial.notes)
+
+
+@pytest.mark.parametrize("basis", ["", "totals", "mean", None])
+def test_an_UNKNOWN_basis_is_REFUSED_rather_than_defaulted(basis):
+    """A silent fallback to totals is exactly how the incommensurable comparison reached a published
+    table: nobody chose it, so nobody reviewed it."""
+    with pytest.raises(fm.MeasurementError, match="unknown spend basis"):
+        fm.compare(
+            "identical work",
+            _arm("fanout", [70.0, 70.0, 70.0], 10_000),
+            _arm("single", [60.0, 60.0, 60.0], 10_000),
+            spend_basis=basis,
+        )
+
+
+def test_an_UNKNOWN_basis_is_refused_even_when_a_GATE_would_short_circuit_first():
+    """The basis is validated before the check order runs, not lazily where the division happens.
+    Two trials per arm returns `insufficient_trials` without ever dividing a spend, so a lazily
+    validated basis would record a bad one on the answer and be believed."""
+    with pytest.raises(fm.MeasurementError, match="unknown spend basis"):
+        fm.compare(
+            "identical work",
+            _arm("fanout", [70.0, 70.0], 10_000),
+            _arm("single", [60.0, 60.0], 10_000),
+            spend_basis="mean",
+        )
+
+
+def test_an_observation_FILE_is_measured_on_the_fanout_designs_basis(tmp_path):
+    """The file shape is a `fanout`/`single` pair, which IS amendment (e)'s design, so
+    `measure_file` does not offer a basis to choose — and the answer says which one it used."""
+    assert fm.SPEND_BASES == {fm.SPEND_TOTAL, fm.SPEND_PER_TRIAL}
+    path = _observations(
+        tmp_path, _trials([62.0, 63.0, 61.0], 10_000), _trials([60.0, 60.0, 61.0], 10_000)
+    )
+    assert fm.measure_file(path).spend_basis == fm.SPEND_TOTAL
+
+
 # ── trial count ──
 
 

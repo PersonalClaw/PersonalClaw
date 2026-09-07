@@ -21,6 +21,13 @@ check order, or an aggregate:
 * the only thing added is a **directional relabel** of the two winner verdicts, so an output
   file about skills does not say `fanout_wins`. The closed set stays the same size: three of
   the five verdicts pass through byte-identical.
+* the one thing this module *declares* rather than inherits is the token gate's DENOMINATOR
+  (`SPEND_BASIS`). It is not a threshold and not a check order — it is which spend the gate
+  divides, and it has no design-free answer: the fan-out design matches budget by giving the
+  cheaper arm more samples, so its arms' trial counts are unequal on purpose and TOTALS are
+  right there. This is a paired design (§3: `k` trials per arm on identical work), so its
+  totals are commensurable only while the counts match, and §6's absent cells are exactly
+  what makes them not.
 
 Why this lives in `harness/` and not under `src/personalclaw/`: `harness` is a repo-root dev
 package that is deliberately NOT in the shipped wheel (`harness/README.md`), so a module under
@@ -40,6 +47,7 @@ from typing import Any
 from harness.fanout_measure import (
     INCONCLUSIVE_BAND_POINTS,
     MIN_TRIALS_PER_ARM,
+    SPEND_PER_TRIAL,
     TOKEN_MATCH_TOLERANCE,
     VERDICT_FANOUT_WINS,
     VERDICT_INCONCLUSIVE,
@@ -56,6 +64,7 @@ __all__ = [
     "ARM_SKILLS_ON",
     "INCONCLUSIVE_BAND_POINTS",
     "MIN_TRIALS_PER_ARM",
+    "SPEND_BASIS",
     "TOKEN_MATCH_TOLERANCE",
     "VERDICT_INCONCLUSIVE",
     "VERDICT_INSUFFICIENT_TRIALS",
@@ -64,6 +73,7 @@ __all__ = [
     "VERDICT_SKILLS_ON_WINS",
     "VERDICTS",
     "Arm",
+    "IncommensurableSpendError",
     "TaskVerdict",
     "Trial",
     "verdict_class",
@@ -78,6 +88,30 @@ ARM_SKILLS_OFF = "skills_off"
 #: The two directional verdicts, renamed off `fanout`/`single` and nothing else changed.
 VERDICT_SKILLS_ON_WINS = "skills_on_wins"
 VERDICT_SKILLS_OFF_WINS = "skills_off_wins"
+
+#: The denominator the token gate divides for THIS design, and the only knob this module declares.
+#: §3 runs `k` trials per arm on identical work, so per-trial and total spend are the same
+#: comparison whenever the run is whole — they diverge in exactly one case, and it is §6's: an arm
+#: that lost cells to `VERIFIER_ABSENT`. Over unequal counts a totals ratio is not a spend
+#: comparison at all; it reports the missing attempts. MEASURED (`learnbench-20260907T003211Z`):
+#: `sk_task_project` lost two `skills_on` cells, was verdicted on 3 trials against 5, and published
+#: `token_ratio` 0.5139 as "a 48.6% spend difference" where the per-trial value is 0.8565, 14.3%.
+#: Recomputing both runs of #2587 on this basis changes no verdict CLASS — it corrects a published
+#: number, which is why it is a miscomputation fix and not a protocol edit.
+SPEND_BASIS = SPEND_PER_TRIAL
+
+
+class IncommensurableSpendError(RuntimeError):
+    """The token gate ran on a basis this design cannot use.
+
+    Raised rather than noted, and raised even though the line above it passes :data:`SPEND_BASIS`
+    into `compare()`: `compare()`'s own default is TOTALS (correct for the fan-out design it
+    belongs to), so an edit that drops the argument, or that flips :data:`SPEND_BASIS`, would
+    silently restore the totals comparison and publish an "N% spend difference" that is mostly
+    missing trials. §8 publishes the ratio beside the verdict, so a wrong ratio is read as evidence
+    — a crash the tests catch beats a number a reader believes.
+    """
+
 
 #: `fanout_measure`'s verdict → this benchmark's. Three of five are identity: the
 #: withheld verdicts are withheld for reasons that have nothing to do with which arm is
@@ -137,22 +171,27 @@ def _arm_note(verdict: str, payload: dict) -> str:
     if verdict == VERDICT_NOT_TOKEN_MATCHED:
         on_tokens = int(on.get("tokens") or 0)
         off_tokens = int(off.get("tokens") or 0)
-        if not on_tokens or not off_tokens:
+        on_n = int(on.get("trials") or 0)
+        off_n = int(off.get("trials") or 0)
+        if not on_tokens or not off_tokens or not on_n or not off_n:
             return (
                 f"an arm spent zero tokens ({ARM_SKILLS_ON} {on_tokens}, {ARM_SKILLS_OFF} "
                 f"{off_tokens}) — a comparison against an arm that called no model measures "
                 "nothing about the skill"
             )
-        # From the integer TOTALS, not from the payload's rounded `token_ratio`: `compare()`
-        # computes the percentage off `fanout.tokens / single.tokens`, and deriving it from the
-        # 4-decimal ratio instead moves the last digit (13.6% became 13.7% on one real pair). Two
-        # published numbers about the same spend must not disagree, even by a tenth.
-        drift = f"{abs(on_tokens / off_tokens - 1.0) * 100:.1f}% "
+        # PER TRIAL, on `SPEND_BASIS`, and derived from the same quantity the gate divided rather
+        # than from the payload's 4-decimal `token_ratio`: rounding the ratio first moves the last
+        # digit (13.6% became 13.7% on one real pair), and two published numbers about the same
+        # spend must not disagree, even by a tenth.
+        on_rate = on_tokens / on_n
+        off_rate = off_tokens / off_n
+        drift = f"{abs(on_rate / off_rate - 1.0) * 100:.1f}% "
         return (
-            f"token spend differs by {drift}({ARM_SKILLS_ON} {on_tokens} vs {ARM_SKILLS_OFF} "
-            f"{off_tokens}), over the {TOKEN_MATCH_TOLERANCE * 100:.0f}% match tolerance — the "
-            "arms are not spend-matched, so no direction is offered. This is the measurement "
-            "declining a question it did not ask, NOT a finding that the skill does not help"
+            f"token spend differs by {drift}per trial ({ARM_SKILLS_ON} {on_rate:.0f} over {on_n} "
+            f"trial(s), {ARM_SKILLS_OFF} {off_rate:.0f} over {off_n}), over the "
+            f"{TOKEN_MATCH_TOLERANCE * 100:.0f}% match tolerance — the arms are not spend-matched, "
+            "so no direction is offered. This is the measurement declining a question it did not "
+            "ask, NOT a finding that the skill does not help"
         )
     return (
         f"|delta| {abs(float(payload.get('delta_points') or 0.0)):.2f} clears the "
@@ -168,18 +207,16 @@ def _imbalance_note(payload: dict) -> str:
     """The note an UNEQUAL pair needs, or ``""``. Measured, not hypothetical.
 
     `sk_task_project` in the 2026-09-07 run lost two `skills_on` cells to `VERIFIER_ABSENT` and
-    was verdicted on 3 trials against 5. `compare()` divides the arms' token TOTALS, so the ratio
-    came out `0.5139` — a 48.6% "spend difference" that is mostly two missing trials, not a
-    per-trial difference (8,099/trial vs 9,456/trial, a ratio of 0.857).
+    was verdicted on 3 trials against 5. On TOTALS the ratio came out `0.5139` — a 48.6% "spend
+    difference" that is mostly two missing trials rather than spend (8,099/trial against
+    9,456/trial is 0.857). :data:`SPEND_BASIS` now divides per trial, so the published ratio is the
+    per-trial one; what remains to say is that the pair is thin, because a per-trial ratio over 3
+    trials is a weaker observation than the same ratio over 5 and the score delta beside it is no
+    longer a paired comparison at all.
 
     §6 already says an absent cell is reported as a count and never counted as a skills-off win.
-    It does not say the surviving arms stay COMPARABLE, and over unequal trial counts they do not.
-    So the imbalance is stated beside the ratio rather than left for a reader to spot in the
-    `trials` column, and it is emitted whatever the verdict, because it is a property of the pair
-    and not of the verdict.
-
-    The ratio is not silently corrected here: normalising it would change a number `compare()`
-    produced, which is the owner's module and this one's whole contract is not to.
+    It does not say the surviving arms stay comparable. Emitted whatever the verdict, because it is
+    a property of the pair and not of the verdict.
     """
     arms = payload.get("arms") or {}
     on = int((arms.get(ARM_SKILLS_ON) or {}).get("trials") or 0)
@@ -187,9 +224,10 @@ def _imbalance_note(payload: dict) -> str:
     if on == off:
         return ""
     return (
-        f"the arms are UNEQUAL — {ARM_SKILLS_ON} {on} trial(s) against {ARM_SKILLS_OFF} {off}, so "
-        "the token ratio above is computed over unequal totals and is not a per-trial comparison. "
-        "Re-run the missing trials before reading the ratio as a spend difference"
+        f"the arms are UNEQUAL — {ARM_SKILLS_ON} {on} trial(s) against {ARM_SKILLS_OFF} {off}. The "
+        "token ratio above is a PER-TRIAL comparison, which is the only one unequal counts admit; "
+        "over totals it would have reported the missing trial(s) as a spend difference. The score "
+        "delta beside it is NOT a paired result — re-run the missing trial(s) before reading it"
     )
 
 
@@ -260,6 +298,9 @@ def verdict_task(
 ) -> TaskVerdict:
     """Verdict one task's two arms through `fanout_measure.compare`, then relabel.
 
+    The token gate runs on :data:`SPEND_BASIS` — per trial, because this is a paired design — and
+    the basis is re-checked off the returned comparison rather than trusted from the call site.
+
     Refuses BEFORE calling `compare` when an arm has no trials at all — `compare` would
     return `insufficient_trials`, which reads as "we measured too little" when the truth is
     "we measured nothing". §6's absent-cell count is the honest report of that state.
@@ -294,7 +335,15 @@ def verdict_task(
     off_arm = Arm(name=ARM_SKILLS_OFF, trials=list(off_trials))
     # `compare(work, a, b)` treats its second argument as the arm a positive delta favours.
     # Passing the treatment arm there is what makes a positive delta mean "the skill helped".
-    comparison = compare(task_id, on_arm, off_arm)
+    comparison = compare(task_id, on_arm, off_arm, spend_basis=SPEND_BASIS)
+    # The rail. See `IncommensurableSpendError`: `compare()`'s default basis is TOTALS, so this
+    # cannot be left to the argument above staying where it is.
+    if comparison.spend_basis != SPEND_PER_TRIAL:
+        raise IncommensurableSpendError(
+            f"the token-match gate ran on {comparison.spend_basis!r} for {task_id!r}, over "
+            f"{len(on_arm.trials)} {ARM_SKILLS_ON} trial(s) against {len(off_arm.trials)} "
+            f"{ARM_SKILLS_OFF} — a paired design's arms are only comparable per trial"
+        )
     payload = comparison.to_dict()
     # Forward every upstream note that is about THIS experiment; replace the ones written in
     # fan-out vocabulary with the same numbers in skills-arm words. See `_FANOUT_VOCABULARY`.
