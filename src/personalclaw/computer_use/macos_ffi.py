@@ -469,6 +469,24 @@ def walk_window(app: str) -> WindowWalk:
         if depth < MAX_DEPTH:
             children = _array_items(frameworks, _attribute(frameworks, handle, "AXChildren"))
             stack = [(child, depth + 1) for child in children if child] + stack
+        elif _array_items(frameworks, _attribute(frameworks, handle, "AXChildren")):
+            # 🔴 issue 2553. The depth cap dropped a whole subtree while leaving `truncated` at
+            # its False default, so a deep window arrived at the model labelled COMPLETE. That
+            # contradicted both of this function's own stated contracts — the docstring's "a
+            # truncated answer THAT SAYS SO is more useful than a killed process", and
+            # MAX_ELEMENTS' "a window exposing more is truncated AND SAYS SO".
+            #
+            # Absent and complete are different facts, and this is the read a model uses to
+            # decide what is on screen. Asked whether a window holds a password field, it saw N
+            # elements and `truncated: false`, and could only conclude no. MAX_DEPTH of 25 is
+            # generous for a native window and not generous for a Chromium or Electron one,
+            # which is exactly where such a field lives.
+            #
+            # The flag is set only when children were ACTUALLY dropped. A leaf that merely sits
+            # at the depth limit has nothing below it, so flagging truncation there would cry
+            # wolf on every deep-but-complete tree and teach readers to ignore the flag — the
+            # opposite error, and one that costs the flag its meaning rather than restoring it.
+            walk.truncated = True
     return walk
 
 
