@@ -4408,9 +4408,9 @@
           "done_when": "the desktop app connects to a gateway it did not spawn (LAN or remote) while defaulting to spawn-local; the connect dialog lists N paired gateways, shows the active one, switches cleanly with graceful reconnect per S3; revoking one gateway's device session breaks only that entry",
           "deps": [
             "CA-6",
-            "CA-7",
-            "EXT:DESKTOP-CAPABILITIES:Electron shell connect-mode coordination"
-          ]
+            "CA-7"
+          ],
+          "blocked_reason": "NOT EXT-GATED — its gate was CIRCULAR, and dropping it makes CA-8 agent-buildable (correction 2026-09-07). The dep 'EXT:DESKTOP-CAPABILITIES:Electron shell connect-mode coordination' named a deliverable that is CA-8'S OWN OUTPUT: docs/roadmap/plans/DESKTOP-CAPABILITIES.md:15 states that COMPANION-APPS' 'connect to a gateway you did not spawn: LAN or remote' mode 'is added here in that plan's S4/T4.1', and COMPANION-APPS T4.1's file list is desktop/main.js plus a connect dialog. No DC atom ships it — DC-1..DC-6 are signing/notarization, the capability bridge, push-to-talk, tray, native notifications and Win/Linux targets. COMPOUNDING DEFECT, now fixed: the resolver edge mapped that ref to DC-1, an unrelated todo atom held by the owner for four Apple Developer signing secrets (via SH-11). So a connect dialog was waiting on Apple credentials. Both the dep and its resolved_edges entry are dropped. MEASURED STARTING STATE: zero connect-mode code exists. desktop/main.js is spawn-local only (spawn of the bundled gateway on --port auto; backendUrl = http://localhost:${payload.port} at :154), and grep for connectMode / gatewayUrl / savedEndpoint / pairedGateway across desktop/ returns nothing. REMAINING deps CA-6 and CA-7 are both done, so T4.1 + T4.4 (connect dialog, multi-gateway switcher over CA-6's registry, graceful reconnect per CA-7) are buildable NOW and are scheduled. What stays owner-side is V4 only — COMPANION-APPS owner task 3 requires connecting to a LAN gateway AND a remote one on the owner's own network plus a tunnel, which an agent cannot perform. So T4.1 + T4.4 are LIVE AGENT WORK and only V4's validation is the owner's. MARKER NOTE, because this bit me and will bit the next editor: atom_gates() flags an atom 'owner' when OWNER_GATE_RE (owner[-\\s]?(gated|only)) matches ANYWHERE in blocked_reason, so describing ANOTHER atom's owner gate in this prose silently moved CA-8 out of ready_frontier and into gated_frontier, hiding buildable work. The marker cannot distinguish 'this atom is held by the owner' from 'this atom mentions an owner gate'. Phrasing here avoids the spelling deliberately."
         },
         {
           "id": "CA-9",
@@ -5494,9 +5494,9 @@
           "scope": "Gap filled 2026-09-07 — WF2AUT-8's seam shipped with zero adopters and no atom in the dag required one (issue #2557)",
           "done_when": "Each shipped channel app declares a `trigger_source` provider so an `app:<name>:<event>` trigger arms from real inbound traffic rather than from a test fixture; adoption is MEASURED at 4/4 by a test that reads the installed manifests rather than asserting a count, so a regression reds in either direction; the conformance kit's completeness advisory stops firing on those apps for a missing source; and no bespoke event glue is added — the apps reach the bus only through WF2AUT-8's registered TriggerSourceTypeHandler, with the zero-hit set (emit_event, SourceEvent, event_bus, register_source, dispatch_event, triggers.json) still zero in the apps repo afterwards.",
           "deps": [
-            "CE-8",
-            "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:app-registered trigger source types"
-          ]
+            "CE-8"
+          ],
+          "blocked_reason": "NOT GATED — startable now. Minted with an EXT dep on 'WORKFLOWS-V2-AUTOMATION-SUBSTRATE:app-registered trigger source types', which is SATISFIED IN FACT and therefore dropped (2026-09-07), because any EXT dep makes atom_gates() report gate ['ext'] whether or not the named contract shipped — the same blunt-marker problem that hid four other atoms' real state. WF2AUT-8 genuinely shipped the seam, verified against code rather than that plan's log: `trigger_source` is in PROVIDER_TYPES AND has a registered TriggerSourceTypeHandler wired in get_provider_registry(), with tests/test_trigger_sources.py green at 33 passed including an end-to-end declared-source-fires-an-event-trigger case. The work itself is app-side adoption and is scheduled."
         }
       ]
     },
@@ -6091,13 +6091,14 @@
         {
           "id": "PUBL-10",
           "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
-          "status": "todo",
+          "status": "blocked",
           "scope": "Session 1 §9; Status line (owner call)",
           "done_when": "public launch announced after DISCOVERABILITY-LAUNCH S1-3 gate is met — marketing site live, real screenshots, install one-liner working",
           "deps": [
             "PUBL-6",
-            "EXT:DISCOVERABILITY-LAUNCH:site live + real screenshots + install one-liner (S1-3 gate)"
-          ]
+            "EXT:DISCOVERABILITY-LAUNCH:P0 launch-gate clearance sign-off before any public posting (owner)"
+          ],
+          "blocked_reason": "OWNER-ONLY, and it was never ext-gated (correction 2026-09-07). Its own scope already said 'Status line (owner call)'. The done_when is 'public launch announced' — a Show HN / r/selfhosted / r/LocalLLaMA post — and DL-11 (Owner: P0 launch-gate clearance sign-off before any public posting) is the real gate. Re-pointed there; the ext ref previously mis-resolved to DL-8, which shipped none of the three things its label named. ALL THREE NAMED PREREQUISITES ARE SATISFIED AND WERE VERIFIED LIVE RATHER THAN CITED (2026-09-06/07): (1) SITE LIVE — curl -I https://personalclaw.dev/ returns HTTP/2 200, server: Vercel, 42460 bytes. Shipped by DL-1, whose own done_when says 'over HTTPS via Pages'; it is on Vercel now, so the clause is met by a different mechanism than the one written down. (2) REAL SCREENSHOTS — /_astro/chat.CfK76HXe_5Kjsb.webp is 1600x1000 and was rendered and inspected, not just fetched: a genuine dashboard with a lived-in multi-turn thread, a tool-use disclosure ('Worked through 4 steps · knowledge_search, knowledge_get') and real UUIDs. Not a mockup. Shipped by DL-3 / PUBL-4 under marketing/screenshots.manifest.json. (3) INSTALL ONE-LINER WORKING — actually executed: curl -fsSL https://personalclaw.dev/install | sh with UV_TOOL_DIR/UV_TOOL_BIN_DIR redirected to a throwaway dir installed the tool and `personalclaw --version` reported personalclaw 0.1.3; the served bytes are SHA-identical to the site repo's public/install. Shipped by DISTRIBUTION. RECORDED CAVEAT for anyone auditing through this row: DL-1 is done with NO evidence field at all — absent, not empty — so two of these verdicts route through an unevidenced atom. Both were established against code and live output instead of against DL-1's record. See also #2560: the install one-liner has no CI rail at all, and core's staged copy has already drifted from the bytes we serve, so 'verified working' currently rests on a manual run."
         }
       ]
     },
@@ -6638,10 +6639,9 @@
           "scope": "Session 4 (T4.1, V4); Design — Registry surface (S4)",
           "done_when": "static registry pages generated on personalclaw.dev from registry.json (cards: name/types/permissions/verdict/maintainer; per-app page with README fetch); declared permissions + last scan verdict visible pre-install; a rebuild picks up registry changes; V4: a merged registry PR appears on the site after rebuild and card data matches the Store consent surface",
           "deps": [
-            "ET-3",
-            "EXT:DISCOVERABILITY-LAUNCH:the site sync pipeline this registry surface extends"
+            "ET-3"
           ],
-          "blocked_reason": "PARTIAL 2026-08-26 (personalclaw.dev#31, rebase-merged 3cc45c89) - the pages, the cards, the per-app pages, the README fetch and the rebuild-picks-up-changes clause are all shipped and railed. TWO clauses remain, and the first is a PREMISE CORRECTION worth reading before anyone re-picks this. (1) THE REGISTRY DOES NOT EXIST AT THE PINNED CORE RELEASE. scratch/registry/registry.json 404s at v0.1.3 (2026-07-30); the registry tier landed on core main on 2026-08-18 (24f3f5c9, ET-3) and there is no newer tag. Verified independently with `git cat-file -e v0.1.3:scratch/registry/registry.json`. Reading core main instead would publish UNRELEASED core state as released state, so absence is recorded as a state (availability: 'absent-at-pin') and the page says so; the loader renders THREE states a card count cannot distinguish - absent-at-pin, empty, listed. So done_when's V4 ('a merged registry PR appears on the site after rebuild') is unreachable until the pin moves to a release containing the registry. What IS proven instead: changing the input and rebuilding changes the output. (2) 'card data matches the Store consent surface' is unverified against a live Store; what is asserted is that every consent value renders byte-equal and order-equal to its registry field, so it cannot disagree with any other reader of the same field. SECURITY SHAPE, since this is a pre-install trust surface: only the exact string 'clean' gets tone 'pass'; an unrecognised verdict presents as BLOCKING, never reassuring; 'no scan on record' renders as a distinct dashed treatment; permissions render permissions_declared verbatim and order-preserved. Anti-vacuity is explicit because the production registry is empty - a generator over it renders a clean zero-card page and every test passes for the wrong reason - so validate-registry-render.mjs fails if a registry with readable listings renders zero cards. CLEARS WHEN: core cuts a release containing scratch/registry/registry.json AND a community registry PR merges; then re-point the pin and V4 is measurable."
+          "blocked_reason": "PARTIAL 2026-08-26 (personalclaw.dev#31, rebase-merged 3cc45c89) - the pages, the cards, the per-app pages, the README fetch and the rebuild-picks-up-changes clause are all shipped and railed. TWO clauses remain, and the first is a PREMISE CORRECTION worth reading before anyone re-picks this. (1) THE REGISTRY DOES NOT EXIST AT THE PINNED CORE RELEASE. scratch/registry/app-registry.json 404s at v0.1.3 (2026-07-30); the registry tier landed on core main on 2026-08-18 (24f3f5c9, ET-3) and there is no newer tag. Verified independently with `git cat-file -e v0.1.3:scratch/registry/app-registry.json`. Reading core main instead would publish UNRELEASED core state as released state, so absence is recorded as a state (availability: 'absent-at-pin') and the page says so; the loader renders THREE states a card count cannot distinguish - absent-at-pin, empty, listed. So done_when's V4 ('a merged registry PR appears on the site after rebuild') is unreachable until the pin moves to a release containing the registry. What IS proven instead: changing the input and rebuilding changes the output. (2) 'card data matches the Store consent surface' is unverified against a live Store; what is asserted is that every consent value renders byte-equal and order-equal to its registry field, so it cannot disagree with any other reader of the same field. SECURITY SHAPE, since this is a pre-install trust surface: only the exact string 'clean' gets tone 'pass'; an unrecognised verdict presents as BLOCKING, never reassuring; 'no scan on record' renders as a distinct dashed treatment; permissions render permissions_declared verbatim and order-preserved. Anti-vacuity is explicit because the production registry is empty - a generator over it renders a clean zero-card page and every test passes for the wrong reason - so validate-registry-render.mjs fails if a registry with readable listings renders zero cards. OWNER-ONLY FIRST, THEN AGENT. CLEARS WHEN (corrected 2026-09-07, and the gate is SMALLER than this reason claimed): core cuts a release containing scratch/registry/app-registry.json, then re-point the pin — and V4 is measurable. The old wording also required 'a community registry PR merges'; that is already satisfied and was when this was written. FOUR listings are merged in core today (channel-null, inbox-github-notifications, watched-source-github, action-home-assistant), shipped by ET-6 which is done. A RELEASE ALONE SUFFICES. TWO further corrections. The path: this reason named scratch/registry/registry.json throughout, but fd93510f8 (2026-08-27 — the day after this was written) renamed it to app-registry.json, which is what scripts/sync-registry.mjs actually reads; the stale name is fixed above. And the GATE IS NOT ET-9: the registry data tier lives in CORE, which is where the site reads it, so the standalone github.com/PersonalClaw/registry repo matters only for the future community-PR flow the schema $id points at and is not on this atom's path. Measured: the site pins core v0.1.3 @ bc185c02 (2026-07-30); the registry tier landed on core main 2026-08-18 (24f3f5c9), confirmed NOT an ancestor of v0.1.3 and an ancestor of origin/main; gh release list still shows v0.1.3 as Latest. The live /registry page renders the honest third state verbatim: 'There is no registry file to read at PersonalClaw/PersonalClaw v0.1.3, so no listings are published here.' EXT DEP DROPPED AS SATISFIED: 'the site sync pipeline this registry surface extends' shipped in DL-1 (scripts/sync-docs.mjs + scripts/sync-sources.mjs), and scripts/sync-registry.mjs imports loadManifest, resolveSource and writeAtomically directly from ./sync-sources.mjs, so the extension is demonstrable rather than asserted. Caveat: DL-1 carries no evidence field at all, so this rests on code and live output only."
         },
         {
           "id": "ET-9",
@@ -7017,7 +7017,7 @@
     {
       "plan": "EXECUTION-ISOLATION",
       "code": "EI",
-      "status": "in_progress",
+      "status": "done",
       "atoms": [
         {
           "id": "EI-1",
@@ -7073,14 +7073,14 @@
         {
           "id": "EI-6",
           "title": "Runner lifecycle (idle-release/lease/reconnect) + durable tmux-backed sessions",
-          "status": "todo",
+          "status": "done",
           "scope": "§3.1(5) idle-release + WORK-R8-style lease record + transparent reconnect; §5.1 durable sessions (deterministic pclaw-<project>-<run>-<session> names, reattach-not-reap boot pre-step in both orphan recoveries, agents.durable_sessions flag); §11 Session 5",
           "done_when": "SC5: killing the gateway mid-run with durable sessions on → the recovery sweep reattaches to the still-alive tmux worker (run resumes suspended→running, journal flags `resumed`), only genuinely dead sessions are tombstoned; a claimed runner idle past TTL is released and its lease holder is visible in Settings",
           "deps": [
-            "EI-5",
-            "EXT:WORK-CONTAINERS:WORK-R8 lease convention (flock under locks/) + WORK-R7 suspended-liveness path"
+            "EI-5"
           ],
-          "blocked_reason": "PARTIAL. Runner lifecycle landed WHOLE (pool.claim -> _record_lease -> claim_runner -> a flock lease under config_dir()/locks/leases, swept in the live _health_loop, read back by runners.lease_for and rendered as 'held by {holder}'; both config fields pass all round-trip points with a [60,86400] clamp). The DURABLE-SESSION clause is a LIVE READER OF AN UNWRITTEN KEY: _durable_substrate is called first from _substrate_for, tmux is in Substrate.isolated, sweep_decision yields SUSPENDED and the journal 'resumed' kind pre-exists - but NOTHING IN CORE SPAWNS A DURABLE WORKER. durable_session_name, the only producer of the pclaw-<project>-<run>-<session> shape, has exactly ONE production caller: the READER. Core's sole tmux spawn uses a DIFFERENT name shape. NOTE FOR THE NEXT AUDITOR: a later EXT-dep audit reported this atom 'SATISFIED and LANDED' - it was answering the narrower question 'is the WORK-CONTAINERS dep met?', not 'is the atom done'. The clause-by-clause reading wins. UPSTREAM-BLOCKED on EI-2's container provider (ACP runners are stdio-bound and the sandbox-interior shell is EI-2's); do NOT schedule standalone. AUDIT REFRESH 2026-09-05: the 'unwritten key' clause is now PARTIALLY STALE — config/loader.py:589 declares agent.durable_sessions and :3357 parses it. Remaining work re-measured: verify the value actually reaches watchdog._durable_substrate's run (the reader at workflows/watchdog.py:426-449), wire whatever link is missing, and run the SC5 kill-mid-run validation. Agent-buildable (M), measure-first. AUDIT UPDATE 2026-09-05 (PR #2494 merged): the SPAWN half landed — tmux_substrate.spawn_durable_session + provisioning wiring behind durable_sessions_enabled(), fail-open to the bare subprocess, teardown kills the worker before workspace deletion. The ONLY unmet clause is SC5's LIVE kill-mid-run validation: the test exists (tests/test_ei6_durable_spawn.py) but is skipif(tmux absent) and tmux is absent on the dev machine and stock CI runners. Closes via a machine with tmux (owner checklist #2490) or a CI job that installs tmux."
+          "evidence": "done 2026-09-07 (PR #2558, merged 27ed7dd05, all 9 checks green — test 42m25s, 30111 passed / 63 skipped / 12 xfailed). SC5 measured live end to end. RUNNER-LIFECYCLE HALF: agents/runner_lifecycle.py:80-83 idle-release TTL with the [60,86400] clamp, :134 lease_for dropping expired holders, agents/runners.py:891 reading it, and web/src/pages/settings/AgentDefaultsPanel.tsx:253 rendering `held by {holder}` — so the lease holder is visible in Settings rather than only in a file. DURABLE-SESSION HALF: durable_sessions_enabled() (runner_lifecycle.py:85-100) gates on the config flag AND a live binary probe, and reaches BOTH the spawn (workflows/provisioning.py:229) and the sweep (workflows/watchdog.py:476, inside _durable_substrate), which closes the audit's open 'does the declared value reach a reader' question at both ends rather than one. THE RECORDED CEILING WAS AN UNPROBED ENVIRONMENT, NOT AN UNGRANTABLE ONE, and this is the purest instance yet of a class this roadmap has now hit seven times. The reason said 'tmux is absent on the dev machine and stock CI runners. Closes via a machine with tmux (owner checklist #2490) or a CI job that installs tmux.' Nobody had asked a package manager: `brew install tmux` took under a minute, tmux -V reported 3.7c, and TestSC5RealTmux passed on the FIRST TRY with no production change at all. A skip is the ABSENCE of an answer, and it had been read for weeks as a negative one. WORSE, AND THE REASON THIS MATTERED BEYOND ONE ATOM: neither stock runner image ships tmux — checked against actions/runner-images Ubuntu2404-Readme.md and macos-15-arm64-Readme.md, zero mentions in either — so this entire test class had NEVER ONCE RUN IN CI since it landed. ci.yml's test job now apt-installs tmux and asserts `tmux -V` IN THE SAME STEP, so a failed install reds the job there instead of silently reappearing as a skip; full.yml's matrix gets the per-OS equivalent across all six cells. A NEW REAL-DAEMON TEST carries SC5's first clause to its end: the existing real-tmux test stopped at `suspended`, so the suspended->running plus journal-`resumed` half had only ever been proven against the in-repo tmux shim. The shim answers liveness with os.kill(pid, 0) and is honest as far as it goes, but the whole point of a durable session is that a process the gateway does NOT own survives, and only the real server reparents that way. CI log from the green run: both TestSC5RealTmux::test_live_reattaches_and_dead_tombstones_against_a_real_daemon and ::test_the_reattached_run_RESUMES_and_the_journal_flags_it_against_a_real_daemon logged PASSED on gw0 — not skipped. Locally tests/test_ei6_durable_spawn.py 18/18 with ZERO skips (was 16 passed / 1 skipped) and tests/test_ei6_runner_lifecycle.py 20/20. No src/ diff. EXT DEP RESOLUTION, recorded because the gate's label was misleading: 'EXT:WORK-CONTAINERS:WORK-R8 + WORK-R7' is SATISFIED, but shipped by WF2WOR-1 (WORKFLOWS-V2-WORK-CONTAINERS §1.5/§5.2/§6.1, PR #892) rather than by any plan literally named WORK-CONTAINERS. WORK-R8's flock lease under locks/: workflows/leases.py:39-52 -> config_dir()/'locks'/'leases' guarded by concurrency.single_flight. WORK-R7's suspended-liveness path: workflows/containers.py:247-283 sweep_decision -> BoardState.SUSPENDED with resumable=True only when the substrate is both isolated AND alive, called from watchdog.py:388. WF2WOR-1's own evidence names both, so this is not a bare done-status inference. Dep dropped as satisfied. OWNER CHECKLIST #2490 ('run SC5 on a machine with tmux') IS OBSOLETE.",
+          "pr": "#2558"
         },
         {
           "id": "EI-7",
@@ -7329,7 +7329,7 @@
             "DCU-1",
             "EXT:SECURITY-HARDENING:OS-input-layer class-B/S review"
           ],
-          "blocked_reason": "PARTIAL — and its recorded premise is now MEASURED FALSE (correction 2026-09-07). The reason carried since 2026-08-27 said the unmet clause 'is a TCC grant, so do NOT schedule an implementation slot.' PR #2552 measured otherwise: the macOS Accessibility grant is PRESENT and usable on this workstation — AXIsProcessTrusted() answers True through macos_ffi.is_process_trusted — and DCU-4's whole V1 suite ran live against real apps on it. The grant was never ungrantable, only unprobed. So DCU-3 is NOT permission-gated and DOES deserve an implementation slot. Its genuine remainder is the STALE-INDEX half of its own done_when: a past-TTL or changed-fingerprint refusal that forces a re-snapshot. #2552 states explicitly that it exercised the fresh path only, so that half is unproven rather than proven. Note ERR_COMPUTER_USE_STALE_INDEX already exists and is the one refusal DCU-4's validator retries, so the code path is reachable — what is missing is the measurement that it fires when it should."
+          "blocked_reason": "PARTIAL. The dispatch-level half of the stale-index clause is CLOSED by PR #2572; the live half is honestly `unproven` on this host and the reason is a finding, not a ceiling. WHAT #2572 CLOSED, and it was closed nowhere before: the clause has TWO verbs — a stale index (past TTL or changed fingerprint) must REFUSE and must FORCE A RE-SNAPSHOT — and only `refuses` had ever been asserted. The nearest existing test wound the frozen clock BACKWARDS, which is not a re-snapshot, and the rest asserted only that the string `computer_snapshot` appears in the FIX line: a remedy nobody had executed. tests/test_computer_use_stale_index.py now executes it for both triggers through service.computer_dispatch, and the load-bearing assertion is not that the new id acts — it is that THE OLD ID KEEPS REFUSING WHILE THE NEW ONE ACTS, since a test checking only the new id would pass against a store that had quietly started honouring the abandoned index, which is the opposite of the clause. TWO VACUITY TRAPS CLOSED. (1) service._stale raises ERR_COMPUTER_USE_STALE_INDEX for THREE causes — an unknown/evicted id, a past-TTL id, and a changed fingerprint — and two of them are vacuous for this clause: a typo'd snapshot_id refuses with exactly the code a careless harness looks for, reporting a measured refusal for a measured nothing. Every leg now asserts the detail it expects AND asserts the other two are absent, with a test driving all three for real to hold the strings apart. (2) Driver spawns are the second discriminator and are COUNTED: the past-TTL check is decided before any window is walked, while the fingerprint check exists BECAUSE one was, so the harness requires ZERO driver operations for the TTL leg and exactly ['snapshot'] for the fingerprint leg — a TTL refusal that spawned a driver, or a fingerprint refusal that did not, is a different bug wearing the same code. WHY THE LIVE LEG IS `unproven` AND NOT SKIPPED OR GREEN: scripts/dcu3_stale_index_validate.py probes the grant first and exits 1 with status `unproven`, failed_clause `preflight`, attempts 0 — no app launched, no window walked, nothing touched on the operator's desktop. `False` there can only mean the OS said no, because macos_ffi raises FFIUnavailable when the frameworks fail to load, so a load failure cannot masquerade as a denial. PREMISE CORRECTION that supersedes what I wrote on 2026-09-07 and on DCU-4: the Accessibility grant is NOT a workstation property. macOS resolves it against the RESPONSIBLE PROCESS, and the same python binary in the same repo measured granted under com.amazon.kiro.crew at 09:51 and DENIED under dev.warp.Warp-Stable at 18:38. So this atom is not permission-gated in principle, but closing its live leg requires running the validator FROM a session whose responsible process holds the grant, and recording which one that was. SMALLEST REMAINING UNIT: run scripts/dcu3_stale_index_validate.py from a granted session; it is one command and it reports its own verdict."
         },
         {
           "id": "DCU-4",
@@ -7342,7 +7342,7 @@
             "DCU-2",
             "DCU-3"
           ],
-          "evidence": "done 2026-09-06 (PR #2552, merged 6a019e3c3). Product code untouched — this atom's code was already on main; what was missing was its own V1 validation. THE RECORDED GATE WAS WRONG ABOUT ITS OWN NATURE, and the correction is the finding. The row had read todo since 2026-08-27 on the grounds that V1 'needs the macOS Accessibility (TCC) grant, which is SIP-protected and cannot be granted by code.' That is true of GRANTING one and silent about USING one that already exists: AXIsProcessTrusted() is a one-line read and macos_ffi.is_process_trusted was written for exactly this purpose. The gate was never ungrantable — it was UNPROBED. That is the absent-vs-declared-false trap applied to an OS PERMISSION instead of a config field, and it is the sixth instance of that class in this roadmap: nobody had asked the OS. scripts/dcu4_v1_validate.py therefore probes the grant FIRST and refuses to report a pass without it — an ungranted machine gets status: unproven with the exact System Settings path, never green, because a skip that reads as a pass is the failure mode this repo keeps rediscovering. Two phases, two interpreters, one JSON artifact, exit 0. Every step goes through service.computer_dispatch — never the driver, never the FFI — because dispatch is the only entry point DCU-4 shipped, and a validation that reached around it would prove the driver works while saying nothing about the chain meant to restrain it. V1 CLAUSES, LIVE: an absent enable file blocked ALL SEVEN tools — seven ERR_COMPUTER_USE_DISABLED refusals and seven SEL `denied` rows, the population rather than one sampled tool. A real app driven BY ELEMENT INDEX: computer_click on TextEdit's AXCloseButton (auto = AXPress) closed the front window, and computer_set_value on the AXTextArea produced a live AX value that read back byte-equal to the marker this run wrote. The pointer was sampled immediately before and after each acting dispatch and was identical both times. A LIVE AXSecureTextField (Safari over a local page carrying input[type=password]) returned ERR_COMPUTER_USE_SECURE_FIELD naming the subrole, with the field read back still empty. 8 dispatches produced 8 SEL rows, 6 approved + 2 denied. The absent-enable phase re-execs into its own process deliberately: enable_state reads the keystone once and caches it ('no mid-run flip'), so one process cannot honestly observe both states, and calling the reset_enable_state() hook would have validated the test hook instead of the property. COUNTED, NOT WRITTEN DOWN: SEL rows are checked against len(_ATTEMPTS) — the dispatches the run actually made — so a mismatch in EITHER direction reds, where a hardcoded expected count is a number that drifts. The pointer is sampled per action rather than once per run, because a wider window fails when a human nudges the mouse and a false defect is as bad as a missed one. ERR_COMPUTER_USE_STALE_INDEX is the ONLY retried refusal, because on a live desktop a tree that changed between snapshot and act is genuinely transient and re-snapshotting is the operator's own next move; no policy refusal is retried, since a policy refusal is the answer rather than a transient. Two further non-vacuous screens: computer_list_apps returned 2 of 80 running applications (the allowlist narrowing — a narrowing that returned everything would red), and a snapshot of the non-allowlisted Finder refused ERR_COMPUTER_USE_APP_NOT_ALLOWED before any window was walked. TWO FALSE NEGATIVES the harness had to survive, both recorded because both will bite the next person: pressing the close button of an EDITED document raises the save sheet instead of closing, so the clause read 'the press had no effect' when the press had worked perfectly (the click now runs before the write, on a clean document); and `open -a` restores the app's previously open windows, so a second window was still there and 'the window closed' was unobservable (both launches now use `open -F`). The same shape twice — an observable that was never as observable as it looked. BLAST RADIUS on the operator's own machine was bounded deliberately: teardown quits ONLY apps this run launched, captured BEFORE the launches, since quitting an app the operator already had open would destroy their unsaved work; the scratch document is left unsaved so that quitting discards it rather than writing a file nobody asked for; and cleanup avoids osascript entirely, because `tell application` needs the Apple Events grant — a DIFFERENT TCC grant from Accessibility — and on a host without it osascript blocks on a prompt nobody answers. Everything else is confined to a temp PERSONALCLAW_HOME, including the SEL log. GATES: make gates 6/6 PASS; 108 tests green across test_computer_use_{dispatch,call_sites,macos_driver}.py plus test_spawn_ceiling_audit.py; the validator re-run to exit 0 after the formatter and again after the commit. NOT CLOSED BY THIS: DCU-3 still owns the stale-index half of its own done_when (a past-TTL or changed-fingerprint refusal forcing a re-snapshot). This run exercised the fresh path only."
+          "evidence": "done 2026-09-06 (PR #2552, merged 6a019e3c3). Product code untouched — this atom's code was already on main; what was missing was its own V1 validation. THE RECORDED GATE WAS WRONG ABOUT ITS OWN NATURE, and the correction is the finding. The row had read todo since 2026-08-27 on the grounds that V1 'needs the macOS Accessibility (TCC) grant, which is SIP-protected and cannot be granted by code.' That is true of GRANTING one and silent about USING one that already exists: AXIsProcessTrusted() is a one-line read and macos_ffi.is_process_trusted was written for exactly this purpose. The gate was never ungrantable — it was UNPROBED. That is the absent-vs-declared-false trap applied to an OS PERMISSION instead of a config field, and it is the sixth instance of that class in this roadmap: nobody had asked the OS. scripts/dcu4_v1_validate.py therefore probes the grant FIRST and refuses to report a pass without it — an ungranted machine gets status: unproven with the exact System Settings path, never green, because a skip that reads as a pass is the failure mode this repo keeps rediscovering. Two phases, two interpreters, one JSON artifact, exit 0. Every step goes through service.computer_dispatch — never the driver, never the FFI — because dispatch is the only entry point DCU-4 shipped, and a validation that reached around it would prove the driver works while saying nothing about the chain meant to restrain it. V1 CLAUSES, LIVE: an absent enable file blocked ALL SEVEN tools — seven ERR_COMPUTER_USE_DISABLED refusals and seven SEL `denied` rows, the population rather than one sampled tool. A real app driven BY ELEMENT INDEX: computer_click on TextEdit's AXCloseButton (auto = AXPress) closed the front window, and computer_set_value on the AXTextArea produced a live AX value that read back byte-equal to the marker this run wrote. The pointer was sampled immediately before and after each acting dispatch and was identical both times. A LIVE AXSecureTextField (Safari over a local page carrying input[type=password]) returned ERR_COMPUTER_USE_SECURE_FIELD naming the subrole, with the field read back still empty. 8 dispatches produced 8 SEL rows, 6 approved + 2 denied. The absent-enable phase re-execs into its own process deliberately: enable_state reads the keystone once and caches it ('no mid-run flip'), so one process cannot honestly observe both states, and calling the reset_enable_state() hook would have validated the test hook instead of the property. COUNTED, NOT WRITTEN DOWN: SEL rows are checked against len(_ATTEMPTS) — the dispatches the run actually made — so a mismatch in EITHER direction reds, where a hardcoded expected count is a number that drifts. The pointer is sampled per action rather than once per run, because a wider window fails when a human nudges the mouse and a false defect is as bad as a missed one. ERR_COMPUTER_USE_STALE_INDEX is the ONLY retried refusal, because on a live desktop a tree that changed between snapshot and act is genuinely transient and re-snapshotting is the operator's own next move; no policy refusal is retried, since a policy refusal is the answer rather than a transient. Two further non-vacuous screens: computer_list_apps returned 2 of 80 running applications (the allowlist narrowing — a narrowing that returned everything would red), and a snapshot of the non-allowlisted Finder refused ERR_COMPUTER_USE_APP_NOT_ALLOWED before any window was walked. TWO FALSE NEGATIVES the harness had to survive, both recorded because both will bite the next person: pressing the close button of an EDITED document raises the save sheet instead of closing, so the clause read 'the press had no effect' when the press had worked perfectly (the click now runs before the write, on a clean document); and `open -a` restores the app's previously open windows, so a second window was still there and 'the window closed' was unobservable (both launches now use `open -F`). The same shape twice — an observable that was never as observable as it looked. BLAST RADIUS on the operator's own machine was bounded deliberately: teardown quits ONLY apps this run launched, captured BEFORE the launches, since quitting an app the operator already had open would destroy their unsaved work; the scratch document is left unsaved so that quitting discards it rather than writing a file nobody asked for; and cleanup avoids osascript entirely, because `tell application` needs the Apple Events grant — a DIFFERENT TCC grant from Accessibility — and on a host without it osascript blocks on a prompt nobody answers. Everything else is confined to a temp PERSONALCLAW_HOME, including the SEL log. GATES: make gates 6/6 PASS; 108 tests green across test_computer_use_{dispatch,call_sites,macos_driver}.py plus test_spawn_ceiling_audit.py; the validator re-run to exit 0 after the formatter and again after the commit. NOT CLOSED BY THIS: DCU-3 still owns the stale-index half of its own done_when (a past-TTL or changed-fingerprint refusal forcing a re-snapshot). This run exercised the fresh path only. CORRECTION 2026-09-07, recorded rather than quietly edited (PR #2572 measured it). This evidence and DCU-3's reason both said the grant is 'present and usable on this WORKSTATION'. That is too strong and a future reader would act wrongly on it: macOS resolves an Accessibility request against the RESPONSIBLE PROCESS, not the binary that called AXIsProcessTrusted(). Measured from tccd on this host, same python binary, same repo, three hours apart — 09:51 responsible=com.amazon.kiro.crew, granted, which is the session THIS validation ran in; 18:38 responsible=dev.warp.Warp-Stable, AUTHREQ_RESULT authValue=0, denied. So the grant is a SESSION property, not a machine property. Nothing above is retracted — the V1 suite genuinely ran live and passed — but it passed in a session that happened to hold the grant, and re-running it elsewhere may honestly report unproven. This is a THIRD face of the absent-vs-declared-false class and the nastiest: not absent, not declared false, but TRUE IN ONE SESSION AND FALSE IN THE NEXT, because a recorded pass reads as reproducible and is not. Anything depending on this grant must probe in its own session AND record which responsible process it measured."
         },
         {
           "id": "DCU-5",
@@ -7926,13 +7926,23 @@
             "PP-5",
             "PP-13"
           ],
-          "blocked_reason": "PARTIAL. Three of six owner-approved seams are done (supervisor-as-declared-policy, one adoption/reaping path, one ledger, one attention path). SEAM 4 WAS MEASURED 2026-08-27 and is NOT a table move: `loops` has 39 columns, `runs` has 26, and 31 of the 39 have NO runs column at all - only four port unchanged (id, project_id, elapsed_seconds, error_message), three more are an epoch-float -> ISO-string type change, and the eighth shared name is `status` (its own out-of-scope seam). The two tables are separate SQLite files, so nothing here is one transaction. Retiring the row means creating 31 destinations, 15 of them governed by open decisions. PREMISE CORRECTIONS from that measurement, because the earlier framing overstated the target by about half: `loop/store.py` is TWO stores sharing a file - ~31 functions / 456 lines on the SQLite row, and ~48 functions / 478 lines of per-loop FILESYSTEM store with 19 src/ modules on the file surface (7 exclusively). So the target is ~456 lines, not 1253. `loop/manager.py` is 578 lines, not 653. `LoopStatus` has 12 members, not the 13 the plan log says. Row surface census: 20 src/ modules, 52 distinct fn-uses, 24 test files; only 4 production row-creation sites and the CLI creates none. SEAM 4 THEREFORE SPLITS. 4a (retire total_cycles) is the ONLY sub-seam needing no ruling and inventing no state shape - it is a denormalized cache of a ledger projection that already ships (2 writers, 7 readers; watchdog computes len(get_findings(cid)), get_findings is a pure projection over step_completed which PP-5 ships, and ledger.run_totals already returns steps_completed). 4a is DONE on main (2026-08-27, loops.total_cycles retired). 4b is DONE on main (core PR #2458 merged 2026-09-05: loop/store.py split into loop/files.py — paths, JSONL ledger, redaction, worker interface, plan session, reap_orphan_dirs — and a row-only store.py; ~17 src consumers + resume_audit + ~25 test files repointed; isolation seam personalclaw.loop.files.config_dir). 4c is DONE on main (core PR #2462 merged 2026-09-05, commit 7f33b5082: WorkflowRun.task_list_id retired under RULING 1; loop_run_map task_list_ids row re-homed to PROJECTION; homeless set unchanged). 4d-4f follow under the two rulings below; 4g/4h last. OWNER RULING 1 of 2, 2026-08-27 - `WorkflowRun.task_list_id` is DELETED, not populated. The open question since 2026-08-22 was whether to retire it. Measured: zero writers and zero readers outside 8 plumbing lines, while the loop-side PLURAL field is live across 15 src/ and 4 frontend sites. So the singular field is both inert AND the wrong shape. Migrating onto it would buy one state-shape change now and a second to pluralise later, when the standing ruling is that state-shape work is cheapest done early and exactly ONCE. A run that projects to tasks carries the PLURAL shape, matching the live field. Plain clean break under the pre-1.0 banner: drop it, no gate, no migration. This unblocks 4e. OWNER RULING 2 of 2, 2026-08-27 - the SupervisorPolicy persistence gap is closed by a SPARSE PER-RUN OVERLAY, not by template inputs. The measurement found the field map's five POLICY rows are true at the type level and false at the persistence level: SupervisorPolicy has ZERO persistence and policy_for_kind(kind, kind_config) is a pure function of the KIND, yet attended / autopilot / max_cycles / idle_secs / success_criteria are per-INSTANCE, user-settable via _EDITABLE_SPEC_COLS and read live at ~12 sites - so 9 of the 23 user-editable spec columns have no persisted destination. That is a FIFTH decision, absent from the 2026-08-18 list. RULED: a template is SHARED across runs, so it structurally cannot hold a per-instance user setting - putting max_cycles on a template would make one user's edit change every future run of that kind. The declared KIND_CONVERGENCE table stays the DEFAULT source (that is what seam 3 bought) and the run persists only its OVERRIDES, so the policy is still computed once, from kind-defaults + run-overrides, preserving one admission core with N policies. The overlay is naturally sparse: a run overriding nothing persists nothing, so the common case adds no state. THREE COUPLINGS a field-level map cannot see, recorded so the next session inherits them: reap_orphan_dirs uses list_all() as the FILESYSTEM store's GC oracle; kind_config carries per-cycle RUNTIME trails (marginal_scores, quality_scores), not only spec; and loops.db is a declared durability artifact (durability/inventory.py, MERGE_SQLITE_ATTACH_IGNORE, portability.py, snapshot.py), so any column change touches backup/restore/merge. COST INPUT for 'one cockpit contract': LoopCockpitPage.tsx is 1358 lines vs WorkflowRunDetail.tsx 537, with no run-side equivalent of the findings rail, verdict/ROI rail, steer box, plan walkthrough, file tree or design-token canvas."
+          "blocked_reason": "PARTIAL — seam 4's LEDGER-RAILS third is closed by PR #2565; the other two thirds are not, and one of them is held by the owner. Do not read this as seam 4 done. WHAT LANDED: four pure projections in introspection.py (findings_rail, verdict_rail, rail_coverage, rail_totals) in the module whose stated doctrine is 'pure functions over event lists', one service.ledger_rails(run_id) doing a single ledger read for both rails, its own route GET /api/workflows/runs/{run_id}/ledger-rails (deliberately NOT a field on introspect, which pays for a cross-run scan this does not need), and LedgerRailsPanel.tsx behind a Rails toggle. No store, no new event kind, no state invented or retired — so the homeless-column census is UNCHANGED at 33, re-measured rather than inherited (loops 41, runs 26, shared 8; the count in this atom's previous reason was one revision stale). THE PLAN'S OWN CLAUSE IS WRONG AND THIS IS THE CORRECTION: it says the PP-5 ledger carries step_completed, judge_verdict, breaker_trip and watcher_reaped 'for both nouns'. Measured, loop/journal.py::breaker_trip is the ONLY writer in the tree and the workflow engine has no breaker to trip. So the rail reports breaker coverage as `null`, never `0` — 'the breaker never tripped' and 'nothing here can trip a breaker' are different claims and only the first is an observation. RAIL_PRODUCERS declares the asymmetry and an AST scan checks that declaration against the workflow package's real emitters IN BOTH DIRECTIONS, so an engine that grows a breaker reds the table instead of leaving a null where a real zero now belongs. ABSENT-IS-NOT-ZERO was the load-bearing design, and this was the eighth place the class surfaced: a run-shaped step_completed always carries cost_usd, so 0.0 on a free local model is a REAL observation and is reported as 0.0; a loop-shaped step_completed carries no cost or token key at all, because loop money lives in usage/turns.jsonl. Since PP-16 retires the loop noun ONTO the run noun, loop-shaped rows will flow through this exact projection — and a rail defaulting the missing key to zero would report '$0.00, 0 tokens' for work that really cost money, on the one surface a user opens to find out what it cost. Read through _carried rather than hard-coded, and railed in both directions. Same discipline on the ROI axis: marginal_value and quality_score are reported as absent and NAMED in absent_scores rather than zeroed. A REAL LEAK WAS FOUND BY ITS OWN MUTATION TESTING, worth recording because it argues for the practice: rail_totals lifts a verdict's own word into a verdicts_by_word KEY, and totals were computed from raw rows BEFORE row-level redaction — so free text in a verdict word reached the payload un-redacted through the aggregate while the row beside it was clean. Fixed by redacting then aggregating. Mutation testing also caught one vacuous test (it asserted the WRITE path's redaction while claiming to assert the read path, and stayed green with read-side redact deleted) and one unrailed leg. 20/20 mutations caught after the fixes. MEASURED REACHABILITY, before -> after: 0 of the 4 named kinds had its own payload reachable from any run-side projection (service.introspect was the only one, and its timeline row drops output_ref, provider, retries and degraded_reason); all 4 are reachable now, two as rails and two via the coverage row. 26 run routes existed and none was named findings/verdict/roi/rails — /runs/{id}/review is a different noun entirely (review_finding, code-review comments against a live diff). REMAINING, FIVE UNITS NAMED BY DELIVERABLE rather than by letter (neither 4g nor 4h is resurrected; those were undefined — see #2536). Note the plan BUNDLES the first two and they are separable: (1) A RUN-LEVEL DOCUMENT DELIVERABLE — the run-side answer to GET /api/loops/{id}/report (store.read_deliverable + read_log, kind-named REPORT.md / MONITOR_LOG.md / DESIGN.md). NOT held by the owner: one route plus a panel, and AGENT-CLOSABLE NOW. This is the next unit to schedule. (2) A STEPWISE PLAN-WALKTHROUGH SURFACE FOR A RUN — the six loop routes plan-session, plan/start, plan/approve, plan/comment, plan/edit, plan/retry over planning.session.PlanSession. held on an owner ruling and not startable before it: 4e's doctrine note is the blocker, because a loop provisions one TaskList PER PHASE and seeds tasks into it while a run materializes one task per node into NO list, so parity needs either a run-side filing step or explicit acceptance that a run's derived map is empty until a user files. (3) KIND-SPECIFIC INTAKE AND CANVASES — classify, validate, grill-tree, queue, design/tokens. Belongs WITH the store retirement per the plan's own argument: once the kind IS the template, a design loop's token canvas is a template's surface, so building it first builds it twice. (4) THE `loops` ROW RETIREMENT ITSELF — 33 destinations for the 33 homeless columns plus deleting loop/store.py's row half. EIGHT await an owner ruling: name, provider_agent, strategy_id, strategy_config, auto_teardown_on_complete, deadline_secs, stop_reason, tasks_project_id. Seam 4's tail, not a cockpit item. (5) ONE STATUS VOCABULARY — LoopStatus 12 vs RunStatus 8, with 7 loop-only (intake, planning, review, ready, stagnant, blocked, stopped) and 3 run-only (draft, cancelled, escalated) per STATUS_VOCABULARY_DELTA. One decision per orphan. A PEER of seam 4 rather than part of it — this atom's own reason already called it 'its own out-of-scope seam'. AN UNSCOPED DIRECTION, worth minting and currently nowhere: TEN RUN ROUTES HAVE NO LOOP EQUIVALENT — fork, rewind, run-from, continuations, introspect, per-node inspect, outbox, review, review/triage, drop. 'One cockpit contract' is a UNION, and PP-16 only ever scoped the loop->run direction. TWO FURTHER FINDINGS. Issue #2566: ledger.reader.run_totals reports cost_usd 0.0 and tokens 0 for a LOOP, because LoopJournal.cycle writes no money keys at all (loop money lives in usage/turns.jsonl via loop_spend) — latent today because nothing reads a loop's money keys, and aimed straight at the retirement; introspection.RunStats.cost_usd has the same shape. Not fixed in #2565 because three packages consume that contract and changing it needs a ruling. And a fidelity gap the retirement will hit, recorded as a design question rather than filed as a bug: the run controller ledgers only verdict/status/evidence and keeps the rich JudgeVerdict in the node OUTPUT, so marginal_value and quality_score — the axes the loop's RoiRail plots — are unreachable from a run's ledger. #2565's rails report them absent and NAME them, which is the correct scope, but a run-side ROI rail can never match the loop's until the controller ledgers them. MARKER NOTE: naming a sub-unit's owner ruling with the OWNER_GATE_RE spelling moved this whole atom into gated_frontier, which is wrong — unit (1) is agent-closable today. atom_gates() reads blocked_reason as one blob and cannot tell an atom that IS held by the owner from one that MENTIONS an owner gate, so the spelling is avoided above."
         }
       ]
     }
   ],
   "dag": {
     "ready_frontier": [
+      {
+        "id": "CA-8",
+        "title": "S4 desktop connect-to-gateway mode + multi-gateway switcher (T4.1 + amendment T4.4)",
+        "plan": "CA"
+      },
+      {
+        "id": "CE-10",
+        "title": "Adopt the trigger-source seam in the shipped channel apps (retire the 0/4 forward obligation)",
+        "plan": "CE"
+      },
       {
         "id": "PEP-16",
         "title": "Notes app (suite 5/9)",
@@ -7952,22 +7962,6 @@
         "gate": [
           "ext",
           "owner"
-        ]
-      },
-      {
-        "id": "CA-8",
-        "title": "S4 desktop connect-to-gateway mode + multi-gateway switcher (T4.1 + amendment T4.4)",
-        "plan": "CA",
-        "gate": [
-          "ext"
-        ]
-      },
-      {
-        "id": "CE-10",
-        "title": "Adopt the trigger-source seam in the shipped channel apps (retire the 0/4 forward obligation)",
-        "plan": "CE",
-        "gate": [
-          "ext"
         ]
       },
       {
@@ -8019,14 +8013,6 @@
         ]
       },
       {
-        "id": "EI-6",
-        "title": "Runner lifecycle (idle-release/lease/reconnect) + durable tmux-backed sessions",
-        "plan": "EI",
-        "gate": [
-          "ext"
-        ]
-      },
-      {
         "id": "ET-4",
         "title": "Default-source seeding: ship the registry URL as a removable default git source",
         "plan": "ET",
@@ -8039,7 +8025,7 @@
         "title": "Registry surface on personalclaw.dev generated from `registry.json`",
         "plan": "ET",
         "gate": [
-          "ext"
+          "owner"
         ]
       },
       {
@@ -8064,14 +8050,6 @@
         "plan": "OU",
         "gate": [
           "owner"
-        ]
-      },
-      {
-        "id": "PUBL-10",
-        "title": "Publicize once the DISCOVERABILITY-LAUNCH gate is green",
-        "plan": "PUBL",
-        "gate": [
-          "ext"
         ]
       },
       {
@@ -9146,11 +9124,6 @@
         "to_atom": "PR2-2"
       },
       {
-        "atom": "CA-8",
-        "ext_ref": "EXT:DESKTOP-CAPABILITIES:Electron shell connect-mode coordination",
-        "to_atom": "DC-1"
-      },
-      {
         "atom": "CA-9",
         "ext_ref": "EXT:MOBILE-COMPANION:PWA/Capacitor consumes pairing + endpoint switch",
         "to_atom": "MC-8"
@@ -9212,11 +9185,6 @@
       },
       {
         "atom": "CE-9",
-        "ext_ref": "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:app-registered trigger source types",
-        "to_atom": "WF2AUT-8"
-      },
-      {
-        "atom": "CE-10",
         "ext_ref": "EXT:WORKFLOWS-V2-AUTOMATION-SUBSTRATE:app-registered trigger source types",
         "to_atom": "WF2AUT-8"
       },
@@ -9297,8 +9265,8 @@
       },
       {
         "atom": "PUBL-10",
-        "ext_ref": "EXT:DISCOVERABILITY-LAUNCH:site live + real screenshots + install one-liner (S1-3 gate)",
-        "to_atom": "DL-8"
+        "ext_ref": "EXT:DISCOVERABILITY-LAUNCH:P0 launch-gate clearance sign-off before any public posting (owner)",
+        "to_atom": "DL-11"
       },
       {
         "atom": "MC-2",
@@ -9376,11 +9344,6 @@
         "to_atom": "CE-9"
       },
       {
-        "atom": "ET-8",
-        "ext_ref": "EXT:DISCOVERABILITY-LAUNCH:the site sync pipeline this registry surface extends",
-        "to_atom": "DL-1"
-      },
-      {
         "atom": "LV-1",
         "ext_ref": "EXT:LEARNING-FLYWHEEL:skill-ladder synthesis machinery (run_skill_ladder_review + proposals.enqueue) steps 1-4",
         "to_atom": "WF2LEA-12"
@@ -9424,11 +9387,6 @@
         "atom": "EI-2",
         "ext_ref": "EXT:WORK-CONTAINERS:WORK-R3 workspace block call sites + WORK-R20 mode:container re-expression",
         "to_atom": "WF2WOR-12"
-      },
-      {
-        "atom": "EI-6",
-        "ext_ref": "EXT:WORK-CONTAINERS:WORK-R8 lease convention (flock under locks/) + WORK-R7 suspended-liveness path",
-        "to_atom": "WF2WOR-1"
       },
       {
         "atom": "EI-9",
@@ -10013,8 +9971,8 @@
         "total_atoms": 10,
         "done": 9,
         "in_progress": 0,
-        "todo": 1,
-        "blocked": 0
+        "todo": 0,
+        "blocked": 1
       },
       {
         "code": "MC",
@@ -10092,9 +10050,9 @@
         "code": "EI",
         "plan": "EXECUTION-ISOLATION",
         "total_atoms": 12,
-        "done": 11,
+        "done": 12,
         "in_progress": 0,
-        "todo": 1,
+        "todo": 0,
         "blocked": 0
       },
       {
@@ -10143,6 +10101,6 @@
         "blocked": 0
       }
     ],
-    "edge_count": 851
+    "edge_count": 847
   }
 }

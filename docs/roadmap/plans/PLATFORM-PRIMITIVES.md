@@ -269,11 +269,29 @@ rather than deferring them past it.
   **A decomposition PROPOSED for the owner to mint, deliberately not minted here.** The twelve
   unanswered loop routes do not fall into two seams; they fall into three, and only one is a cockpit
   seam at all.
-  * **The ledger rails.** The findings rail and the verdict/ROI rail are PROJECTIONS over the `PP-5`
-    ledger, which already carries `step_completed`, `judge_verdict`, `breaker_trip` and
-    `watcher_reaped` for both nouns. Cheapest of the three, invents no state, needs no ruling, and
-    the run side already has `events` and `introspect` to hang it on. One endpoint family plus one
-    panel — the only candidate here that is genuinely one review-ready change.
+  * **The ledger rails.** ✅ **DONE — PR #2565, merged `1cbb65dd2`.** The findings rail and the
+    verdict/ROI rail are PROJECTIONS over the `PP-5` ledger, which already carries `step_completed`,
+    `judge_verdict` and `watcher_reaped` for both nouns. Cheapest of the three, invents no state,
+    needs no ruling, and the run side already has `events` and `introspect` to hang it on. One
+    endpoint family plus one panel — the only candidate here that is genuinely one review-ready
+    change.
+
+    **Correction 2026-09-07:** this bullet originally said all FOUR kinds are carried "for both
+    nouns". `breaker_trip` is not. `loop/journal.py::breaker_trip` is its only writer in the tree and
+    the workflow engine has no breaker to trip, measured while building the rail. That is why the
+    shipped rail reports breaker coverage as `null` and never `0` — "the breaker never tripped" and
+    "nothing here can trip a breaker" are different claims, and only the first is an observation.
+    `RAIL_PRODUCERS` declares the asymmetry and an AST scan checks it against the workflow package's
+    real emitters in BOTH directions, so an engine that later grows a breaker reds the table rather
+    than leaving a `null` where a real zero now belongs.
+
+    Reachability, measured before and after: **0 of the 4 kinds had its own payload reachable** from
+    any run-side projection (`service.introspect` was the only one, and its timeline row drops
+    `output_ref`, `provider`, `retries` and `degraded_reason`); all four are reachable now, three as
+    projections and `breaker_trip` as a declared-absent coverage row. None of the 26 run routes was
+    named `findings`/`verdict`/`roi`/`rails` — `/runs/{id}/review` is a different noun entirely
+    (`review_finding`, code-review comments against a live diff). Homeless columns **unchanged at
+    33**, because this seam invents no state and retires none.
   * **The plan walkthrough plus the run-level deliverable** (`report`). Six routes and a document,
     and the seam where 4e's DOCTRINE NOTE lands: a loop provisions one TaskList PER PHASE and seeds
     tasks into it, while a run materializes one task per node into NO list, so parity needs either a

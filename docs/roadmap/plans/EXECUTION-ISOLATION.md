@@ -1433,3 +1433,40 @@ Four more were found by a read-only audit of the 29 `EXT:`-only atoms.
 ## Execution log — EI-4 (Lima VM tier app + apps-sandbox + terminal sandbox picker) — validated done
 
 **2026-09-04 — LANDED on main (core #2394, merge 5b156d829; apps side PersonalClawApps #64).** The `lima` provider ships the VM isolation tier beside `docker`: a terminal opened "inside the run's sandbox" executes in the Lima VM with host↔guest path translation, a stopped instance flips the provider to greyed-out-with-reason within one probe TTL rather than silently downgrading to the host, an interactive request gets the path-guard-only dialog, and app backends launch through `backend.sandbox`. The per-session terminal sandbox picker rides the shared `Select` primitive. SC3's every clause maps to shipped, test-railed code; `EI-6` is the plan's last open atom.
+
+## Execution log — EI-6 (runner lifecycle + durable tmux sessions) — validated done · PLAN COMPLETE 12/12
+
+**2026-09-07 — LANDED on main (core #2558, merge `27ed7dd05`). This closes the plan.** The entry above
+ended "`EI-6` is the plan's last open atom"; it is now shut, and EXECUTION-ISOLATION is **12/12 done**.
+Both SC5 halves are measured rather than argued. The runner-lifecycle half: an idle-release TTL clamped
+to [60, 86400], `lease_for` dropping expired holders, and the holder rendering in Settings as
+`held by {holder}` — the lease is visible to a human, not only to a file. The durable-session half:
+`durable_sessions_enabled()` gates on the config flag **and** a live binary probe, and reaches both the
+spawn and the sweep, which closes the old audit's open "does the declared value reach a reader" question
+at both ends instead of one.
+
+**The recorded ceiling was an unprobed environment, not an ungrantable one — and that is the lesson worth
+keeping.** This clause sat behind "tmux is absent on the dev machine and stock CI runners; closes via a
+machine with tmux (owner checklist #2490) or a CI job that installs tmux". Nobody had asked a package
+manager. `brew install tmux` took under a minute, `tmux -V` answered 3.7c, and `TestSC5RealTmux` passed on
+the **first try with no production change at all**. A skip is the *absence* of an answer, and it had been
+read for weeks as a negative one.
+
+Worse, and the reason this mattered beyond one atom: **neither stock runner image ships tmux** — checked
+against `actions/runner-images` `Ubuntu2404-Readme.md` and `macos-15-arm64-Readme.md`, zero mentions in
+either — so this entire test class had **never once run in CI** since it landed. `ci.yml`'s `test` job now
+apt-installs it and asserts `tmux -V` *in the same step*, so a failed install reds the job there instead
+of silently reappearing as a skip; `full.yml`'s `matrix` gets the per-OS equivalent across all six cells.
+
+A new real-daemon test carries the first clause to its end. The existing real-tmux test stopped at
+`suspended`, so the `suspended → running` plus journal-`resumed` half had only ever been proven against
+the in-repo tmux shim. The shim answers liveness with `os.kill(pid, 0)` and is honest as far as it goes,
+but the whole point of a durable session is that a process the gateway does **not** own survives, and only
+the real server reparents that way. Both `TestSC5RealTmux` legs logged PASSED in CI — not skipped —
+and locally `test_ei6_durable_spawn.py` runs 18/18 with **zero skips** (was 16 passed / 1 skipped).
+
+Two record corrections. The plan's EXT dep on "WORK-R8 lease convention + WORK-R7 suspended-liveness path"
+was **satisfied all along**, shipped by `WF2WOR-1` rather than by any plan literally named
+WORK-CONTAINERS: the flock lease lives at `config_dir()/locks/leases` under `concurrency.single_flight`,
+and the suspended-liveness sweep marks `SUSPENDED` with `resumable=True` only when the substrate is both
+isolated **and** alive. And **owner checklist #2490 ("run SC5 on a machine with tmux") is obsolete.**

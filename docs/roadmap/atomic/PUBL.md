@@ -19,7 +19,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PUBL-7` | ✅ | Fresh-clone getting-started walkthrough on a clean machine and fix remote friction | `PUBL-6` | fresh clone from GitHub (not local) on a clean machine/venv runs the getting-started guide verbatim to a working gateway; any remote-specific friction fixed (URL casing, submodule-free clone, raw-content doc links) |
 | `PUBL-8` | ✅ | Verify the self-update pipeline end-to-end against the real remote | `PUBL-6`, `EXT:DISTRIBUTION:tag-tracking self-update (S4)` | gateway on a clone one commit behind detects the update and apply pulls/rebuilds/re-execs successfully against the published remote |
 | `PUBL-9` | ✅ | Verify Store git-source install from the published apps repo URL | `PUBL-1` | installing an app via POST /api/apps/sources git path against the published PersonalClawApps repo URL succeeds (previously validated only with local paths) |
-| `PUBL-10` | ⬜ | Publicize once the DISCOVERABILITY-LAUNCH gate is green | `PUBL-6`, `EXT:DISCOVERABILITY-LAUNCH:site live + real screenshots + install one-liner (S1-3 gate)` | public launch announced after DISCOVERABILITY-LAUNCH S1-3 gate is met — marketing site live, real screenshots, install one-liner working |
+| `PUBL-10` | ⬜ | Publicize once the DISCOVERABILITY-LAUNCH gate is green | `PUBL-6`, `EXT:DISCOVERABILITY-LAUNCH:P0 launch-gate clearance sign-off before any public posting (owner)` | public launch announced after DISCOVERABILITY-LAUNCH S1-3 gate is met — marketing site live, real screenshots, install one-liner working |
 
 ## Atom scopes
 
@@ -97,7 +97,7 @@ Session 2 §3
 
 ### `PUBL-10` — Publicize once the DISCOVERABILITY-LAUNCH gate is green
 
-**Status:** todo
+**Status:** blocked (all three prerequisites verified live; the public launch post is owner-only via DL-11)
 
 Session 1 §9; Status line (owner call)
 
