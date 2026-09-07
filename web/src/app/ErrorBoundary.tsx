@@ -3,6 +3,7 @@ import { fvs } from '../design/fontWeight'
 import { AlertTriangle, RotateCcw } from 'lucide-react'
 import { treatmentPaint } from '../design/errorTreatments'
 import { useErrorTreatment } from './personality'
+import { readableErrText } from '../lib/errText'
 
 interface Props { children: ReactNode; resetKey?: string }
 interface State { error: Error | null }
@@ -89,7 +90,14 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <ErrorFallback
           chunk={chunk}
-          message={this.state.error.message}
+          // 🔴 A MINIFIED EXCEPTION AS A FULL-PAGE ERROR. `error.message` on a production bundle is
+          // routinely `Failed to fetch` or a mangled one-symbol string, and this is the widest
+          // surface in the app — the whole page. `readableErrText` returns `''` for exactly that
+          // closed set, which hands the paragraph below to the written sentence it ALREADY has
+          // ("Something went wrong rendering this view."). A real authored message is unaffected,
+          // which is also why the frozen pre-change markup in `errorTreatmentSkin.test.tsx` still
+          // matches: its fixture message is authored text and passes through untouched.
+          message={readableErrText(this.state.error)}
           onRetry={() => { if (chunk) window.location.reload(); else this.setState({ error: null }) }}
         />
       )

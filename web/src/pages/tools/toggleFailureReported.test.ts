@@ -54,7 +54,15 @@ describe('a tool toggle that fails tells the user', () => {
     expect(shared).toMatch(
       /export async function reportingWrite\(what: string, run: \(\) => Promise<unknown>\): Promise<boolean>/,
     )
-    expect(shared, 'it reports through the app toast').toMatch(/notify\(`Couldn't \$\{what\}: /)
+    // 🔁 RE-POINTED, NOT RELAXED — the same discipline this file's header states. The sentence moved
+    // into a named composer when `readableErrText` was wired in, so an opaque `e.message` (Chrome's
+    // "Failed to fetch", or `errEnvelope`'s own `HTTP 500`) stops becoming the tail of a written
+    // sentence. Both BRANCHES are pinned below, which the single old literal could not do: the
+    // detail-ful form keeps the colon, and the detail-less form is a complete sentence — a suppressed
+    // detail behind a kept colon would be a broken sentence rather than a fixed one.
+    expect(shared, 'it reports through the app toast').toMatch(/notify\(failureSentence\(what, e\), 'error'\)/)
+    expect(shared, 'the sentence still opens with the written clause').toMatch(/`Couldn't \$\{what\}: \$\{detail\}`/)
+    expect(shared, 'and closes cleanly when there is no usable detail').toMatch(/`Couldn't \$\{what\}\.`/)
     expect(shared, 'and returns the outcome so a caller can skip its refetch').toMatch(/return true/)
     // 🪤 The JSON-unwrap this used to assert is GONE ON PURPOSE, not dropped: `lib/errText` is the
     // app's single funnel for failure text and `api.ts` throws `ApiError(await errText(r))`, so
