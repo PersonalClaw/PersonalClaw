@@ -883,15 +883,149 @@ def test_the_allowed_types_derive_from_cores_provider_registry() -> None:
     assert schema_types == validator.ALLOWED_TYPES
 
 
-def test_every_row_in_the_live_registry_satisfies_the_schema(fixture_repos: Path) -> None:
+def _live_rows() -> list[dict[str, Any]]:
+    """The rows the registry actually ships. One reader, so the two rails below cannot
+    disagree about what "a shipped listing" is."""
     document = json.loads((STAGED / "app-registry.json").read_text(encoding="utf-8"))
-    assert isinstance(document.get("apps"), list)
-    # The live file is empty until ET-6 lists the exemplars, so the fixture row rides
-    # along: without it this rail would pass over zero rows and prove nothing.
-    rows = list(document["apps"]) + [_row("https://github.com/personalclaw/registry-fixture")]
-    assert len(rows) >= 1
-    for row in rows:
+    assert isinstance(document.get("apps"), list), "app-registry.json carries no 'apps' array"
+    for row in document["apps"]:
+        assert isinstance(row, dict), f"a non-object row is in the shipped index: {row!r}"
+    return list(document["apps"])
+
+
+def test_every_row_in_the_live_registry_satisfies_the_schema(fixture_repos: Path) -> None:
+    live = _live_rows()
+    # THE FLOOR, over the LIVE rows only. It used to be `len(rows) >= 1` asserted after a
+    # fixture row had been appended, which no input could fail — the comment there said the
+    # live file "is empty until ET-6 lists the exemplars", and ET-6 listed four on 2026-09-02.
+    # A floor that cannot fail is not a floor.
+    assert live, "the shipped app-registry.json lists nothing — this rail would prove nothing"
+    # The fixture row still rides along, but as a POSITIVE control on the checker rather than
+    # as the thing being counted: a row known to satisfy the schema must keep satisfying it.
+    for row in live + [_row("https://github.com/personalclaw/registry-fixture")]:
         assert validator.check_row_schema(row, allow_file_repos=False) == [], row
+
+
+# ── the pre-install trust surface may not be a page of "no scan on record" ─────
+
+
+def test_every_shipped_listing_carries_a_real_scan_verdict() -> None:
+    """`last_scan_verdict` is what personalclaw.dev's ``/registry`` publishes BEFORE you
+    install. Measured 2026-09-07: four shipped listings, zero carrying it, so the surface
+    rendered four "No scan on record" cards and had never been exercised against a verdict.
+
+    ``apply_validation_stamps``'s docstring names two consumers, "the Store card and the
+    website". Measured on this commit only the website is one: ``RegistryPointer.from_dict``
+    (``apps/catalog.py``) keeps nine display fields and drops this one, so core's Store card
+    cannot show a verdict yet. Wiring it is ``ET-5``, and is not this rail's business.
+
+    Two directions, because a one-directional floor is how that state stayed green for five
+    days. Zero listings must not pass (every per-row loop is green over an empty index), and
+    a non-empty index every row of which lacks a verdict must not pass either.
+
+    An ABSENT verdict is not a weaker verdict — it is the same rendering an unscanned
+    listing gets, so a listing that silently lost its stamp becomes indistinguishable from
+    one that was never checked. That is the conflation this rail exists to keep impossible.
+    """
+    rows = _live_rows()
+    # DIRECTION ONE — non-vacuity. Asserted first: the loop below is green over nothing.
+    assert rows, "the shipped app-registry.json lists nothing, so a per-listing rail is empty"
+
+    verdicts = {v.value for v in validator.Verdict}
+    blocking = validator.BLOCKING_VERDICT.value
+    for row in rows:
+        name = row.get("name")
+        verdict = row.get("last_scan_verdict")
+        # DIRECTION TWO — every readable listing carries one. `not in verdicts` covers the
+        # absent case and a hand-edited value in one assertion, because the surface treats an
+        # unrecognised string as blocking rather than as reassuring and so must this.
+        assert verdict in verdicts, (
+            f"{name!r} carries last_scan_verdict={verdict!r}. Re-stamp with "
+            f"'python scratch/registry/validate_registry.py "
+            f"scratch/registry/app-registry.json --write' and commit the result."
+        )
+        assert verdict != blocking, f"{name!r} is listed with a {blocking!r} verdict"
+        stamped = row.get("last_validated")
+        assert isinstance(stamped, str) and validator.ISO_RE.match(stamped), (
+            f"{name!r} carries a verdict but last_validated={stamped!r} — a verdict with no "
+            f"date cannot be read as stale, so it would never be refreshed."
+        )
+
+
+def _workflow_job_commands(path: Path, job: str) -> str:
+    """The SHELL COMMANDS one workflow job runs: its block with comment lines and heredoc
+    BODIES removed, leaving only what the runner actually executes.
+
+    Both removals are load-bearing, and both were learned from a surviving mutant rather
+    than guessed:
+
+    * the job's WHY header quotes ``validate_registry.py`` by path, so a rail that read
+      comments stayed GREEN with the invocation line deleted;
+    * the compare step's heredoc quotes BOTH paths inside diagnostic strings (the re-stamp
+      instruction, and the file it reads), so a rail that read heredoc bodies stayed GREEN
+      with the ``cp`` of the shipped index deleted.
+
+    Each removal is pinned below by a vacuity assertion that reads the same file, so a
+    future edit that stops quoting a path there reds instead of quietly making this inert.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    header = f"  {job}:"
+    assert header in lines, f"{path.name} has no {job!r} job"
+    body: list[str] = []
+    terminator: str | None = None
+    for line in lines[lines.index(header) + 1 :]:
+        if re.match(r"^ {2}[A-Za-z][\w-]*:", line):
+            break  # the next job id
+        if terminator is not None:
+            if line.strip() == terminator:
+                terminator = None
+            continue
+        opened = re.search(r"<<-?'?([A-Za-z_]\w*)'?\s*$", line)
+        if opened is not None:
+            terminator = opened.group(1)
+            body.append(line[: opened.start()])  # the command, minus its redirection
+            continue
+        if line.strip().startswith("#"):
+            continue
+        body.append(line)
+    return "\n".join(body)
+
+
+def test_core_ci_keeps_the_shipped_verdicts_filled() -> None:
+    """Something must call the stamper, or the rail above is a standing red waiting to happen.
+
+    The three staged workflows cannot: GitHub runs workflows only from ``.github/workflows/``
+    at the repo ROOT, and they live under ``scratch/registry/``. Until the standalone registry
+    repo exists (ET-9, owner-only, #2490) core's own ``full.yml`` owns the job.
+    """
+    workflows = REPO_ROOT / ".github" / "workflows"
+    full = (workflows / "full.yml").read_text(encoding="utf-8")
+    commands = _workflow_job_commands(workflows / "full.yml", "registry-verdicts")
+    assert "scratch/registry/validate_registry.py" in commands, "the job never runs the validator"
+    assert "scratch/registry/app-registry.json" in commands, "the job never reads the shipped index"
+
+    # Vacuity for the two removals in _workflow_job_commands, self-proving. Each mutant that
+    # survived before them is named there; these two assertions are what keep them dead.
+    commented = [
+        line
+        for line in full.splitlines()
+        if line.strip().startswith("#") and "scratch/registry/validate_registry.py" in line
+    ]
+    assert commented, "the WHY header stopped naming the validator; comment-stripping is inert"
+    heredoc = full.rsplit("<<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+    for path in ("scratch/registry/app-registry.json", "scratch/registry/validate_registry.py"):
+        assert (
+            path in heredoc
+        ), f"the compare step stopped quoting {path}; heredoc-stripping is inert"
+
+    # The staged workflows are inert HERE, which is the whole reason the job above exists.
+    staged = {p.name for p in (STAGED / ".github" / "workflows").glob("*.yml")}
+    assert len(staged) == 3, staged
+    assert not staged & {p.name for p in workflows.glob("*.yml")}, "a staged workflow went live"
+
+    # And deliberately NOT on the ≤10-min PR gate: each listing costs a clone plus a scan over
+    # a third-party repository, so a forge hiccup would red an unrelated merge.
+    assert "validate_registry.py" not in (workflows / "ci.yml").read_text(encoding="utf-8")
 
 
 def test_the_staged_content_is_complete() -> None:
