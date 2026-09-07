@@ -17,24 +17,27 @@ Reuses ``history._SENSITIVE_TOOL_PATTERNS`` (the credential/secret path set) so
 "reads ~/.aws" detection has one source of truth. Not a sandbox — static
 inspection only; it reduces risk, it does not contain execution.
 
-The DANGEROUS band is additionally scoped by EXECUTION REACHABILITY (issue #2526) — the
-"Execution reachability" section below states the rule in full. In short: a matched
-literal nothing in the bundle can execute is *disclosed* as a ``warning`` rather than
-refused outright, because it is a string, not a payload. Default-deny throughout — a
-match stays DANGEROUS unless non-reachability is PROVED, so the failure mode is a false
-block and never a false pass.
+The DANGEROUS band is additionally scoped by EXECUTION REACHABILITY (issues #2526,
+#2625) — the "Execution reachability" section below states the rule in full. In short: a
+match the bundle cannot execute is *disclosed* as a ``warning`` rather than refused
+outright, because it is a string (or a comment), not a payload. Default-deny throughout —
+a match stays DANGEROUS unless inertness is PROVED, and proved structurally from the AST
+and the tokeniser rather than from the text, so the failure mode is a false block and
+never a false pass.
 """
 
 from __future__ import annotations
 
 import ast
+import io
 import json
 import re
+import tokenize
 import unicodedata
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 # One source of truth for "touches a credential/secret path" (IMDS, ~/.aws, …).
 from personalclaw.history import _SENSITIVE_TOOL_PATTERNS
@@ -72,10 +75,15 @@ class TrustTier(str, Enum):
 class Reachability(str, Enum):
     """Whether the code a DANGEROUS match sits in can EXECUTE that match.
 
-    FOUR states, not two, and that is the point. "We could not tell" must never render
+    FIVE states, not two, and that is the point. "We could not tell" must never render
     as "safe": a file the analysis could not read is reported as its own outcome
     (:data:`UNPARSEABLE`) and treated exactly like :data:`REACHABLE`, so an unreadable
     file can never be mistaken for a clean one by a reviewer reading the report.
+
+    :data:`COMMENTARY` and :data:`UNREACHABLE` are kept apart for the same reason, in the
+    other direction: they are proved by different evidence (a token class vs. five
+    clauses over the whole bundle) and both land on WARNING, so a reviewer can tell
+    "this is a comment" from "this is a literal nothing reaches".
     """
 
     #: Nothing was asked — the finding is not a DANGEROUS script match, or the caller
@@ -85,8 +93,11 @@ class Reachability(str, Enum):
     REACHABLE = "reachable"
     #: Every clause held. The match is a string the bundle cannot run → WARNING.
     UNREACHABLE = "unreachable"
+    #: The match lies wholly inside a ``COMMENT`` token or a docstring — text the
+    #: interpreter discards at tokenisation, so it is not code at all → WARNING.
+    COMMENTARY = "commentary"
     #: The file is not parseable Python, so there is no AST to reason over. Its own
-    #: state, and DANGEROUS — never folded into either of the two answers above.
+    #: state, and DANGEROUS — never folded into any of the answers above.
     UNPARSEABLE = "unparseable"
 
 
@@ -431,15 +442,23 @@ def _evidence(text: str, match: "re.Match[str]") -> str:
 #     degrades the fixtures, whose entire job is to be read.
 #
 # THE RULE. A DANGEROUS match is re-scored to WARNING — never lower, never dropped —
-# iff ALL FIVE clauses below hold. Default-deny: fail any one, or fail to evaluate one,
-# and the finding stays DANGEROUS. The failure mode is a false BLOCK (annoying, and
-# fixable by the author) and never a false PASS.
+# iff L0 holds, or ALL FIVE of L1-L5 do. Default-deny: fail a clause, or fail to
+# evaluate one, and the finding stays DANGEROUS. The failure mode is a false BLOCK
+# (annoying, and fixable by the author) and never a false PASS.
 #
+#   L0  COMMENTARY, NOT CODE (issue #2625). Every match of this rule lies wholly inside a
+#       ``COMMENT`` token or a docstring. That is decided from :mod:`tokenize` and the
+#       AST, never from the text — see the note below on why that distinction is the
+#       whole basis of this clause. L0 short-circuits: it does not consult L2-L5, because
+#       those clauses all ask whether a STRING THE FILE HOLDS can be handed to an
+#       interpreter, and a comment is not a string the file holds. The tokeniser throws
+#       it away before the compiler ever sees it, so no sink, no import edge and no
+#       top-level call in the bundle can reach it.
 #   L1  LITERAL, NOT CODE. The file parses as Python and every match of this rule that
-#       the scanner could have reported lies wholly inside a ``str`` constant. A `.sh`
-#       file is never eligible: its text IS its program. Decided on AST spans, not on
-#       text — a docstring or comment mentioning `rm -rf /` is not a call to it, and a
-#       text scan that counts it trains readers to ignore the rail.
+#       the scanner could have reported lies wholly inside a ``str`` constant (or, per
+#       L0, inside commentary — so documenting an inert fixture next to it does not
+#       revoke the fixture's own downgrade). A `.sh` file is never eligible: its text IS
+#       its program. Decided on AST spans, not on text.
 #   L2  NO EXECUTION SINK IN THE FILE. The file contains no sink that could receive a
 #       string: no ``os.system``/``popen``/``exec*``/``spawn*``/``fork``, no
 #       ``eval``/``exec``/``compile``/``__import__``, no ``subprocess`` call whose
@@ -466,14 +485,37 @@ def _evidence(text: str, match: "re.Match[str]") -> str:
 #       curious user, may import the module. Its top level must contain no call outside
 #       a small pure allowlist, so the payload cannot fire on import.
 #
-# RESIDUAL, STATED NOT HIDDEN. A bundle can ship a module of pure inert data that
-# nothing references and get its literal disclosed-and-consentable instead of refused.
-# That is a real reduction in the floor for that one shape. The counterweight is
-# measured, not asserted: the shipped band already scores ``"rm -" + "rf /"`` as CLEAN
-# and ``os.system("rm -rf /")`` as WARNING, so the capability given up is refusing the
-# attacker who wrote their payload as a plain literal AND left it unreachable AND did
-# not obfuscate it — and even they still get the finding, the rule id, the evidence and
-# a required click. See ``tests/security/test_scanner_reachability.py``.
+# WHY L0 IS ON THE TOKENISER AND NOT ON THE TEXT (issue #2625). "Skip lines that start
+# with ``#``" is a one-liner and it is the wrong fix: it is defeated by anything that
+# merely LOOKS like a comment, which is exactly the payload parking spot #2526 refused to
+# create. ``X = "#"`` opens a string, and every ``#`` to the end of that string is inside
+# a ``str`` token, not a comment — a text scan reading the next line as commentary would
+# hand an attacker a way to hide live code behind a fake one. A tokeniser cannot be fooled
+# that way: it reports the token class the compiler will actually see, so a line that
+# tokenises as code is code no matter what it looks like. The scanner already had one
+# available. (:func:`_strip_line_comments` and :func:`_on_comment_only_line` remain text
+# heuristics, deliberately: they only ever NARROW what the ``exfil_sensitive_path`` rule
+# may match, so being fooled there costs recall on a rule, never the floor.)
+#
+# RESIDUAL, STATED NOT HIDDEN. Two shapes, both narrower than the rule they replace.
+#
+#   * A bundle can ship a module of pure inert data that nothing references and get its
+#     literal disclosed-and-consentable instead of refused. That is a real reduction in
+#     the floor for that one shape. The counterweight is measured, not asserted: the
+#     shipped band already scores ``"rm -" + "rf /"`` as CLEAN and ``os.system("rm -rf
+#     /")`` as WARNING, so the capability given up is refusing the attacker who wrote
+#     their payload as a plain literal AND left it unreachable AND did not obfuscate it.
+#   * Under L0, a bundle that performs STRING SURGERY ON ITS OWN SOURCE — reads a sibling
+#     file, strips the ``#``, and ``exec``s the result — could promote a comment back to
+#     code, and L0 does not consult L4's bundle-wide graph-trust check to stop it. L4
+#     exists to protect L3's static "nothing imports it" claim, and L0 makes no such
+#     claim, so extending it here would refuse the honest author for a threat that does
+#     not need a comment: a bundle that can ``exec`` arbitrary text can spell the payload
+#     itself, and its ``exec`` is separately flagged. It is a real hole all the same, and
+#     it is the reason L0 is stated on a token class rather than on a filename or a line.
+#
+# Either way the finding survives: rule id, path, evidence and a required click, all
+# unchanged. See ``tests/security/test_scanner_reachability.py``.
 
 #: argv[0] values that make the spawned process an interpreter OF ITS ARGUMENTS. A
 #: string handed to any of these becomes code, so a file with such a spawn site can run
@@ -624,6 +666,11 @@ _LOADER_NAMES = frozenset({"Makefile", "makefile", "Dockerfile", "Procfile", "ju
 #: modulates any other warning (no special case, and no path to CLEAN).
 _REACH_FLOOR = Verdict.WARNING
 
+#: The states that earn :data:`_REACH_FLOOR`. Both are POSITIVE PROOFS of inertness and
+#: neither is a "we could not tell" — those land on REACHABLE or UNPARSEABLE and keep the
+#: terminal severity. Listed once so the two proofs cannot drift apart in severity.
+_INERT_STATES = frozenset({Reachability.UNREACHABLE, Reachability.COMMENTARY})
+
 
 @dataclass
 class _FileFacts:
@@ -631,6 +678,9 @@ class _FileFacts:
 
     parsed: bool
     str_spans: list[tuple[int, int]]  # (start, end) text offsets of every ``str`` constant
+    #: L0 evidence: text offsets of every region the interpreter discards — each
+    #: ``COMMENT`` token, and each module/class/function docstring.
+    commentary_spans: list[tuple[int, int]]
     imports: set[str]
     string_literals: set[str]
     dynamic: set[str]  # L4 evidence: names that make the import graph untrustworthy
@@ -639,11 +689,108 @@ class _FileFacts:
 
 
 def _offset_table(text: str) -> list[int]:
-    """Line-start offsets, so an AST ``(lineno, col_offset)`` becomes a flat offset."""
+    """Line-start offsets, so an AST or :mod:`tokenize` ``(row, col)`` becomes a flat
+    offset.
+
+    Split on the UNIVERSAL NEWLINES CPython itself recognises — ``\\n``, ``\\r\\n``,
+    ``\\r`` — and nothing else. Deliberately not :meth:`str.splitlines`, which also breaks
+    on ``\\f`` and ``\\u2028``: CPython's tokeniser treats those as ordinary characters, so
+    a file containing one would produce a table that disagreed with the row numbers being
+    looked up in it, by an amount the file's author chooses. That is fine for a heuristic
+    and not fine for a table a span check stands on.
+    """
     starts = [0]
-    for line in text.splitlines(keepends=True):
-        starts.append(starts[-1] + len(line))
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\r":
+            i += 2 if text[i + 1 : i + 2] == "\n" else 1
+        elif c == "\n":
+            i += 1
+        else:
+            i += 1
+            continue
+        starts.append(i)
     return starts
+
+
+def _docstring_nodes(tree: ast.AST) -> Iterator[ast.Constant]:
+    """Every module/class/function docstring node — the ``str`` the compiler lifts into
+    ``__doc__`` and never evaluates as an expression."""
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        first = node.body[0] if node.body else None
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            yield first.value
+
+
+def _commentary_spans(text: str, tree: ast.AST) -> list[tuple[int, int]] | None:
+    """L0: text offsets of every region of ``text`` the interpreter throws away — each
+    ``COMMENT`` token, and each docstring — or ``None`` when that cannot be DETERMINED.
+
+    ``None`` is not "no comments". It means the file did not tokenise, or a span the
+    lexer reported did not match the bytes it claims to cover, and the caller must then
+    treat the file as unanalysable: the entire claim L0 makes is that the determination is
+    structural, so a file whose structure could not be read gets no benefit from it.
+
+    Every span is verified against the token's own text before it is trusted, so a line
+    table that drifted from the lexer for any reason revokes the whole answer rather than
+    silently pointing a "this is a comment" span at some other part of the file.
+    """
+    starts = _offset_table(text)
+
+    def span(tok: tokenize.TokenInfo) -> tuple[int, int] | None:
+        try:
+            start = starts[tok.start[0] - 1] + tok.start[1]
+            end = starts[tok.end[0] - 1] + tok.end[1]
+        except IndexError:
+            return None
+        return (start, end) if text[start:end] == tok.string else None
+
+    spans: list[tuple[int, int]] = []
+    strings: dict[int, list[tokenize.TokenInfo]] = {}
+    try:
+        # ``newline=""`` so readline splits on the same universal newlines as the table
+        # above and translates nothing — the offsets must address the ORIGINAL bytes.
+        for tok in tokenize.generate_tokens(io.StringIO(text, newline="").readline):
+            if tok.type == tokenize.COMMENT:
+                got = span(tok)
+                if got is None:
+                    return None
+                spans.append(got)
+            elif tok.type == tokenize.STRING:
+                strings.setdefault(tok.start[0], []).append(tok)
+    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+        return None
+    # A docstring is a STRING token the AST says is the first statement of a scope. Matched
+    # by ROW and then verified by VALUE, because the AST's column offsets are UTF-8 byte
+    # counts while the lexer's are character counts; a row with two string tokens on it, or
+    # a value that does not round-trip, claims nothing rather than guessing.
+    for node in _docstring_nodes(tree):
+        row = strings.get(node.lineno, [])
+        if len(row) != 1:
+            continue
+        try:
+            if ast.literal_eval(row[0].string) != node.value:
+                continue
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
+            continue
+        got = span(row[0])
+        if got is not None:
+            spans.append(got)
+    return spans
+
+
+def _within(regions: Iterable[tuple[int, int]], probes: Iterable[tuple[int, int]]) -> bool:
+    """True when EVERY probe span lies wholly inside at least one region. Vacuously true
+    for no probes, which is why every caller checks it has probes first."""
+    regions = list(regions)
+    return all(any(s <= start and end <= e for s, e in regions) for start, end in probes)
 
 
 def _argv0_of(call: ast.Call) -> tuple[bool, str | None]:
@@ -728,11 +875,17 @@ def _note_call(
 def _analyse_python(text: str) -> _FileFacts:
     """AST facts for one Python file. An unparseable file returns ``parsed=False`` and
     nothing else — the caller must treat that as its own outcome, never as "no sinks"."""
-    facts = _FileFacts(True, [], set(), set(), set(), set(), set())
+    unreadable = _FileFacts(False, [], [], set(), set(), set(), set(), set())
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError):  # ValueError: NUL bytes / oversized literals
-        return _FileFacts(False, [], set(), set(), set(), set(), set())
+        return unreadable
+    commentary = _commentary_spans(text, tree)
+    if commentary is None:
+        # It parsed but would not tokenise, or the lexer and the line table disagreed.
+        # Same answer as a parse failure: the structure could not be read (L0/L1).
+        return unreadable
+    facts = _FileFacts(True, [], commentary, set(), set(), set(), set(), set())
 
     starts = _offset_table(text)
     spawn_prefixes, spawn_bare = _spawn_names(tree)
@@ -869,7 +1022,7 @@ class _BundleReach:
     # ── the decision ──
 
     def decide(self, finding: Finding) -> tuple[Reachability, str]:
-        """L1-L5 for one DANGEROUS finding, plus the sentence that justifies it."""
+        """L0-L5 for one DANGEROUS finding, plus the sentence that justifies it."""
         rel = finding.path
         if not rel.endswith(".py"):
             return Reachability.REACHABLE, "not Python — a script's text is its program (L1)"
@@ -885,9 +1038,17 @@ class _BundleReach:
             # have an opinion. The invisible-character rules land here by construction:
             # a bidi override is a rendering attack, not a string a bundle merely holds.
             return Reachability.REACHABLE, "rule has no locatable span (L1)"
-        if not all(
-            any(s <= start and end <= e for s, e in facts.str_spans) for start, end in spans
-        ):
+        if _within(facts.commentary_spans, spans):
+            # L0 is decided on the token class, so it needs nothing from L2-L5: a comment
+            # is not a string this file holds, and the tokeniser discards it before the
+            # compiler sees it. A file that merely LOOKS like it comments the match out
+            # never lands here — the lexer, not the text, said this is commentary.
+            return (
+                Reachability.COMMENTARY,
+                "every match is inside a comment or docstring, which the interpreter "
+                "discards at tokenisation — not code (L0)",
+            )
+        if not _within([*facts.str_spans, *facts.commentary_spans], spans):
             return Reachability.REACHABLE, "match is code, not a string literal (L1)"
         if facts.sinks:
             return (
@@ -957,7 +1118,8 @@ def _scope_by_reachability(
     opaque: list[str],
 ) -> list[Finding]:
     """Annotate every DANGEROUS script finding with its execution reachability, and
-    re-score the provably-unreachable ones to :data:`_REACH_FLOOR` (WARNING).
+    re-score the provably-inert ones — :data:`_INERT_STATES` — to :data:`_REACH_FLOOR`
+    (WARNING).
 
     Order and count are preserved exactly; rule, path, surface and evidence are never
     touched. Nothing is ever raised and nothing is ever dropped — the only edit is
@@ -980,7 +1142,7 @@ def _scope_by_reachability(
             out.append(finding)
             continue
         state, reason = reach.decide(finding)
-        severity = _REACH_FLOOR if state is Reachability.UNREACHABLE else finding.severity
+        severity = _REACH_FLOOR if state in _INERT_STATES else finding.severity
         out.append(
             replace(finding, severity=severity, reachability=state, reachability_reason=reason)
         )

