@@ -656,6 +656,13 @@ def test_partial_streaming_trio_fails():
 
 _CHANNEL_PROVIDER = {"type": "channel", "implementation": "fixture_runtime.transport:create"}
 _INBOX_PROVIDER = {"type": "inbox", "implementation": "fixture_runtime.source:create"}
+#: CE-10's arm. Generically named, like every other fixture here — the plan's done_when ends
+#: "core contains no vendor names", and a test fixture is a tracked file like any other.
+_TRIGGER_SOURCE_PROVIDER = {
+    "type": "trigger_source",
+    "implementation": "fixture_runtime.trigger_source:create",
+}
+_COMPLETE_PROVIDERS = [_INBOX_PROVIDER, _TRIGGER_SOURCE_PROVIDER]
 
 
 def _transport_in_app_bundle(tmp_path, monkeypatch, manifest, *, tag: str):
@@ -693,8 +700,14 @@ def _run_capturing_warnings(provider, **kwargs) -> list[str]:
     return _completeness_advisories(record)
 
 
-def test_channel_only_app_warns_about_the_missing_inbox_seam(tmp_path, monkeypatch):
-    """The measured shape of telegram-channel/discord-channel: `channel`, no `inbox`."""
+def test_channel_only_app_warns_about_BOTH_missing_seams_SEPARATELY(tmp_path, monkeypatch):
+    """A `channel`-only manifest is missing two seams, and gets two advisories.
+
+    Two, not one merged sentence: "you have no inbox" and "you have no trigger source" are
+    different facts about different work, and a reader who has decided about one must not
+    have to re-read a paragraph to find the other. Each must name ITS seam, ITS consequence
+    and ITS own suppressor.
+    """
     provider = _transport_in_app_bundle(
         tmp_path,
         monkeypatch,
@@ -704,14 +717,69 @@ def test_channel_only_app_warns_about_the_missing_inbox_seam(tmp_path, monkeypat
     with pytest.warns(UserWarning, match=r"vendor completeness") as record:
         assert_channel_contract(provider)
     advisories = _completeness_advisories(record)
+    assert len(advisories) == 2, advisories
+    inbox = [m for m in advisories if "no inbox provider" in m]
+    trigger = [m for m in advisories if "no trigger_source provider" in m]
+    assert len(inbox) == 1, advisories
+    assert len(trigger) == 1, advisories
+    # Each advisory must name the app, the missing seam, the fix, its own exemption and
+    # where the checklist lives — a warning that only says "incomplete" sends the reader
+    # nowhere.
+    for message in advisories:
+        assert "fixture-channel" in message
+        assert "docs/guides/build-a-channel-app.md" in message
+    assert "no_inbox_source_reason" in inbox[0]
+    assert "no_trigger_source_reason" not in inbox[0], "the arms must not cross-reference"
+    assert "no_trigger_source_reason" in trigger[0]
+    assert "no_inbox_source_reason" not in trigger[0], "the arms must not cross-reference"
+    # The trigger arm must say the seam is available, not that it is coming: the whole 0/4
+    # window happened because the prose said "once that seam exists" after it existed.
+    assert "WF2AUT-8" in trigger[0]
+    assert "once that seam exists" not in trigger[0]
+
+
+def test_a_channel_plus_inbox_app_still_warns_about_the_TRIGGER_SOURCE_arm(tmp_path, monkeypatch):
+    """🔴 The regression this arm exists for: the CE-8-era slack-channel shape.
+
+    `channel` + `inbox` was "full vendor completeness" when CE-8 shipped, and this clause
+    went silent on it — so the trigger-source obligation sat at 0/4 with the kit reporting
+    nothing wrong. Exactly ONE advisory now, and it is the trigger one.
+    """
+    provider = _transport_in_app_bundle(
+        tmp_path,
+        monkeypatch,
+        {
+            "name": "fixture-inboxonly",
+            "version": "0.1.0",
+            "provider": _CHANNEL_PROVIDER,
+            "providers": [_INBOX_PROVIDER],
+        },
+        tag="inboxonly",
+    )
+    advisories = _run_capturing_warnings(provider)
     assert len(advisories) == 1, advisories
-    message = advisories[0]
-    # The advisory must name the MISSING seam and where the checklist lives — a warning
-    # that only says "incomplete" sends the reader nowhere.
-    assert "fixture-channel" in message
-    assert "inbox message source" in message
-    assert "no_inbox_source_reason" in message
-    assert "docs/guides/build-a-channel-app.md" in message
+    assert "no trigger_source provider" in advisories[0]
+    assert "no inbox provider" not in advisories[0]
+
+
+def test_a_channel_plus_trigger_source_app_still_warns_about_the_INBOX_arm(tmp_path, monkeypatch):
+    """The mirror. Adopting one arm must not silence the other — the failure mode of a
+    single merged "seams are incomplete" advisory."""
+    provider = _transport_in_app_bundle(
+        tmp_path,
+        monkeypatch,
+        {
+            "name": "fixture-triggeronly",
+            "version": "0.1.0",
+            "provider": _CHANNEL_PROVIDER,
+            "providers": [_TRIGGER_SOURCE_PROVIDER],
+        },
+        tag="triggeronly",
+    )
+    advisories = _run_capturing_warnings(provider)
+    assert len(advisories) == 1, advisories
+    assert "no inbox provider" in advisories[0]
+    assert "no trigger_source provider" not in advisories[0]
 
 
 def test_channel_only_app_still_passes_every_hard_clause(tmp_path, monkeypatch):
@@ -732,23 +800,23 @@ def test_channel_only_app_still_passes_every_hard_clause(tmp_path, monkeypatch):
     "manifest,tag",
     [
         (
-            # The vendor-completeness shape slack-channel ships: canonical singular
-            # `provider` for the transport + the inbox source in `providers[]`.
+            # The vendor-completeness shape slack-channel ships after CE-10: canonical
+            # singular `provider` for the transport + both companion seams in `providers[]`.
             {
                 "name": "fixture-complete",
                 "version": "0.1.0",
                 "provider": _CHANNEL_PROVIDER,
-                "providers": [_INBOX_PROVIDER],
+                "providers": _COMPLETE_PROVIDERS,
             },
             "complete-singular",
         ),
         (
-            # Both seams in the array. Read one declaration shape only and a complete app
-            # gets reported as channel-only.
+            # All three seams in the array. Read one declaration shape only and a complete
+            # app gets reported as channel-only.
             {
                 "name": "fixture-complete-array",
                 "version": "0.1.0",
-                "providers": [_CHANNEL_PROVIDER, _INBOX_PROVIDER],
+                "providers": [_CHANNEL_PROVIDER, *_COMPLETE_PROVIDERS],
             },
             "complete-array",
         ),
@@ -759,17 +827,34 @@ def test_complete_vendor_app_gets_no_advisory(tmp_path, monkeypatch, manifest, t
     assert _run_capturing_warnings(provider) == []
 
 
-def test_declared_reason_suppresses_the_advisory(tmp_path, monkeypatch):
-    """The documented exemption: an app states why the vendor has no message source."""
-    provider = _transport_in_app_bundle(
-        tmp_path,
-        monkeypatch,
-        {"name": "fixture-channel", "version": "0.1.0", "provider": _CHANNEL_PROVIDER},
-        tag="exempt",
+def test_each_declared_reason_suppresses_ONLY_ITS_OWN_arm(tmp_path, monkeypatch):
+    """The documented exemptions, and their INDEPENDENCE.
+
+    Suppressing the inbox arm must leave the trigger arm audible and vice versa: a shared
+    "seams I skip" string would let an app silence a seam nobody had thought about. Only
+    supplying both goes quiet.
+    """
+    manifest = {"name": "fixture-channel", "version": "0.1.0", "provider": _CHANNEL_PROVIDER}
+    inbox_only = _transport_in_app_bundle(tmp_path, monkeypatch, manifest, tag="exempt-inbox")
+    advisories = _run_capturing_warnings(
+        inbox_only, no_inbox_source_reason="this vendor has no message-source semantics"
     )
+    assert len(advisories) == 1, advisories
+    assert "no trigger_source provider" in advisories[0]
+
+    trigger_only = _transport_in_app_bundle(tmp_path, monkeypatch, manifest, tag="exempt-trigger")
+    advisories = _run_capturing_warnings(
+        trigger_only, no_trigger_source_reason="this vendor emits nothing an automation can use"
+    )
+    assert len(advisories) == 1, advisories
+    assert "no inbox provider" in advisories[0]
+
+    both = _transport_in_app_bundle(tmp_path, monkeypatch, manifest, tag="exempt-both")
     assert (
         _run_capturing_warnings(
-            provider, no_inbox_source_reason="this vendor has no message-source semantics"
+            both,
+            no_inbox_source_reason="no message-source semantics",
+            no_trigger_source_reason="nothing an automation can use",
         )
         == []
     )
