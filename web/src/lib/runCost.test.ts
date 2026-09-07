@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { loopSpendPill, loopSpendTitle, runCostText, runUsd } from './runCost'
+import { loopSpendPill, loopSpendTitle, runCostStat, runCostText, runUsd, templateCostStat } from './runCost'
 import type { LoopSpend } from './api'
 
 // The loop cockpit's money figure (MRT-3). Every assertion here is on the NUMBER or on the words
@@ -29,15 +29,74 @@ describe('runUsd — one rounding rule, mirroring routing/usage.py::_usd', () =>
 
 describe('runCostText — unchanged by the move out of IntrospectPanel', () => {
   it('states the figure and that it is an estimate', () => {
-    const text = runCostText(0.1234)
+    const text = runCostText(0.1234, true)
     expect(text).toContain('~$0.1234')
     expect(text).toContain('this run')
     expect(text).toMatch(/estimated from model prices/)
   })
 
   it('does not render zero as $0.00', () => {
-    expect(runCostText(0)).not.toContain('$0.00')
-    expect(runCostText(0)).toMatch(/local model|no price row/)
+    expect(runCostText(0, true)).not.toContain('$0.00')
+    expect(runCostText(0, true)).toMatch(/local model|no price row/)
+  })
+})
+
+// #2566: the backend now distinguishes "measured, and it was free" from "nobody recorded this", so
+// the copy has to as well. Both directions are asserted — a suite that only covered the unpriced
+// case would pass with these helpers hard-coded to the floor wording, which would misreport every
+// genuinely-free local run as unmeasured.
+describe('the two zeros are different sentences', () => {
+  it('a measured zero says it was measured', () => {
+    const text = runCostText(0, true)
+    expect(text).toMatch(/measured/)
+    expect(text).not.toMatch(/[Nn]ot recorded/)
+    expect(text).not.toMatch(/at least/i)
+  })
+
+  it('an unrecorded zero says nobody recorded it, and never shows a figure', () => {
+    const text = runCostText(0, false)
+    expect(text).toMatch(/[Nn]ot recorded/)
+    expect(text).not.toContain('$')
+    expect(text).not.toMatch(/measured/)
+  })
+
+  it('an unpriced NON-zero is a floor, in loopSpendTitle’s own vocabulary', () => {
+    const text = runCostText(0.5, false)
+    expect(text).toContain('~$0.5000')
+    expect(text).toMatch(/At least/)
+    expect(text).toMatch(/higher/)
+    // And never the estimate disclosure: two different claims about one dollar in one sentence.
+    expect(text).not.toMatch(/estimated from model prices/)
+  })
+})
+
+describe('runCostStat — the cell that used to render ~$0.0000', () => {
+  it('renders the figure when the run was priced', () => {
+    expect(runCostStat(0.0342, true)).toBe('~$0.0342')
+    expect(runCostStat(0, true)).toBe('~$0.0000')
+  })
+
+  it('never renders a measured-looking figure for an unpriced run', () => {
+    // The exact defect: before #2566 this cell read `~$${cost.toFixed(4)}` and a loop-shaped run
+    // (cost key absent on every step) rendered "~$0.0000" — a measurement of nothing.
+    expect(runCostStat(0, false)).toBe('not recorded')
+    expect(runCostStat(0, false)).not.toContain('$')
+  })
+
+  it('marks a partial figure as a floor rather than dropping it', () => {
+    expect(runCostStat(0.25, false)).toBe('≥~$0.2500')
+  })
+})
+
+describe('templateCostStat — one unpriced run makes every percentile a floor', () => {
+  it('renders a plain figure over a fully-priced sample', () => {
+    expect(templateCostStat(0.0342, true)).toBe('$0.0342')
+    expect(templateCostStat(0, true)).toBe('$0.0000')
+  })
+
+  it('marks the percentile as a floor when the sample was not fully priced', () => {
+    expect(templateCostStat(0.0342, false)).toBe('≥$0.0342')
+    expect(templateCostStat(0, false)).toBe('≥$0.0000')
   })
 })
 

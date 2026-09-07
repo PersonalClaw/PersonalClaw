@@ -6,7 +6,7 @@ import { FormSkeleton } from '../../ui/ListScaffold'
 import { InlineError } from '../../ui/InlineError'
 import { api, type WorkflowIntrospection, type WorkflowTimelineRow } from '../../lib/api'
 import { fmtElapsed } from './workflowMeta'
-import { runCostText } from '../../lib/runCost'
+import { runCostStat, runCostText, templateCostStat } from '../../lib/runCost'
 
 /** The cockpit's introspection panel: the nine questions §6.4 promotes to Success Criteria
  *  (WORK-CONTAINERS R6 — criteria 6 & 8).
@@ -108,8 +108,12 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                       from a price table, not billed. One panel rendering the SAME number as
                       "~$0.0342" in one place and "$0.0342" in another would read as two different
                       claims about the same dollar. The tilde is the marker everywhere; the
-                      "what is costing money" answer below is where it is spelled out once. */}
-                  <Stat label="Cost (est.)" value={`~$${data.stats.cost_usd.toFixed(4)}`} />
+                      "what is costing money" answer below is where it is spelled out once.
+
+                      Routed through `runCostStat` so an UNPRICED run cannot render "~$0.0000" here
+                      (issue 2566): a cell has no room for the sentence below, but it must not put
+                      a measured-looking figure where the honest answer is "not recorded". */}
+                  <Stat label="Cost (est.)" value={runCostStat(data.stats.cost_usd, data.stats.priced)} />
                   <Stat label="Tokens" value={data.stats.tokens.toLocaleString()} />
                   <Stat label="Duration" value={fmtElapsed(data.stats.duration_secs)} />
                   <Stat label="To first output" value={`${Math.round(data.stats.first_byte_ms)} ms`} />
@@ -132,8 +136,11 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   {data.template_card.runs === 1 ? ' — p50 and p95 are that one run' : ''}
                 </p>
                 <dl data-type="caption" className="grid grid-cols-2 gap-xs sm:grid-cols-4">
-                  <Stat label="Cost p50" value={`$${data.template_card.cost_p50.toFixed(4)}`} />
-                  <Stat label="Cost p95" value={`$${data.template_card.cost_p95.toFixed(4)}`} />
+                  {/* `≥` when any run in the sample was unpriced: a percentile drawn from a sample
+                      that includes work nobody costed is a floor, and "$0.0000 p95" would report a
+                      template that quietly spends as free (issue 2566). */}
+                  <Stat label="Cost p50" value={templateCostStat(data.template_card.cost_p50, data.template_card.priced)} />
+                  <Stat label="Cost p95" value={templateCostStat(data.template_card.cost_p95, data.template_card.priced)} />
                   <Stat label="Duration p50" value={fmtElapsed(data.template_card.duration_p50)} />
                   <Stat label="Duration p95" value={fmtElapsed(data.template_card.duration_p95)} />
                 </dl>
@@ -273,7 +280,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                       ? `${data.answers.failed.length} node${data.answers.failed.length === 1 ? '' : 's'} failed`
                       : 'Nothing failed'}
                   />
-                  <Answer q="What is costing money" a={runCostText(data.stats.cost_usd)} />
+                  <Answer q="What is costing money" a={runCostText(data.stats.cost_usd, data.stats.priced)} />
                   <Answer
                     q="What is risky"
                     a={riskyText(data.answers.risky.degraded.length, fakeChecks.length, data.stats.verification_debt)}

@@ -98,6 +98,9 @@ def test_run_stats_matches_the_engines_OWN_run_totals(journal_home):
     assert stats.steps_completed == official["steps_completed"]
     assert stats.steps_failed == official["steps_failed"]
     assert stats.steps_cached == official["steps_cached"]
+    # …including the money DISCLOSURE, not just the money (#2566). Two aggregates that agreed on the
+    # dollar and disagreed on whether it was measured would be the same defect one level up.
+    assert stats.priced is official["priced"] is True
 
 
 def test_the_models_a_run_used_are_collected(journal_home):

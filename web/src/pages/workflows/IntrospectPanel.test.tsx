@@ -23,7 +23,7 @@ vi.mock('../../lib/api', async (importActual) => {
 
 function payload(over: Partial<WorkflowIntrospection> = {}): WorkflowIntrospection {
   const stats = {
-    run_id: 'r1', tokens: 1200, cached_tokens: 100, cost_usd: 0.0342,
+    run_id: 'r1', tokens: 1200, cached_tokens: 100, cost_usd: 0.0342, priced: true,
     steps_completed: 4, steps_failed: 1, steps_cached: 1, duration_secs: 92.5,
     first_byte_ms: 830, models: ['claude-sonnet'], unverified_steps: 3,
     verification_debt: 0.75, cache_hit_rate: 0.2,
@@ -42,7 +42,7 @@ function payload(over: Partial<WorkflowIntrospection> = {}): WorkflowIntrospecti
     gates: {},
     edges: { branches: {}, judges: {} },
     template_card: {
-      template: 'weekly-report', runs: 12, cost_p50: 0.03, cost_p95: 0.09,
+      template: 'weekly-report', runs: 12, cost_p50: 0.03, cost_p95: 0.09, priced: true,
       duration_p50: 90, duration_p95: 240, failure_rate: 0.25, warnings: [],
     },
     proof,
@@ -113,7 +113,7 @@ describe('the nine questions reach the DOM', () => {
 
   it('says a single-run card IS that run rather than implying a distribution', async () => {
     introspect = async () => payload({
-      template_card: { template: 't', runs: 1, cost_p50: 0.01, cost_p95: 0.01, duration_p50: 5, duration_p95: 5, failure_rate: 0, warnings: [] },
+      template_card: { template: 't', runs: 1, cost_p50: 0.01, cost_p95: 0.01, priced: true, duration_p50: 5, duration_p95: 5, failure_rate: 0, warnings: [] },
     })
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     expect(await screen.findByText(/p50 and p95 are that one run/i)).toBeTruthy()
@@ -396,7 +396,7 @@ describe('the live touched-items feed', () => {
 
 describe('the run cost line', () => {
   it('marks a derived cost as an estimate and never renders it as exact', () => {
-    const text = runCostText(0.1234)
+    const text = runCostText(0.1234, true)
     expect(text).toContain('~$0.1234')
     expect(text).toContain('estimated from model prices')
     expect(text).toContain('not a provider-reported charge')
@@ -405,21 +405,60 @@ describe('the run cost line', () => {
   })
 
   it('rounds to cents once there is a dollar, matching the Usage panel', () => {
-    expect(runCostText(4.2)).toContain('~$4.20')
+    expect(runCostText(4.2, true)).toContain('~$4.20')
     // …and keeps four decimals below a dollar, so a real $0.0012 is not "$0.00".
-    expect(runCostText(0.0012)).toContain('~$0.0012')
+    expect(runCostText(0.0012, true)).toContain('~$0.0012')
   })
 
   it('does not claim $0.00 when nothing was recorded', () => {
+    // #2566 split what this case used to conflate. `priced: false` is the unrecorded case — the
+    // ledger's own disclosure that no completed step booked a cost. NaN rides here too: a figure
+    // nobody can parse is not a measurement of nothing.
     for (const zero of [0, -0, Number.NaN]) {
-      const text = runCostText(zero)
+      const text = runCostText(zero, false)
       expect(text).not.toContain('$')
-      expect(text).toContain('no price row')
+      expect(text).toMatch(/[Nn]ot recorded/)
     }
+  })
+
+  it('says a measured zero WAS measured, so a free local run is not called unrecorded', () => {
+    // The other half of the same fact, and the half a one-sided test would let regress: before
+    // #2566 both zeros produced one sentence, so the panel could not tell a free local model from
+    // a run nobody costed.
+    const text = runCostText(0, true)
+    expect(text).not.toContain('$0.00')
+    expect(text).toMatch(/measured/)
+    expect(text).not.toMatch(/[Nn]ot recorded/)
   })
 
   it('reaches the DOM as the answer to "what is costing money"', async () => {
     render(<IntrospectPanel runId="r1" onClose={() => {}} />)
     expect(await screen.findByText(/~\$.* this run/)).toBeTruthy()
+  })
+
+  it('renders an UNPRICED run as not-recorded in the cell, never as ~$0.0000', async () => {
+    // The measured before/after of #2566 at the surface: a loop-shaped run (no cost key on any
+    // step) used to reach this cell as "~$0.0000" — a measured-looking figure for work whose cost
+    // nobody wrote down.
+    const base = payload()
+    introspect = async () => ({
+      ...base,
+      stats: { ...base.stats, cost_usd: 0, priced: false },
+      answers: { ...base.answers, cost: { ...base.stats, cost_usd: 0, priced: false } },
+    })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText('not recorded')).toBeTruthy()
+    expect(screen.queryByText('~$0.0000')).toBeNull()
+  })
+
+  it('marks the template percentiles as floors when the sample was not fully priced', async () => {
+    const base = payload()
+    introspect = async () => ({
+      ...base,
+      template_card: { ...base.template_card, cost_p50: 0.03, cost_p95: 0.09, priced: false },
+    })
+    render(<IntrospectPanel runId="r1" onClose={() => {}} />)
+    expect(await screen.findByText('≥$0.0300')).toBeTruthy()
+    expect(screen.getByText('≥$0.0900')).toBeTruthy()
   })
 })

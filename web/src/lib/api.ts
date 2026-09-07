@@ -1360,7 +1360,17 @@ export interface WorkflowLedgerRow {
   status: string
   spec_version: number
   created_at?: string
-  totals: { tokens?: number; cost_usd?: number; steps_completed?: number; steps_failed?: number }
+  // `priced: false` means `cost_usd` is a FLOOR — some completed step booked no cost, so the figure
+  // must render "not recorded"/"at least this much", never `$0.00`. Same word and same meaning as
+  // `LoopSpend.priced` and `UsageAgg.priced` (#2566). Declared here even though this tab renders no
+  // money today, so the column somebody adds later inherits the disclosure instead of the trap.
+  totals: {
+    tokens?: number
+    cost_usd?: number
+    priced?: boolean
+    steps_completed?: number
+    steps_failed?: number
+  }
 }
 export type WorkflowRunStatus =
   'draft' | 'running' | 'paused' | 'needs_input' | 'complete' | 'failed' | 'cancelled' | 'escalated'
@@ -1517,6 +1527,10 @@ export interface WorkflowRunStats {
   tokens: number
   cached_tokens: number
   cost_usd: number
+  // `false` ⇒ `cost_usd` is a FLOOR: some completed step booked no cost at all, so the float is a
+  // running sum over an incomplete sample. Render it as unknown / "at least this much", never
+  // `$0.00` — a measured zero (a free local model) reports `priced: true` (#2566).
+  priced: boolean
   steps_completed: number
   steps_failed: number
   steps_cached: number
@@ -1569,6 +1583,9 @@ export interface WorkflowTemplateCard {
   runs: number
   cost_p50: number
   cost_p95: number
+  // `false` ⇒ at least one run in the sample was unpriced, so BOTH percentiles are floors. One
+  // unpriced constituent taints the aggregate, exactly as it does in a `UsageAgg` rollup (#2566).
+  priced: boolean
   duration_p50: number
   duration_p95: number
   failure_rate: number
