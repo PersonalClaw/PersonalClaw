@@ -9,6 +9,12 @@ import { overlayEnter, spring } from '../design/motion'
  *  composer flyout flips at the same point rather than disagreeing by a few px. */
 const MENU_ROOM = 160
 
+/** Tabbable candidates inside a flyout, in DOM order — the first one is where keyboard entry lands.
+ *  `[tabindex="-1"]` is excluded deliberately: it is programmatically focusable but held OUT of the
+ *  tab sequence on purpose, so it is not where a menu's entry belongs. */
+const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:not([disabled])'
+  + ',textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+
 /** Anchored flyout — opaque NE surface, 20px radius, soft ambient shadow, spring
  *  entrance. Opens above the trigger by default (composer sits low); pass
  *  ``placement="bottom"`` for a top-anchored trigger (e.g. a top-bar control).
@@ -126,11 +132,95 @@ export function Popover({
     if (r.top < pad) { el.style.top = `${pad}px`; el.style.bottom = 'auto' }
   }, [open, portal, anchor])
 
+  // ── Portaled mode only: move focus INTO the flyout on open ───────────────────────────────────────
+  //
+  // 🔑 THE PORTAL SILENTLY CHANGED THE KEYBOARD CONTRACT. `portal` was added to fix CLIPPING — a
+  // visual problem — but `createPortal(flyout, document.body)` appends the menu after the entire
+  // `#root` subtree, so it stops being the trigger's DOM neighbour. Sequential focus order follows
+  // DOM order, so Tab from the trigger went to the next control ON THE PAGE and straight past the
+  // open menu: the flyout floated over the transcript while focus walked along behind it, and
+  // nothing dismissed on Tab either. Ten portaled call sites were not keyboard-operable, including
+  // the composer's PERMISSION MODE pill, which governs what the agent may do without asking.
+  //
+  // 🪤 THE PROJECT ALREADY DIAGNOSED THIS EXACT MECHANISM AND THE RAIL STILL COULD NOT SEE IT.
+  // `lib/menuCursorAdoption.test.tsx` records the portaled HeaderModePill's "four mode options were
+  // unreachable in practice", and the fix landed as `useMenuCursor`. But that rail's scan key is
+  // `role="menu"|"listbox"`, and these flyouts are deliberately ROLE-LESS (`ui/popupItemRoles.test.tsx`:
+  // a bare button is correct in a role-less popover). The scan key is narrower than the defect shape —
+  // THE DEFECT IS CAUSED BY PORTALING, NOT BY DECLARING A ROLE. `ui/Segmented` is portaled too and is
+  // correctly exempt precisely because it declares a role and adopts the hook.
+  //
+  // Borrowed rather than re-spelled: this is `lib/useMenuCursor.ts`'s autoFocus effect, down to
+  // `{ preventScroll: true }` — which is load-bearing here, not decorative. The flyout is
+  // `position: fixed`, and focusing into it without that flag can scroll an ancestor, which trips the
+  // capture-phase scroll handler below and closes the menu in the same frame it opened.
+  //
+  // Keyed on `anchor`, not just `open`: an `openSignal`-forced open sets the anchor in a LATER commit
+  // (see the effect above), so the flyout does not exist yet on the `open` render. `[open, portal,
+  // anchor]` is the dep set the measure-nudge effect already proved means "the flyout is mounted".
+  //
+  // Inline mode is UNTOUCHED — its flyout already is the trigger's next sibling, so Tab reaches it.
+  //
+  // 🪤 AND IT MUST STAND DOWN FOR A POPUP THAT OWNS ITS OWN KEYBOARD, or it breaks the one portaled
+  // call site that was already correct. `ui/Segmented` renders a `role="listbox"` child that adopts
+  // `useMenuCursor` with `initialIndex` = the SELECTED option. Child effects run BEFORE parent
+  // effects, so an unconditional focus-in here would land after the cursor's and move focus from the
+  // selected option to the FIRST one — reintroducing verbatim the defect `useMenuCursor` records
+  // measuring ("one ArrowDown from a trigger showing 'Agent' focused 'Ask'"). Guarding on `portal`
+  // alone is therefore NOT sufficient.
+  //
+  // The discriminator is the container role, which is deliberately the SAME key
+  // `lib/menuCursorAdoption.test.tsx` scans on. So the two mechanisms partition the popups on one
+  // axis rather than two overlapping ones, and any future popover that adopts a role + the hook opts
+  // out of this automatically instead of having to be remembered here.
+  /** True when the flyout declares a popup container role, i.e. it adopts `useMenuCursor` and owns
+   *  its own focus entry and Tab handling. Both behaviours below stand down for it, so exactly one
+   *  mechanism governs each popup rather than two racing to set focus.
+   *
+   *  🪤 READS THE ATTRIBUTE INSTEAD OF MATCHING A `[role="menu"]` SELECTOR STRING, DELIBERATELY.
+   *  `lib/menuCursorAdoption.test.tsx` builds its population by scanning source for
+   *  `role="(menu|listbox)"`, and a CSS selector containing that text is indistinguishable from a
+   *  JSX attribute declaring it — so the literal form enrolled this file in the adopters census and
+   *  reded two of its assertions, demanding `Popover` route arrows through `menuCursorKeydown`. That
+   *  was the scanner reading a QUERY as a DECLARATION. Re-quoting to `[role='menu']` would have
+   *  dodged the regex while leaving the same ambiguity for the next reader; naming the values in an
+   *  array says what this actually is. */
+  const POPUP_ROLES = ['menu', 'listbox']
+  const ownsItsKeyboard = () => {
+    const el = menuRef.current
+    if (!el) return false
+    return [...el.querySelectorAll('[role]')].some((n) => POPUP_ROLES.includes(n.getAttribute('role') ?? ''))
+  }
+
+  useEffect(() => {
+    if (!open || !portal || ownsItsKeyboard()) return
+    menuRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus({ preventScroll: true })
+  }, [open, portal, anchor])
+
+  /** Tab out of a portaled flyout closes it and hands focus back to the trigger.
+   *
+   *  🔑 DELIBERATELY NOT `preventDefault`ed, and that is the whole trick — verbatim the reasoning in
+   *  `menuCursorKeydown`'s Tab branch: focus returns to the trigger, then the browser's OWN Tab
+   *  carries on from there, landing on the control after the trigger. So the natural sequence the
+   *  portal broke is RESTORED rather than simulated. Shift+Tab needs no special case for the same
+   *  reason: the browser moves backward from the trigger for free.
+   *
+   *  Stands down for a role-declaring popup for the same reason the focus-in effect does: those
+   *  already route Tab through `menuCursorKeydown`, whose Tab branch is where this reasoning comes
+   *  from in the first place.
+   */
+  const onFlyoutKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab' || ownsItsKeyboard()) return
+    setOpen(false)
+    triggerFocusRef.current?.focus({ preventScroll: true })
+  }
+
   const flyout = (
     <AnimatePresence>
       {open && (portal ? anchor != null : true) && (
         <motion.div
           ref={menuRef}
+          onKeyDown={portal ? onFlyoutKeyDown : undefined}
           variants={overlayEnter} initial="initial" animate="animate" exit="exit"
           className={portal
             ? 'glass fixed z-[var(--z-menu)] rounded-lgi p-s'
