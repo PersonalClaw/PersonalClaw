@@ -48,19 +48,30 @@ ARMED_APP = "TextEdit"
 TEXT_AREA = {"index": 0, "role": "AXTextArea", "value": "", "title": "scratch"}
 
 
-def _harness():
-    """Load the live harness by path. It is a script, not a package module, by design.
+def _script(filename: str):
+    """Load one live harness by path. They are scripts, not package modules, by design.
 
-    Loaded in isolation (``spec_from_file_location``) rather than added to ``sys.path``: the
-    script is an operator entry point and importing it must not depend on repo layout.
+    Loaded in isolation (``spec_from_file_location``) rather than added to ``sys.path``: each is
+    an operator entry point and importing it must not depend on repo layout.
     """
-    path = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "dcu3_stale_index_validate.py"
-    spec = importlib.util.spec_from_file_location("_dcu3_stale_index_harness", path)
+    path = pathlib.Path(__file__).resolve().parents[1] / "scripts" / filename
+    spec = importlib.util.spec_from_file_location(f"_harness_{filename.replace('.', '_')}", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _harness():
+    """The `DCU-3` stale-index harness."""
+    return _script("dcu3_stale_index_validate.py")
+
+
+#: Both live harnesses, because the provenance omission (#2569) was in both of them. Named by
+#: file so a rail can assert the property over the population rather than over whichever one
+#: somebody remembered.
+LIVE_HARNESSES = ("dcu3_stale_index_validate.py", "dcu4_v1_validate.py")
 
 
 @pytest.fixture(autouse=True)
@@ -302,10 +313,10 @@ def test_the_harness_reports_unproven_rather_than_skipping_without_the_grant(mon
     that held.
     """
     harness = _harness()
-    from personalclaw.computer_use import macos_ffi
-
-    monkeypatch.setattr(harness.platform, "system", lambda: "Darwin")
-    monkeypatch.setattr(macos_ffi, "is_process_trusted", lambda: False)
+    # The principal probe is stubbed, not left live: it shells out to ``log show``, whose cost is
+    # the host's log archive rather than anything this test controls. Its own content is asserted
+    # by ``test_an_ungranted_harness_names_the_principal_in_its_unproven_reason``.
+    _force_darwin_with(monkeypatch, trusted=False)
     with pytest.raises(harness.Failure) as excinfo:
         harness._preflight()
     detail = excinfo.value.detail
@@ -313,6 +324,87 @@ def test_the_harness_reports_unproven_rather_than_skipping_without_the_grant(mon
     assert "Privacy & Security > Accessibility" in detail
     assert "RESPONSIBLE" in detail, "the fix must name the identity macOS actually evaluates"
     assert "AXIsProcessTrusted" in detail
+
+
+#: A principal that is unmistakably an app bundle and unmistakably not an interpreter — the
+#: contrast #2569 is about.
+_MEASURED = ("dev.warp.Warp-Stable", "/Applications/Warp.app/Contents/MacOS/stable")
+
+
+def _force_darwin_with(monkeypatch, *, trusted: bool) -> list[dict]:
+    """Make both harnesses reach the grant branch on any host, and record the probe's arguments.
+
+    Returns the recorded ``responsible_process`` call kwargs so a test can assert HOW the probe
+    was asked, not just that it was.
+    """
+    from personalclaw.computer_use import macos_ffi, macos_tcc
+
+    calls: list[dict] = []
+
+    def probe(**kwargs):
+        calls.append(kwargs)
+        return macos_tcc.Responsible(identifier=_MEASURED[0], path=_MEASURED[1])
+
+    monkeypatch.setattr(macos_tcc.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(macos_ffi, "is_process_trusted", lambda: trusted)
+    monkeypatch.setattr(macos_tcc, "responsible_process", probe)
+    return calls
+
+
+@pytest.mark.parametrize("filename", LIVE_HARNESSES)
+def test_a_live_harness_records_which_responsible_process_it_measured(monkeypatch, filename):
+    """#2569's provenance half: a recorded pass must name the principal it measured.
+
+    ``ax_process_trusted: true`` on its own is a fact about a session nobody can identify
+    afterwards, which is exactly why `DCU-4`'s recorded pass — *"the macOS Accessibility grant is
+    PRESENT and usable on this workstation"* — is not reproducible from what it wrote down. Same
+    workstation, same python: True under an app bundle at 09:51 and False under a terminal at
+    18:38. Asserted for BOTH harnesses, since both had the omission.
+    """
+    harness = _script(filename)
+    calls = _force_darwin_with(monkeypatch, trusted=True)
+
+    preflight = harness._preflight()
+    assert preflight["ax_process_trusted"] is True
+    assert preflight["tcc_responsible_identifier"] == _MEASURED[0]
+    assert preflight["tcc_responsible_path"] == _MEASURED[1]
+    assert _MEASURED[0] in preflight["tcc_responsible_process"]
+    assert calls, "the harness recorded a grant without probing for the principal behind it"
+
+
+@pytest.mark.parametrize("filename", LIVE_HARNESSES)
+def test_a_live_harness_probes_with_the_patient_timeout_not_the_refusals(monkeypatch, filename):
+    """Nothing is waiting on a validator, and ``log show``'s cost is the host's, not ours.
+
+    The driver's refusal has to answer inside its own budget, so it probes with the short
+    timeout and reports ``unknown`` when the log store is slow. A validator that inherited that
+    hurry would write down ``unknown`` for the one field it exists to record.
+    """
+    from personalclaw.computer_use import macos_tcc
+
+    harness = _script(filename)
+    calls = _force_darwin_with(monkeypatch, trusted=True)
+    harness._preflight()
+    assert [call.get("timeout") for call in calls] == [macos_tcc.PATIENT_PROBE_TIMEOUT_SECS]
+    assert macos_tcc.PATIENT_PROBE_TIMEOUT_SECS > macos_tcc.PROBE_TIMEOUT_SECS
+
+
+@pytest.mark.parametrize("filename", LIVE_HARNESSES)
+def test_an_ungranted_harness_names_the_principal_in_its_unproven_reason(monkeypatch, filename):
+    """The reason an operator reads must name the row to tick, not just its category.
+
+    "Add the responsible process" is unactionable on a machine with forty applications. Both
+    harnesses report ``unproven`` here — never a skip — and both must carry the identity.
+    """
+    harness = _script(filename)
+    _force_darwin_with(monkeypatch, trusted=False)
+
+    with pytest.raises(harness.Failure) as excinfo:
+        harness._preflight()
+    assert excinfo.value.clause == "preflight"
+    assert "RESPONSIBLE" in excinfo.value.detail
+    assert _MEASURED[0] in excinfo.value.detail
+    assert _MEASURED[1] in excinfo.value.detail
 
 
 def test_the_harness_refuses_on_a_non_macos_host_too(monkeypatch):
@@ -367,6 +459,14 @@ def test_the_harness_drives_only_the_dispatch():
         "macos_ffi.is_process_trusted",
         "macos_ffi.list_gui_apps",
     }, sorted(name for name in called if name.startswith("macos_ffi."))
+
+    # The TCC principal probe is held to the same equality discipline. It reads the OS's own log
+    # to record WHICH responsible process the grant was measured against (#2569) and drives
+    # nothing; a second entry point appearing here would be a second thing this script does to
+    # the machine.
+    assert {name for name in called if name.startswith("macos_tcc.")} == {
+        "macos_tcc.responsible_process"
+    }, sorted(name for name in called if name.startswith("macos_tcc."))
     for banned in ("macos_driver", "driver_host", "ffi"):
         offenders = sorted(name for name in called if name.split(".")[0] == banned)
         assert offenders == [], f"the harness reaches around the dispatch: {offenders}"

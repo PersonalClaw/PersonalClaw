@@ -423,19 +423,42 @@ def phase_armed(home: Path) -> dict[str, Any]:
 
 
 def _preflight() -> dict[str, Any]:
+    """Platform, the grant, and WHICH PRINCIPAL the grant was measured against (#2569).
+
+    The responsible process is recorded on both legs and it is not decoration. macOS resolves an
+    Accessibility request against the process it holds responsible for the interpreter, not
+    against the interpreter, so ``ax_process_trusted`` on its own is a fact about a session that
+    the recorded run cannot identify afterwards. This script's own earlier pass said *"the macOS
+    Accessibility grant is PRESENT and usable on this workstation"* — same workstation, same
+    python, True at 09:51 under an app bundle and False at 18:38 under a terminal. Naming the
+    principal is what makes a recorded pass reproducible instead of merely true once.
+    """
     if platform.system() != "Darwin":
         raise Failure("preflight", f"V1 is a macOS validation; this is {platform.system()}")
-    from personalclaw.computer_use import macos_ffi
+    from personalclaw.computer_use import macos_ffi, macos_tcc
 
     trusted = macos_ffi.is_process_trusted()
+    # AFTER the probe, never before: the row this reads is the one tccd wrote when it answered.
+    # The PATIENT timeout — nothing is waiting on a validator, and an `unknown` recorded because
+    # this script was in a hurry would be the provenance gap all over again.
+    responsible = macos_tcc.responsible_process(timeout=macos_tcc.PATIENT_PROBE_TIMEOUT_SECS)
     if not trusted:
         raise Failure(
             "preflight",
-            "AXIsProcessTrusted() is False: this interpreter has no macOS Accessibility (TCC) "
+            "AXIsProcessTrusted() is False: this session has no macOS Accessibility (TCC) "
             "grant. Grant it in System Settings > Privacy & Security > Accessibility for the "
-            "process that runs this script. It cannot be granted by code (SIP-protected).",
+            "RESPONSIBLE process of this session — macOS attributes the request to the "
+            "application that launched this interpreter, so adding the interpreter alone does "
+            f"nothing. This session's responsible process: {responsible.describe()}. It cannot "
+            "be granted by code (SIP-protected).",
         )
-    return {"platform": platform.platform(), "ax_process_trusted": trusted}
+    return {
+        "platform": platform.platform(),
+        "ax_process_trusted": trusted,
+        "tcc_responsible_process": responsible.describe(),
+        "tcc_responsible_identifier": responsible.identifier,
+        "tcc_responsible_path": responsible.path,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

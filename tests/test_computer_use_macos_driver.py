@@ -46,6 +46,7 @@ import inspect
 import json
 import pathlib
 import platform
+import subprocess
 
 import pytest
 
@@ -54,6 +55,7 @@ from personalclaw.computer_use import (
     enable_state,
     macos_driver,
     macos_ffi,
+    macos_tcc,
     policy,
     service,
 )
@@ -375,6 +377,273 @@ def test_an_absent_application_refuses_by_name():
     """Real: exact-match resolution, with no fuzzy fallback onto a similarly-named app."""
     with pytest.raises(macos_ffi.AppNotFound):
         macos_ffi.resolve_app_pid("NoSuchApplicationExists-DCU3")
+
+
+# ---------------------------------------------------------------------------
+# 3b. The permission refusal names the RIGHT TCC principal (#2569)
+#
+# The FIX used to send the operator to add "the binary running PersonalClaw's gateway (its own
+# python executable, not a terminal app)". Both halves are wrong: macOS resolves the request
+# against the session's RESPONSIBLE process, and for an interpreter launched from a terminal, an
+# IDE or an app bundle that responsible process is precisely the host application the old text
+# told the operator not to add. An operator following it granted something the OS never consults,
+# which is why the grant step kept appearing to fail. These rails hold the corrected text in
+# place from both directions: the new one must name the principal it observed, and the old one
+# must not be able to come back.
+# ---------------------------------------------------------------------------
+
+#: A real ``tccd`` attribution row, recorded from the unified log on the authoring host with the
+#: home directory generalised. The whole point of #2569 is in the contrast between the two paths:
+#: ``binary_path`` is the interpreter that asked, ``responsible_path`` is the app System Settings
+#: is asking about.
+_REAL_TCCD_ROW = (
+    "2026-09-06 22:53:14.570 Df tccd[66015:4d31e7] [com.apple.TCC:access] AUTHREQ_ATTRIBUTION: "
+    "msgID=4242.1, attribution={responsible={TCCDProcess: identifier=dev.warp.Warp-Stable, "
+    "pid=4242, auid=503, euid=503, responsible_path=/Applications/Warp.app/Contents/MacOS/stable, "
+    "binary_path=/opt/uv/python/cpython-3.13.14-macos-aarch64-none/bin/python3.13}, "
+    "accessing={TCCDProcess: identifier=-, pid=4242, auid=503, euid=503, "
+    "binary_path=/opt/uv/python/cpython-3.13.14-macos-aarch64-none/bin/python3.13}, "
+    "requesting={TCCDProcess: identifier=com.apple.tccd, pid=66015, auid=0, euid=0, "
+    "binary_path=/System/Library/PrivateFrameworks/TCC.framework/Support/tccd}, },"
+)
+
+#: The exact instruction #2569 is about. Asserted ABSENT from the rendered FIX, because a
+#: reverted sentence is the defect: it reads as authoritative and sends the operator to tick a
+#: row macOS never reads.
+_REVERTED_FIX_FRAGMENTS = (
+    "its own python executable",
+    "not a terminal app",
+    "the binary running PersonalClaw's gateway",
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_cached_principal():
+    """The probe caches for the life of the process; no test may inherit another's answer."""
+    macos_tcc.reset_cache()
+    yield
+    macos_tcc.reset_cache()
+
+
+def _responsible(monkeypatch, answer: macos_tcc.Responsible) -> None:
+    monkeypatch.setattr(macos_tcc, "responsible_process", lambda **_kwargs: answer)
+
+
+def test_the_responsible_process_is_read_from_tccds_own_attribution_row():
+    """The parse, against a recorded real row: the RESPONSIBLE path, not the binary that asked.
+
+    Asserting both is the point. A parse that grabbed the first ``binary_path`` in the row would
+    hand back the interpreter — which is the wrong answer #2569 was already giving, arrived at by
+    a new route.
+    """
+    found = macos_tcc._from_lines([_REAL_TCCD_ROW], 4242)
+    assert found.known
+    assert found.identifier == "dev.warp.Warp-Stable"
+    assert found.path == "/Applications/Warp.app/Contents/MacOS/stable"
+    assert "python" not in found.path
+    assert found.describe() == "dev.warp.Warp-Stable (/Applications/Warp.app/Contents/MacOS/stable)"
+
+
+def test_a_row_belonging_to_another_process_is_never_borrowed():
+    """On a busy desktop the newest attribution row usually belongs to somebody else.
+
+    Naming it would be confidently wrong in exactly the way #2569 was — so a window with no row
+    for this pid is reported as unknown, with the pid it looked for.
+    """
+    found = macos_tcc._from_lines([_REAL_TCCD_ROW], 9999)
+    assert not found.known
+    assert found.identifier == "" and found.path == ""
+    assert "9999" in found.unknown_reason
+    assert "dev.warp.Warp-Stable" not in found.describe()
+
+
+def test_the_newest_matching_row_wins_over_an_earlier_one():
+    """Two probes in one session: the answer is the one tccd decided most recently."""
+    earlier = _REAL_TCCD_ROW.replace("dev.warp.Warp-Stable", "com.amazon.kiro.crew").replace(
+        "/Applications/Warp.app/Contents/MacOS/stable", "/Applications/KiroCrew.app/x/KiroCrew"
+    )
+    found = macos_tcc._from_lines([earlier, _REAL_TCCD_ROW], 4242)
+    assert found.identifier == "dev.warp.Warp-Stable"
+
+
+def test_a_responsible_path_containing_a_space_survives_the_parse():
+    """Real applications have spaces in their names, and a comma-split would truncate the path.
+
+    A half path is worse than no path: it looks like an answer and matches nothing in System
+    Settings.
+    """
+    row = _REAL_TCCD_ROW.replace(
+        "/Applications/Warp.app/Contents/MacOS/stable",
+        "/Applications/FortiDLP Agent.app/Contents/MacOS/Reveal Agent",
+    )
+    found = macos_tcc._from_lines([row], 4242)
+    assert found.path == "/Applications/FortiDLP Agent.app/Contents/MacOS/Reveal Agent"
+
+
+def test_an_attribution_row_with_no_responsible_block_is_unknown_not_empty():
+    """tccd does not always attribute a request. That is unknown WITH a reason, never a blank."""
+    row = _REAL_TCCD_ROW.replace("responsible=", "unrelated=")
+    found = macos_tcc._from_lines([row], 4242)
+    assert not found.known and found.unknown_reason
+    assert "unknown" in found.describe()
+
+
+@pytest.mark.parametrize(
+    "failure,expected",
+    [
+        (FileNotFoundError(), "not present"),
+        (subprocess.TimeoutExpired(cmd="log", timeout=8.0), "did not answer within"),
+        (OSError("no"), "could not be read"),
+    ],
+)
+def test_a_probe_that_cannot_run_reports_WHY_rather_than_a_plausible_name(
+    monkeypatch, failure, expected
+):
+    """Every failure mode is a reason, never a guess and never an exception.
+
+    A probe that raised would take the whole refusal with it, turning an operator-fixable
+    permission problem into a driver crash; a probe that guessed would recreate #2569.
+    """
+
+    def boom(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(macos_tcc.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(macos_tcc.subprocess, "run", boom)
+    found = macos_tcc.responsible_process(refresh=True)
+    assert not found.known
+    assert expected in found.unknown_reason
+
+
+def test_a_log_show_that_exits_non_zero_is_unknown_and_says_the_status(monkeypatch):
+    """``log show`` can refuse (a restricted store, a bad predicate). Its stdout is then noise."""
+    monkeypatch.setattr(macos_tcc.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        macos_tcc.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 64, _REAL_TCCD_ROW, ""),
+    )
+    found = macos_tcc.responsible_process(refresh=True)
+    assert not found.known, "a failed query must not be parsed for a name anyway"
+    assert "64" in found.unknown_reason
+
+
+def test_a_probe_on_a_non_macos_host_says_so_without_running_anything(monkeypatch):
+    """TCC does not exist off macOS, so there is nothing to shell out to."""
+    monkeypatch.setattr(macos_tcc.platform, "system", lambda: "Linux")
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("the probe shelled out on a host with no TCC")
+
+    monkeypatch.setattr(macos_tcc.subprocess, "run", forbidden)
+    found = macos_tcc.responsible_process(refresh=True)
+    assert not found.known and "Linux" in found.unknown_reason
+
+
+def test_the_probe_is_bounded_well_inside_the_drivers_own_budget():
+    """A slow log store must cost the FIX its detail, never the refusal its code.
+
+    ``log show`` reads a store this process does not control (measured 3s–15s on one host) and it
+    runs INSIDE the driver child's timeout. If the probe could approach that budget, an
+    ungranted machine would report ``ERR_COMPUTER_USE_DRIVER_FAILED`` — losing the one FIX line
+    that tells the operator what to grant.
+    """
+    assert macos_tcc.PROBE_TIMEOUT_SECS * 2 < service.DRIVER_TIMEOUT_SECS
+
+
+def test_the_operator_command_runs_the_same_query_as_the_probe():
+    """The FIX hands the operator a command; it must be the query this module actually ran.
+
+    Otherwise the by-hand answer and the reported answer can disagree, and the operator has no
+    way to tell which is about their session.
+    """
+    command = macos_tcc.RESPONSIBLE_PROBE_COMMAND
+    argv = " ".join(macos_tcc._PROBE_ARGV)
+    assert 'subsystem == "com.apple.TCC"' in command and 'subsystem == "com.apple.TCC"' in argv
+    assert macos_tcc._ATTRIBUTION in command and macos_tcc._ATTRIBUTION in argv
+    assert f"--last {macos_tcc._WINDOW}" in command and macos_tcc._WINDOW in argv
+    assert "log show" in command
+    assert "AUTHREQ_SUBJECT" not in command, "the SUBJECT row does not carry the responsible path"
+
+
+def test_the_permission_fix_names_the_responsible_process_it_observed(monkeypatch):
+    """#2569's fix: the refusal points at the principal macOS evaluates, and names WHICH one.
+
+    Naming it is not a nicety. "Add the responsible process" is unactionable on a machine with
+    forty applications; the operator needs the row to look for.
+    """
+    _responsible(
+        monkeypatch,
+        macos_tcc.Responsible(
+            identifier="dev.warp.Warp-Stable",
+            path="/Applications/Warp.app/Contents/MacOS/stable",
+        ),
+    )
+    fix = macos_driver._permission_refusal("AXError -25211").fix
+    assert "System Settings" in fix and "Accessibility" in fix
+    assert "RESPONSIBLE process for this session" in fix
+    assert "dev.warp.Warp-Stable" in fix
+    assert "/Applications/Warp.app/Contents/MacOS/stable" in fix
+    assert "terminal emulator, IDE, or the app bundle" in fix
+
+
+def test_the_permission_fix_says_it_could_not_determine_the_principal(monkeypatch):
+    """The honest branch. Unknown is stated, with the command — never a fallback to a guess.
+
+    Silence would be worse than the wrong sentence and a guess would be the wrong sentence
+    again, so the only remaining option is to say so and hand over the query.
+    """
+    _responsible(
+        monkeypatch,
+        macos_tcc.Responsible(unknown_reason="the unified log did not answer within 8s"),
+    )
+    fix = macos_driver._permission_refusal("AXError -25211").fix
+    assert "System Settings" in fix and "Accessibility" in fix
+    assert "could NOT determine" in fix
+    assert "the unified log did not answer within 8s" in fix
+    assert macos_tcc.RESPONSIBLE_PROBE_COMMAND in fix
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        macos_tcc.Responsible(identifier="com.amazon.kiro.crew", path="/Applications/KiroCrew.app"),
+        macos_tcc.Responsible(unknown_reason="/usr/bin/log is not present on this system"),
+    ],
+)
+def test_the_permission_fix_never_names_the_interpreter_as_the_principal(monkeypatch, answer):
+    """The regression rail for #2569 itself, on BOTH branches of the new text.
+
+    The defect was one specific wrong instruction, so this asserts that instruction is gone
+    rather than that some new one is present: restore the old sentence and this reds, whichever
+    way the probe went.
+    """
+    _responsible(monkeypatch, answer)
+    error = macos_driver._permission_refusal("AXError -25211")
+    for fragment in _REVERTED_FIX_FRAGMENTS:
+        assert fragment not in error.fix, f"the #2569 instruction is back: {fragment!r}"
+        assert fragment not in error.why
+    assert "responsible" in error.why.lower(), "the WHY must state the mechanism, not just the fix"
+
+
+@_NEEDS_DARWIN
+def test_the_responsible_process_probe_answers_against_the_real_unified_log():
+    """Real, and unconditional on macOS: the probe reads this session's own tccd attribution.
+
+    Runs the grant check FIRST because that is what makes tccd write the row — the probe reports
+    what the OS just used, it does not ask a new question. Both outcomes are asserted rather than
+    skipped: an answer must be a named principal or a stated reason, and NEVER both empty, since
+    a blank answer with no reason is what lets a refusal claim it checked.
+    """
+    macos_ffi.is_process_trusted()
+    found = macos_tcc.responsible_process(refresh=True)
+    assert found.known != bool(found.unknown_reason), dataclasses.asdict(found)
+    if found.known:
+        assert found.describe().strip("() ")
+        assert found.identifier in found.describe() and found.path in found.describe()
+    else:
+        assert found.unknown_reason.strip()
+        assert "unknown" in found.describe()
 
 
 # ---------------------------------------------------------------------------

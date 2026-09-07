@@ -473,6 +473,19 @@ def phase_stale(home: Path) -> dict[str, Any]:  # noqa: C901 - one linear transc
             f"{len(_STALE_OBSERVED)} stale refusals were observed but {len(stale_rows)} SEL rows "
             "carry the stale code",
         )
+    # Counting the rows was never enough (#2570). Both legs here refuse an index the gateway had
+    # just resolved a snapshot for, so both rows have an app to name; the past-TTL one used to
+    # record `resources=''` because step 3a raises before the dispatch assigns it, and a
+    # count-based check stayed green over a record that had lost its target.
+    anonymous = [r for r in stale_rows if r.get("resources") != f"app={APP}"]
+    if anonymous:
+        raise Failure(
+            "sel-records-present",
+            f"{len(anonymous)} of {len(stale_rows)} stale SEL rows do not name {APP} as the "
+            f"target: {[r.get('resources') for r in anonymous]}. Both triggers refuse an index "
+            "taken from a snapshot this run resolved, so a row without the app has dropped the "
+            "one fact the audit is about",
+        )
     report["sel"] = {
         "attempts": len(_ATTEMPTS),
         "total_rows": len(rows),
@@ -496,12 +509,22 @@ def phase_stale(home: Path) -> dict[str, Any]:  # noqa: C901 - one linear transc
 
 
 def _preflight() -> dict[str, Any]:
-    """Platform and the Accessibility grant, in that order, before anything is launched."""
+    """Platform, the Accessibility grant, and the principal it was measured against.
+
+    The responsible process is *recorded*, on both legs, not merely described in prose (#2569).
+    A run that wrote down ``ax_process_trusted`` alone left its own reader unable to tell which
+    identity answered — and on this host that identity is the difference between True and False.
+    """
     if platform.system() != "Darwin":
         raise Failure("preflight", f"this is a macOS validation; this host is {platform.system()}")
-    from personalclaw.computer_use import macos_ffi
+    from personalclaw.computer_use import macos_ffi, macos_tcc
 
     trusted = macos_ffi.is_process_trusted()
+    # AFTER the grant probe: tccd writes the attribution row when it answers, so a probe run
+    # before the question has nothing of this process's to read. The PATIENT timeout, because
+    # nothing is waiting on this: `log show` costs whatever the host's log archive costs, and a
+    # validator that gave up early would record the very gap it exists to close.
+    responsible = macos_tcc.responsible_process(timeout=macos_tcc.PATIENT_PROBE_TIMEOUT_SECS)
     if not trusted:
         raise Failure(
             "preflight",
@@ -511,13 +534,19 @@ def _preflight() -> dict[str, Any]:
             "Fix: System Settings > Privacy & Security > Accessibility, then add and enable the "
             "RESPONSIBLE process for this session. macOS attributes the request to the terminal "
             "or host application that started the interpreter, not to the python binary, so "
-            "adding python alone does not work. To see the identity macOS is actually "
-            "evaluating, run this script again and then: log show --last 2m --style compact "
-            "--predicate 'subsystem == \"com.apple.TCC\"' | grep AUTHREQ_SUBJECT | tail -3. "
+            "adding python alone does not work. This session's responsible process, read from "
+            f"tccd: {responsible.describe()}. To see it by hand: "
+            f"{macos_tcc.RESPONSIBLE_PROBE_COMMAND}. "
             "The grant cannot be made by code (SIP-protected) and it is per-responsible-process, "
             "so a session that once answered True does not make the next one answer True.",
         )
-    return {"platform": platform.platform(), "ax_process_trusted": trusted}
+    return {
+        "platform": platform.platform(),
+        "ax_process_trusted": trusted,
+        "tcc_responsible_process": responsible.describe(),
+        "tcc_responsible_identifier": responsible.identifier,
+        "tcc_responsible_path": responsible.path,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
