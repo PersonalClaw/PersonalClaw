@@ -294,7 +294,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                   />
                 </div>
 
-                <div className="flex flex-col gap-2xs">
+                <div className="flex flex-col gap-xs">
                   <span data-type="title-m" className="text-on-surface">Steps</span>
                   {rows.map((r, i) => (
                     <div
@@ -313,7 +313,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                 </div>
 
                 {handoffs.length > 0 && (
-                  <div className="flex flex-col gap-2xs">
+                  <div className="flex flex-col gap-xs">
                     <span data-type="title-m" className="text-on-surface">Hands off to</span>
                     {handoffs.map((h) => (
                       <div key={h.target_def} className="flex items-baseline gap-m py-2xs">
@@ -335,7 +335,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                 )}
 
                 {def.metadata?.requirements && Object.keys(def.metadata.requirements).length > 0 && (
-                  <div className="flex flex-col gap-2xs">
+                  <div className="flex flex-col gap-xs">
                     <span data-type="title-m" className="text-on-surface">Requires</span>
                     {Object.entries(def.metadata.requirements).map(([group, items]) => (
                       <span key={group} data-type="caption" className="text-on-surface-low">
@@ -349,7 +349,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
 
             {tab === 'versions' && (
               <div className="flex flex-col gap-l">
-                <div className="flex flex-col gap-2xs">
+                <div className="flex flex-col gap-xs">
                   <span data-type="title-m" className="text-on-surface">Versions</span>
                   {versions.length === 0 ? (
                     <p data-type="caption" className="text-on-surface-low">No version history yet.</p>
@@ -374,7 +374,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
                 </div>
 
                 {diffOps && diffOps.length > 0 && (
-                  <div className="flex flex-col gap-2xs">
+                  <div className="flex flex-col gap-xs">
                     <span data-type="title-m" className="text-on-surface">Latest change</span>
                     {diffOps.map((op, i) => (
                       <div key={`${op.op}-${op.node_id ?? ''}-${i}`} className="flex items-baseline gap-m py-2xs">
@@ -391,7 +391,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted }: {
             )}
 
             {tab === 'ledger' && (
-              <div className="flex flex-col gap-2xs">
+              <div className="flex flex-col gap-xs">
                 <span data-type="title-m" className="text-on-surface">Run Ledger</span>
                 {ledger === null ? (
                   <Loading what="the run ledger" />

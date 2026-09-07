@@ -436,8 +436,21 @@ function classAttributeRegions(text: string): { offset: number; body: string }[]
 // scanner that stripped `group-hover/handle:` off `group-hover/handle:bg-primary`
 // would test a different class than the one in the source.
 const CLASS_TOKEN_SPLIT = /[^A-Za-z0-9_@:./![\]%&>*+~(),#='"-]+|["'`]/
-// Only utilities in the three prefixes this guard covers (bare or after a variant).
-const SCANNED_PREFIX = /(?:^|:)!?-?(?:text|bg|border)-/
+// Only utilities in the prefixes this guard covers (bare or after a variant).
+//
+// `rounded` and `gap` are here because the colour-only version of this list let two
+// whole families of dead CSS ship: `gap-2xs` (49 sites — the spacing scale has no `2xs`
+// step, so every one of those gaps collapsed to 0) and `rounded-m` (12 sites — the
+// radius scale spells 12px `md`, so every one of those corners rendered square).
+//
+// Both are SILENT in a way a colour bug is not: a missing colour looks like a bug and
+// gets reported, while a missing gap or radius looks like a design choice and gets
+// copied. These families need the guard more than the colour ones did, not less.
+//
+// 🪤 The two scales do not share spellings, which is what produced both typos:
+// spacing is xs/s/m/l/xl/2xl/3xl, radius is xs/sm/md/lg/lgi/xl/xli/2xl. So `gap-m` is
+// live while `rounded-m` is dead, and `gap-2xl` is live while `gap-2xs` is dead.
+const SCANNED_PREFIX = /(?:^|:)!?-?(?:text|bg|border|rounded|gap)-/
 
 /** Scans every `className` in web/src for utilities that compile to no CSS. */
 export async function scanInertUtilities(): Promise<InertUtilityHit[]> {

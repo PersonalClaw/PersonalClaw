@@ -71,7 +71,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                 <p className="text-on-surface">
                   {data.checklist_gaps.length} of 9 questions cannot be answered from this run's state:
                 </p>
-                <ul className="mt-2xs flex flex-col gap-2xs text-on-surface-low">
+                <ul className="mt-2xs flex flex-col gap-xs text-on-surface-low">
                   {data.checklist_gaps.map((gap) => <li key={gap}>{gap}</li>)}
                 </ul>
               </div>
@@ -95,7 +95,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   shown beside total duration, never merged into it: one is what a watching user
                   feels, the other is what a scheduler budgets. */}
               <section className="flex flex-col gap-xs">
-                <h3 data-type="label-s" className="flex items-center gap-2xs text-on-surface fw-500">
+                <h3 data-type="label-s" className="flex items-center gap-xs text-on-surface fw-500">
                   <DollarSign size={13} aria-hidden /> Cost and latency
                 </h3>
                 <dl data-type="caption" className="grid grid-cols-2 gap-xs sm:grid-cols-4">
@@ -119,7 +119,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   cost", p95 "what is the bad case". Never a mean: one runaway run moves it and
                   nothing tells you whether the typical run is cheap. */}
               <section className="flex flex-col gap-xs">
-                <h3 data-type="label-s" className="flex items-center gap-2xs text-on-surface fw-500">
+                <h3 data-type="label-s" className="flex items-center gap-xs text-on-surface fw-500">
                   <Clock size={13} aria-hidden /> Template: {data.template_card.template || 'unnamed'}
                 </h3>
                 <p data-type="caption" className="text-on-surface-low">
@@ -141,7 +141,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   renders the backend's warning string verbatim, because the sample rule that earns
                   the warning lives there and a second phrasing here would drift from it. */}
               <section className="flex flex-col gap-xs">
-                <h3 data-type="label-s" className="flex items-center gap-2xs text-on-surface fw-500">
+                <h3 data-type="label-s" className="flex items-center gap-xs text-on-surface fw-500">
                   <ShieldQuestion size={13} aria-hidden /> Gates
                 </h3>
                 {Object.keys(data.gates).length === 0 ? (
@@ -149,9 +149,9 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                     This run resolved no gates, so there is nothing to judge.
                   </p>
                 ) : (
-                  <ul data-type="caption" className="flex flex-col gap-2xs">
+                  <ul data-type="caption" className="flex flex-col gap-xs">
                     {Object.values(data.gates).map((g) => (
-                      <li key={g.node_id} className="flex flex-col gap-2xs rounded-lg bg-surface-high p-s">
+                      <li key={g.node_id} className="flex flex-col gap-xs rounded-lg bg-surface-high p-s">
                         <span className="flex flex-wrap items-center gap-xs">
                           <span className="font-mono text-on-surface">{g.node_id}</span>
                           <span className="text-on-surface-low tabular-nums">
@@ -159,7 +159,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                             {g.retries_consumed ? ` · ${g.retries_consumed} retries` : ''}
                           </span>
                           {g.fake_check_warning ? (
-                            <span className="text-warning inline-flex items-center gap-2xs">
+                            <span className="text-warning inline-flex items-center gap-xs">
                               <TriangleAlert size={12} aria-hidden /> never said no
                             </span>
                           ) : null}
@@ -179,7 +179,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   the rule that earns it ("dead across a real sample", "one verdict over many calls")
                   lives there, and a second phrasing here would drift from it. */}
               <section className="flex flex-col gap-xs">
-                <h3 data-type="label-s" className="flex items-center gap-2xs text-on-surface fw-500">
+                <h3 data-type="label-s" className="flex items-center gap-xs text-on-surface fw-500">
                   <Split size={13} aria-hidden /> Edges
                 </h3>
                 {Object.keys(data.edges.branches).length === 0 &&
@@ -188,9 +188,9 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                     This template has no branch or judge edges, so there is no routing to distribute.
                   </p>
                 ) : (
-                  <ul data-type="caption" className="flex flex-col gap-2xs">
+                  <ul data-type="caption" className="flex flex-col gap-xs">
                     {Object.values(data.edges.branches).map((b) => (
-                      <li key={`b:${b.path}`} className="flex flex-col gap-2xs rounded-lg bg-surface-high p-s">
+                      <li key={`b:${b.path}`} className="flex flex-col gap-xs rounded-lg bg-surface-high p-s">
                         <span className="flex flex-wrap items-center gap-xs">
                           <span className="font-mono text-on-surface">{b.path}</span>
                           <span className="text-on-surface-low tabular-nums">
@@ -200,7 +200,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                             {` · ${b.routed_runs} routed`}
                           </span>
                           {b.degenerate_warning || b.never_taken.length > 0 ? (
-                            <span className="text-warning inline-flex items-center gap-2xs">
+                            <span className="text-warning inline-flex items-center gap-xs">
                               <TriangleAlert size={12} aria-hidden />{' '}
                               {b.degenerate_warning ? 'does no work' : 'dead case'}
                             </span>
@@ -217,7 +217,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                       </li>
                     ))}
                     {Object.values(data.edges.judges).map((j) => (
-                      <li key={`j:${j.node_id}`} className="flex flex-col gap-2xs rounded-lg bg-surface-high p-s">
+                      <li key={`j:${j.node_id}`} className="flex flex-col gap-xs rounded-lg bg-surface-high p-s">
                         <span className="flex flex-wrap items-center gap-xs">
                           <span className="font-mono text-on-surface">{j.node_id}</span>
                           <span className="text-on-surface-low tabular-nums">
@@ -226,7 +226,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                               .join(' · ')}
                           </span>
                           {j.degenerate_warning ? (
-                            <span className="text-warning inline-flex items-center gap-2xs">
+                            <span className="text-warning inline-flex items-center gap-xs">
                               <TriangleAlert size={12} aria-hidden /> one verdict
                             </span>
                           ) : null}
@@ -295,7 +295,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
           {tab === 'timeline' && data.touched.length > 0 && (
             <section className="flex flex-col gap-xs">
               <h3 data-type="label-s" className="text-on-surface fw-500">Touched</h3>
-              <ul data-type="caption" className="flex flex-col gap-2xs">
+              <ul data-type="caption" className="flex flex-col gap-xs">
                 {data.touched.map((t) => (
                   <li key={`${t.kind}-${t.ref}-${t.ts}`} className="flex flex-wrap items-baseline gap-xs rounded-lg bg-surface-high p-s">
                     <span className="text-on-surface-low">{t.kind === 'file' ? 'file in' : 'artifact'}</span>
@@ -316,9 +316,9 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                 This run has written no journal events yet.
               </p>
             ) : (
-              <ol data-type="caption" className="flex flex-col gap-2xs">
+              <ol data-type="caption" className="flex flex-col gap-xs">
                 {data.timeline.map((row, i) => (
-                  <li key={`${row.ts}-${row.kind}-${i}`} className="flex flex-col gap-2xs rounded-lg bg-surface-high p-s">
+                  <li key={`${row.ts}-${row.kind}-${i}`} className="flex flex-col gap-xs rounded-lg bg-surface-high p-s">
                     <span className="flex flex-wrap items-baseline gap-xs">
                       <span className="text-on-surface fw-500">{row.kind}</span>
                       {row.node_id ? <span className="font-mono text-on-surface-low">{row.node_id}</span> : null}
@@ -362,9 +362,9 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   No evidence files were captured.
                 </p>
               ) : (
-                <ul data-type="caption" className="flex flex-col gap-2xs">
+                <ul data-type="caption" className="flex flex-col gap-xs">
                   {data.proof.evidence_files.map((f) => (
-                    <li key={f} className="flex items-center gap-2xs text-on-surface-low">
+                    <li key={f} className="flex items-center gap-xs text-on-surface-low">
                       <CircleCheck size={12} className="text-success shrink-0" aria-hidden />
                       <span className="font-mono">{f}</span>
                     </li>
@@ -374,9 +374,9 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
               {data.proof.warnings.length > 0 && (
                 <>
                   <h4 data-type="label-s" className="text-on-surface fw-500">Caveats</h4>
-                  <ul data-type="caption" className="flex flex-col gap-2xs">
+                  <ul data-type="caption" className="flex flex-col gap-xs">
                     {data.proof.warnings.map((w) => (
-                      <li key={w} className="flex items-start gap-2xs text-on-surface-low">
+                      <li key={w} className="flex items-start gap-xs text-on-surface-low">
                         <TriangleAlert size={12} className="text-warning mt-2xs shrink-0" aria-hidden />
                         <span>{w}</span>
                       </li>
@@ -388,7 +388,7 @@ export function IntrospectPanel({ runId, onClose }: { runId: string; onClose: ()
                   a claim dressed as proof. The backend guarantees one or the other; saying so
                   here means a regression is visible rather than invisible. */}
               {!data.proof.honest && (
-                <p data-type="caption" className="text-warning flex items-center gap-2xs">
+                <p data-type="caption" className="text-warning flex items-center gap-xs">
                   <CircleHelp size={12} aria-hidden />
                   This section has neither evidence nor a stated caveat, so it proves nothing.
                 </p>
@@ -414,7 +414,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 /** One checklist question and its answer, as a definition pair — the question IS the label. */
 function Answer({ q, a }: { q: string; a: string }) {
   return (
-    <div className="flex flex-col gap-2xs border-outline-variant border-b pb-xs last:border-b-0">
+    <div className="flex flex-col gap-xs border-outline-variant border-b pb-xs last:border-b-0">
       <dt className="text-on-surface-low">{q}</dt>
       <dd className="text-on-surface">{a}</dd>
     </div>

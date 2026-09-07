@@ -204,7 +204,7 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
             </Section>
           ) : item.draft ? (
             <Section label="Drafted reply">
-              <div data-type="body-s" className="rounded-m bg-surface-container px-m py-s text-on-surface-var whitespace-pre-wrap">{item.draft}</div>
+              <div data-type="body-s" className="rounded-md bg-surface-container px-m py-s text-on-surface-var whitespace-pre-wrap">{item.draft}</div>
               <p data-type="caption" className="mt-1.5 text-on-surface-low">This item&rsquo;s source doesn&rsquo;t support replies (notifications are read-only), so this saved draft can&rsquo;t be sent.</p>
             </Section>
           ) : null}
@@ -216,7 +216,7 @@ export function InboxDetail({ item, onChanged, navigate }: { item: InboxItem; on
       {/* INU-6: a withheld item explains itself and offers the one recovery — Restore
           re-fires the suppressed notification, so a false positive is never a silent drop. */}
       {item.status === 'filtered' && (
-        <div data-type="body-s" className="flex flex-wrap items-center gap-s rounded-m border border-outline-variant/40 px-m py-s">
+        <div data-type="body-s" className="flex flex-wrap items-center gap-s rounded-md border border-outline-variant/40 px-m py-s">
           <Filter size={14} style={{ color: 'var(--color-warn)' }} />
           <span className="text-on-surface-low">A second-opinion check flagged this claim, so its notification was withheld. Restore to deliver it.</span>
           <Button size="sm" variant="secondary" className="ml-auto" onClick={restore} disabled={!!busy}>

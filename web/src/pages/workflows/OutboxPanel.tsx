@@ -155,7 +155,7 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
                 output here as an artifact.
               </p>
             ) : (
-              <ul className="flex flex-col gap-2xs">
+              <ul className="flex flex-col gap-xs">
                 {files.map((f) => (
                   <li key={f.slug}>
                     <Button
@@ -286,7 +286,7 @@ export function OutboxPanel({ runId, onClose }: { runId: string; onClose: () => 
                 />
                 {dropNote && <p data-type="caption" className="text-on-surface-low">{dropNote}</p>}
                 {drop.files.length > 0 && (
-                  <ul className="flex flex-col gap-2xs">
+                  <ul className="flex flex-col gap-xs">
                     {drop.files.map((f) => (
                       <li
                         key={f.filename}
