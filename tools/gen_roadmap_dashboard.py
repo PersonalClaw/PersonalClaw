@@ -18,6 +18,12 @@ atom". Those want different reactions from different people, so the stuck half i
 CAUSE (`owner` / `environment` / `waiting`) with an `unclassified` state for atoms the rules
 cannot place. See `DAG_STATES` for the vocabulary and `AtomClassifier` for the precedence.
 
+And a fifth, once the answer to the fourth turned out to be "almost all of it is the owner's":
+WHICH owner action buys the most? `unblock_leverage` counts, per not-done atom, the atoms that
+cross from dependency-blocked to dependency-satisfied if it flips — transitively — and
+`_render_leverage` ranks the owner's queue by it, naming the freed ids. Read `dep_blocked_ids`
+before touching that: the baseline is what stops the count from being a tautology.
+
 How MANY are in each is deliberately not written down anywhere in this file: run it and read
 the summary line. That population turns over daily — the same query returned 37 at main
 `281d693b1` and 34 three commits later at `50b3671e3`, because CE-10, EI-6 and PEP-16
@@ -72,6 +78,37 @@ DAG_JSON = CORE / "docs/roadmap/atomic/dag.json"
 EXEC_STATE = WORKSPACE / ".roadmap-exec-state.json"
 OUT = WORKSPACE / "roadmap-dashboard.html"
 REPO_URL = "https://github.com/PersonalClaw/PersonalClaw"
+#: Escape hatch for the workspace guard below — a scratch render from a detached worktree.
+ALLOW_DETACHED_ENV = "ROADMAP_DASHBOARD_ALLOW_DETACHED"
+
+
+def detached_workspace() -> str:
+    """Empty when `WORKSPACE` is the workspace this page describes; else WHY it is not.
+
+    `WORKSPACE` is derived as `CORE.parent`, so running this from a git worktree parked
+    outside the real workspace (`/private/tmp/wt/PersonalClaw`, say) silently re-points every
+    workspace-level INPUT and the OUTPUT: no `ROADMAP.md` §5 prose, no
+    `.roadmap-exec-state.json` (so "Working now" quietly degrades to the ready frontier), and
+    the page is written to `/private/tmp/wt/roadmap-dashboard.html`, where nobody will read
+    it. Nothing raises — a plausible-looking, degraded page appears at the wrong path, which
+    is the same defect class as the grey `blocked` bucket this module exists to fix: a
+    confident answer that is quietly wrong. Measured 2026-09-07: THREE builders regenerated
+    from a worktree. Two produced the degraded page and one nearly published it. The third was
+    the run that finally landed this guard (#2671) — a 325KB page written to
+    `/private/tmp/roadmap-dashboard.html` beside a real 1.2MB one, exit status 0 — caught only
+    because that builder happened to compare the two sizes. Silent success on a wrong output
+    is the worst diagnostic shape available, which is why this refuses rather than warns.
+
+    `ROADMAP.md` is the marker because it is the one workspace-level file that must exist for
+    the page to be complete, and it is versioned (unlike the exec-state file, which is
+    legitimately absent between runs and already degrades visibly on the page).
+    """
+    if WORKSPACE_ROADMAP.exists():
+        return ""
+    return (
+        f"{WORKSPACE_ROADMAP} does not exist, so {WORKSPACE} is not the workspace this page "
+        f"describes — most likely {CORE} is a git worktree parked outside it"
+    )
 
 
 def sh(cmd: str, cwd: Path = CORE, timeout: int = 20) -> str:
@@ -492,6 +529,23 @@ def parse_atoms() -> dict:
     }
 
 
+def atom_deps(atom: dict, atoms: dict[str, dict]) -> list[str]:
+    """The atom's dependency ids that EXIST in the catalog — this file's one reading of an edge.
+
+    `deps` is dag.json's edge key, and it carries two kinds of entry: real atom ids, and
+    `EXT:<PLAN>:<prose>` pseudo-refs naming work outside the decomposition. Only the first is an
+    edge this graph can traverse, so every traversal here goes through this accessor — the tier
+    chart and `unblock_leverage` must not end up disagreeing about what blocks what. An unknown
+    id is dropped rather than counted as unmet: a dangling edge is a data problem
+    `_render_validation` reports, and it must neither make the graph unrenderable nor silently
+    inflate a count.
+
+    Display is the exception: `_render_tiers` shows the RAW `deps` list in its tooltip, because
+    there the EXT prose is the useful part.
+    """
+    return [d for d in (atom.get("deps") or []) if d in atoms]
+
+
 def dag_layers(atoms: dict[str, dict]) -> list[list[dict]]:
     """Group atoms into dependency tiers (longest-path layering).
 
@@ -506,7 +560,7 @@ def dag_layers(atoms: dict[str, dict]) -> list[list[dict]]:
             return depth[aid]
         if aid in seen or aid not in atoms:
             return 0  # cycle or dangling → floor it; the panels report the real problem
-        deps = [d for d in (atoms[aid].get("deps") or []) if d in atoms]
+        deps = atom_deps(atoms[aid], atoms)
         d = 0 if not deps else 1 + max(resolve(x, seen | {aid}) for x in deps)
         depth[aid] = d
         return d
@@ -792,6 +846,87 @@ def _natkey(aid: str):
     return (m.group(1), int(m.group(2))) if m else (aid or "", 0)
 
 
+# ── unblock leverage: which not-done atom, if it flipped, would free the most others ──
+#
+# The classifier above says WHY an atom is stuck. At 650/684 that is no longer the open
+# question: nearly the whole remainder is `owner`, so what the page must answer is WHICH of
+# those owner acts buys the most. That is a graph measurement, not a judgement, and it was
+# being re-derived by hand every cycle instead of computed here.
+
+
+def dep_blocked_ids(atoms: dict[str, dict]) -> frozenset[str]:
+    """The BASELINE: not-done atoms held back by at least one unfinished dependency.
+
+    This set is the entire difference between a measurement and a tautology, so it is computed
+    FIRST and nothing outside it can ever be reported as freed. "Are its deps satisfied once X
+    lands?" is **vacuously true** for an atom whose deps were never an obstacle — most obviously
+    one with no deps at all — so asking only that question makes every atom look like it frees
+    every dep-less atom. Run against the live catalog, that shape reported that all 34 not-done
+    atoms each unblocked the other 33: absurd on its face, and confidently useless.
+
+    An atom that starts here can be freed. An atom that does not, cannot be freed by anything —
+    something other than the graph is holding it, which is itself worth printing.
+    """
+    done = {aid for aid, a in atoms.items() if a.get("status") == "done"}
+    return frozenset(
+        aid
+        for aid, a in atoms.items()
+        if aid not in done and any(d not in done for d in atom_deps(a, atoms))
+    )
+
+
+def unblock_leverage(atoms: dict[str, dict]) -> dict[str, tuple[str, ...]]:
+    """Per not-done atom: the not-done atoms that cross from dependency-BLOCKED to
+    dependency-SATISFIED if it flips to done — transitively, and nothing else.
+
+    Transitively, because a freed atom's own dependents are part of what the flip buys: AR-1
+    frees AR-2 and AR-3 directly, and through them the rest of the AR chain. The cascade is
+    confined to `dep_blocked_ids`, so it models exactly one hypothesis — "this atom, and then
+    whatever that alone makes startable" — and never credits a flip with atoms whose deps were
+    already met.
+
+    Counting, not judging: an atom appears in a freed list because its dep edges say so. Whether
+    anyone can then actually START it (a gate, a machine, a live account) is the classifier's
+    question, answered elsewhere on the page.
+
+    WHICH GRAPH, stated because the two levels give different answers and other tooling reads
+    the same one: this walks the RAW atom→atom graph only — `atom_deps`, so `EXT:<PLAN>:<prose>`
+    plan-refs are not edges here. It is NOT the resolved graph the deriver reports `cycles` and
+    `edge_count` over, which additionally turns each `EXT:` ref into an atom edge (measured at
+    c5369c37a: 705 raw edges and no cycles; 705 + 143 resolved = 848, with one cycle). A leverage
+    number therefore answers "what do this atom's own dep edges free", never "what does the
+    cross-plan closure free".
+    """
+    done = {aid for aid, a in atoms.items() if a.get("status") == "done"}
+    blocked = dep_blocked_ids(atoms)
+    # Unmet-dependency counts + reverse edges, built once for the whole run: a landing atom then
+    # only ever decrements, so each source is one linear sweep instead of a re-scan per round.
+    unmet: dict[str, set[str]] = {
+        aid: {d for d in atom_deps(atoms[aid], atoms) if d not in done} for aid in blocked
+    }
+    dependents: dict[str, list[str]] = {}
+    for aid, missing in unmet.items():
+        for dep in missing:
+            dependents.setdefault(dep, []).append(aid)
+
+    out: dict[str, tuple[str, ...]] = {}
+    for src in (aid for aid in atoms if aid not in done):
+        remaining = {aid: len(missing) for aid, missing in unmet.items()}
+        freed: list[str] = []
+        landing = [src]
+        while landing:
+            just_landed = landing.pop()
+            for aid in dependents.get(just_landed, ()):
+                remaining[aid] -= 1
+                # Exactly 0 = its last unmet dep just landed. `!= src` keeps a source out of its
+                # own freed list if the graph ever has a cycle back to it.
+                if remaining[aid] == 0 and aid != src:
+                    freed.append(aid)
+                    landing.append(aid)
+        out[src] = tuple(sorted(freed, key=_natkey))
+    return out
+
+
 # ── bar / caption helpers ──
 
 
@@ -964,6 +1099,11 @@ def render(
     # ---- working now (live stack + next-up), from .roadmap-exec-state.json ----
     working = _render_working(exec_state, git, ready)
 
+    # ---- the owner's own queue, ranked by what each item unblocks ----
+    # Sits directly under "Working now" on purpose: that panel is the agent's queue, this one is
+    # the owner's, and the decision they inform ("what do I pick up next") is the same decision.
+    leverage = _render_leverage(dag, clf)
+
     driver_html = _render_driver(driver)
 
     # ---- validation strip (cycles / unresolved / dangling), then the unplaceable atoms ----
@@ -1003,6 +1143,7 @@ def render(
         hero=hero,
         legend=legend,
         working=working,
+        leverage=leverage,
         driver=driver_html,
         validation=validation,
         grid=grid_sections,
@@ -1149,6 +1290,71 @@ def _render_working(exec_state: dict, git: dict, ready: list) -> str:
         f'<section class="box wn"><h2 class="section">Working now '
         f'<span class="wn-meta">no exec-state file — showing DAG ready frontier</span></h2>'
         f"<ul class='wn-list'>{rows}</ul></section>"
+    )
+
+
+def _render_leverage(dag: dict, clf: AtomClassifier) -> str:
+    """The owner's queue, ordered by what each item measurably frees.
+
+    The page already colours an atom as the OWNER'S. What it could not say is which owner act
+    buys the most — the one question worth asking when the remainder is almost entirely his. So
+    this is his queue, ranked by `unblock_leverage`, with the freed ids NAMED (a bare count is
+    not checkable, and the ids are how he sees the chain he is unsticking).
+
+    Zero is printed, never omitted. Most of the queue frees nothing further, and "this unblocks
+    nothing else" is exactly the finding an owner deciding where to spend attention needs; hiding
+    the zeroes would turn a ranked queue into a highlight reel of four atoms.
+
+    Deliberately absent: any prose about WHY an atom is gated. That text already lives on the
+    atom (`blocked_reason`, and the classifier's own hint in the legend); re-narrating it here
+    would be this file inventing a second, drifting account of the same fact.
+    """
+    atoms = dag.get("atoms") or {}
+    if not atoms:
+        return ""
+    leverage = unblock_leverage(atoms)
+    not_done = [a for a in atoms.values() if a.get("status") != "done"]
+    blocked = dep_blocked_ids(atoms)
+    rows = sorted(
+        (a for a in not_done if clf.state(a) == "owner"),
+        key=lambda a: (-len(leverage.get(str(a.get("id") or ""), ())), _natkey(a.get("id", ""))),
+    )
+    if not rows:
+        return ""
+
+    items = ""
+    for a in rows:
+        aid = str(a.get("id") or "")
+        frees = leverage.get(aid, ())
+        if frees:
+            named = ", ".join(f"<code>{esc(f)}</code>" for f in frees)
+            body = f'<div class="lev-frees">unblocks {len(frees)}: {named}</div>'
+        else:
+            body = '<div class="lev-frees none">this unblocks nothing else</div>'
+        items += (
+            f'<li><span class="lev-n{"" if frees else " zero"}">{len(frees)}</span>'
+            f'<div class="lev-body"><code>{esc(aid)}</code> {esc(a.get("title", ""))}'
+            f'<span class="rf-plan">{esc(a.get("plan_code") or a.get("plan") or "")}</span>'
+            f"{body}</div></li>"
+        )
+
+    # Measured at run time, like every other number on this page: how much of the remainder the
+    # graph is actually holding. When most of it is already dependency-satisfied, ordering by
+    # leverage is the honest answer AND the reason the ordering is nearly flat.
+    satisfied = sum(1 for a in not_done if str(a.get("id") or "") not in blocked)
+    moving = sum(1 for a in rows if leverage.get(str(a.get("id") or "")))
+    meta = (
+        f"{len(rows)} owner-action atoms · {moving} free another atom · "
+        f"{satisfied} of {len(not_done)} not-done atoms are already dependency-satisfied"
+    )
+    return (
+        f'<section class="box lev"><h2 class="section">Owner queue — by unblock leverage'
+        f'<span class="wn-meta">{esc(meta)}</span></h2>'
+        f'<p class="xhint">The number is how many not-done atoms cross from '
+        f"dependency-blocked to dependency-satisfied when this one flips, following the chain. "
+        f"Counted from the DAG's <code>deps</code> edges — it says what a flip frees, not "
+        f"whether the freed atoms are themselves gated.</p>"
+        f'<ol class="lev-list">{items}</ol></section>'
     )
 
 
@@ -1535,6 +1741,19 @@ _CSS = """
   .prlink:hover { text-decoration:underline; }
   .wn-recon { color:var(--muted); font-size:11px; }
   .muted { color:var(--muted); }
+  /* owner queue — unblock leverage */
+  .lev-list { list-style:none; margin:0; padding:0; }
+  .lev-list li { display:flex; gap:10px; align-items:flex-start; padding:6px 0;
+    border-top:1px solid var(--border); font-size:12.5px; }
+  .lev-list li:first-child { border-top:none; }
+  .lev-n { flex:0 0 26px; text-align:center; font-weight:800; font-size:13px;
+    font-variant-numeric:tabular-nums; background:#21262d; border-radius:6px; padding:1px 0;
+    color:var(--text); }
+  .lev-n.zero { color:var(--muted); font-weight:600; }
+  .lev-body { flex:1 1 auto; min-width:0; }
+  .lev-frees { color:var(--muted); font-size:11.5px; margin-top:3px; }
+  .lev-frees code { font-size:10.5px; }
+  .lev-frees.none { font-style:italic; }
   /* validation */
   .val { display:flex; gap:11px; align-items:flex-start; font-size:12.5px; }
   .val.ok { color:#3fb950; align-items:center; }
@@ -1707,6 +1926,7 @@ _PAGE = """<!doctype html>
   {hero}
   {legend}
   {working}
+  {leverage}
   {driver}
   {validation}
   {grid}
@@ -1722,6 +1942,19 @@ _PAGE = """<!doctype html>
 
 
 def main() -> int:
+    # Refuse BEFORE doing any work: writing a degraded page to a path nobody reads is worse
+    # than not writing one, and it is indistinguishable from a good run in the exit status.
+    detached = detached_workspace()
+    if detached:
+        if not os.environ.get(ALLOW_DETACHED_ENV):
+            logger_warn(f"refusing to write: {detached}")
+            logger_warn(
+                f"re-run from the real checkout, or set {ALLOW_DETACHED_ENV}=1 to write "
+                f"{OUT} anyway — that page has no ROADMAP §5 prose and no exec state"
+            )
+            return 2
+        logger_warn(f"{ALLOW_DETACHED_ENV} set: writing a DEGRADED page — {detached}")
+
     plans = parse_pillars()
     for p in plans:
         enrich_plan(p)
@@ -1748,6 +1981,17 @@ def main() -> int:
         assert_state_partition(counts, len(atoms), "atom census")
         by_state = " · ".join(f"{counts[s.key]} {s.label}" for s in DAG_STATES)
         print(f"  atoms: {len(atoms)} total · {by_state} (sum {sum(counts.values())})")
+        # The ranking the page now carries, on the terminal too: the operator running this by
+        # hand is usually asking exactly this question.
+        lev = unblock_leverage(atoms)
+        ranked = sorted(lev.items(), key=lambda kv: (-len(kv[1]), _natkey(kv[0])))
+        frees_any = [(aid, ids) for aid, ids in ranked if ids]
+        satisfied = len(lev) - len(dep_blocked_ids(atoms))
+        top = " · ".join(f"{aid} frees {len(ids)}" for aid, ids in frees_any[:5])
+        print(
+            f"  unblock leverage: {len(frees_any)} of {len(lev)} not-done atoms free anything · "
+            f"{satisfied} already dependency-satisfied" + (f" · {top}" if top else "")
+        )
         print(
             f"  ready_frontier: {len(dag.get('ready') or [])} · gated_frontier "
             f"{len(dag.get('gated') or [])} · cycles {len(dag.get('cycles') or [])} · "
