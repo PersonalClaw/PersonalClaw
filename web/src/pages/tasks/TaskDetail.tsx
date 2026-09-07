@@ -394,7 +394,8 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
                 <span className="text-on-surface-var">{c.author || 'you'}</span>
                 <span>{relTime(c.created_at)}</span>
                 <IconButton icon={Trash2} label="Delete comment" onClick={() => remove(c.id, c.body)} size={24} iconSize={13}
-                  className="ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-danger" />
+                  tone="danger"
+                  className="ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
               </div>
               <p data-type="body-s" className="text-on-surface whitespace-pre-wrap">{c.body}</p>
             </div>

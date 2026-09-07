@@ -2597,7 +2597,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               <Meter size="thin" className="min-w-0 flex-1" label={`Uploading ${u.name}`} pct={u.pct} />
               <span className="shrink-0 tabular-nums text-on-surface-low">{u.pct}%</span>
               <IconButton icon={X} label="Cancel upload" onClick={() => uploadAbortRef.current?.abort()} size={20} iconSize={13}
-                className="shrink-0 hover:text-danger" />
+                tone="danger" className="shrink-0" />
             </div>
           ))}
         </div>
@@ -3210,7 +3210,7 @@ function MentionChips({ paths, onRemove, onOpen }: { paths: string[]; onRemove: 
                 className="shrink-0 h-6 px-1.5 text-[0.75rem]">Open</Button>
             )}
             <IconButton icon={X} label="Remove file" onClick={() => onRemove(p)} size={20} iconSize={13}
-              className="shrink-0 hover:text-danger" />
+              tone="danger" className="shrink-0" />
           </div>
         )
       })}
@@ -3384,7 +3384,7 @@ function KnowledgeChips({ items, onRemove }: { items: { id: string; name: string
           <BookText size={13} className="shrink-0 text-primary" />
           <span className="min-w-0 truncate text-on-surface" title={k.name}>{k.name}</span>
           <IconButton icon={X} label="Remove knowledge reference" onClick={() => onRemove(k.id)} size={20} iconSize={13}
-            className="shrink-0 hover:text-danger" />
+            tone="danger" className="shrink-0" />
         </div>
       ))}
     </div>
@@ -3453,7 +3453,7 @@ function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt = false
           <IconButton icon={Pencil} label="Edit queued message" onClick={() => onEdit(q.id, q.content)} size={20} iconSize={12}
             className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100 focus-within:opacity-100" />
           <IconButton icon={X} label="Cancel queued message" onClick={() => onCancel(q.id)} size={20} iconSize={13}
-            className="hover:text-danger" />
+            tone="danger" />
         </span>
       )}
     </motion.div>
@@ -3516,7 +3516,7 @@ function PasteCards({ blocks, onRemove }: { blocks: PasteBlock[]; onRemove: (seq
               Paste #{b.seq} <span className="text-on-surface-low">· {b.lines} line{b.lines === 1 ? '' : 's'}</span>
             </button>
             <IconButton icon={X} label={`Remove paste #${b.seq}`} onClick={() => onRemove(b.seq)} size={20} iconSize={13}
-              className="shrink-0 hover:text-danger" />
+              tone="danger" className="shrink-0" />
           </div>
         ))}
       </div>
@@ -4377,7 +4377,8 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
         <Pin size={14} className={s.pinned ? 'fill-current' : ''} />
       </SquareIconButton>
       <IconButton icon={Trash2} label="Delete chat" onClick={(e) => { e.stopPropagation(); del(s) }} size={26} iconSize={14}
-        className="shrink-0 opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 focus-within:opacity-100" />
+        tone="danger"
+        className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
     </div>
     </ContextMenu>
     )

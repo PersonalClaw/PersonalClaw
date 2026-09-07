@@ -108,7 +108,7 @@ export function ReportRow({ report, index, onChanged }: {
               the Run-now Button beside it keep `disabled`: those are native-disabled tiers whose
               in-flight treatment is their own (`Button` already has `loading`, and using it here
               would change what the row looks like mid-request — a separate call). */}
-          <IconButton icon={Trash2} label={`Delete ${report.name}`} size={36} loading={busy}
+          <IconButton icon={Trash2} label={`Delete ${report.name}`} size={36} loading={busy} tone="danger"
             onClick={() => void act(() => api.deleteResearchReport(report.id), `${report.name} deleted`)} />
         </div>
       </div>
