@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from personalclaw.config.loader import config_dir
+from personalclaw.config import loader as config_loader
 
 METADATA_DIR_NAME = "agent-metadata"
 
@@ -16,8 +16,28 @@ def _validate_name(name: str) -> str:
     return name
 
 
+def config_dir() -> Path:
+    """This module's home resolver — DEFINED here, delegating to the loader per call.
+
+    Defined rather than imported because this module is imported LAZILY (``agents/runners.py``,
+    ``handlers/agents.py``): an import-time binding captures whatever ``loader.config_dir``
+    pointed at on first use, which under test can be a previous test's patched lambda that
+    outlives the teardown restoring the attribute (#2442). Keeping the NAME here is what lets
+    ``conftest``'s home guard and existing patch sites work unchanged; delegating on every call
+    is what makes the stale capture impossible.
+    """
+    return config_loader.config_dir()
+
+
 def metadata_dir() -> Path:
-    """Return the agent metadata directory, creating it if needed."""
+    """Return the agent metadata directory, creating it if needed.
+
+    Resolved through the LIVE ``config_loader.config_dir`` attribute rather than a name bound
+    at import: this module is imported LAZILY (``agents/runners.py``, ``handlers/agents.py``),
+    so an import-time binding captures whatever that name pointed at on first use — which
+    under test can be a previous test's patched lambda, outliving the teardown that restored
+    the attribute. See ``tasks/native._tasks_dir`` for the measured failure this prevents.
+    """
     d = config_dir() / METADATA_DIR_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d

@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from personalclaw.config.loader import config_dir
+from personalclaw.config import loader as config_loader
 from personalclaw.record_ids import record_path
 from personalclaw.tasks import reconcile
 from personalclaw.tasks.models import (
@@ -50,7 +50,53 @@ def create_provider(config: dict[str, Any] | None = None) -> "NativeTaskProvider
     return NativeTaskProvider()
 
 
+def config_dir() -> Path:
+    """This module's home resolver — DEFINED here, delegating to the loader per call.
+
+    🔑 IT IS DEFINED RATHER THAN IMPORTED, and that is the entire fix. A module-level
+    ``from personalclaw.config.loader import config_dir`` binds whatever that name pointed at
+    when this module was first imported — and this module is imported LAZILY, by
+    ``registry._ensure_native()`` on first use. Under test that first use can land inside a
+    test which has patched ``loader.config_dir`` to return its own tmp home, so the module
+    captured THAT LAMBDA and kept it: ``monkeypatch`` restores the attribute on ``loader`` at
+    teardown, but nothing can restore a copy another module already took.
+
+    🪤 THE ENV VAR IS NOT A DEFENCE, which is what made this so hard to see.
+    ``PERSONALCLAW_HOME`` is read by the REAL ``config_dir``; a captured lambda never consults
+    it. Measured: the resolved path was the FIRST test's home while ``PERSONALCLAW_HOME``
+    correctly named the current one, so every task the second test filed landed in a directory
+    it never looks at (#2443, #2442).
+
+    🪤 AND IT IS A DEFINITION, NOT AN ALIAS ASSIGNMENT, deliberately. Keeping the name on this
+    module is what lets ``conftest``'s home guard and the existing per-module patch sites go on
+    working unchanged — they replace this function, and ``monkeypatch`` restores it. Delegating
+    on every call is what makes the stale-capture impossible. Both properties are needed: an
+    alias (``config_dir = config_loader.config_dir``) would capture again.
+    """
+    return config_loader.config_dir()
+
+
 def _tasks_dir() -> Path:
+    """The active home's ``tasks/`` directory. See :func:`config_dir` for why it resolves live.
+
+    🔑 THIS MODULE IS IMPORTED LAZILY, so a module-level ``from ... import config_dir`` binds
+    whatever that name pointed at the first time anything touched the task store —
+    ``registry._ensure_native()`` defers the import to first use. Under test that first use
+    can land inside a test that has patched ``loader.config_dir`` to return its own tmp home,
+    and the captured lambda then outlives that test's teardown: ``monkeypatch`` restores the
+    attribute on ``loader``, but nothing can restore a copy another module already took.
+
+    🪤 THE ENV VAR DOES NOT SAVE YOU HERE, which is what made this so hard to see. It saves
+    you only if the captured object is the REAL ``config_dir`` (which does read
+    ``PERSONALCLAW_HOME`` per call). If the captured object is a previous test's lambda, the
+    env var is simply never consulted — measured: the resolved path was the FIRST test's home
+    while ``PERSONALCLAW_HOME`` correctly named the current one, and every task the second
+    test filed landed in a directory it never looks at.
+
+    Resolving through ``config_loader.config_dir()`` means the lookup happens per call, so the
+    active home always wins — in production (where the attribute is the real function) and
+    under test alike.
+    """
     return config_dir() / "tasks"
 
 
