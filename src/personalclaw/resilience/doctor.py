@@ -1309,6 +1309,40 @@ async def _probe_sandbox_cgroup_scopes(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def _probe_timezone(_ctx: DoctorContext) -> ProbeResult:
+    """scheduling — which zone a timed trigger's wall clock is read in (#2520).
+
+    A WARN (`ok=False` at tier 3, so it degrades this card and nothing else) for exactly two
+    states, both of which silently relocate every reminder:
+
+      * the machine's zone cannot be determined, so schedules fall back to **UTC**. The detail
+        names the CONSEQUENCE in hours — "timed triggers will fire at UTC, which is 7 hour(s)
+        off this host's local time" — rather than reporting the condition, because "timezone
+        source: utc-fallback" is an informational line a user has no reason to act on;
+      * `config.timezone` holds something that is not an IANA key (`CEST`, a typo), so it is
+        being ignored. Reporting the RESOLVED zone and not the requested one is the same rule
+        the credential-backend probe follows.
+
+    A correctly resolved zone is `ok=True` and still reports the zone and where it came from,
+    because "which timezone does this install think it is in" was previously unanswerable from
+    any surface — `server_tz` said UTC on a PDT host.
+    """
+    from personalclaw.timezones import zone_report
+
+    facts = await asyncio.to_thread(zone_report)
+    evidence = {k: v for k, v in facts.items() if k != "warning"}
+    if facts["warning"]:
+        return ProbeResult(ok=False, detail=facts["warning"], evidence=evidence)
+    return ProbeResult(
+        ok=True,
+        detail=(
+            f"timed triggers resolve to {facts['resolved']} "
+            f"(from {facts['source']}, UTC{facts['utc_offset_hours']:+g})"
+        ),
+        evidence=evidence,
+    )
+
+
 def _register_builtin_probes() -> None:
     register_probe(
         Probe(
@@ -1462,6 +1496,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_sandbox_cgroup_scopes,
             "Sandbox pids/RSS enforcement",
+        )
+    )
+    register_probe(
+        Probe(
+            "scheduling.timezone",
+            "scheduling",
+            Tier.CAPABILITY,
+            _probe_timezone,
+            "Wall-clock timezone for timed triggers",
         )
     )
 

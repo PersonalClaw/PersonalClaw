@@ -36,26 +36,30 @@ import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
 
 def _trigger_tz(trigger: Any) -> Any:
-    """The trigger's timezone, or UTC. Mirrors `schedule._job_tz`'s fail-safe direction.
+    """The trigger's timezone, resolved by the one owner (`personalclaw.timezones`).
 
-    An unknown zone falls back to UTC rather than raising: a typo'd tz must not make a trigger
-    unarmable, and UTC is the one zone that always exists.
+    🔴 THIS RETURNED `timezone.utc` FOR AN ABSENT `spec.timezone` (#2520). Measured before
+    fixing, on a host whose `/etc/localtime` points at `America/Los_Angeles`: a trigger
+    authored `{"kind": "cron", "expr": "30 8 * * *"}` armed to `1788769800.0` —
+    **08:30 UTC = 01:30 PDT**, a **-7 h** error against the `1788795000.0` that "remind me
+    at 08:30" means. Silent: the trigger armed, nothing warned, and the only symptom was a
+    notification at a strange hour that a user reads as flakiness.
+
+    An ABSENT zone now resolves to the machine's zone. An explicit-but-unknown one RAISES
+    `UnknownTimeZone` instead of silently degrading — `semantic_spec_issues` refuses it at
+    create time, and `next_fire` converts a stored typo into "not armable" plus a named
+    warning. The resolution order and its rationale live in `personalclaw.timezones`; this
+    function is a call into it, not a copy of it.
     """
+    from personalclaw.timezones import resolve_zone
+
     spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
-    name = str(spec.get("timezone") or "").strip()
-    if not name:
-        return timezone.utc
-    try:
-        return ZoneInfo(name)
-    except Exception:  # noqa: BLE001 - an invalid zone is a config typo, not a crash
-        logger.debug("trigger %s has unknown timezone %r; using UTC", trigger.id, name)
-        return timezone.utc
+    return resolve_zone(str(spec.get("timezone") or "").strip())
 
 
 #: How many candidate fires to step past `skip_dates` before giving up. A user can legitimately skip
@@ -97,8 +101,24 @@ def next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0) -> floa
 
     `last_fire` anchors an interval so a recompute does not re-phase the schedule; it defaults to
     the trigger's `created_at` grid, matching `next_after_completion`'s §3.1 anchoring rule.
+
+    🔴 A TYPO'D `spec.timezone` IS NOT ARMABLE (#2520), and says so. `_trigger_tz` refuses an
+    unknown IANA name rather than silently degrading to UTC, so the refusal is converted HERE —
+    once, at the boundary — into the same 0.0 an invalid cron expression produces, plus a warning
+    naming the offending zone. Catching it inside the resolver would restore the silent 7-hour
+    shift; letting it escape would let one hand-edited row wedge the boot sweep for every other
+    trigger. `POST /api/triggers` already refuses the typo before the row exists.
     """
+    from personalclaw.timezones import UnknownTimeZone
+
     now = now or time.time()
+    try:
+        _trigger_tz(trigger)
+    except UnknownTimeZone as exc:
+        logger.warning(
+            "trigger %s will not arm: %s", getattr(trigger, "id", "?"), exc, exc_info=False
+        )
+        return 0.0
     skips = _skipped_dates(trigger)
     fire = cadence_next_fire(trigger, now=now, last_fire=last_fire)
     if not skips or fire <= 0:
@@ -234,6 +254,11 @@ def cadence_next_fire(trigger: Any, *, now: float = 0.0, last_fire: float = 0.0)
             return now + secs
 
         if kind == "at":
+            # `spec.at` is EPOCH SECONDS, not an ISO string (#2520). Not obvious from the field
+            # name, and the surrounding row spells its own timestamps the other way —
+            # `next_fire_at`, `expires_at`, `last_fired_at` are all ISO — so an author reading a
+            # stored trigger has every reason to guess wrong. `_positive()` coerces through
+            # `float()`, which means an ISO string silently reads as 0.0 = "never fires".
             at = _positive(spec.get("at"))
             # A PAST one-shot never fires again — 0.0, not `now`. Re-arming an elapsed appointment
             # to the present turns a missed fire into an immediate surprise.
@@ -325,14 +350,23 @@ def _cron_fires_on_date(expr: str, day: "date", tz_name: str) -> bool:
 
     Mirrors ``next_fire``'s own semantics exactly: skip dates are compared as
     ``%Y-%m-%d`` strings against the fire instant in the trigger's OWN timezone, so
-    the question "is this skip date inert?" must be asked in that same timezone.
+    the question "is this skip date inert?" must be asked in that same timezone — which
+    means resolving it through the SAME owner ``_trigger_tz`` calls (#2520), not a second
+    inline ``ZoneInfo(...) if … else timezone.utc``. That inline copy was why an absent
+    zone made this check ask about UTC days while the grid drew local ones.
+
+    An unknown zone reads as "fires" (not inert). ``semantic_spec_issues`` already refuses
+    that spec with its own ERROR row, so an extra inert-date warning on the same spec would
+    be noise pointing at the wrong field.
     """
     from croniter import croniter  # type: ignore[import-untyped]
 
+    from personalclaw.timezones import UnknownTimeZone, resolve_zone
+
     try:
-        tz = ZoneInfo(tz_name) if tz_name else timezone.utc
-    except Exception:  # noqa: BLE001 - unknown zone falls back like _trigger_tz does
-        tz = timezone.utc
+        tz = resolve_zone(tz_name)
+    except UnknownTimeZone:
+        return True
     try:
         base = datetime(day.year, day.month, day.day, tzinfo=tz) - timedelta(seconds=1)
         nxt = croniter(expr, base).get_next(datetime)
@@ -357,7 +391,8 @@ def semantic_spec_issues(kind: str, spec: dict[str, Any] | None) -> "list[Any]":
     * a skip date that is not ``YYYY-MM-DD`` can never match the fire path's
       ``%Y-%m-%d`` string comparison, so it is protection the user believes in and
       does not have (#270),
-    * a well-formed skip date the schedule never fires on is equally inert (#560).
+    * a well-formed skip date the schedule never fires on is equally inert (#560),
+    * a ``spec.timezone`` that is not an IANA zone name (#2520) — see below.
 
     Pure, never raises, and returns ``models.Issue`` rows so callers fold them into
     the same reporting the structural checks use.
@@ -367,6 +402,31 @@ def semantic_spec_issues(kind: str, spec: dict[str, Any] | None) -> "list[Any]":
     issues: list[Issue] = []
     if kind != "clock" or not isinstance(spec, dict):
         return issues
+
+    # 🔴 A TYPO'D ZONE IS AN ERROR AT THE DOOR (#2520). This is the "refuse where it is
+    # authored" half of the absent-vs-invalid split: an absent zone now resolves to the
+    # machine's, so the only remaining way to get a surprising hour is a name `ZoneInfo`
+    # cannot resolve — and that is a typo, which `POST /api/triggers` refuses before the row
+    # exists rather than arming it and shifting the fire. Abbreviations are named explicitly
+    # because they are the mistake people actually make: `CEST`/`PDT` look like zones, read
+    # like zones, and are rejected by every IANA lookup.
+    tz_declared = str(spec.get("timezone", "") or "").strip()
+    if tz_declared:
+        from personalclaw.timezones import is_known_zone
+
+        if not is_known_zone(tz_declared):
+            issues.append(
+                Issue(
+                    path="spec.timezone",
+                    severity="error",
+                    message=(
+                        f"{tz_declared!r} is not an IANA timezone name — use one like "
+                        f"'America/Los_Angeles' or 'Europe/London' (abbreviations such as "
+                        f"'PDT' or 'CEST' are not zones). Leave it empty to use this "
+                        f"machine's zone"
+                    ),
+                )
+            )
 
     clock_kind = str(spec.get("kind", "") or "")
     expr = str(spec.get("expr", "") or "").strip()

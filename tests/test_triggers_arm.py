@@ -37,6 +37,22 @@ from personalclaw.triggers.store import TriggerStore
 NOW = 1_800_000_000.0  # 2027-01-15T08:00:00Z
 
 
+@pytest.fixture(autouse=True)
+def _utc_host(monkeypatch):
+    """Pin the HOST zone to UTC for this module (#2520).
+
+    Every expected epoch below is UTC wall-clock arithmetic (`1_800_003_600.0` is 09:00**Z**).
+    An absent `spec.timezone` used to mean UTC unconditionally, so that arithmetic held on any
+    machine by accident; it now resolves the host's zone, which would make these arming
+    assertions read differently on every developer's laptop. Pinning the host — rather than
+    writing `"timezone": "UTC"` into each spec — keeps the rows under test byte-identical, so
+    these stay tests of ARMING and not of resolution. Resolution is pinned in
+    `test_timed_trigger_timezone_default.py`; the tests below that vary the zone deliberately
+    still declare it explicitly and are unaffected.
+    """
+    monkeypatch.setenv("TZ", "UTC")
+
+
 def _clock(spec, *, enabled=True, tid="t"):
     return Trigger(
         id=tid,
@@ -203,12 +219,23 @@ def test_cron_is_evaluated_in_the_triggers_own_timezone():
     assert ny != utc
 
 
-def test_an_unknown_timezone_falls_back_to_utc_rather_than_refusing():
-    """A typo'd zone must not make a trigger unarmable — UTC is the one zone that always exists."""
-    got = A.next_fire(
-        _clock({"kind": "cron", "expr": "0 9 * * *", "timezone": "Mars/Olympus"}), now=NOW
-    )
-    assert got == 1_800_003_600.0
+def test_an_unknown_timezone_refuses_to_arm_and_says_so(caplog):
+    """🔴 REVERSED BY #2520, deliberately. This asserted that a typo'd zone silently fell back to
+    UTC ("UTC is the one zone that always exists"), and that reasoning was the defect: it made
+    "the author never mentioned a zone" and "the author mistyped one" the same case, so the only
+    signal a typo produced was a fire at a strange hour.
+
+    An UNKNOWN zone is now refused. `POST /api/triggers` rejects it before the row exists
+    (`semantic_spec_issues`), and a hand-edited row reports **not armable** — the same 0.0 an
+    invalid cron expression produces — with the offending zone named in the log. It still must
+    not RAISE: one bad row would otherwise take down the boot sweep for every other trigger.
+    """
+    with caplog.at_level("WARNING"):
+        got = A.next_fire(
+            _clock({"kind": "cron", "expr": "0 9 * * *", "timezone": "Mars/Olympus"}), now=NOW
+        )
+    assert got == 0.0
+    assert any("Mars/Olympus" in r.getMessage() for r in caplog.records), caplog.text
 
 
 def test_an_interval_advances_on_its_own_grid():

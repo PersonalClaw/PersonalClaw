@@ -778,7 +778,7 @@ def test_digest_cron_schedule_converges(home):
     assert store.get(DIGEST_JOB_NAME).trigger.spec["expr"] == "30 6 * * 1-5"
 
 
-def test_a_converged_schedule_is_re_armed(home):
+def test_a_converged_schedule_is_re_armed(home, monkeypatch):
     """🔴 The fire is computed FROM the expression, so converging the spec without re-arming would
     leave the digest running on the schedule the user just replaced."""
     from personalclaw.action_providers.digest_provider import (
@@ -786,6 +786,11 @@ def test_a_converged_schedule_is_re_armed(home):
         reconcile_digest_cron,
     )
 
+    # The host zone is pinned because the assertion below reads the armed instant as UTC
+    # (`21:45:00+00:00` for a `45 21 * * *` row). An absent `spec.timezone` resolves the machine's
+    # zone now (#2520), so on a PDT laptop the correct answer is `04:45:00+00:00`. What this test
+    # is about is RE-ARMING after a converge, not which zone the digest runs in.
+    monkeypatch.setenv("TZ", "UTC")
     _write_rules(home, {"digest": {"schedule": "0 8 * * *"}})
     store = _seed_digest(home, "0 8 * * *")
     reconcile_digest_cron(store)

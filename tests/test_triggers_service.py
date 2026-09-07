@@ -37,6 +37,15 @@ _ALL_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 NOW = 1_800_000_000.0
 
 
+@pytest.fixture(autouse=True)
+def _utc_host(monkeypatch):
+    """Pin the HOST zone to UTC (#2520): the cron assertions here are UTC wall-clock arithmetic
+    (`1_800_003_600.0` is 09:00Z; the grid-resume test reads `(hour, day) == (3, 16)`), and an
+    absent `spec.timezone` now resolves the machine's zone rather than UTC. Pinning the host keeps
+    these tests about RECOMPUTATION, not about resolution."""
+    monkeypatch.setenv("TZ", "UTC")
+
+
 @pytest.fixture
 def store(tmp_path):
     return TriggerStore(base_dir=tmp_path)

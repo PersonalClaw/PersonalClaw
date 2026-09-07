@@ -228,7 +228,12 @@ async def _fire_from_the_store(trigger_store):
 # ── 1. the row exists, is ARMED, and is single-flight ───────────────────────────
 
 
-def test_the_bundled_trigger_is_registered_and_ARMED(trigger_store):
+def test_the_bundled_trigger_is_registered_and_ARMED(trigger_store, monkeypatch):
+    # The host zone is pinned because the ARMED assertion below reads the instant as UTC
+    # (`07:00:00+00:00` for the bundled `0 7 * * *`). An absent `spec.timezone` resolves the
+    # machine's zone now (#2520), so on a PDT laptop 07:00 local is `14:00:00+00:00` — the digest
+    # correctly landing at 7am where the user is. What this test pins is that the row is ARMED.
+    monkeypatch.setenv("TZ", "UTC")
     # VACUITY: nothing is there before the reconciler runs, so the assertions below are about
     # what IT wrote and not about a row some other boot step happened to leave.
     assert trigger_store.get(SOURCE_DIGEST_JOB_NAME) is None
