@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import personalclaw.schedule_script as ss
+from personalclaw import gateway_base
 from personalclaw.schedule import (
     ScheduleJob,
     make_agent_action,
@@ -28,6 +29,19 @@ from personalclaw.schedule import (
 # wall time from pure CPU contention. Give wide headroom over that — still well
 # under pytest's 120s per-test ceiling, and a genuinely hung script is caught.
 _SCRIPT_TIMEOUT = 90
+
+
+@pytest.fixture(autouse=True)
+def _a_gateway_to_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declare a gateway for the cron launcher to address.
+
+    ``run_script_sandboxed`` resolves the launcher's port from ``gateway_base`` at CALL time
+    and REFUSES rather than assuming the default port when it cannot (#2539) — the previous
+    ``config.loader.DASHBOARD_PORT`` was an import-time constant that happily named a port
+    another instance was listening on. These tests exercise the sandbox, the resource ceiling
+    and the child environment, not the port, so they state one and move on.
+    """
+    monkeypatch.setenv(gateway_base.PORT_ENV, "7777")
 
 
 # ── exec_mode strategy axis ───────────────────────────────────────────

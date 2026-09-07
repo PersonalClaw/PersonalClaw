@@ -42,6 +42,54 @@ def _audit_toggle(request: web.Request, op: str, ok: bool, resources: str, error
         pass
 
 
+def _provider_trust_tiers() -> dict[str, str]:
+    """provider name → supply-chain trust tier, for tool providers an APP contributes.
+
+    #2627. The Tools page badge used to be a binary — ``platform`` when the provider was
+    locked, ``built-in`` otherwise — so an installed community bundle (native kind, not
+    locked) was labelled with the same word core's own first-party providers get. The
+    install dialog had just disclosed "Unsigned — community tier" and the user consented
+    to *that*; the page a user later audits from then said shipped-with-the-product. The
+    fix is provenance on the wire, so the badge derives from where the provider came from
+    rather than from whether it happens to be locked.
+
+    A provider absent from this map is CORE (the cwd-coupled platform provider, the entity
+    categories, anything registered by a factory rather than by an app) and the caller
+    labels it ``builtin``. Every app-contributed provider is keyed twice — under the app
+    name and under each live instance's own ``name`` — because an app that declares several
+    provider instances registers them as ``{app}:{instance}``, which is the string the
+    catalog tags its tools with and therefore the string the page groups by.
+
+    Never raises: a broken registry read must not empty the Tools page, and the caller's
+    ``builtin`` default is the pre-#2627 behaviour, so the worst case is the old label.
+    """
+    try:
+        from personalclaw.apps.app_manager import trust_tier_of
+        from personalclaw.apps.manager import list_apps
+        from personalclaw.providers.registry import get_provider_registry
+
+        tier_by_app = {
+            str(app.get("name", "")): trust_tier_of(str(app.get("name", "")))
+            for app in list_apps()
+            if app.get("name")
+        }
+        out: dict[str, str] = {}
+        for ext in get_provider_registry().list_by_type("tool"):
+            tier = tier_by_app.get(ext.name)
+            if not tier:
+                continue
+            out[ext.name] = tier
+            instance = ext.provider_instance
+            for provider in instance if isinstance(instance, list) else [instance]:
+                inst_name = str(getattr(provider, "name", "") or "")
+                if inst_name:
+                    out[inst_name] = tier
+        return out
+    except Exception:
+        logger.warning("Failed to resolve tool-provider trust tiers", exc_info=True)
+        return {}
+
+
 async def api_tools_list(request: web.Request) -> web.Response:
     """GET /api/tools — Return all tools from all active tool sources.
 
@@ -84,6 +132,11 @@ async def api_tools_list(request: web.Request) -> web.Response:
         # provider) pair: a core-locked name is always core, wherever it lives.
         return CORE_GROUP if tool_prefs.is_locked(name) else group_name_for_provider(provider)
 
+    # #2627: where each provider came from, so the page's provenance badge is derived
+    # from that rather than from whether the provider is locked. Resolved once per catalog
+    # build (it is a directory scan plus a registry walk), not per tool.
+    provider_tiers = _provider_trust_tiers()
+
     tools_out: list[dict] = []
     seen: set[tuple[str, str]] = set()
 
@@ -94,6 +147,8 @@ async def api_tools_list(request: web.Request) -> web.Response:
         parameters: dict,
         requires_approval: bool = True,
         risk_level: object = "safe",
+        *,
+        default_tier: str = "builtin",
     ) -> None:
         key = (provider, name)
         if key in seen or not name:
@@ -125,6 +180,18 @@ async def api_tools_list(request: web.Request) -> web.Response:
                 # (derived from its provider; core-locked names are always "core").
                 # Read-only here — activation is per-session runtime state, not a pref.
                 "group": _group_of(name, provider),
+                # #2627: the PROVENANCE of the provider behind this tool — the same
+                # `supply_chain.TrustTier` the install dialog disclosed. A NATIVE provider
+                # no installed app contributed is the platform itself, hence `builtin`; the
+                # Tools page spells this through the one shared label map so its badge and
+                # the install dialog cannot describe the same bundle differently.
+                #
+                # 🪤 An EXTERNAL MCP server gets "" rather than `builtin` (its caller passes
+                # `default_tier=""`). It never went through the supply-chain gate, so it has
+                # no tier to report, and claiming the platform's own is exactly the
+                # reassuring-direction lie this field exists to remove. The page renders
+                # live health for those groups, not provenance, so nothing reads it.
+                "tier": provider_tiers.get(provider, default_tier),
             }
         )
 
@@ -219,6 +286,9 @@ async def api_tools_list(request: web.Request) -> web.Response:
                         server_name,
                         tool.input_schema,
                         risk_level=infer_risk_from_name(tool.name),
+                        # An external MCP server has no supply-chain tier — see the `tier`
+                        # note in `_add`. "" is the honest answer, `builtin` would be a lie.
+                        default_tier="",
                     )
     except Exception as exc:
         logger.warning("Failed to list tools from MCP client registry", exc_info=True)

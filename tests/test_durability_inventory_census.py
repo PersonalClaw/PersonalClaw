@@ -73,6 +73,12 @@ _NOT_STATE = frozenset(
         "gateway-restart.log",
         "locks",
         "loop.md",  # a rendered prompt, re-rendered per run
+        # The socket this gateway bound + the pid that bound it (`gateway_base.RUNTIME_FILE`,
+        # #2539). Not state: written after bind, removed on shutdown, ignored once its pid is
+        # gone. Carrying it in a snapshot would be the exact bug it exists to fix — a restored
+        # home would address its children at a port a DIFFERENT instance bound. Also in
+        # `durability.inventory.IGNORED`, for the same reason `machine_id` is.
+        "gateway.runtime.json",
     }
 )
 

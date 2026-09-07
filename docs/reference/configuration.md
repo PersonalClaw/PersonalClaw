@@ -262,7 +262,7 @@ Not config-file fields, but part of the same operator surface:
 | Variable | Effect |
 |---|---|
 | `PERSONALCLAW_HOME` | Relocate the config/state directory (default `~/.personalclaw`). |
-| `PERSONALCLAW_PORT` | Override the dashboard/API port (default `10000`). Validated at CLI entry. |
+| `PERSONALCLAW_PORT` | Override the dashboard/API port (default `10000`). Validated at CLI entry. A running gateway **overwrites** this in its own environment with the port it actually bound, so every child it spawns agrees with the live socket even under `--port` / `--port auto`. |
 | `PERSONALCLAW_WORKSPACE` | Workspace root for LLM working directories. |
 | `PERSONALCLAW_BIND_HOST` | Bind address for the gateway (e.g. `0.0.0.0` for LAN access). |
 | `PERSONALCLAW_BYPASS_LOCAL_NETWORKS` | `1` = skip token auth for loopback/RFC1918 clients (dev convenience; public origins still need a token). |
@@ -270,7 +270,21 @@ Not config-file fields, but part of the same operator surface:
 | `PERSONALCLAW_SKIP_APP_BACKENDS` | Don't launch app backend subprocesses (test isolation). |
 | `PERSONALCLAW_CREDENTIAL_BACKEND` | Where new credentials are stored: `keychain` (OS secret service, needs the `keychain` extra) or `dotenv` (default — `~/.personalclaw/.env` at mode 0600). A `keychain` request on a machine with no usable secret service falls back to `.env` 0600 and `personalclaw doctor` says so. Reads always see both stores, so switching back never hides an existing secret. |
 
-## Programmatic surfaces
+### How a child finds its gateway
+
+Tool subprocesses (the `personalclaw-core` MCP server, sandboxed cron scripts, an ACP CLI's
+MCP children) resolve the gateway's API base through **one** owner, `personalclaw.gateway_base`,
+which answers from the socket the gateway actually bound — in order:
+
+1. `PERSONALCLAW_PORT`, which the gateway overwrites with its bound port after binding;
+2. `~/.personalclaw/gateway.runtime.json`, the same value recorded inside the home for a child
+   whose environment was rebuilt from an allowlist (ignored when the pid it names is gone);
+3. an **explicit** port in `dashboard.url`.
+
+If none of the three answers, the call is **refused** with a message naming all three. It is
+never sent to the default port: on a host running more than one instance, `10000` is another
+instance's gateway — with its own home, config and state — so a guess is a cross-instance
+read or write, not a degraded local call.
 
 - `GET /api/config/personalclaw` — full config as JSON (owner-only).
 - `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted; non-editable paths return 400.

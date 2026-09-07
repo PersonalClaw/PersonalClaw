@@ -1672,6 +1672,63 @@ export interface WorkflowLedgerRails {
   }
   coverage: WorkflowRailCoverage[]
 }
+// Why a document slot is empty. Five DIFFERENT facts that all look like "no
+// document" if you render a blank panel, and only `not_written` is a worker that has not got there
+// yet — so the FE prints one sentence per member rather than one for all five.
+export type WorkflowDeliverableAbsence =
+  // No loop kind resolves to this run's template, so nothing declares its document name. UNKNOWN,
+  // not none.
+  | 'template_unknown'
+  // The kind declares none: a verifiable goal, a code project and a general project produce a
+  // passing check or a diff, and that IS the output.
+  | 'kind_has_no_document'
+  // The name is known and a readable root exists; the file is not there yet.
+  | 'not_written'
+  // The run has no directory to read at all (never launched, or retention swept it).
+  | 'no_root'
+  // It is there and the read failed. Reported, never blanked — a permission problem rendered as
+  // "not written yet" is one a user waits out forever.
+  | 'unreadable'
+// One document slot. `content` is `null` — never `''` — when absent: an empty string is a document
+// someone wrote nothing into, which is a real observation, and collapsing the two is exactly the
+// absent-is-not-zero mistake in text form.
+export interface WorkflowDeliverableDoc {
+  name: string | null
+  present: boolean
+  content: string | null
+  // The real size on disk, even when `content` was truncated at the serve ceiling.
+  bytes: number | null
+  modified_at: number | null
+  truncated: boolean
+  // How many blob-shaped runs (>512 non-space characters) were replaced before redaction. The
+  // redactor is quadratic in unbroken-token length — one 512 KB base64 blob measured 111s — so a
+  // blob is clipped rather than served, and the clip is COUNTED rather than silent.
+  clipped_blobs: number
+  found_in: 'workspace' | 'run_dir' | null
+  absent_reason: WorkflowDeliverableAbsence | null
+}
+export interface WorkflowRunDeliverable {
+  run_id: string
+  workflow: string
+  // The kind's declared document — REPORT.md / MONITOR_LOG.md / DESIGN.md / RESEARCH.md.
+  report: WorkflowDeliverableDoc
+  // The worker's cumulative working log (FINDINGS.md), the same slot `GET /api/loops/{id}/report`
+  // serves as `log`.
+  log: WorkflowDeliverableDoc
+  // How the filename was decided. `declared_by` names the loop kind and variant whose strategy
+  // produced it, so a reader can tell a DERIVED name from a hard-coded one.
+  derivation: {
+    name: string | null
+    reason: WorkflowDeliverableAbsence | null
+    declared_by: { kind: string; variant: string; name: string } | null
+  }
+  // Where the backend looked, in order — workspace first, then the run dir.
+  roots: Array<{ kind: 'workspace' | 'run_dir'; path: string; exists: boolean }>
+  // Whether this run's OWN spec ever names the document. `false` reframes an absence from "not yet"
+  // to "never asked for": measured, no bundled template names its kind's document today. `null`
+  // when there was no name to check for.
+  instructed: boolean | null
+}
 // One dashboard pin. A REFERENCE, never a copy: no name and no content,
 // because a denormalized title goes stale on the next rename and a card that is confidently wrong
 // is worse than one that is absent.
@@ -1808,7 +1865,14 @@ export interface SkillFile { path: string; size: number }
 export interface SkillMarketplace { name: string; type: string }
 export interface SkillSearchResult { id: string; name: string; description: string; source: string; url?: string; installs?: number }
 export interface SkillMarketplaceDetail { id: string; name: string; audit_status?: string; files: Array<{ path: string; binary?: boolean }>; frontmatter?: Record<string, unknown>; body?: string; marketplace?: string }
-export interface ToolItem { name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean; group?: string }
+/** `tier` is the PROVENANCE of the provider behind this tool — the same
+ *  `supply_chain.TrustTier` string the install dialog discloses ("Unsigned — community
+ *  tier"). `builtin` for a native provider no installed app contributed, the app's own
+ *  recorded tier for one an app did, and `''` for an external MCP server (which never went
+ *  through the supply-chain gate and so has no tier to claim). Rendered through
+ *  `lib/trustTier` — the ONE map both the Tools badge and the install dialog read, after
+ *  #2627 found them describing the same bundle differently. */
+export interface ToolItem { name: string; description: string; provider: string; parameters?: Record<string, unknown>; requires_approval?: boolean; risk_level?: 'safe' | 'caution' | 'destructive'; disabled?: boolean; locked?: boolean; providerDisabled?: boolean; group?: string; tier?: string }
 export interface ToolLoadFailure { provider: string; error: string }
 // The generated self-description document served at GET /api/manifest — the same
 // shape an agent driving this instance reads (personalclaw/manifest.py).
@@ -7046,6 +7110,17 @@ export const api = {
    *  side that has no breaker. */
   workflowRunLedgerRails: (id: string) =>
     get<WorkflowLedgerRails>(`/api/workflows/runs/${encodeURIComponent(id)}/ledger-rails`),
+  /** The run's document deliverable + working log — the run-side `uLoopReport`.
+   *
+   *  The loop side answers the same question at `GET /api/loops/{id}/report`, and the loop cockpit
+   *  renders it as its Deliverable tab. The filename is DERIVED per kind on the backend, so nothing
+   *  here decides that a goal run produces `REPORT.md`.
+   *
+   *  Absence arrives NAMED (`absent_reason`), and rendering all five as one blank panel is the bug
+   *  this shape exists to prevent: "this kind produces a passing check, not a document" is a
+   *  finished answer, and "the worker has not written it yet" is a wait. */
+  workflowRunDeliverable: (id: string) =>
+    get<WorkflowRunDeliverable>(`/api/workflows/runs/${encodeURIComponent(id)}/deliverable`),
   workflowRunDropStatus: (id: string) =>
     get<WorkflowDropStatus>(`/api/workflows/runs/${encodeURIComponent(id)}/drop`),
   /** Drop files into a run. `confirm` ANSWERS the approval gate — the first

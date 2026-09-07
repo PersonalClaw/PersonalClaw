@@ -504,10 +504,18 @@ class TestLessonsGate:
 
 
 class TestMcpCoreSessionKeyPassthrough:
+    """``PERSONALCLAW_PORT`` is set here because ``mcp_core`` now REFUSES rather than
+    assuming the default port when it cannot resolve this instance's gateway (#2539) — so a
+    test that wants to inspect the outgoing request must first give it a gateway to address.
+    """
+
     def test_learn_add_sends_session_key_header(self):
         with (
             patch("personalclaw.mcp_core.urllib.request.urlopen") as mock_urlopen,
-            patch.dict("os.environ", {"PERSONALCLAW_SESSION_KEY": "dashboard:e1"}),
+            patch.dict(
+                "os.environ",
+                {"PERSONALCLAW_SESSION_KEY": "dashboard:e1", "PERSONALCLAW_PORT": "7777"},
+            ),
         ):
             mock_resp = MagicMock()
             mock_resp.read.return_value = b'{"error": "Incognito mode"}'
@@ -526,6 +534,7 @@ class TestMcpCoreSessionKeyPassthrough:
         with (
             patch("personalclaw.mcp_core.urllib.request.urlopen") as mock_urlopen,
             patch("personalclaw.mcp_core._resolve_session_key", return_value=""),
+            patch.dict("os.environ", {"PERSONALCLAW_PORT": "7777"}),
         ):
             mock_resp = MagicMock()
             mock_resp.read.return_value = b'{"ok": true}'

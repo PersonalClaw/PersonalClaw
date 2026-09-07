@@ -39,6 +39,8 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 
+import pytest
+
 from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.triggers import service as SVC
 from personalclaw.triggers.models import Trigger
@@ -46,6 +48,18 @@ from personalclaw.triggers.store import TriggerStore
 
 NOW = 1_700_000_000.0
 HOUR = 3600.0
+
+
+@pytest.fixture(autouse=True)
+def _utc_host(monkeypatch):
+    """Pin the HOST zone to UTC (#2520).
+
+    The sweep assertions read a cron's landing HOUR in UTC (`(landed.hour, landed.day) == (3, 16)`
+    for a `0 3 * * *` row), and an absent `spec.timezone` now resolves the machine's zone instead
+    of UTC — so on a PDT laptop the same correct behaviour lands at 03:00 local, a different UTC
+    hour. These are tests of the SWEEP, so the host is pinned rather than the row rewritten.
+    """
+    monkeypatch.setenv("TZ", "UTC")
 
 
 class _State:

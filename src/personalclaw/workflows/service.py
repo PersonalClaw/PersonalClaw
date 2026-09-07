@@ -1581,6 +1581,64 @@ def ledger_rails(run_id: str) -> dict[str, Any]:
     )
 
 
+def run_deliverable(run_id: str) -> dict[str, Any]:
+    """The run's DOCUMENT deliverable and working log (PP-16 unit 1).
+
+    The run-side answer to `GET /api/loops/{id}/report`, which serves `store.read_deliverable` +
+    `store.read_log` off one route. Same two slots, the same kind-declared filenames and the same
+    redaction — a READ over files the run already has, so nothing is stored and no kind is minted.
+
+    **The filename is DERIVED, not configured here.** `deliverable.resolve_name` walks the loop
+    alias table forward and asks each kind's own `deliverable_name`, so `goal-pursuit-open-ended`
+    resolves to `REPORT.md`, `goal-pursuit-monitor` to `MONITOR_LOG.md` and `design-project` to
+    `DESIGN.md` because those kinds say so — not because this module repeats them.
+
+    **Absence is named, five ways** (see `workflows/deliverable.py`), because a blank panel cannot
+    tell a user whether the worker has not written yet, whether this kind produces a check rather
+    than a document, or whether the template never asked for one. `instructed` is that question,
+    measured per run against the run's OWN spec: today no bundled template names its kind's
+    document, so an absent REPORT.md is a template gap rather than a slow worker, and the surface
+    says which.
+
+    **No money field, deliberately** — issue #2566: `run_totals` reports `cost_usd 0.0` for a loop
+    because `LoopJournal.cycle` writes no money keys, and PP-16 sends loop-backed runs through every
+    run-side surface. A cost here would read `$0.00` for work that cost real money, on the one page
+    a user opens to find out what the document cost.
+
+    404s for an unknown run, so a polled deleted run is distinguishable from one whose worker has
+    not written yet — the same rule `api_loop_report` adopted after the same bug.
+    """
+    from personalclaw.loop import store as loop_store
+    from personalclaw.workflows import deliverable as deliverable_mod
+
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+
+    workflow = str(getattr(run, "workflow_name", "") or "")
+    resolved = deliverable_mod.resolve_name(workflow)
+    roots = deliverable_mod.run_roots(run)
+    report = deliverable_mod.read_document(roots, resolved.name, reason=resolved.reason)
+    # The log's name is the loop store's own declaration, imported rather than re-spelled: one
+    # on-disk convention, one string. Unconditional — every kind's worker keeps a working log, which
+    # is why the loop side's `read_log` takes no kind at all.
+    log = deliverable_mod.read_document(roots, loop_store.LOG_NAME)
+    return _ok(
+        run_id=run_id,
+        workflow=workflow,
+        report=report.to_dict(),
+        log=log.to_dict(),
+        # How the name was decided, so a reader can tell a derived name from a guessed one.
+        derivation=resolved.to_dict(),
+        # Where we looked, in order. A user staring at "not written" needs to know whether we looked
+        # in the workspace their worker actually used.
+        roots=roots.to_dict(),
+        # Whether this run's OWN spec ever names the document. `false` reframes the absence from
+        # "not yet" to "never asked for" — see the docstring.
+        instructed=deliverable_mod.instructed_by_spec(store.read_spec(run_id), resolved.name),
+    )
+
+
 def template_trajectory(name: str) -> dict[str, Any]:
     """The trajectory-signature distribution and regression signal for one template (PP-7).
 

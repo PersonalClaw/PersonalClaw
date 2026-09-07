@@ -786,20 +786,41 @@ class TestCurrentDateTimezone:
             hooks=HookManager(HooksConfig()),
         )
 
+    def _date_line(self, ctx):
+        return [ln for ln in ctx.splitlines() if ln.startswith("[CURRENT DATE]")][0]
+
     def test_current_date_uses_configured_timezone(self, tmp_path):
         builder = self._make_builder(tmp_path)
-        with patch("personalclaw.schedule.AppConfig.load") as mock_load:
+        # Patched where the value is READ (`personalclaw.timezones`), not where it used to be
+        # imported — `schedule` no longer holds an `AppConfig` reference of its own (#2520).
+        with patch("personalclaw.config.loader.AppConfig.load") as mock_load:
             mock_load.return_value.timezone = "Asia/Tokyo"
             ctx = builder.build_session_context()
         # Tokyo is JST/UTC+9; %Z renders "JST"
         assert "[CURRENT DATE]" in ctx
-        date_line = [ln for ln in ctx.splitlines() if ln.startswith("[CURRENT DATE]")][0]
-        assert "JST" in date_line
+        assert "JST" in self._date_line(ctx)
 
-    def test_current_date_falls_back_to_utc_when_config_empty(self, tmp_path):
+    def test_current_date_falls_back_to_the_machine_zone_when_config_is_empty(
+        self, tmp_path, monkeypatch
+    ):
+        """CHANGED BY #2520: a blank `config.timezone` used to mean UTC — even here, where the
+        line's whole job is telling the model what time it is *for the user*. It now resolves
+        the machine's zone, so the model is told the local hour rather than a UTC one."""
         builder = self._make_builder(tmp_path)
-        with patch("personalclaw.schedule.AppConfig.load") as mock_load:
+        monkeypatch.setenv("TZ", "Asia/Tokyo")
+        with patch("personalclaw.config.loader.AppConfig.load") as mock_load:
             mock_load.return_value.timezone = ""
             ctx = builder.build_session_context()
-        date_line = [ln for ln in ctx.splitlines() if ln.startswith("[CURRENT DATE]")][0]
-        assert "UTC" in date_line
+        assert "JST" in self._date_line(ctx)
+
+    def test_current_date_falls_back_to_utc_only_when_nothing_resolves(self, tmp_path, monkeypatch):
+        from personalclaw import timezones as tzmod
+
+        builder = self._make_builder(tmp_path)
+        monkeypatch.delenv("TZ", raising=False)
+        monkeypatch.setattr(tzmod, "LOCALTIME_LINK", tmp_path / "absent-localtime")
+        monkeypatch.setattr(tzmod, "TIMEZONE_FILE", tmp_path / "absent-timezone")
+        with patch("personalclaw.config.loader.AppConfig.load") as mock_load:
+            mock_load.return_value.timezone = ""
+            ctx = builder.build_session_context()
+        assert "UTC" in self._date_line(ctx)

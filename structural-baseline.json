@@ -215,12 +215,6 @@
   },
   "structural-import-direction": {
     "per_file": {
-      "src/personalclaw/acp/mcp_servers.py": {
-        "edges": 1,
-        "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
-        ]
-      },
       "src/personalclaw/action_providers/services.py": {
         "edges": 1,
         "violations": [
@@ -372,16 +366,9 @@
         ]
       },
       "src/personalclaw/mcp_core.py": {
-        "edges": 2,
-        "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
-        ]
-      },
-      "src/personalclaw/mcp_shared.py": {
         "edges": 1,
         "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
+          "core-must-not-import-the-http-surface -> personalclaw.dashboard"
         ]
       },
       "src/personalclaw/packs/import_.py": {
@@ -486,11 +473,11 @@
     "totals": {
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 7,
-        "core-must-not-import-the-http-surface": 57,
+        "core-must-not-import-the-http-surface": 54,
         "ledger-is-a-leaf": 0
       },
-      "edges": 64,
-      "files": 33
+      "edges": 61,
+      "files": 31
     }
   },
   "structural-size": {

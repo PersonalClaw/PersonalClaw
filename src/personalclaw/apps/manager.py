@@ -122,6 +122,12 @@ def app_data_dir(name: str) -> Path:
 _VALID_ORIGIN: frozenset[str] = frozenset({"builtin", "registry", "local", "external"})
 _VALID_RESOURCES: frozenset[str] = frozenset({"gateway", "app"})
 _VALID_LIFECYCLE: frozenset[str] = frozenset({"gateway", "app", "locked"})
+# The supply-chain trust tier the install gate settled on for THESE bytes. Spelled out
+# here rather than imported from ``supply_chain.TrustTier`` for the same reason
+# ``_VALID_ORIGIN`` is: this module owns the on-disk record and must not pull the scanner
+# in to read one. A tier the enum gains has to be listed here too — ``from_dict`` drops an
+# unrecognised one rather than persisting a value no reader can interpret.
+_VALID_TIER: frozenset[str] = frozenset({"builtin", "official", "trusted", "community"})
 
 
 @dataclass
@@ -138,6 +144,14 @@ class InstalledApp:
     origin: str = "registry"  # builtin | registry | local | external
     resources: str = "gateway"  # gateway | app
     lifecycle: str = "gateway"  # gateway | app | locked
+    # The trust tier the install/update gate computed for the bytes that landed —
+    # ``supply_chain.TrustTier``, the SAME value the install dialog disclosed
+    # ("Unsigned — community tier"). Recorded rather than re-derived because the gate
+    # knows one thing a later read cannot: a verified maintainer signature RAISES a
+    # community bundle to ``official``, and the signature is checked on the staged tree.
+    # "" means "installed before this field existed"; readers fall back to the tier the
+    # app's ``origin`` earns (``app_manager.trust_tier_of``), never to ``builtin`` (#2627).
+    tier: str = ""
     schemaVersion: int = 2  # noqa: N815  — schema version for future migrations
 
     def validate_fields(self) -> list[str]:
@@ -149,6 +163,9 @@ class InstalledApp:
             errors.append(f"invalid resources: {self.resources!r}")
         if self.lifecycle not in _VALID_LIFECYCLE:
             errors.append(f"invalid lifecycle: {self.lifecycle!r}")
+        # "" is legal (an app installed before the field existed), a junk value is not.
+        if self.tier and self.tier not in _VALID_TIER:
+            errors.append(f"invalid tier: {self.tier!r}")
         return errors
 
     def to_dict(self) -> dict[str, Any]:
@@ -167,6 +184,7 @@ class InstalledApp:
             origin=str(data.get("origin", "registry")),
             resources=str(data.get("resources", "gateway")),
             lifecycle=str(data.get("lifecycle", "gateway")),
+            tier=str(data.get("tier", "")),
             schemaVersion=int(data.get("schemaVersion", 1)),
         )
         errors = inst.validate_fields()
@@ -182,6 +200,10 @@ class InstalledApp:
                 inst.resources = "gateway"
             if inst.lifecycle not in _VALID_LIFECYCLE:
                 inst.lifecycle = "gateway"
+            # Drop an unreadable tier to "" — which readers resolve from `origin` — rather
+            # than default it to a tier. Guessing here would invent a provenance claim.
+            if inst.tier and inst.tier not in _VALID_TIER:
+                inst.tier = ""
         return inst
 
 

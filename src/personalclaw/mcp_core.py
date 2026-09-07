@@ -37,8 +37,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from personalclaw.config.loader import AppConfig, config_dir
-from personalclaw.dashboard.origin import parse_dashboard_url
+from personalclaw import gateway_base
+from personalclaw.config.loader import config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,15 @@ def reset_current_agent_id(token) -> None:
 
 
 def _api_base() -> str:
-    """Resolve the gateway API base URL from ``dashboard.url`` config, AT CALL TIME.
+    """The gateway API base for this instance, AT CALL TIME, from the ONE owner.
+
+    Delegates to :func:`personalclaw.gateway_base.resolve_api_base`, which answers from
+    the socket the gateway actually bound and REFUSES when it cannot. This used to be
+    ``parse_dashboard_url(AppConfig.load().dashboard.url)``, which falls back to the fixed
+    ``10000``: with the default empty ``dashboard.url``, every tool subprocess of a gateway
+    started on another port addressed ``10000`` instead — a *different instance* on a
+    multi-gateway host, not a dead socket (issue #2539). See ``gateway_base`` for the
+    measured capture.
 
     Deliberately not a module-level constant. This was ``_API = _resolve_api_base()``
     evaluated at import, which is the one shape ``tests/conftest.py``'s
@@ -110,7 +118,7 @@ def _api_base() -> str:
     resolved into a module-level constant at import time … If a new leak appears here,
     check for that shape first"* — and it is the fourth instance of it, after
     ``subagent_persistence._subagents_dir``, ``session_map._sessions_dir`` and
-    ``schedule._DEFAULT_DIR``. It is worse than those three, because :meth:`AppConfig.load`
+    ``schedule._DEFAULT_DIR``. It is worse than those three, because ``AppConfig.load``
     is not a pure read: it performs a **migration write-back** (``loader.py`` ~5657), so
     merely importing this module could rewrite the user's real ``config.json``. Under
     pytest that happened during COLLECTION — before any fixture exists — which is how it
@@ -121,9 +129,7 @@ def _api_base() -> str:
     port change was invisible to every MCP tool call until the process restarted, and an
     MCP child that imported before the gateway wrote its config bound the wrong port.
     """
-    cfg = AppConfig.load()
-    _host, port = parse_dashboard_url(cfg.dashboard.url)
-    return f"http://localhost:{port}"
+    return gateway_base.resolve_api_base()
 
 
 def _list_tools() -> list[dict[str, Any]]:
@@ -778,19 +784,24 @@ def _resolve_session_key() -> str:
     return ""
 
 
+# NB: ``_api_base()`` is resolved INSIDE each try below. It refuses (raises
+# ``GatewayBaseUnresolved``) rather than guessing a port, and a refusal must reach the
+# agent as this tool's result text — the named, fail-fast answer. Built outside the try it
+# would instead escape ``run_mcp_stdio_loop`` and take the whole MCP server down mid-turn,
+# which is the "hang" shape the refusal exists to replace.
 def _post(path: str, body: dict | None = None) -> dict:
     data = json.dumps(body or {}).encode()
     headers = {"Content-Type": "application/json", "X-Internal-Secret": _internal_secret()}
     sk = _resolve_session_key()
     if sk:
         headers["X-Session-Key"] = sk
-    req = urllib.request.Request(
-        f"{_api_base()}{path}",
-        data=data,
-        headers=headers,
-        method="POST",
-    )
     try:
+        req = urllib.request.Request(
+            f"{_api_base()}{path}",
+            data=data,
+            headers=headers,
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read())
     except Exception as e:
@@ -802,11 +813,11 @@ def _get(path: str) -> dict:
     sk = _resolve_session_key()
     if sk:
         headers["X-Session-Key"] = sk
-    req = urllib.request.Request(
-        f"{_api_base()}{path}",
-        headers=headers,
-    )
     try:
+        req = urllib.request.Request(
+            f"{_api_base()}{path}",
+            headers=headers,
+        )
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read())
     except Exception as e:
@@ -821,13 +832,13 @@ def _delete(path: str, body: dict | None = None) -> dict:
         headers["X-Session-Key"] = sk
     if data:
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(
-        f"{_api_base()}{path}",
-        data=data,
-        headers=headers,
-        method="DELETE",
-    )
     try:
+        req = urllib.request.Request(
+            f"{_api_base()}{path}",
+            data=data,
+            headers=headers,
+            method="DELETE",
+        )
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read())
     except Exception as e:
@@ -1134,10 +1145,16 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             except BaseException:
                 os.unlink(tmp)
                 raise
-        # Resolve webhook URL
+        # Resolve webhook URL. A refusal from the base owner is returned as the tool's
+        # result: a hook URL naming the wrong port is worse than no hook URL, because the
+        # external system would POST its results into another instance.
         from urllib.parse import urlparse
 
-        parsed = urlparse(_api_base())
+        try:
+            _resolved_base = _api_base()
+        except gateway_base.GatewayBaseUnresolved as exc:
+            return f"Error: cannot build the webhook URL — {exc}"
+        parsed = urlparse(_resolved_base)
         base = f"{parsed.scheme}://{parsed.hostname}"
         if parsed.port:
             base += f":{parsed.port}"

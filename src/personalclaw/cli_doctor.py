@@ -134,6 +134,30 @@ def _doctor_credentials() -> list[str]:
     return ["credential backend: keychain requested but unavailable"]
 
 
+def _doctor_timezone() -> list[str]:
+    """Print the zone timed triggers resolve to; return an issue on a UTC fallback (#2520).
+
+    Same rule as the credentials line above: report the RESOLVED zone, not the requested one.
+    Before this, no surface answered "which zone will my 08:30 reminder fire at" — `server_tz`
+    said `UTC` on a PDT host, and an 08:30 trigger fired at 01:30 with nothing warning.
+
+    The fallback is a ⚠️  that names the consequence in hours, not an informational line: a user
+    who reads "timezone source: utc-fallback" has no reason to act, and one who reads "timed
+    triggers will fire 7 hours off your local time" does.
+    """
+    from personalclaw.timezones import zone_report
+
+    facts = zone_report()
+    print(
+        f"  timezone:    🕐 {facts['resolved']} (from {facts['source']}, "
+        f"UTC{facts['utc_offset_hours']:+g})"
+    )
+    if not facts["warning"]:
+        return []
+    print(f"               ⚠️  {facts['warning']}")
+    return [f"timezone: unresolved — schedules fall back to {facts['resolved']}"]
+
+
 def _doctor() -> None:
     """Verify PersonalClaw setup — check dependencies, config, credentials, connectivity."""
 
@@ -251,6 +275,7 @@ def _doctor() -> None:
         print("  chat model:  (unresolved)")
     print(f"  approval:    {cfg.agent.approval_mode}")
 
+    issues.extend(_doctor_timezone())
     issues.extend(_doctor_credentials())
 
     _host: str = ""

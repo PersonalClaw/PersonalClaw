@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import personalclaw.mcp_shared as mcp_shared
+from personalclaw import gateway_base
 
 
 @pytest.fixture(autouse=True)
@@ -71,12 +72,14 @@ def _make_http_error(code: int) -> urllib.error.HTTPError:
 
 @pytest.fixture
 def patch_session_setup(monkeypatch, tmp_path):
-    """Patch the gateway-config plumbing so the resolver only depends on
-    what the test wants to exercise."""
-    cfg = MagicMock()
-    cfg.dashboard.url = "http://localhost:7777/"
-    monkeypatch.setattr(mcp_shared.AppConfig, "load", classmethod(lambda cls: cfg))
-    monkeypatch.setattr(mcp_shared, "parse_dashboard_url", lambda url: ("localhost", 7777))
+    """Give the resolver a gateway to find, so the test only exercises the cache.
+
+    The API base now comes from ``gateway_base``, the one owner of "where is this
+    instance's gateway" (#2539) — so the base is established the way a real child gets it,
+    by the port the gateway published, rather than by patching a config loader and a URL
+    parser that this module no longer calls.
+    """
+    monkeypatch.setenv(gateway_base.PORT_ENV, "7777")
     # Provide a writeable config_dir() with a .local_secret.
     monkeypatch.setattr(mcp_shared, "config_dir", lambda: tmp_path)
     (tmp_path / ".local_secret").write_text("test-secret")

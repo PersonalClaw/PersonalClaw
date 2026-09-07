@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 import personalclaw.schedule_script as ss
+from personalclaw import gateway_base
 from personalclaw.action_providers.base import ActionContext
 from personalclaw.action_providers.bash_provider import BashActionProvider
 from personalclaw.hooks import HOOK_EVENT_USER_PROMPT_SUBMIT, ScriptHook, run_script_hook
@@ -48,6 +49,19 @@ _SECRET_VALUE = "planted-secret-value-9f3a"
 # load a spawn that takes 0.3s alone can take tens of seconds of wall time from CPU
 # contention. Same headroom the sibling schedule-script suite uses.
 _TIMEOUT = 90
+
+
+@pytest.fixture(autouse=True)
+def _a_gateway_to_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declare a gateway for the cron launcher to address.
+
+    ``run_script_sandboxed`` resolves the launcher's port from ``gateway_base`` at CALL time
+    and REFUSES rather than assuming the default port when it cannot (#2539) — the previous
+    ``config.loader.DASHBOARD_PORT`` was an import-time constant that happily named a port
+    another instance was listening on. These tests exercise the sandbox, the resource ceiling
+    and the child environment, not the port, so they state one and move on.
+    """
+    monkeypatch.setenv(gateway_base.PORT_ENV, "7777")
 
 
 @pytest.fixture(autouse=True)

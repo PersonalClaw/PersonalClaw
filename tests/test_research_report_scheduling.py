@@ -216,15 +216,18 @@ def test_an_unusable_cadence_yields_no_row_rather_than_a_guess(home, sched):
 def test_a_report_with_no_explicit_tz_still_carries_the_host_zone(home, monkeypatch):
     """The drift that had no test until a falsification leg found nothing to run.
 
-    `ReportDefinition.tz` documents `"" == host local`, and `_report_tz` honours that. An
-    ABSENT `spec["timezone"]` means something ELSE on the trigger side: `arm._tz` falls back
-    to UTC. So on a non-UTC host the row would arm for the UTC hour while `is_due` waited for
-    the local one — the fire arrives, the pre-flight skips it as not-due, and the report runs
-    late or not that day. Safe rather than wrong, which is why it would have gone unnoticed.
-    """
-    import personalclaw.schedule as sched_mod
+    `ReportDefinition.tz` documents `""` as "resolved", and `_report_tz` honours that. An
+    ABSENT `spec["timezone"]` used to mean something ELSE on the trigger side —
+    `arm._trigger_tz` fell back to UTC — so on a non-UTC host the row would arm for the UTC
+    hour while `is_due` waited for the local one: the fire arrives, the pre-flight skips it as
+    not-due, and the report runs late or not that day. Safe rather than wrong, which is why it
+    would have gone unnoticed.
 
-    monkeypatch.setattr(sched_mod, "get_local_tz", lambda: ("Europe/Berlin", None))
+    Driven through the REAL resolution now (#2520) rather than a `get_local_tz` stub. The stub
+    was hiding the actual bug: `get_local_tz`'s own fallback was UTC, so `_effective_tz`
+    resolved to `"UTC"` on any stock install and this test could never have seen it.
+    """
+    monkeypatch.setenv("TZ", "Europe/Berlin")
     defn = _defn()
     defn.tz = ""
     spec = rs.clock_spec(defn)
@@ -236,9 +239,7 @@ def test_a_report_with_no_explicit_tz_still_carries_the_host_zone(home, monkeypa
 
 def test_an_explicit_tz_wins_over_the_host_zone(home, monkeypatch):
     """Vacuity for the fallback: it must not overwrite a zone the user chose."""
-    import personalclaw.schedule as sched_mod
-
-    monkeypatch.setattr(sched_mod, "get_local_tz", lambda: ("Europe/Berlin", None))
+    monkeypatch.setenv("TZ", "Europe/Berlin")
     defn = _defn(tz="America/New_York")
     assert rs.clock_spec(defn)["timezone"] == "America/New_York"
 

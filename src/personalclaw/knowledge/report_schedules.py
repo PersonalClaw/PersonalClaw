@@ -77,26 +77,32 @@ def _effective_tz(defn: ReportDefinition) -> str:
     """The zone this report's cron is evaluated in — RESOLVED, never left blank.
 
     🔴 The drift this closes, found by a test that expected a `timezone` key and got none.
-    `ReportDefinition.tz` documents `"" == host local (get_local_tz)`, and `_report_tz` honours
-    that. But an ABSENT `spec["timezone"]` means something different on the trigger side:
-    `arm._tz` falls back to **UTC**. So a report with no explicit zone on a non-UTC host would
-    have its trigger armed for the UTC hour while `is_due` waited for the local one — the fire
-    would arrive and be skipped as not-due, and the report would run late or not that day.
-    The pre-flight makes that safe rather than wrong, which is exactly why it would have gone
-    unnoticed.
+    `ReportDefinition.tz` documents `""` as "resolved", and `_report_tz` honours that. But an
+    ABSENT `spec["timezone"]` used to mean something different on the trigger side —
+    `arm._trigger_tz` fell back to **UTC** — so a report with no explicit zone on a non-UTC
+    host would have its trigger armed for the UTC hour while `is_due` waited for the local
+    one: the fire would arrive and be skipped as not-due, and the report would run late or not
+    that day. The pre-flight makes that safe rather than wrong, which is exactly why it would
+    have gone unnoticed.
 
-    Resolved through `get_local_tz()[0]` — the same source `_report_tz` falls back to — so the
-    two sides cannot disagree about what "host local" means.
+    🔴 AND IT DID NOT ACTUALLY COMPENSATE, measured (#2520). This function exists to paper
+    over `arm`'s UTC default, and it resolved through `get_local_tz()[0]` — which itself
+    answered `'UTC'` whenever `config.timezone` was blank, which is the stock install. So on
+    the very hosts the workaround was written for, it wrote `"UTC"` into the spec and the
+    report still ran at the wrong hour. That is the cost the issue names: a hand-rolled copy of
+    a resolution nobody owned, which looked like a fix and was not one.
+
+    Now `personalclaw.timezones.resolve_zone_name` — the SAME function `_report_tz` and
+    `arm._trigger_tz` call, so the two sides cannot disagree about what "resolved" means. An
+    unusable `defn.tz` still writes no key rather than raising: a schedule must stay writable
+    while its zone is being corrected, and `arm.semantic_spec_issues` names the bad zone.
     """
-    explicit = str(getattr(defn, "tz", "") or "").strip()
-    if explicit:
-        return explicit
-    try:
-        from personalclaw.schedule import get_local_tz
+    from personalclaw.timezones import UnknownTimeZone, resolve_zone_name
 
-        return get_local_tz()[0]
-    except Exception:  # noqa: BLE001 — a config read must not stop a schedule being written
-        logger.debug("report %s: local timezone unresolved; leaving UTC", getattr(defn, "id", ""))
+    try:
+        return resolve_zone_name(str(getattr(defn, "tz", "") or "").strip())[0]
+    except UnknownTimeZone as exc:
+        logger.warning("report %s: %s", getattr(defn, "id", ""), exc)
         return ""
 
 

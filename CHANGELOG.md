@@ -18,9 +18,14 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 - **`run_chat` is no longer exported from `personalclaw.sdk.channel`.**
 - **Workflow runs gain a sparse `policy_overrides` overlay: the five per-instance supervisor knobs (`attended`, `autopilot`, `max_cycles`, `idle_secs`, `success_criteria`) can now be persisted per run, composed on top of the template/kind defaults at resolution time.**
+- **The install one-liner now verifies something, and stops claiming to verify what it does not ([#2582](https://github.com/PersonalClaw/PersonalClaw/issues/2582)).**
 - **The `runs` table no longer declares a `task_list_id` column and `WorkflowRun` no longer carries the field.**
+- **⚠️ TIMED TRIGGERS WITH NO EXPLICIT TIMEZONE NOW FIRE AT THEIR LOCAL WALL-CLOCK TIME, NOT AT UTC.**
 
 ### Fixed
+- The **Tools page no longer badges an installed community bundle `built-in`** — the same word core's own first-party providers get.
+- A successful local-source add now **shows up in the Manage Sources panel**.
+- **`--port` now reaches the tool subprocesses too.**
 - **Set default**
 - A lifecycle trigger's **Test** button is now a rehearsal, not a fire: it no longer writes into the trigger's real `run_count`/`last run`/`last status` (“Ran 2× · ok” could previously describe a trigger that had never actually fired — both runs were Test clicks), and the action's payload is tagged the way the event-trigger test path already tags it, so a provider can tell a rehearsal from the real thing.
 - The **YOLO mode** toggle (Settings → Agent defaults) now applies immediately instead of at the next gateway start: the config field's only reader was the startup seed, so flipping it changed the file while the running instance kept its previous posture — worst in the OFF direction, where revoking the approval bypass silently did nothing and the UI read `false` while approvals stayed bypassed until restart.

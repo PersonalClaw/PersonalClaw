@@ -22,7 +22,9 @@
 # What it does (idempotent — re-running upgrades):
 #   1. `--container` → print the Docker Compose snippet and exit (no install).
 #   2. Ensure `uv` is present (installs via the official installer if missing).
-#   3. `uv tool install --upgrade personalclaw` (uv provides its own Python 3.12).
+#   3. `uv tool install --upgrade personalclaw>=$PC_MIN_VERSION` (uv brings its own Python
+#      3.12). The floor bounds a downgrade attack without giving up --upgrade — see
+#      PC_MIN_VERSION below for why it lags the current release by one.
 #   4. Print next steps and offer to run `personalclaw setup`.
 #
 # POSIX sh only (no bashisms) so it runs under dash/ash/sh on Linux + macOS.
@@ -30,6 +32,27 @@
 set -eu
 
 PC_PACKAGE="personalclaw"
+# Downgrade floor for the PyPI install below, and it is deliberately the PREVIOUS release
+# rather than the version this tree builds.
+#
+# WHAT IT BUYS. `--upgrade` already resolves to the newest release, so on an honest index the
+# floor forbids nothing (measured 2026-09-07, uv 0.12.5: `>=0.1.2` + `--upgrade` installs
+# 0.1.3). Its whole job is the dishonest case: a rolled-back or yanked-and-replaced index
+# that offers only old code. Unfloored, that installs silently — measured `+ personalclaw==
+# 0.1.0`, exit 0. Floored, uv exits 1 with "unsatisfiable". Loud beats quiet.
+#
+# WHY NOT THE CURRENT VERSION. A floor equal to pyproject's version is unsatisfiable for as
+# long as it takes that release to reach PyPI and its mirrors — measured, `>=0.1.4` exits 1
+# today with "only personalclaw<=0.1.3 is available". That window would break every install
+# AND full.yml's `install-smoke`, which runs this file for real on every push to main. One
+# release behind has always shipped already, so the floor can never demand a version that
+# does not exist yet. The cost is one unguarded step: a rollback to the immediately-previous
+# release still installs, which is the attacker's weakest move anyway.
+#
+# WHY IT CANNOT ROT. A hand-typed version in a shell script is the defect in #2554 (two
+# copies drifted three weeks). tests/test_website_installer.py pins this constant to
+# CHANGELOG.md's second-newest release heading, so it reds the release after it goes stale.
+PC_MIN_VERSION="0.1.2"
 UV_INSTALLER_URL="https://astral.sh/uv/install.sh"
 
 # ── tiny output helpers ──────────────────────────────────────────────────────
@@ -85,8 +108,17 @@ ensure_uv() {
         return 0
     fi
     step "Installing uv (Astral's Python package/tool manager)…"
-    # The official installer is served over TLS from astral.sh and verifies its
-    # own downloads (checksum-pinned per release). Prefer curl, fall back to wget.
+    # The trust chain for THIS fetch is TLS to astral.sh plus Astral's release hygiene, and
+    # nothing else. We do not verify these bytes: no digest, no version pin, and astral.sh
+    # redirects — so a compromised host, a mis-issued certificate or a hostile redirect
+    # would execute here. uv's installer does checksum-pin the uv BINARIES it goes on to
+    # fetch, but that is a different download and says nothing about the script we pipe into
+    # sh. (An earlier version of this comment claimed otherwise — see #2582.) This is the
+    # same posture as rustup, nvm and uv's own documented bootstrap: chosen, not overlooked.
+    # A user who wants a verified fetch can check THIS file's digest against the copy committed
+    # in the GitHub repo first; that path covers our bytes, not Astral's, and is written up
+    # under "Verify the one-liner" in docs/guides/getting-started.md §1.
+    # Prefer curl, fall back to wget.
     if have curl; then
         curl -fsSL "$UV_INSTALLER_URL" | sh
     elif have wget; then
@@ -110,8 +142,10 @@ ensure_uv() {
 install_personalclaw() {
     step "Installing $PC_PACKAGE with uv (this brings its own Python 3.12)…"
     # --upgrade makes re-runs idempotent: a fresh install the first time, an
-    # in-place upgrade to the latest release afterwards.
-    uv tool install --upgrade "$PC_PACKAGE"
+    # in-place upgrade to the latest release afterwards. The >= floor does not narrow that —
+    # --upgrade still resolves to the newest release; it only refuses an index that offers
+    # nothing at or above PC_MIN_VERSION. See PC_MIN_VERSION at the top of this file.
+    uv tool install --upgrade "$PC_PACKAGE>=$PC_MIN_VERSION"
     have personalclaw || {
         warn "personalclaw installed but not yet on PATH."
         warn "Run 'uv tool update-shell' (or open a new shell), then 'personalclaw setup'."

@@ -3132,34 +3132,44 @@ class TestShutdownReapsAppBackends:
         sup.stop_all.assert_called_once()
 
 
-class TestRuntimePortIsExportedToChildren:
-    """The bound port must reach child processes, not just the READY line.
+class TestRuntimeBaseIsPublishedForChildren:
+    """The socket we ACTUALLY bound must reach child processes, not just the READY line.
 
-    ``mcp_core._resolve_api_base()`` derives the gateway's API base from
-    ``dashboard.url`` and falls back to 10000; neither ``--port`` nor the ``--port auto``
-    that ``--test-mode`` uses writes that config. So a gateway on any other port spawned
-    a ``personalclaw-core`` MCP server pointed at a dead port, and its HTTP-bridged tools
-    returned a raw ``urlopen`` error as their result text. Driven on a kiro ACP session
-    (``AAP-3``/``K58``): ``subagent_run`` answered
-    ``<urlopen error [Errno 61] Connection refused>`` while the in-process tools in the
-    same turn all worked.
+    Each child used to resolve the gateway's API base for itself — from ``dashboard.url``
+    or from the import-time ``DASHBOARD_PORT`` — and both fall back to 10000. Neither
+    ``--port`` nor the ``--port auto`` that ``--test-mode`` uses writes that config, so a
+    gateway on another port addressed its children at 10000, which on a multi-instance host
+    is a DIFFERENT instance rather than a dead socket (#2539). Two measured symptoms of the
+    one root: ``subagent_run`` answering ``<urlopen error [Errno 61] Connection refused>``
+    on a kiro ACP session while the in-process tools beside it worked (``AAP-3``/``K58``),
+    and a ``run-script`` action's ``ctx.notify()`` persisting into a second instance's
+    notification store.
     """
 
-    def test_a_bound_port_is_exported(self, monkeypatch):
+    def test_a_bound_port_is_published(self, monkeypatch):
         monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
         orch = _make_orchestrator()
         orch._dashboard_port = 10051
-        orch._export_runtime_port()
+        orch._publish_runtime_base()
         import os
 
-        assert os.environ["PERSONALCLAW_PORT"] == "10051"
+        from personalclaw import gateway_base
 
-    def test_an_unbound_port_exports_nothing(self, monkeypatch):
-        """Port 0 means "not bound yet" — publishing it would point children at nothing."""
+        assert os.environ["PERSONALCLAW_PORT"] == "10051"
+        assert gateway_base.live_port() == 10051
+
+    def test_an_unbound_port_is_a_loud_failure(self, monkeypatch):
+        """Port 0 means "bound, but cannot say to what" — and that must fail HERE.
+
+        This used to be a silent no-op (``if self._dashboard_port:``), which deferred the
+        same failure to the first tool call — by which point the request had already been
+        delivered to whatever occupied the default port.
+        """
         monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
         orch = _make_orchestrator()
         orch._dashboard_port = 0
-        orch._export_runtime_port()
+        with pytest.raises(ValueError):
+            orch._publish_runtime_base()
         import os
 
         assert "PERSONALCLAW_PORT" not in os.environ

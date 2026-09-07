@@ -27,7 +27,7 @@ import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Segmented } from '../../ui/Segmented'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useIsMobile } from '../../app/useIsMobile'
-import { useQuery, invalidateKeys } from '../../lib/data'
+import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
 import {
   api, type AppSummary, type AppDepClassification, type AppCatalogEntry,
 } from '../../lib/api'
@@ -931,11 +931,38 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
     if (r?.ok) { setPending(null); onInstalled(); reloadCatalog() }
   }
 
+  /** Repaint this panel's source lists from the WRITE'S OWN ANSWER, not from a re-read.
+   *
+   *  🔑 A SUCCESSFUL ADD LEFT THE PANEL SAYING "No local sources" (#2627's second
+   *  observation, which the committed harness already flags as `listedInPanel: false`).
+   *  The list here IS `catalog.localSources`, and `reloadCatalog()` does invalidate that
+   *  key — but `invalidateKeys` deliberately KEEPS the cached value so open panels don't
+   *  blank, so this one keeps painting the pre-write array for however long the re-read
+   *  takes. And that re-read is the most expensive request in the app: `available_catalog()`
+   *  also scans registries and shallow-clones every git source behind a 5-minute TTL. Slow,
+   *  and the panel contradicts itself; failed, and the cache holds the pre-write value
+   *  indefinitely with nothing on screen saying so.
+   *
+   *  🪤 THE AUTHORITATIVE LIST WAS ALREADY IN HAND AND BEING THROWN AWAY. Both add endpoints
+   *  return `{ ok, sources }` — the post-write list, straight from the same file the GET
+   *  would re-read. So this is not a second source of truth; it is the same one, arriving
+   *  earlier. `reloadCatalog()` still runs and still lands last, because the real catalog
+   *  read carries `localApps`/`gitApps` for the Store grid, which this cannot synthesise. */
+  function paintSources(patch: { gitSources?: string[]; localSources?: string[] }) {
+    // No catalog yet ⇒ nothing to merge onto, and inventing a partial one would strip the
+    // grid's other slices. The pending read is the only correct answer in that state.
+    if (!catalog) return
+    writeQuery('app-catalog', { ...catalog, ...patch }, true)
+  }
+
   async function addSource() {
     const u = newSource.trim()
     if (!u) return
     setBusy('add-source'); setErr(null)
-    try { await api.addAppSource(u); setNewSource(''); reloadCatalog() }
+    try {
+      const r = await api.addAppSource(u)
+      setNewSource(''); reloadCatalog(); paintSources({ gitSources: r.sources })
+    }
     catch (e) { setErr(String((e as Error).message || e)) }
     finally { setBusy(null) }
   }
@@ -944,7 +971,10 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
     const p = newLocal.trim()
     if (!p) return
     setBusy('add-local'); setErr(null)
-    try { await api.addLocalAppSource(p); setNewLocal(''); reloadCatalog() }
+    try {
+      const r = await api.addLocalAppSource(p)
+      setNewLocal(''); reloadCatalog(); paintSources({ localSources: r.sources })
+    }
     catch (e) { setErr(String((e as Error).message || e)) }
     finally { setBusy(null) }
   }

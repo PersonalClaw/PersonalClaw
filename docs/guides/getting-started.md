@@ -46,6 +46,46 @@ there is no provider app to hold one yet. Providers arrive in
 real terminal: it prompts, so piping or redirecting stdin makes it fall back to
 the printed defaults.
 
+### Verify the one-liner
+
+`curl … | sh` executes whatever the server sends, unread. If you would rather
+check the bytes before running them, the digest of the current `install.sh` is
+committed in this repository — a **different origin** from the site that serves
+the script:
+
+```bash
+curl -fsSL -o install.sh https://personalclaw.dev/install
+curl -fsSL -o install.sh.sha256 \
+  https://raw.githubusercontent.com/PersonalClaw/PersonalClaw/main/deploy/website/install.sh.sha256
+shasum -a 256 -c install.sh.sha256   # or: sha256sum -c install.sh.sha256
+sh install.sh
+```
+
+**What this proves, exactly** — stated narrowly on purpose, because a digest is
+easy to oversell:
+
+- **It does defeat** a poisoned CDN cache, a truncated or corrupted transfer, and
+  a tampered response from `personalclaw.dev`. None of those can also change the
+  copy on `raw.githubusercontent.com`.
+- **Fetching the digest from a second origin is the entire security value here.**
+  A digest served by the same host as the script would prove almost nothing: a
+  host that can hand you a modified script can hand you a matching digest. Do not
+  "simplify" the recipe to a `personalclaw.dev` digest.
+- **It does not defeat** a compromise of this GitHub repository or of a maintainer
+  account — an attacker with that access updates the script and the digest
+  together. It also covers only this file, not what the file goes on to download:
+  uv's installer from `astral.sh` is fetched over TLS and **not** verified (see the
+  comment in `deploy/website/install.sh`), and the `personalclaw` wheel comes from
+  PyPI over TLS with a version floor. The wheel does carry
+  [PEP 740](https://peps.python.org/pep-0740/) provenance, signed by GitHub for
+  `PersonalClaw/PersonalClaw` `release.yml` — but no released `uv` or `pip` checks
+  it at install time, so nothing in this path verifies it for you yet.
+- **A mismatch is not by itself proof of an attack.** The website's copy is applied
+  by hand from this repository, so the served bytes can legitimately lag it by a
+  commit. On a mismatch, diff what you downloaded against
+  `deploy/website/install.sh` on `main` before assuming the worst: a reworded
+  message is drift, an added download is not.
+
 ### Optional extras
 
 The base install is lean. Add an extra only if you need what it unlocks (most
