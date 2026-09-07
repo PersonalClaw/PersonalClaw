@@ -32,6 +32,19 @@ export interface DashboardLiveData {
   proposalsErr: unknown
   loops: Loop[]
   tasks: TaskItem[]
+  /** The three COUNTED lanes' own read failures, each distinct from a lane that is genuinely
+   *  empty. `HeroPulse` renders these three as numbers on the app's first screen, and `[]` is
+   *  what a swallowed rejection leaves behind — so without these the hero states "0 loops
+   *  running · 0 tasks ready · 0 unread" as fact when nothing was read. Same shape and the same
+   *  reason as `approvalsErr` above and `discoverErr`/`doctorErr` below; this finishes the
+   *  convergence those started, for the slices that have a consumer able to use them.
+   *
+   *  `schedule`/`status`/`system` deliberately still swallow: no consumer would read the field
+   *  yet, and an unread error field is the dead-guard shape the repo's rails already reject.
+   *  They are the next step, not an oversight. */
+  loopsErr: unknown
+  tasksErr: unknown
+  notificationsErr: unknown
   schedule: ScheduleRun[]
   /** §1.3's archive split, straight from the server (S165). `didIds` are the fires that DID
    *  something; everything else was held by a gate. Kept beside the rows rather than re-derived in
@@ -106,6 +119,11 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const [scheduleSuppressed, setScheduleSuppressed] = useState(0)
   const [status, setStatus] = useState<DashboardStatus | null>(null)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  // The counted lanes' own failures — see the type's note: `[]` is what a swallowed rejection
+  // leaves, and HeroPulse turns these three into numbers on the first screen.
+  const [loopsErr, setLoopsErr] = useState<unknown>(null)
+  const [tasksErr, setTasksErr] = useState<unknown>(null)
+  const [notificationsErr, setNotificationsErr] = useState<unknown>(null)
   const [system, setSystem] = useState<SystemInfo | null>(null)
   const [discover, setDiscover] = useState<DiscoverResponse | null>(null)
   const [discoverErr, setDiscoverErr] = useState<unknown>(null)
@@ -135,8 +153,8 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   const loadProposals = useCallback(() => {
     api.skillProposals().then((d) => { guard(setProposals)(d.proposals); guard(setProposalsErr)(null) }).catch((e) => guard(setProposalsErr)(e))
   }, [])
-  const loadLoops = useCallback(() => { api.uLoops().then(guard(setLoops)).catch(() => {}) }, [])
-  const loadTasks = useCallback(() => { api.readyTasks().then(guard(setTasks)).catch(() => {}) }, [])
+  const loadLoops = useCallback(() => { api.uLoops().then((d) => { guard(setLoops)(d); guard(setLoopsErr)(null) }).catch((e) => guard(setLoopsErr)(e)) }, [])
+  const loadTasks = useCallback(() => { api.readyTasks().then((d) => { guard(setTasks)(d); guard(setTasksErr)(null) }).catch((e) => guard(setTasksErr)(e)) }, [])
   // 🔴 Keeps the archive split, which this call discarded (S165). The backend has returned
   // `did_ids`/`suppressed` since S132 and S163 typed them — but the widget still saw only
   // `d.runs`, so a minutely trigger inside quiet hours filled all six visible rows with identical
@@ -150,7 +168,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
     }).catch(() => {})
   }, [])
   const loadStatus = useCallback(() => { api.status().then(guard(setStatus)).catch(() => {}) }, [])
-  const loadNotifications = useCallback(() => { api.notifications().then((d) => guard(setNotifications)(d.notifications ?? [])).catch(() => {}) }, [])
+  const loadNotifications = useCallback(() => { api.notifications().then((d) => { guard(setNotifications)(d.notifications ?? []); guard(setNotificationsErr)(null) }).catch((e) => guard(setNotificationsErr)(e)) }, [])
   const loadSystem = useCallback(() => { api.system().then(guard(setSystem)).catch(() => {}) }, [])
   // 🔴 `catch(() => {})` left `discover` null, and the dashboard's Discover slot renders
   // "Discover tips are off." for `!discover` — so a dead endpoint (and every millisecond before
@@ -227,6 +245,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
 
   const value: DashboardLiveData = {
     approvals, inbox, proposals, approvalsErr, inboxErr, proposalsErr,
+    loopsErr, tasksErr, notificationsErr,
     loops, tasks, schedule, scheduleDidIds, scheduleSuppressed,
     status, notifications, system,
     discover, discoverErr, doctor, doctorErr,
