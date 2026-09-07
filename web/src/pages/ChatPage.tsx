@@ -1657,15 +1657,39 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     //
     // The server decides and says which it did: `{steered:true}` when the running
     // turn has a live drain path, `{queued:true}` when it does not (an ACP-backed
-    // turn, or a turn that just ended). Either way nothing is dropped — a queued
-    // message still echoes `queue_push`, so the strip above the composer shows it
-    // with its cancel affordance. We render the outcome rather than assuming one.
+    // turn, or a turn that just ended). Either of those two OUTCOMES drops nothing —
+    // a queued message still echoes `queue_push`, so the strip above the composer
+    // shows it with its cancel affordance. We render the outcome rather than
+    // assuming one.
+    //
+    // 🔴 BUT THERE IS A THIRD OUTCOME, AND IT USED TO DESTROY THE USER'S TEXT. The
+    // sentence above says "either way nothing is dropped", and that was true of the
+    // two SUCCESS shapes and false on REJECTION — which the `.catch(() => {})` hid.
+    // `setInput('')` ran BEFORE the request, so a failed steer (gateway restart, a
+    // 500, a dropped connection) emptied the composer, never pushed a `steered`
+    // chip, and showed no error. The text was then nowhere: not on screen, not in
+    // `queued`, not on the server. Nothing to copy and nothing to retry, while the
+    // model kept streaming the answer the user was trying to correct.
+    //
+    // 🪤 THE DRAFT IS CLEARED ON SUCCESS, AND ONLY IF THE USER HAS NOT TYPED SINCE.
+    // Moving `setInput('')` into the success path unconditionally would swap one
+    // data-loss bug for another: the request is in flight for a round trip, and a
+    // user who starts their next message during it would have it wiped. The
+    // functional setter compares against exactly what was sent, so an untouched
+    // composer clears and a re-typed one is left alone.
+    //
+    // `reportActionFailure` is this file's own convention for a user-initiated write
+    // (11 other uses), and it is what `DesignCockpitPage.sendNudge` does for the
+    // same shape — a rule `loops/loopActionReported.test.ts` states in prose as
+    // "the nudge KEEPS its text on failure".
     if (isStreaming) {
-      setInput('')
       ensureSession()
         .then((s) => api.sendChat(t, s, undefined, 'steer'))
-        .then((r) => { if (r?.steered) setSteered((prev) => [...prev, t]) })
-        .catch(() => {})
+        .then((r) => {
+          setInput((cur) => (cur === t ? '' : cur))
+          if (r?.steered) setSteered((prev) => [...prev, t])
+        })
+        .catch(reportActionFailure('steer this turn'))
       return
     }
     // The bubble keeps the prompt as typed (paste markers shown as chips); the
