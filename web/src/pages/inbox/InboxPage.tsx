@@ -408,7 +408,7 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           // different …"; this is the twelfth.
           <EmptyState icon={InboxIcon}
             title={narrowed ? 'Nothing here' : 'Inbox zero'}
-            hint={narrowed
+            hint={(narrowed || (items && items.length > 0))
               ? (kind ? `No ${kindMeta(kind).label.toLowerCase()} matches the current search or filter.` : 'Try a different search or filter.')
               : disabled
                 ? 'Inbox collects messages, questions, and notifications from your agents and connected sources (filesystem and Slack; email coming). Enable a source to begin.'
