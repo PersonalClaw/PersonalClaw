@@ -1561,14 +1561,19 @@ def ledger_rails(run_id: str) -> dict[str, Any]:
         return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
 
     events = journal_mod.ledger(run_id)
-    findings = introspection.findings_rail(events)
-    verdicts = introspection.verdict_rail(events)
+    # Redact BEFORE aggregating, not after. `rail_totals` lifts a verdict's own word into a
+    # `verdicts_by_word` KEY, so totals computed from raw rows would carry any free text that word
+    # held straight past the row-level redaction — measured by mutation, not reasoned about. This
+    # order also strengthens the totals-agree-with-rows property: both now derive from the
+    # identical redacted list.
+    findings = [journal_mod.redact(row) for row in introspection.findings_rail(events)]
+    verdicts = [journal_mod.redact(row) for row in introspection.verdict_rail(events)]
     totals = introspection.rail_totals(findings, verdicts)
     return _ok(
         run_id=run_id,
         workflow=run.workflow_name,
-        findings=[journal_mod.redact(row) for row in findings],
-        verdicts=[journal_mod.redact(row) for row in verdicts],
+        findings=findings,
+        verdicts=verdicts,
         totals=totals.to_dict(),
         # Which rail kinds have a producer at all, and how many events each holds. `events: null`
         # names a kind nothing on this side writes — an absent cell, not a zero.
