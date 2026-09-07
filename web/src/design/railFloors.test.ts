@@ -55,7 +55,35 @@ const TIGHTENED: [string, RegExp, number][] = [
   // real change, so lower it in that PR". Measured on both sides in that PR: 32 before (the floor had
   // drifted BELOW the real count again), 30 after. The scan still finds 30, so it did not stop guarding;
   // the population is genuinely smaller. A floor moved for any other reason is the rot this rail is for.
-  ['pages/settings/configReadNotFabricated.test.ts', /toBeGreaterThanOrEqual\((\d+)\)/, 30],
+  // 🔻 30 → 33, because THIS RAIL WAS RECORDING A NUMBER BELOW THE FLOOR IT POLICES. The subject's floor
+  // was 32 while this table said 30, so a 32 → 30 lowering passed the very meta-rail that exists to stop
+  // a floor being lowered. The subject's real measured population was **34** — the fourth drift of that
+  // one floor (its history logs 3 → 31 → 30 → 32) — and this table sitting two steps further back is how
+  // those drifts stayed invisible. This PR de-swallows one, taking the measurement to 33; both agree now.
+  //
+  // 🪤 UPDATED IN THE SAME COMMIT AS THE SUBJECT, ON PURPOSE. The assertion below is
+  // `subject_floor >= recorded`, so the two are coupled: correcting this table on its own branch would
+  // RED main until the subject's PR landed (32 >= 33 fails), and correcting the subject alone leaves the
+  // hole open. An ordering hazard, not a formatting preference.
+  //
+  // 🪤 AND THE MATCHER IS NOW SPECIFIC, LIKE EVERY SIBLING BELOW. It was a bare
+  // `/toBeGreaterThanOrEqual\((\d+)\)/`, which takes the FIRST match in the subject file — and this rail
+  // reads raw text with no comment stripping. So any prose above the real assertion that spelled
+  // `toBeGreaterThanOrEqual(` plus digits would silently become the number being policed. The subject's
+  // new comment discusses that matcher by name and escaped only because it omits the parenthesised
+  // digits: luck, not design. Anchoring on the assertion's own message removes the coincidence.
+  //
+  // One hazard left, recorded not fixed because it reaches every entry: the table header calls the third
+  // element "the measured population it must SIT AT", while the assertion is `toBeGreaterThanOrEqual` —
+  // "at least", not "at". For a type (a) measured population the taxonomy above prescribes sitting AT the
+  // measurement, so the header claims a stronger property than the code checks. Some entries are
+  // genuinely type (b) anti-vacuity floors where `>=` is correct, so the real fix is splitting the two
+  // kinds rather than a blanket `toBe`.
+  [
+    'pages/settings/configReadNotFabricated.test.ts',
+    /the decorating fallbacks in these five files, measured'\)\s*\.toBeGreaterThanOrEqual\((\d+)\)/,
+    33,
+  ],
   ['ui/requiredFieldMarked.test.tsx', /population must still be visible to this rail'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 20],
   ['design/controlNameFloor.test.ts', /expected the inline rename\/edit inputs'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 18],
   ['ui/escapeDismissContract.test.tsx', /scrim-bearing overlays'\)\.toBeGreaterThanOrEqual\((\d+)\)/, 10],

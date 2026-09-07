@@ -49,12 +49,36 @@ const widgets = readFileSync(join(SRC, 'pages/settings/settingsWidgets.tsx'), 'u
 // prose as code has been wrong five times in this session already.
 const code = widgets.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-/** The four tiles whose reader can actually fail: [title, the error alias it must read]. */
+// ── FIFTH MEMBER, and two corrections to the census above ─────────────────────────────────────
+//
+// 🔺 `Agent defaults` joins the list. Its hook shared `settings:agent-defaults` with
+// `AgentDefaultsPanel` and carried a DIVERGENT `.catch(() => ({}))` on the config read, so the panel's
+// own honesty fix was unreachable on the hub→panel journey and the tile fabricated two controls:
+// approval mode read "Ask each time" (stored default is `auto`) and the YOLO auto-approve-everything
+// switch read OFF. De-swallowed, so the tile can now enter `undefined` and needs the line.
+//
+// 🪤 IT IS DELIBERATELY NOT ADDED to the swallower-exclusion assertion at the bottom, and the reason is
+// a flaw in that census's model rather than an exception to it. `useAgentDefaults` is the file's first
+// MIXED hook: its governing read (the config) has no fallback, while its decorating read (the default
+// agent's NAME, which renders as '—') keeps `.catch(() => '')` exactly as the panel spells it. The
+// census asks only "does this hook contain any `.catch(() => `", so it counts the hook as a swallower
+// both BEFORE and AFTER the fix — measured, 23 either way. The dichotomy "a hook either swallows or it
+// does not" cannot express a hook that swallows only what is safe to swallow.
+//
+// 🪤 AND THE HEADER CENSUS ABOVE HAS DRIFTED HARD. It says "26 cached hooks, 22 still substitute, only
+// 4 can [fail]". Replaying its own selection logic against `origin/main`: **36 hooks, 23 substituting,
+// 13 that can fail** — so the "only 4" figure is stale by nine. That does NOT mean nine live defects:
+// the predicate is crude (a hook with no `.catch` may still have a read that cannot reject, or may not
+// back a tile at all). It does mean the number this rail reasons from is no longer the number, and the
+// `>= 4` floors below cannot see a tile that starts shimmering forever. Re-measuring which of the 13
+// genuinely back a failable tile is its own pass, not this one.
+/** The tiles whose reader can actually fail: [title, the error alias it must read]. */
 const CAN_FAIL: [string, string][] = [
   ['Inbox', 'inboxErr'],
   ['Apps', 'appsErr'],
   ['Archive', 'archErr'],
   ['Tool output', 'rulesErr'],
+  ['Agent defaults', 'agentErr'],
 ]
 
 describe('a hub tile whose data can fail says so instead of shimmering', () => {
@@ -114,8 +138,10 @@ describe('a hub tile whose data can fail says so instead of shimmering', () => {
     // A tile-scale error CHROME would be an owner call (the dashboard's slot-level idiom already is).
     // This is the quiet line the Inbox tile already shipped, three more times.
     const lines = [...code.matchAll(/Couldn&rsquo;t load[^<]*<\/div>/g)]
-    expect(lines.length, 'four tiles, four lines').toBeGreaterThanOrEqual(4)
+    expect(lines.length, 'five tiles, five lines').toBeGreaterThanOrEqual(CAN_FAIL.length)
     const styled = [...code.matchAll(/data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load/g)]
-    expect(styled.length, 'every one of them uses the same muted type as the original').toBeGreaterThanOrEqual(4)
+    // Derived from CAN_FAIL rather than a literal, so adding a sixth member cannot leave the floor
+    // behind — the drift recorded above happened because two numbers had to be edited together.
+    expect(styled.length, 'every one of them uses the same muted type as the original').toBeGreaterThanOrEqual(CAN_FAIL.length)
   })
 })
