@@ -632,7 +632,10 @@ async def api_app_disable(request: web.Request) -> web.Response:
 
 
 async def api_app_uninstall(request: web.Request) -> web.Response:
-    """DELETE /api/apps/{name} — the three-rung removal ladder, selected by query:
+    """remove an app: no flag deactivates, ``?remove=1`` keeps ``data/``, ``?force=1`` wipes.
+
+    The first line is the operator-facing summary in ``reference/routes.md`` (the
+    generator takes it verbatim), so it names all three rungs on its own.
 
     * (no flag)     — uninstall = DEACTIVATE. Nothing leaves disk.
     * ``?remove=1`` — remove the app's files, KEEP its ``data/`` (issue #2541).
@@ -667,9 +670,10 @@ async def api_app_uninstall(request: web.Request) -> web.Response:
 
 
 async def api_app_uninstall_preview(request: web.Request) -> web.Response:
-    """GET /api/apps/{name}/uninstall-preview — classify shared deps (A3), plus what
-    the app's ``data/`` holds so the removal-confirm dialogs can name the trade the
-    user is about to make instead of describing it in the abstract."""
+    """classify shared deps (A3) and report what the app's ``data/`` holds.
+
+    The ``data`` block lets the removal-confirm dialogs name the trade the user is about
+    to make instead of describing it in the abstract."""
     from personalclaw.apps import app_manager
 
     name = request.match_info["name"]
