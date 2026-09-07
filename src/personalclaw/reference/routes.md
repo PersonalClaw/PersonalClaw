@@ -792,6 +792,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/workflows/runs/{run_id}/cancel` — _(no summary)_
 - `POST /api/workflows/runs/{run_id}/confirm` — Resolve a pending confirmation by verb — the seam the DagView's Approve/Deny binds to.
 - `GET /api/workflows/runs/{run_id}/continuations` — The pending resume tokens for a run — what a needs-input inbox renders.
+- `GET /api/workflows/runs/{run_id}/deliverable` — GET the run's document deliverable + working log (PP-16 unit 1).
 - `GET /api/workflows/runs/{run_id}/drop` — GET the run's file-drop policy + what has been dropped (WORK-CONTAINERS §2.5).
 - `POST /api/workflows/runs/{run_id}/drop` — POST multipart to the run's approval-gated file drop (WORK-CONTAINERS §2.5, R17).
 - `POST /api/workflows/runs/{run_id}/edit` — _(no summary)_

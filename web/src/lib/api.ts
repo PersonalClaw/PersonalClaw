@@ -1672,6 +1672,63 @@ export interface WorkflowLedgerRails {
   }
   coverage: WorkflowRailCoverage[]
 }
+// Why a document slot is empty (PP-16 unit 1). Five DIFFERENT facts that all look like "no
+// document" if you render a blank panel, and only `not_written` is a worker that has not got there
+// yet — so the FE prints one sentence per member rather than one for all five.
+export type WorkflowDeliverableAbsence =
+  // No loop kind resolves to this run's template, so nothing declares its document name. UNKNOWN,
+  // not none.
+  | 'template_unknown'
+  // The kind declares none: a verifiable goal, a code project and a general project produce a
+  // passing check or a diff, and that IS the output.
+  | 'kind_has_no_document'
+  // The name is known and a readable root exists; the file is not there yet.
+  | 'not_written'
+  // The run has no directory to read at all (never launched, or retention swept it).
+  | 'no_root'
+  // It is there and the read failed. Reported, never blanked — a permission problem rendered as
+  // "not written yet" is one a user waits out forever.
+  | 'unreadable'
+// One document slot. `content` is `null` — never `''` — when absent: an empty string is a document
+// someone wrote nothing into, which is a real observation, and collapsing the two is exactly the
+// absent-is-not-zero mistake in text form.
+export interface WorkflowDeliverableDoc {
+  name: string | null
+  present: boolean
+  content: string | null
+  // The real size on disk, even when `content` was truncated at the serve ceiling.
+  bytes: number | null
+  modified_at: number | null
+  truncated: boolean
+  // How many blob-shaped runs (>512 non-space characters) were replaced before redaction. The
+  // redactor is quadratic in unbroken-token length — one 512 KB base64 blob measured 111s — so a
+  // blob is clipped rather than served, and the clip is COUNTED rather than silent.
+  clipped_blobs: number
+  found_in: 'workspace' | 'run_dir' | null
+  absent_reason: WorkflowDeliverableAbsence | null
+}
+export interface WorkflowRunDeliverable {
+  run_id: string
+  workflow: string
+  // The kind's declared document — REPORT.md / MONITOR_LOG.md / DESIGN.md / RESEARCH.md.
+  report: WorkflowDeliverableDoc
+  // The worker's cumulative working log (FINDINGS.md), the same slot `GET /api/loops/{id}/report`
+  // serves as `log`.
+  log: WorkflowDeliverableDoc
+  // How the filename was decided. `declared_by` names the loop kind and variant whose strategy
+  // produced it, so a reader can tell a DERIVED name from a hard-coded one.
+  derivation: {
+    name: string | null
+    reason: WorkflowDeliverableAbsence | null
+    declared_by: { kind: string; variant: string; name: string } | null
+  }
+  // Where the backend looked, in order — workspace first, then the run dir.
+  roots: Array<{ kind: 'workspace' | 'run_dir'; path: string; exists: boolean }>
+  // Whether this run's OWN spec ever names the document. `false` reframes an absence from "not yet"
+  // to "never asked for": measured, no bundled template names its kind's document today. `null`
+  // when there was no name to check for.
+  instructed: boolean | null
+}
 // One dashboard pin (WORK-CONTAINERS §6.5d). A REFERENCE, never a copy: no name and no content,
 // because a denormalized title goes stale on the next rename and a card that is confidently wrong
 // is worse than one that is absent.
@@ -7053,6 +7110,17 @@ export const api = {
    *  side that has no breaker. */
   workflowRunLedgerRails: (id: string) =>
     get<WorkflowLedgerRails>(`/api/workflows/runs/${encodeURIComponent(id)}/ledger-rails`),
+  /** The run's document deliverable + working log (PP-16 unit 1) — the run-side `uLoopReport`.
+   *
+   *  The loop side answers the same question at `GET /api/loops/{id}/report`, and the loop cockpit
+   *  renders it as its Deliverable tab. The filename is DERIVED per kind on the backend, so nothing
+   *  here decides that a goal run produces `REPORT.md`.
+   *
+   *  Absence arrives NAMED (`absent_reason`), and rendering all five as one blank panel is the bug
+   *  this shape exists to prevent: "this kind produces a passing check, not a document" is a
+   *  finished answer, and "the worker has not written it yet" is a wait. */
+  workflowRunDeliverable: (id: string) =>
+    get<WorkflowRunDeliverable>(`/api/workflows/runs/${encodeURIComponent(id)}/deliverable`),
   workflowRunDropStatus: (id: string) =>
     get<WorkflowDropStatus>(`/api/workflows/runs/${encodeURIComponent(id)}/drop`),
   /** Drop files into a run (WORK-CONTAINERS §2.5). `confirm` ANSWERS the approval gate — the first

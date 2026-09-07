@@ -882,6 +882,31 @@ async def api_run_ledger_rails(request: web.Request) -> web.Response:
     return _reply(service.ledger_rails(request.match_info.get("run_id", "")))
 
 
+async def api_run_deliverable(request: web.Request) -> web.Response:
+    """GET the run's document deliverable + working log (PP-16 unit 1).
+
+    The run-side counterpart of `GET /api/loops/{id}/report`, which the loop cockpit reads for its
+    Deliverable tab. Two document slots, the kind-declared filename derived from the loop alias
+    table rather than restated here, and every absence NAMED — "this kind produces a check, not a
+    document" and "the worker has not written it yet" are different facts, and a blank panel is
+    neither.
+
+    Its own route rather than a field on `api_run_status`: the status payload is polled by every
+    open run tab and by the stream's snapshot, and a document read (up to two stats plus a file read
+    of a document that grows all run) has no business riding a poll. The panel fetches this once and
+    on refresh.
+
+    Not `_guard`ed — a read, the same rule `api_run_workspace` and `api_run_ledger_rails` follow.
+    Redacted at the service layer through the ledger redactor, because a worker-authored document is
+    prose about whatever it was working on and a pasted token in a REPORT.md is exactly how a
+    credential reaches a screenshot.
+
+    404s for an unknown run (`WF_RUN_NOT_FOUND`), so a client polling a deleted run learns it is
+    gone instead of reading "no document yet" forever.
+    """
+    return _reply(service.run_deliverable(request.match_info.get("run_id", "")))
+
+
 async def api_run_output(request: web.Request) -> web.Response:
     return _reply(
         service.output(request.match_info.get("run_id", ""), request.match_info.get("node_id", ""))
@@ -1315,6 +1340,7 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/runs/{run_id}/outbox", api_run_outbox)
     app.router.add_get("/api/workflows/runs/{run_id}/introspect", api_run_introspect)
     app.router.add_get("/api/workflows/runs/{run_id}/ledger-rails", api_run_ledger_rails)
+    app.router.add_get("/api/workflows/runs/{run_id}/deliverable", api_run_deliverable)
     app.router.add_get("/api/workflows/runs/{run_id}/outputs/{node_id}", api_run_output)
     app.router.add_get("/api/workflows/runs/{run_id}/nodes/{node_id}/inspect", api_run_node_inspect)
     app.router.add_post("/api/workflows/runs/{run_id}/edit", api_run_edit)

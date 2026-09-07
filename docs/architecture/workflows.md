@@ -117,6 +117,7 @@ while not terminal:
 | `overlap.py` | `on_overlap`: the exhaustive policy decision with a raising tail, the queued-vs-hand-made-draft marker on `run.extra`, the coalesce-to-one cap, and the single-flight drain called from the terminal writer and the watchdog poll |
 | `web_preview.py` | a run's localhost dev-server preview (EI-8): fixed-argv `lsof`/`ss`/`ps` host-fact probes, port→pid→cwd attribution scoped to the run's own workspace, and the honest empty reason when no scanner exists |
 | `loop_run_map.py` | the `Loop`→`WorkflowRun` field map (PP-16): every `Loop` field either maps to a run field, maps to a template input, or is listed as homeless — the checked starting point for retiring the second work-unit noun |
+| `deliverable.py` | a run's DOCUMENT deliverable + working log (PP-16 unit 1), the run-side answer to `GET /api/loops/{id}/report`: the kind→filename resolution DERIVED by walking `loop_aliases` forward and asking each kind's own `deliverable_name` (never a constant here), the workspace-then-run-dir root order that mirrors `loop/watchdog._deliverable_file`, a confined + redacted read with a blob ceiling that bounds the redactor's quadratic unbroken-token cost, and a five-member NAMED absence vocabulary — unknown template, kind declares none, not written, no root, unreadable — because a blank panel cannot tell a finished verifiable goal from a slow worker. Carries no money field by design (issue #2566) |
 
 ## Containers do not execute
 
