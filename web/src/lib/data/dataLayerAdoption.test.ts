@@ -192,6 +192,12 @@ describe('§3 the remaining hand-rolled server-data caches are a shrinking, name
     // (`Math.random()`) and identifies this browser profile to the push-subscribe route. No
     // server response is cached, so there is nothing that could paint stale.
     'app/pushClient.ts': "this browser profile's own push device id",
+    // Same discriminator, same verdict. The stored value is `composer-resth2`: the resting HEIGHT
+    // the reader dragged the composer to — a number minted by a pointer, never a server response.
+    // The module's one api call reads the "Send on Enter" preference through `useQuery`, so the
+    // shared layer owns that value's cache, its age and its bust; nothing fetched here is written
+    // to storage, so nothing can paint stale.
+    'ui/Composer.tsx': 'the composer resting height the reader dragged to',
   }
 
   /** A module that writes server data into web storage under a cache-ish prefix of its own. */

@@ -316,10 +316,13 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     render(query, go) {
       const { data: c, refresh, stale: cStale } = useDashCfg()
       // This card is the SECOND writer of these prefs (the Chat settings panel is the other), so it
-      // owes the same reader bust: chat reads the timestamp preference under its own persisted key,
-      // and refreshing only this card's copy would leave the transcript on the value you changed.
+      // owes the same reader busts, and there are TWO of them: chat reads the timestamp preference
+      // under its own persisted key, and the composer reads the Enter binding under another.
+      // Refreshing only this card's copy would leave the transcript — or the keyboard — on the value
+      // you just changed.
       const save = (patch: Record<string, unknown>) => mutate(
-        () => api.saveDashboardConfig(patch).then(refresh), 'settings:dashboard-config', 'chat:show-timestamps',
+        () => api.saveDashboardConfig(patch).then(refresh),
+        'settings:dashboard-config', 'chat:show-timestamps', 'chat:send-on-enter',
       )
       return (
         <BentoCard icon={MessageSquare} title="Chat" query={query} onClick={() => go('chat')} loading={c === undefined} rows={4} stale={cStale}>
