@@ -11,9 +11,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
-from personalclaw.config.loader import AppConfig, config_dir
+from personalclaw import gateway_base
+from personalclaw.config.loader import config_dir
 from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
-from personalclaw.dashboard.origin import parse_dashboard_url
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -97,9 +97,14 @@ def _resolve_excluded_tools() -> set[str]:
         return set()
 
     try:
-        cfg = AppConfig.load()
-        _host, port = parse_dashboard_url(cfg.dashboard.url)
-        api_base = f"http://localhost:{port}"
+        # ONE owner for the gateway's address (#2539). This was a second, inline copy of
+        # ``mcp_core._api_base()`` — the same ``parse_dashboard_url(dashboard.url)`` with the
+        # same fixed ``10000`` fallback — so an MCP server of a gateway on another port asked
+        # a DIFFERENT instance for this session's tool policy, and got that instance's answer.
+        # A refusal propagates to the ``except`` below: the documented fail-open of this
+        # defence-in-depth layer then applies with a named cause, rather than a policy read
+        # answered by a stranger.
+        api_base = gateway_base.resolve_api_base()
 
         # Read internal secret for auth
         secret = ""

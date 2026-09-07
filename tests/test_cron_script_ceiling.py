@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 
 import personalclaw.schedule_script as ss
+from personalclaw import gateway_base
 from personalclaw.sandbox import PROFILE_TOOL, spawn_shim_argv
 
 # A cron run spawns a fresh interpreter through the sandbox, twice over (shim then target).
@@ -46,6 +47,19 @@ _CEILING = 137
 #: How many descriptors the probe script tries to open. Far above ``_CEILING`` and far below
 #: this host's inherited soft limit, so the two outcomes are unmistakable.
 _ATTEMPTS = 400
+
+
+@pytest.fixture(autouse=True)
+def _a_gateway_to_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declare a gateway for the cron launcher to address.
+
+    ``run_script_sandboxed`` resolves the launcher's port from ``gateway_base`` at CALL time
+    and REFUSES rather than assuming the default port when it cannot (#2539) — the previous
+    ``config.loader.DASHBOARD_PORT`` was an import-time constant that happily named a port
+    another instance was listening on. These tests exercise the sandbox, the resource ceiling
+    and the child environment, not the port, so they state one and move on.
+    """
+    monkeypatch.setenv(gateway_base.PORT_ENV, "7777")
 
 
 def _crons_with(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, body: str) -> str:

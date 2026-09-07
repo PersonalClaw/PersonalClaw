@@ -1813,12 +1813,26 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> None:
 
 
 def _is_gateway_running() -> bool:
-    """Check if the PersonalClaw gateway is listening on its dashboard port."""
-    # DASHBOARD_PORT already resolves PERSONALCLAW_PORT → _DEFAULT_PORT, so this
-    # is the single source of truth for the gateway port.
-    from personalclaw.config.loader import DASHBOARD_PORT
+    """Whether a gateway of THIS home is up, on the socket it actually bound.
 
-    port = DASHBOARD_PORT
+    Asks ``gateway_base.live_port()`` — the port a live gateway of this home published
+    after binding — instead of ``config.loader.DASHBOARD_PORT``. That constant is the
+    import-time ``PERSONALCLAW_PORT``-or-10000 guess, and probing it was wrong in BOTH
+    directions (#2539): on a gateway started with ``--port 10188`` it probed a socket
+    nobody was listening on and reported "not running" while this very process served the
+    request (`DAS-10`, see ``dashboard/handlers/durability.py``); and on a multi-instance
+    host it could equally report "running" because a DIFFERENT instance answered on 10000,
+    refusing a legitimate restore.
+
+    No live record ⇒ no gateway of this home ⇒ ``False``. The record is written after bind
+    and removed on shutdown, and one naming a dead pid is ignored, so this cannot be
+    satisfied by a stale file or by a stranger occupying a shared port.
+    """
+    from personalclaw import gateway_base
+
+    port = gateway_base.live_port()
+    if not port:
+        return False
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=1):
             return True

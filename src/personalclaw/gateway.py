@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from personalclaw import notification_kinds, shutdown_event
+from personalclaw import gateway_base, notification_kinds, shutdown_event
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
 from personalclaw.channel_history import ChannelHistory
@@ -3581,23 +3581,30 @@ class GatewayOrchestrator:
         )
         self.subagent_mgr.start_reaper()
 
-    def _export_runtime_port(self) -> None:
-        """Publish the bound dashboard port into this process's environment.
+    def _publish_runtime_base(self) -> None:
+        """Publish the socket we ACTUALLY bound, for every child to resolve from.
 
-        Child processes resolve the gateway's API base through
-        ``mcp_core._api_base()`` -> ``parse_dashboard_url(dashboard.url)``,
-        which falls back to the 10000 default. Neither ``--port`` nor ``--port auto``
-        writes that config, so on any other port an MCP server spawned for a session
-        posted where nothing was listening and its tools returned a raw ``urlopen``
-        error as their result text. Exporting ``PERSONALCLAW_PORT`` -- the override
-        ``parse_dashboard_url`` already documents -- makes every child (MCP servers,
-        ACP CLIs, sandboxed helpers, which allowlist this name) agree with the socket
-        we actually bound. Measured on a kiro ACP session: ``subagent_run`` failed with
-        ``<urlopen error [Errno 61] Connection refused>`` while the in-process tools
-        beside it worked (`AAP-3`, `K58`).
+        This process is the only one that knows the answer, so it is the only one allowed
+        to state it: ``gateway_base.publish()`` records the bound port in this process's
+        environment (inherited by every child we spawn) and in a per-home runtime record
+        (readable by a child whose environment was rebuilt from an allowlist).
+
+        Before the owner existed, each child worked the base out for itself from
+        ``dashboard.url`` or from the import-time ``DASHBOARD_PORT``, and BOTH fall back to
+        the fixed 10000. Neither ``--port`` nor ``--port auto`` writes that config, so a
+        gateway on another port addressed its children at 10000 — which on a multi-instance
+        host is a DIFFERENT instance, not a dead socket (#2539). Two earlier symptoms of the
+        same root: ``subagent_run`` answering ``<urlopen error [Errno 61] Connection
+        refused>`` on a kiro ACP session while the in-process tools beside it worked
+        (`AAP-3`, `K58`), and a ``run-script`` action's ``ctx.notify()`` persisting into a
+        second instance's notification store.
+
+        No ``if self._dashboard_port:`` guard: an unset/zero port here means we bound but
+        cannot say to what, and ``publish()`` raises. Failing at startup is the honest
+        answer — the guard's silence just deferred the same failure to the first tool call,
+        by which time the request had already gone somewhere.
         """
-        if self._dashboard_port:
-            os.environ["PERSONALCLAW_PORT"] = str(self._dashboard_port)
+        gateway_base.publish(self._dashboard_port)
 
     async def _init_dashboard(self) -> None:
         """Start the dashboard web server."""
@@ -3634,7 +3641,7 @@ class GatewayOrchestrator:
             addresses = self._dashboard_runner.addresses
             if addresses:
                 self._dashboard_port = addresses[0][1]
-        self._export_runtime_port()
+        self._publish_runtime_base()
         if self.dashboard_state:
             self.dashboard_state.no_crons = self._no_crons  # dashboard mode
             # (S107) The scheduler's refresh callback is gone. It fired only from
@@ -3674,7 +3681,7 @@ class GatewayOrchestrator:
             addresses = self._dashboard_runner.addresses
             if addresses:
                 self._dashboard_port = addresses[0][1]
-        self._export_runtime_port()
+        self._publish_runtime_base()
         if self.dashboard_state:
             self.dashboard_state.no_crons = self._no_crons  # API-only mode
 
@@ -3684,6 +3691,10 @@ class GatewayOrchestrator:
 
     async def _shutdown(self) -> None:
         """Graceful cleanup of all services."""
+        # Withdraw the runtime base record FIRST: from here on this instance is not serving,
+        # and a record left behind is a record a later child could resolve. (The pid check in
+        # ``live_port()`` already covers a crash; this covers the graceful case exactly.)
+        gateway_base.unpublish()
         # Reap app-backend subprocesses FIRST, synchronously — before the
         # ACP/session teardown below. ACP cleanup can take many seconds when a
         # delegate CLI is wedged (force-kill retries), and it used to run in the
