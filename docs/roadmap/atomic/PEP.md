@@ -2,7 +2,7 @@
 
 **Source plan:** [`PRODUCT-EXPERIENCE-PARITY`](../plans/PRODUCT-EXPERIENCE-PARITY.md)  
 **Code:** `PEP`  
-**Source status:** todo
+**Source status:** done
 
 Product-experience improvements to PersonalClaw's own surfaces: progressive-disclosure empty states that seed (never replace) the expert create flows, an always-open App Store category/source rail with polished cards, onboarding import from other local agent tools, artifact folders, local artifact deploy served through PersonalClaw's own gateway, artifacts as an indexed knowledge source, an always-on-conventions viewer, and a first-party product-app suite. Every simplification is progressive disclosure with full power one click away, and artifact deploy is strictly local through the PersonalClaw gateway with no cloud provisioner.
 
@@ -27,8 +27,8 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `PEP-15` | ✅ | Docs/Slides app (suite 4/9) | — | The docs/slides app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a brief produces an openable .pptx and a compiled document through the existing doc-writer seam. |
 | `PEP-16` | ✅ | Notes app (suite 5/9) | — | The notes app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; notes are versioned in git and survive app reinstall; no parallel knowledge store is created. |
 | `PEP-17` | ✅ | Issue Radar app (suite 6/9) | — | The issue-radar app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a real repo's issues are triaged with suggested labels and locally persisted investigation notes. |
-| `PEP-18` | ⬜ | Spec Builder app (suite 7/9) | — | The spec-builder app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; an idea walks to a task list that hands off to a real workflow run through the engine's own seams. |
-| `PEP-19` | ⬜ | Ops app (suite 8/9) | — | The ops app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a simulated alarm is claimed, investigated, and a fix PROPOSED behind an explicit confirm gate — no ungated mutation path exists. |
+| `PEP-18` | ✅ | Spec Builder app (suite 7/9) | — | The spec-builder app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; an idea walks to a task list that hands off to a real workflow run through the engine's own seams. |
+| `PEP-19` | ✅ | Ops app (suite 8/9) | — | The ops app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a simulated alarm is claimed, investigated, and a fix PROPOSED behind an explicit confirm gate — no ungated mutation path exists. |
 | `PEP-20` | ✅ | Companion app (suite 9/9) | — | The companion app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; every surface is opt-in and disabling it removes all its triggers. |
 
 ## Atom scopes
@@ -467,7 +467,7 @@ GitHub/GitLab issue triage with AI-suggested labels + per-issue investigation no
 
 ### `PEP-18` — Spec Builder app (suite 7/9)
 
-**Status:** blocked (bundle merged; the install path needs one owner decision on the scanner floor — #2526)
+**Status:** done
 
 Idea -> Requirements -> Design -> Tasks, then hand to an autonomous run. App front over the WORKFLOWS-V2 engine — not a parallel planner.
 
@@ -475,7 +475,7 @@ Idea -> Requirements -> Design -> Tasks, then hand to an autonomous run. App fro
 
 ### `PEP-19` — Ops app (suite 8/9)
 
-**Status:** blocked (bundle merged; the same single owner scanner decision as PEP-18 — #2526)
+**Status:** done
 
 On-call first responder: watch alarms/pages, claim, investigate, propose fixes. Largest and most heavily gated: every fix is confirm-gated and rides AUTONOMY-GUARDRAILS (shipped). Build last among 8/9.
 
