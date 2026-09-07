@@ -789,14 +789,39 @@ function StudioMeta({ pairs }: { pairs: [string, string][] }) {
 }
 
 /** Inline markdown editor for a memory doc, folded into the inspector (reuses the
- *  same GET/PUT the old Editors tab used). Save gated on dirty; transient Saved ✓. */
+ *  same GET/PUT the old Editors tab used). Save gated on dirty; transient Saved ✓.
+ *
+ *  🔴 A FAILED READ MUST NOT LOOK LIKE AN EMPTY DOCUMENT, BECAUSE THIS EDITOR CAN
+ *  OVERWRITE THE FILE. The load used to `.catch(() => { setContent(''); setDraft('') })`,
+ *  which conflates "the GET failed" with "the doc is empty": the textarea rendered blank
+ *  with no error, so a user whose read had failed saw an empty document, typed one
+ *  character, and Save PUT that character over prose still on disk. `dirty` is
+ *  `content !== null && draft !== content`, so the empty-string content is exactly what
+ *  armed the button — leaving `content` null instead makes `dirty` unreachable and the
+ *  save physically impossible until a read has actually succeeded.
+ *
+ *  This is the same defect the SAVE path below already fixed, one state earlier: two
+ *  different situations told apart only by the ABSENCE of a signal. The save path got an
+ *  explicit failure signal; the load path never did. */
 function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects' | 'history'; onSaved: () => void }) {
   const [content, setContent] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [err, setErr] = useState('')
-  useEffect(() => { setContent(null); api.memoryDoc(which).then((c) => { setContent(c); setDraft(c) }).catch(() => { setContent(''); setDraft('') }) }, [which])
+  const [loadErr, setLoadErr] = useState('')
+  const [reloads, setReloads] = useState(0)
+  useEffect(() => {
+    let alive = true
+    setContent(null)
+    setLoadErr('')
+    api.memoryDoc(which)
+      .then((c) => { if (alive) { setContent(c); setDraft(c) } })
+      // `content` deliberately stays null — see the docstring. An empty string here is
+      // the data-loss path, not a tidier default.
+      .catch((e) => { if (alive) setLoadErr(e instanceof Error ? e.message : 'Could not load this document') })
+    return () => { alive = false }
+  }, [which, reloads])
   const dirty = content !== null && draft !== content
   const save = async () => {
     setBusy(true)
@@ -812,6 +837,12 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
     catch (e) { setErr(e instanceof Error ? e.message : 'Save failed') }
     setBusy(false)
   }
+  if (loadErr) return (
+    <div className="flex flex-col items-start gap-2">
+      <p role="alert" data-type="body-s" className="text-danger">Couldn’t load this document, so it isn’t safe to edit — saving now could overwrite what’s on disk. {loadErr}</p>
+      <Button size="sm" onClick={() => setReloads((n) => n + 1)}><RefreshCw size={14} /> Try again</Button>
+    </div>
+  )
   if (content === null) return <div data-type="body-s" className="flex items-center gap-2 text-on-surface-low"><Loader2 size={14} className="animate-spin" /> Loading…</div>
   return (
     <div className="flex flex-col gap-2">
