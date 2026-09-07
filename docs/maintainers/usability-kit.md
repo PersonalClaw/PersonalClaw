@@ -45,8 +45,10 @@ Budgets are for your clock, not theirs. Never tell a participant they are runnin
 
 The setup flow makes a model provider a **required** step, and the four provider cards
 it shows by default all need either a paid API key or an AWS account. A keyless local
-option (Ollama) exists but is the twelfth of sixteen providers, behind a **Show all 16
-model provider apps** control. So a stranger with no API key hits a required step they
+option (Ollama) exists but is not one of them: it sits near the bottom of the full list,
+behind the lane's **Show all … model provider apps** disclosure control (the label
+carries a live count, so the number you see depends on the installed catalog — do not
+expect a particular one). So a stranger with no API key hits a required step they
 cannot satisfy, roughly ninety seconds in. Pick one of these in advance:
 
 - **A — you supply a key (preferred).** Bring a throwaway, low-limit key for one

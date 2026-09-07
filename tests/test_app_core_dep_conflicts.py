@@ -135,10 +135,14 @@ def test_the_real_compatible_core_pin_is_allowed(monkeypatch: pytest.MonkeyPatch
 
 
 def test_extras_are_not_core_so_provider_apps_stay_installable() -> None:
-    """The invariant that keeps the Store working. 19 of the 20 first-party apps that
-    declare pythonDependencies pin one of these; every one is an `extra ==` entry in
+    """The invariant that keeps the Store working. Nearly every first-party app that
+    declares pythonDependencies pins one of these; every one is an `extra ==` entry in
     core's metadata, NOT a core dependency. If a future change promotes one to core,
     this goes red — which is the warning that those apps just became uninstallable.
+
+    Deliberately no count here: the number of apps is a fact about another repository,
+    and this test cannot see it. `docs/security/limitations.md` carries the measured
+    ratio with the ref it was measured against.
     """
     core = app_manager._core_requirement_pins()
     for name in (

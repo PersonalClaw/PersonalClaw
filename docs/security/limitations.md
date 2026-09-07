@@ -79,9 +79,16 @@ requirement that names a core-declared dependency unless the version already
 installed satisfies it — so pip is never in a position to move a core dependency
 under the running gateway. The check is fail-closed: an unparseable requirement, or
 a core-owned name whose installed version cannot be read, denies rather than
-installs. Requirements for libraries core does not own are unaffected (that is 19 of
-the 20 first-party apps that declare dependencies; the provider SDKs like `openai`
-and `anthropic` are *extras*, not core dependencies).
+installs. Requirements for libraries core does not own are unaffected — that is 20
+of the 22 first-party apps that declare dependencies, so the check has something to
+say about **two** of them: `design-critique` pins `Pillow` and `diarization-onnx`
+pins `numpy`, both core-declared, and both are admitted only while the installed
+version already satisfies the pin. The provider SDKs like `openai` and `anthropic`
+are *extras*, not core dependencies, so every app declaring one of those is
+unaffected. (Ratio measured 2026-09-07 against `PersonalClawApps` `f623b66`, over
+the 22 manifests declaring `dependencies.pythonDependencies`, compared against
+core's `pyproject.toml` `[project].dependencies`. It is a claim about another
+repository at a moment in time: re-derive it, do not trust it.)
 
 **What is not enforced:** the packages an app adds are still importable by
 everything in the process, and pip may still move a *transitive* dependency that

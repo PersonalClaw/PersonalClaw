@@ -118,8 +118,8 @@ The delivery vocabulary names no vendor anywhere in core:
 
 ## The reference channel app: `apps/slack-channel`
 
-`apps/slack-channel/slack_runtime/` (14 modules) is the full worked example of
-a channel provider:
+`apps/slack-channel/slack_runtime/` is the full worked example of a channel
+provider. The modules that carry the contract:
 
 - `transport.py` — implements `start_inbound`;
 - `runtime.py` — a facade proxying `GatewayServices`;
