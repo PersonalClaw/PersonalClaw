@@ -157,7 +157,17 @@ export function FindBar<T>({ items, segmentsOf, nodeOf, scrollRef, label, onClos
       // Escape is bound on the CONTAINER, not only on the input (CC-6). Tabbing to
       // Previous/Next/Close left Escape dead — the one key a user presses to get out of
       // a transient bar did nothing from three of its four tab stops.
-      onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }}>
+      //
+      // 🔑 AND IT STOPS PROPAGATION, or one press dismisses TWO layers. This bar is transient and
+      // holds focus, while the surfaces hosting it also carry window-level Escape handlers that
+      // dismiss something bigger — `pages/chat/ChatFilePanel` closes the open file that way, and it
+      // is one of 26 modules binding a global Escape. `preventDefault` does NOT stop the native
+      // event, so the press kept bubbling: open a file from chat, ⌘F, Escape — and the bar AND the
+      // file panel both went, leaving the reader to re-open a file they never closed.
+      // `stopPropagation` on the synthetic event stops the native one too, and React's listener
+      // sits at the root container, BELOW `window` in the bubble path, so the outer handler never
+      // runs. Whoever has focus owns the key — the doctrine `ui/tourEscapeLayer.test.tsx` states.
+      onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose() } }}>
       <SearchField variant="inline" value={query} onChange={setQuery} inputRef={inputRef} autoFocus
         placeholder={label} ariaLabel={label} inlineIconSize={14}
         onKeyDown={(e) => {
