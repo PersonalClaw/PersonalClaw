@@ -129,6 +129,13 @@ offer_setup() {
     say ""
     # Only prompt when we have a real TTY (piped `curl | sh` has none — don't hang).
     if [ -t 0 ]; then
+        # The backticks below are prose the USER reads — they quote the command name in the
+        # prompt. Single quotes are deliberate: no expansion is wanted, and double quotes
+        # would turn `personalclaw setup` into a real command substitution. SC2016 flags the
+        # shape without knowing that, so it is silenced on the next line only.
+        # NOTE: a shellcheck directive must be a line of its own — trailing prose after the
+        # key=value is parsed as another pair and errors with SC1125.
+        # shellcheck disable=SC2016
         printf 'Run `personalclaw setup` now? [y/N] '
         read -r reply || reply=n
         case "$reply" in
