@@ -101,6 +101,29 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
   useEffect(() => { loadTokens() }, [loadTokens])
   useEffect(() => { loadArtifacts() }, [loadArtifacts])
 
+  // 🔴 THE ARMED DELETE HAD NO DISARM TIMER, WHICH IS THE ONLY THING THAT MAKES THE
+  // PATTERN SAFE. `del()` arms on the first click and the header control relabels
+  // "Delete" → "Confirm delete?"; nothing reset it, so once armed it stayed armed until
+  // the user navigated away. That leaves a LIVE ONE-CLICK DESTROY sitting in the page
+  // header — and what it destroys is the loop's findings, deliverable and history, with
+  // no undo. The next click anywhere on that control, minutes later and for any reason,
+  // took it.
+  //
+  // 4000ms matches every sibling that got this right: `LoopCockpitPage` (for both its
+  // delete AND its stop), `LoopsListPage`, `SdlcProgressCard`, `WorkflowsListPage` and
+  // `tasks/formControls`. This file was one of two that lost the timer when the pattern
+  // was copied — which is what happens with no shared primitive to copy FROM.
+  //
+  // 🪤 PLACED ABOVE THE `notFound` / `!loop` EARLY RETURNS ON PURPOSE. The sibling's own
+  // comment says "(Must run unconditionally — above the not-found/loading early return.)"
+  // A hook below a conditional return does not run on the renders that take it, so the
+  // arm would survive exactly the states where the page is least predictable.
+  useEffect(() => {
+    if (!confirmDelete) return
+    const t = window.setTimeout(() => setConfirmDelete(false), 4000)
+    return () => window.clearTimeout(t)
+  }, [confirmDelete])
+
   // Live: refetch tokens (overrides may change) + artifacts (new components) + the
   // loop snapshot on every lifecycle event.
   const { connected } = useRunStream(id, !notFound, {
