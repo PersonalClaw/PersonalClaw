@@ -19,6 +19,18 @@ import type {
 // approval or inbox item appears without waiting for the next poll tick), while
 // the polls keep slower-moving data (loops, tasks, schedule, status) fresh.
 
+/** The slices whose "have we read this yet" answer a consumer actually uses. Deliberately not every
+ *  slice: an unread flag nobody reads is the dead-guard shape this file's `*Err` note already
+ *  rejects for the same reason. */
+export type ReadSlice =
+  | 'approvals' | 'inbox' | 'proposals' | 'loops' | 'tasks' | 'notifications' | 'schedule'
+
+/** Nothing read yet — the honest starting position, and the one this file used to lack. */
+const NOTHING_READ: Record<ReadSlice, boolean> = {
+  approvals: false, inbox: false, proposals: false, loops: false, tasks: false,
+  notifications: false, schedule: false,
+}
+
 export interface DashboardLiveData {
   approvals: PendingApproval[]
   inbox: InboxItem[]
@@ -73,6 +85,28 @@ export interface DashboardLiveData {
    *  and critically distinct from a healthy report, because a health surface that goes quiet is
    *  read as "nothing wrong". Consumers must render "unknown", never silence. */
   doctorErr: unknown
+  /** Which slices have completed at least one read ATTEMPT — success **or** failure.
+   *
+   *  🔴 THE FAILED CASE WAS CONVERGED AND THE NOT-YET-READ CASE WAS NEVER MODELLED. Every `*Err`
+   *  above starts at `null` and is set to `null` again on success, so `*Err === null` meant BOTH
+   *  "this read succeeded" and "this read has never been attempted". Combined with arrays that seed
+   *  to `[]`, the dashboard's FIRST FRAME asserted emptiness as fact: `HeroPulse` stated
+   *  "0 loops running · 0 approvals waiting · 0 tasks ready · 0 inbox · 0 unread", and four widgets
+   *  rendered their empty states — two of them pitching a create flow ("New task", "New trigger") to
+   *  someone whose tasks and triggers simply had not arrived yet.
+   *
+   *  🔑 `HeroPulse` ALREADY CARRIES THE DOCTRINE THIS COMPLETES, in its own words: *"A COUNT IS A
+   *  CLAIM, AND `0` IS THE MOST REASSURING ONE THIS STRIP CAN MAKE… `null` means 'not read'."* It
+   *  implemented only the FAILED half of "not read". This is the other half.
+   *
+   *  🪤 AND IT CANNOT BE FOLDED INTO `*Err` — that was the tempting one-line version. Seeding the
+   *  err fields with a truthy "unread" sentinel would fix every count for free, because consumers
+   *  already write `err ? null : n`. But the two states must render DIFFERENTLY: an unread lane is
+   *  neutral and silent, while a FAILED lane earns an error row and a Retry (`ActionCenter` renders
+   *  exactly that). A sentinel would make the first frame claim a fault nobody has measured — the
+   *  mirror of the bug, and the same mistake `HeroPulse` warns about when it keeps the unknown pill
+   *  NEUTRAL rather than styling it as an alarm. */
+  read: Readonly<Record<ReadSlice, boolean>>
   /** Re-run ONE triage lane's read — the Retry beside its failure row. Per-lane, so retrying a
    *  failed approvals read doesn't refetch a healthy inbox. */
   retryApprovals: () => void
@@ -138,6 +172,19 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const guard = <T,>(set: (v: T) => void) => (v: T) => { if (alive.current) set(v) }
 
+  const [read, setRead] = useState<Record<ReadSlice, boolean>>(NOTHING_READ)
+  /** Mark a slice as attempted. Called from `.finally()`, which is precisely "the attempt finished"
+   *  — one call site per loader covering the success and failure branches together.
+   *
+   *  🪤 RETURNS THE SAME OBJECT once a slice is already marked. Without that identity check, every
+   *  8s poll would hand `read` a fresh object, change the context value, and re-render every
+   *  dashboard consumer on every tick — a steady render storm to answer a question that stops
+   *  changing after the first load. */
+  const markRead = useCallback((s: ReadSlice) => {
+    if (!alive.current) return
+    setRead((r) => (r[s] ? r : { ...r, [s]: true }))
+  }, [])
+
   // 🔴 The three triage lanes surface their own read failures (like `loadDiscover`/`loadDoctor`
   // below) instead of swallowing. `catch(() => {})` left each array at its last-good value, so a
   // failed read was indistinguishable from an empty lane — and ActionCenter folded that into "All
@@ -146,15 +193,18 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
   // the cold case surfaces the error so the lane can say it failed and offer a retry.
   const loadApprovals = useCallback(() => {
     api.approvals().then((d) => { guard(setApprovals)(d); guard(setApprovalsErr)(null) }).catch((e) => guard(setApprovalsErr)(e))
-  }, [])
+      .finally(() => markRead('approvals'))
+  }, [markRead])
   const loadInbox = useCallback(() => {
     api.inboxPending().then((d) => { guard(setInbox)(d); guard(setInboxErr)(null) }).catch((e) => guard(setInboxErr)(e))
-  }, [])
+      .finally(() => markRead('inbox'))
+  }, [markRead])
   const loadProposals = useCallback(() => {
     api.skillProposals().then((d) => { guard(setProposals)(d.proposals); guard(setProposalsErr)(null) }).catch((e) => guard(setProposalsErr)(e))
-  }, [])
-  const loadLoops = useCallback(() => { api.uLoops().then((d) => { guard(setLoops)(d); guard(setLoopsErr)(null) }).catch((e) => guard(setLoopsErr)(e)) }, [])
-  const loadTasks = useCallback(() => { api.readyTasks().then((d) => { guard(setTasks)(d); guard(setTasksErr)(null) }).catch((e) => guard(setTasksErr)(e)) }, [])
+      .finally(() => markRead('proposals'))
+  }, [markRead])
+  const loadLoops = useCallback(() => { api.uLoops().then((d) => { guard(setLoops)(d); guard(setLoopsErr)(null) }).catch((e) => guard(setLoopsErr)(e)).finally(() => markRead('loops')) }, [markRead])
+  const loadTasks = useCallback(() => { api.readyTasks().then((d) => { guard(setTasks)(d); guard(setTasksErr)(null) }).catch((e) => guard(setTasksErr)(e)).finally(() => markRead('tasks')) }, [markRead])
   // 🔴 Keeps the archive split, which this call discarded (S165). The backend has returned
   // `did_ids`/`suppressed` since S132 and S163 typed them — but the widget still saw only
   // `d.runs`, so a minutely trigger inside quiet hours filled all six visible rows with identical
@@ -165,10 +215,10 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
       guard(setSchedule)(d.runs ?? [])
       guard(setScheduleDidIds)(d.did_ids ?? [])
       guard(setScheduleSuppressed)(d.suppressed ?? 0)
-    }).catch(() => {})
-  }, [])
+    }).catch(() => {}).finally(() => markRead('schedule'))
+  }, [markRead])
   const loadStatus = useCallback(() => { api.status().then(guard(setStatus)).catch(() => {}) }, [])
-  const loadNotifications = useCallback(() => { api.notifications().then((d) => { guard(setNotifications)(d.notifications ?? []); guard(setNotificationsErr)(null) }).catch((e) => guard(setNotificationsErr)(e)) }, [])
+  const loadNotifications = useCallback(() => { api.notifications().then((d) => { guard(setNotifications)(d.notifications ?? []); guard(setNotificationsErr)(null) }).catch((e) => guard(setNotificationsErr)(e)).finally(() => markRead('notifications')) }, [markRead])
   const loadSystem = useCallback(() => { api.system().then(guard(setSystem)).catch(() => {}) }, [])
   // 🔴 `catch(() => {})` left `discover` null, and the dashboard's Discover slot renders
   // "Discover tips are off." for `!discover` — so a dead endpoint (and every millisecond before
@@ -245,7 +295,7 @@ export function DashboardLiveProvider({ children }: { children: ReactNode }) {
 
   const value: DashboardLiveData = {
     approvals, inbox, proposals, approvalsErr, inboxErr, proposalsErr,
-    loopsErr, tasksErr, notificationsErr,
+    loopsErr, tasksErr, notificationsErr, read,
     loops, tasks, schedule, scheduleDidIds, scheduleSuppressed,
     status, notifications, system,
     discover, discoverErr, doctor, doctorErr,

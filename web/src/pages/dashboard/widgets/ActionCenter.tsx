@@ -7,6 +7,7 @@ import { rowSubject } from '../../../lib/rowSubject'
 import { useDashboardLive } from '../DashboardLive'
 import { SlotEmptyState, WidgetRow, RowAction } from './kit'
 import { InlineError } from '../../../ui/InlineError'
+import { ListSkeleton } from '../../../ui/ListScaffold'
 import type { RouteProps } from '../../../app/useQueryState'
 import { invalidateKeys } from '../../../lib/data'
 
@@ -26,7 +27,7 @@ export function ActionCenter({ navigate }: RouteProps) {
   const bustProposals = () => invalidateKeys('skill-proposals', true)
   const {
     approvals, inbox, proposals, refreshAll,
-    approvalsErr, inboxErr, proposalsErr, retryApprovals, retryInbox, retryProposals,
+    approvalsErr, inboxErr, proposalsErr, retryApprovals, retryInbox, retryProposals, read,
   } = useDashboardLive()
   const [busy, setBusy] = useState<Set<string>>(new Set())
   // Optimistically hidden rows (acted on) until the feed catches up.
@@ -74,6 +75,21 @@ export function ActionCenter({ navigate }: RouteProps) {
   ]
 
   if (allEntries.length === 0 && failures.length === 0) {
+    // 🔴 "ALL CLEAR" IS A VERDICT, AND ON THE FIRST FRAME IT WAS A GUESS. All three lanes seed to `[]`
+    // with no error, so this branch fired before anything had been read — meaning the one sentence the
+    // note above says "must never appear over a swallowed PENDING TOOL APPROVAL" was also appearing
+    // over an UNREAD one. Same consequence on a safety-relevant queue, different cause: `approvalsErr`
+    // cannot tell "succeeded" from "never attempted", which is exactly why `read` sits beside it.
+    //
+    // ALL THREE lanes must be read before the verdict is earned — the queue is their union, so one
+    // unread lane makes "nothing waiting on you" unprovable.
+    //
+    // 🪤 BARE ON PURPOSE. `ui/loadingNounPairing` requires the noun to be sourced from a declaration
+    // in this file, and "All clear — nothing waiting on you." names no data; the per-lane failure
+    // rows name three different things, and picking one of them would describe a third of the queue.
+    // The rail's own answer for that is "the unnamed ones stay bare rather than guessing", so this
+    // says "Loading…" rather than inventing a collective noun.
+    if (!read.approvals || !read.inbox || !read.proposals) return <ListSkeleton rows={3} />
     return <SlotEmptyState icon={CheckCheck}>All clear — nothing waiting on you.</SlotEmptyState>
   }
 
