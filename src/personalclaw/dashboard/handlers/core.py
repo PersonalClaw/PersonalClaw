@@ -1117,6 +1117,12 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # only gates SEEDING, so a PATCH cannot retract a row already in app-sources.json (the
     # Store's remove control does that, and that removal persists).
     "apps.registry_source_enabled": {"type": "bool"},
+    # Whether the BUNDLED default git source is listed (#2528). Unlike the registry flag this
+    # is a live filter, not a seed switch: the bundled tuple is folded into every read of
+    # list_git_sources(), so there is no row to remove and this PATCH is the only way to turn
+    # it off. Editable for exactly that reason — an unremovable default that reaches the
+    # network before the user has configured anything needs an off switch to point at.
+    "apps.bundled_source_enabled": {"type": "bool"},
 }
 
 

@@ -5,7 +5,7 @@ import { motion } from 'framer-motion'
 import {
   Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
   ShieldAlert, ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
-  MoreVertical, Database, Sparkles, Archive, HardDrive,
+  MoreVertical, Database, Sparkles, Archive, HardDrive, MapPin,
 } from 'lucide-react'
 import { launchChat } from '../../app/appSdk'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -29,11 +29,13 @@ import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { useIsMobile } from '../../app/useIsMobile'
 import { useQuery, invalidateKeys, writeQuery } from '../../lib/data'
 import {
-  api, type AppSummary, type AppDepClassification, type AppCatalogEntry,
+  api, type AppSummary, type AppDepClassification, type AppCatalogEntry, type AppCatalog,
 } from '../../lib/api'
 import {
   useGuardedInstall, guardedFromApp, isBlockingResult, terminalRefusalReason, type GuardedResult,
 } from '../../lib/useGuardedInstall'
+import { catalogApps } from '../../lib/appCatalog'
+import { provenance } from '../../lib/provenance'
 import { AppIcon } from './appIcon'
 import { QualityBadges } from './qualityBadges'
 import { StoreSideRail, type RailOption } from './StoreSideRail'
@@ -484,7 +486,6 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
   //    UNION already-installed apps (deduped by name), so the Store shows every
   //    app it knows about regardless of install status — then search → filter →
   //    sort over that union. ──
-  const bundled = catalog?.bundled ?? []
   const storeUniverse = useMemo<StoreItem[]>(() => {
     // The Store lists ONLY apps that can still be INSTALLED (user decision
     // 2026-07-05) — already-installed apps live in the Library tab, not here. So
@@ -495,10 +496,11 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     const installedNames = new Set((apps ?? []).map((a) => a.name))
     const byName = new Map<string, StoreItem>()
     // bundled + local-dir-scanned + P20 registry-indexed (remoteApps) + git-scanned
-    // multi-app repos (gitApps) — the union of every installable app the catalog surfaced.
+    // multi-app repos (gitApps) — the union of every installable app the catalog surfaced,
+    // flattened by the ONE merge every consumer shares (`lib/appCatalog`) rather than by a
+    // concatenation order of this surface's own (#2528).
     // remoteApps/gitApps carry a `pointer` (repo[#sub]) that install uses instead of source.
-    const available = [...bundled, ...(catalog?.localApps ?? []), ...(catalog?.remoteApps ?? []), ...(catalog?.gitApps ?? [])]
-    for (const e of available) {
+    for (const e of catalogApps(catalog)) {
       if (installedNames.has(e.name) || byName.has(e.name)) continue
       byName.set(e.name, { ...e, installed: false, enabled: false, hasUI: false, native: false })
     }
@@ -783,7 +785,7 @@ function ResultCount({ n, total, noun }: { n: number; total: number; noun: strin
  *  consent is a claim only a driven render can make. It is the fastest install path in the
  *  product and the one that used to disclose the least. */
 export function StoreView({ catalog, catalogError, result, totalKnown, installedCount, onInstalled, reloadCatalog, onClearFilters, filtersActive, onOpen, onAction, onOpenSources }: {
-  catalog: { bundled: AppCatalogEntry[]; gitSources: string[]; defaultGitSources?: string[]; builtinGitSources?: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] } | null | undefined
+  catalog: AppCatalog | null | undefined
   /** The catalog fetch's rejection. A Store that cannot reach its catalog must say so rather than
    *  render as an empty shelf — "nothing to install" and "we could not ask" are different answers. */
   catalogError?: unknown
@@ -891,7 +893,7 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
  *  can be driven at the level a user meets it (`sourceLabels.test.tsx`) — a badge and a missing
  *  remove control are exactly the kind of claim no backend test can make. */
 export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
-  catalog: { bundled: AppCatalogEntry[]; gitSources: string[]; defaultGitSources?: string[]; builtinGitSources?: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] } | null | undefined
+  catalog: AppCatalog | null | undefined
   reloadCatalog: () => void
   onInstalled: () => void
 }) {
@@ -909,11 +911,11 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
    *  indexed source the manifest is already in hand. `undefined` for an un-indexed source,
    *  which the modal states plainly rather than showing an empty permission list. */
   function entryForSource(source: string): AppCatalogEntry | undefined {
-    const all = [
-      ...(catalog?.gitApps ?? []), ...(catalog?.remoteApps ?? []),
-      ...(catalog?.localApps ?? []), ...(catalog?.bundled ?? []),
-    ]
-    return all.find((e) => e.source === source || (e.pointer && e.pointer === source))
+    // 🔴 The ONE merge (`lib/appCatalog`), not a git-first concatenation of its own. This
+    // lookup used to put `gitApps` first while the card grid put `localApps` first, so for a
+    // name carried by both a local and a remote source the CONSENT modal disclosed the
+    // remote copy's permissions while the grid had shown the local copy's (#2528).
+    return catalogApps(catalog).find((e) => e.source === source || (e.pointer && e.pointer === source))
   }
 
   async function installFrom(source: string, label: string) {
@@ -984,6 +986,7 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
   const firstPartySources = new Set(catalog?.firstPartySources ?? [])
   const defaultSources = new Set(catalog?.defaultGitSources ?? [])
   const builtinSources = new Set(catalog?.builtinGitSources ?? [])
+  const networkSources = catalog?.networkSources ?? []
 
   return (
     <div className="flex flex-col gap-xl">
@@ -1045,6 +1048,21 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
               </div>
             )})}
           </div>
+        )}
+        {/* 🔴 The egress disclosure (issue 2528, finding 1). A brand-new home lists a shipped git
+            source, so opening the Store contacts github.com before the user has configured
+            anything. The hosts are named on the surface that triggers the fetch, and only when a
+            network source is actually listed — with an all-local configuration this says nothing
+            rather than warning about nothing.
+            The second sentence is the other half: a shipped source has no ROW to delete (it is
+            folded into every backend read), so a hidden remove button is not an explanation. It
+            appears only when such a source is listed, and it names where the switch is. */}
+        {networkSources.length > 0 && (
+          <p data-testid="store-egress-disclosure" data-type="caption" className="mt-2 text-on-surface-low">
+            Reading these listings contacts {networkSources.join(', ')}. Only listings are
+            fetched — nothing is installed or run without your consent.
+            {builtinSources.size > 0 && ' A source that ships with PersonalClaw has no remove button; turn it off in Settings → Apps.'}
+          </p>
         )}
         <p className="mt-2 text-on-surface-low text-[0.75rem]">
           Installing fetches the app behind the security scanner — a dangerous verdict is always refused.
@@ -1144,6 +1162,15 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
     </div>
   )
 
+  // 🔴 Provenance, as TEXT, BEFORE install (#2528). The only pre-install signal that a card
+  // came from a local source used to be the divider heading (a folder basename) and the
+  // Sources rail — nothing on the card itself said where its bytes came from, which is why a
+  // remote card standing in for a local bundle was invisible to the user and visible only to
+  // whoever read the catalog code. Rendered from the ONE provenance owner
+  // (`lib/provenance`), and only pre-install: an installed app's origin is already named in
+  // the detail panel, and repeating it in the Library's card row would be noise.
+  const origin = item.installed ? null : provenance({ sourceKind: item.sourceKind })
+
   return (
     <ContextMenu items={menuItems}>
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: Math.min(index * 0.03, 0.3) }}
@@ -1200,12 +1227,21 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
                   `on-primary-container`, 13.1:1 light and 10.43:1 dark, guaranteed for all 12 schemes
                   by `schemeContrast.test.ts`. This chip was the last accent-carrying TEXT left on the
                   old spelling. */}
-            {providerLabel && (
-              <span className="mt-0.5 inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5" data-type="label-s"
-                style={accentChip}>
-                <Plug size={11} />{providerLabel}
-              </span>
-            )}
+            <div className="mt-0.5 flex flex-wrap items-center gap-1">
+              {providerLabel && (
+                <span className="inline-flex items-center gap-1 rounded-pill px-1.5 py-0.5" data-type="label-s"
+                  style={accentChip}>
+                  <Plug size={11} />{providerLabel}
+                </span>
+              )}
+              {origin && (
+                <span data-testid="store-card-origin" title={origin.title}
+                  className="inline-flex items-center gap-1 rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-var"
+                  data-type="label-s">
+                  <MapPin size={11} />{origin.label}
+                </span>
+              )}
+            </div>
           </div>
           {/* installed apps get the real ⋯ actions menu, top-right */}
           {item.installed && <span onClick={stop}><AppActionMenu item={item} onAction={onAction} /></span>}
@@ -1404,12 +1440,22 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen }: { app: AppSummary; 
 
   const toggleNav = () => { const next = !inNav; setInNav(app.name, next); setInNavState(next) }
 
+  // `sourceKind` is resolved by the backend for installed apps too (`/api/apps`), so this
+  // surface never translates between the `origin` and `sourceKind` vocabularies itself.
+  const installedOrigin = provenance({ sourceKind: app.sourceKind })
+
   return (
     <>
       <div className="flex flex-col gap-l p-l">
         <div>
           <div data-type="body-s" className="text-on-surface-low">{app.description || app.name}</div>
-          <div data-type="label-s" className="mt-1 text-on-surface-low">v{app.version} · {app.origin || 'local'}</div>
+          {/* Provenance through the ONE owner (`lib/provenance`) rather than the raw `origin`
+              string with a `|| 'local'` fallback — that fallback CLAIMED "local" for an app
+              whose origin the record did not carry, which is the same false-provenance defect
+              as issue 2514 one surface over. No origin ⇒ the version stands alone. */}
+          <div data-type="label-s" className="mt-1 text-on-surface-low">
+            v{app.version}{installedOrigin ? ` · ${installedOrigin.label}` : ''}
+          </div>
           {/* APE-4: same badge row, same component, as the Store card and the pre-install
               panel — one declaration rendered one way across every surface that shows it. */}
           <div className="mt-2"><QualityBadges quality={app.quality} /></div>
