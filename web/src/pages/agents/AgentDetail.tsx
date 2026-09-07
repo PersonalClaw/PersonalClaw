@@ -95,7 +95,17 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
       {reserved && <ReservedModelEditor agent={agent} onSaved={onSaved} />}
 
       <div className="flex flex-wrap items-center gap-s text-[0.8125rem]">
-        <span className="inline-flex items-center gap-1 rounded-pill px-m h-7" style={accentChip}>{reserved && <ShieldCheck size={12} />}{reserved ? 'Built-in' : 'Native'}</span>
+        {/* 🔴 THIS CHIP WAS THE LITERAL STRING 'Native' for every non-reserved agent, while
+            `providerMeta` sat imported and unused by this component — so a profile stored as
+            `acp:<cli>` was labelled Native, and the one surface that could have shown the mismatch
+            was the surface hiding it. That was the missing cue for the provider clobber the sibling
+            `AgentForm.draftToPayload` used to perform; now that the edit PRESERVES the provider, a
+            hardcoded label would be a permanent false statement rather than a transient one.
+            🪤 `providerMeta('')` still answers 'Native', which is today's string for every agent that
+            never set a provider — so this cannot read WORSE than before for anybody. It is also not
+            strictly true: empty means *inherit the global* `agent.provider`, which the frontend has no
+            way to resolve here. Naming that honestly needs the global on the wire; out of scope. */}
+        <span className="inline-flex items-center gap-1 rounded-pill px-m h-7" style={accentChip}>{reserved && <ShieldCheck size={12} />}{reserved ? 'Built-in' : providerMeta(agent.provider).label}</span>
         {!reserved && agent.model && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center font-mono text-on-surface-var text-[0.75rem]">{agent.model}</span>}
         {agent.approval_mode && <span className="rounded-pill bg-surface-high px-m h-7 inline-flex items-center text-on-surface-var">{agent.approval_mode}</span>}
       </div>

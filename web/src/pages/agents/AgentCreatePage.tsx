@@ -23,7 +23,13 @@ export function AgentCreatePage({ onBack, onCreated }: { onBack: () => void; onC
   async function create() {
     if (!draft.name.trim()) { setErr('Name is required'); return }
     setSaving(true); setErr('')
-    try { await api.createAgent(draftToPayload(draft)); onCreated() }
+    // 🔑 THE PROVIDER AND ORIGIN ARE DECLARED HERE, not inside `draftToPayload`. This page is the
+    // native-agent builder, so "native" and "personalclaw" are facts about CREATING one — not about the
+    // shared draft, which `AgentDetail` also sends as an EDIT where both fields must be left alone.
+    // `provider` is load-bearing and must not be dropped: the create handler reads
+    // `body.get("provider", "")`, and empty means *inherit the global* `agent.provider`, so omitting it
+    // would make this form produce ACP agents wherever that global is an ACP CLI.
+    try { await api.createAgent({ ...draftToPayload(draft), provider: 'native', source: 'personalclaw' }); onCreated() }
     catch (e) { setErr(e instanceof Error ? e.message : 'Create failed') } finally { setSaving(false) }
   }
 

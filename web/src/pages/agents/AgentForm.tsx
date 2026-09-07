@@ -31,17 +31,65 @@ export function toDraft(a: SavedAgent): AgentDraft {
     specialty: a.specialty ?? '', route_hints: a.route_hints ?? '',
   }
 }
+/** Build the create/update payload from the draft.
+ *
+ *  🔴 IT EMITS NEITHER `provider` NOR `source`, AND THOSE OMISSIONS ARE THE POINT. This function is
+ *  shared by `AgentCreatePage` and by `AgentDetail`'s in-panel EDIT, and it used to state
+ *  `provider: 'native'` and `source: 'personalclaw'` unconditionally — describing two fields the form
+ *  has no control for. `PUT /api/agents/{name}` applies each one whenever its key is present
+ *  (`handlers/agents.py`: `if "provider" in body: agent.provider = ...`, and the same for `source`), so
+ *  editing one word of an agent's description rewrote both:
+ *
+ *   · `provider` — declared `default=""` with *"Empty inherits the global agent.provider default"*
+ *     (`loader.py`'s `AgentProfile`), resolved at `loader.py:4325` as `provider or config.agent.provider`.
+ *     So an `acp:<cli>` agent silently became native, and an agent that was *following* the global
+ *     default got quietly PINNED to native. The second half needs no ACP setup to hit: it is every
+ *     profile whose provider was never explicitly set.
+ *   · `source` — *"Agent origin: personalclaw, marketplace, or builtin"*. A marketplace-installed agent
+ *     recorded itself as hand-authored after one edit. Nothing gates behaviour on it today, so this half
+ *     falsifies provenance rather than breaking function; the sibling prompts surface already tints by
+ *     `source === 'marketplace'` (`promptMeta.ts`), so it is a latent break too.
+ *
+ *  🪤 AND THE LEFTOVER `provider_agent` IS NOT INERT — IT IS WORSE THAN THE PROVIDER LOSS. `PUT` writes
+ *  only the keys it is sent, and this payload never mentioned `provider_agent`/`acp_mode`, so the old
+ *  clobber left a half-migrated profile: `provider: 'native'` with an ACP modeId still in
+ *  `provider_agent`. `chat_runner.py` then passes `agent=provider_agent or session.agent` into the
+ *  native bridge, where `provider_bridge.py` does `cfg.agents.get(agent)` — a name that matches no
+ *  profile. So the agent's voice, system prompt, model, tools, skills AND triggers are all silently
+ *  dropped for the turn, and the turn labels itself with the stale modeId. Preserving all three
+ *  together is the only coherent state; that is what omitting them achieves.
+ *
+ *  🔑 REACHABLE WITHOUT TOUCHING A FILE OR AN API. `lib/agents.ts`'s `ensureBindableAgentName()` POSTs
+ *  `provider: <the acp runtime id>` to materialize a bindable profile, and its callers are two ordinary
+ *  Settings comboboxes — Agent defaults → Default agent, and Chat → Warm pool agent. Picking a
+ *  discovered ACP agent there writes an `acp:<cli>` profile into `cfg.agents`; the Agents page lists it
+ *  as a fully-editable row (`agentsData` applies no provider filter) with a chip reading "Native".
+ *
+ *  Nothing warned about either loss. `AgentDetail`'s chip was the literal string 'Native' for every
+ *  non-reserved agent and never consulted the `providerMeta(agent.provider)` it imports, so an ACP
+ *  profile read "Native" *before* the edit made it true. That chip now names the real provider.
+ *
+ *  This is issue 689's shape exactly, and its fix is the precedent followed here. There, renaming a
+ *  notification trigger replaced its action, because `ScheduleForm.draftToPayload` described an action
+ *  the form could not edit; `renameKeepsItsAction.test.ts` records the verdict — *"The server was never
+ *  at fault… the fix is to stop describing an action the form cannot edit."* Same server contract
+ *  (partial update by key presence), same cure: a form with no control for a field sends no such field.
+ *
+ *  🪤 SO THE CREATE PATH STATES BOTH ITSELF, and `AgentCreatePage` does. Dropping `provider` without
+ *  that is the mirror defect rather than a smaller one: `POST /api/agents` reads
+ *  `body.get("provider", "")`, and empty means inherit — so on an instance whose global default is an
+ *  ACP CLI, the native-agent builder would quietly produce ACP agents. (`source` differs: its create
+ *  default already *is* `"personalclaw"`, so stating it there is for symmetry, not to hold behaviour.) */
 export function draftToPayload(d: AgentDraft): Record<string, unknown> {
   // NB: there is no `workflows` binding on an agent. A workflow scopes itself to
   // an agent at THEIR creation (scope='agent', scope_ref=<agent>), not from the
   // agent side — eligibility is resolved by that scope_ref match at surfacing.
   return {
-    name: d.name.trim().replace(/^-+|-+$/g, ''), description: d.description.trim(), provider: 'native', model: d.model,
+    name: d.name.trim().replace(/^-+|-+$/g, ''), description: d.description.trim(), model: d.model,
     system_prompt: d.system_prompt, voice: d.voice, natural_voice: d.natural_voice, approval_mode: d.approval_mode,
     skills: d.skills, tools: d.tools, triggers: d.triggers,
     default_dir: d.default_dir.trim(), memory_store: d.memory_store.trim(),
     specialty: d.specialty.trim(), route_hints: d.route_hints.trim(),
-    source: 'personalclaw',
   }
 }
 
