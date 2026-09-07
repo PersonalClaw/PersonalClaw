@@ -339,14 +339,14 @@ export function McpPoolTile({ stats }: { stats: McpPoolStats | null }) {
     <div>
       <div className="mb-s flex items-center gap-s">
         <Server size={14} className="text-on-surface-low" />
-        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">MCP connection pool</span>
+        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">MCP connection pool</span>
       </div>
       <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))' }}>
         {cells.map((c) => (
           <div key={c.label} title={c.hint}
             className="rounded-lg border border-outline-variant/40 bg-surface-container/50 px-3 py-2">
             <div className="text-on-surface text-[1.25rem] tabular-nums leading-tight">{c.value ?? 0}</div>
-            <div className="text-on-surface-low text-[0.75rem]">{c.label}</div>
+            <div data-type="caption" className="text-on-surface-low">{c.label}</div>
           </div>
         ))}
       </div>
@@ -362,16 +362,16 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
     <div className={g.providerDisabled ? 'opacity-55' : ''}>
       <div className="mb-s flex items-center gap-s">
         {g.kind === 'mcp' ? <Server size={14} className="text-on-surface-low" /> : <Cpu size={14} className="text-on-surface-low" />}
-        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">{g.label}</span>
+        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{g.label}</span>
         {g.kind === 'native'
-          ? <span className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low text-[0.75rem]">{g.providerLocked ? 'platform' : 'built-in'}</span>
-          : health && <span className="inline-flex items-center gap-1 text-[0.75rem]" style={{ color: health.tone }} title={health.detail}><Circle size={7} fill="currentColor" stroke="none" /> {health.state}</span>}
-        <span className="text-on-surface-low text-[0.75rem]">· {g.tools.length}</span>
+          ? <span data-type="caption" className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low">{g.providerLocked ? 'platform' : 'built-in'}</span>
+          : health && <span data-type="caption" className="inline-flex items-center gap-1" style={{ color: health.tone }} title={health.detail}><Circle size={7} fill="currentColor" stroke="none" /> {health.state}</span>}
+        <span data-type="caption" className="text-on-surface-low">· {g.tools.length}</span>
         {/* Which activation GROUP these tools belong to (Context Economy §5) — the
             page already groups by provider, which IS the group grain, so this just
             names it. Only shown when grouping is on, since it's meaningless off. */}
         {g.group && (
-          <span className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low text-[0.75rem]"
+          <span data-type="caption" className="rounded-pill bg-surface-high px-2 h-5 inline-flex items-center text-on-surface-low"
             title={g.group === 'core'
               ? 'Always loaded — the primitives an agent cannot work without'
               : `Group "${g.group}" — loaded on demand; a session that doesn't need it doesn't pay for its schemas`}>
@@ -395,7 +395,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
                 deletable here. Show a "via app" marker (delete = uninstall the app)
                 instead of a Trash button that would 409 + look broken. */}
             {g.server.name.includes(':') ? (
-              <span className="text-on-surface-low text-[0.75rem]" title={`Provided by the '${g.server.name.split(':')[0]}' app — uninstall it from the Store to remove this server.`}>via app</span>
+              <span data-type="caption" className="text-on-surface-low" title={`Provided by the '${g.server.name.split(':')[0]}' app — uninstall it from the Store to remove this server.`}>via app</span>
             ) : (
               <SquareIconButton icon={Trash2} iconSize={13} tone="danger"
                 label={`Remove ${g.server.name}`} title="Remove server" onClick={() => onRemoveServer(g.server!)} />
@@ -411,7 +411,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
           </div>
         )}
         {g.providerLocked && (
-          <span className="ml-auto text-on-surface-low text-[0.75rem]" title="Required by platform features — can't be disabled">required</span>
+          <span data-type="caption" className="ml-auto text-on-surface-low" title="Required by platform features — can't be disabled">required</span>
         )}
       </div>
       {/* 🔴 TWO COLUMNS WITH NO BREAKPOINT MADE THE TOOL NAME INVISIBLE ON A PHONE. The grid in the
@@ -428,7 +428,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
           🪤 This comment sits ABOVE the conditional on purpose: a `{…}` comment as the first child of a
           ternary branch is a second child where one expression is allowed, and it does not compile. */}
       {g.kind === 'mcp' && g.tools.length === 0 ? (
-        <div className="rounded-lg bg-surface-container px-m py-3 text-on-surface-low text-[0.8125rem] flex items-center gap-s">
+        <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex items-center gap-s">
           <Plug size={14} />
           {!g.server?.enabled ? 'Server disabled.' : health?.state === 'error' ? `Not responding — ${g.server?.error || 'no tools available'}.` : 'No tools exposed yet.'}
         </div>
@@ -479,10 +479,10 @@ function GroupBlock({ g, onOpen, onToggleServer, onRemoveServer, onToggleTool, o
                           beside `RiskBadge` would take width from it. Same call as the agent-row counts. */}
                       {t.requires_approval && <ShieldAlert size={12} className="text-warn shrink-0" role="img" aria-label="Asks for approval before it runs" />}
                       <RiskBadge risk={t.risk_level} />
-                      {off && <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">Disabled</span>}
+                      {off && <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">Disabled</span>}
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-on-surface-low text-[0.75rem] leading-snug">{t.description}</p>
-                    {props.length > 0 && <div className="mt-1 text-on-surface-low text-[0.75rem]">{props.length} param{props.length === 1 ? '' : 's'}</div>}
+                    <p data-type="caption" className="mt-0.5 line-clamp-2 text-on-surface-low leading-snug">{t.description}</p>
+                    {props.length > 0 && <div data-type="caption" className="mt-1 text-on-surface-low">{props.length} param{props.length === 1 ? '' : 's'}</div>}
                   </div>
                 </button>
                 {/* per-tool enable/disable. Locked tools show a disabled switch with
@@ -512,7 +512,7 @@ function RiskBadge({ risk }: { risk?: 'safe' | 'caution' | 'destructive' }) {
   const color = risk === 'destructive' ? 'var(--color-danger)' : 'var(--color-warn)'
   const label = risk === 'destructive' ? 'Destructive' : 'Caution'
   return (
-    <span className="rounded-pill px-1.5 py-0.5 text-[0.75rem] shrink-0" title={`Risk: ${label}`}
+    <span data-type="caption" className="rounded-pill px-1.5 py-0.5 shrink-0" title={`Risk: ${label}`}
       style={withWeight({ background: `color-mix(in srgb, ${color} 16%, transparent)`, color }, 600)}>
       {label}
     </span>
@@ -527,11 +527,14 @@ function LoadFailures({ failures }: { failures: ToolLoadFailure[] }) {
     <div className="rounded-lg border px-m py-3" style={{ borderColor: 'color-mix(in srgb, var(--color-danger) 35%, transparent)', background: 'color-mix(in srgb, var(--color-danger) 8%, transparent)' }}>
       <div className="mb-2 flex items-center gap-s">
         <ShieldAlert size={15} className="text-danger" />
-        <span className="text-on-surface text-[0.8125rem] font-medium">{failures.length} tool source{failures.length === 1 ? '' : 's'} failed to load</span>
+        {/* `font-medium` became `fw-500`: a role's `font-variation-settings` beats a Tailwind
+            font-weight class outright, so keeping `font-medium` beside `label-s` would have
+            rendered this line at 470 instead of the 500 it has always been. */}
+        <span data-type="label-s" className="text-on-surface fw-500">{failures.length} tool source{failures.length === 1 ? '' : 's'} failed to load</span>
       </div>
       <div className="flex flex-col gap-1.5">
         {failures.map((f) => (
-          <div key={f.provider} className="text-[0.75rem] leading-snug">
+          <div key={f.provider} data-type="caption" className="leading-snug">
             <span className="font-mono text-on-surface">{f.provider}</span>
             <span className="text-on-surface-low"> — {f.error}</span>
           </div>
@@ -567,11 +570,11 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="mb-s flex min-h-6 -my-0.5 items-center gap-s text-on-surface-low hover:text-on-surface transition-colors">
         <ChevronRight size={14} style={{ transform: open ? 'rotate(90deg)' : 'none' }} />
         <Download size={14} />
-        <span className="text-[0.75rem] uppercase tracking-wide">Discovered in other tools ({servers.length})</span>
+        <span data-type="caption" className="uppercase tracking-wide">Discovered in other tools ({servers.length})</span>
       </button>
       {open && (
         <>
-          <p className="mb-2 text-on-surface-low text-[0.75rem] leading-snug">
+          <p data-type="caption" className="mb-2 text-on-surface-low leading-snug">
             These MCP servers are configured in another backend but not in PersonalClaw. Import one to copy its
             configuration here so your agents can use it.
           </p>
@@ -582,7 +585,7 @@ function ImportSuggestions({ servers, onImported }: { servers: ImportableMcpServ
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="truncate font-mono text-on-surface text-[0.8125rem]" title={s.name}>{s.name}</span>
-                    <span className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low text-[0.75rem]">{s.backend}</span>
+                    <span data-type="caption" className="rounded-pill bg-surface-high px-1.5 py-0.5 text-on-surface-low">{s.backend}</span>
                   </div>
                   {/* The server line is a URL or a full command line — the most tail-heavy string on
                       the surface, and the half that says WHICH server this is. It did not clip with this
@@ -715,7 +718,7 @@ function AddToolServerModal({ onClose, onAdded }: { onClose: () => void; onAdded
             disabledReason={saving ? undefined
               : kind === 'mcp' ? 'Name the server and give it a command' : "Enter the server's endpoint URL"}>{saving ? 'Adding…' : 'Add server'}</Button>
           <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-          {err && <span className="text-[0.75rem]" style={{ color: 'var(--color-danger)' }}>{err}</span>}
+          {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
         </div>
       </div>
     </Modal>
