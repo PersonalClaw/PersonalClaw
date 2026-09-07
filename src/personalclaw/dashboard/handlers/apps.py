@@ -206,7 +206,11 @@ async def api_apps_list(request: web.Request) -> web.Response:
     ``updateAvailable`` + ``latestVersion`` for the Library card badge, and emit ONE
     notification per newly-available version (deduped by ``name + latest_version`` in
     ``surface_app_updates`` so re-viewing never re-nags)."""
-    from personalclaw.apps.catalog import resolve_hero_url, surface_app_updates
+    from personalclaw.apps.catalog import (
+        resolve_hero_url,
+        source_kind_for_origin,
+        surface_app_updates,
+    )
     from personalclaw.apps.manager import app_dir, list_apps
 
     # Compute available updates + emit the (deduped) notifications, on this read path.
@@ -255,6 +259,14 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 "description": manifest.get("description", ""),
                 "enabled": app.get("enabled", False),
                 "origin": app.get("origin", ""),
+                # The Store's `sourceKind` reading of that origin, resolved HERE so no
+                # frontend has to translate between the two provenance vocabularies (which
+                # is how the detail panel came to render `origin || 'local'` — claiming
+                # "local" for an app whose origin the record did not carry). "" when the
+                # origin has no reading, and the surface then shows nothing.
+                "sourceKind": source_kind_for_origin(
+                    str(app.get("origin", "")), native=bool(manifest.get("native", False))
+                ),
                 # A native app is locked on — the FE hides uninstall/disable and
                 # shows a "native, always-on" notice, offering Configure/Update only.
                 "native": bool(manifest.get("native", False)),
@@ -321,6 +333,8 @@ async def api_apps_list(request: web.Request) -> web.Response:
                     "bash, full-result retrieval. Required by the agent.",
                     "enabled": True,
                     "origin": "bundled",
+                    # Synthesized rows are shipped-with-the-product by construction.
+                    "sourceKind": "native",
                     "icon": "FolderCog",
                     "heroUrl": "",
                     "hasBackend": False,
@@ -352,6 +366,9 @@ async def api_apps_list(request: web.Request) -> web.Response:
                     "description": ext.manifest.description,
                     "enabled": ext.enabled,
                     "origin": "bundled",
+                    # This branch only runs for an extension NOT already in `out` (i.e. not a
+                    # disk-installed app), so it is shipped-with-the-product by construction.
+                    "sourceKind": "native",
                     "icon": ext.manifest.icon,
                     # Extension providers installed on disk may ship a hero image; resolve
                     # from their app dir (no-op → "" when absent or not disk-installed).

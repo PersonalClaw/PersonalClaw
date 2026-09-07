@@ -746,6 +746,10 @@ export interface AppQualityWire {
 export interface AppSummary {
   name: string; displayName: string; version: string; description: string
   enabled: boolean; origin: string; source?: string; icon: string
+  /** The Store's `sourceKind` reading of `origin`, resolved by the backend so no surface
+   *  translates between the two provenance vocabularies. `''` when the origin has no
+   *  reading — render nothing rather than guessing (see `lib/provenance`). */
+  sourceKind?: string
   heroUrl?: string  // resolved data: URI for the optional hero/banner image; absent/"" if none
   hasBackend: boolean; hasUI: boolean
   uiPages: AppUiPage[]
@@ -817,6 +821,26 @@ export interface AppCatalogEntry {
   // `{}`/absent = declared nothing (also the case for a registry pointer whose
   // manifest hasn't been fetched) → no badges, which is honest either way.
   quality?: AppQualityWire
+}
+/** The `/api/apps/catalog` payload. Spelled ONCE — the shape used to be written out inline at
+ *  three call sites, which is how a new field (`networkSources`) reaches one consumer and not
+ *  the next. The four app lists carry at most one entry per name between them: the backend
+ *  resolves collisions before serialising (`apps/catalog.py: resolve_catalog_entries`), so no
+ *  consumer can resolve one differently from another (#2528). Flatten them with
+ *  `lib/appCatalog.catalogApps`, never by concatenating here. */
+export interface AppCatalog {
+  bundled: AppCatalogEntry[]
+  gitSources: string[]
+  defaultGitSources?: string[]
+  builtinGitSources?: string[]
+  localSources?: string[]
+  firstPartySources?: string[]
+  localApps?: AppCatalogEntry[]
+  remoteApps?: AppCatalogEntry[]
+  gitApps?: AppCatalogEntry[]
+  /** The remote HOSTS a Store read contacts, so the surface that triggers the egress can
+   *  disclose it. Empty ⇒ opening the Store reaches nothing off this machine. */
+  networkSources?: string[]
 }
 export interface AppScanFinding { surface: string; severity: string; rule: string; path: string; evidence: string }
 /** SH-3 contract C2. `state` is `signed` | `unsigned` | `invalid`; `signer` is the
@@ -6300,7 +6324,9 @@ export const api = {
   // the generated self-description document (tools + routes + providers)
   manifest: () => get<Manifest>('/api/manifest'),
   // full catalog envelope incl. operator-visible load failures (broken providers/sources)
-  toolsIndex: () => get<{ tools: ToolItem[]; load_failures?: ToolLoadFailure[] }>('/api/tools'),
+  toolsIndex: () => get<{
+    tools: ToolItem[]; load_failures?: ToolLoadFailure[]
+  }>('/api/tools'),
   invokeTool: (tool: string, args: Record<string, unknown>, provider?: string) =>
     post<ToolInvokeResult>('/api/tools/invoke', { tool, arguments: args, provider }),
   mcpServers: () => get<McpServer[]>('/api/mcp'),
@@ -7345,7 +7371,7 @@ export const api = {
   // `defaultGitSources` = the rows PersonalClaw shipped (labelled "Default"); `builtinGitSources`
   // = the subset that cannot be removed (bundled into every read), so the UI hides a remove
   // control that would silently do nothing. The seeded registry is in the first, not the second.
-  appCatalog: () => get<{ bundled: AppCatalogEntry[]; gitSources: string[]; defaultGitSources?: string[]; builtinGitSources?: string[]; localSources?: string[]; firstPartySources?: string[]; localApps?: AppCatalogEntry[]; remoteApps?: AppCatalogEntry[]; gitApps?: AppCatalogEntry[] }>('/api/apps/catalog'),
+  appCatalog: () => get<AppCatalog>('/api/apps/catalog'),
   appSources: () => get<{ sources: string[] }>('/api/apps/sources').then((d) => d.sources),
   addAppSource: (url: string) => post<{ ok: boolean; sources: string[] }>('/api/apps/sources', { url }),
   removeAppSource: (url: string) => del(`/api/apps/sources?url=${encodeURIComponent(url)}`),

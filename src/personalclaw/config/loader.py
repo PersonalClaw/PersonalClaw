@@ -960,13 +960,20 @@ class SourcesConfig:
 class AppsConfig:
     """App Store settings that are not per-app (ECOSYSTEM-TOOLING T2.2).
 
-    Today one knob: whether the curated app registry ships as a default git source. It is a
-    *seed* switch, not a live filter — on first start with it on, the registry URL is written
-    into ``apps/app-sources.json`` as an ordinary, removable row (see
-    :func:`personalclaw.apps.catalog.seed_default_git_sources`). Turning it off later does not
-    retract an already-seeded row (remove it in the Store, which persists); turning it on later
-    seeds on the next start. A source only ever contributes Store LISTINGS — the scanner-gated
-    install path is unchanged, so nothing from the registry runs without per-app consent.
+    Two knobs, both about shipped NETWORK app sources, and they work differently on purpose:
+
+    * ``registry_source_enabled`` is a *seed* switch. On first start with it on, the curated
+      registry URL is written into ``apps/app-sources.json`` as an ordinary, removable row
+      (see :func:`personalclaw.apps.catalog.seed_default_git_sources`). Turning it off later
+      does not retract an already-seeded row (remove it in the Store, which persists);
+      turning it on later seeds on the next start.
+    * ``bundled_source_enabled`` is a *live filter* over the bundled default tuple, which is
+      folded into every read and so has no row to remove. It is the off switch that makes
+      "a Store read contacts github.com before anything has been configured" a refusable
+      default rather than an unconditional one (#2528).
+
+    Either way a source only ever contributes Store LISTINGS — the scanner-gated install
+    path is unchanged, so nothing from a source runs without per-app consent.
     """
 
     registry_source_enabled: bool = field(
@@ -976,6 +983,16 @@ class AppsConfig:
             "Ship the curated app registry as a default source in the Store, so community "
             "apps are discoverable out of the box. Seeded once as a removable source; off "
             "means it is never added. Listing only — installing still runs the scanner.",
+        ),
+    )
+    bundled_source_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Bundled app source",
+            "List the published first-party apps repo as a Store source. On (the default) a "
+            "Store read contacts github.com to enumerate it; off means the Store reaches no "
+            "network of its own and lists only local sources. Listing only — installing "
+            "still runs the scanner.",
         ),
     )
 
@@ -3598,6 +3615,11 @@ class AppConfig:
                 # decision of this field — and the resulting source is visible in the Store
                 # and removable there.
                 registry_source_enabled=bool(apps_data.get("registry_source_enabled", True)),
+                # Same polarity reasoning: a corrupted value resolves to the SHIPPED default
+                # (bundled source listed). Losing the Store's only source on an unreadable
+                # config is the worse failure, and the listing is disclosed on the surface
+                # that triggers the fetch plus refusable from Settings → Apps.
+                bundled_source_enabled=bool(apps_data.get("bundled_source_enabled", True)),
             ),
             hooks=data.get("hooks", {}),
             agents=agents,
