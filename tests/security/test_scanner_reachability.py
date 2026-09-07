@@ -402,6 +402,41 @@ class TestCommentaryIsNotCode:
         assert finding.reachability is Reachability.UNPARSEABLE
         assert finding.severity is Verdict.DANGEROUS
 
+    def test_a_newly_reachable_alternative_is_scoped_like_every_other(self, tmp_path: Path) -> None:
+        """#2610 — the interaction. ``disk_wipe``'s ``> /dev/sdX`` branch was dead code, so
+        the scoping pass had never once been handed a finding from it. A branch that starts
+        firing must be scoped by the SAME rule as its siblings — neither exempted from the
+        downgrade nor denied it: inert commentary re-scores, a live call does not.
+
+        Driven both ways in one test, because either half alone is misleading — a downgrade
+        with nothing kept would read as a hole, and a kept finding with nothing downgraded
+        would read as the pre-#2605 floor."""
+        redirect = "cat /dev/zero > /dev/sda"
+        assert dict(_DANGEROUS_SCRIPT)["disk_wipe"].search(
+            redirect
+        ), "the #2610 fix regressed — this spelling no longer matches, so the rest is vacuous"
+
+        inert = _bundle(
+            tmp_path / "inert",
+            {"provider.py": _INERT_PROVIDER, "test_notes.py": _commented(redirect)},
+        )
+        scoped = _by_rule(_scan(inert), "disk_wipe")
+        assert scoped.reachability is Reachability.COMMENTARY, scoped.reachability_reason
+        assert scoped.severity is Verdict.WARNING
+        assert "(L0)" in scoped.reachability_reason
+        assert _scan(inert).verdict is Verdict.WARNING
+        assert _dangerous(_scan(inert)) == []
+
+        live = _bundle(
+            tmp_path / "live",
+            {"provider.py": _INERT_PROVIDER, "boot.py": _in_a_live_call(redirect)},
+        )
+        kept = _by_rule(_scan(live), "disk_wipe")
+        assert _scan(live).verdict is Verdict.DANGEROUS, "a live raw-disk redirect was let in"
+        assert kept.severity is Verdict.DANGEROUS
+        assert kept.reachability is Reachability.REACHABLE
+        assert "(L0)" not in kept.reachability_reason
+
     def test_the_line_table_the_span_check_stands_on_is_not_str_splitlines(self) -> None:
         """A form feed is legal Python whitespace and CPython does NOT count it as a line
         break; ``str.splitlines`` does. A table built the wrong way would slide every span
