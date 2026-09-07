@@ -5,6 +5,7 @@ import { TopBar } from './TopBar'
 import { Spark } from './Spark'
 import { Button } from './Button'
 import { spring, expr } from '../design/motion'
+import { readableErrText } from '../lib/errText'
 import { PageTitle } from './PageTitle'
 import { Surface } from './Surface'
 
@@ -68,8 +69,17 @@ export function LoadError({ what, error, onRetry }: {
           {/* The fallback used to read "Your ${what} are safe", which is ungrammatical for the many
               singular nouns callers pass ("Your project are safe"). Nothing on this component reads
               the count, so the noun cannot be pluralized reliably — the reassurance is stated once,
-              noun-free, and it is just as true. The headline above already names what failed. */}
-          {(error as Error)?.message
+              noun-free, and it is just as true. The headline above already names what failed.
+
+              🔴 AND THE FALLBACK WAS UNREACHABLE IN THE COMMONEST FAILURE OF ALL. `?.message` is
+              truthy for a browser fetch rejection, so the written sentence lost to "Failed to
+              fetch" (Chrome) / "Load failed" (Safari) — engine-specific text meant for a developer
+              console — and to `HTTP 502`, which is `errText`'s own placeholder for a body it
+              refused to show. Both displaced a real sentence with something the reader cannot use,
+              directly under a headline that had already named what failed. `readableErrText`
+              returns '' for exactly that closed set and passes a backend-authored message through
+              untouched, so "name is required" still reaches the user. */}
+          {readableErrText(error)
             || "The server didn't respond — this is just a load error, and nothing was lost."}
         </p>
       </div>
