@@ -33,9 +33,14 @@ export function useResizablePanel(
      *  EXISTING localStorage key that does not follow the `-w` convention (e.g. the terminal
      *  drawer's `terminal-drawer-h`), so adopting this hook resets no saved size. */
     storageKey?: string
+    /** Sliver of what sits behind the panel that `fitWidth` always leaves visible, so a panel can
+     *  never occupy the entire viewport and strand its own controls at the far edge. 32px is
+     *  `SidePanel`'s original `EDGE_PEEK`, kept as the default because every edge-docked panel
+     *  wants it. Only affects `fitWidth`; the stored `width` is untouched. */
+    edgePeek?: number
   },
 ) {
-  const { def, min, max, side, collapsible = false } = opts
+  const { def, min, max, side, collapsible = false, edgePeek = 32 } = opts
   const vertical = side === 'top' || side === 'bottom'
   const wKey = opts.storageKey ?? `${key}-w`
   // A dynamic max is read through a ref so it never enters a callback's dep array (the thunk
@@ -58,6 +63,41 @@ export function useResizablePanel(
     return () => window.removeEventListener('resize', on)
   }, [dynamicMax])
   const [collapsed, setCollapsed] = useState<boolean>(() => collapsible && localStorage.getItem(`${key}-collapsed`) === '1')
+
+  // ── fitWidth: the width to RENDER, which is not always the width the user chose ──────────────
+  //
+  // 🔑 A PANEL WIDER THAN THE VIEWPORT CLIPS ITS OWN CLOSE BUTTON OFF-SCREEN, AND THE APP HAS NO
+  // HORIZONTAL SCROLLBAR TO REACH IT. `design/tokens.css` sets `overflow: hidden` on
+  // `html, body, #root`, so an overflowing panel is not a scroll nuisance — the controls at its far
+  // edge simply become unreachable by pointer. Drag a panel to 900px on a large monitor, then
+  // split-screen to 720px, and its Expand/Close buttons are gone.
+  //
+  // 🪤 A VIEWPORT-RELATIVE `max` THUNK DOES NOT FIX THIS, which is the trap here. `resolveMax()` is
+  // consulted only when a clamp RUNS — on drag and on keyboard resize. The resize listener above
+  // deliberately updates `resolvedMax` alone, so `aria-valuemax` stays honest, and never re-clamps
+  // `width`. The defect needs no drag at all: the window narrows and nothing recomputes. A thunk
+  // would fix only the drag-while-already-narrow case, which is not the failure.
+  //
+  // 🪤 AND IT MUST NOT CLAMP THE STORED VALUE. `SidePanel` invented this mechanism and
+  // `ui/sidePanelClamp.test.tsx` pins the reason: "clamps a WIDER stored width WITHOUT overwriting
+  // it — a wide screen restores the choice", asserting the persisted value stays `720` while the
+  // render clamps. Capping storage would silently destroy the user's preference the first time they
+  // ever split-screened. So `width` (stored, persisted, reported to `aria-valuenow`) and `fitWidth`
+  // (rendered) are deliberately two values.
+  //
+  // This lives in the primitive rather than being copied per panel because that copy is exactly how
+  // an invariant gets lost — the same shape as the armed-delete timer that went missing from one of
+  // seven hand-rolled copies.
+  const [viewport, setViewport] = useState(() => (vertical ? window.innerHeight : window.innerWidth))
+  useEffect(() => {
+    // Unconditional, unlike the `resolvedMax` listener above (which is gated on a thunk max): a
+    // static max is exactly the case that needs this, since nothing else re-reads the viewport.
+    const on = () => setViewport(vertical ? window.innerHeight : window.innerWidth)
+    on()
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+  }, [vertical])
+  const fitWidth = Math.min(width, Math.max(0, viewport - edgePeek))
 
   // Persist the width, but DEBOUNCED: a pointer drag fires setWidth on every
   // pointermove (60+/sec), and an un-debounced effect did a synchronous localStorage
@@ -140,5 +180,7 @@ export function useResizablePanel(
     setWidth(Math.max(min, Math.min(resolveMax(), next)))
   }, [width, min, side])
 
-  return { width, collapsed, setCollapsed, onHandleDown, onHandleKey, min, max: resolvedMax }
+  // `width` is the user's stored choice — persist it, report it to `aria-valuenow`. `fitWidth` is
+  // what to put in a style. They differ only while the viewport cannot hold the choice.
+  return { width, fitWidth, collapsed, setCollapsed, onHandleDown, onHandleKey, min, max: resolvedMax }
 }
