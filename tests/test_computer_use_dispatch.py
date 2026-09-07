@@ -443,6 +443,74 @@ def test_a_driver_refusal_after_the_audit_does_not_write_a_second_row(
     assert len(rows) == 1 and rows[0]["outcome"] == "approved", rows
 
 
+@pytest.mark.parametrize("trigger", ["past-ttl", "changed-fingerprint"])
+def test_a_stale_index_refusal_records_WHICH_APP_it_was_about(
+    tmp_path, monkeypatch, sel_rows, trigger
+):
+    """#2570: BOTH stale-index triggers must name their target in the SEL row, not just one.
+
+    The two are the same error code on the same tool, one dispatch step apart, and only the
+    second used to keep the app: the past-TTL check raises inside ``_resolve_snapshot``, before
+    the dispatch's ``app = snap.app`` line runs, so its denied row carried ``resources=''``
+    while a changed-fingerprint refusal carried ``app=TextEdit``. The row was present either
+    way, which is why every count-based audit check stayed green over a record that had lost the
+    thing it was about — ``gate``'s own docstring promises "which tool, on which app, with what
+    verdict".
+
+    Parametrised rather than written once: a test that asserted only one leg is exactly what let
+    the asymmetry live, so the leg that was already correct is asserted beside the one that was
+    not and neither can quietly go blank.
+    """
+    _arm(tmp_path, ARMED_APP)
+    clock = [1000.0]
+    _freeze(monkeypatch, clock)
+    _fake_driver(monkeypatch, elements=[ORDINARY_FIELD])
+    snap = _snapshot()
+    if trigger == "past-ttl":
+        clock[0] += service.SNAPSHOT_TTL_SECS + 0.001
+    else:
+        # Inside the TTL, so age cannot be what refuses: only the re-walk's fingerprint differs.
+        _fake_driver(monkeypatch, elements=[ORDINARY_FIELD], fingerprint="fp-window-moved")
+
+    with pytest.raises(service.ComputerUseRefusal) as caught:
+        _run(
+            service.computer_dispatch(
+                "computer_set_value",
+                {"snapshot_id": snap.snapshot_id, "element_index": 0, "value": "x"},
+            )
+        )
+    assert caught.value.error.code == service.ERR_STALE_INDEX
+
+    denied = [row for row in sel_rows() if row["outcome"] == "denied"]
+    assert len(denied) == 1, sel_rows()
+    assert denied[0]["error"] == service.ERR_STALE_INDEX
+    assert denied[0]["operation"] == "computer_set_value"
+    assert denied[0]["resources"] == f"app={ARMED_APP}", (trigger, denied[0])
+
+
+def test_an_unknown_snapshot_id_still_names_no_app(tmp_path, monkeypatch, sel_rows):
+    """The deliberate asymmetry, pinned so the fix above cannot be widened into a guess.
+
+    The third cause of ``ERR_COMPUTER_USE_STALE_INDEX`` is an id that was never live in this
+    gateway. It resolves to no snapshot, so there is no app it was about — an empty
+    ``resources`` is the true record, and filling it in with whatever the caller happened to
+    pass would be an audit row asserting something nobody checked.
+    """
+    _arm(tmp_path, ARMED_APP)
+    _fake_driver(monkeypatch, elements=[ORDINARY_FIELD])
+    with pytest.raises(service.ComputerUseRefusal) as caught:
+        _run(
+            service.computer_dispatch(
+                "computer_set_value",
+                {"snapshot_id": "never-live", "element_index": 0, "value": "x"},
+            )
+        )
+    assert "no such snapshot is live" in caught.value.error.what
+    rows = sel_rows()
+    assert len(rows) == 1 and rows[0]["outcome"] == "denied", rows
+    assert rows[0]["resources"] == "", rows[0]
+
+
 # ── 4. the bounds, from both sides, each with a floor ─────────────────────────
 
 

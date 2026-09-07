@@ -143,11 +143,21 @@ class ComputerUseRefusal(Exception):
     tell an operator-fixable refusal from a model-fixable one — and they carry different FIX
     lines for exactly that reason. All three are discriminated by
     :attr:`AgentError.code`, and the dispatch catches all three in one place.
+
+    ``app`` is the target the refusal already knows about, for the SEL row (#2570). Some
+    refusals are raised *inside* a helper that has resolved the target the dispatch has not yet
+    assigned — ``_resolve_snapshot``'s past-TTL branch holds the snapshot it just read the app
+    off — and the audit is written by the handler, which has only what the chain got as far as
+    setting. Carrying it on the exception is what lets the row name its target without the
+    dispatch having to guess or the helper having to return through a raise. Left ``""`` where
+    there genuinely is no target: an unknown snapshot id points at nothing, and inventing an app
+    for it would be a worse record than the empty one.
     """
 
-    def __init__(self, error: AgentError) -> None:
+    def __init__(self, error: AgentError, *, app: str = "") -> None:
         super().__init__(error.render())
         self.error = error
+        self.app = app
 
 
 @dataclass(frozen=True)
@@ -191,16 +201,26 @@ def live_snapshots() -> tuple[Snapshot, ...]:
 
 
 def _refuse(
-    code: str, *, what: str, why: str, fix: str, suggestions: tuple[str, ...] = ()
+    code: str,
+    *,
+    what: str,
+    why: str,
+    fix: str,
+    suggestions: tuple[str, ...] = (),
+    app: str = "",
 ) -> NoReturn:
     """Raise one refusal with the three lines a model can act on.
 
     Typed ``NoReturn`` so every call site is a real terminator to the type checker as well as
     at runtime — otherwise each one needs a dead ``raise`` after it to convince mypy, and a
     dead raise is indistinguishable from a guard someone forgot to finish.
+
+    ``app`` is for the refusals raised where the target is already known but the dispatch has
+    not recorded it yet — see :class:`ComputerUseRefusal`. It changes no decision; it only
+    reaches the SEL row.
     """
     raise ComputerUseRefusal(
-        AgentError(code=code, what=what, why=why, fix=fix, suggestions=suggestions)
+        AgentError(code=code, what=what, why=why, fix=fix, suggestions=suggestions), app=app
     )
 
 
@@ -221,6 +241,17 @@ def _audit(*, tool: str, app: str, outcome: str, error: str, source: str, identi
         source=source or "background",
         caller_identity=identity,
     )
+
+
+def _refusal_app(exc: Exception) -> str:
+    """The target a refusal knows about, when the dispatch had not recorded one yet (#2570).
+
+    Only :class:`ComputerUseRefusal` carries this — the keystone and the policy are both handed
+    the app by the dispatch, so they never know one it does not. Narrowed by type rather than by
+    ``getattr`` so a future exception growing an unrelated ``app`` attribute cannot start
+    supplying audit rows by accident.
+    """
+    return exc.app if isinstance(exc, ComputerUseRefusal) else ""
 
 
 def _spec(tool: str) -> ToolSpec:
@@ -286,7 +317,15 @@ def _remember(app: str, fingerprint: str, elements: list[dict[str, Any]]) -> Sna
     return snap
 
 
-def _stale(snapshot_id: str, *, tool: str, detail: str) -> NoReturn:
+def _stale(snapshot_id: str, *, tool: str, detail: str, app: str = "") -> NoReturn:
+    """One code, three causes — and only two of the three have a target to name.
+
+    ``app`` is passed by the callers that hold the snapshot (the past-TTL branch and the
+    changed-fingerprint re-walk), so the SEL row records *which app* the refused index was
+    about. The unknown/evicted-id branch leaves it empty on purpose: an id that was never live
+    in this gateway names no window, and filling that row in with a guess would make the audit
+    less true rather than more complete (#2570).
+    """
     _refuse(
         ERR_STALE_INDEX,
         what=f"Snapshot {snapshot_id!r} can no longer be acted on: {detail}.",
@@ -296,6 +335,7 @@ def _stale(snapshot_id: str, *, tool: str, detail: str) -> NoReturn:
             "automation clicks the wrong button."
         ),
         fix=f"Call computer_snapshot again and use the new index for {tool}.",
+        app=app,
     )
 
 
@@ -315,10 +355,17 @@ def _resolve_snapshot(tool: str, params: dict[str, Any]) -> Snapshot:
         _stale(snapshot_id, tool=tool, detail="no such snapshot is live in this gateway")
     age = _now() - snap.taken_at
     if age > SNAPSHOT_TTL_SECS:
+        # ``app=snap.app`` is what stops this refusal writing an anonymous audit row (#2570).
+        # This branch raises before the dispatch's ``app = snap.app`` runs, so without it the
+        # SEL row for a past-TTL refusal carried ``resources=''`` while a changed-fingerprint
+        # refusal — same code, same tool, one step later — carried the app. The row was present
+        # either way, so every count-based check stayed green over a record that had lost the
+        # thing it was about.
         _stale(
             snapshot_id,
             tool=tool,
             detail=f"it is {age:.1f}s old and indices expire after {SNAPSHOT_TTL_SECS:.0f}s",
+            app=snap.app,
         )
     return snap
 
@@ -337,7 +384,12 @@ async def _require_fresh_element(
     index = _int_arg(params, "element_index", tool=tool)
     fresh = await _run_driver("snapshot", {"app": snap.app}, tool=tool)
     if str(fresh.get("fingerprint") or "") != snap.fingerprint:
-        _stale(snap.snapshot_id, tool=tool, detail="the window has changed since it was walked")
+        _stale(
+            snap.snapshot_id,
+            tool=tool,
+            detail="the window has changed since it was walked",
+            app=snap.app,
+        )
     raw = fresh.get("elements")
     elements = list(raw) if isinstance(raw, list) else []
     if not 0 <= index < len(elements):
@@ -590,9 +642,13 @@ async def computer_dispatch(
         policy.ComputerUsePolicyRefusal,
         ComputerUseRefusal,
     ) as exc:
+        # ``app`` is whatever the chain got as far as assigning; a refusal raised before that
+        # assignment may still know the target (#2570) and carries it, so the denied row names
+        # what it was about rather than nothing. Local first: once the dispatch has resolved the
+        # app, that is the value every other row in this attempt used.
         _audit(
             tool=tool,
-            app=app,
+            app=app or _refusal_app(exc),
             outcome="denied",
             error=exc.error.code,
             source=source,

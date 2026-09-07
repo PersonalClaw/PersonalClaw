@@ -494,6 +494,17 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "triggers/liveness.py::_dirty_git_active::subprocess.run": (
         "host-fact: workspace git-dirty probe"
     ),
+    # #2569's TCC principal probe — one `/usr/bin/log show` read of the OS's own log, to name
+    # WHICH responsible process macOS resolved this session's Accessibility request against.
+    # Operator-exempt rather than ceiling-wrapped, and the reason is that nothing agent-authored
+    # reaches it: the argv is fixed in `macos_tcc._PROBE_ARGV` with the predicate and the window
+    # as module literals, there is no shell, and no caller parameter is interpolated — the only
+    # runtime input is `os.getpid()`, used to FILTER the output rather than to build the command.
+    # It is the same class as the git-dirty probe above: a read of a host fact, bounded by its own
+    # `timeout=` because the log store's size is the host's business, not this process's.
+    "computer_use/macos_tcc.py::_probe::subprocess.run": (
+        "host-fact: tccd responsible-process probe (fixed argv, read-only, own timeout)"
+    ),
     # Voice/transcribe — operator media (ffmpeg/whisper host tools), operator-initiated.
     "transcribe.py::_transcribe_segmented::asyncio.create_subprocess_exec": (
         "host tool: transcription ffmpeg"

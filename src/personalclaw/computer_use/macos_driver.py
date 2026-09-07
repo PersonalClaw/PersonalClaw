@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from personalclaw.computer_use import macos_ffi as ffi
+from personalclaw.computer_use import macos_tcc
 from personalclaw.computer_use.types import DriverError, DriverRefusal, Element, fingerprint_of
 
 #: The refusal an operator fixes in System Settings, distinct from every other failure because
@@ -53,6 +54,47 @@ _DEFAULT_SCROLL_LINES = 3
 _POINTER_METHODS = ("located", "global")
 
 
+def _permission_fix(responsible: macos_tcc.Responsible) -> str:
+    """The FIX line for an ungranted session, naming the principal macOS actually evaluates.
+
+    This text used to send the operator to add *"the binary running PersonalClaw's gateway (its
+    own python executable, not a terminal app)"* (#2569). That is the wrong TCC principal in
+    both halves: macOS resolves the request against the session's **responsible process**, and
+    for an interpreter started from a terminal, an IDE or an app bundle that responsible process
+    is exactly the host application the old text told the operator not to add. An operator
+    following it ticked a row the OS never consults, which is why the grant step kept appearing
+    to fail — see :mod:`~personalclaw.computer_use.macos_tcc`.
+
+    So the identity is *named*, from ``tccd``'s own attribution, and when the probe cannot read
+    it the line says so and hands over the command instead. A refusal that guessed a plausible
+    application would be back where #2569 started: confidently wrong.
+    """
+    where = (
+        "Open System Settings > Privacy & Security > Accessibility, click +, and add the "
+        "RESPONSIBLE process for this session — the application that launched PersonalClaw's "
+        "gateway (your terminal emulator, IDE, or the app bundle hosting it). That is the "
+        "identity macOS resolves this request against; adding the interpreter binary itself "
+        "changes nothing, because the OS never consults it."
+    )
+    if responsible.known:
+        which = (
+            f" On this session that process is {responsible.describe()}, read from tccd's own "
+            "attribution for this pid — that is the row to add and tick."
+        )
+    else:
+        which = (
+            f" This process could NOT determine which one it is ({responsible.unknown_reason}), "
+            "so rather than guess: run `"
+            f"{macos_tcc.RESPONSIBLE_PROBE_COMMAND}` and add the process named by the "
+            "responsible= field."
+        )
+    return (
+        f"{where}{which} Then restart the gateway. The grant belongs to that process and not to "
+        "the machine, so the same interpreter is trusted under one host application and refused "
+        "under the next. Nothing was clicked, typed or changed."
+    )
+
+
 def _permission_refusal(detail: str) -> DriverError:
     return DriverError(
         ERR_AX_PERMISSION,
@@ -60,13 +102,12 @@ def _permission_refusal(detail: str) -> DriverError:
         why=(
             "Reading a window's accessibility tree and activating an element both require the "
             "Accessibility permission, which only a human can grant — it is deliberately not "
-            "something a program can turn on for itself."
+            "something a program can turn on for itself. macOS also decides WHOSE grant to "
+            "check by responsibility rather than by executable: the request is resolved against "
+            "this session's responsible process — the application that launched this interpreter "
+            "— so the same binary is trusted in one session and refused in the next."
         ),
-        fix=(
-            "Open System Settings > Privacy & Security > Accessibility, click +, and add the "
-            "binary running PersonalClaw's gateway (its own python executable, not a terminal "
-            "app), then restart the gateway. Nothing was clicked, typed or changed."
-        ),
+        fix=_permission_fix(macos_tcc.responsible_process()),
     )
 
 
