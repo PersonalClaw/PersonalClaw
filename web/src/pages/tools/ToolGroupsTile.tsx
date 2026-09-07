@@ -52,8 +52,8 @@ export function ToolGroupsTile({ data, onChanged }: { data: ToolGroupsData; onCh
     <div>
       <div className="mb-s flex items-center gap-s">
         <Layers size={14} className="text-on-surface-low" />
-        <span className="text-on-surface-low text-[0.75rem] uppercase tracking-wide">Tool groups</span>
-        <span className="text-on-surface-low text-[0.75rem]">
+        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">Tool groups</span>
+        <span data-type="caption" className="text-on-surface-low">
           · {offerable.length} group{offerable.length === 1 ? '' : 's'}, {total} tool{total === 1 ? '' : 's'}
         </span>
         <div className="ml-auto flex items-center gap-s">
@@ -65,7 +65,7 @@ export function ToolGroupsTile({ data, onChanged }: { data: ToolGroupsData; onCh
       </div>
 
       <div className="rounded-lg bg-surface-container px-m py-m">
-        <p className="text-on-surface-low text-[0.8125rem] leading-relaxed">
+        <p data-type="body-s" className="text-on-surface-low leading-relaxed">
           Every tool schema an agent carries costs context on every turn. Groups let a
           session load only the groups it needs and pick up the rest on demand — the
           agent activates them itself mid-task.{' '}
@@ -73,16 +73,16 @@ export function ToolGroupsTile({ data, onChanged }: { data: ToolGroupsData; onCh
             ? 'Chat keeps every group loaded; background, autonomous, and subagent runs start focused.'
             : 'Currently off: every session loads every group.'}
         </p>
-        <p className="mt-2 text-on-surface-low text-[0.75rem] leading-relaxed">
+        <p data-type="caption" className="mt-2 text-on-surface-low leading-relaxed">
           Nothing is ever unavailable — a tool stays callable by name even when its
           group is not loaded, and the agent can search across all of them.
         </p>
 
         <div className="mt-m flex flex-wrap gap-1.5">
           {offerable.map((g) => (
-            <span key={g.name}
+            <span key={g.name} data-type="caption"
               title={`${g.toolCount} tool${g.toolCount === 1 ? '' : 's'}: ${g.tools.slice(0, 8).join(', ')}${g.tools.length > 8 ? '…' : ''}${g.alwaysOn ? '\nAlways loaded — these are the primitives an agent cannot work without.' : ''}`}
-              className={`inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6 text-[0.75rem] ${g.alwaysOn ? 'bg-primary-container text-on-primary-container' : 'bg-surface-high text-on-surface-low'}`}>
+              className={`inline-flex items-center gap-1.5 rounded-pill px-2.5 h-6 ${g.alwaysOn ? 'bg-primary-container text-on-primary-container' : 'bg-surface-high text-on-surface-low'}`}>
               {g.display}
               {/* No `opacity-*` on the count: the chip's own colour is ALREADY the dimmed token
                   (`text-on-surface-low` / `text-primary`), so dimming again halves an intentional
@@ -95,7 +95,7 @@ export function ToolGroupsTile({ data, onChanged }: { data: ToolGroupsData; onCh
         </div>
 
         {hidden.length > 0 && (
-          <p className="mt-m text-on-surface-low text-[0.75rem] leading-relaxed">
+          <p data-type="caption" className="mt-m text-on-surface-low leading-relaxed">
             <span className="text-warn">Not available in this install:</span>{' '}
             {hidden.map((g) => g.display).join(', ')} — the capability these tools need
             isn’t configured, so they’re hidden rather than offered in a state where
@@ -105,14 +105,14 @@ export function ToolGroupsTile({ data, onChanged }: { data: ToolGroupsData; onCh
 
         {data.enabled && (
           <div className="mt-m border-t border-outline-variant/30 pt-m">
-            <div className="mb-s text-on-surface-low text-[0.75rem] uppercase tracking-wide">What each surface starts with</div>
+            <div data-type="caption" className="mb-s text-on-surface-low uppercase tracking-wide">What each surface starts with</div>
             <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
               {Object.entries(data.surfaceDefaults).map(([surface, names]) => {
                 const all = names.length === 0
                 return (
                   <div key={surface} className="rounded-md bg-surface-high px-2.5 py-2" title={SURFACE_HINT[surface] ?? ''}>
-                    <div className="text-on-surface text-[0.8125rem]">{SURFACE_LABEL[surface] ?? surface}</div>
-                    <div className="mt-0.5 text-on-surface-low text-[0.75rem]">
+                    <div data-type="body-s" className="text-on-surface">{SURFACE_LABEL[surface] ?? surface}</div>
+                    <div data-type="caption" className="mt-0.5 text-on-surface-low">
                       {all ? 'every group' : names.map((name, i) => {
                         // A default may name a group this install can't offer (e.g.
                         // subagents with no model bound). Strike it rather than listing
@@ -134,7 +134,7 @@ export function ToolGroupsTile({ data, onChanged }: { data: ToolGroupsData; onCh
                 )
               })}
             </div>
-            <p className="mt-s text-on-surface-low text-[0.75rem]">
+            <p data-type="caption" className="mt-s text-on-surface-low">
               Tune these with <code className="font-mono">tools.group_defaults</code> in
               config. A surface listed as “every group” behaves exactly as it did before
               groups existed.
