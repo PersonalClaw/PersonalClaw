@@ -56,8 +56,25 @@ export async function uploadKnowledgeFile(
   return api.ingestKnowledgeFile(file, onProgress)
 }
 
+/** 🔴 THIS READ MUST REJECT, BECAUSE ITS ZEROS ARE CLAIMS AND ONE OF THEM GIVES ADVICE.
+ *
+ *  It used to `.catch(() => ({ items: 0, entities: 0, relations: 0, embeddings: { enabled: false } }))`,
+ *  which turns a failed GET into four confident statements. Three are wrong counts; the fourth is
+ *  worse than wrong. `KnowledgeListPage`'s `EmbeddingChip` branches on `!e?.enabled` and renders
+ *  "semantic search off", titled *"No embedding model active — search is keyword + entity-graph
+ *  only. Set one in Settings › AI & Models."* So an unreachable gateway told a user their semantic
+ *  search was off and sent them to reconfigure a setting that may already have been correct.
+ *  A wrong indicator is bad; wrong ACTIONABLE ADVICE derived from a request that never landed is
+ *  the part worth removing.
+ *
+ *  Rejecting needs no new UI, because the page's structure was already right and the swallow was
+ *  the only thing defeating it: `const stats = statsData ?? null` and `{stats && (…)}` gate the
+ *  whole stats strip, so an unread response now renders NOTHING instead of lying — the same as the
+ *  not-yet-loaded state, which is exactly what it is. `const empty = stats && stats.items === 0`
+ *  goes falsy for the same reason, so a failed stats read can no longer produce an "empty" claim
+ *  either. One swallow removed, three false claims closed. */
 export async function knowledgeStats(): Promise<KnowledgeStats> {
-  return api.knowledgeStats().catch(() => ({ items: 0, entities: 0, relations: 0, embeddings: { enabled: false } } as KnowledgeStats))
+  return api.knowledgeStats()
 }
 
 export { FILE_TYPES }
