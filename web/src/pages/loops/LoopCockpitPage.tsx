@@ -41,6 +41,7 @@ import { accentChip } from '../../design/accent'
 import { tabListKeys } from '../../lib/tabListKeys'
 import { loopStatusLabel, effectiveLoopStatus, ACTIVE_LOOP_STATUSES, LOOP_ACTION_SOURCE_STATUSES } from '../../lib/loopStatus'
 import { notify } from '../../app/appSdk'
+import { copyText } from '../../app/clipboard'
 
 /** Decode the `?sel=` Details-rail drill-down ref. */
 function parseSel(raw?: string): { kind: 'log' } | { kind: 'roi' } | { kind: 'cycle'; cycle: number } | null {
@@ -495,7 +496,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   }
   function copyLink() {
     const url = `${location.origin}/#/loops/${id}`
-    navigator.clipboard?.writeText(url).then(() => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1500) }).catch(() => {})
+    void copyText(url, 'the link').then((ok) => { if (ok) { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1500) } })
   }
   // Rename works in ANY state (the name is metadata; the rest of the spec freezes
   // once running). updateLoop with a name-only body routes to the rename path.
@@ -991,7 +992,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, onOpenArtifact, 
   const [activeId, setActiveId] = useState<string>('')
   const [copiedReport, setCopiedReport] = useState(false)
   const copyReport = () => {
-    navigator.clipboard?.writeText(report).then(() => { setCopiedReport(true); setTimeout(() => setCopiedReport(false), 1500) }).catch(() => {})
+    void copyText(report, 'the report').then((ok) => { if (ok) { setCopiedReport(true); setTimeout(() => setCopiedReport(false), 1500) } })
   }
   // Keep the active tab valid as outputs stream in (default to the first).
   const current = tabs.find((t) => t.id === activeId) ?? tabs[0]

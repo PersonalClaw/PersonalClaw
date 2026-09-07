@@ -7,6 +7,7 @@ import { Modal } from '../../ui/Modal'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import type { AppSummary, AppInstallResult, AppCronSummary, AppScanReport } from '../../lib/api'
 import { terminalRefusalReason, type GuardedResult } from '../../lib/useGuardedInstall'
+import { copyText } from '../../app/clipboard'
 
 /** The APP INSTALL-CONSENT surface — everything a user is shown BEFORE an app is
  *  installed, and the override they must click if the supply-chain scanner objects.
@@ -227,7 +228,7 @@ export function ConsentModal({ label, result, busy, permissions, crons, onConfir
 /** A monospace command row with a copy button — for the P21 client-install one-liner. */
 function ClientInstallCommand({ label, cmd }: { label: string; cmd: string }) {
   const [copied, setCopied] = useState(false)
-  const copy = () => { navigator.clipboard?.writeText(cmd).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }
+  const copy = async () => { if (await copyText(cmd, 'the command')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
   return (
     <div>
       <div data-type="label-s" className="mb-1 text-on-surface-low uppercase tracking-wide">{label}</div>

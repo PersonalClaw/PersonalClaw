@@ -20,6 +20,7 @@ import type { RouteProps } from '../../app/useQueryState'
 import { promptInput } from '../../ui/dialog'
 import { accentChip } from '../../design/accent'
 import { notify } from '../../app/appSdk'
+import { copyText } from '../../app/clipboard'
 
 export type Scheme = 'light' | 'dark'
 type Tab = 'tokens' | 'canvas' | 'palette' | 'contrast' | 'exports'
@@ -180,9 +181,9 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
     onDeleted?.()
   }
   function copyLink() {
-    navigator.clipboard?.writeText(`${location.origin}/#/loops/${id}`).then(() => {
-      setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1500)
-    }).catch(() => {})
+    void copyText(`${location.origin}/#/loops/${id}`, 'the link').then((ok) => {
+      if (ok) { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1500) }
+    })
   }
 
   // Apply a chosen color as a primitive-scale override, persisted into the loop's
