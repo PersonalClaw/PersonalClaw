@@ -523,6 +523,85 @@ describe('the skill-impact benchmark is CONSUMED, not merely served', () => {
     expect(screen.queryByText('Cells called LocalOllama:gemma4:12b')).toBeNull()
   })
 
+  // ── 5. §8: the verdict is published WITH its notes and its token ratio ─────
+  //
+  // "The verdict is published with its `notes`, its within-arm spread and its token ratio — never
+  // the verdict alone." The spread rode the two arm columns; the notes and the ratio were dropped.
+  // A `not_token_matched` row with neither is exactly "the verdict alone", and it is the row a
+  // real run produces most often.
+
+  it('publishes the note that says WHY a direction was withheld', () => {
+    // The sentence `harness/learning_verdict.py` actually emits for this verdict, taken from the
+    // measured run `learnbench-20260907T003211Z` (k=5, local Ollama, ratio 1.1365).
+    const note = 'token spend differs by 13.7% (skills_on 42517 vs skills_off 37409), over the 5% '
+      + 'match tolerance — the arms are not spend-matched, so no direction is offered.'
+    render(
+      <BenchmarkPanel
+        view={view({
+          report: report({
+            tasks: [task({
+              verdict: 'not_token_matched',
+              verdict_class: 'not_token_matched',
+              delta_points: 0,
+              token_ratio: 1.1365,
+              notes: [note],
+            })],
+          }),
+        })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText(note)).toBeTruthy()
+    expect(screen.getByText('1.1365')).toBeTruthy()
+  })
+
+  it('does not print the estimated/unobserved notes twice', () => {
+    // The producer appends these in the same branch that sets the booleans, so the flag-driven
+    // lines and the notes would both carry them. The flag lines stay (a producer that set the flag
+    // and forgot the note must still warn a reader); the duplicate note is filtered.
+    render(
+      <BenchmarkPanel
+        view={view({
+          report: report({
+            tasks: [task({
+              spend_estimated: true,
+              notes: ['tokens and dollars are ESTIMATED, not provider-reported'],
+            })],
+          }),
+        })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getAllByText(/estimated, not provider-reported/i)).toHaveLength(1)
+  })
+
+  it('shows a zero token ratio as a zero, not as "not measured"', () => {
+    // `Comparison.token_ratio` is 0.0 when the skills_off arm spent nothing. That is a real
+    // observation that disqualifies the comparison, not an absent one, and the two must not
+    // collapse — the whole point of the null/zero split everywhere else on this panel.
+    const zero = render(
+      <BenchmarkPanel
+        view={view({ report: report({ tasks: [task({ token_ratio: 0 })] }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.getByText('0.0000')).toBeTruthy()
+    zero.unmount()
+
+    render(
+      <BenchmarkPanel
+        view={view({ report: report({ tasks: [task({ token_ratio: null })] }) })}
+        error={undefined}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.queryByText('0.0000')).toBeNull()
+    expect(screen.getAllByText('not measured').length).toBeGreaterThan(0)
+  })
+
   it('renders provenance for a report with no pin at all, without inventing one', () => {
     render(
       <BenchmarkPanel

@@ -121,6 +121,7 @@ export function BenchmarkPanel({ view, error, onRetry }: {
               <th scope="col" className="px-m py-s text-left">Skill</th>
               <th scope="col" className="px-m py-s text-left">Verdict</th>
               <th scope="col" className="px-m py-s text-right">Delta (pts)</th>
+              <th scope="col" className="px-m py-s text-right">Token ratio</th>
               <th scope="col" className="px-m py-s text-right">skills_on</th>
               <th scope="col" className="px-m py-s text-right">skills_off</th>
               <th scope="col" className="px-m py-s text-right">Absent</th>
@@ -317,12 +318,38 @@ function TaskRow({ row }: { row: BenchmarkTaskRow }) {
         {row.spend_estimated && (
           <p className="text-on-surface-low">tokens estimated, not provider-reported</p>
         )}
+        {/* §8: "The verdict is published with its `notes`, its within-arm spread and its token
+            ratio — never the verdict alone." The spread already rode the two arm columns and the
+            ratio now has its own; the NOTES were dropped entirely, and they are where the reason a
+            direction was withheld actually lives. A `not_token_matched` row without its note is
+            the verdict alone, which is the one shape §8 names. */}
+        {notesFor(row).map((note) => (
+          <p key={note} className="text-on-surface-low">{note}</p>
+        ))}
       </td>
       <td className="px-m py-s text-right text-on-surface-var">{fmtDelta(row.delta_points)}</td>
+      <td className="px-m py-s text-right text-on-surface-var">{fmtRatio(row.token_ratio)}</td>
       <td className="px-m py-s text-right text-on-surface-var">{fmtArm(on)}</td>
       <td className="px-m py-s text-right text-on-surface-var">{fmtArm(off)}</td>
       <td className="px-m py-s text-right text-on-surface-var">{row.absent_cells}</td>
     </tr>
+  )
+}
+
+/** The producer sentences the two flag-driven lines above already say.
+ *
+ *  `harness/learning_verdict.py` appends these in the same branch that sets `spend_observed` /
+ *  `spend_estimated`, so rendering the notes wholesale would print each of them twice. The flag
+ *  lines are kept rather than deleted because they are driven by the BOOLEAN: a producer that
+ *  set the flag and forgot the note would still warn the reader. */
+const NOTE_ALREADY_SHOWN = [
+  'spend was NOT observed for every contributing cell',
+  'tokens and dollars are ESTIMATED',
+]
+
+function notesFor(row: BenchmarkTaskRow): string[] {
+  return (row.notes || []).filter(
+    (note) => !NOTE_ALREADY_SHOWN.some((shown) => note.includes(shown)),
   )
 }
 
@@ -440,6 +467,19 @@ function fmtDelta(value: number | null): string {
 function fmtArm(agg: BenchmarkArmAggregate | undefined): string {
   if (!agg) return 'not measured'
   return `${agg.mean_score.toFixed(2)} ±${agg.spread.toFixed(2)}`
+}
+
+/** The arms' spend ratio, which §8 requires beside the verdict — it is the number that says
+ *  whether the comparison was matched at all, and a `not_token_matched` verdict is unreadable
+ *  without it.
+ *
+ *  `null` is "not measured" like every other absent number here. `0` is NOT: `Comparison.token_ratio`
+ *  returns `0.0` when the `skills_off` arm spent nothing, which is a real (and disqualifying)
+ *  observation about the run rather than a missing one, so it renders as `0.0000` and the note
+ *  explains it. Collapsing the two would hide the zero-spend arm behind "not measured". */
+function fmtRatio(value: number | null): string {
+  if (value === null) return 'not measured'
+  return value.toFixed(4)
 }
 
 function pct(fraction: number): string {

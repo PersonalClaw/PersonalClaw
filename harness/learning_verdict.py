@@ -98,6 +98,100 @@ VERDICTS: frozenset[str] = frozenset(_RELABEL.values())
 #: one class) is one edit here rather than a second definition of "same class" per caller.
 VERDICT_CLASS = {v: v for v in VERDICTS}
 
+#: Words that only mean something in a FAN-OUT comparison. `compare()` writes its `notes` in that
+#: vocabulary, and the verdict relabel above never touched them — so a measured skills report
+#: published this, verbatim, about a suppressed SKILL:
+#:
+#:     "token spend differs by 13.7% (fanout 42517 vs single 37409) … give the cheaper arm more
+#:      budget (more single-agent samples, or a wider fan-out) and re-measure; the largest published
+#:      fan-out win was ~3.75x tokens…"
+#:
+#: §8 publishes the verdict WITH its notes, so that sentence is not a log line — it is part of the
+#: published result, and it points a reader at a lever this experiment does not have. A note
+#: carrying any of these is REPLACED by :func:`_arm_note`, not forwarded.
+#:
+#: Detected by VOCABULARY rather than by matching `compare()`'s exact prose: an upstream wording
+#: change would silently stop matching a prose-keyed rule, and would still be caught by this one
+#: (and by the test that asserts no published note contains any of these words).
+_FANOUT_VOCABULARY: tuple[str, ...] = ("fanout", "fan-out", "single-agent", "topology")
+
+#: NOT in the list above, deliberately: the inconclusive-band note's parenthetical "scorer swaps
+#: move scores further than architecture does" is the literature citation that JUSTIFIES the
+#: 5-point band this module imports. Rewording a citation to suit a different experiment would
+#: misquote it, and the band is not this experiment's to restate. It passes through as written.
+
+
+def _has_fanout_vocabulary(note: str) -> bool:
+    lowered = note.lower()
+    return any(word in lowered for word in _FANOUT_VOCABULARY)
+
+
+def _arm_note(verdict: str, payload: dict) -> str:
+    """The skills-arm sentence for a withheld verdict, from the numbers `compare()` already
+    computed. Re-derives NOTHING: the verdict, the delta, the ratio and the per-arm aggregates are
+    all read off `payload`. Only the prose is this module's.
+    """
+    arms = payload.get("arms") or {}
+    on = arms.get(ARM_SKILLS_ON) or {}
+    off = arms.get(ARM_SKILLS_OFF) or {}
+    if verdict == VERDICT_NOT_TOKEN_MATCHED:
+        on_tokens = int(on.get("tokens") or 0)
+        off_tokens = int(off.get("tokens") or 0)
+        if not on_tokens or not off_tokens:
+            return (
+                f"an arm spent zero tokens ({ARM_SKILLS_ON} {on_tokens}, {ARM_SKILLS_OFF} "
+                f"{off_tokens}) — a comparison against an arm that called no model measures "
+                "nothing about the skill"
+            )
+        # From the integer TOTALS, not from the payload's rounded `token_ratio`: `compare()`
+        # computes the percentage off `fanout.tokens / single.tokens`, and deriving it from the
+        # 4-decimal ratio instead moves the last digit (13.6% became 13.7% on one real pair). Two
+        # published numbers about the same spend must not disagree, even by a tenth.
+        drift = f"{abs(on_tokens / off_tokens - 1.0) * 100:.1f}% "
+        return (
+            f"token spend differs by {drift}({ARM_SKILLS_ON} {on_tokens} vs {ARM_SKILLS_OFF} "
+            f"{off_tokens}), over the {TOKEN_MATCH_TOLERANCE * 100:.0f}% match tolerance — the "
+            "arms are not spend-matched, so no direction is offered. This is the measurement "
+            "declining a question it did not ask, NOT a finding that the skill does not help"
+        )
+    return (
+        f"|delta| {abs(float(payload.get('delta_points') or 0.0)):.2f} clears the "
+        f"{INCONCLUSIVE_BAND_POINTS}-point band, but within-arm spread is "
+        f"{max(float(on.get('spread') or 0.0), float(off.get('spread') or 0.0)):.2f} points "
+        f"({ARM_SKILLS_ON} {float(on.get('spread') or 0.0):.2f}, {ARM_SKILLS_OFF} "
+        f"{float(off.get('spread') or 0.0):.2f}) — a delta smaller than the variance it sits in "
+        "is unresolved; add trials or reduce per-trial nondeterminism before claiming a direction"
+    )
+
+
+def _imbalance_note(payload: dict) -> str:
+    """The note an UNEQUAL pair needs, or ``""``. Measured, not hypothetical.
+
+    `sk_task_project` in the 2026-09-07 run lost two `skills_on` cells to `VERIFIER_ABSENT` and
+    was verdicted on 3 trials against 5. `compare()` divides the arms' token TOTALS, so the ratio
+    came out `0.5139` — a 48.6% "spend difference" that is mostly two missing trials, not a
+    per-trial difference (8,099/trial vs 9,456/trial, a ratio of 0.857).
+
+    §6 already says an absent cell is reported as a count and never counted as a skills-off win.
+    It does not say the surviving arms stay COMPARABLE, and over unequal trial counts they do not.
+    So the imbalance is stated beside the ratio rather than left for a reader to spot in the
+    `trials` column, and it is emitted whatever the verdict, because it is a property of the pair
+    and not of the verdict.
+
+    The ratio is not silently corrected here: normalising it would change a number `compare()`
+    produced, which is the owner's module and this one's whole contract is not to.
+    """
+    arms = payload.get("arms") or {}
+    on = int((arms.get(ARM_SKILLS_ON) or {}).get("trials") or 0)
+    off = int((arms.get(ARM_SKILLS_OFF) or {}).get("trials") or 0)
+    if on == off:
+        return ""
+    return (
+        f"the arms are UNEQUAL — {ARM_SKILLS_ON} {on} trial(s) against {ARM_SKILLS_OFF} {off}, so "
+        "the token ratio above is computed over unequal totals and is not a per-trial comparison. "
+        "Re-run the missing trials before reading the ratio as a spend difference"
+    )
+
 
 def verdict_class(verdict: str) -> str:
     """The reproduction class of a verdict string. Unknown verdicts map to themselves,
@@ -202,7 +296,14 @@ def verdict_task(
     # Passing the treatment arm there is what makes a positive delta mean "the skill helped".
     comparison = compare(task_id, on_arm, off_arm)
     payload = comparison.to_dict()
-    notes = list(payload.get("notes") or [])
+    # Forward every upstream note that is about THIS experiment; replace the ones written in
+    # fan-out vocabulary with the same numbers in skills-arm words. See `_FANOUT_VOCABULARY`.
+    notes = [n for n in (payload.get("notes") or []) if not _has_fanout_vocabulary(str(n))]
+    if len(notes) != len(payload.get("notes") or []):
+        notes.append(_arm_note(str(payload.get("verdict") or ""), payload))
+    imbalance = _imbalance_note(payload)
+    if imbalance:
+        notes.append(imbalance)
     if not spend_observed:
         notes.append(
             "spend was NOT observed for every contributing cell, so the token ratio is not "

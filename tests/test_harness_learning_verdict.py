@@ -235,3 +235,120 @@ def test_verdict_class_maps_an_unknown_string_to_itself():
     reproduction check would certify two runs that disagree."""
     assert learning_verdict.verdict_class("wat") == "wat"
     assert learning_verdict.verdict_class("inconclusive") == "inconclusive"
+
+
+# ── the relabel reaches the NOTES, not just the verdict strings ───────────────
+#
+# §8 publishes the verdict WITH its notes, so a note is part of the published result. `compare()`
+# writes its notes in fan-out vocabulary, and until this landed they were forwarded verbatim: a
+# MEASURED skills report (`learnbench-20260907T003211Z`, k=5 against a local Ollama) published
+#
+#     "token spend differs by 13.7% (fanout 42517 vs single 37409) … give the cheaper arm more
+#      budget (more single-agent samples, or a wider fan-out) … the largest published fan-out win
+#      was ~3.75x tokens"
+#
+# about a suppressed SKILL. The module's own docstring already promised "an output file about
+# skills does not say `fanout_wins`"; the notes broke that promise in the same file.
+
+
+def _spend(on_scores, off_scores, *, on_tokens, off_tokens):
+    return learning_verdict.verdict_task(
+        task_id="sk_grill",
+        skill="grill",
+        on_trials=[learning_verdict.Trial(score=float(s), tokens=on_tokens) for s in on_scores],
+        off_trials=[learning_verdict.Trial(score=float(s), tokens=off_tokens) for s in off_scores],
+        spend_observed=True,
+    )
+
+
+@pytest.mark.parametrize("word", ["fanout", "fan-out", "single-agent", "topology"])
+def test_no_published_note_speaks_the_fanout_vocabulary(word):
+    """The vacuity floor for the case below: asserted as an ABSENCE across every verdict that
+    carries a note, not as the presence of one good sentence. A single spot-check would pass on a
+    module that fixed one note and forwarded the other two."""
+    cases = [
+        # not_token_matched (the 13.7% case, real numbers off the measured run)
+        _spend((50, 100, 100, 100, 100), (100, 50, 100, 100, 100), on_tokens=8503, off_tokens=7482),
+        # not_token_matched via a zero-spend arm
+        _spend((80, 80, 80), (60, 60, 60), on_tokens=1000, off_tokens=0),
+        # inconclusive by within-arm spread (delta clears the band, spread swamps it)
+        _spend((100, 50, 100, 100, 100), (40, 40, 40, 40, 40), on_tokens=1000, off_tokens=1000),
+        # inconclusive by the band
+        _spend((80, 80, 80), (79, 79, 79), on_tokens=1000, off_tokens=1000),
+    ]
+    for tv in cases:
+        joined = " ".join(tv.notes).lower()
+        assert word not in joined, f"{tv.verdict} note still says {word!r}: {tv.notes}"
+
+
+def test_the_replacement_note_keeps_compares_OWN_numbers():
+    """A relabel that re-derived the numbers would be a second implementation of the check.
+
+    The replacement sentence must carry the same per-arm totals AND the same percentage
+    ``compare()`` prints — asserted against ``compare()``'s own note rather than a literal, so a
+    rounding path that drifts by a tenth reddens this. It did: deriving the percentage from the
+    payload's 4-decimal ``token_ratio`` printed 13.7% where ``compare()`` printed 13.6%.
+    """
+    on_tokens, off_tokens, k = 8503, 7482, 5
+    tv = _spend(
+        (50, 100, 100, 100, 100),
+        (100, 50, 100, 100, 100),
+        on_tokens=on_tokens,
+        off_tokens=off_tokens,
+    )
+    assert tv.verdict == learning_verdict.VERDICT_NOT_TOKEN_MATCHED
+    note = next(n for n in tv.notes if "token spend differs" in n)
+    assert f"{learning_verdict.ARM_SKILLS_ON} {on_tokens * k}" in note
+    assert f"{learning_verdict.ARM_SKILLS_OFF} {off_tokens * k}" in note
+
+    def _arm(name, tokens):
+        return fanout_measure.Arm(
+            name=name,
+            trials=[fanout_measure.Trial(score=1.0, tokens=tokens) for _ in range(k)],
+        )
+
+    upstream = fanout_measure.compare("sk_grill", _arm("a", on_tokens), _arm("b", off_tokens))
+    printed = next(n for n in upstream.notes if "token spend differs by " in n)
+    percentage = printed.split("token spend differs by ", 1)[1].split(" ", 1)[0]
+    assert percentage.endswith("%")
+    assert percentage in note, f"compare() printed {percentage!r}; the relabel printed {note!r}"
+    # …and it must not read as a finding about the skill, which is the misreading §5's tolerance
+    # exists to prevent.
+    assert "declining a question it did not ask" in note
+
+
+def test_the_literature_citation_that_justifies_the_band_is_NOT_reworded():
+    """The inconclusive-band note cites the noise floor this module IMPORTS its 5 points from.
+    Rewording a citation to suit a different experiment would misquote it, so that note passes
+    through as written even though it says "architecture"."""
+    tv = _spend((80, 80, 80), (79, 79, 79), on_tokens=1000, off_tokens=1000)
+    assert tv.verdict == learning_verdict.VERDICT_INCONCLUSIVE
+    assert any("scorer swaps move scores further than architecture does" in n for n in tv.notes)
+
+
+def test_unequal_arms_say_so_beside_the_ratio_they_distort():
+    """MEASURED: `sk_task_project` lost two `skills_on` cells to `VERIFIER_ABSENT` and was
+    verdicted on 3 trials against 5. `compare()` divides arm TOTALS, so the ratio came out 0.5139
+    — a "48.6% spend difference" that is mostly two missing trials (8,099/trial against
+    9,456/trial is 0.857). §6 counts absent cells; it does not make the survivors comparable."""
+    tv = learning_verdict.verdict_task(
+        task_id="sk_task_project",
+        skill="task-and-project",
+        on_trials=[learning_verdict.Trial(score=100.0, tokens=8099) for _ in range(3)],
+        off_trials=[learning_verdict.Trial(score=100.0, tokens=9456) for _ in range(5)],
+        absent_cells=2,
+        spend_observed=True,
+    )
+    assert tv.verdict == learning_verdict.VERDICT_NOT_TOKEN_MATCHED
+    note = next(n for n in tv.notes if "UNEQUAL" in n)
+    assert "skills_on 3 trial(s) against skills_off 5" in note
+    assert "not a per-trial comparison" in note
+    # The ratio itself is NOT quietly corrected — that would change a number `compare()` produced.
+    assert tv.token_ratio == round((8099 * 3) / (9456 * 5), 4)
+
+
+def test_a_balanced_pair_carries_no_imbalance_note():
+    """The vacuity floor for the case above: the note must be absent when the arms are equal, or
+    it is decoration that fires on every task and tells a reader nothing."""
+    tv = _spend((80, 80, 80), (60, 60, 60), on_tokens=1000, off_tokens=1000)
+    assert not any("UNEQUAL" in n for n in tv.notes)
