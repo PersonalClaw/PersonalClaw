@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ChevronRight, GitMerge, Loader2, Pencil, Tag as TagIcon, Trash2 } from 'lucide-react'
 import { api, ApiError, type KnowledgeTag } from '../../lib/api'
 import { notify } from '../../app/appSdk'
-import { confirmDelete, promptInput } from '../../ui/dialog'
+import { confirmDelete, confirmDestructive, promptInput } from '../../ui/dialog'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { EmptyState, ListSkeleton } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
@@ -100,9 +100,30 @@ export function TagManager({ onChanged }: { onChanged?: () => void }) {
     run(t.id, parentId === null ? `“${t.name}” is now top-level` : `Moved “${t.name}”`,
       () => api.renameKnowledgeTag(t.id, { parent_id: parentId }))
 
+  // Merge asks the same way `remove` does, four lines below, and for a stronger reason: it
+  // rewrites every item carrying `t` and then DELETES `t` from the taxonomy, so it does strictly
+  // more than Delete. The blast radius is spelled out from the same `usage_count` and children
+  // that Delete's prompt uses, because a merge does not read as destructive from its verb.
   const merge = (t: KnowledgeTag, into: KnowledgeTag) =>
-    run(t.id, `Merged “${t.name}” into “${into.name}”`,
-      () => api.mergeKnowledgeTag(t.id, into.id))
+    run(t.id, `Merged “${t.name}” into “${into.name}”`, async () => {
+      const kids = tags.filter((x) => x.parent_id === t.id)
+      const ok = await confirmDestructive(
+        `Merge “${t.name}” into “${into.name}”?`,
+        [
+          t.usage_count
+            ? `This retags ${t.usage_count} item${t.usage_count === 1 ? '' : 's'} as “${into.name}”.`
+            : `“${t.name}” is on no items.`,
+          ` The tag “${t.name}” is then deleted from the taxonomy.`,
+          kids.length
+            ? ` Its ${kids.length} nested tag${kids.length === 1 ? '' : 's'} become top-level rather than being deleted.`
+            : '',
+          ' This cannot be undone.',
+        ].join(''),
+        { confirmLabel: 'Merge' },
+      )
+      if (!ok) return
+      await api.mergeKnowledgeTag(t.id, into.id)
+    })
 
   const remove = (t: KnowledgeTag) => run(t.id, `Deleted “${t.name}”`, async () => {
     const kids = tags.filter((x) => x.parent_id === t.id)
