@@ -214,7 +214,7 @@ export function SdlcProgressCard({ refObj, controllable = false, onDeleted }: {
             {canAct('pause') && <IconButton icon={Pause} label="Pause" size={28} onClick={(e) => act(e, 'pause')} />}
             {canAct('resume') && <IconButton icon={Play} label="Resume" size={28} onClick={(e) => act(e, 'resume')} />}
             {canAct('stop') && <IconButton icon={Square} label="Stop" size={28} onClick={(e) => act(e, 'stop')} />}
-            {DONE_ST.has(entity.status) && <IconButton icon={Trash2} size={28}
+            {DONE_ST.has(entity.status) && <IconButton icon={Trash2} size={28} tone="danger"
               label={confirmDel ? 'Click again to delete' : 'Delete'} onClick={del}
               className={confirmDel ? 'text-danger' : undefined} />}
           </span>

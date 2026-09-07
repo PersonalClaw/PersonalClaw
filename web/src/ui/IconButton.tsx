@@ -9,7 +9,7 @@ import { spring, physics, expr, exprHeavy } from '../design/motion'
  *  and success `bloom` moments. Yields to reduced-motion; halo drops below the
  *  heavy-effect threshold. */
 export function IconButton({
-  icon: Icon, label, title, onClick, active, filled, size = 40, iconSize = 20, className, disabled, disabledReason, loading = false, iconKey, bloom,
+  icon: Icon, label, title, onClick, active, filled, size = 40, iconSize = 20, className, disabled, disabledReason, loading = false, iconKey, bloom, tone = 'neutral',
 }: {
   icon: LucideIcon
   label: string
@@ -65,6 +65,30 @@ export function IconButton({
   // mounts in this state (e.g. the send→check confirmation). Scales with the
   // user's bounciness setting via the bounce tier.
   bloom?: boolean
+  /** `danger` = a destructive action: hover tints the glyph red, with no fill.
+   *
+   *  🔴 THE SIBLING HAD THIS AND THIS TIER DID NOT, and the split fell the wrong way round.
+   *  `ui/SquareIconButton` has carried `tone?: 'neutral' | 'danger'` for a while, and 14 of its
+   *  destructive call sites pass it — including three that only splice a row out of an UNSAVED draft
+   *  array. This tier had no such prop at all, so **eight persisted destroys** wore the same neutral
+   *  grey as a Copy button: Delete chat, Delete comment (×2 surfaces), Delete report, Delete template,
+   *  Remove comment, and the two armed list deletes. The primitive WITH the danger affordance guarded
+   *  the reversible edits; the primitive WITHOUT it guarded the irreversible ones.
+   *
+   *  🪤 KEEP IT FOR WHAT DESTROYS SOMETHING STORED. Two controls a verb sweep flags deliberately stay
+   *  neutral: "Clear workspace" calls `setWorkspaceDir('')` and clears an INPUT FIELD, and "Remove …
+   *  from chain" is a reversible settings edit. A red that also covers routine edits stops reading as
+   *  a warning. The composer's remove-attachment controls ARE tinted — not by that rule, but because
+   *  the shipped design already tinted them by hand and it is not this prop's place to overturn that.
+   *
+   *  🪤 THE CLASS IS NOT COPIED FROM THE SIBLING — only the RULE is. `SquareIconButton`'s danger branch
+   *  is `text-on-surface-low hover:text-danger`, but this tier's resting ink is `text-on-surface-var`.
+   *  Pasting its class would silently re-ink every danger button at rest, which is a different change
+   *  from adding a hover tint. Same rule ("hover tints the glyph, no fill"), this tier's own token.
+   *
+   *  Ignored while `filled` or `active`: those already claim the button's colour, and a selected
+   *  destructive button is not a pattern this app has — the same carve-out the sibling states. */
+  tone?: 'neutral' | 'danger'
 }) {
   const reduce = useReducedMotion()
   // One guard for both inert reasons, exactly as `Button` spells it (`off = !!disabled || loading`).
@@ -108,7 +132,10 @@ export function IconButton({
             ? 'bg-primary text-on-primary hover:bg-primary-emphasis'
             : active
               ? 'bg-surface-high text-on-surface'
-              : 'text-on-surface-var hover:bg-surface-high hover:text-on-surface',
+              : tone === 'danger'
+                // This tier's own resting ink, with the sibling's danger RULE — see the prop's note.
+                ? 'text-on-surface-var hover:text-danger'
+                : 'text-on-surface-var hover:bg-surface-high hover:text-on-surface',
         // In flight keeps its full ink and its colour — only the cursor changes, because "wait"
         // is the honest thing to say. Dimming here is what made a working button read as dead.
         loading && !disabled && 'cursor-progress',

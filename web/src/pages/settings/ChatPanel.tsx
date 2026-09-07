@@ -121,7 +121,7 @@ function StartersSection() {
           </p>
         ) : items.map((t) => (
           <Row key={t.id} label={t.name} hint={[t.agent, t.model, t.reasoning_effort].filter(Boolean).join(' · ') || 'Uses your defaults'}>
-            <IconButton icon={Trash2} label={`Delete ${t.name}`} iconSize={16} size={32} onClick={() => remove(t)} />
+            <IconButton icon={Trash2} label={`Delete ${t.name}`} iconSize={16} size={32} tone="danger" onClick={() => remove(t)} />
           </Row>
         ))}
       </RowGroup>
