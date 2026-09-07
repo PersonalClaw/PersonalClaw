@@ -392,8 +392,18 @@ function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: Me
   }, [onClose, closeAndReturnFocus, move])
 
   return createPortal(
+    // 🔴 THE LIVE INSTANCE OF THE DEFECT THE TWO PRIMITIVES WERE FIXED FOR. This is a portaled,
+    // cursor-positioned `role="menu"` with menu-cursor keyboard handling — a control-anchored menu by
+    // every test tokens.css states, and `--z-menu` exists for exactly it ("ABOVE dialogs, BELOW toast
+    // + palette"). It rode a bare `z-50`, i.e. the CONTENT ceiling, BELOW every dialog.
+    //
+    // 🪤 THE PRIOR PASS CALLED THIS FAMILY "LATENT, NOT LIVE" — and that was true of the two
+    // primitives it fixed (`ui/Popover`, `ui/motion/ContextMenu`), neither of which is currently
+    // rendered inside a `<Modal>`. It was not true of the tree: this THIRD, hand-rolled context menu
+    // had the same wrong rung, and was invisible to the rail because that rail could only see the
+    // ARBITRARY `z-[N]` spelling. A census scoped to one spelling certified a fix as complete.
     <div ref={ref} role="menu" aria-orientation="vertical"
-      className="fixed z-50 min-w-[160px] rounded-lgi bg-surface-container p-s"
+      className="fixed z-[var(--z-menu)] min-w-[160px] rounded-lgi bg-surface-container p-s"
       style={{ left: pos.left, top: pos.top, boxShadow: 'var(--shadow-menu)' }}>
       {items.map((it, i) => (
         <button key={it.label} type="button" role="menuitem" tabIndex={tabIndexFor(i)}

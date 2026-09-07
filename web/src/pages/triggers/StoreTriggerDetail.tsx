@@ -9,6 +9,7 @@ import { RunHistory } from '../schedule/ScheduleDetail'
 import { triggerHealthMeta } from '../schedule/scheduleMeta'
 import { actionLabel } from './triggerMeta'
 import { reportingWrite } from '../../app/reportingWrite'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Inspector for a store-backed trigger (file/web_watch/idle/…) in the SidePanel.
  *
@@ -197,11 +198,11 @@ export function StoreTriggerDetail({ trigger, onChanged, onDeleted }: {
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <Button variant="secondary" size="sm" onClick={() => run(false)} loading={busy}><Play size={14} /> Run now
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => run(true)} disabled={busy}>
+          <Button variant="ghost" size="sm" onClick={() => run(true)} disabled={busy} disabledReason={BUSY_REASON}>
             <FlaskConical size={14} /> Dry run
           </Button>
           <div className="flex-1" />
-          <Button variant="ghost" size="sm" onClick={remove} disabled={busy} className="text-danger">
+          <Button variant="ghost" size="sm" onClick={remove} disabled={busy} disabledReason={BUSY_REASON} className="text-danger">
             <Trash2 size={14} /> Delete
           </Button>
         </div>

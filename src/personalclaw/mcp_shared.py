@@ -12,9 +12,19 @@ from pathlib import Path
 from typing import Any, Callable
 
 from personalclaw import gateway_base
-from personalclaw.config.loader import config_dir
+from personalclaw.config import loader as config_loader
 from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
 from personalclaw.sel import sel
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 logger = logging.getLogger(__name__)
 

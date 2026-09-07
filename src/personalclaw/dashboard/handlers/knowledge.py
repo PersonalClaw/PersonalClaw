@@ -2908,8 +2908,29 @@ async def merge_tag(request: web.Request) -> web.Response:
             {"error": {"code": "into_required", "message": "supply into: <tag id> (an integer)"}},
             status=400,
         )
+    # `confirm: true` is required, on exactly the reasoning `merge_items` already states in this
+    # file: this DELETES the source tag from the taxonomy after rewriting every item that carried
+    # it, so it is strictly more destructive than `delete_tag` — which the UI already gates behind
+    # a confirm naming its blast radius. The wider operation must not be the ungated one, and an
+    # accidental double-post must not silently fold two tags together.
+    if not body.get("confirm"):
+        return web.json_response(
+            {
+                "error": {
+                    "code": "confirm_required",
+                    "message": "merging deletes the source tag — pass confirm: true",
+                }
+            },
+            status=400,
+        )
     try:
         result = store.merge_tags(tid, into)
+    except LookupError as exc:
+        # A tag that is not there is a 404 — not a 200 carrying zeros, and not a 400: the request
+        # was well-formed and no change to the body would make it succeed.
+        return web.json_response(
+            {"error": {"code": "tag_not_found", "message": str(exc)}}, status=404
+        )
     except ValueError as exc:
         return web.json_response(
             {"error": {"code": "invalid_merge", "message": str(exc)}}, status=400

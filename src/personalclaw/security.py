@@ -786,7 +786,66 @@ def _decode_b64_safe(text: str) -> str:
 #   * a bare `token@host` with no colon matches too. That is not over-reach: it is exactly how a
 #     GitHub PAT is passed in a clone URL (`https://<token>@github.com/…`), so treating userinfo as
 #     secret only when it has two parts would miss the most common real case.
-_URL_USERINFO_RE = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)(?P<userinfo>[^/?#\s@]+)@")
+# ── Why this is two stages and not one regex ──
+# The rule above was once one pattern, `([A-Za-z][A-Za-z0-9+.\-]*://)([^/?#\s@]+)@`, and that form
+# was **quadratic in the length of a single unbroken run of scheme characters** (#2637). A
+# backtracking engine has to attempt the match at every offset; at each one the variable-length
+# scheme run re-scans the rest of the run before failing for want of a `://`. Profiled at 64 KB of
+# one alphanumeric token, `.sub` on that pattern was **99.6% of all of `redact_credentials`** —
+# 1.641s of 1.648s — and each doubling of the run cost ~4×. `_CREDENTIAL_PATTERNS`, the obvious
+# suspect, was 0.004s (0.2%) and the base64 pass 0.002s.
+#
+# That is a user-visible stall, not a micro-optimisation: this function runs on live turn paths
+# (`acp/translate.py` alone redacts five fields per agent message), so one tool result carrying a
+# long hash, a minified line, or a base64 blob bought seconds of dead air per message.
+#
+# So the scan is anchored on `://` — a rare literal the engine finds with a memchr-class scan — and
+# the scheme is recovered by walking BACKWARD from each hit. The rewrite is byte-identical, and
+# provably so rather than by inspection:
+#
+#   * `:` is not a scheme character, so the run of scheme characters ending at a `://` can only be
+#     the MAXIMAL one. Every shorter split the old form backtracked through was a guaranteed
+#     failure — that wasted work was the whole cost.
+#   * within that run, the leftmost overall match starts at the earliest offset holding a letter,
+#     which is what `_SCHEME_FIRST_RE` finds. A run with no letter can match at no offset at all,
+#     which is exactly the old form failing at each one.
+#   * a candidate that fails (no letter, or no `@` after the userinfo) cannot hide a later match
+#     inside its own span: userinfo excludes `/`, so no second `://` can occur there.
+#   * `++` is possessive. Free for the same reason: `@` is excluded from the userinfo class, so the
+#     greedy run can only ever be followed by `@` at its maximal length.
+#
+# `tests/test_redaction_cost.py` keeps the pre-#2637 implementation as an oracle and asserts the
+# two return values are identical, because "still redacts credentials" is the wrong bar here: a
+# long run that IS a credential is already replaced whole, and a long run that is innocuous is
+# preserved verbatim, so anything short of byte-identity is a behaviour change to a security
+# primitive.
+_URL_USERINFO_CORE_RE = re.compile(r"://(?P<userinfo>[^/?#\s@]++)@")
+
+#: The scheme character class, spelled as a `str` because the backward walk is `str.rstrip` — one C
+#: pass over the run instead of a Python loop. These are the characters a scheme may CONTAIN;
+#: `_SCHEME_FIRST_RE` is the ones it may BEGIN with. Both have to keep matching the old pattern's
+#: classes, which `TestTheEquivalenceRestsOnTwoFacts` pins character by character.
+_SCHEME_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+.-"
+_SCHEME_FIRST_RE = re.compile(r"[A-Za-z]")
+
+
+def _scheme_run_start(text: str, sep: int) -> int:
+    """Index where the maximal run of scheme characters ending just before `sep` begins.
+
+    Walks backward in doubling windows, so an arbitrarily long run stays linear and the common case
+    (`https`, five characters) costs one small slice. No cap on the run length: a cap would be a
+    silent behaviour change, and this is a security primitive.
+    """
+    lo = sep
+    window = 64
+    while True:
+        start = max(0, lo - window)
+        head = text[start:lo].rstrip(_SCHEME_CHARS)
+        if head or start == 0:
+            return start + len(head)
+        lo = start
+        window *= 2
+
 
 #: What replaces the userinfo. Contains a space, which the `userinfo` class above excludes — so
 #: re-running the pre-pass over its own output cannot match again. Idempotence by construction
@@ -804,12 +863,24 @@ def redact_url_userinfo(text: str) -> tuple[str, list[str]]:
     testable on its own.
     """
     warnings: list[str] = []
+    out: list[str] = []
+    pos = 0
 
-    def _sub(m: "re.Match[str]") -> str:
-        warnings.append(f"Redacted credential in a {m.group('scheme')[:-3]} URL")
-        return f"{m.group('scheme')}{_URL_USERINFO_TAG}@"
+    for m in _URL_USERINFO_CORE_RE.finditer(text):
+        sep = m.start()
+        first = _SCHEME_FIRST_RE.search(text, _scheme_run_start(text, sep), sep)
+        if first is None:
+            continue  # no scheme, so no match — `://x@y`, or `1://x@y`
+        scheme = text[first.start() : sep]
+        out.append(text[pos : first.start()])
+        out.append(f"{scheme}://{_URL_USERINFO_TAG}@")
+        warnings.append(f"Redacted credential in a {scheme} URL")
+        pos = m.end()
 
-    return _URL_USERINFO_RE.sub(_sub, text), warnings
+    if not warnings:
+        return text, []
+    out.append(text[pos:])
+    return "".join(out), warnings
 
 
 def redact_credentials(text: str) -> tuple[str, list[str]]:
@@ -819,7 +890,7 @@ def redact_credentials(text: str) -> tuple[str, list[str]]:
     """
     warnings: list[str] = []
 
-    # 0. URL userinfo, positionally — see `_URL_USERINFO_RE`. FIRST, so a credential in a URL
+    # 0. URL userinfo, positionally — see `_URL_USERINFO_CORE_RE`. FIRST, so a credential in a URL
     #    redacts the same way whatever its shape, instead of only when the shape-based patterns
     #    below happen to recognise it.
     result, url_warnings = redact_url_userinfo(text)

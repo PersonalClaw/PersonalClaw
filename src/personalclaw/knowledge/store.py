@@ -4312,6 +4312,18 @@ class KnowledgeStore:
         items that already carried it. Provenance follows the more human of the two: if
         either membership was user-authored the merged one is, so a merge can never
         downgrade a user's tag into something enrichment may overwrite.
+
+        Raises :class:`LookupError` naming the side that does not exist, and
+        :class:`ValueError` for a merge that is refused on its merits (folding a tag into
+        itself). The two are distinct because they are different answers: a caller can fix
+        an invalid merge, and cannot fix a tag that is not there.
+
+        🪤 THIS USED TO RETURN ``{"moved": 0, "already": 0}`` FOR A TAG THAT DOES NOT EXIST,
+        which is byte-identical to a legitimate merge of a tag carrying no items. So the
+        route above reported ``ok: true`` for ``POST /api/knowledge/tags/999999/merge`` and
+        a caller had no field to tell "I folded an empty tag" from "there was no such tag".
+        A success shape must not be able to mean "nothing happened because the subject was
+        absent".
         """
         if source_id == target_id:
             raise ValueError("cannot merge a tag into itself")
@@ -4320,7 +4332,9 @@ class KnowledgeStore:
         ).fetchone()
         tgt = self.db.execute("SELECT id FROM tags WHERE id = ?", (target_id,)).fetchone()
         if not src or not tgt:
-            return {"moved": 0, "already": 0}
+            missing = "source" if not src else "target"
+            missing_id = source_id if not src else target_id
+            raise LookupError(f"no such tag: {missing} id {missing_id}")
         rows = self.db.execute(
             "SELECT item_id, source FROM item_tags WHERE tag_id = ?", (source_id,)
         ).fetchall()

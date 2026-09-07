@@ -14,6 +14,7 @@ import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { qget, type RouteProps } from '../../app/useQueryState'
 import { InboxSection, RecentSection, RunningLoopsSection, TasksSection } from './CompanionSections'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** `#/companion` — the phone control surface, approvals first.
  *
@@ -288,7 +289,7 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
         ? 'Push is on for this device.'
         : 'Push is on for this device, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications.'
       action = (
-        <Button variant="ghost" size="sm" disabled={busy}
+        <Button variant="ghost" size="sm" disabled={busy} disabledReason={BUSY_REASON}
           onClick={async () => {
             setBusy(true)
             const ok = await disableNativePush()
@@ -302,7 +303,7 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
     } else {
       line = 'Get woken up when a run needs your approval.'
       action = (
-        <Button variant="primary" size="sm" disabled={busy}
+        <Button variant="primary" size="sm" disabled={busy} disabledReason={BUSY_REASON}
           onClick={async () => {
             setBusy(true)
             setNote('')
@@ -333,14 +334,14 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
     line = data.approval_targeted
       ? 'Push is on for this device.'
       : 'Push is on for this device, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications.'
-    action = <Button variant="ghost" size="sm" onClick={disable} disabled={busy}>Turn off</Button>
+    action = <Button variant="ghost" size="sm" onClick={disable} disabled={busy} disabledReason={BUSY_REASON}>Turn off</Button>
   } else if (!supported) {
     // The honest iOS story: web push needs an INSTALLED PWA there, so a Safari tab
     // legitimately cannot subscribe and pretending otherwise wastes the user's time.
     line = 'This browser cannot hold a push subscription. Install to your home screen first.'
   } else {
     line = 'Get woken up when a run needs your approval.'
-    action = <Button variant="primary" size="sm" onClick={enable} disabled={busy}><BellRing size={15} /> Turn on push</Button>
+    action = <Button variant="primary" size="sm" onClick={enable} disabled={busy} disabledReason={BUSY_REASON}><BellRing size={15} /> Turn on push</Button>
   }
 
   return (

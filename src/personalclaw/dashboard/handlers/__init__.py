@@ -12,7 +12,8 @@ System metrics (CPU, memory, network, disk) live in ``handlers_system.py``;
 import logging
 
 # Imports accessed by submodules via late-binding (_h.X pattern)
-from personalclaw.config.loader import AppConfig, config_dir, config_path  # noqa: F401
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import AppConfig  # noqa: F401
 from personalclaw.dashboard.handlers_system import (  # noqa: F401
     api_auth_status,
     api_healthz,
@@ -400,3 +401,21 @@ from personalclaw.dashboard.handlers.updates import (  # noqa: E402, F401
     get_update_info,
     install_log_ring_handler,
 )
+
+
+def config_dir():
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
+
+def config_path():
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_path`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_path()

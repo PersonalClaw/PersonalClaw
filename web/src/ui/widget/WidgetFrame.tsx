@@ -261,7 +261,9 @@ export function WidgetFrame({ html, title = 'Widget', slug, messageTs, widgetInd
       ref={wrapRef}
       initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}
       className={expanded
-        ? 'fixed inset-4 z-50 overflow-hidden rounded-xl border border-outline-variant/50 bg-surface shadow-2xl'
+        // `--z-content` IS 50: spelling migration, byte-identical computed value. An expanded widget
+        // is a full-bleed content panel, which is the rung tokens.css calls the content ceiling.
+        ? 'fixed inset-4 z-[var(--z-content)] overflow-hidden rounded-xl border border-outline-variant/50 bg-surface shadow-2xl'
         // Frameless inline render. Layout is DYNAMIC based on the natural content
         // width vs the host column: ≤ ~70% of host + text column keeps readable
         // measure → float left (prose wraps beside); wider → full-width block.

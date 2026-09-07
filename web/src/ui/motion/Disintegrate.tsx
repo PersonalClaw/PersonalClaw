@@ -8,7 +8,7 @@ import { familyFade, familyTween } from './vocabulary'
  *  can drop the item from state. It is the destructive counterpart to the app's
  *  additive motion — where a create springs in, a delete DISINTEGRATES:
  *
- *   • BOLD (exprHeavy): a `--color-negative`-tinted wash sweeps across via a clip
+ *   • BOLD (exprHeavy): a `--color-danger`-tinted wash sweeps across via a clip
  *     mask while the content fragments — a slight scatter (rotate + drift, scaled by
  *     `expr()`) and blur — then collapses its height so the list closes the gap.
  *   • REFINED (below the exprHeavy gate): no scatter/blur — just the danger-tinted
@@ -20,7 +20,7 @@ import { familyFade, familyTween } from './vocabulary'
  *     (the global CSS rule kills CSS transitions; JS/Motion must self-gate).
  *
  *  NO WebGL, no gooey filter (the deleted-primitives lesson) — pure Motion +
- *  CSS mask. Tint is always `var(--color-negative)`; offsets ride `expr()` (no raw
+ *  CSS mask. Tint is always `var(--color-danger)`; offsets ride `expr()` (no raw
  *  px), so it honors the theme + the expressiveness knob. */
 export function Disintegrate({
   active,
@@ -88,7 +88,7 @@ export function Disintegrate({
       onAnimationComplete={() => { if (active) onDone?.() }}
     >
       {children}
-      {/* The danger wash — a `--color-negative`-tinted overlay that fades IN as the
+      {/* The danger wash — a `--color-danger`-tinted overlay that fades IN as the
           content leaves, reading as "burning away" in the theme's own danger tone.
           Pointer-events-none so it never blocks the settling row. */}
       <motion.span
@@ -98,7 +98,7 @@ export function Disintegrate({
         animate={{ opacity: active ? expr(0.5, 0.4) : 0 }}
         transition={familyFade()}
         style={{
-          background: 'linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-negative) 55%, transparent))',
+          background: 'linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-danger) 55%, transparent))',
           // Bold tier gets a soft mask sweep so the wash reads as a directional
           // dissolve, not a flat tint; refined just fades the whole overlay. The
           // mask uses the `black`/`transparent` alpha keywords (a mask channel, not

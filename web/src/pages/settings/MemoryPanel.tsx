@@ -411,7 +411,22 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       reloadAll()   // show the server's truth; keep the selection so the user can retry
     }
     if (selected.kind === 'fact' && selected.fact) {
-      if (!(await confirmDelete('memory', selected.fact.key))) return
+      // 🔴 THIS TOOK `confirmDelete`'s DEFAULT BODY — "This cannot be undone." — AND IT IS FALSE HERE.
+      // `vector_memory.delete_semantic` is a TOMBSTONE: `UPDATE semantic_memory SET is_deleted = 1`,
+      // the row keeps its `value_json`, and `_log_event("delete", "semantic", key, existing["value_json"]…)`
+      // records the prior value as well. So the data survives in two places — and this very panel
+      // ships the undo: the History tab's `canUndo` is
+      // `ev.memory_type === 'semantic' && UNDOABLE.has(ev.event_type)`, and `UNDOABLE` contains
+      // `'delete'`.
+      //
+      // 🪤 OVERSTATING A LOSS IS ITS OWN DEFECT, not a safe error. Warnings work by being scarce; one
+      // that cries irreversible over a one-click undo is what teaches people to click through the ones
+      // that mean it — and two lines down in this same function sits an episodic delete that genuinely
+      // cannot be undone. That sibling is the discriminator: this is a precise correction, not a
+      // blanket softening of danger copy.
+      if (!(await confirmDelete('memory', selected.fact.key, {
+        body: 'The agent stops using it right away. This one is reversible — the History tab below has an Undo for it.',
+      }))) return
       try { await api.deleteSemantic(selected.fact.key) } catch (e) { return fail('memory', e) }
     } else if (selected.kind === 'episodic' && selected.episodic) {
       // 🪤 This hand-rolled a dialog `confirmDelete` already produces, and lost its body doing so.
@@ -423,12 +438,32 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
       // handle was in scope (`selected.episodic.text`) and thrown away. Truncated through
       // `rowSubject`, the app's own helper for a prose subject in a fixed budget, because an episodic
       // memory is a sentence rather than a name.
+      // 🔑 THIS ONE KEEPS THE DEFAULT "This cannot be undone." AND MUST — it is the discriminator that
+      // makes the two corrections above precise rather than a softening of danger copy. Episodic delete
+      // is also a tombstone, but `undo_event` refuses a non-semantic event and the History tab's
+      // `canUndo` gates on `ev.memory_type === 'semantic'`, so there is no route back. Three deletes in
+      // one function, two of which were saying the wrong thing; do not "finish the job" on this one.
       if (!(await confirmDelete('episodic memory', rowSubject([selected.episodic.text], 40)))) return
       try { await api.deleteEpisodic(selected.episodic.id) } catch (e) { return fail('episodic memory', e) }
     } else if (selected.kind === 'lesson' && selected.lesson) {
       // `selected.lesson.rule` IS the lesson — it is what `deleteLesson` takes as its identity — and
       // the dialog asked about "this lesson" while holding it.
-      if (!(await confirmDelete('lesson', rowSubject([selected.lesson.rule], 40)))) return
+      //
+      // 🔴 ALSO TOOK THE FALSE DEFAULT. `delete_lesson` calls `delete_semantic` per match, so the event
+      // is `memory_type='semantic'` and `canUndo` is true here exactly as for a fact.
+      //
+      // 🪤 BUT IT IS NOT THE SAME UNDO, AND SAYING "REVERSIBLE" ALONE WOULD BE A SECOND OVERCLAIM IN
+      // THE OTHER DIRECTION. `delete_lesson` also calls `_reverse_lesson`, which VOIDS the accumulated
+      // observations — deliberately, and the reason is in its own comment: the lesson key is
+      // deterministic, so writing the same rule again un-tombstones this very row, and without the
+      // reversal it would "return at the confidence it had when the user threw it away". `undo_event`
+      // only clears `is_deleted`; it does not restore observations. So undo brings the RULE back at
+      // reset confidence, and the copy has to carry that or it trades one lie for another.
+      if (!(await confirmDelete('lesson', rowSubject([selected.lesson.rule], 40), {
+        body: 'The agent stops applying it right away. The History tab below can undo this, but the lesson '
+          + 'comes back with its confidence reset — forgetting one deliberately voids the observations '
+          + 'that earned it.',
+      }))) return
       try { await api.deleteLesson(selected.lesson.rule) } catch (e) { return fail('lesson', e) }
     } else return
     setSelUid(null); reloadAll()
@@ -850,7 +885,7 @@ function StudioDocEditor({ which, onSaved }: { which: 'preferences' | 'projects'
         data-type="caption" className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
         style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }} />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={save} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Save size={14} /> {busy ? 'Saving…' : 'Save'}</Button>
+        <Button size="sm" onClick={save} loading={busy} disabled={!dirty || busy} disabledReason={!dirty && !busy ? 'No changes to save' : undefined}><Save size={14} /> Save</Button>
         {dirty && <span data-type="caption" className="text-on-surface-low">Unsaved changes</span>}
         {saved && <span data-type="caption" className="text-ok">Saved ✓</span>}
         {err && <span role="alert" data-type="caption" className="text-danger">{err}</span>}
@@ -881,8 +916,8 @@ function AddLessonForm({ onDone }: { onDone: (created: boolean) => void }) {
         placeholder="e.g. Always run the test suite before saying a fix works."
         data-type="body-s" className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={submit} disabled={!rule.trim() || saving}
-          disabledReason={!rule.trim() ? 'Write the lesson first' : undefined}>{saving ? 'Saving…' : 'Save lesson'}</Button>
+        <Button size="sm" onClick={submit} loading={saving} loadingLabel="Saving…" disabled={!rule.trim() || saving}
+          disabledReason={!rule.trim() ? 'Write the lesson first' : undefined}>Save lesson</Button>
         {err && <span role="alert" data-type="caption" className="text-danger">{err}</span>}
       </div>
       <p data-type="caption" className="text-on-surface-low">Injected into future prompts. Prune anything wrong from the list.</p>
@@ -918,8 +953,8 @@ function AddSemanticForm({ onDone }: { onDone: (created: boolean) => void }) {
         placeholder="value" rows={2}
         data-type="body-s" className="mb-2 w-full rounded-md bg-surface-high px-3 py-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={submit} disabled={saving || !key || !value.trim()}
-          disabledReason={!key ? 'Choose a key first' : !value.trim() ? 'Enter a value first' : undefined}>{saving ? 'Saving…' : 'Save'}</Button>
+        <Button size="sm" onClick={submit} loading={saving} disabled={saving || !key || !value.trim()}
+          disabledReason={!key ? 'Choose a key first' : !value.trim() ? 'Enter a value first' : undefined}>Save</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
         {err && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{err}</span>}
       </div>
@@ -1568,7 +1603,7 @@ function ProposalQueue({ proposals, onDecided }: { proposals: MemoryEntityPropos
           <div className="flex gap-1.5">
             <Button size="sm" onClick={() => decide(p.name, 'accept')} loading={busy === p.name} className="flex-1"><Check size={14} /> Accept
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => decide(p.name, 'reject')} disabled={busy === p.name} className="flex-1">
+            <Button size="sm" variant="ghost" onClick={() => decide(p.name, 'reject')} loading={busy === p.name} className="flex-1">
               <X size={14} /> Not a thing
             </Button>
           </div>

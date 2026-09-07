@@ -314,7 +314,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
           {/* `canSave` ANDs four requirements; the reason names the FIRST one outstanding, in the
               order the form presents them, rather than reciting all four. Omitted while `saving`,
               where the label already reads "Creating…". */}
-          <Button onClick={create} disabled={saving || !canSave}
+          <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !canSave}
             disabledReason={saving ? undefined
               : !name.trim() ? 'Name the trigger first'
                 // The providers read comes FIRST among the provider-shaped reasons: telling someone to
@@ -322,7 +322,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
                 : providersErr && providers.length === 0 ? "Couldn't load the action providers — retry above"
                   : !provider ? 'Pick a provider'
                     : !requiredConfigMet ? 'Complete the required settings'
-                      : 'Set the event to match'}><Check size={16} /> {saving ? 'Creating…' : 'Create trigger'}</Button>
+                      : 'Set the event to match'}><Check size={16} /> Create trigger</Button>
         </div>
       </div>
     </div>

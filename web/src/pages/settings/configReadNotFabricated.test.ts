@@ -104,6 +104,64 @@ describe('a config panel does not present fabricated values as saved state', () 
     expect(body).toMatch(/Boolean\(legErr\) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load/)
   })
 
+  // ── `settings:agent-defaults` — the same defect, on the two most dangerous controls in Settings ──
+  //
+  // 🪤 THIS KEY WAS THE ONE THE RAIL DID NOT NAME. The legibility case above was written as a
+  // per-key assertion, and `settings:agent-defaults` was never added — so the hub kept the divergent
+  // `.catch(() => ({}))` that `AgentDefaultsPanel` had already removed from its own copy, and the
+  // panel's `if (!data && loadErr)` guard stayed unreachable on the hub→panel journey. `data` was
+  // defined, just empty.
+  //
+  // Why this key matters more than legibility's two switches: with `{}` the tile claimed
+  // **"Ask each time"** for approval mode (from `?? 'interactive'`) while the stored default is
+  // `auto` — the UI showed the SAFE mode and the runtime ran the permissive one — and rendered the
+  // **YOLO** auto-approve-everything switch as OFF. Both of those controls PATCH on change, so a user
+  // "correcting" one writes against a config they never loaded.
+  it('🔴 the hub stops poisoning the agent-defaults key it shares with that panel', () => {
+    const widgets = codeOf('pages/settings/settingsWidgets.tsx')
+    const at = widgets.indexOf("'settings:agent-defaults'")
+    expect(at, 'the hook must still exist').toBeGreaterThan(-1)
+    // Bounded to the hook body. The window has to reach BOTH reads, because the second one keeps its
+    // fallback legitimately — so this cannot just forbid `.catch` in the hook and be done.
+    const hook = widgets.slice(at, widgets.indexOf('persist: true', at) + 20)
+    expect(hook, 'found the whole hook').toMatch(/api\.agents\(\)/)
+    // The config read: no substitute, byte-identical to the panel's.
+    expect(hook, 'a substitute on the CONFIG read defeats the panel on the hub journey')
+      .not.toMatch(/personalclawConfig\(\)[^\n]*\.catch\(/)
+    // 🪤 …and the DECORATING read keeps its own, exactly as the panel spells it. Stripping this one
+    // would be the over-correction: the default agent's NAME renders as '—', it is not a control's
+    // claimed state, and blanking the tile for it would be a regression dressed as a fix.
+    expect(hook, 'the default-agent name keeps its fallback').toMatch(/api\.agents\(\)\.then\(\(a\) => a\.default_agent\)\.catch\(\(\) => ''\)/)
+  })
+
+  it('🔴 the agent-defaults tile substitutes the TRUE default, not the safe-looking one', () => {
+    // The tile's shimmer/failure-line half belongs to `tileLoadFailure.test.ts`, which owns that
+    // property for all five failable tiles; this file owns the FABRICATED VALUE, which is the half
+    // that made the readout contradict the runtime.
+    const widgets = codeOf('pages/settings/settingsWidgets.tsx')
+    const at = widgets.indexOf('title="Agent defaults"')
+    expect(at, 'found the tile').toBeGreaterThan(-1)
+    const body = widgets.slice(at - 1400, at + 1200)
+    // 🪤 `'interactive'` claimed the app would ask before every tool call; the stored default is
+    // `auto`. Unreachable now that the fetcher rejects — but a readout that lies whenever it IS
+    // reached is not worth keeping, and the direction matters: this string governs only the DISPLAY,
+    // so guessing the restrictive mode manufactures false assurance rather than adding safety.
+    expect(body, 'the honest fallback').toMatch(/approval_mode \?\? 'auto'/)
+    expect(body, 'the safe-looking lie is gone').not.toMatch(/approval_mode \?\? 'interactive'/)
+  })
+
+  it("VACUITY: the backend default really is `auto`, so 'auto' is the truthful fallback", () => {
+    // If this ever becomes `interactive`, the assertion above inverts and the tile should follow the
+    // config rather than this rail. Guards the fallback's TRUTH, not its spelling.
+    const { readFileSync } = require('node:fs') as typeof import('node:fs')
+    const { join } = require('node:path') as typeof import('node:path')
+    const loader = readFileSync(join(process.cwd(), '..', 'src/personalclaw/config/loader.py'), 'utf8')
+    // Bounded to AgentConfig's own block, not the file — `approval_mode` also exists per-agent.
+    const cls = loader.match(/class AgentConfig:[\s\S]*?\n\n/)?.[0] ?? ''
+    expect(cls, 'found AgentConfig').not.toBe('')
+    expect(cls, 'approval_mode defaults to auto').toMatch(/approval_mode[\s\S]{0,120}?default="auto"/)
+  })
+
   it('the census is reproducible, and the rest of the population is stated not swept', () => {
     // 55 readers in this directory still substitute a value. That is deliberate: for a counter or a
     // decorative strip, a fallback is right. This rail owns the family where the substitution decides
@@ -131,9 +189,29 @@ describe('a config panel does not present fabricated values as saved state', () 
     // the two share that cache key and a DIVERGENT fetcher on a shared key is the defect this whole
     // file is about. That is a decorating read (the panel's own answer to a failed ledger read is
     // "No packs installed yet"), so it keeps the fallback, and the floor moves to the measured 32.
-    // Per-file, this tree: ChatPanel 1 · DurabilityPanel 2 · PacksPanel 2 · AgentDefaults 1 ·
+    // Per-file, that tree: ChatPanel 1 · DurabilityPanel 2 · PacksPanel 2 · AgentDefaults 1 ·
     // settingsWidgets 26.
+    //
+    // 🔺 32 → 33, and THE FLOOR HAD DRIFTED BELOW THE REAL COUNT FOR THE FOURTH TIME. Re-measured by
+    // replaying this census's own regex against `origin/main`: the true count was **34**, not 32, and
+    // the per-file line above under-reports `settingsWidgets` by two (28, not 26). So two swallows
+    // landed unrecorded since the last measurement — and, worse, the drift made this rail unable to
+    // see the change in this very PR: removing one takes 34 → 33, which still satisfied `>= 32`.
+    //
+    // That is the fourth occurrence of the same failure, so it is worth naming the cause rather than
+    // just fixing the number: a `toBeGreaterThanOrEqual` floor cannot detect an ADDITION, only a
+    // removal. It is the right shape for "do not silently de-swallow", and the wrong shape for "do not
+    // silently add one" — which is the direction that actually happens, because adding a `.catch` is
+    // what a developer does under time pressure. An exact-equality assertion would catch both and
+    // force this comment to be updated in the same PR; that is a bigger change than this one and it
+    // belongs to whoever next touches this rail.
+    //
+    // This PR de-swallows ONE: `settings:agent-defaults` in `settingsWidgets.tsx`, whose divergent
+    // `.catch(() => ({}))` on the config read defeated `AgentDefaultsPanel`'s own honesty fix on the
+    // hub→panel journey. Lowered to the MEASURED post-fix value, not to 32-minus-nothing.
+    // Per-file, this tree: ChatPanel 1 · DurabilityPanel 2 · PacksPanel 2 · AgentDefaultsPanel 1 ·
+    // settingsWidgets 27 = 33.
     expect(stillSubstituting, 'the decorating fallbacks in these five files, measured')
-      .toBeGreaterThanOrEqual(32)
+      .toBeGreaterThanOrEqual(33)
   })
 })

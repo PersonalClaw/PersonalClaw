@@ -53,7 +53,18 @@ describe('a failed cancel tells the user the work did not stop', () => {
     )
     const shared = readFileSync(join(process.cwd(), 'src/app/reportingWrite.ts'), 'utf8')
     expect(shared).toMatch(/^export const reportActionFailure = \(what: string\) => \(e: unknown\) => \{$/m)
-    expect(shared).toContain("notify(`Couldn't ${what}: ${e instanceof Error ? e.message : String(e)}`, 'error')")
+    // 🔁 RE-POINTED A THIRD TIME, for the reason this rail already anticipates. The sentence moved from
+    // an inline template into a named composer (`failureSentence`) when `readableErrText` was wired in,
+    // so an opaque `e.message` — Chrome's "Failed to fetch", or `errEnvelope`'s own `HTTP 500` — is no
+    // longer the tail of a sentence written for a person. BOTH exports call the one composer, which is
+    // the drift-proofing this assertion has always been about; it is pinned more directly now than the
+    // old inline literal managed.
+    expect(shared).toContain("notify(failureSentence(what, e), 'error')")
+    expect(shared, 'the sentence has exactly one composer').toMatch(
+      /function failureSentence\(what: string, e: unknown\): string/,
+    )
+    expect(shared, 'and it filters the unusable text rather than printing it')
+      .toMatch(/const detail = readableErrText\(e\)/)
     // 🪤 UNIQUENESS, not just scope. The first version of this test asserted only that a
     // module-level definition EXISTS — and the PR that added it shipped a second, indented copy
     // inside `ChatPage` as well, which legally shadows the outer one. TypeScript is silent about

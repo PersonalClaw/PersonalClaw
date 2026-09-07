@@ -77,6 +77,10 @@ async def test_desktop_returns_instructions(monkeypatch) -> None:
     assert resp.status == 200
     assert body["kind"] == "desktop"
     assert body["status"] == "instructions"
+    # The detail must name where the new version comes from. It shipped saying "the app
+    # updates itself", which is the unbuilt electron-updater half of DC-1 (#2673).
+    assert "releases page" in body["detail"]
+    assert "updates itself" not in body["detail"]
 
 
 @pytest.mark.asyncio

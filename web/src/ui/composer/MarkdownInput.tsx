@@ -5,6 +5,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { liveMarkdown, liveMarkdownTheme } from './liveMarkdown'
 import { MentionMenu, type MentionPick } from './MentionMenu'
 import { SlashMenu } from './SlashMenu'
+import { enterKeyAction } from './enterKeyAction'
 
 /** Detect an active `@query` at the caret (word-boundary @, query has no space). */
 function activeMention(value: string, caret: number): { query: string; at: number } | null {
@@ -50,16 +51,23 @@ interface Props {
   onLargePaste?: (text: string) => boolean
   /** mobile viewport → Enter inserts a newline instead of sending (send is button-only). */
   mobile?: boolean
+  /** the user's "Send on Enter" preference. `false` → Enter inserts a newline and sending is
+   *  button-only, which is exactly the behaviour `mobile` already produces — hence one branch
+   *  for both. Optional, and only an explicit `false` changes anything: an unresolved or failed
+   *  config read must not take Enter-to-send away from someone who never turned it off. */
+  sendOnEnter?: boolean
 }
 
 /** A CodeMirror-6-backed message input with Obsidian-style live markdown: the
  *  line the caret is on shows raw markdown; other lines render. Replaces the
- *  composer's <textarea> while preserving its behaviors — Enter to send,
- *  Shift+Enter newline, ⌘/Ctrl+Enter optimize, ↑/↓ prompt-history at the text
- *  boundaries, @-mention file picker, and large-paste interception. */
+ *  composer's <textarea> while preserving its behaviors — Enter to send (unless
+ *  the reader turned "Send on Enter" off, or is on a phone), Shift+Enter newline,
+ *  ⌘/Ctrl+Enter optimize, ↑/↓ prompt-history at the text boundaries, @-mention
+ *  file picker, and large-paste interception. */
 export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function MarkdownInput({
   value, onChange, onSend, canSend, placeholder, maxHeight, minHeight,
   onFocusChange, onOptimize, history, onMentionFile, onMentionKnowledge, mentionProject, slashCommands, onLargePaste, mobile,
+  sendOnEnter,
 }, ref) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -93,8 +101,8 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
     })
   }, [])
   // Latest props for the (static) CM extensions to read without rebuilding.
-  const cb = useRef({ value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onMentionFile, onMentionKnowledge, slashCommands, mobile })
-  cb.current = { value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onMentionFile, onMentionKnowledge, slashCommands, mobile }
+  const cb = useRef({ value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter })
+  cb.current = { value, onChange, onSend, canSend, onOptimize, history, onLargePaste, onMentionFile, onMentionKnowledge, slashCommands, mobile, sendOnEnter }
 
   const [mention, setMention] = useState<{ query: string; at: number } | null>(null)
   const [slash, setSlash] = useState<{ query: string } | null>(null)
@@ -147,15 +155,21 @@ export const MarkdownInput = forwardRef<MarkdownInputHandle, Props>(function Mar
 
     const sendKeys = keymap.of([
       { key: 'Enter', run: (v) => {
-          // while the mention or slash menu is open, Enter is owned by it (the
-          // menu's capture-phase keydown selects the highlighted item).
-          if (mentionRef.current || slashRef.current) return false
-          // On mobile, Enter inserts a newline — sending is button-only (a phone
-          // keyboard's return key must not fire off a half-typed message). Desktop
-          // keeps Enter-to-send / Shift+Enter-newline.
-          if (cb.current.mobile) { v.dispatch(v.state.replaceSelection('\n')); return true }
-          if (cb.current.canSend) { histIdx.current = -1; cb.current.onSend(); return true }
-          return false
+          // The decision itself lives in `enterKeyAction` so it can be tested without
+          // CodeMirror (same split as `sendButtonState`); this stays a thin adapter.
+          switch (enterKeyAction({
+            menuOpen: !!(mentionRef.current || slashRef.current),
+            mobile: cb.current.mobile,
+            sendOnEnter: cb.current.sendOnEnter,
+            canSend: cb.current.canSend,
+          })) {
+            // Declining is the point: while a menu is up, Enter belongs to its own
+            // capture-phase keydown, which selects the highlighted item.
+            case 'menu': return false
+            case 'newline': v.dispatch(v.state.replaceSelection('\n')); return true
+            case 'send': histIdx.current = -1; cb.current.onSend(); return true
+            default: return false
+          }
         } },
       { key: 'Shift-Enter', run: (v) => { v.dispatch(v.state.replaceSelection('\n')); return true } },
       { key: 'Mod-Enter', run: () => {

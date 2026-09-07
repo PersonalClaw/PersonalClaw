@@ -9,6 +9,8 @@ import { resolveSendButton } from './composer/sendButtonState'
 import { useMicRecorder } from './composer/useMicRecorder'
 import type { ComposerProps } from './composer/types'
 import { useIsMobile } from '../app/useIsMobile'
+import { api } from '../lib/api'
+import { useQuery } from '../lib/data'
 import { usePushToTalk, ensureMicGrant } from '../lib/pushToTalk'
 import { MicCaptureChip } from './MicCaptureChip'
 
@@ -36,6 +38,13 @@ export function Composer({
   // On mobile the return key inserts a newline (send is button-only) — a phone
   // keyboard's Enter must not fire a half-typed message. Reactive to rotation/resize.
   const isMobile = useIsMobile()
+  // "Send on Enter" is read HERE rather than threaded in from each page, so every composer in the
+  // app answers to the setting from one shared, persisted cache key. Threading it would mean
+  // repeating the prop at each ComposerStage site (chat, the launcher, the loop composer) — the
+  // same per-site omission that let this setting ship persisted, written by two controls, and read
+  // by nothing. An unresolved or failed read leaves `data` undefined, which MarkdownInput treats as
+  // "keep sending on Enter" — matching the config default rather than silently changing the keyboard.
+  const { data: sendOnEnter } = useQuery('chat:send-on-enter', () => api.dashboardConfig().then((c) => c.send_on_enter), { persist: true })
   const canSend = value.trim().length >= minChars
   const setFocus = (f: boolean) => { setFocused(f); onFocusChange?.(f) }
   // Send→check bloom (brand shape-morph): on a send from the idle button, flash a
@@ -326,6 +335,7 @@ export function Composer({
             slashCommands={!!controls.slash}
             onLargePaste={onLargePaste}
             mobile={isMobile}
+            sendOnEnter={sendOnEnter}
           />
 
           <div className="flex items-end justify-between gap-s">

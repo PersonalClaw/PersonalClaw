@@ -4,6 +4,7 @@ import { GraduationCap, Check, X, Pencil } from 'lucide-react'
 import { api, type EphemeralDraft } from '../../lib/api'
 import { Button } from '../../ui/Button'
 import { Modal } from '../../ui/Modal'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Session-skills review (skill-ephemeral-promotion).
  *
@@ -153,7 +154,7 @@ function DraftCard({ sessionKey, agent, draft, onChanged }: {
         </Button>
         <Button variant="secondary" size="sm" onClick={() => promote('global')} loading={busy === 'global'} disabled={!!busy}>All agents
         </Button>
-        <Button variant="ghost" size="sm" onClick={forget} disabled={!!busy}>
+        <Button variant="ghost" size="sm" onClick={forget} disabled={!!busy} disabledReason={BUSY_REASON}>
           <X size={13} /> Forget
         </Button>
       </div>

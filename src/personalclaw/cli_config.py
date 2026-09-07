@@ -8,9 +8,19 @@ from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import AppConfig
-from personalclaw.config.loader import config_path
+from personalclaw.config import loader as config_loader
 from personalclaw.hooks import safe_read_file
 from personalclaw.sel import sel
+
+
+def config_path() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_path`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_path()
+
 
 _MISSING = object()
 

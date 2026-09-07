@@ -265,7 +265,9 @@ def test_merge_route_reports_moved_and_already(store):
     from personalclaw.dashboard.handlers import knowledge as H
 
     ids = _tag_ids(store)
-    resp = _run(H.merge_tag(_tag_req(store, "POST", ids["src"], {"into": ids["dst"]})))
+    # `confirm: true` is required by the route (#606) — merging DELETES the source tag.
+    body_in = {"into": ids["dst"], "confirm": True}
+    resp = _run(H.merge_tag(_tag_req(store, "POST", ids["src"], body_in)))
     body = json.loads(resp.body)
 
     assert resp.status == 200

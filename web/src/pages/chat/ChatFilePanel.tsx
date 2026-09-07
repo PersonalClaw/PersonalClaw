@@ -43,7 +43,9 @@ const MIN_W = 360, MAX_W = 900, DEFAULT_W = 480
 function ExpandedOverlay({ children }: { children: ReactNode }) {
   const trapRef = useFocusTrap<HTMLDivElement>()
   return (
-    <motion.div ref={trapRef} className="fixed inset-0 z-50 flex flex-col bg-surface"
+    // `--z-content` IS 50, so this is a spelling migration with a byte-identical computed value: a
+    // full-screen content panel is precisely what tokens.css names the content ceiling.
+    <motion.div ref={trapRef} className="fixed inset-0 z-[var(--z-content)] flex flex-col bg-surface"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.effects}>
       {children}
     </motion.div>

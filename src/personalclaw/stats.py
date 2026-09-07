@@ -181,7 +181,7 @@ def cache_hit_pct(
 
     Returns ``None`` when the denominator is 0: no prompt tokens is NO MEASUREMENT,
     not ``0%``. Same honesty rule as ``context_pct`` on the turn-complete line — see
-    ``dashboard/chat_runner.py:637-638``, whose ``if context_pct is not None`` guard
+    ``dashboard/chat_runner.py:645-646``, whose ``if context_pct is not None`` guard
     exists because a defaulted ``0`` printed ``context 0%`` for providers that
     reported nothing, a number the backend never supplied. A measured 0 (prompt
     tokens present, none of them cached) is a real answer and returns ``0.0``.

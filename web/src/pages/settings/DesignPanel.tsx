@@ -16,6 +16,7 @@ import { DEFAULT_PERSONALITY } from '../../design/personalities'
 import { COLOR_GROUPS, BACKDROP_GROUPS, TYPOGRAPHY_GROUPS, LAYOUT_GROUPS, type Scheme } from '../../design/schemes'
 import { PanelHeader, Row, Section, Toggle } from './settingsUI'
 import { useNavDisclosure } from '../../app/navDisclosure'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Design subpage. Cleanly separated concerns:
  *   1. COLOR SCHEME — pick a curated scheme (swatches) or fork your own. Colors only.
@@ -333,7 +334,7 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
             <p className="text-on-surface-var text-[0.8125rem]">
               Editing the saved theme <strong className="text-on-surface">{activeTheme.emoji && !activeTheme.emoji.startsWith('icon:') ? `${activeTheme.emoji} ` : ''}{activeTheme.label}</strong> — save your changes back to it.
             </p>
-            <Button size="sm" variant="ghost" onClick={update} disabled={!!busy}><Save size={15} /> {busy === 'update' ? 'Updating…' : 'Update theme'}</Button>
+            <Button size="sm" variant="ghost" onClick={update} disabled={!!busy} disabledReason={BUSY_REASON}><Save size={15} /> {busy === 'update' ? 'Updating…' : 'Update theme'}</Button>
           </div>
         </Surface>
       )}
@@ -349,7 +350,7 @@ function ColorEditor({ onSave, onUpdate, activeTheme }: {
           <div className="flex items-end gap-s">
             <div className="flex-1"><TextInput value={name} onChange={setName} placeholder="My theme" /></div>
             <Button size="sm" onClick={save} disabled={!name.trim() || !!busy}
-              disabledReason={!name.trim() ? 'Name the theme first' : undefined}><Plus size={15} /> {busy === 'save' ? 'Saving…' : 'Save theme'}</Button>
+              disabledReason={!name.trim() ? 'Name the theme first' : BUSY_REASON}><Plus size={15} /> {busy === 'save' ? 'Saving…' : 'Save theme'}</Button>
           </div>
         </Field>
         {err && <FieldError className="mt-s">{err}</FieldError>}

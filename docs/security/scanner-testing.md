@@ -233,11 +233,114 @@ check that asked "is this literal passed to a sink?" clears that file. Asking in
 "can this file hand *any* string to an interpreter?" does not, which is why the clause
 is stated at module scope and why both shapes are pinned separately.
 
+## The terminal band is not shell-only: native destruction
+
+Everything above is about **precision** — not refusing benign content. The other direction
+has its own rail, `tests/security/test_scanner_recall.py`, because nothing asserted the
+scanner still *catches* anything and the terminal band could have rotted to nothing with
+every suite green. It had: `destructive_root` could not fire inside a quoted string for as
+long as it had shipped, and the entire band was shell syntax, so destruction written in the
+language bundles are actually written in scored **`clean`, with zero findings** (#2607).
+
+Three rules close that, all at the same non-overridable severity as the shell rules —
+destruction is destruction, and the language it is spelled in is not the question:
+
+| Rule | The claim it makes |
+|---|---|
+| `destructive_delete` | A removal call (`shutil.rmtree`, `os.remove`/`unlink`/`rmdir`/`removedirs`, `Path.unlink`/`rmdir`) whose target is the filesystem root, the account root, or an OS-owned tree |
+| `destructive_walk` | An **unbounded recursive** walk (`rglob`, `glob("**/…")`, `os.walk`, `glob.glob(recursive=True)`) rooted at one of those, with a removal call inside the loop or comprehension |
+| `destructive_truncate` | A truncating write (`open(…, "w")`, `Path.write_text`/`write_bytes`, `Path.open("w")`, `os.truncate`) to an OS-owned path |
+
+Two design choices carry the whole family.
+
+**Decided on the `ast`, never on the text.** These are call sites, and a text scan cannot
+tell a call from a mention. `shutil.rmtree` appears in prose, in a comment warning against
+it, in a test asserting it is never called, and in denylists of forbidden writers — one
+shipped bundle carries exactly such a list. `ast` does not have to guess. Import aliases
+are resolved, so `import shutil as sh` and `from shutil import rmtree as rt` are not ways
+out, and a name the file binds **exactly once** is followed one hop, so the two-line
+`home = expanduser("~"); rmtree(home)` spelling is not either. A file that does not parse
+yields nothing here — the text catalogs still judge every byte of it. The family runs on any
+script surface whose extension does not name **another** language, so an extension-less
+`scripts/setup` is covered and a `.js` file is not: requiring a `.py` suffix would itself be a
+parking spot, and every other `_SCRIPT_EXTS` member has syntax `ast.parse` refuses anyway.
+
+**The severity turns on the TARGET, not the call.** `shutil.rmtree` is legitimate; all nine
+of its call sites across the 64 shipped bundles pass a variable holding a staging directory,
+and refusing the call would refuse them all. So the line is the one the shell band already
+draws between `rm -rf /tmp/build` and `rm -rf /`: root, home and the OS-owned trees are
+terminal, while `/tmp`, `/var/folders`, `/dev/null`, `~/.cache/…` and **any target the
+analysis cannot resolve** are not. That last clause is a recall limit, and it is why
+promoting this class to terminal blocks nothing that ships today.
+
+**It goes through the reachability pass, not around it**, and the answer differs by
+direction on purpose. A live call reports `reachable` with the reason "a call is code" —
+L0/L1 ask whether the match is commentary or a string the file merely holds, and a call
+site is neither, so no clause can lower it. The *same text* commented out or quoted in a
+docstring produces **no finding at all**, which is stricter than the consentable `WARNING`
+a re-scored regex match earns: `ast.parse` discards commentary before the rule can see it,
+so there is nothing left to re-score.
+
+### Proving the native rules are load-bearing
+
+`TestRedsOnAWeakenedNativeRule` monkeypatches one control at a time in process. The table
+below is the stronger form — each row was applied to the **shipped source** with every
+`__pycache__` deleted between runs, because `python -B` is not sufficient: it stops
+*writing* bytecode but still *reads* a stale cache, and a same-length edit reverted inside
+one second is masked by `(mtime, size)` validation. All 24 red.
+
+| Weaken this | And this reds |
+|---|---|
+| `_scan_native_destruction` returns `[]` | every native payload |
+| Empty `_HOME_LITERALS` / `_HOME_ENV_KEYS` | the `~` and the `os.environ["HOME"]` payloads |
+| Drop the `_DRIVE_ROOT_RE` check | the bare-`C:\` payload |
+| Stop consulting `_SYSTEM_TREES` | the truncating write and the `/usr` removal |
+| Stop consulting `_TRANSIENT_PATHS` | the precision floor — `open("/dev/null", "w")` becomes terminal |
+| Empty `_DELETE_FUNCS` / `_DELETE_METHODS` / `_WALK_METHODS` / `_OPEN_FUNCS` | the removal, walk and truncate payloads respectively |
+| `_import_aliases` returns `{}` | the `import shutil as sh` and `from shutil import rmtree as rt` payloads |
+| `_single_bindings` returns `{}` | the one-line-indirection payload |
+| `_classify_path_literal` returns `None` | every native payload |
+| Stop unwrapping `_PATH_PASSTHROUGH` | every payload that spells its target as `Path("/")` |
+| Stop resolving `..` segments | the `/tmp/..` escape |
+| Match `_longest_root` without a path boundary | the precision floor — `/optimized/report.txt` becomes terminal |
+| `_truncating_mode` returns `True` | the precision floor — reading and appending become terminal |
+| `_deletes_within` returns `True` | the precision floor — walking the root and printing becomes terminal |
+| Force the `.glob` branch's `**` check true | the precision floor — a single-level glob becomes a tree sweep |
+| Let a `glob.glob` pattern with nothing before its first `*` fall back to `/` | the precision floor — a relative `.pyc` cleanup loop becomes terminal |
+| Drop the language gate entirely | the precision floor — a `.js` file is judged by Python rules |
+| Require a `.py` SUFFIX rather than "not another language" | the extension-less payload — `scripts/setup` with a python shebang |
+| Force `_BundleReach.decide` to answer `UNREACHABLE` for the family | every native payload becomes a consentable warning |
+| Add a native rule without a gloss | the plain-language-gloss rail |
+
+Four of those rows exist **because** something survived. Dropping the drive-root check and
+forcing the `**` check true both survived the whole suite on the first pass, so each is now
+pinned by a fixture. The relative-glob row was a real false positive found by re-reading the
+branch: a pattern with nothing before its first `*` is relative to the working directory, and
+reading it as `/` made `glob.glob("**/*.pyc", recursive=True)` + `os.remove(p)` terminal. The
+suffix row is the mirror image — a recall hole rather than a false positive: gating on a `.py`
+SUFFIX left `scripts/setup` with a python shebang unscanned, which is a payload parking spot,
+so the gate asks "is this some OTHER language?" instead. And one mutation found dead code — a
+literal set of root spellings POSIX normalisation already reached — which was deleted rather
+than tested.
+
 ## Residual risks
 
 The corpus pins what holds. These are the gaps it also pins, honestly, so they are
 auditable rather than invisible. They are accepted, not unnoticed.
 
+- **A destructive target the analysis cannot resolve is not flagged.** The native family
+  classifies a target it can name — a literal, a path wrapper around one, `Path.home()`,
+  `os.environ["HOME"]`, or a name the file binds exactly once. A target assembled at
+  runtime, read from config, passed in as a parameter, or held in a name the file rebinds
+  resolves to nothing and earns nothing. That is deliberate, and it is the direction that
+  costs recall rather than precision, which is the right way round for a band that blocks
+  installs outright — but it means `shutil.rmtree(sys.argv[1])` is not terminal.
+- **`rm -rf /` handed to a shell is still the shell band's problem.** Two spellings stay
+  open and are pinned as strict `xfail`: `os.system("rm -" + "rf /")` and
+  `subprocess.run(["rm", "-rf", "/"])`. The native rules do not reach them, and that is not
+  a technicality — the destructive call is the spawned `rm`'s, so there is no Python call
+  site naming a target to classify. Closing them wants the same AST treatment applied to
+  the *arguments* of an execution sink, which is a different rule.
 - **An unreferenced module of pure inert data becomes consentable rather than refused.**
   A bundle can ship a file containing nothing but a literal attack string, referenced by
   nothing, and get `WARNING` where it previously got `DANGEROUS`. That is a real

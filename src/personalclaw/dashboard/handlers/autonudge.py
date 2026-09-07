@@ -7,11 +7,22 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw.config.loader import config_dir, workspace_root
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import workspace_root
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import is_sensitive_path
 from personalclaw.sel import sel
 from personalclaw.triggers.nudge import get_instance as _autonudge_get
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
 
 logger = logging.getLogger(__name__)
 

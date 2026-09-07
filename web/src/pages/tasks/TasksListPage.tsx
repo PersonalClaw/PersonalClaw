@@ -12,7 +12,7 @@ import { Meter } from '../../ui/Meter'
 import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { TextLink } from '../../ui/TextLink'
-import { confirmDelete } from '../../ui/dialog'
+import { confirm, confirmDelete } from '../../ui/dialog'
 import { SidePanel } from '../../ui/SidePanel'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -28,6 +28,7 @@ import { TaskBoard } from './TaskBoard'
 import { PageTitle } from '../../ui/PageTitle'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { accentChip } from '../../design/accent'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 type ViewMode = 'list' | 'cards' | 'board' | 'dag'
 // views that ignore the status filter (they present all statuses themselves)
@@ -337,7 +338,29 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
 
   // Reset a Repeatable task list (server gates: all tasks must be done). Surfaces
   // the server message on the move-error banner on failure; reloads on success.
+  //
+  // 🔴 IT DESTROYED EVERY TASK'S EXECUTION NOTES ON ONE CLICK, AND SAID NOTHING. The server's own
+  // docstring states what it does — *"all its tasks → open, exit criteria → incomplete, execution
+  // notes cleared"* — and `tasks/hierarchy_handlers.py` loops the whole list passing
+  // `execution_notes=[]`. There is no restore. The only copy this control carried was its tooltip,
+  // *"Reset this repeatable list (all tasks must be done)"*, which names the PRECONDITION and never
+  // the loss: a 20px `RotateCcw` that reads as "start the checklist again", not "discard the record
+  // of the last run".
+  //
+  // 🪤 AND THE OBVIOUS IMPROVEMENT — naming HOW MANY tasks lose notes — WOULD HAVE LIED. `tasks` here
+  // comes from `api.tasks()` with no `limit`, and the server defaults that to **50**
+  // (`tasks/handlers.py:25`) across the whole account rather than per list. So a client-side count
+  // understates the loss precisely on the large lists where it is biggest, and a warning that
+  // undercounts is worse than one that does not count at all. The body states the consequence
+  // categorically instead — true for every list at every size.
   async function resetList(list: TaskListItem) {
+    if (!(await confirm({
+      title: `Reset “${list.name}”?`,
+      body: 'Every task goes back to open and its exit criteria are marked incomplete. '
+        + 'Each task’s execution notes are cleared, and those cannot be recovered.',
+      danger: true,
+      confirmLabel: 'Reset list',
+    }))) return
     setMoveError('')
     try { await api.resetTaskList(list.id); load() }
     catch (e) {
@@ -516,8 +539,8 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
           <div className="pointer-events-auto flex items-center gap-2 rounded-pill bg-surface-highest/95 px-3 py-2 shadow-sheet backdrop-blur">
             <span data-type="label-s" className="pl-1 text-on-surface tabular-nums" style={fvs(600)}>{selected.size} selected</span>
             <span className="h-4 w-px bg-outline-variant/50" aria-hidden />
-            <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={() => runBulk('update', { status: 'done' })}><CheckCircle2 size={14} /> Complete</Button>
-            <Button size="sm" variant="ghost" disabled={bulkBusy} onClick={async () => { if (await confirmDelete('task', `${selected.size} tasks`)) runBulk('delete') }}><Trash2 size={14} /> Delete</Button>
+            <Button size="sm" variant="ghost" disabled={bulkBusy} disabledReason={BUSY_REASON} onClick={() => runBulk('update', { status: 'done' })}><CheckCircle2 size={14} /> Complete</Button>
+            <Button size="sm" variant="ghost" disabled={bulkBusy} disabledReason={BUSY_REASON} onClick={async () => { if (await confirmDelete('task', `${selected.size} tasks`)) runBulk('delete') }}><Trash2 size={14} /> Delete</Button>
             <button type="button" onClick={clearSelection} aria-label="Clear selection" className="ml-1 grid size-7 place-items-center rounded-full text-on-surface-low hover:bg-surface-container hover:text-on-surface"><X size={15} /></button>
           </div>
         </div>

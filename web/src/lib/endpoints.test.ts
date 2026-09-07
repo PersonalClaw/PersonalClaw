@@ -28,7 +28,7 @@ import {
 // ── What this suite is actually measuring ────────────────────────────────────────────────────
 //
 // A companion shell holds N paired gateways — N independent brains — inside ONE storage scope.
-// (Measured, not assumed: `desktop/main.js:1246` does `wc.loadURL(localGatewayUrl)` and
+// (Measured, not assumed: `desktop/main.js:1243` does `wc.loadURL(localGatewayUrl)` and
 // `navigateToEndpoint` does the same for a paired gateway, so the SPA is always loaded from the
 // active gateway's own origin; `grep -n partition desktop/main.js` finds nothing, so the SPA's own
 // storage is already partitioned per-origin and cannot bleed. The shell's scope is the one that

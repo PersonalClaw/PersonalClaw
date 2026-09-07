@@ -59,8 +59,8 @@ export function DoctorPanel() {
           // panel top-down heard the Doctor's hint and then a Re-run button, with nothing between them.
           <div role="alert" data-type="body-s" className="text-on-surface-low">Couldn't load the doctor report.</div>
         )}
-        <Button variant="secondary" size="sm" onClick={refresh} disabled={busy}>
-          <RefreshCw size={15} className={busy ? 'animate-spin' : undefined} /> Re-run
+        <Button variant="secondary" size="sm" onClick={refresh} loading={busy}>
+          <RefreshCw size={15} /> Re-run
         </Button>
       </div>
 

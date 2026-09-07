@@ -163,7 +163,32 @@ async def api_lexicon_update_correction(request: web.Request) -> web.Response:
 
 
 async def api_lexicon_reset(request: web.Request) -> web.Response:
-    """POST /api/lexicon/reset — drop all terms + corrections (rebuild repopulates graph)."""
+    """POST /api/lexicon/reset — drop all terms + corrections (rebuild repopulates graph).
+
+    ``confirm: true`` is required. "Rebuild repopulates" holds only for terms DERIVED from the
+    graph; the CORRECTIONS are user-authored — someone typed each one to teach the system a word
+    it kept getting wrong — and no rebuild brings those back. So this is an unrecoverable wipe of
+    hand-entered work, behind a verb ("reset") that does not read as one.
+    """
+    body: object = {}
+    if request.can_read_body:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+    if not isinstance(body, dict) or not body.get("confirm"):
+        return web.json_response(
+            {
+                "error": {
+                    "code": "confirm_required",
+                    "message": (
+                        "reset drops every term and every user-authored correction "
+                        "— pass confirm: true"
+                    ),
+                }
+            },
+            status=400,
+        )
     svc = get_lexicon_service()
     svc.store.reset()
     return web.json_response({"ok": True})

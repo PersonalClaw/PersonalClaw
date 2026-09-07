@@ -106,7 +106,7 @@ export function ContextMenu({ items, children, disabled }: { items: ContextMenuI
               role="menu"
               aria-orientation="vertical"
               variants={overlayEnter} initial="initial" animate="animate" exit="exit"
-              className="glass fixed z-50 min-w-[200px] rounded-lgi p-s"
+              className="glass fixed z-[var(--z-menu)] min-w-[200px] rounded-lgi p-s"
               style={{ left: pos.x, top: pos.y, transformOrigin: 'top left' }}
             >
               {items.map((it, i) => (

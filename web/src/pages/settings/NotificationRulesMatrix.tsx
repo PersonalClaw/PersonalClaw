@@ -6,6 +6,7 @@ import { ChipInput, Checkbox, TextInput, FieldError, Select } from '../../ui/for
 import { Toggle } from '../../ui/Toggle'
 import { Button } from '../../ui/Button'
 import { CUES, type CueName } from '../../design/soundCues'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 const MODES: { key: NotificationMode; label: string }[] = [
   { key: 'never', label: 'Never' },
@@ -95,7 +96,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                           every untouched row would be noise on the common case. */}
                       {r.configured && r.mode !== r.default_mode && (
                         <Button size="xs" variant="ghost" onClick={() => save(r.key, { mode: r.default_mode })}
-                          disabled={busy === r.key} title={`Reset to default (${r.default_mode})`}>
+                          loading={busy === r.key} title={`Reset to default (${r.default_mode})`}>
                           <RotateCcw size={11} /> reset
                         </Button>
                       )}
@@ -197,8 +198,8 @@ export function DigestSchedule({ schedule, onSaved }: { schedule: string; onSave
           <div className="w-44">
             <TextInput value={value} onChange={setValue} size="sm" mono ariaLabel="Digest schedule" />
           </div>
-          {dirty && <Button size="sm" onClick={save} disabled={busy}>Save</Button>}
-          {dirty && <Button size="sm" variant="ghost" onClick={() => { setValue(schedule); setErr('') }} disabled={busy}>Cancel</Button>}
+          {dirty && <Button size="sm" onClick={save} disabled={busy} disabledReason={BUSY_REASON}>Save</Button>}
+          {dirty && <Button size="sm" variant="ghost" onClick={() => { setValue(schedule); setErr('') }} disabled={busy} disabledReason={BUSY_REASON}>Cancel</Button>}
         </div>
       </Field>
       {err && <FieldError>{err}</FieldError>}

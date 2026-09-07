@@ -27,6 +27,7 @@ import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { statusMeta, triggerHealthMeta, lastRunMeta, relFuture } from '../schedule/scheduleMeta'
 import { PageTitle } from '../../ui/PageTitle'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 // One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store.
 // `Data events` was missing, so an event trigger — creatable from this page's own form — had no
@@ -378,7 +379,7 @@ export function EventTriggerSummary({ t, onDeleted }: { t: Trigger; onDeleted: (
       {!t.readOnly && (
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <div className="flex-1" />
-          <Button variant="ghost" size="sm" onClick={remove} disabled={busy} className="text-danger">
+          <Button variant="ghost" size="sm" onClick={remove} disabled={busy} disabledReason={BUSY_REASON} className="text-danger">
             <Trash2 size={14} /> Delete
           </Button>
         </div>

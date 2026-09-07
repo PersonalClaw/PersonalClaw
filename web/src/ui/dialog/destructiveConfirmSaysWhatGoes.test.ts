@@ -206,13 +206,22 @@ describe('a destructive confirm names the item', () => {
     expect(nameless, 'a delete dialog that asks about "this <thing>" identifies nothing').toEqual([])
   })
 
+  // 🪤 THESE THREE ASSERTIONS USED `toContain` ON THE WHOLE CALL, TRAILING `)` INCLUDED — so they were
+  // pinned to the ARITY, not to the property. Adding a third argument (a `{ body }` telling the user a
+  // soft delete is undoable) moved the closing paren and reddened this on a change that left the
+  // property completely intact: the subject still comes from `rowSubject` with the same arguments.
+  //
+  // The property is "the subject is built by the shared helper, not hand-sliced". Matched as the
+  // ARGUMENT now, so a call may grow options without this failing. Note this very file already records
+  // the sibling version of the lesson twenty lines down — a scan for a rule about code must read code,
+  // not prose — and pinning a spelling is the same error one step out.
   it('the three prose subjects converge on rowSubject, not a hand-rolled slice', () => {
     const memory = readFileSync(join(SRC, 'pages', 'settings', 'MemoryPanel.tsx'), 'utf8')
-    expect(memory).toContain("confirmDelete('episodic memory', rowSubject([selected.episodic.text], 40))")
-    expect(memory).toContain("confirmDelete('lesson', rowSubject([selected.lesson.rule], 40))")
+    expect(memory).toContain("confirmDelete('episodic memory', rowSubject([selected.episodic.text], 40)")
+    expect(memory).toContain("confirmDelete('lesson', rowSubject([selected.lesson.rule], 40)")
     expect(memory, 'imported, not redefined').toMatch(/import \{ rowSubject \} from '\.\.\/\.\.\/lib\/rowSubject'/)
     const task = readFileSync(join(SRC, 'pages', 'tasks', 'TaskDetail.tsx'), 'utf8')
-    expect(task).toContain("confirmDelete('comment', rowSubject([body], 40))")
+    expect(task).toContain("confirmDelete('comment', rowSubject([body], 40)")
     // A local `.slice(0, n)` would re-answer a question the helper already answers — and would skip its
     // whitespace collapsing, which matters most here: a comment body carries the newlines it was typed
     // with, and a `\n\n` inside a 40-character budget is spent on nothing.

@@ -312,6 +312,21 @@ There is no Windows shell, and none is planned until **both** of these change:
 The desktop shell follows platform support, never leads it. Windows users have real,
 tested backend paths today: [WSL2 or Docker Desktop](platforms.md#windows-via-wsl2).
 
+## Updating
+
+**Download the new version and install it over the old one** — from the
+[releases page](https://github.com/PersonalClaw/PersonalClaw/releases), the same place you
+got this one. Replace the AppImage, or `sudo apt install ./personalclaw-desktop_<new>_amd64.deb`
+over the installed package. Your data lives in `~/.personalclaw` and is untouched by either.
+
+There is **no in-app update yet**, and the app will not offer you one. Settings → Updates
+tells you when a newer release exists and then points here; it deliberately does not show
+the "Update" button that a pip or git install gets, because the shell owns this install:
+the backend inside the app is a frozen bundle with no interpreter to upgrade, and the
+gateway is a child process that cannot restart itself out from under the window you are
+looking at. An auto-updater is planned — until it ships, the panel says what is actually
+true rather than promising an update that never arrives.
+
 ## Related
 
 - [Platforms](platforms.md) — which OSes the desktop shell targets.

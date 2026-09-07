@@ -82,17 +82,35 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
     setErr(null)
     if (!(await confirm({
       title: `Delete project "${proj.name}"?`,
-      // 🪤 "task lists DETACHED" was the wrong word, and it pointed the wrong way — detached implies the
-      // lists survive unattached. `hierarchy.delete_project` unlinks each list file
-      // (`self._list_path(tl.id).unlink(...)`); what survives is the TASKS, which live in their own files
-      // and become orphaned-by-list ("tasks are re-homed by the caller / left orphaned-by-list — the task
-      // provider owns task deletion"). So the reassuring half is the tasks, not the lists.
+      // 🔴 THIS DIALOG PROMISED "the tasks themselves stay" WHILE THE HANDLER DELETED EVERY ONE OF THEM.
+      // The worst kind of wrong copy: it did not merely omit the loss, it asserted safety, so the click
+      // that destroyed a project's entire task history read as the safe option.
       //
-      // "Workspace files on disk are left untouched" holds for this dialog: the bound `workspace_dir` is
-      // an external path the delete never reads, and the project's own `worktrees/` — which the rmtree DOES
-      // take — only exist for bound loops/code work, which sends the user down the force path and its own
-      // dialog instead.
-      body: 'Its context directory and task lists are removed — the tasks themselves stay. Workspace files on disk are left untouched.',
+      // 🪤 AND THE PREVIOUS COMMENT HERE WAS THE CAUSE, NOT AN OVERSIGHT — it reasoned carefully from the
+      // wrong function. `hierarchy.delete_project` really does unlink the list files and leave the task
+      // rows alone; its docstring says so ("tasks are re-homed by the caller / left orphaned-by-list — the
+      // task provider owns task deletion"), and reading it yields exactly the sentence that shipped.
+      // But #457 added a CASCADE in the calling handler, ABOVE that function
+      // (`tasks/hierarchy_handlers.py`: `list_all_tasks(project=…, limit=10_000)` → `delete_task(t.id)` →
+      // `native.py`'s `path.unlink()`), because without it the rows survived pointing at dead list ids,
+      // "unreachable from every scoped view". The docstring is still accurate about the function it
+      // documents. The dialog was describing an inner contract instead of the operation the button runs.
+      // Copy written against a callee is copy that goes stale the first time a caller does more.
+      //
+      // 🔑 THE CASCADE IS NOT THE BUG and is deliberately not touched here: #457's reasoning is sound, and
+      // orphaned unreachable tasks are worse than deleted ones. What was missing is informed consent.
+      //
+      // 🪤 NO COUNT, for the reason `repeatableResetConfirms` already records: this page cannot obtain an
+      // honest one. `api.tasks()` defaults to `limit=50` across the WHOLE account, and the server's own
+      // `total` saturates at 500 (`tasks/registry.py` discards the provider's honest total), so any number
+      // interpolated here would understate the loss on exactly the large projects where it is worst. The
+      // consequence is stated categorically instead — true for every project at every size.
+      //
+      // "Workspace files on disk are left untouched" survives review and stays LAST, because it is the one
+      // genuinely reassuring clause: the bound `workspace_dir` is an external path the delete never reads,
+      // and the project's own `worktrees/` — which the rmtree does take — exist only for bound loops/code
+      // work, which sends the user down the force path and its own dialog instead.
+      body: 'Every task in this project is permanently deleted, along with its notes, action plan and exit criteria — that cannot be undone. Its context directory and task lists go with it. Workspace files on disk are left untouched.',
       danger: true, confirmLabel: 'Delete',
     }))) return
     const run = async (force: boolean) => {
@@ -110,7 +128,13 @@ function ProjectListPage({ onOpen, query, setQuery }: { onOpen: (id: string) => 
       if ((e as { status?: number }).status === 409) {
         const force = await confirm({
           title: 'Project still has active work',
-          body: `"${proj.name}" still has work scoped under it. Deleting it now STOPS and REMOVES any bound loops (Goal, Code, Design, General) — their workers are halted, parallel git worktrees + branches cleaned up, and the loops deleted (not just unlinked). Project-bound chats are kept but UNBOUND (detached from this project, not deleted). This can't be undone.`,
+          // 🪤 THIS ONE WAS INCOMPLETE RATHER THAN WRONG, which is why it survived a review the first
+          // dialog failed. It enumerates loops, workers, worktrees, branches and chats — carefully, and
+          // each clause is accurate — and never mentions tasks, even though the SAME cascade runs on the
+          // force path. Its "This can't be undone" reads as being about the loops it just listed, so a
+          // user who reaches this second dialog still had no way to learn the tasks go. Named first now,
+          // because it is the larger and less recoverable loss of the two.
+          body: `"${proj.name}" still has work scoped under it. Every task in the project is permanently deleted with its notes and exit criteria. Deleting it now also STOPS and REMOVES any bound loops (Goal, Code, Design, General) — their workers are halted, parallel git worktrees + branches cleaned up, and the loops deleted (not just unlinked). Project-bound chats are kept but UNBOUND (detached from this project, not deleted). This can't be undone.`,
           danger: true, confirmLabel: 'Delete anyway',
         })
         if (!force) return

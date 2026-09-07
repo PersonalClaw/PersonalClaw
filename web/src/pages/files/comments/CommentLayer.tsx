@@ -251,7 +251,7 @@ function CommentCard({ c, muted }: { c: DocComment; muted: boolean }) {
       <div className="mb-1.5 flex items-center gap-1.5">
         <span className="min-w-0 flex-1 truncate text-on-surface-low text-[0.75rem]" title={c.docLabel}>{c.docLabel}</span>
         {!editing && <IconButton icon={Pencil} label="Edit comment" size={26} onClick={() => { setVal(c.comment); setEditing(true) }} />}
-        <IconButton icon={X} label="Remove comment" size={26} onClick={() => commentStore.remove(c.id)} />
+        <IconButton icon={X} label="Remove comment" size={26} tone="danger" onClick={() => commentStore.remove(c.id)} />
       </div>
       <div className="mb-2 max-h-20 overflow-y-auto rounded-md bg-surface-low px-2 py-1.5 text-on-surface-var text-[0.75rem] italic">“{c.quote}”</div>
       {editing ? (

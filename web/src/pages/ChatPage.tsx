@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ResultAnnouncement } from '../ui/ListControls'
 import { reportActionFailure, reportingWrite } from '../app/reportingWrite'
-import { unavailableWhen } from '../ui/unavailable'
+import { unavailableWhen, BUSY_REASON } from '../ui/unavailable'
 
 /** Hands-free voice knobs the composer needs (`voice.*`). */
 interface VoiceLoopConfig {
@@ -92,6 +92,7 @@ import { useComposerData } from '../lib/useComposerData'
 import type { ComposerControls, ComposerValue } from '../ui/composer/types'
 import { Popover, MenuRow } from '../ui/Popover'
 import { useQueryFlag, useQueryParam, type RouteProps } from '../app/useQueryState'
+import { copyText } from '../app/clipboard'
 
 // Instant-paint cache for opened chat sessions, held in the ONE data layer.
 //
@@ -2427,7 +2428,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const s = sessionRef.current
     if (!s) return
     const url = `${location.origin}${location.pathname}#/chat/${encodeURIComponent(s)}`
-    try { await navigator.clipboard.writeText(url) } catch { /* clipboard blocked */ }
+    // Gated, because it was NOT: the catch swallowed the failure and "Copied" was set anyway, so
+    // a blocked write left the button claiming a link the clipboard did not hold.
+    if (!(await copyText(url, 'the chat link'))) return
     setLinkCopied(true)
     window.setTimeout(() => setLinkCopied(false), 1600)
   }
@@ -2604,7 +2607,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               <Meter size="thin" className="min-w-0 flex-1" label={`Uploading ${u.name}`} pct={u.pct} />
               <span className="shrink-0 tabular-nums text-on-surface-low">{u.pct}%</span>
               <IconButton icon={X} label="Cancel upload" onClick={() => uploadAbortRef.current?.abort()} size={20} iconSize={13}
-                className="shrink-0 hover:text-danger" />
+                tone="danger" className="shrink-0" />
             </div>
           ))}
         </div>
@@ -3217,7 +3220,7 @@ function MentionChips({ paths, onRemove, onOpen }: { paths: string[]; onRemove: 
                 className="shrink-0 h-6 px-1.5 text-[0.75rem]">Open</Button>
             )}
             <IconButton icon={X} label="Remove file" onClick={() => onRemove(p)} size={20} iconSize={13}
-              className="shrink-0 hover:text-danger" />
+              tone="danger" className="shrink-0" />
           </div>
         )
       })}
@@ -3391,7 +3394,7 @@ function KnowledgeChips({ items, onRemove }: { items: { id: string; name: string
           <BookText size={13} className="shrink-0 text-primary" />
           <span className="min-w-0 truncate text-on-surface" title={k.name}>{k.name}</span>
           <IconButton icon={X} label="Remove knowledge reference" onClick={() => onRemove(k.id)} size={20} iconSize={13}
-            className="shrink-0 hover:text-danger" />
+            tone="danger" className="shrink-0" />
         </div>
       ))}
     </div>
@@ -3460,7 +3463,7 @@ function QueueStack({ items, onCancel, onEdit, onInterrupt, canInterrupt = false
           <IconButton icon={Pencil} label="Edit queued message" onClick={() => onEdit(q.id, q.content)} size={20} iconSize={12}
             className="opacity-0 transition-opacity hover:text-primary group-hover/q:opacity-100 focus-within:opacity-100" />
           <IconButton icon={X} label="Cancel queued message" onClick={() => onCancel(q.id)} size={20} iconSize={13}
-            className="hover:text-danger" />
+            tone="danger" />
         </span>
       )}
     </motion.div>
@@ -3523,7 +3526,7 @@ function PasteCards({ blocks, onRemove }: { blocks: PasteBlock[]; onRemove: (seq
               Paste #{b.seq} <span className="text-on-surface-low">· {b.lines} line{b.lines === 1 ? '' : 's'}</span>
             </button>
             <IconButton icon={X} label={`Remove paste #${b.seq}`} onClick={() => onRemove(b.seq)} size={20} iconSize={13}
-              className="shrink-0 hover:text-danger" />
+              tone="danger" className="shrink-0" />
           </div>
         ))}
       </div>
@@ -3683,7 +3686,7 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
   return (
     <SelectionToolbar ref={barRef} x={pos.x} y={pos.y} actions={[
       { icon: Quote, label: 'Quote', onPress: () => { onQuote(pos.text, pos.attribution); clear() } },
-      { icon: Clipboard, label: 'Copy', onPress: () => { navigator.clipboard?.writeText(pos.text).catch(() => {}); clear() } },
+      { icon: Clipboard, label: 'Copy', onPress: () => { void copyText(pos.text, 'the selection'); clear() } },
     ]} />
   )
 }
@@ -4384,7 +4387,8 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
         <Pin size={14} className={s.pinned ? 'fill-current' : ''} />
       </SquareIconButton>
       <IconButton icon={Trash2} label="Delete chat" onClick={(e) => { e.stopPropagation(); del(s) }} size={26} iconSize={14}
-        className="shrink-0 opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 focus-within:opacity-100" />
+        tone="danger"
+        className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
     </div>
     </ContextMenu>
     )
@@ -4473,15 +4477,15 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
               <div className="mb-m flex flex-wrap items-center gap-2 rounded-lg bg-surface-low px-m py-2 ring-1 ring-outline-variant/40">
                 <span data-type="label-l" className="text-on-surface">{selected.size} selected</span>
                 {showArchived ? (
-                  <Button variant="tonal" size="xs" disabled={bulkBusy} onClick={() => runBulk('restore')}>
+                  <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON} onClick={() => runBulk('restore')}>
                     <ArchiveRestore size={13} /> Restore
                   </Button>
                 ) : (
-                  <Button variant="tonal" size="xs" disabled={bulkBusy} onClick={() => runBulk('archive')}>
+                  <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON} onClick={() => runBulk('archive')}>
                     <Archive size={13} /> Archive
                   </Button>
                 )}
-                <Button variant="ghost" size="xs" disabled={bulkBusy}
+                <Button variant="ghost" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                   onClick={() => runBulk('never_archive', { value: true })}
                   title="Exempt these chats from auto-archive">
                   <Pin size={13} /> Never archive
@@ -4825,9 +4829,9 @@ function AutoNudgeMenuItem({ session, onOpen }: { session: string; onOpen: () =>
               </div>
               {loop && <p className="text-[0.75rem] text-on-surface-low">Active · {loop.cycle_count} cycle{loop.cycle_count === 1 ? '' : 's'} fired{loop.max_cycles ? ` / ${loop.max_cycles}` : ''}.</p>}
               <div className="flex justify-end gap-2 mt-1">
-                {loop && <Button variant="ghost" size="sm" onClick={stop} disabled={busy}><X size={14} /> Stop</Button>}
+                {loop && <Button variant="ghost" size="sm" onClick={stop} disabled={busy} disabledReason={BUSY_REASON}><X size={14} /> Stop</Button>}
                 <Button size="sm" onClick={arm} disabled={busy || !msg.trim()}
-                  disabledReason={!msg.trim() ? 'Write the message first' : undefined}><Check size={14} /> {loop ? 'Update' : 'Arm'}</Button>
+                  disabledReason={!msg.trim() ? 'Write the message first' : BUSY_REASON}><Check size={14} /> {loop ? 'Update' : 'Arm'}</Button>
               </div>
             </>)}
           </div>

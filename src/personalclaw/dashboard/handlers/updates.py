@@ -18,9 +18,20 @@ from personalclaw import __version__ as _local_version
 from personalclaw import self_update, shutdown_event
 from personalclaw.atomic_write import atomic_write
 from personalclaw.cancellation import kill_timed_out
-from personalclaw.config.loader import AppConfig, config_path
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.frontend import build_frontend_async
+
+
+def config_path() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_path`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_path()
+
 
 logger = logging.getLogger(__name__)
 
@@ -436,11 +447,19 @@ async def api_update_apply(request: web.Request) -> web.Response:
                 "kind": kind,
                 "apply_method": status.get("apply_method", ""),
                 "instructions": status.get("instructions", []),
+                # The desktop wording says what the shell ACTUALLY does today. It shipped
+                # claiming "the app updates itself", which described the electron-updater
+                # half — still unbuilt: `desktop/package.json` carries no
+                # electron-updater dependency and nothing in the shell checks for a release
+                # (#2673). A user told the app self-updates simply never updates. The CLI's
+                # own desktop branch (`cli_server._update_desktop`) has always named the
+                # re-download; this is the same answer in the panel.
                 "detail": (
                     "This is a container install — update by pulling the new "
                     "image and recreating."
                     if kind == "container"
-                    else "This is a desktop install — the app updates itself."
+                    else "This is a desktop install — install the new version from the "
+                    "PersonalClaw releases page, then reopen the app."
                 ),
             }
         )

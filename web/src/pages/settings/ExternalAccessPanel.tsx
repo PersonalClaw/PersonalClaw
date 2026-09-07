@@ -480,7 +480,7 @@ function ClientRow({
             <Button
               size="xs"
               variant="ghost"
-              disabled={busy === client.client_id}
+              loading={busy === client.client_id}
               onClick={() => {
                 setConfirming(false)
                 onRevoke()
@@ -497,7 +497,7 @@ function ClientRow({
           <Button
             size="xs"
             variant="ghost"
-            disabled={busy === client.client_id}
+            loading={busy === client.client_id}
             onClick={() => setConfirming(true)}>
             <Trash2 size={12} aria-hidden /> Revoke
           </Button>

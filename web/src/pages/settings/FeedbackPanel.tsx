@@ -125,12 +125,12 @@ function ProducerRow({ row, busy, act }: {
       )}
       {!row.collecting && (
         <div className="flex shrink-0 items-center gap-1">
-          <Button size="xs" variant="ghost" disabled={busy === key}
+          <Button size="xs" variant="ghost" loading={busy === key}
             onClick={() => act(() => api.feedbackSnooze(producer), key)}>
             <BellOff size={12} /> Snooze
           </Button>
           {row.suppressed && (
-            <Button size="xs" variant="ghost" disabled={busy === key}
+            <Button size="xs" variant="ghost" loading={busy === key}
               onClick={() => act(() => api.feedbackClear(producer), key)}>
               <RotateCcw size={12} /> Clear
             </Button>

@@ -16,6 +16,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - The Learning page gains a **Lab vs field** panel: one row per subject (bundled template or registered action type) showing its pinned lab score beside its live field record — 👍/👎 rate, edit-before-approve rate, and approval/rejection/undo rates derived from the feedback and earned-autonomy ledgers, computed by query and stored nowhere new.
 
 ### Changed
+- **The install scanner's terminal tier is no longer shell-only: destruction written in Python is refused, and a bundle that deletes your home directory can no longer install with a clean bill of health.**
 - **`run_chat` is no longer exported from `personalclaw.sdk.channel`.**
 - **Workflow runs gain a sparse `policy_overrides` overlay: the five per-instance supervisor knobs (`attended`, `autopilot`, `max_cycles`, `idle_secs`, `success_criteria`) can now be persisted per run, composed on top of the template/kind defaults at resolution time.**
 - **The install one-liner now verifies something, and stops claiming to verify what it does not ([#2582](https://github.com/PersonalClaw/PersonalClaw/issues/2582)).**
@@ -24,7 +25,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The eval report can now tell "not recorded" from "recorded as zero/none"**
 
 ### Fixed
+- **The desktop app now tells the gateway it IS the desktop app, so a packaged install stops offering to `pip install -U` its own frozen backend.**
+- **The three surfaces that tell a desktop user how to update stopped promising an updater the shell does not ship.**
 - **Every channel's outbound reply now goes to that channel, so a multi-provider install stops losing answers.**
+- **⚠️ THREE DESTRUCTIVE ROUTES NOW REQUIRE `confirm: true`, AND TWO UI CONTROLS ASK BEFORE THEY DESTROY.**
 - **A chat session's on-disk identity has one owner, so a send can no longer destroy a transcript or resurrect a deleted conversation.**
 - **A path containing a NUL byte is refused instead of crashing the request — and the credential guard now fails closed on it.**
 - **Five MCP paths ignored `PERSONALCLAW_HOME` and reached into the real home instead — one of them wrote there.**

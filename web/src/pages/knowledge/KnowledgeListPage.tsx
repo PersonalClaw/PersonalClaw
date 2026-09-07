@@ -27,6 +27,7 @@ import { rowSubject } from '../../lib/rowSubject'
 import { confirm, confirmDelete, promptInput } from '../../ui/dialog'
 import { PageTitle } from '../../ui/PageTitle'
 import { notify } from '../../app/appSdk'
+import { BUSY_REASON } from '../../ui/unavailable'
 
 // 'home' is the library HOME: the shelves — recently added, continue reading, favorites,
 // per-shelf counts — as opposed to the filterable item list. FIRST in the view strip, because it
@@ -650,27 +651,27 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                     <span data-type="label-s" className="text-on-surface" style={fvs(500)}>
                       {selected.size} selected
                     </span>
-                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                    <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                       onClick={() => runBulk('read_state', { state: 'read' }, 'Marked read')}>
                       Mark read
                     </Button>
-                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                    <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                       onClick={() => runBulk('read_state', { state: 'unread' }, 'Marked unread')}>
                       Mark unread
                     </Button>
-                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                    <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                       onClick={() => runBulk('favorite', { value: true }, 'Favorited')}>
                       Favorite
                     </Button>
                     {/* Only MANUAL shelves: a smart shelf resolves membership from its
                         query, so adding by hand would be a write its own reads ignore. */}
                     {collections.filter((c) => c.kind === 'manual').map((c) => (
-                      <Button key={c.id} variant="tonal" size="xs" disabled={bulkBusy}
+                      <Button key={c.id} variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                         onClick={() => runBulk('collect', { collection_id: c.id }, `Added to ${c.name}:`)}>
                         Add to {c.name}
                       </Button>
                     ))}
-                    <Button variant="tonal" size="xs" disabled={bulkBusy}
+                    <Button variant="tonal" size="xs" disabled={bulkBusy} disabledReason={BUSY_REASON}
                       onClick={() => runBulk(showArchived ? 'restore' : 'archive', {}, showArchived ? 'Restored' : 'Archived')}>
                       {showArchived ? 'Restore' : 'Archive'}
                     </Button>
@@ -1056,16 +1057,26 @@ function IntentDetail({ intent, onChanged, onClose, onOpenItem }: {
     <div className="flex flex-col gap-m p-l">
       <p data-type="body-m" className="text-on-surface">{intent.goal}</p>
       <div className="flex flex-wrap items-center gap-s">
-        <Button size="sm" variant="secondary" onClick={run} disabled={running}><Play size={14} className={running ? 'animate-pulse' : ''} /> {running ? 'Running…' : 'Run on existing items'}</Button>
+        {/* Hand-rolled in-flight state, replaced by the prop it was imitating: `animate-pulse` on
+            the icon plus a `running ? 'Running…'` label is exactly what `loading` + `loadingLabel`
+            do, minus the `aria-busy` that only `loading` publishes. The verb is kept rather than
+            faded, because this runs an intent over an existing library and can take a while. */}
+        <Button size="sm" variant="secondary" onClick={run} loading={running} loadingLabel="Running…"><Play size={14} /> Run on existing items</Button>
         {/* The blocked reason used to live on a WRAPPING span's title, where a hover finds it and
             a keyboard user never can — the button inside stayed natively disabled and out of the
             tab order. Both strings now ride the button: `title` explains the action,
             `disabledReason` explains the block, and Button joins them when it is soft-off. */}
+        {/* A MIXED gate below, so it takes the two-prop split: `loading` carries the narrow in-flight
+            truth and publishes `aria-busy`, while `disabled` keeps the wider gate that also blocks on
+            having nothing to synthesize from. `off = !!disabled || loading`, so the behaviour is
+            unchanged; `softOff = off && reason && !loading` keeps the reason on the "no outcomes"
+            branch and natively disables while working, which is what it did before. */}
         {intent.propose_skill && (
           <Button size="sm" variant="secondary" onClick={generateSkill}
             title="Synthesize a reusable skill from what this intent has gathered"
+            loading={genning} loadingLabel="Generating…"
             disabled={genning || !hasOutcomes} disabledReason={!hasOutcomes && !genning ? 'Gather some matches first' : undefined}>
-            <Sparkles size={14} className={genning ? 'animate-pulse' : ''} /> {genning ? 'Generating…' : 'Generate skill'}
+            <Sparkles size={14} /> Generate skill
           </Button>
         )}
         <span onClick={(e) => e.stopPropagation()}>
@@ -1180,7 +1191,7 @@ function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIntent; o
         <span>Offer to build a skill from this intent — adds a “Generate skill” action that distills what it has gathered into a reusable skill.</span>
       </label>
       {err && <FieldError>{err}</FieldError>}
-      <div className="flex justify-end gap-s"><Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button><Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save intent'}</Button></div>
+      <div className="flex justify-end gap-s"><Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button><Button size="sm" onClick={save} loading={saving} loadingLabel="Saving…">Save intent</Button></div>
     </div>
   )
 }

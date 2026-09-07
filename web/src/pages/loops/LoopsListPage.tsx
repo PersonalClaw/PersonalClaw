@@ -295,7 +295,7 @@ export function LoopsListPage({ onOpen, onCreate, query, setQuery }: { onOpen: (
                       {LOOP_ACTION_SOURCE_STATUSES.resume.has(c.status) && <IconButton icon={Play} label="Resume" size={34} onClick={(e) => act(e, c.id, 'resume')} />}
                       {LOOP_ACTION_SOURCE_STATUSES.stop.has(c.status) && <IconButton icon={Square} label="Stop" size={34} onClick={(e) => act(e, c.id, 'stop')} />}
                       {['complete', 'stopped', 'failed'].includes(c.status) && (
-                        <IconButton icon={Trash2} size={34}
+                        <IconButton icon={Trash2} size={34} tone="danger"
                           label={confirmDelete === c.id ? 'Click again to delete' : 'Delete loop'}
                           onClick={(e) => del(e, c.id)}
                           className={confirmDelete === c.id ? 'text-danger' : undefined} />

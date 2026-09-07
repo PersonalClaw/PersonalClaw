@@ -40,6 +40,11 @@ vi.mock('../lib/api', () => ({
     // The chord is read from config on mount. Kept minimal: this file is not testing
     // config plumbing, only that a chord gets bound.
     personalclawConfig: vi.fn(async () => ({ voice: { push_to_talk_chord: 'Alt+F13' } })),
+    // The composer also reads the reader's "Send on Enter" preference on mount. Same reason as
+    // above — not what this file tests — but it has to EXIST: this mock replaces the module
+    // wholesale, so an omitted method is not a default, it is a call on undefined, and every test
+    // here mounts the real Composer.
+    dashboardConfig: vi.fn(async () => ({ send_on_enter: true })),
   },
 }))
 

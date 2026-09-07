@@ -299,7 +299,7 @@ function Row({ n, index, now, onOpen, onAck, onUnack, onDelete }: { n: Notificat
         {n.acked
           ? <IconButton icon={Undo2} label={`Mark unread: ${subject}`} title="Mark unread" size={34} onClick={onUnack} />
           : <IconButton icon={Check} label={`Mark read: ${subject}`} title="Mark read" size={34} onClick={onAck} />}
-        <IconButton icon={X} label={`Delete: ${subject}`} title="Delete" size={34} onClick={onDelete} />
+        <IconButton icon={X} label={`Delete: ${subject}`} title="Delete" size={34} tone="danger" onClick={onDelete} />
       </div>
     </motion.div>
     </ContextMenu>

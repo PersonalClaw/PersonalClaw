@@ -121,7 +121,7 @@ function StartersSection() {
           </p>
         ) : items.map((t) => (
           <Row key={t.id} label={t.name} hint={[t.agent, t.model, t.reasoning_effort].filter(Boolean).join(' · ') || 'Uses your defaults'}>
-            <IconButton icon={Trash2} label={`Delete ${t.name}`} iconSize={16} size={32} onClick={() => remove(t)} />
+            <IconButton icon={Trash2} label={`Delete ${t.name}`} iconSize={16} size={32} tone="danger" onClick={() => remove(t)} />
           </Row>
         ))}
       </RowGroup>
@@ -261,9 +261,11 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
     // (`AccountPanel`, `AmbientPanel`, `AgentDefaultsPanel`, ...).
     api.saveDashboardConfig(patch).then(() => {
       // Every reader of this section's writes gets its own persisted key, so each needs busting here
-      // or the chat keeps the value you just changed until that key happens to go stale.
+      // or the chat keeps the value you just changed until that key happens to go stale. The
+      // composer's Enter binding is the third reader in that same shape.
       invalidateKeys('chat:stream-reveal')
       invalidateKeys('chat:show-timestamps')
+      invalidateKeys('chat:send-on-enter')
       flash()
     }).catch((e) => {
       notify(`Couldn't save this chat setting: ${String((e as Error)?.message || e)}`, 'error')
@@ -272,7 +274,11 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
   return (
     <Section title="Messages" hint="How messages and tool activity render in the chat.">
       <RowGroup>
-        <Row label="Send on Enter" hint={cfg.send_on_enter ? 'Enter sends · Shift+Enter for a newline.' : 'Enter inserts a newline · Cmd/Ctrl+Enter sends.'}>
+        {/* Both halves of the OFF hint used to be false: it promised a newline that Enter did not
+            insert, and a chord that optimizes the prompt rather than sending. The newline half is
+            real as of this change; the send route is the composer's button, so that is what it
+            names. */}
+        <Row label="Send on Enter" hint={cfg.send_on_enter ? 'Enter sends · Shift+Enter for a newline.' : 'Enter inserts a newline · sending is button-only.'}>
           <div className="flex items-center gap-2"><SavedToast show={saved} /><Toggle on={cfg.send_on_enter} onChange={(v) => save({ send_on_enter: v })} label="Send on Enter" /></div>
         </Row>
         <Row label="Show timestamps" hint="Display a time on each message.">
@@ -308,9 +314,6 @@ function MessagesSection({ cfg, setCfg }: { cfg: DashboardConfig; setCfg: (c: Da
         <Row label="Widget density" hint="How aggressively the agent uses inline widgets for visual content.">
           <SegPills ariaLabel="Widget density" value={cfg.widget_density} onChange={(v) => save({ widget_density: v as 'more' | 'less' })}
             options={[{ key: 'more', label: 'More' }, { key: 'less', label: 'Less' }]} />
-        </Row>
-        <Row label="Confirm before closing a session" hint="Ask for confirmation when closing a session from the sidebar.">
-          <Toggle on={cfg.confirm_close_session} onChange={(v) => save({ confirm_close_session: v })} label="Confirm before closing a session" />
         </Row>
       </RowGroup>
     </Section>

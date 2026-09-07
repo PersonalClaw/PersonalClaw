@@ -248,11 +248,32 @@ describe('a boundary-gated icon button names its limit', () => {
     // `ModelsPanel` gates on `saving || i === 0`. A flat `disabledReason` there would explain the
     // wrong cause while a save is in flight — the row's own save state carries that one. So the
     // reason must be conditional on the boundary term, not passed unconditionally.
+    //
+    // 🪤 THIS SCANNED EVERY `disabledReason=` IN THE FILE rather than the boundary-gated controls, and
+    // that is the third file-wide-instead-of-tag-scoped check this campaign has had to narrow. It
+    // reddened on a `<Button disabled={saving} disabledReason={BUSY_REASON}>` elsewhere in the panel — a
+    // simple gate on a different control, where a flat reason is exactly right because the only state
+    // that can select it is "saving". The rule belongs to the control that motivated it; a file is not a
+    // subject.
+    //
+    // 🔑 AND THE GATE IT DESCRIBES HAS SINCE IMPROVED, which the prose above still had wrong. It said
+    // *"`ModelsPanel` gates on `saving || i === 0`"*; the pair now reads
+    // `disabled={i === 0} loading={saving}` — the busy term moved to the prop that announces it, so the
+    // gate is no longer compound at all. Requiring `||`/`&&` therefore matched nothing and the check
+    // went vacuous. The real subject is a BOUNDARY-gated control, compound or not: its reason must name
+    // the boundary conditionally rather than flatly, because `loading` can be the reason it is off.
     const src = readFileSync(join(SRC, 'pages/settings/ModelsPanel.tsx'), 'utf8')
-    for (const m of src.matchAll(/disabledReason=\{([^}]*)\}/g)) {
+    const boundaryGated = iconButtonTags(src).filter((tag) => {
+      const g = /(?<!aria-)disabled=\{([\s\S]*?)\}/.exec(tag)
+      return !!g && BOUNDARY.test(g[1])
+    })
+    expect(boundaryGated.length, 'the boundary-gated reorder controls must still be found').toBeGreaterThanOrEqual(2)
+    for (const tag of boundaryGated) {
+      const m = /disabledReason=\{([^}]*)\}/.exec(tag)
+      expect(m?.[1], 'a boundary-gated control must carry a reason at all').toBeTruthy()
       expect(
-        m[1],
-        'a compound gate must condition the reason on its boundary term, not state it flatly',
+        m![1],
+        'the reason must be conditional on the boundary term, not stated flatly',
       ).toMatch(/\?/)
     }
   })

@@ -154,10 +154,10 @@ function RecipeLookup({ kinds, onUse }: { kinds: SourceKind[]; onUse: (r: Source
             placeholder="https://github.com/astral-sh/uv"
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void check() } }} />
         </div>
-        <Button variant="secondary" onClick={check} disabled={!url.trim() || checking}
+        <Button variant="secondary" onClick={check} loading={checking} disabled={!url.trim() || checking}
           disabledReason={checking ? undefined : 'Paste a URL to look up first'}
           className="inline-flex items-center gap-s">
-          <Search size={15} aria-hidden /> {checking ? 'Checking…' : 'Check'}
+          <Search size={15} aria-hidden /> Check
         </Button>
       </div>
       {err && <FieldError>{err}</FieldError>}

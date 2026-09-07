@@ -5,6 +5,7 @@ import { useDashboardLive } from '../DashboardLive'
 import { statusMeta, relPast, relFuture } from '../../schedule/scheduleMeta'
 import { epochSeconds } from '../../../lib/epoch'
 import { SlotEmptyState, SlotAction, WidgetRow, StatusDot } from './kit'
+import { ListSkeleton } from '../../../ui/ListScaffold'
 import { partitionRuns } from './scheduleFold'
 import { Button } from '../../../ui/Button'
 import type { RouteProps } from '../../../app/useQueryState'
@@ -30,7 +31,7 @@ function rel(ts?: number | string | null): string {
  *  cross-trigger "next fire" index is surfaced; today the backend history endpoint
  *  is the runs index.) */
 export function ScheduleWidget({ navigate }: RouteProps) {
-  const { schedule, scheduleDidIds, scheduleSuppressed } = useDashboardLive()
+  const { schedule, scheduleDidIds, scheduleSuppressed, read } = useDashboardLive()
   // Suppressed rows are archived out of the default view; the disclosure reveals them on demand.
   // Collapsed by default because §1.3 is explicit that "the runs inbox is for what the machine
   // DID" — the fold IS the archive, not a nicety layered over an already-crowded list.
@@ -50,6 +51,15 @@ export function ScheduleWidget({ navigate }: RouteProps) {
     // bar and `TriggerCreatePage`'s title — "New trigger" — routed to the same `triggers/new` the
     // Triggers empty state's own "Start from scratch" opens. The widget already navigates to
     // `triggers`, so this adds no new destination.
+    //
+    // 🔴 AND ALL OF THAT WORK WAS BEING SPENT ON THE WRONG USER. `schedule` seeds to `[]`, so this
+    // fired before the first read landed — a user WITH trigger history got taught how to create their
+    // first trigger, for the whole round trip. The teaching sentence is right; it is a CLAIM about a
+    // lane that has been READ. This widget's own loader swallows its errors (`catch(() => {})`), so
+    // `read.schedule` is the only thing separating "nothing fired" from "we have not looked yet".
+    // Sits directly against the state it stands in for, so the two arms of the gate are adjacent and
+    // the noun comes from the sentence below it (`ui/loadingNounPairing`).
+    if (!read.schedule) return <ListSkeleton rows={4} what="recent scheduled runs" />
     return (
       <SlotEmptyState
         icon={CalendarClock}

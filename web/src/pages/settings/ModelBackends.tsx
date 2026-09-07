@@ -343,7 +343,7 @@ function AddInstanceForm({ onDone }: { onDone: (created: boolean) => void }) {
         ))}
       </div>
       <div className="mt-3 flex items-center gap-2">
-        <Button size="sm" onClick={submit} disabled={saving}>{saving ? 'Adding…' : 'Add instance'}</Button>
+        <Button size="sm" onClick={submit} loading={saving} loadingLabel="Adding…">Add instance</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
         {error && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{error}</span>}
       </div>
@@ -389,7 +389,7 @@ function EditInstanceForm({ provider, onDone }: { provider: ModelProvider; onDon
       )}
       <TextInput ariaLabel="Default model" value={model} onChange={setModel} placeholder="Default model (optional)" size="md" surface="high" />
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+        <Button size="sm" onClick={save} loading={saving}>Save</Button>
         <Button variant="ghost" size="sm" onClick={() => onDone(false)}>Cancel</Button>
         {error && <span data-type="caption" style={{ color: 'var(--color-danger)' }}>{error}</span>}
       </div>

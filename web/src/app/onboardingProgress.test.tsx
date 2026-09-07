@@ -270,7 +270,11 @@ describe('re-entering the flow resumes at the persisted step', () => {
     expect(screen.getByText('Chat model: anthropic-models')).toBeTruthy()
     // …and the card completed BEFORE the reload still counts as a first success, even though
     // this visit's cards started idle (only the flags survive a reload, not the outcomes).
-    expect(screen.getByText(/1 of 3 tried/)).toBeTruthy()
+    // 🪤 Scoped to the summary PARAGRAPH. A bare `getByText(/1 of 3 tried/)` matches every
+    // ancestor whose text content contains it, so wrapping the row header in a <button>
+    // (needed to make a done row keyboard-reachable) made this find two nodes. The property
+    // asserted is that the summary is VISIBLE, which the scoped query states directly.
+    expect(screen.getByText(/1 of 3 tried/, { selector: 'p' })).toBeTruthy()
   })
 
   it('does not promise a model the home no longer resolves', async () => {

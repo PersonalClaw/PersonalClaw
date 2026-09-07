@@ -109,8 +109,8 @@ export function TaskDetail({ task, onSaved, onDeleted, editing: editingProp, onE
         {err && <FieldError>{err}</FieldError>}
         <FormFooter>
           <Button variant="ghost" size="sm" onClick={() => { setDraft(toDraft(task)); setEditing(false); setErr('') }}><X size={15} /> Cancel</Button>
-          <Button size="sm" onClick={save} disabled={saving || !draft.title.trim()}
-            disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={15} /> {saving ? 'Saving…' : 'Save'}</Button>
+          <Button size="sm" onClick={save} loading={saving} disabled={saving || !draft.title.trim()}
+            disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={15} /> Save</Button>
         </FormFooter>
       </div>
     )
@@ -394,7 +394,8 @@ function Comments({ taskId, provider }: { taskId: string; provider?: string }) {
                 <span className="text-on-surface-var">{c.author || 'you'}</span>
                 <span>{relTime(c.created_at)}</span>
                 <IconButton icon={Trash2} label="Delete comment" onClick={() => remove(c.id, c.body)} size={24} iconSize={13}
-                  className="ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-danger" />
+                  tone="danger"
+                  className="ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
               </div>
               <p data-type="body-s" className="text-on-surface whitespace-pre-wrap">{c.body}</p>
             </div>

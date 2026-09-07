@@ -22,11 +22,8 @@ The actual implementation lives in:
 # Re-export names that tests monkeypatch on this module
 import asyncio  # noqa: F401
 
-from personalclaw.config.loader import (  # noqa: F401
-    AppConfig,
-    config_dir,
-    resolve_agent_bindings,
-)
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import AppConfig, resolve_agent_bindings  # noqa: F401
 from personalclaw.dashboard.chat_channel import (  # noqa: F401
     api_channel_reply_targets,
     api_chat_session_channel_link,
@@ -160,3 +157,12 @@ from personalclaw.dashboard.side import (  # noqa: F401
 )
 from personalclaw.security import is_sensitive_path  # noqa: F401
 from personalclaw.sel import sel  # noqa: F401
+
+
+def config_dir():
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()

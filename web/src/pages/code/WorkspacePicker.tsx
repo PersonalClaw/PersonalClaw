@@ -4,7 +4,7 @@ import { Check, CornerDownLeft, CornerLeftUp, Folder, FolderPlus, GitBranch, Loa
 import { Modal } from '../../ui/Modal'
 import { SearchField } from '../../ui/SearchField'
 import { Button } from '../../ui/Button'
-import { unavailableWhen } from '../../ui/unavailable'
+import { unavailableWhen, BUSY_REASON } from '../../ui/unavailable'
 import { api } from '../../lib/api'
 
 /** Filesystem navigator for choosing a Code project's workspace directory.
@@ -243,7 +243,7 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                 : <span className="ml-1.5 text-on-surface-low/70">· not a git repo (changes won’t be version-tracked)</span>
             )}
           </span>
-          <Button size="sm" onClick={() => path && onPick(path)} disabled={!path || loading} disabledReason={!path && !loading ? 'Choose a folder first' : undefined}>
+          <Button size="sm" onClick={() => path && onPick(path)} disabled={!path || loading} disabledReason={!path && !loading ? 'Choose a folder first' : BUSY_REASON}>
             <Check size={14} /> Use this folder
           </Button>
         </div>

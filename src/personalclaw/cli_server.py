@@ -14,7 +14,8 @@ from pathlib import Path
 
 from personalclaw import __version__, self_update
 from personalclaw.config import AppConfig
-from personalclaw.config.loader import _DEFAULT_PORT, config_dir, config_path
+from personalclaw.config import loader as config_loader
+from personalclaw.config.loader import _DEFAULT_PORT
 from personalclaw.constants import DATA_WARNING
 from personalclaw.dashboard.origin import dashboard_origin, parse_dashboard_url
 from personalclaw.dashboard.token_auth import parse_duration
@@ -30,6 +31,24 @@ from personalclaw.service.common import SERVICE_NAME, Platform, current_platform
 from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
 from personalclaw.vector_memory import VectorMemoryStore
+
+
+def config_dir() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_dir`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_dir()
+
+
+def config_path() -> Path:
+    """The active home, re-resolved per call — see :func:`personalclaw.config.loader.config_path`.
+
+    DEFINED here rather than imported: this module can be imported lazily, and an
+    import-time binding captures whatever the name pointed at on first use (#2443).
+    """
+    return config_loader.config_path()
 
 
 def resolve_client_port(cli_port: int | None) -> int:
@@ -518,13 +537,23 @@ def _update_container() -> None:
 
 
 def _update_desktop() -> None:
-    """The desktop shell owns its own updater — delegate, don't fight it.
+    """The desktop SHELL owns this install — delegate, don't fight it.
+
+    No in-place apply: the gateway is a child of the Electron shell, so upgrading the
+    wheel under it or re-execing it is the wrong move even where it would work (a packaged
+    app has no interpreter to upgrade — the backend is a frozen PyInstaller bundle).
+
+    What the shell then does is a RE-DOWNLOAD, not an in-app update: the electron-updater
+    half of `DC-1` is unbuilt (no electron-updater dependency in ``desktop/package.json``,
+    nothing in the shell checks for a release), so "accept the update it offers" named an
+    offer that never arrives (#2673). Restore that wording when the updater lands, not
+    before — the rail in ``tests/test_desktop_install_kind.py`` reds when it does.
 
     Exit code 0 for the same reason as the container branch.
     """
-    print("  🖥  This is a desktop install — the PersonalClaw app updates itself.")
-    print("  Open the app and accept the update it offers (or re-download the latest")
-    print("  release from https://github.com/PersonalClaw/PersonalClaw/releases).")
+    print("  🖥  This is a desktop install — the PersonalClaw app manages its own version.")
+    print("  Install the new version from the releases page, then reopen the app:")
+    print("  https://github.com/PersonalClaw/PersonalClaw/releases")
 
 
 def _is_current(latest: str) -> bool:

@@ -7,9 +7,26 @@ import sys
 import time
 from pathlib import Path
 
+import pycache_guard
 import pytest
 import real_home_guard
 from hypothesis import HealthCheck, settings
+
+# ── Bytecode-cache rail (#2659) ─────────────────────────────────────────
+# FIRST STATEMENT AFTER THE IMPORTS, DELIBERATELY. Point this interpreter's bytecode
+# cache at a fresh per-run directory *before* anything a mutation could touch is
+# imported — `personalclaw`, `harness`, the test modules, and pytest's own rewritten
+# test bytecode all resolve their cache through the prefix this sets. Without it
+# CPython validates a `.pyc` on `(int(mtime), size)`, so a same-length edit made
+# inside one second — the exact shape of a mutation-testing cycle — runs the PREVIOUS
+# bytecode and reports a result for code that is not on disk. `-B` does not fix that
+# (it stops the interpreter WRITING a cache, not reading one). Nothing enforced this
+# before, so no past "N mutations caught" claim was self-certifying; from here the run
+# enforces the bytecode half — an interrupted run that leaves its mutation ON DISK is a
+# different defect this cannot see (#2710). Rationale, measurements, the rejected
+# alternative and the three files outside the rail: tests/pycache_guard.py. Proof that
+# it works: tests/test_pycache_guard.py.
+PYCACHE_PREFIX = pycache_guard.activate()
 
 # NOTE: this suite is standalone — it must collect + pass on a clone of this
 # package alone, with NO sibling apps/ directory. Channel/provider seams are

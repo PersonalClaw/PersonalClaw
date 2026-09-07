@@ -224,6 +224,18 @@ _DANGEROUS_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("obfuscated_exec", re.compile(r"base64\s+(?:--decode|-d|-D)\b[^\n|]*\|\s*(?:ba|z|da)?sh\b")),
 )
 
+#: The DANGEROUS rules decided on the AST rather than on a regex (issue #2607) — see the
+#: "Native destruction" section below. Every one of them is TERMINAL, exactly like the shell
+#: catalog above: the owner's ruling on #2607 is that destruction spelled in the host
+#: language is the same claim as destruction spelled as a shell command, so it lands in the
+#: same band. One rule per destruction CLAIM, not per API spelling: three sentences a
+#: non-expert can weigh, rather than one rule per function name in :mod:`shutil`.
+_NATIVE_DESTRUCTION_RULES: tuple[str, ...] = (
+    "destructive_delete",  # removes a path the OS or the account owns
+    "destructive_walk",  # walks a whole tree and deletes what it yields
+    "destructive_truncate",  # blanks a file the OS owns
+)
+
 # WARNING-band script patterns (overridable): notable but not proof of malice.
 _WARNING_SCRIPT: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("eval_exec", re.compile(r"\beval\s*[\"'(]")),
@@ -1100,6 +1112,21 @@ class _BundleReach:
 
     def decide(self, finding: Finding) -> tuple[Reachability, str]:
         """L0-L5 for one DANGEROUS finding, plus the sentence that justifies it."""
+        if finding.rule in _NATIVE_DESTRUCTION_RULES:
+            # The native family (#2607) is decided on CALL SITES, so L0 and L1 answer
+            # themselves and the clauses below have nothing left to weigh. Commentary never
+            # gets here at all: `ast.parse` discards a comment and never yields a Call for a
+            # docstring, so the same text commented out produces NO finding rather than a
+            # re-scored one — strictly stricter than the WARNING a regex match would earn.
+            # And a call that does exist is code, never a string the bundle merely holds, so
+            # no clause below could lower it. Said out loud here rather than left to
+            # `_rule_spans` finding no regex to re-run, which would report "no locatable
+            # span" — the right answer for the wrong reason, on a disclosure a reviewer reads.
+            return (
+                Reachability.REACHABLE,
+                "match is a call site resolved from the AST, not a string the bundle "
+                "merely holds — a call is code (L1)",
+            )
         rel = finding.path
         if not rel.endswith(".py"):
             return Reachability.REACHABLE, "not Python — a script's text is its program (L1)"
@@ -1226,6 +1253,539 @@ def _scope_by_reachability(
     return out
 
 
+# ── Native destruction — the DANGEROUS band spelled in the host language (#2607) ──
+#
+# THE DEFECT. Every rule in `_DANGEROUS_SCRIPT` is a SHELL string: `rm -rf /`, the fork bomb,
+# `mkfs`/`dd`, `curl|sh`, `base64 -d|sh`. The terminal tier assumed malice arrives as a shell
+# command, so the same destruction expressed in Python — the language the bundle is written
+# in — was not merely un-refused, it was CLEAN. Measured on `main`, at the community tier,
+# each in its own one-file bundle: `shutil.rmtree(os.path.expanduser("~"))`, `shutil.rmtree(
+# "/")`, a `Path("/").rglob("*")` loop calling `unlink`, and `open("/etc/hosts", "w")` all
+# scored `clean` with ZERO findings, while `rm -rf /` in a `.sh` next to them was terminal.
+# A bundle that deletes the user's home directory installed without a single finding.
+#
+# THE TIER IS THE OWNER'S RULING, NOT AN INFERENCE. #2607 direction 3 left the severity open
+# ("that is a judgement call about the floor and belongs to the owner"). The ruling is that
+# native destruction gets the SAME TERMINAL severity as shell destruction, so these rules sit
+# in the DANGEROUS band and the floor in `_aggregate` applies to them unchanged — no tier,
+# builtin included, downgrades one.
+#
+# WHY THE SEVERITY TURNS ON THE TARGET AND NOT ON THE CALL. `shutil.rmtree` is a legitimate
+# call; cleanup code uses it constantly, and every one of the 64 shipped bundles that calls it
+# passes a VARIABLE holding a staging directory. Refusing the call would refuse them all. So
+# the claim these rules make is the one the shell band already makes: `rm -rf /tmp/build` is
+# not terminal and `rm -rf /` is, and the difference is the target. `_classify_path_literal`
+# is that line, and it is drawn to the SAME vocabulary — `/`, `~`, `$HOME` — plus the
+# OS-owned trees whose destruction is the same claim (`/etc`, `/usr`, `/System`, …), minus the
+# temp roots and character devices that are written every day (`/tmp`, `/var/folders`,
+# `/dev/null`). A target the analysis cannot resolve to one of those is NOT flagged: that is a
+# recall limit, stated here rather than papered over, and it is what keeps the floor off the
+# shipped corpus (measured: 64 bundles, 0 newly DANGEROUS).
+#
+# WHY THE AST AND NOT A REGEX. This repo has been bitten repeatedly by text scans that match a
+# MENTION rather than a call — including a grep that matched a docstring denying the symbol.
+# `shutil.rmtree` appears in prose, in a comment warning against it, in a test asserting it is
+# never called, and in a denylist of forbidden writers (`design-critique/test_provider.py`
+# ships exactly such a list). A regex cannot tell those from a call; `ast` does not have to
+# try. So the rule is stated on call targets, resolved through import aliases, and a file that
+# does not parse yields NOTHING here rather than a guess.
+#
+# HOW THIS MEETS THE REACHABILITY SCOPING (#2605, #2625) RATHER THAN GOING AROUND IT. Every
+# finding below is `surface="script"` and DANGEROUS, so `_scope_by_reachability` annotates it
+# like any other. `_BundleReach.decide` answers REACHABLE for the whole family, and that is
+# the only honest answer: L0 and L1 ask whether the match is commentary or a string the file
+# merely holds, and a call site is neither. The two directions matter separately —
+#   * a commented-out or docstringed destruction produces NO finding at all, which is STRICTER
+#     than the WARNING a re-scored regex match would earn: `ast.parse` discards commentary
+#     before the rule can see it, so there is nothing to re-score;
+#   * a live call is code, so no clause can lower it, and it stays terminal.
+# That asymmetry is the #2605 principle applied, not evaded: a commented-out removal really is
+# strictly less executable than a live one, and here the gap is the whole finding.
+
+#: Whole-ACCOUNT targets, spelled as a path literal. `$HOME` is here for the same reason
+#: `destructive_root` names it: it is how the target is written, and `os.path.expandvars`
+#: turns it into the real thing. There is deliberately NO matching set for the filesystem
+#: root: every spelling of it (`/`, `//`, `/.`, `/./`, `/etc/..`) normalises to `/` inside
+#: `_classify_path_literal`, so a literal set would be dead code — a mutation emptying it
+#: survived the whole suite, which is exactly how that was found.
+_HOME_LITERALS = frozenset({"~", "~/", "~/.", "$HOME", "${HOME}", "%USERPROFILE%"})
+#: Environment keys that name the account root.
+_HOME_ENV_KEYS = frozenset({"HOME", "USERPROFILE"})
+#: A bare Windows drive root (`C:`, `C:\`, `C:/`) — the one root spelling POSIX
+#: normalisation cannot reach, because it does not start with `/`.
+_DRIVE_ROOT_RE = re.compile(r"[A-Za-z]:[\\/]{0,2}")
+
+#: OS-owned trees. Destroying one of these is the same claim as destroying `/` — the machine
+#: does not boot, or the account does not log in — so they earn the same band. Deliberately
+#: NOT "every absolute path": `/data/cache` and `/srv/../opt/x` resolve to ordinary places, and
+#: a bundle writing under one is doing its job.
+_SYSTEM_TREES: tuple[str, ...] = (
+    "/Applications",
+    "/Library",
+    "/System",
+    "/Users",
+    "/Volumes",
+    "/bin",
+    "/boot",
+    "/dev",
+    "/etc",
+    "/home",
+    "/lib",
+    "/lib64",
+    "/opt",
+    "/private/etc",
+    "/private/var",
+    "/proc",
+    "/root",
+    "/sbin",
+    "/srv",
+    "/sys",
+    "/usr",
+    "/var",
+)
+#: Carved back OUT of the trees above, by longest match. These are the paths ordinary code
+#: deletes and truncates all day — the scratch roots, and the character devices where a write
+#: destroys nothing. Precision lives here: without `/dev/null` every `open("/dev/null", "w")`
+#: would be terminal, and `/var/folders` is where macOS puts `TemporaryDirectory()`.
+_TRANSIENT_PATHS: tuple[str, ...] = (
+    "/dev/fd",
+    "/dev/null",
+    "/dev/random",
+    "/dev/shm",
+    "/dev/stderr",
+    "/dev/stdin",
+    "/dev/stdout",
+    "/dev/tty",
+    "/dev/urandom",
+    "/dev/zero",
+    "/private/tmp",
+    "/private/var/folders",
+    "/private/var/tmp",
+    "/tmp",
+    "/var/folders",
+    "/var/tmp",
+)
+
+#: Calls that hand their first argument through unchanged as a path, so the target is one
+#: level in. `os.path.expanduser`/`expandvars` are here rather than special-cased: they take
+#: the literal that names the target and the classifier already knows `~` and `$HOME`.
+_PATH_PASSTHROUGH = frozenset(
+    {
+        "os.fspath",
+        "os.path.abspath",
+        "os.path.expanduser",
+        "os.path.expandvars",
+        "os.path.normpath",
+        "os.path.realpath",
+        "pathlib.Path",
+        "pathlib.PosixPath",
+        "pathlib.PurePath",
+        "pathlib.PurePosixPath",
+        "str",
+    }
+)
+#: Path METHODS that hand the receiver through unchanged. `.parent` is deliberately absent —
+#: it CHANGES the path, and guessing which way is worse than not guessing.
+_PATH_PASSTHROUGH_METHODS = frozenset({"absolute", "expanduser", "resolve"})
+#: Calls that answer with the account root, or read it out of the environment.
+_HOME_FUNCS = frozenset({"pathlib.Path.home", "pathlib.PurePath.home", "Path.home"})
+_ENV_READ_FUNCS = frozenset({"os.environ.get", "os.getenv"})
+
+#: Module-level functions that REMOVE a path, keyed by their canonical dotted name so an
+#: import alias (`import shutil as sh`, `from shutil import rmtree`) is not a way out.
+_DELETE_FUNCS = frozenset({"os.remove", "os.removedirs", "os.rmdir", "os.unlink", "shutil.rmtree"})
+#: Path METHODS that remove. Matched on the attribute name alone, because inside
+#: `for p in Path("/").rglob("*")` there is no literal to resolve and `p` is whatever the walk
+#: yielded. `remove` is deliberately ABSENT: `list.remove` is not a filesystem call, and
+#: including it would read every list mutation inside a loop as a deletion.
+_DELETE_METHODS = frozenset({"removedirs", "rmdir", "rmtree", "unlink"})
+
+#: Calls that open a file for writing (so a `mode` argument decides truncation) and the
+#: methods/functions that truncate outright.
+_OPEN_FUNCS = frozenset({"codecs.open", "io.open", "open"})
+_TRUNCATE_FUNCS = frozenset({"os.truncate"})
+_TRUNCATE_METHODS = frozenset({"write_bytes", "write_text"})
+
+#: Walks that enumerate a whole subtree. `glob`'s recursive form needs `recursive=True` AND a
+#: `**` in the pattern to be unbounded, so both are checked rather than assumed.
+_WALK_FUNCS = frozenset({"os.fwalk", "os.walk"})
+_WALK_METHODS = frozenset({"rglob", "walk"})
+_GLOB_FUNCS = frozenset({"glob.glob", "glob.iglob"})
+
+#: How far the target resolver will follow wrappers and single-assignment aliases. A bound,
+#: not a judgement: a chain longer than this is not a shape anyone writes, and an unbounded
+#: walk over a hostile AST is a denial of service on the install path.
+_TARGET_DEPTH = 6
+
+
+def _longest_root(path: str, roots: tuple[str, ...]) -> str | None:
+    """The longest entry of ``roots`` that ``path`` equals or lies under, else ``None``.
+
+    Compared on path SEGMENTS (``/etc`` matches ``/etc`` and ``/etc/hosts``, never
+    ``/etcetera``), and longest-wins so a carve-out can be nested inside a tree —
+    ``/var/folders`` has to be able to beat ``/var``."""
+    hit: str | None = None
+    for root in roots:
+        if (path == root or path.startswith(f"{root}/")) and (hit is None or len(root) > len(hit)):
+            hit = root
+    return hit
+
+
+def _classify_path_literal(raw: str) -> str | None:
+    """``"root"`` | ``"home"`` | ``"system"`` for a destructive target, else ``None``.
+
+    THE PRECISION LINE for the whole native family, and the same line the shell band already
+    draws. ``..`` segments are resolved lexically rather than refused, because ``/etc/..``
+    IS the root and a rule that could not see that would be defeated by two characters."""
+    if raw in _HOME_LITERALS:
+        return "home"
+    if _DRIVE_ROOT_RE.fullmatch(raw):
+        return "root"
+    if not raw.startswith("/"):
+        return None
+    parts: list[str] = []
+    for segment in raw.split("/"):
+        if not segment or segment == ".":
+            continue
+        if segment == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(segment)
+    norm = "/" + "/".join(parts)
+    if norm == "/":
+        return "root"
+    transient = _longest_root(norm, _TRANSIENT_PATHS)
+    system = _longest_root(norm, _SYSTEM_TREES)
+    if transient is not None and (system is None or len(transient) >= len(system)):
+        return None
+    return "system" if system is not None else None
+
+
+def _dotted_name(node: ast.expr) -> str | None:
+    """The dotted name a ``Name``/``Attribute`` chain spells, or ``None`` for anything else.
+
+    Built by hand rather than with :func:`ast.unparse` so the answer is ``None`` — not a
+    string that merely looks like a name — for `f().attr`, a subscript, or a literal."""
+    parts: list[str] = []
+    cursor: ast.expr = node
+    while isinstance(cursor, ast.Attribute):
+        parts.append(cursor.attr)
+        cursor = cursor.value
+    if not isinstance(cursor, ast.Name):
+        return None
+    parts.append(cursor.id)
+    return ".".join(reversed(parts))
+
+
+def _import_aliases(tree: ast.AST) -> dict[str, str]:
+    """Every local name mapped to the canonical dotted path it refers to.
+
+    ``import shutil as sh`` → ``{"sh": "shutil"}``; ``from shutil import rmtree as rt`` →
+    ``{"rt": "shutil.rmtree"}``. Without this the rules would read ``shutil.rmtree`` and
+    miss ``rt``, which is one line of evasion. Relative imports are skipped: a
+    bundle-local module is not the stdlib no matter what it re-exports, and pretending to
+    resolve it would put a name in the map that means something else."""
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                out[alias.asname or root] = alias.name if alias.asname else root
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            module = node.module or ""
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                out[alias.asname or alias.name] = f"{module}.{alias.name}" if module else alias.name
+    return out
+
+
+def _target_names(node: ast.expr) -> Iterator[str]:
+    """Every name an assignment target binds, through tuple/list/star unpacking."""
+    if isinstance(node, ast.Name):
+        yield node.id
+    elif isinstance(node, ast.Starred):
+        yield from _target_names(node.value)
+    elif isinstance(node, (ast.Tuple, ast.List)):
+        for element in node.elts:
+            yield from _target_names(element)
+
+
+def _bound_names(node: ast.AST) -> Iterator[str]:
+    """Every name ONE node binds, by any form Python has for binding one.
+
+    Exhaustive on purpose: this feeds the "bound exactly once" count, and a binding form
+    left out of it would let a name that really does change be resolved as if it could not."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        yield node.name
+    elif isinstance(node, ast.Assign):
+        for target in node.targets:
+            yield from _target_names(target)
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+        yield from _target_names(node.target)
+    elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+        yield from _target_names(node.target)
+    elif isinstance(node, ast.withitem):
+        if node.optional_vars is not None:
+            yield from _target_names(node.optional_vars)
+    elif isinstance(node, ast.Delete):
+        for target in node.targets:
+            yield from _target_names(target)
+    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        for alias in node.names:
+            yield alias.asname or alias.name.split(".")[0]
+    elif isinstance(node, ast.ExceptHandler):
+        if node.name:
+            yield node.name
+    elif isinstance(node, (ast.Global, ast.Nonlocal)):
+        yield from node.names
+    elif isinstance(node, ast.arguments):
+        for arg in (*node.posonlyargs, *node.args, *node.kwonlyargs):
+            yield arg.arg
+        for maybe in (node.vararg, node.kwarg):
+            if maybe is not None:
+                yield maybe.arg
+
+
+def _single_bindings(tree: ast.AST) -> dict[str, ast.expr]:
+    """Names bound EXACTLY ONCE in the file, mapped to the expression bound to them.
+
+    The only dataflow this family does, and the weakest claim that closes the obvious
+    evasion: ``home = os.path.expanduser("~")`` then ``shutil.rmtree(home)`` is the same
+    payload as the one-liner, and a rule that reads only the one-liner is defeated by
+    pressing Enter. So a name is resolved only when the whole file binds it once — a second
+    assignment, an augmented assignment, a loop target, a `with … as`, a comprehension, a
+    parameter, a `del`, an `except … as`, a `global`, or an import of the same name drops it
+    entirely. One binding in the whole file means there is exactly one scope to be wrong
+    about, which is why this needs no scope tracking to be sound."""
+    counts: dict[str, int] = {}
+    for node in ast.walk(tree):
+        for name in _bound_names(node):
+            counts[name] = counts.get(name, 0) + 1
+    out: dict[str, ast.expr] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target: ast.expr = node.targets[0]
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            target = node.target
+        else:
+            continue
+        value = node.value
+        if isinstance(target, ast.Name) and value is not None and counts.get(target.id) == 1:
+            out[target.id] = value
+    return out
+
+
+@dataclass(frozen=True)
+class _NativeCtx:
+    """What resolving a target in ONE file needs: its import aliases and its stable names."""
+
+    aliases: dict[str, str]
+    bindings: dict[str, ast.expr]
+
+
+def _canonical_name(node: ast.expr, ctx: _NativeCtx) -> str:
+    """``node``'s dotted name with its import alias resolved, or ``""`` when it has none.
+
+    Longest-prefix, so ``osp.expanduser`` under ``import os.path as osp`` becomes
+    ``os.path.expanduser`` rather than being left unresolvable."""
+    dotted = _dotted_name(node)
+    if dotted is None:
+        return ""
+    parts = dotted.split(".")
+    for i in range(len(parts), 0, -1):
+        target = ctx.aliases.get(".".join(parts[:i]))
+        if target is not None:
+            return ".".join([target, *parts[i:]])
+    return dotted
+
+
+def _target_class(node: ast.expr | None, ctx: _NativeCtx, depth: int = 0) -> str | None:
+    """The destructive class of the path ``node`` denotes, or ``None``.
+
+    ``None`` is the answer for everything the analysis cannot resolve to a named target —
+    a variable that changes, a runtime join, an argument. That is the direction that costs
+    RECALL rather than precision, which is the right way round for a terminal band that
+    blocks installs."""
+    if node is None or depth > _TARGET_DEPTH:
+        return None
+    if isinstance(node, ast.Constant):
+        return _classify_path_literal(node.value) if isinstance(node.value, str) else None
+    if isinstance(node, ast.Name):
+        return _target_class(ctx.bindings.get(node.id), ctx, depth + 1)
+    if isinstance(node, ast.Subscript):
+        keyed = isinstance(node.slice, ast.Constant) and node.slice.value in _HOME_ENV_KEYS
+        return "home" if keyed and _canonical_name(node.value, ctx) == "os.environ" else None
+    if not isinstance(node, ast.Call):
+        return None
+    name = _canonical_name(node.func, ctx)
+    if name in _HOME_FUNCS:
+        return "home"
+    if name in _ENV_READ_FUNCS:
+        first = node.args[0] if node.args else None
+        keyed = isinstance(first, ast.Constant) and first.value in _HOME_ENV_KEYS
+        return "home" if keyed else None
+    if name in _PATH_PASSTHROUGH:
+        return _target_class(node.args[0] if node.args else None, ctx, depth + 1)
+    if isinstance(node.func, ast.Attribute) and node.func.attr in _PATH_PASSTHROUGH_METHODS:
+        return _target_class(node.func.value, ctx, depth + 1)
+    return None
+
+
+def _delete_target(node: ast.Call, ctx: _NativeCtx) -> ast.expr | None:
+    """The path a removal call would remove, or ``None`` when this is not a removal."""
+    if _canonical_name(node.func, ctx) in _DELETE_FUNCS:
+        return node.args[0] if node.args else None
+    if isinstance(node.func, ast.Attribute) and node.func.attr in _DELETE_METHODS:
+        return node.func.value
+    return None
+
+
+def _truncating_mode(node: ast.Call, position: int) -> bool:
+    """True when this call's ``mode`` is a literal that TRUNCATES what is already there.
+
+    ``w`` and only ``w``: ``a`` appends, ``x`` refuses to clobber, ``r`` reads. A mode the
+    source does not pin is not treated as truncating — the default is ``r``, and guessing
+    otherwise would make every `open(p)` in the corpus a candidate."""
+    mode: ast.expr | None = node.args[position] if len(node.args) > position else None
+    for keyword in node.keywords:
+        if keyword.arg == "mode":
+            mode = keyword.value
+    return isinstance(mode, ast.Constant) and isinstance(mode.value, str) and "w" in mode.value
+
+
+def _truncating_target(node: ast.Call, ctx: _NativeCtx) -> ast.expr | None:
+    """The path a truncating write would blank, or ``None`` when this is not one."""
+    name = _canonical_name(node.func, ctx)
+    if name in _TRUNCATE_FUNCS:
+        return node.args[0] if node.args else None
+    if name in _OPEN_FUNCS:
+        return node.args[0] if node.args and _truncating_mode(node, 1) else None
+    if isinstance(node.func, ast.Attribute):
+        if node.func.attr in _TRUNCATE_METHODS:
+            return node.func.value
+        if node.func.attr == "open" and _truncating_mode(node, 0):
+            return node.func.value
+    return None
+
+
+def _walk_class(node: ast.expr, ctx: _NativeCtx) -> str | None:
+    """The destructive class of the root an UNBOUNDED recursive walk starts from, else
+    ``None``. A bounded walk (`Path(x).glob("*.md")`) is not one, whatever its root."""
+    if not isinstance(node, ast.Call):
+        return None
+    name = _canonical_name(node.func, ctx)
+    if name in _WALK_FUNCS:
+        return _target_class(node.args[0] if node.args else None, ctx)
+    if name in _GLOB_FUNCS:
+        recursive = next((kw.value for kw in node.keywords if kw.arg == "recursive"), None)
+        pattern = node.args[0] if node.args else None
+        if not (isinstance(recursive, ast.Constant) and recursive.value is True):
+            return None
+        if not (isinstance(pattern, ast.Constant) and isinstance(pattern.value, str)):
+            return None
+        # The directory part of the pattern, and NO fallback when there isn't one. A pattern
+        # with nothing before its first `*` is relative to the working directory, and reading
+        # that as `/` made `glob.glob("**/*.pyc", recursive=True)` + `os.remove(p)` — a `.pyc`
+        # cleanup loop — terminal. Found by re-reading this branch, not by a fixture, which is
+        # why the fixture now exists.
+        return _classify_path_literal(pattern.value.split("*")[0])
+    if not isinstance(node.func, ast.Attribute):
+        return None
+    if node.func.attr in _WALK_METHODS:
+        return _target_class(node.func.value, ctx)
+    if node.func.attr == "glob":
+        pattern = node.args[0] if node.args else None
+        deep = isinstance(pattern, ast.Constant) and "**" in str(pattern.value)
+        return _target_class(node.func.value, ctx) if deep else None
+    return None
+
+
+def _walk_class_within(node: ast.expr, ctx: _NativeCtx) -> str | None:
+    """:func:`_walk_class` for the walk anywhere inside ``node`` — so wrapping the walk in
+    ``sorted(...)`` or ``list(...)``, which is how it is usually written, still counts."""
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.expr):
+            found = _walk_class(inner, ctx)
+            if found is not None:
+                return found
+    return None
+
+
+def _deletes_within(nodes: Iterable[ast.AST], ctx: _NativeCtx) -> bool:
+    """True when any of ``nodes`` contains a removal call, at any depth."""
+    return any(
+        isinstance(inner, ast.Call)
+        and (
+            _canonical_name(inner.func, ctx) in _DELETE_FUNCS
+            or (isinstance(inner.func, ast.Attribute) and inner.func.attr in _DELETE_METHODS)
+        )
+        for root in nodes
+        for inner in ast.walk(root)
+    )
+
+
+def _ast_evidence(text: str, node: ast.AST) -> str:
+    """The user-facing snippet for one AST finding: ``L<line>: <source>``.
+
+    Cut on LINE boundaries and never on columns. :mod:`ast` reports ``col_offset`` as a
+    UTF-8 BYTE count, so a line with non-ASCII text before the call would make a
+    column-derived slice point at the wrong characters — and this string is what a reviewer
+    reads to check the finding. Shares :func:`_evidence`'s caps and its ``…`` mark, so a
+    native finding and a regex finding read the same on the consent surface."""
+    lines = text.splitlines()
+    first = max((getattr(node, "lineno", 1) or 1) - 1, 0)
+    last = min(getattr(node, "end_lineno", None) or first + 1, first + _EVIDENCE_MAX_LINES)
+    prefix = f"L{first + 1}: "
+    body = " ".join(" ".join(lines[first:last]).split())
+    room = _EVIDENCE_CAP - len(prefix)
+    if len(body) > room:
+        body = body[: max(0, room - 1)].rstrip() + _ELLIPSIS
+    return f"{prefix}{body}".rstrip()
+
+
+def _scan_native_destruction(text: str, rel: str) -> list[Finding]:
+    """The native-destruction family over one Python source text.
+
+    At most one finding per rule — the same "first match per rule" shape ``_scan_script``
+    uses for the regex catalog — emitted in :data:`_NATIVE_DESTRUCTION_RULES` order so a
+    report is deterministic.
+
+    A file that does not parse yields NOTHING. That is a recall limit and not a pass: the
+    text catalogs still judge every byte of it, and the reachability pass still reports
+    ``unparseable`` for whatever they matched. Guessing at a broken parse tree is how a
+    scanner ends up flagging a docstring that forbids the very call it names."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):  # ValueError: NUL bytes / oversized literals
+        return []
+    ctx = _NativeCtx(aliases=_import_aliases(tree), bindings=_single_bindings(tree))
+    hits: dict[str, ast.AST] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            if _walk_class_within(node.iter, ctx) and _deletes_within(node.body, ctx):
+                hits.setdefault("destructive_walk", node)
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            if any(_walk_class_within(gen.iter, ctx) for gen in node.generators):
+                produced: list[ast.AST] = [test for gen in node.generators for test in gen.ifs]
+                produced.extend(
+                    [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+                )
+                if _deletes_within(produced, ctx):
+                    hits.setdefault("destructive_walk", node)
+        elif isinstance(node, ast.Call):
+            if _target_class(_delete_target(node, ctx), ctx):
+                hits.setdefault("destructive_delete", node)
+            if _target_class(_truncating_target(node, ctx), ctx):
+                hits.setdefault("destructive_truncate", node)
+    return [
+        Finding("script", Verdict.DANGEROUS, rule, rel, _ast_evidence(text, hits[rule]))
+        for rule in _NATIVE_DESTRUCTION_RULES
+        if rule in hits
+    ]
+
+
 # ── The scanner ─────────────────────────────────────────────────────────────
 
 
@@ -1335,6 +1895,15 @@ class SkillScanner:
             m = pat.search(text)
             if m:
                 out.append(Finding("script", Verdict.DANGEROUS, rule, rel, _evidence(text, m)))
+        # Destruction spelled in the HOST LANGUAGE rather than as a shell command (#2607) —
+        # decided on the AST, so Python only. The gate is stated as "not some OTHER language"
+        # rather than "is `.py`", because every other `_SCRIPT_EXTS` member NAMES a language
+        # whose syntax `ast.parse` refuses, while an extension-LESS file names nothing: a
+        # `scripts/setup` with a python shebang is Python, and requiring the suffix would have
+        # left exactly the payload parking spot this rule family exists to close. `""` covers
+        # the bare-blob surface too, where the caller has no filename to offer at all.
+        if Path(rel).suffix.lower() in {"", ".py"}:
+            out.extend(_scan_native_destruction(text, rel))
         # exfil-to-remote: a sensitive-path read AND a network egress that sit
         # CLOSE TOGETHER (the read-creds→send-out pipeline) is high-confidence
         # malice. Scan comment-stripped text (a comment never executes) and

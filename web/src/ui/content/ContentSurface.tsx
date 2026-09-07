@@ -9,6 +9,7 @@ import { CommentLayer } from '../../pages/files/comments/CommentLayer'
 import type { CommentTarget } from './commentTarget'
 import { type ContentType, isEditable, isCommentable } from './contentTypes'
 import type { IterationTarget } from '../widget/useArtifactIteration'
+import { copyText } from '../../app/clipboard'
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'))
 
@@ -184,7 +185,7 @@ export const ContentSurface = forwardRef<ContentSurfaceHandle, ContentSurfacePro
     finally { setSaving(false) }
   }
 
-  const copy = () => { navigator.clipboard?.writeText(draft).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }
+  const copy = async () => { if (await copyText(draft, 'the document')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
 
   const [exportOpen, setExportOpen] = useState(false)
   // The export menu's click-away scrim is a MOUSE-only exit; Escape closes it for the keyboard,
