@@ -309,7 +309,7 @@ that vendor touches.** The checklist:
 |---|---|---|
 | **Channel transport** | `provider` / `providers[]` `type: "channel"` | conversations in and out |
 | **Inbox message source** | `providers[]` `type: "inbox"` (a `MessageSourceProvider`) | messages that arrive while no session is live. Without it, anything sent to your channel outside a conversation is invisible to the owner's Inbox |
-| **Trigger source** | `providers[]` `type: "trigger_source"` (a `TriggerSourceProvider` from `personalclaw.sdk.trigger_source`) | vendor events driving automations. **The seam is live** as of `WF2AUT-8`, so this row stopped being a forward obligation. `personalclaw app new --list-types` prints `trigger_source` next to `channel`. Your provider's `start(emit)` hands core typed events; core namespaces them `app:<name>:<event>`, fences them at origin, and `kind: event` triggers match on the existing `{source, pattern}` spec. Core never polls you. Still do **not** hand-roll event glue. There is a seam now, so there is no excuse for one |
+| **Trigger source** | `providers[]` `type: "trigger_source"` (a `TriggerSourceProvider` from `personalclaw.sdk.trigger_source`) | vendor events driving automations. **The seam is live** as of `WF2AUT-8` and **every shipped channel app declares one** as of `CE-10`, so this row is neither a forward obligation nor an unadopted suggestion. `personalclaw app new --list-types` prints `trigger_source` next to `channel`. Your provider's `start(emit)` hands core typed events; core namespaces them `app:<name>:<event>`, fences them at origin, and `kind: event` triggers match on the existing `{source, pattern}` spec. Core never polls you. Still do **not** hand-roll event glue. There is a seam now, so there is no excuse for one |
 | **Contributed UI** | `ui` pages in your own bundle | anything the generic provider-settings form cannot express |
 
 **Rule 2 — your UI, not core's.** Anything that does not fit a pluggable seam becomes
@@ -321,33 +321,66 @@ accommodation. If a vendor feature seems to need a core change, the change is a 
 If you find residue while touching a seam, scrub it in the same change.
 
 The reference for the completed pattern is the **slack-channel** app in the apps
-repository: one bundle, a channel transport plus an inbox `MessageSourceProvider` built as
-an adapter over the transport's *existing* client (not a second client), and its non-seam
-surface behind its own `ui` block.
+repository: one bundle, a channel transport plus an inbox `MessageSourceProvider` plus a
+`TriggerSourceProvider`, each built as an adapter over the transport's *existing* client or
+inbound stream (never a second connection), and its non-seam surface behind its own `ui`
+block.
+
+### Sharing one inbound stream between two providers
+
+Your transport and your trigger source are built by two different manifest factories, so
+the two instances never see each other — and the wrong fix is a second connection to the
+vendor. All four shipped channel apps use the same shape: a small `inbound_tap` module in
+the app's own runtime package with `subscribe` / `unsubscribe` / `publish`. The transport
+publishes; the trigger source subscribes in `start(emit)` and unsubscribes in `stop()`.
+A module in your package is the only thing the two instances demonstrably share.
+
+**Publish only what your trust gate already admitted.** Put the `publish` call *after* the
+guarded door and gate it on `verdict.allowed`. Publishing earlier means anyone who can
+reach your bot can arm the owner's automations by sending it a message — strictly worse
+than the session the trust gate already refuses them.
+
+**Two more rules that are easy to get wrong.** Pick the event NAME from a frozen tuple of
+constants using a *structural* fact (is this a DM?), never from anything in the message: a
+source that reads its event name out of the payload lets a sender choose which of the
+owner's triggers to match, and choosing the trigger is choosing the action. And put every
+piece of prose in `SourceEvent.text` — that is the one field core fences at ingestion.
+`meta` is matched, not narrated, and it is *not* fenced, so a remote display name or a mail
+subject does not belong there.
 
 ### The kit's completeness advisory
 
 The conformance kit checks this for you. From your live provider it locates the owning
-`app.json`, and if the manifest declares a `channel` provider but no `inbox` provider in
-either shape, it emits a `UserWarning` naming the missing seam:
+`app.json`, and for each companion seam the manifest does not declare in either shape it
+emits a separate `UserWarning` naming that seam:
 
 ```
 vendor completeness: the app 'your-channel' registers a channel transport but no inbox
-message source — its manifest declares provider types ['channel']. …
+provider — its manifest declares provider types ['channel']. …
+vendor completeness: the app 'your-channel' registers a channel transport but no
+trigger_source provider — … The seam is LIVE (WF2AUT-8) …
 ```
+
+**One advisory per missing seam**, not one merged sentence: they are different facts about
+different work, and adopting one must not silence the other.
 
 It is **advisory, never a failure**, deliberately: the doctrine postdates the shipped
 channel apps, and giving a control teeth before the population satisfies it is an outage,
 not a gate. It also stays silent when no `app.json` is discoverable — a bare unit test or
 a core fixture has no bundle, and an advisory that fires on fixtures teaches readers to
-ignore it.
+ignore it. The thing with *teeth* is the apps repo's own
+`.github/scripts/check_trigger_source_adoption.py` sweep, which can see the whole
+population where a per-app kit call only ever sees one app.
 
-If your vendor genuinely has no message-source semantics, say so and the advisory stops:
+If your vendor genuinely has no such semantics, say so and that advisory stops. The two
+suppressors are independent on purpose — a shared one would silence a seam nobody had
+thought about:
 
 ```python
 assert_channel_contract(
     transport,
     no_inbox_source_reason="the vendor exposes no message history to poll",
+    no_trigger_source_reason="the vendor pushes nothing an automation could act on",
 )
 ```
 
@@ -363,7 +396,8 @@ the only audience for it.
 - [ ] `health()` and `test()` cannot disagree.
 - [ ] The inbound cursor is persisted before dispatch.
 - [ ] `assert_channel_contract` passes with `delivery=`, `min_edit_interval=`, `clock=` and `inbound_via=` supplied — not just the bare transport.
-- [ ] No completeness advisory, or a real `no_inbox_source_reason`.
+- [ ] No completeness advisory, or a real `no_inbox_source_reason` / `no_trigger_source_reason`.
+- [ ] Your trigger source publishes only what the trust gate admitted, picks its event name from a frozen tuple, and puts every piece of prose in `SourceEvent.text`.
 - [ ] Core imports go through `personalclaw.sdk.*` only; no core file names your vendor.
 - [ ] Secrets in the credential store; minimum permissions declared.
 - [ ] `README.md` + `LICENSE` + tests ship with the bundle.
