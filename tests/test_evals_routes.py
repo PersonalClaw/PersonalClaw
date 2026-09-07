@@ -562,3 +562,76 @@ def test_the_whole_frozen_register_travels_with_the_report(evals_on, monkeypatch
     assert body["protocol_doc"] == lb.PROTOCOL_DOC
     # The variance a reproduction is judged against is SHIPPED to the reader, not implied.
     assert body["stated_variance"] == list(lb.REPRODUCTION_CONDITIONS)
+
+
+def test_the_runs_provenance_survives_the_wire_in_all_THREE_states(evals_on, monkeypatch):
+    """WHICH MODEL produced the table is the one thing the table cannot show, and the two run
+    kinds serialize identically apart from this field.
+
+    Three states, and the route must preserve the difference between all three, because the page
+    renders three different sentences from them:
+
+    * an object — the cells called that named model;
+    * ``None`` — the run RECORDED that no provider was bound, so every cell resolved the offline
+      ``scripted`` replay and no number in the table is a model measurement;
+    * the key ABSENT — the report predates provenance recording (ES-17 added the field without
+      moving ``report_schema``), so provenance is unrecorded. The route must NOT invent the key
+      here: an added ``null`` would turn "we never recorded it" into "we recorded that no model
+      ran", which is the absent-versus-declared-false collapse.
+    """
+    from personalclaw.evals import learning_bench as lb
+
+    binding = {
+        "use_case": "chat",
+        "provider_name": "LocalOllama",
+        "model": "gemma4:12b",
+        "protocol": "openai",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "api_key_env": "",
+        "max_tokens": None,
+    }
+    base = {"run_id": "learnbench-x", "tasks": [], "skipped": []}
+
+    monkeypatch.setattr(lb, "latest_report", lambda: {**base, "provider_binding": binding})
+    bound = _body(_run(E.api_evals_learning_benchmark(_bench_req())))["report"]
+    assert bound["provider_binding"] == binding
+    # The NAME of a key variable may cross; a value never may. Asserted over the whole payload
+    # rather than the binding alone, so a secret smuggled into any sibling field fails this too.
+    assert "PERSONALCLAW_EVAL_PROVIDER_KEY" not in json.dumps(bound)
+
+    monkeypatch.setattr(lb, "latest_report", lambda: {**base, "provider_binding": None})
+    unbound = _body(_run(E.api_evals_learning_benchmark(_bench_req())))["report"]
+    assert "provider_binding" in unbound
+    assert unbound["provider_binding"] is None
+
+    monkeypatch.setattr(lb, "latest_report", lambda: dict(base))
+    legacy = _body(_run(E.api_evals_learning_benchmark(_bench_req())))["report"]
+    assert "provider_binding" not in legacy
+
+
+def test_the_pin_reaches_the_reader_spelled_out_not_only_as_a_digest(evals_on, monkeypatch):
+    """``model_fp`` is a 12-char digest and cannot be read; ``model_fingerprint`` is the
+    per-use-case refs behind it. Both must cross: the digest is what the ledger row carries, and
+    the spelled-out map is the only form a reader of a published table can check.
+
+    MEASURED on ``main``: a bound run and an unbound run launched from the SAME bound home carry an
+    IDENTICAL ``model_fp`` — the pin is read from the invoking home's ``active_models.json``, so it
+    describes what the operator configured rather than what any cell reached. That is exactly why
+    the pin must arrive BESIDE ``provider_binding`` and never instead of it.
+    """
+    from personalclaw.evals import learning_bench as lb
+
+    pin = {
+        "model_fp": "5970c589da34",
+        "model_fingerprint": {"chat": "LocalOllama:gemma4:12b"},
+        "prompt_pack_sha256": "ab" * 32,
+        "config_snapshot_ref": "cd" * 32,
+    }
+    monkeypatch.setattr(
+        lb,
+        "latest_report",
+        lambda: {"run_id": "learnbench-x", "tasks": [], "skipped": [], "pin": pin},
+    )
+    report = _body(_run(E.api_evals_learning_benchmark(_bench_req())))["report"]
+    assert report["pin"]["model_fingerprint"] == {"chat": "LocalOllama:gemma4:12b"}
+    assert report["pin"]["model_fp"] == "5970c589da34"

@@ -1,10 +1,12 @@
 import { ExternalLink, FlaskConical, ShieldAlert } from 'lucide-react'
 import { LoadError } from '../../ui/ListScaffold'
+import { StatusPill } from '../../ui/StatusPill'
 import { fvs } from '../../design/fontWeight'
 import { hasApiCode } from '../../lib/api'
 import { EvalsOff } from './EvalsOff'
 import type {
-  BenchmarkArmAggregate, BenchmarkReport, BenchmarkTaskRow, BenchmarkView,
+  BenchmarkArmAggregate, BenchmarkProviderBinding, BenchmarkReport, BenchmarkTaskRow,
+  BenchmarkView,
 } from '../../lib/api'
 
 /** Canonical blob root for repo docs, from `pyproject.toml`'s `[project.urls] Source`.
@@ -103,6 +105,8 @@ export function BenchmarkPanel({ view, error, onRetry }: {
         {report.created_at ? <> · {report.created_at}</> : null}.
       </p>
 
+      <Provenance report={report} />
+
       <Coverage report={report} registerSize={view.register.length} />
 
       <div className="overflow-x-auto rounded-lg bg-surface-container">
@@ -197,6 +201,98 @@ function Coverage({ report, registerSize }: { report: BenchmarkReport; registerS
             + 'never folded into an arm, so an infrastructure failure can never register as a '
             + 'skills-off win.'}
       </p>
+    </div>
+  )
+}
+
+/** The `Provider:model` ref, spelled exactly as the pin spells it — one place, so the page and the
+ *  pin can never disagree about which entry a cell resolved. A model id may itself contain a colon
+ *  (`gemma4:12b`), which is why the ref is joined here rather than re-split anywhere. */
+function bindingRef(binding: BenchmarkProviderBinding): string {
+  return `${binding.provider_name}:${binding.model}`
+}
+
+/** WHICH MODEL produced this table — the one thing the table itself cannot show.
+ *
+ *  A benchmark run has two kinds and they render identically: cells bound to one real
+ *  `Provider:model`, and cells that resolve the offline `scripted` replay. Publishing a score
+ *  table without saying which is the overclaim protocol §8 forbids, and it is not a hypothetical
+ *  — the report has carried `provider_binding` since ES-17 and no surface read it.
+ *
+ *  `pin.model_fingerprint` is NOT the answer and must not be presented as one. It is read from the
+ *  INVOKING home's `active_models.json`, so it describes what the operator's home was bound to
+ *  whether or not any of it crossed the cell boundary. Measured: two runs from one bound home, one
+ *  with `--bind-provider` and one without, carry the same `pin.model_fp` — so a reader shown only
+ *  the pin would read the unbound run as a real-model run. It is rendered here labelled as the
+ *  home's binding, under the cell binding, never instead of it.
+ *
+ *  THREE states, because collapsing any two of them re-creates the defect:
+ *
+ *  1. an object — these cells called that model, named with its endpoint;
+ *  2. `null` — the run RECORDED that no provider was bound: every cell resolved the offline
+ *     replay, so the table is not a model measurement;
+ *  3. absent — the report predates provenance recording (ES-17 added the field without moving
+ *     `report_schema`), so provenance is UNRECORDED. "We did not record it" is a different claim
+ *     from "nothing was bound", and a reader who cannot tell them apart will read the first as
+ *     the second — which is this project's recurring absent-versus-declared-false failure. */
+function Provenance({ report }: { report: BenchmarkReport }) {
+  const binding = report.provider_binding
+  const recorded = 'provider_binding' in report
+  const homeRefs = report.pin?.model_fingerprint
+  return (
+    <div className="flex flex-col gap-xs rounded-lg bg-surface-container px-l py-m">
+      <span data-type="title-s" className="text-on-surface">
+        {binding
+          ? `Cells called ${bindingRef(binding)}`
+          : recorded
+            ? 'No model was bound — these cells called no model'
+            : 'Provenance was not recorded'}
+      </span>
+      {/* `StatusPill` rather than the hand-rolled tint its sibling in `Coverage` still carries: it
+          owns the one sanctioned 16% tint strength and the closed tone vocabulary, and the
+          `statusTint` ratchet counts every new inline colour-mix style in `pages/` as debt. Note
+          the ratchet is a source-TEXT scan, so spelling the CSS function name in a comment here
+          would itself have reddened it — which is why this sentence does not. */}
+      {!binding && (
+        <StatusPill tone="warn" className="w-fit gap-1.5 px-m h-6">
+          <ShieldAlert size={12} />
+          {recorded ? 'not a model measurement' : 'provenance unrecorded'}
+        </StatusPill>
+      )}
+      <p data-type="body-s" className="text-on-surface-low">
+        {binding ? (
+          <>
+            Bound for use case <span className="text-on-surface-var">{binding.use_case}</span> over
+            the <span className="text-on-surface-var">{binding.protocol}</span>-compatible protocol
+            {binding.base_url ? <> at <code className="text-on-surface-var">{binding.base_url}</code></> : null}
+            . One use case and one model ref, declared by the run — not inherited from this home.
+          </>
+        ) : recorded ? (
+          <>
+            This run declared no provider binding, so every cell resolved the offline{' '}
+            <code className="text-on-surface-var">scripted</code> replay rather than a model. Both
+            arms off one canned script is a fabricated comparison, so no number below is a model
+            measurement. A real run names its model:{' '}
+            <code className="text-on-surface-var">--bind-provider Provider:model</code>.
+          </>
+        ) : (
+          <>
+            This report was written before runs recorded which provider their cells could reach, so
+            whether a model was called is UNKNOWN here — which is not the same as knowing none was.
+            Re-run to record it.
+          </>
+        )}
+      </p>
+      {homeRefs && Object.keys(homeRefs).length > 0 && (
+        <p data-type="caption" className="text-on-surface-low">
+          The pin records this <span className="text-on-surface-var">home&apos;s</span> bindings —{' '}
+          {Object.entries(homeRefs)
+            .map(([useCase, ref]) => `${useCase}=${ref}`)
+            .join(', ')}
+          {' '}— which is what the operator configured, not what the cells reached. Only the line
+          above says what the cells reached.
+        </p>
+      )}
     </div>
   )
 }
