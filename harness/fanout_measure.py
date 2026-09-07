@@ -11,6 +11,15 @@ So this module refuses to report a winner unless the two arms spent within
 :data:`TOKEN_MATCH_TOLERANCE` of each other. A `not_token_matched` verdict is not a failure of the
 fan-out; it is the measurement declining to answer a question it did not ask.
 
+**"The two arms spent the same" is not one quantity, and the design decides which.** Amendment (e)
+matches budget by giving the cheaper arm more samples, so its arms' trial counts are unequal on
+purpose and the gate divides TOTALS. A PAIRED design runs both arms over identical work the same
+number of times, so its totals are commensurable only while the counts match and its gate must
+divide PER TRIAL. :data:`SPEND_TOTAL` / :data:`SPEND_PER_TRIAL` make the caller say which, and
+:func:`compare` records the answer on the :class:`Comparison` — a ratio whose denominator has to be
+inferred was published once already, and it read as a 48.6% spend difference that was really two
+missing trials.
+
 **And a matched comparison still usually cannot see anything.** The literature's own noise floor
 exceeds most of its reported architecture deltas: run-to-run variance is 1-3 points, format errors
 cause >50% of failures in some harnesses, a scorer swap moved one result 79.0 -> 25.6, and the
@@ -52,6 +61,28 @@ TOKEN_MATCH_TOLERANCE = 0.05
 #: is why the verdict reports the observed spread beside the delta instead of pretending three
 #: trials settled anything.
 MIN_TRIALS_PER_ARM = 3
+
+#: WHICH quantity the token-match gate divides. A property of the experiment's DESIGN, which is why
+#: it is a named vocabulary and not a number — there is no honest default that fits both designs:
+#:
+#: * :data:`SPEND_TOTAL` is the fan-out design's basis and this module's default. Amendment (e)
+#:   matches budget by giving the cheaper arm more samples (see
+#:   :data:`TOKEN_MATCH_TOLERANCE`: "you add single-agent samples until the budget is consumed"), so
+#:   the two arms' trial counts are DELIBERATELY unequal and the question really is what the whole
+#:   arm cost to produce its answer. Dividing by trial count here would defeat the design.
+#: * :data:`SPEND_PER_TRIAL` is a PAIRED design's basis, where both arms run the identical work the
+#:   identical number of times and spend is an OUTCOME of the treatment rather than a knob. Totals
+#:   are commensurable there only while the counts match, so a lost trial makes the gate compare
+#:   n_a attempts against n_b attempts and report the missing attempts as a spend difference.
+#:   MEASURED (`learnbench-20260907T003211Z`, protocol §6's absent-cell case): a paired arm lost two
+#:   cells, was verdicted on 3 trials against 5, and published a `token_ratio` of 0.5139 — "a 48.6%
+#:   spend difference" — where the per-trial value is 0.8565, i.e. 14.3%.
+SPEND_TOTAL = "total"
+SPEND_PER_TRIAL = "per_trial"
+
+#: Every basis the gate can divide on. Exported so a caller declares its design by naming a member
+#: rather than passing a string this module would have to guess the meaning of.
+SPEND_BASES = frozenset({SPEND_TOTAL, SPEND_PER_TRIAL})
 
 #: The arm names. Fixed rather than free-form: the comparison is always fan-out against the
 #: single-agent path on IDENTICAL work, and an observation file naming its arms something else is
@@ -121,9 +152,29 @@ class Arm:
 
     @property
     def tokens(self) -> int:
-        """Total spend. The verdict's denominator — summed, not averaged, because the question is
-        what the whole arm cost to produce its answer."""
+        """Total spend — summed, not averaged, because in the fan-out design the question is what
+        the whole arm cost to produce its answer."""
         return sum(t.tokens for t in self.trials)
+
+    @property
+    def tokens_per_trial(self) -> float:
+        """Mean spend per trial. The commensurable quantity when the two arms ran DIFFERENT numbers
+        of trials — a total is only a spend comparison while the counts match."""
+        return self.tokens / len(self.trials) if self.trials else 0.0
+
+    def spend(self, basis: str = SPEND_TOTAL) -> float:
+        """This arm's spend on ``basis``.
+
+        Raises on an unknown basis instead of falling back to totals: a silent fallback is exactly
+        how the incommensurable comparison reached a published table in the first place.
+        """
+        if basis == SPEND_TOTAL:
+            return float(self.tokens)
+        if basis == SPEND_PER_TRIAL:
+            return self.tokens_per_trial
+        raise MeasurementError(
+            f"unknown spend basis {basis!r} — expected one of {sorted(SPEND_BASES)}"
+        )
 
     @property
     def mean_score(self) -> float:
@@ -161,6 +212,9 @@ class Comparison:
     single: Arm
     verdict: str
     notes: list[str] = field(default_factory=list)
+    #: The basis the token-match gate divided on, carried on the answer rather than only on the
+    #: call, so a reader of a published ratio can tell which denominator produced it.
+    spend_basis: str = SPEND_TOTAL
 
     @property
     def delta_points(self) -> float:
@@ -169,8 +223,9 @@ class Comparison:
 
     @property
     def token_ratio(self) -> float:
-        """Fan-out spend / single-agent spend. 1.0 is a perfectly matched comparison."""
-        return self.fanout.tokens / self.single.tokens if self.single.tokens else 0.0
+        """Fan-out spend / single-agent spend on :attr:`spend_basis`. 1.0 is matched."""
+        denominator = self.single.spend(self.spend_basis)
+        return self.fanout.spend(self.spend_basis) / denominator if denominator else 0.0
 
     @property
     def conclusive(self) -> bool:
@@ -184,6 +239,7 @@ class Comparison:
             "inconclusive_band_points": INCONCLUSIVE_BAND_POINTS,
             "token_ratio": round(self.token_ratio, 4),
             "token_matched": self.verdict != VERDICT_NOT_TOKEN_MATCHED,
+            "spend_basis": self.spend_basis,
             "arms": {
                 arm.name: {
                     "trials": len(arm.trials),
@@ -242,7 +298,7 @@ def load_observations(path: str | Path) -> tuple[str, Arm, Arm]:
     return work, built[ARM_FANOUT], built[ARM_SINGLE]
 
 
-def compare(work: str, fanout: Arm, single: Arm) -> Comparison:
+def compare(work: str, fanout: Arm, single: Arm, *, spend_basis: str = SPEND_TOTAL) -> Comparison:
     """Verdict the two arms. Pure: no I/O, no clock.
 
     Order of checks is the order of honesty. Trials first (n=1 is not a measurement), then token
@@ -250,7 +306,17 @@ def compare(work: str, fanout: Arm, single: Arm) -> Comparison:
     unresolved), then the within-arm spread (a delta below the noise it sits in is unresolved too).
     Each earlier check makes the later ones unaskable, which is why they are gates and not
     annotations on a verdict that was already computed.
+
+    ``spend_basis`` names WHICH spend the token gate compares, and it has no honest default that
+    fits every design — see :data:`SPEND_TOTAL` and :data:`SPEND_PER_TRIAL`. It defaults to totals
+    because that is amendment (e)'s own design, where the arms' trial counts are unequal on purpose.
+    A paired caller must pass :data:`SPEND_PER_TRIAL`, and the basis is recorded on the answer so a
+    published ratio names its denominator instead of leaving it to be inferred.
     """
+    if spend_basis not in SPEND_BASES:
+        raise MeasurementError(
+            f"unknown spend basis {spend_basis!r} — expected one of {sorted(SPEND_BASES)}"
+        )
     notes: list[str] = []
 
     thin = [a.name for a in (fanout, single) if len(a.trials) < MIN_TRIALS_PER_ARM]
@@ -265,9 +331,12 @@ def compare(work: str, fanout: Arm, single: Arm) -> Comparison:
             single=single,
             verdict=VERDICT_INSUFFICIENT_TRIALS,
             notes=notes,
+            spend_basis=spend_basis,
         )
 
-    if not fanout.tokens or not single.tokens:
+    fanout_spend = fanout.spend(spend_basis)
+    single_spend = single.spend(spend_basis)
+    if not fanout_spend or not single_spend:
         notes.append(
             "an arm spent zero tokens — a comparison against a free arm measures nothing about "
             "topology"
@@ -278,13 +347,15 @@ def compare(work: str, fanout: Arm, single: Arm) -> Comparison:
             single=single,
             verdict=VERDICT_NOT_TOKEN_MATCHED,
             notes=notes,
+            spend_basis=spend_basis,
         )
 
-    ratio = fanout.tokens / single.tokens
+    ratio = fanout_spend / single_spend
     if abs(ratio - 1.0) > TOKEN_MATCH_TOLERANCE:
+        unit = "per trial" if spend_basis == SPEND_PER_TRIAL else "in total"
         notes.append(
             f"token spend differs by {abs(ratio - 1.0) * 100:.1f}% "
-            f"(fanout {fanout.tokens} vs single {single.tokens}), over the "
+            f"(fanout {fanout_spend:.0f} vs single {single_spend:.0f} {unit}), over the "
             f"{TOKEN_MATCH_TOLERANCE * 100:.0f}% match tolerance — give the cheaper arm more "
             "budget (more single-agent samples, or a wider fan-out) and re-measure; the largest "
             "published fan-out win was ~3.75x tokens and its own regression credits spend for 80% "
@@ -296,6 +367,7 @@ def compare(work: str, fanout: Arm, single: Arm) -> Comparison:
             single=single,
             verdict=VERDICT_NOT_TOKEN_MATCHED,
             notes=notes,
+            spend_basis=spend_basis,
         )
 
     delta = fanout.mean_score - single.mean_score
@@ -306,7 +378,12 @@ def compare(work: str, fanout: Arm, single: Arm) -> Comparison:
             "architecture does), so this is unresolved, not a tie and not a small win"
         )
         return Comparison(
-            work=work, fanout=fanout, single=single, verdict=VERDICT_INCONCLUSIVE, notes=notes
+            work=work,
+            fanout=fanout,
+            single=single,
+            verdict=VERDICT_INCONCLUSIVE,
+            notes=notes,
+            spend_basis=spend_basis,
         )
 
     worst_spread = max(fanout.spread, single.spread)
@@ -318,7 +395,12 @@ def compare(work: str, fanout: Arm, single: Arm) -> Comparison:
             "per-trial nondeterminism before claiming either direction"
         )
         return Comparison(
-            work=work, fanout=fanout, single=single, verdict=VERDICT_INCONCLUSIVE, notes=notes
+            work=work,
+            fanout=fanout,
+            single=single,
+            verdict=VERDICT_INCONCLUSIVE,
+            notes=notes,
+            spend_basis=spend_basis,
         )
 
     verdict = VERDICT_FANOUT_WINS if delta > 0 else VERDICT_SINGLE_WINS
@@ -326,10 +408,22 @@ def compare(work: str, fanout: Arm, single: Arm) -> Comparison:
         f"|delta| {abs(delta):.2f} points clears the {INCONCLUSIVE_BAND_POINTS}-point band at a "
         f"token ratio of {ratio:.3f}, with within-arm spread {worst_spread:.2f}"
     )
-    return Comparison(work=work, fanout=fanout, single=single, verdict=verdict, notes=notes)
+    return Comparison(
+        work=work,
+        fanout=fanout,
+        single=single,
+        verdict=verdict,
+        notes=notes,
+        spend_basis=spend_basis,
+    )
 
 
 def measure_file(path: str | Path) -> Comparison:
-    """Load an observation file and verdict it."""
+    """Load an observation file and verdict it.
+
+    The observation file carries no basis and is not given one: its shape is amendment (e)'s
+    fan-out/single pair, whose arms are budget-matched by adding samples, so totals are the basis
+    that design asks for.
+    """
     work, fanout, single = load_observations(path)
     return compare(work, fanout, single)

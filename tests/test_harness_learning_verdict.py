@@ -61,11 +61,12 @@ def test_the_sibling_calls_compare_rather_than_reimplementing_the_check_order(mo
     cases a test happens to pick and diverge on the one it does not."""
     seen = {}
 
-    def _spy(work, fanout, single):
+    def _spy(work, fanout, single, *, spend_basis):
         seen["work"] = work
         seen["fanout"] = fanout.name
         seen["single"] = single.name
-        return fanout_measure.compare(work, fanout, single)
+        seen["spend_basis"] = spend_basis
+        return fanout_measure.compare(work, fanout, single, spend_basis=spend_basis)
 
     monkeypatch.setattr(learning_verdict, "compare", _spy)
     learning_verdict.verdict_task(
@@ -78,6 +79,9 @@ def test_the_sibling_calls_compare_rather_than_reimplementing_the_check_order(mo
         "work": "sk_grill",
         "fanout": learning_verdict.ARM_SKILLS_ON,
         "single": learning_verdict.ARM_SKILLS_OFF,
+        # The one thing this module declares rather than inherits, asserted at the call and not
+        # only in the answer: a keyword that stopped being passed would default to TOTALS.
+        "spend_basis": fanout_measure.SPEND_PER_TRIAL,
     }
 
 
@@ -284,7 +288,7 @@ def test_no_published_note_speaks_the_fanout_vocabulary(word):
 def test_the_replacement_note_keeps_compares_OWN_numbers():
     """A relabel that re-derived the numbers would be a second implementation of the check.
 
-    The replacement sentence must carry the same per-arm totals AND the same percentage
+    The replacement sentence must carry the same per-arm spend AND the same percentage
     ``compare()`` prints — asserted against ``compare()``'s own note rather than a literal, so a
     rounding path that drifts by a tenth reddens this. It did: deriving the percentage from the
     payload's 4-decimal ``token_ratio`` printed 13.7% where ``compare()`` printed 13.6%.
@@ -298,8 +302,10 @@ def test_the_replacement_note_keeps_compares_OWN_numbers():
     )
     assert tv.verdict == learning_verdict.VERDICT_NOT_TOKEN_MATCHED
     note = next(n for n in tv.notes if "token spend differs" in n)
-    assert f"{learning_verdict.ARM_SKILLS_ON} {on_tokens * k}" in note
-    assert f"{learning_verdict.ARM_SKILLS_OFF} {off_tokens * k}" in note
+    # PER TRIAL — the quantity the gate divided. The arm totals are `k` times these and are in the
+    # published `arms` payload; a note that printed totals would name a number the gate did not use.
+    assert f"{learning_verdict.ARM_SKILLS_ON} {on_tokens} over {k} trial(s)" in note
+    assert f"{learning_verdict.ARM_SKILLS_OFF} {off_tokens} over {k}" in note
 
     def _arm(name, tokens):
         return fanout_measure.Arm(
@@ -307,7 +313,12 @@ def test_the_replacement_note_keeps_compares_OWN_numbers():
             trials=[fanout_measure.Trial(score=1.0, tokens=tokens) for _ in range(k)],
         )
 
-    upstream = fanout_measure.compare("sk_grill", _arm("a", on_tokens), _arm("b", off_tokens))
+    upstream = fanout_measure.compare(
+        "sk_grill",
+        _arm("a", on_tokens),
+        _arm("b", off_tokens),
+        spend_basis=fanout_measure.SPEND_PER_TRIAL,
+    )
     printed = next(n for n in upstream.notes if "token spend differs by " in n)
     percentage = printed.split("token spend differs by ", 1)[1].split(" ", 1)[0]
     assert percentage.endswith("%")
@@ -326,11 +337,32 @@ def test_the_literature_citation_that_justifies_the_band_is_NOT_reworded():
     assert any("scorer swaps move scores further than architecture does" in n for n in tv.notes)
 
 
-def test_unequal_arms_say_so_beside_the_ratio_they_distort():
-    """MEASURED: `sk_task_project` lost two `skills_on` cells to `VERIFIER_ABSENT` and was
-    verdicted on 3 trials against 5. `compare()` divides arm TOTALS, so the ratio came out 0.5139
-    — a "48.6% spend difference" that is mostly two missing trials (8,099/trial against
-    9,456/trial is 0.857). §6 counts absent cells; it does not make the survivors comparable."""
+def test_a_balanced_pair_carries_no_imbalance_note():
+    """The vacuity floor for the unequal-arm cases below: the note must be absent when the arms are
+    equal, or it is decoration that fires on every task and tells a reader nothing."""
+    tv = _spend((80, 80, 80), (60, 60, 60), on_tokens=1000, off_tokens=1000)
+    assert not any("UNEQUAL" in n for n in tv.notes)
+
+
+# ── the token gate divides PER TRIAL, because this is a paired design (#2587) ──
+#
+# Protocol §3 runs `k` trials per arm over IDENTICAL work, so per-trial and total spend are the same
+# comparison whenever a run is whole. They diverge in exactly one case and it is §6's: an arm that
+# lost cells to `VERIFIER_ABSENT`. `compare()`'s default basis is TOTALS and is right for the
+# experiment it belongs to — amendment (e) matches budget by giving the cheaper arm more samples, so
+# ITS arms are unequal on purpose. Reusing that denominator here published, about a real run:
+#
+#     token_ratio 0.5139 — "token spend differs by 48.6%"
+#
+# for `sk_task_project` in `learnbench-20260907T003211Z`, which ran 3 `skills_on` trials against 5
+# and whose per-trial spends are 8,099 and 9,456 — a 14.3% difference. Two thirds of that "48.6%"
+# was the two missing attempts.
+
+
+def test_the_ratio_of_UNEQUAL_arms_is_PER_TRIAL_not_over_totals():
+    """The measured case, with the run's own numbers. The published ratio must be the per-trial one
+    and must NOT be the totals one — asserted as both, because a single assertion on the wanted
+    value passes on any arithmetic that happens to land near it."""
     tv = learning_verdict.verdict_task(
         task_id="sk_task_project",
         skill="task-and-project",
@@ -339,16 +371,74 @@ def test_unequal_arms_say_so_beside_the_ratio_they_distort():
         absent_cells=2,
         spend_observed=True,
     )
+    assert tv.token_ratio == round(8099 / 9456, 4) == 0.8565
+    assert tv.token_ratio != round((8099 * 3) / (9456 * 5), 4)
+    # …and correcting the arithmetic does NOT move the verdict class, which is what makes this a
+    # miscomputation fix rather than a protocol edit: 14.3% is over the 5% tolerance too.
     assert tv.verdict == learning_verdict.VERDICT_NOT_TOKEN_MATCHED
+
+
+def test_equal_TOTALS_over_unequal_trial_counts_is_NOT_a_token_match():
+    """The rail with teeth, and the failure the totals gate could not see at all.
+
+    Three trials at 10,000 each against five at 6,000 each: 30,000 in total both ways, so the
+    totals gate calls it perfectly matched (ratio 1.0) and hands the score delta a direction. Per
+    attempt the arms spent 10,000 against 6,000 — 66.7% apart. A gate that certifies a token match
+    that does not exist is worse than one that refuses a real one, because the verdict it releases
+    is the budget wearing the treatment's name.
+    """
+    tv = learning_verdict.verdict_task(
+        task_id="sk_task_project",
+        skill="task-and-project",
+        on_trials=[learning_verdict.Trial(score=90.0, tokens=10_000) for _ in range(3)],
+        off_trials=[learning_verdict.Trial(score=60.0, tokens=6_000) for _ in range(5)],
+        absent_cells=2,
+        spend_observed=True,
+    )
+    assert tv.verdict == learning_verdict.VERDICT_NOT_TOKEN_MATCHED
+    assert tv.token_ratio == round(10_000 / 6_000, 4)
+    # The shape the totals gate would have produced, spelled out so this test states what it
+    # prevents rather than only what it wants.
+    on = fanout_measure.Arm(
+        name="skills_on", trials=[fanout_measure.Trial(score=90.0, tokens=10_000)] * 3
+    )
+    off = fanout_measure.Arm(
+        name="skills_off", trials=[fanout_measure.Trial(score=60.0, tokens=6_000)] * 5
+    )
+    on_totals = fanout_measure.compare("sk_task_project", on, off)
+    assert on_totals.token_ratio == 1.0
+    assert on_totals.verdict == fanout_measure.VERDICT_FANOUT_WINS
+
+
+def test_the_basis_is_verified_off_the_ANSWER_not_only_passed_into_the_call(monkeypatch):
+    """The rail proper. `compare()`'s default is TOTALS, so an edit that drops the keyword — or
+    that flips `SPEND_BASIS` — would silently restore the incommensurable comparison. It raises
+    instead, and the raise names both trial counts so the report of it is diagnosable."""
+    monkeypatch.setattr(learning_verdict, "SPEND_BASIS", fanout_measure.SPEND_TOTAL)
+    with pytest.raises(learning_verdict.IncommensurableSpendError) as exc:
+        learning_verdict.verdict_task(
+            task_id="sk_task_project",
+            skill="task-and-project",
+            on_trials=[learning_verdict.Trial(score=100.0, tokens=8099) for _ in range(3)],
+            off_trials=[learning_verdict.Trial(score=100.0, tokens=9456) for _ in range(5)],
+            spend_observed=True,
+        )
+    assert "3 skills_on trial(s) against 5 skills_off" in str(exc.value)
+
+
+def test_the_unequal_arm_note_says_the_ratio_is_per_trial_and_the_delta_is_not_paired():
+    """§8 publishes the notes, and §6's absent cells cost this pair its pairing. The ratio survives
+    as a per-trial observation; the score delta beside it does not survive as a paired one, and the
+    published sentence has to say which is which."""
+    tv = learning_verdict.verdict_task(
+        task_id="sk_task_project",
+        skill="task-and-project",
+        on_trials=[learning_verdict.Trial(score=100.0, tokens=8099) for _ in range(3)],
+        off_trials=[learning_verdict.Trial(score=100.0, tokens=9456) for _ in range(5)],
+        absent_cells=2,
+        spend_observed=True,
+    )
     note = next(n for n in tv.notes if "UNEQUAL" in n)
     assert "skills_on 3 trial(s) against skills_off 5" in note
-    assert "not a per-trial comparison" in note
-    # The ratio itself is NOT quietly corrected — that would change a number `compare()` produced.
-    assert tv.token_ratio == round((8099 * 3) / (9456 * 5), 4)
-
-
-def test_a_balanced_pair_carries_no_imbalance_note():
-    """The vacuity floor for the case above: the note must be absent when the arms are equal, or
-    it is decoration that fires on every task and tells a reader nothing."""
-    tv = _spend((80, 80, 80), (60, 60, 60), on_tokens=1000, off_tokens=1000)
-    assert not any("UNEQUAL" in n for n in tv.notes)
+    assert "PER-TRIAL comparison" in note
+    assert "NOT a paired result" in note
