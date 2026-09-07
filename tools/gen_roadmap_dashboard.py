@@ -4,20 +4,39 @@
 Design goal (owner ask, 2026-08-05, refined 2026-08-06): LOW COGNITIVE LOAD. The default
 view is ~one screen and answers three questions with no scrolling:
 
-  1. How much is done?    — a hero band: plans-done % AND atoms-done %, each a 4-color
-                            stacked status bar with counts.
+  1. How much is done?    — a hero band: plans-done % AND atoms-done %, each a stacked
+                            status bar over the states in `DAG_STATES`, with counts.
   2. What's happening now? — the live execution stack + next-up queue (from
                             `.roadmap-exec-state.json`), with branch + PR links.
   3. Where does the work live? — a compact pillar grid, one tile per plan, click to drill in.
+
+And, since 2026-09-07, a fourth question the first three could not answer: WHY is an atom
+not moving? Everything not done, not in progress and not on the ready frontier used to
+render as one grey `blocked` bucket — dozens of atoms mixing "the owner can sign this off
+today" with "needs a second machine nobody here has" with "waiting its turn behind another
+atom". Those want different reactions from different people, so the stuck half is split by
+CAUSE (`owner` / `environment` / `waiting`) with an `unclassified` state for atoms the rules
+cannot place. See `DAG_STATES` for the vocabulary and `AtomClassifier` for the precedence.
+
+How MANY are in each is deliberately not written down anywhere in this file: run it and read
+the summary line. That population turns over daily — the same query returned 37 at main
+`281d693b1` and 34 three commits later at `50b3671e3`, because CE-10, EI-6 and PEP-16
+flipped to done — so any number pinned in prose here would be wrong by the next tick.
 
 Everything heavier — per-plan atom lists, dependency tiers, the full execution-order prose,
 the engine session queue — lives inside `<details>` elements that are CLOSED by default.
 No JS framework: native `<details>/<summary>` plus a tiny expand/collapse-all helper.
 
 Derives ENTIRELY from files already maintained as the source of truth, so it never drifts:
-  * docs/roadmap/atomic/dag.json  — 602 atoms + the authoritative DAG (ready_frontier,
-                                    cycles, dangling, unresolved). The backbone: every
-                                    count and color comes from here.
+  * docs/roadmap/atomic/dag.json  — the atom catalog + the authoritative DAG:
+                                    ready_frontier, gated_frontier, cycles, dangling,
+                                    unresolved, resolved_edges. The backbone: every count
+                                    and colour comes from here, computed at run time.
+                                    Sizes belong in the output, not in this docstring —
+                                    this line read "602 atoms" for months while the file
+                                    grew to 684 (measured at 50b3671e3, 2026-09-07), and a
+                                    stale number is most dangerous in the file that
+                                    computes the real one.
   * docs/roadmap/roadmap.md       — the Plans-by-Pillar tables (pillar grouping, names, waves)
   * docs/roadmap/plans/*.md       — each plan's **Status:** line (shown inside a drilled tile)
   * workspace ROADMAP.md §5       — the full execution-order prose (collapsed)
@@ -40,6 +59,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 # ── locate the repos relative to this file ──
 CORE = Path(__file__).resolve().parents[1]  # …/PersonalClaw/PersonalClaw
@@ -460,6 +480,10 @@ def parse_atoms() -> dict:
     return {
         "atoms": atoms,
         "ready": d.get("ready_frontier", []),
+        # Startable by deps but held back by a gate the ordering graph cannot see. Each entry
+        # carries a `gate` array — the difference between "the owner can act" and "this
+        # environment cannot", i.e. rules 1 and 2 of `AtomClassifier`.
+        "gated": d.get("gated_frontier", []),
         "topo": d.get("topo_order", []),
         "cycles": d.get("cycles", []),
         "dangling": d.get("dangling", []),
@@ -497,42 +521,270 @@ def dag_layers(atoms: dict[str, dict]) -> list[list[dict]]:
     return layers
 
 
-# DAG status vocabulary — ONE source of truth shared by every bar and chip.
-# done / in_progress come straight from the atom; a `todo` atom is `ready` when it is in the
-# authoritative ready-frontier, else `blocked`. Labels, CSS classes, and colors travel together.
-DAG_STATES = (
-    ("done", "st-done", "#3fb950", "done"),
-    ("in_progress", "st-inprog", "#d29922", "in progress"),
-    ("ready", "st-ready", "#58a6ff", "startable"),
-    ("blocked", "st-blocked", "#6e7681", "blocked"),
-)
-_DAG_CLASS = {k: c for k, c, _, _ in DAG_STATES}
-_DAG_COLOR = {k: col for k, _, col, _ in DAG_STATES}
-_DAG_LABEL = {k: lbl for k, _, _, lbl in DAG_STATES}
+# ── DAG status vocabulary — ONE source of truth shared by every bar, chip, dot and legend ──
+#
+# done / in_progress come straight from the atom, and a `todo` atom on the authoritative
+# ready-frontier is `ready`. The rest is the interesting part. Until 2026-09-07 EVERYTHING
+# else was a single grey `blocked` — every stuck atom in one bar, and the owner could not see
+# which of them were HIS. They are three unrelated situations — a sign-off, repo, release or
+# money-spending live run only the owner can do; a machine, OS grant, live account or price
+# row this environment lacks; or plain dependency ordering behind another atom — so they get
+# three states. `unclassified` is the seventh, and deliberate: an atom the rules cannot place
+# must be VISIBLE, because a guessed classification is worse than the grey bucket it replaced
+# (the owner would act on it). See `AtomClassifier` for the precedence.
 
-# When the DAG is absent, fall back to plan-level status → one of the four states.
+
+class DagState(NamedTuple):
+    """One rendered state. Key, CSS class, colours and wording travel TOGETHER, by design."""
+
+    key: str
+    cls: str
+    bg: str  #: the fill
+    ink: str  #: text ON that fill — half a pair, never set anywhere else (see `_state_css`)
+    label: str  #: legend chip + bar-segment wording; keep it chip-short
+    hint: str  #: legend tooltip — what this state asks of the reader
+
+
+DAG_STATES: tuple[DagState, ...] = (
+    DagState("done", "st-done", "#3fb950", "#0d1117", "done", "Shipped, with evidence in-tree."),
+    DagState(
+        "in_progress",
+        "st-inprog",
+        "#d29922",
+        "#0d1117",
+        "in progress",
+        "Being built right now.",
+    ),
+    DagState(
+        "ready",
+        "st-ready",
+        "#58a6ff",
+        "#0d1117",
+        "startable",
+        "Every dependency satisfied and ungated — an agent can pick this up now.",
+    ),
+    DagState(
+        "owner",
+        "st-owner",
+        "#db61a2",
+        "#0d1117",
+        "owner action",
+        "OWNER'S QUEUE: only the owner can move it — a sign-off, a repo or listing to "
+        "create, a release to cut, provisioning, commissioning a review, a live run that "
+        "spends real money.",
+    ),
+    DagState(
+        "environment",
+        "st-env",
+        "#a371f7",
+        "#0d1117",
+        "environment",
+        "Needs a machine, an OS grant held by another responsible process, a live external "
+        "account or a price row that does not exist here. No decision unblocks it.",
+    ),
+    DagState(
+        "waiting",
+        "st-waiting",
+        "#6e7681",
+        "#c9d1d9",
+        "waiting",
+        "Blocked only on another unfinished atom — ordinary dependency ordering. Nothing "
+        "for anyone to decide.",
+    ),
+    DagState(
+        "unclassified",
+        "st-unclass",
+        "#f85149",
+        "#0d1117",
+        "unclassified",
+        "The rules could not say WHY this is stuck — read its blocked_reason. Loud on "
+        "purpose: a guess here is worse than a grey bucket, because it would be acted on.",
+    ),
+)
+_DAG_CLASS = {s.key: s.cls for s in DAG_STATES}
+_DAG_LABEL = {s.key: s.label for s in DAG_STATES}
+
+#: The invariant every percentage on this page rests on: each atom lands in EXACTLY ONE
+#: state, so the per-state counts must sum to the atom total. Spelled out as an explicit
+#: roll-call instead of `sum(counts.values())` because `sum()` cannot tell a state that is
+#: counted from one that was added to `DAG_STATES` and then silently dropped from the hero
+#: bar — the second makes every percentage lie while still adding up. Same shape as the
+#: per-plan column invariant `tests/test_roadmap_dag_derived.py` asserts over dag.json's
+#: `plan_counts`: name the columns, then require them to account for the whole.
+_STATE_ROLL_CALL = (
+    "done",
+    "in_progress",
+    "ready",
+    "owner",
+    "environment",
+    "waiting",
+    "unclassified",
+)
+
+
+def assert_state_partition(counts: dict[str, int], total: int, what: str) -> None:
+    """Raise unless `counts` partitions `total` across EVERY state in `_STATE_ROLL_CALL`.
+
+    Raises (rather than `assert`) so `python -O` cannot strip the only thing standing
+    between a new state and a page whose bars quietly stop summing to 100%.
+    """
+    known = {s.key for s in DAG_STATES}
+    unlisted = sorted(known - set(_STATE_ROLL_CALL))
+    if unlisted:
+        raise AssertionError(
+            f"DAG_STATES gained {unlisted} but _STATE_ROLL_CALL was not updated — the "
+            f"{what} bar would silently stop summing to its total. Add the state there."
+        )
+    stale = sorted(set(_STATE_ROLL_CALL) - known)
+    if stale:
+        raise AssertionError(f"_STATE_ROLL_CALL names {stale}, which DAG_STATES dropped")
+    tallied = sum(counts.get(key, 0) for key in _STATE_ROLL_CALL)
+    if tallied != total:
+        parts = " + ".join(f"{key} {counts.get(key, 0)}" for key in _STATE_ROLL_CALL)
+        raise AssertionError(f"{what}: {parts} = {tallied}, but total is {total}")
+
+
+# When the DAG is absent, fall back to plan-level status.
 _STATUS_TO_STATE = {
     "done": "done",
     "in_progress": "in_progress",
     "proposed": "ready",
-    "deferred": "blocked",
-    "unknown": "blocked",
-    "missing": "blocked",
+    # Without the DAG there is no gate array and no blocked_reason, so WHY a deferred /
+    # unknown / missing plan is not moving is genuinely unknown here. Say that, rather than
+    # colouring the tile `owner` or `waiting` on no evidence.
+    "deferred": "unclassified",
+    "unknown": "unclassified",
+    "missing": "unclassified",
 }
 
+#: An OWNER marker in a `blocked_reason`. The first two mirror `OWNER_GATE_RE` in
+#: `tools/regen_dag_derived.py` — the regex that puts `"owner"` in a `gated_frontier` gate
+#: array — so the two agree by construction on the atoms both can see. `residual` is the
+#: dashboard's own addition: it only ever appears on atoms whose status is already `blocked`,
+#: which the deriver never considers startable and so never gates.
+_OWNER_TAG_RE = re.compile(r"owner[-\s]?(?:gated|only|residual)", re.I)
+#: The matching ENVIRONMENT marker. The deriver has no `"env"` gate token, so an
+#: environment-gated atom is only legible here through this marker on a `blocked` atom.
+_ENV_TAG_RE = re.compile(r"environment[-\s]?gated", re.I)
+#: An atom id shaped token; only ids that exist in the catalog are believed (`AtomClassifier
+#: ._unfinished_named`), which is what keeps `WORKFLOWS-V2` and `PR #81` out.
+_ATOM_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]{0,9}-\d{1,3}\b")
+#: "…blocked on a core scanner decision … see issue #2526" — a core DECISION issue named as
+#: the blocker. Not owner work (the atom's own scope is met) and not a dep edge the DAG can
+#: see, but still just waiting on something else to land.
+_DECISION_ISSUE_RE = re.compile(
+    r"(?:decision|ruling)\b[^.]{0,140}?issue\s*#\d+"
+    r"|issue\s*#\d+[^.]{0,140}?(?:decision|ruling)\b",
+    re.I,
+)
+#: An owner act named as THE BLOCKER, for reasons carrying no explicit marker. Blocker
+#: language must introduce it inside the same clause, because the bare phrase is usually
+#: PROVENANCE, not a gate: "split from WF2UNI-12 per owner ruling 2026-08-27" records who
+#: decided the split, and reading that as "the owner can act" would put an atom that is
+#: purely waiting on its predecessor into the owner's queue.
+_OWNER_AS_BLOCKER_RE = re.compile(
+    r"(?:blocker|blocked|gate|gates|gated|unmet|unblocks?)\b[^.;]{0,80}?"
+    r"owner\s+(?:ruling|approval|sign-?off|live\s+run)",
+    re.I,
+)
 
-def classify_atom(atom: dict, ready_ids: set[str]) -> str:
-    """One of done | in_progress | ready | blocked.
 
-    done/in_progress come from the atom; a `todo` atom is `ready` iff it is in the DAG's
-    authoritative ready-frontier (which resolves cross-plan EXT edges to concrete atoms),
-    else `blocked`. Using the frontier keeps every blue count identical to the "Startable
-    now" frontier length.
+@dataclass(frozen=True)
+class AtomClassifier:
+    """Which `DAG_STATES` key an atom is in, and WHY — mechanically, in a fixed precedence.
+
+    Built once per run by `classifier_for` from the dag block, because three of the rules
+    need graph-wide facts (the two frontiers, and every other atom's status).
+
+    The precedence, highest first:
+
+    0. `status` is `done` / `in_progress` — the atom itself settles it; it IS moving.
+    1. on `gated_frontier` with `"owner"` in its gate array → **owner**. Deps are all met;
+       the only thing left is an owner act. This outranks the gate's other tokens: AR-1 is
+       gated `["ext", "owner"]` and it is the owner's ruling that unsticks it.
+    2. on `gated_frontier` with no `"owner"` gate (e.g. `["ext"]`) → **environment**.
+    3. on `ready_frontier` → **ready**.
+    4. `status` is `blocked` → read `blocked_reason`, case-insensitively:
+       a. an ENVIRONMENT-GATED marker → **environment**. Checked BEFORE the owner markers
+          because an environment reason often also cites the owner ruling that scoped it
+          (PCS-9: "ENVIRONMENT-GATED (owner ruling 2026-08-28 split this from …)") and the
+          explicit marker is the atom's own answer to this exact question.
+       b. an OWNER-GATED / OWNER-ONLY / OWNER-RESIDUAL marker → **owner**.
+       c. a core decision issue, or another unfinished atom, named as the blocker →
+          **waiting**.
+       d. an owner act named as the blocker in prose → **owner**.
+       e. otherwise → **unclassified**, and the page says so out loud.
+    5. `status` is `todo` and it is on neither frontier → **waiting**: something in its dep
+       closure is unfinished, which is exactly why the deriver left it off both frontiers.
+       A marker in such an atom's reason describes the gate it will hit LATER, not what is
+       stopping it now (DL-10 is OWNER-ONLY, but what it waits on is DL-11).
+    6. anything else → **unclassified**.
     """
-    st = atom.get("status", "todo")
-    if st in ("done", "in_progress"):
-        return st
-    return "ready" if atom.get("id") in ready_ids else "blocked"
+
+    ready_ids: frozenset[str]
+    gates: dict[str, tuple[str, ...]]  #: atom id → its `gated_frontier` gate tokens
+    atoms: dict[str, dict]  #: the whole catalog, for "does this reason name a live blocker"
+
+    def state(self, atom: dict) -> str:
+        return self.explain(atom)[0]
+
+    def explain(self, atom: dict) -> tuple[str, str]:
+        """`(state, why)` — `why` is shown on the page for `unclassified` and in the log."""
+        aid = str(atom.get("id") or "")
+        st = str(atom.get("status") or "todo")
+        if st in ("done", "in_progress"):
+            return st, f"status {st}"
+        gate = self.gates.get(aid)
+        if gate is not None:
+            if "owner" in gate:
+                return "owner", "gated_frontier, gate includes owner"
+            return "environment", f"gated_frontier, gate {','.join(gate) or '(empty)'}"
+        if aid in self.ready_ids:
+            return "ready", "ready_frontier"
+        reason = str(atom.get("blocked_reason") or "")
+        if st == "blocked":
+            if _ENV_TAG_RE.search(reason):
+                return "environment", "blocked_reason carries an ENVIRONMENT-GATED marker"
+            if _OWNER_TAG_RE.search(reason):
+                return "owner", "blocked_reason carries an OWNER-GATED/ONLY/RESIDUAL marker"
+            if _DECISION_ISSUE_RE.search(reason):
+                return "waiting", "blocked_reason names a core decision issue as the blocker"
+            named = self._unfinished_named(aid, reason)
+            if named:
+                return "waiting", f"blocked_reason names unfinished {', '.join(named)}"
+            if _OWNER_AS_BLOCKER_RE.search(reason):
+                return "owner", "blocked_reason names an owner act as the blocker"
+            return "unclassified", (
+                "status blocked, but its blocked_reason carries no owner or environment "
+                "marker and names neither an unfinished atom nor a decision issue as the "
+                "blocker — nothing here can say who unsticks it"
+            )
+        if st == "todo":
+            return "waiting", "todo, on neither frontier — something in its deps is unfinished"
+        return "unclassified", f"status {st!r} matches no rule"
+
+    def _unfinished_named(self, aid: str, reason: str) -> list[str]:
+        """Atom ids the reason names that exist in the catalog and are not `done`."""
+        found: list[str] = []
+        for token in _ATOM_ID_RE.findall(reason):
+            if token == aid or token in found:
+                continue
+            other = self.atoms.get(token)
+            if other is not None and other.get("status") != "done":
+                found.append(token)
+        return sorted(found)
+
+
+def classifier_for(dag: dict) -> AtomClassifier:
+    """One classifier for the whole run, from `parse_atoms`' output (or an empty dag)."""
+    return AtomClassifier(
+        ready_ids=frozenset(str(r.get("id") or "") for r in (dag.get("ready") or [])),
+        gates={
+            str(g.get("id") or ""): tuple(str(t).lower() for t in (g.get("gate") or ()))
+            for g in (dag.get("gated") or [])
+        },
+        atoms=dag.get("atoms") or {},
+    )
 
 
 def _natkey(aid: str):
@@ -544,33 +796,33 @@ def _natkey(aid: str):
 
 
 def _bar(counts: dict[str, int], total: int, height: int, labels: bool = False) -> str:
-    """A single stacked horizontal bar over the four states (widths = share of total)."""
+    """A single stacked horizontal bar over every state (widths = share of total)."""
     if not total:
         return f'<div class="statbar" style="height:{height}px"></div>'
     segs = ""
-    for key, cls, _c, lbl in DAG_STATES:
-        n = counts.get(key, 0)
+    for s in DAG_STATES:
+        n = counts.get(s.key, 0)
         if not n:
             continue
         pc = n / total * 100
         text = ""
         if labels:
-            text = f"{n} {lbl}" if pc >= 12 else (str(n) if pc >= 5 else "")
-        segs += f'<i class="{cls}" style="width:{pc:.3f}%" title="{n} {lbl}">{text}</i>'
+            text = f"{n} {s.label}" if pc >= 12 else (str(n) if pc >= 5 else "")
+        segs += f'<i class="{s.cls}" style="width:{pc:.3f}%" title="{n} {s.label}">{text}</i>'
     return f'<div class="statbar" style="height:{height}px">{segs}</div>'
 
 
 def _caption(counts: dict[str, int]) -> str:
-    """e.g. '214 done · 8 in progress · 153 startable · 227 blocked' (nonzero states only)."""
+    """e.g. 'N done · N startable · N owner action · N waiting' — nonzero states only."""
     return " · ".join(
-        f"{counts.get(k, 0)} {lbl}" for k, _c, _col, lbl in DAG_STATES if counts.get(k, 0)
+        f"{counts.get(s.key, 0)} {s.label}" for s in DAG_STATES if counts.get(s.key, 0)
     )
 
 
-def _count_states(atom_list: list[dict], ready_ids: set[str]) -> dict[str, int]:
-    c = {k: 0 for k, *_ in DAG_STATES}
+def _count_states(atom_list: list[dict], clf: AtomClassifier) -> dict[str, int]:
+    c = {s.key: 0 for s in DAG_STATES}
     for a in atom_list:
-        c[classify_atom(a, ready_ids)] += 1
+        c[clf.state(a)] += 1
     return c
 
 
@@ -584,7 +836,15 @@ def _plan_state(counts: dict[str, int]) -> str:
         return "in_progress"
     if counts["ready"]:
         return "ready"
-    return "blocked"
+    # Nothing shipped and nothing startable: colour the tile by the most ACTIONABLE cause it
+    # holds, so a plan the owner could unstick reads as his instead of as generic grey.
+    # `unclassified` sorts last: it is reported in full by its own strip, and letting one
+    # unplaceable atom repaint a plan whose other atoms are plainly waiting would hide the
+    # thing this ordering exists to surface.
+    for key in ("owner", "environment", "waiting", "unclassified"):
+        if counts.get(key):
+            return key
+    return "unclassified"
 
 
 # ── rendering ──
@@ -603,7 +863,7 @@ def render(
         return round(100 * a / b) if b else 0
 
     ready = dag.get("ready") or []
-    ready_ids = {r.get("id") for r in ready}
+    clf = classifier_for(dag)
     atoms = dag.get("atoms") or {}
 
     # index atoms by their (long) plan name for the join with roadmap pillar rows
@@ -616,10 +876,10 @@ def render(
     seen: set[str] = set()
 
     def _rec(name, code, slug, num, status_line, atom_list):
-        counts = _count_states(atom_list, ready_ids)
+        counts = _count_states(atom_list, clf)
         state = _plan_state(counts)
         if state == "empty":  # DAG absent → colour by plan-level status
-            state = _STATUS_TO_STATE.get(status_kind_for.get(slug, "unknown"), "blocked")
+            state = _STATUS_TO_STATE.get(status_kind_for.get(slug, "unknown"), "unclassified")
         # pair each atom with its authoritative state so the tile dots match the frontier
         atoms_sorted = sorted(atom_list, key=lambda x: _natkey(x.get("id", "")))
         return {
@@ -628,7 +888,7 @@ def render(
             "slug": slug,
             "num": num,
             "status_line": status_line,
-            "atoms": [(a, classify_atom(a, ready_ids)) for a in atoms_sorted],
+            "atoms": [(a, clf.state(a)) for a in atoms_sorted],
             "counts": counts,
             "total": sum(counts.values()),
             "state": state,
@@ -654,16 +914,24 @@ def render(
 
     all_recs = [r for recs in pillars.values() for r in recs]
 
-    # ---- hero band: plans + atoms, each a 4-color stacked bar ----
-    plan_counts = {k: 0 for k, *_ in DAG_STATES}
+    # ---- hero band: plans + atoms, each a stacked bar over every state ----
+    plan_counts = {s.key: 0 for s in DAG_STATES}
     for r in all_recs:
         plan_counts[r["state"]] += 1
     plan_total = sum(plan_counts.values())
+    assert_state_partition(plan_counts, len(all_recs), "plan hero bar")
 
-    atom_counts = {k: 0 for k, *_ in DAG_STATES}
+    atom_counts = {s.key: 0 for s in DAG_STATES}
+    unplaced: list[tuple[dict, str]] = []
     for a in atoms.values():
-        atom_counts[classify_atom(a, ready_ids)] += 1
+        state, why = clf.explain(a)
+        atom_counts[state] += 1
+        if state == "unclassified":
+            unplaced.append((a, why))
     atom_total = sum(atom_counts.values())
+    # The whole page's arithmetic in one line: every atom in the catalog lands in exactly one
+    # state, so a state added to DAG_STATES and forgotten here reds instead of skewing the %.
+    assert_state_partition(atom_counts, len(atoms), "atom hero bar")
 
     def herocard(title, counts, total):
         return (
@@ -682,10 +950,13 @@ def render(
         + "</section>"
     )
 
+    # Each swatch carries its state's CLASS, not an inline colour: the fill and the ink that
+    # goes on it live together in DAG_STATES and reach the page through `_state_css` only.
     legend = (
         '<div class="legend">'
         + "".join(
-            f'<span><b style="background:{col}"></b>{lbl}</span>' for _k, _c, col, lbl in DAG_STATES
+            f'<span title="{_tip(s.hint)}"><b class="{s.cls}"></b>{esc(s.label)}</span>'
+            for s in DAG_STATES
         )
         + '<span class="hint">click any tile to drill into its atoms</span></div>'
     )
@@ -695,8 +966,8 @@ def render(
 
     driver_html = _render_driver(driver)
 
-    # ---- validation strip (cycles / unresolved / dangling) ----
-    validation = _render_validation(dag)
+    # ---- validation strip (cycles / unresolved / dangling), then the unplaceable atoms ----
+    validation = _render_validation(dag) + _render_unclassified(unplaced)
 
     # ---- pillar grid (compact tiles; each is a closed <details>) ----
     grid_sections = ""
@@ -704,7 +975,7 @@ def render(
         letter = pillar.split("—")[0].replace("Pillar", "").strip()
         rest = pillar.split("—", 1)[1].strip() if "—" in pillar else pillar
         recs_sorted = sorted(recs, key=lambda r: (999 if r["num"] == "—" else int(r["num"])))
-        pc = {k: 0 for k, *_ in DAG_STATES}
+        pc = {s.key: 0 for s in DAG_STATES}
         for r in recs_sorted:
             for k in pc:
                 pc[k] += r["counts"].get(k, 0)
@@ -720,10 +991,10 @@ def render(
         )
 
     # ---- collapsed extras ----
-    extras = _render_extras(dag, nxt, queue, ready)
+    extras = _render_extras(dag, nxt, queue, ready, clf)
 
     return _PAGE.format(
-        css=_CSS,
+        css=_CSS + _state_css(),
         stamp=time.strftime("%Y-%m-%d %H:%M", time.localtime()),
         staleness=_render_staleness(),
         plan_pct=pct(plan_counts["done"], plan_total),
@@ -1071,7 +1342,42 @@ def _render_validation(dag: dict) -> str:
     )
 
 
-def _render_extras(dag: dict, nxt: list[dict], queue: QueueStats, ready: list) -> str:
+def _render_unclassified(rows: list[tuple[dict, str]]) -> str:
+    """Name every atom the classifier REFUSED to place, with the reason text it read.
+
+    This strip is the honest half of the why-is-it-stuck split. The alternative — quietly
+    defaulting an unmatched atom into `waiting` (invisible) or `owner` (worse: the owner
+    would go do something) — buys a tidy page by lying on it. An entry here is a real
+    finding about dag.json: either the `blocked_reason` names a blocker the DAG does not
+    model as a dep, or the marker vocabulary needs a deliberate extension. Empty renders
+    nothing, so a clean run costs no screen space.
+    """
+    if not rows:
+        return ""
+    items = ""
+    for atom, why in sorted(rows, key=lambda pair: _natkey(pair[0].get("id", ""))):
+        reason = (atom.get("blocked_reason") or "").strip()
+        quoted = f"“{reason[:220]}…”" if len(reason) > 220 else (f"“{reason}”" if reason else "")
+        items += (
+            f'<li><code>{esc(atom.get("id", ""))}</code> {esc(atom.get("title", ""))}'
+            f'<span class="rf-plan">{esc(atom.get("plan_code") or atom.get("plan") or "")}'
+            f'</span><div class="unc-why">{esc(why)}</div>'
+            f'<div class="unc-reason">{esc(quoted) or "no blocked_reason recorded"}</div></li>'
+        )
+    return (
+        '<section class="box val warn"><span class="valdot st-unclass"></span>'
+        f'<div class="valbody"><b class="valtitle">Unclassified — why these are stuck '
+        f"cannot be read from the DAG ({len(rows)})</b>"
+        f'<p class="xhint">Not a bucket: each of these is a gap in dag.json or in the '
+        f"classifier, and is left uncoloured rather than guessed. Fix the atom's "
+        f"<code>blocked_reason</code> (or its deps) upstream — not here.</p>"
+        f'<ul class="unc-list">{items}</ul></div></section>'
+    )
+
+
+def _render_extras(
+    dag: dict, nxt: list[dict], queue: QueueStats, ready: list, clf: AtomClassifier
+) -> str:
     out = '<section class="extras"><div class="xhead">'
     out += (
         '<button id="xall" class="xbtn">Expand all plan tiles</button>'
@@ -1118,7 +1424,7 @@ def _render_extras(dag: dict, nxt: list[dict], queue: QueueStats, ready: list) -
 
     # dependency tiers
     if dag:
-        out += _render_tiers(dag)
+        out += _render_tiers(dag, clf)
 
     # engine session queue
     if queue.total:
@@ -1135,17 +1441,16 @@ def _render_extras(dag: dict, nxt: list[dict], queue: QueueStats, ready: list) -
     return out
 
 
-def _render_tiers(dag: dict) -> str:
+def _render_tiers(dag: dict, clf: AtomClassifier) -> str:
     atoms = dag["atoms"]
-    ready_ids = {r.get("id") for r in (dag.get("ready") or [])}
-    state = {aid: classify_atom(a, ready_ids) for aid, a in atoms.items()}
+    state = {aid: clf.state(a) for aid, a in atoms.items()}
     layers = dag_layers(atoms)
     tiers = ""
     for i, layer in enumerate(layers):
-        tcounts = {k: 0 for k, *_ in DAG_STATES}
+        tcounts = {s.key: 0 for s in DAG_STATES}
         chips = ""
         for a in sorted(layer, key=lambda x: _natkey(x.get("id", ""))):
-            s = state.get(a.get("id", ""), "blocked")
+            s = state.get(a.get("id", ""), "unclassified")
             tcounts[s] += 1
             deps = ", ".join(a.get("deps") or []) or "no deps"
             chips += (
@@ -1154,9 +1459,9 @@ def _render_tiers(dag: dict) -> str:
                 f'{_DAG_LABEL[s]} | deps: {_tip(deps)}">{esc(a.get("id", ""))}</span>'
             )
         barsegs = "".join(
-            f'<i class="{cls}" style="width:{tcounts[k] / len(layer) * 100:.3f}%"></i>'
-            for k, cls, _c, _l in DAG_STATES
-            if tcounts[k]
+            f'<i class="{st.cls}" style="width:{tcounts[st.key] / len(layer) * 100:.3f}%"></i>'
+            for st in DAG_STATES
+            if tcounts[st.key]
         )
         tiers += (
             f'<div class="tier"><div class="tier-n">tier {i}<span class="tier-c">'
@@ -1184,9 +1489,8 @@ _CSS = """
   h1 { font-size:20px; margin:0 0 2px; }
   .sub { color:var(--muted); font-size:12px; margin-bottom:20px; }
   code { background:#21262d; padding:1px 5px; border-radius:4px; font-size:11.5px; }
-  /* status colors — one source of truth */
-  .st-done { background:#3fb950; } .st-inprog { background:#d29922; }
-  .st-ready { background:#58a6ff; } .st-blocked { background:#6e7681; }
+  /* Per-state fills and inks are GENERATED from DAG_STATES by `_state_css()` and appended
+     to this sheet — edit the table, never a colour here. */
   /* hero band */
   .hero { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:14px; }
   @media (max-width:720px){ .hero { grid-template-columns:1fr; } }
@@ -1200,9 +1504,7 @@ _CSS = """
   .herosub { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .statbar { display:flex; width:100%; border-radius:6px; overflow:hidden; background:#21262d; }
   .statbar i { display:flex; align-items:center; justify-content:center; height:100%;
-    font-size:10.5px; font-weight:700; color:#0d1117; min-width:0; overflow:hidden;
-    white-space:nowrap; }
-  .statbar i.st-blocked { color:#c9d1d9; }
+    font-size:10.5px; font-weight:700; min-width:0; overflow:hidden; white-space:nowrap; }
   .cap { color:var(--muted); font-size:12px; margin-top:8px; font-variant-numeric:tabular-nums; }
   /* legend */
   .legend { display:flex; flex-wrap:wrap; gap:14px; margin:2px 0 18px; font-size:11.5px;
@@ -1302,10 +1604,6 @@ _CSS = """
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:8px; }
   .tile { background:var(--panel); border:1px solid var(--border); border-radius:9px;
     border-left:3px solid var(--border); overflow:hidden; }
-  .tile.st-done { border-left-color:#3fb950; }
-  .tile.st-inprog { border-left-color:#d29922; }
-  .tile.st-ready { border-left-color:#58a6ff; }
-  .tile.st-blocked { border-left-color:#6e7681; }
   .tile > summary { display:flex; align-items:center; gap:9px; padding:9px 12px;
     cursor:pointer; list-style:none; }
   .tile > summary::-webkit-details-marker { display:none; }
@@ -1359,10 +1657,42 @@ _CSS = """
     background:#21262d; }
   .tier-bar i { display:block; height:100%; }
   .tier-atoms { display:flex; flex-wrap:wrap; gap:4px; }
-  .atomchip { color:#0d1117; font-weight:700; font-size:10.5px; padding:2px 6px; border-radius:5px;
+  .atomchip { font-weight:700; font-size:10.5px; padding:2px 6px; border-radius:5px;
     cursor:help; }
-  .atomchip.st-blocked { color:#c9d1d9; background:#30363d; }
+  /* unclassified strip */
+  .unc-list { list-style:none; margin:0; padding:0; font-size:12.5px; }
+  .unc-list li { padding:6px 0; border-top:1px solid var(--border); }
+  .unc-list li:first-child { border-top:none; }
+  .unc-why { color:var(--text); font-size:11.5px; margin-top:3px; }
+  .unc-reason { color:var(--muted); font-size:11px; margin-top:2px; }
 """
+
+
+def _state_css() -> str:
+    """Emit every state's colours from `DAG_STATES`, fill and ink in the SAME rule.
+
+    Theme safety, mechanically enforced: a fill and the ink that sits on it are one pair in
+    the table and are written out together here, so no state can ship half-dressed. The
+    hand-written block this replaced had exactly that bug latent — `.st-*` set four fills,
+    while the ink for the grey one lived in two unrelated overrides (`.statbar i.st-blocked`,
+    `.atomchip.st-blocked`) that any new state was guaranteed to miss, inheriting near-black
+    text on whatever fill it chose.
+
+    Selectors are scoped to the elements that actually wear a state (segment, chip, dot,
+    swatch, tile edge) rather than a bare `.st-*`, because `.tile` and `.atom` carry the
+    state class too: a bare `.st-owner { background; color }` would repaint a whole plan tile
+    pink and set its text near-black on dark. Each is >= 2 classes, so it wins by specificity
+    and this block can be appended without depending on where it lands in the cascade.
+    """
+    out = ["  /* GENERATED from DAG_STATES by _state_css() — do not hand-edit */"]
+    for s in DAG_STATES:
+        out.append(
+            f"  .statbar i.{s.cls}, .atomchip.{s.cls} {{ background:{s.bg}; color:{s.ink}; }}"
+        )
+        out.append(f"  .atom.{s.cls}, .legend b.{s.cls}, .valdot.{s.cls} {{ background:{s.bg}; }}")
+        out.append(f"  .tile.{s.cls} {{ border-left-color:{s.bg}; }}")
+    return "\n" + "\n".join(out) + "\n"
+
 
 _PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -1407,20 +1737,27 @@ def main() -> int:
     print(f"wrote {OUT}")
     if dag:
         atoms = dag["atoms"]
-        ready_ids = {r.get("id") for r in (dag.get("ready") or [])}
-        counts = {k: 0 for k, *_ in DAG_STATES}
+        clf = classifier_for(dag)
+        counts = {s.key: 0 for s in DAG_STATES}
+        unplaced: list[tuple[dict, str]] = []
         for a in atoms.values():
-            counts[classify_atom(a, ready_ids)] += 1
+            state, why = clf.explain(a)
+            counts[state] += 1
+            if state == "unclassified":
+                unplaced.append((a, why))
+        assert_state_partition(counts, len(atoms), "atom census")
+        by_state = " · ".join(f"{counts[s.key]} {s.label}" for s in DAG_STATES)
+        print(f"  atoms: {len(atoms)} total · {by_state} (sum {sum(counts.values())})")
         print(
-            f"  atoms: {len(atoms)} total · {counts['done']} done · "
-            f"{counts['in_progress']} in progress · {counts['ready']} startable · "
-            f"{counts['blocked']} blocked (sum {sum(counts.values())})"
-        )
-        print(
-            f"  ready_frontier: {len(dag.get('ready') or [])} · cycles "
-            f"{len(dag.get('cycles') or [])} · dangling {len(dag.get('dangling') or [])} · "
+            f"  ready_frontier: {len(dag.get('ready') or [])} · gated_frontier "
+            f"{len(dag.get('gated') or [])} · cycles {len(dag.get('cycles') or [])} · "
+            f"dangling {len(dag.get('dangling') or [])} · "
             f"unresolved {len(dag.get('unresolved') or [])}"
         )
+        # Loud, not silent: an unplaceable atom is a finding about dag.json, and the page
+        # already names it — the operator running this by hand should not have to open it.
+        for atom, why in sorted(unplaced, key=lambda pair: _natkey(pair[0].get("id", ""))):
+            logger_warn(f"unclassified atom {atom.get('id', '?')}: {why}")
     else:
         print("  DAG: docs/roadmap/atomic/dag.json not present (degraded to plan-status view)")
     stack = len(exec_state.get("stack") or [])
