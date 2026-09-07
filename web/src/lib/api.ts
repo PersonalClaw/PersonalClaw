@@ -6207,7 +6207,7 @@ export const api = {
   createTaskList: (body: Record<string, unknown>) => post<TaskListItem>('/api/task-lists', body),
   updateTaskList: (id: string, body: Record<string, unknown>) => put<TaskListItem>(`/api/task-lists/${encodeURIComponent(id)}`, body),
   deleteTaskList: (id: string) => del(`/api/task-lists/${encodeURIComponent(id)}`),
-  resetTaskList: (id: string) => post<{ ok: boolean; reset_task_ids: string[] }>(`/api/task-lists/${encodeURIComponent(id)}/reset`, {}),
+  resetTaskList: (id: string) => post<{ ok: boolean; reset_task_ids: string[] }>(`/api/task-lists/${encodeURIComponent(id)}/reset`, { confirm: true }),
 
   // workflows
 
@@ -6723,9 +6723,12 @@ export const api = {
     get<{ tags: KnowledgeTag[] }>('/api/knowledge/tag-tree').then((d) => d.tags),
   renameKnowledgeTag: (id: number, body: { name?: string; parent_id?: number | null }) =>
     patch<{ ok: boolean; tags: KnowledgeTag[] }>(`/api/knowledge/tags/${id}`, body),
+  // `confirm: true` is the route's own gate — merging DELETES the source tag. The UI asks the user
+  // before calling, so this is that acknowledgement travelling with the request, not a second
+  // prompt: the server refuses the bare body so a non-UI caller cannot fold two tags by accident.
   mergeKnowledgeTag: (id: number, into: number) =>
     post<{ ok: boolean; moved: number; already: number; tags: KnowledgeTag[] }>(
-      `/api/knowledge/tags/${id}/merge`, { into }),
+      `/api/knowledge/tags/${id}/merge`, { into, confirm: true }),
   // `del` is void-typed repo-wide, so the caller re-reads the tree rather than this
   // one method inventing a generic DELETE.
   deleteKnowledgeTag: (id: number) => del(`/api/knowledge/tags/${id}`),

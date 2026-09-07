@@ -649,7 +649,11 @@ async def test_bulk_validate_all_aborts(tmp_path):
 async def test_reset_requires_repeatable_project(tmp_path):
     async with _client(tmp_path) as client:
         tl = await (await client.post("/api/task-lists", json={"name": "L"})).json()
-        assert (await client.post(f"/api/task-lists/{tl['id']}/reset", json={})).status == 400
+        # Send the confirm, so this still tests the REPEATABLE guard rather than passing on
+        # the confirm gate added in #604 — a 400 from the wrong check is a vacuous pass.
+        r = await client.post(f"/api/task-lists/{tl['id']}/reset", json={"confirm": True})
+        assert r.status == 400
+        assert "Repeatable" in (await r.text())
 
 
 @pytest.mark.asyncio
@@ -662,7 +666,9 @@ async def test_reset_repeatable_list(tmp_path):
             await client.post("/api/tasks", json={"title": "step", "task_list_id": tl["id"]})
         ).json()
         await client.put(f"/api/tasks/{t['id']}", json={"status": "done"})
-        assert (await client.post(f"/api/task-lists/{tl['id']}/reset", json={})).status == 200
+        # `confirm: true` is required by the route (#604) — reset wipes execution_notes.
+        r = await client.post(f"/api/task-lists/{tl['id']}/reset", json={"confirm": True})
+        assert r.status == 200
         reloaded = await (await client.get(f"/api/tasks/{t['id']}")).json()
         assert reloaded["status"] == "open"
 

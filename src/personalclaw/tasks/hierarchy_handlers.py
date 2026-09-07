@@ -760,10 +760,34 @@ async def api_task_lists_delete(request: web.Request) -> web.Response:
 async def api_task_lists_reset(request: web.Request) -> web.Response:
     """POST /api/task-lists/{list_id}/reset — reset a Repeatable-project list: all
     its tasks → open, exit criteria → incomplete, execution notes cleared. Only
-    allowed for lists under the Repeatable project and only when all tasks done."""
+    allowed for lists under the Repeatable project and only when all tasks done.
+
+    ``confirm: true`` is required. The two existing guards here are about whether the reset is
+    LEGAL (a Repeatable list, all tasks terminal), not about whether it was INTENDED, and this
+    is the only path that empties ``execution_notes`` — the record of what was actually done on
+    each task. Clearing that is unrecoverable and has no undo, so intent has to be stated. It is
+    the same bar ``merge_items`` sets in the knowledge handlers for the same reason.
+    """
     from personalclaw.tasks import registry
     from personalclaw.tasks.models import TaskStatus
 
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict) or not body.get("confirm"):
+        return web.json_response(
+            {
+                "error": {
+                    "code": "confirm_required",
+                    "message": (
+                        "reset clears execution notes and un-completes every exit criterion "
+                        "— pass confirm: true"
+                    ),
+                }
+            },
+            status=400,
+        )
     store = _store()
     list_id = request.match_info["list_id"]
     tl = store.get_task_list(list_id)
