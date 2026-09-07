@@ -30,7 +30,21 @@ import { PRODUCT_TOUR_STOPS } from './ProductTour'
 
 // Each walk mounts the shell, then five lazily-imported page chunks in turn, and waits for
 // the overlay's anchor poll on each — well past the 5s default.
-vi.setConfig({ testTimeout: 30_000 })
+//
+// ONE budget, DERIVED, because the two halves of it drifted apart and that drift is what made
+// this file flaky. The outer `testTimeout` was raised to 30s in acknowledgement that a
+// five-stop walk needs far longer than vitest's 5s default — but the INNER `waitFor` calls
+// that do the actual waiting were each left at a hardcoded 5000ms. A loaded machine then blows
+// the inner cap while sitting comfortably inside the outer one: observed twice on unrelated
+// branches as a 6654ms timeout on `data-tour-anchored`, i.e. 1.6s past the inner budget and
+// 23s short of the outer. The test was not wrong about the app; it was wrong about the clock.
+//
+// So the per-stop budget is named ONCE and the outer timeout is computed from it. An author who
+// needs more room raises one number and the relationship still holds — there is no second
+// budget left to forget. `WALK_SLACK_MS` covers the shell mount that precedes the first stop.
+const STOP_BUDGET_MS = 10_000
+const WALK_SLACK_MS = 20_000
+vi.setConfig({ testTimeout: STOP_BUDGET_MS * PRODUCT_TOUR_STOPS.length + WALK_SLACK_MS })
 
 vi.mock('../../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
 // The onboarding flow's 3D dot-wave is a canvas; jsdom has no 2D context.
@@ -167,7 +181,9 @@ async function reachDoneScreen(user: ReturnType<typeof userEvent.setup>) {
 
 /** Advance to a stop, tolerating the surface's own lazy chunk + the overlay's anchor poll. */
 async function atStop(id: string) {
-  await waitFor(() => expect(tour()).toHaveAttribute('data-tour-step', id), { timeout: 5000 })
+  await waitFor(() => expect(tour()).toHaveAttribute('data-tour-step', id), {
+    timeout: STOP_BUDGET_MS,
+  })
   return screen.getByRole('dialog')
 }
 
@@ -231,7 +247,9 @@ describe('it walks all five stops, over the real surfaces', () => {
       walked.push(stop.id)
       // The claim that matters: the element this stop names EXISTS on the surface the tour
       // just took the user to. A renamed anchor still renders a perfect card over nothing.
-      await waitFor(() => expect(d).toHaveAttribute('data-tour-anchored', 'true'), { timeout: 5000 })
+      await waitFor(() => expect(d).toHaveAttribute('data-tour-anchored', 'true'), {
+        timeout: STOP_BUDGET_MS,
+      })
       expect(d.getAttribute('aria-label')).toContain(stop.title)
       if (stop.id !== 'settings') await user.click(next())
     }
@@ -257,7 +275,9 @@ describe('it walks all five stops, over the real surfaces', () => {
     const d = await atStop('settings')
     // The search really is there (vacuity: something WAS competing for focus).
     expect(await screen.findByLabelText('Search settings')).toBeInTheDocument()
-    await waitFor(() => expect(d.contains(document.activeElement)).toBe(true), { timeout: 5000 })
+    await waitFor(() => expect(d.contains(document.activeElement)).toBe(true), {
+      timeout: STOP_BUDGET_MS,
+    })
   })
 
   it('each stop names an anchor that exists in the file hosting that surface', () => {
@@ -302,7 +322,9 @@ describe('Escape exits anywhere, and what is left behind is a working app', () =
     // NOT just "the overlay unmounted". A real click on a real control, doing a real thing:
     // the rail still navigates, so nothing about the app was left in a tour-shaped state.
     await user.click(within(rail()).getByRole('button', { name: 'Chat' }))
-    await waitFor(() => expect(document.querySelector('[data-tour="chat"]')).not.toBeNull(), { timeout: 5000 })
+    await waitFor(() => expect(document.querySelector('[data-tour="chat"]')).not.toBeNull(), {
+      timeout: STOP_BUDGET_MS,
+    })
   })
 
   it('the X and a click on the overlay are the pointer twins of Escape', async () => {
