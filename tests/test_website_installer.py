@@ -591,11 +591,37 @@ class TestLiveInstallerLegIsWired:
 
         Running both separates "our next installer is broken" (staged red) from "the site
         or PyPI regressed" (served red) — two different pages for two different people.
+
+        Asserted as EXECUTION, not as a mention. The drift leg legitimately names the staged
+        path twice — ``sha256sum deploy/website/install.sh`` and a ``diff`` against it — so a
+        substring check passed with the staged smoke leg deleted outright: measured, the leg
+        was reduced to served-only and the case stayed green. Hashing a file is not running
+        it.
         """
         _jid, body = leg
-        assert "deploy/website/install.sh" in code_only(body), (
-            "the live leg runs only the served bytes. A staged edit that breaks the "
-            "installer would then go green until someone copied it to the website repo."
+        assert re.search(
+            r"(?:^|\s)(?:/bin/)?(?:sh|dash|bash)\s+\S*deploy/website/install\.sh",
+            code_only(body),
+        ), (
+            "nothing in the live leg EXECUTES deploy/website/install.sh (hashing or diffing "
+            "it does not count). A staged edit that breaks the installer would go green "
+            "until someone copied it to the website repo."
+        )
+
+    def test_it_pipes_the_served_bytes_into_a_shell(self, leg: tuple[str, str]) -> None:
+        """The served leg must run the documented pipeline, not just download the file.
+
+        ``curl … | sh`` is itself part of what is being asserted — no TTY on stdin, and a
+        partial transfer must install nothing. Fetching to a file and running that file
+        would exercise a path no user takes, and would quietly drop the pipe semantics.
+        """
+        _jid, body = leg
+        assert re.search(
+            rf"curl[^\n]*{re.escape(SERVED_URL)}[^\n]*\|\s*(?:/bin/)?sh\b",
+            code_only(body).replace("\\\n", " "),
+        ), (
+            "the served bytes are never piped into a shell, so the leg does not exercise "
+            "the one-liner users are actually given."
         )
 
     def test_it_compares_served_against_the_pin(self, leg: tuple[str, str]) -> None:
@@ -659,12 +685,19 @@ class TestLiveInstallerLegIsWired:
             "runner's real tool directories."
         )
 
-    def test_it_asserts_the_installed_binary_runs(self, leg: tuple[str, str]) -> None:
-        """Installing without running proves the wheel downloaded, not that it works."""
+    def test_both_smoke_legs_assert_the_installed_binary_runs(self, leg: tuple[str, str]) -> None:
+        """Installing without running proves the wheel downloaded, not that it works.
+
+        Counted, not merely found: with one occurrence the assertion is satisfied by whichever
+        leg happens to have it, and the other leg can install into its own tool dir and never
+        check that anything came out. Two legs, two verdicts.
+        """
         _jid, body = leg
-        assert "personalclaw --version" in code_only(body), (
-            "the live leg never runs `personalclaw --version`, so a wheel that installs "
-            "and then cannot start would pass."
+        found = code_only(body).count("personalclaw --version")
+        assert found >= 2, (
+            f"`personalclaw --version` appears {found} time(s) in the live leg; both the "
+            "staged and served smokes must run the installed binary, or one of them proves "
+            "only that a download happened."
         )
 
 
@@ -679,11 +712,35 @@ class TestLintJobChecksTheInstaller:
         return present["lint"]
 
     def test_lint_runs_shellcheck_on_the_installer(self, lint_body: str) -> None:
-        code = code_only(lint_body)
-        assert "shellcheck" in code and "deploy/website/install.sh" in code, (
-            "ci.yml's lint job does not shellcheck the installer, so the header's "
-            "shellcheck-clean claim rests on nothing again."
+        """The INVOCATION, not the word.
+
+        The step installs its tools with ``for tool in shellcheck dash``, so "shellcheck
+        appears in this job" is true even with every actual check deleted: measured, removing
+        both ``shellcheck --version`` and ``shellcheck -s sh …`` left this case green because
+        the apt loop still named the tool. Naming a linter is not running it.
+        """
+        assert re.search(
+            r"shellcheck\s+(?:-\S+\s+)*-s\s+sh\s+\S*deploy/website/install\.sh",
+            code_only(lint_body),
+        ), (
+            "ci.yml's lint job never invokes `shellcheck -s sh deploy/website/install.sh`, "
+            "so the header's shellcheck-clean claim rests on nothing again."
         )
+
+    def test_lint_runs_both_posix_syntax_checks(self, lint_body: str) -> None:
+        """``dash -n`` and ``sh -n`` are not interchangeable, and neither replaces shellcheck.
+
+        Measured while mutating this rail: ``[[ -t 0 ]]`` — a bashism that breaks the script
+        under a real dash — passes ``dash -n`` cleanly, because dash parses ``[[`` as an
+        ordinary command name and only fails at RUNTIME. shellcheck is the only member of the
+        set that rejects it at check time. All three are named here so that dropping one is a
+        red rather than a silent narrowing of what "POSIX-clean" means.
+        """
+        code = code_only(lint_body)
+        for tool in ("sh -n", "dash -n"):
+            assert re.search(
+                rf"{re.escape(tool)}\s+\S*deploy/website/install\.sh", code
+            ), f"ci.yml's lint job does not run `{tool}` on the installer"
 
     def test_lint_sets_the_require_proof_lever(self, lint_body: str) -> None:
         """Without the lever, a runner image that drops shellcheck turns red into skip."""
