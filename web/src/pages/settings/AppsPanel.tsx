@@ -7,6 +7,7 @@ import { PanelHeader, Section, RowGroup, ToggleRow } from './settingsUI'
 import { Skeleton, LoadingStatus, LoadError, FormSkeleton } from '../../ui/ListScaffold'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
+import { FieldError } from '../../ui/forms'
 import { AppConfigFields, useAppConfig } from '../apps/appConfigForm'
 import { AppIcon } from '../apps/appIcon'
 import { fvs } from '../../design/fontWeight'
@@ -146,7 +147,9 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
       ) : (
         <div className="flex flex-col gap-m pl-11">
           <AppConfigFields appName={app.name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} required={cfg.required} />
-          {cfg.err && <div data-type="body-s" className="text-negative">{cfg.err}</div>}
+          {/* The second consumer of `appConfigForm`'s save guard — same inert `text-negative`, same
+              cost. See the sibling site in `pages/apps/AppsSection.tsx` for the full reasoning. */}
+          {cfg.err && <FieldError>{cfg.err}</FieldError>}
           <div className="flex items-center justify-end gap-2">
             {justSaved && <span data-type="caption" className="flex items-center gap-1 text-ok"><Check size={13} /> Saved</span>}
             <Button variant="primary" size="sm" loading={cfg.busy} disabled={cfg.busy || !cfg.dirty || cfg.missing.length > 0}

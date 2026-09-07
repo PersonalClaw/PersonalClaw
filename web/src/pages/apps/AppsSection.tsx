@@ -22,7 +22,7 @@ import { Modal } from '../../ui/Modal'
 import { SidePanel } from '../../ui/SidePanel'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { RowHitTarget } from '../../ui/RowHitTarget'
-import { TextInput } from '../../ui/forms'
+import { TextInput, FieldError } from '../../ui/forms'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Segmented } from '../../ui/Segmented'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
@@ -32,7 +32,8 @@ import {
   api, type AppSummary, type AppDepClassification, type AppCatalogEntry, type AppCatalog,
 } from '../../lib/api'
 import {
-  useGuardedInstall, guardedFromApp, isBlockingResult, terminalRefusalReason, type GuardedResult,
+  useGuardedInstall, guardedFromApp, isBlockingResult, terminalRefusalReason,
+  type GuardedResult, type GuardedInstall,
 } from '../../lib/useGuardedInstall'
 import { catalogApps } from '../../lib/appCatalog'
 import { provenance } from '../../lib/provenance'
@@ -836,12 +837,7 @@ export function StoreView({ catalog, catalogError, result, totalKnown, installed
 
   return (
     <div className="flex flex-col gap-2xl">
-      {guarded.error && (
-        <div className="flex items-center justify-between gap-3">
-          <div data-type="body-s" className="text-negative">{guarded.error}</div>
-          <FixWithAiButton fixPrompt={guarded.fixPrompt} />
-        </div>
-      )}
+      <GuardedFailure guarded={guarded} />
       {pending && guarded.blocked && (
         <ConsentModal
           label={pending.label}
@@ -990,13 +986,8 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
 
   return (
     <div className="flex flex-col gap-xl">
-      {err && <div data-type="body-s" className="text-negative">{err}</div>}
-      {guarded.error && (
-        <div className="flex items-center justify-between gap-3">
-          <div data-type="body-s" className="text-negative">{guarded.error}</div>
-          <FixWithAiButton fixPrompt={guarded.fixPrompt} />
-        </div>
-      )}
+      {err && <FieldError>{err}</FieldError>}
+      <GuardedFailure guarded={guarded} />
       {pending && guarded.blocked && (
         <ConsentModal
           label={pending.label}
@@ -1266,7 +1257,9 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
             item.hasUI && item.enabled ? (
               <span onClick={stop}><Button variant="secondary" size="sm" onClick={() => onAction(app, 'open')}><LayoutGrid size={14} /> Open</Button></span>
             ) : item.enabled ? (
-              <span className="inline-flex items-center gap-1 text-positive" data-type="label-s"><ShieldCheck size={13} /> Installed</span>
+              // `text-positive` was inert too — `--color-positive` is undefined; `ok` is the token,
+              // so this chip has been rendering in plain body ink rather than green.
+              <span className="inline-flex items-center gap-1 text-ok" data-type="label-s"><ShieldCheck size={13} /> Installed</span>
             ) : (
               // Deactivated (uninstalled, files kept): state must be visible on the
               // card — a green "Installed" here hid the fact the app is off. One
@@ -1331,12 +1324,7 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
           placeholder="/path/to/app  or  https://github.com/owner/app.git" />
 
         {guarded.blocked?.scan && <ScanReport scan={guarded.blocked.scan} />}
-        {guarded.error && (
-          <div className="flex items-center justify-between gap-3">
-            <div data-type="body-s" className="text-negative">{guarded.error}</div>
-            <FixWithAiButton fixPrompt={guarded.fixPrompt} />
-          </div>
-        )}
+        <GuardedFailure guarded={guarded} />
 
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -1377,12 +1365,7 @@ function UpdateModal({ name, onClose, onUpdated }: { name: string; onClose: () =
         <TextInput value={source} onChange={(v) => { setSource(v); guarded.reset() }} autoFocus name="app-install-source"
           placeholder="/path/to/app  or  https://github.com/owner/app.git" />
         {guarded.blocked?.scan && <ScanReport scan={guarded.blocked.scan} />}
-        {guarded.error && (
-          <div className="flex items-center justify-between gap-3">
-            <div data-type="body-s" className="text-negative">{guarded.error}</div>
-            <FixWithAiButton fixPrompt={guarded.fixPrompt} />
-          </div>
-        )}
+        <GuardedFailure guarded={guarded} />
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {needsConsent ? (
@@ -1412,6 +1395,27 @@ export function FixWithAiButton({ fixPrompt }: { fixPrompt: string | null }) {
     <Button variant="secondary" size="sm" onClick={() => launchChat({ prompt: fixPrompt })}>
       <Sparkles size={15} /> Fix with AI
     </Button>
+  )
+}
+
+/** A guarded-install failure, with the offer to hand it to the assistant.
+ *
+ *  This row was repeated VERBATIM at five surfaces in this file — the store view, the sources
+ *  panel, the install modal, the update modal and the store detail panel — and every copy carried
+ *  the same inert `text-negative` class. That pairing is the point: a hand-rolled copy is what
+ *  lets a class name rot, because there is no single place where anyone would notice. The hook's
+ *  own doc already treats the two fields as one unit — `fixPrompt` *"rides alongside `error` — the
+ *  same surface that renders it"* — so this is the surface that comment is describing.
+ *
+ *  Self-guarding on `error`, so a call site is one unconditional element rather than five copies
+ *  of the same `{guarded.error && (…)}` wrapper. */
+function GuardedFailure({ guarded }: { guarded: Pick<GuardedInstall, 'error' | 'fixPrompt'> }) {
+  if (!guarded.error) return null
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <FieldError>{guarded.error}</FieldError>
+      <FixWithAiButton fixPrompt={guarded.fixPrompt} />
+    </div>
   )
 }
 
@@ -1643,12 +1647,7 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
         </div>
       </div>
 
-      {guarded.error && (
-        <div className="flex items-center justify-between gap-3">
-          <div data-type="body-s" className="text-negative">{guarded.error}</div>
-          <FixWithAiButton fixPrompt={guarded.fixPrompt} />
-        </div>
-      )}
+      <GuardedFailure guarded={guarded} />
       <div>
         <Button variant="primary" size="sm" loading={guarded.busy} onClick={() => install(false)}><Download size={15} /> Install
         </Button>
@@ -1684,7 +1683,13 @@ function ConfigModal({ name, onClose }: { name: string; onClose: () => void }) {
           ) : (
             <AppConfigFields appName={name} props={cfg.props} cur={cfg.cur} set={cfg.set} secretSet={cfg.secretSet} required={cfg.required} />
           )}
-        {cfg.err && <div data-type="body-s" className="text-negative">{cfg.err}</div>}
+        {/* 🔴 The one with a data cost. `cfg.err` is `appConfigForm`'s save guard, which exists because
+            the backend's `write_config` REPLACES the file — so a save from a form that never loaded
+            would erase this app's stored config, secrets included. Its refusal ("…Retry the load
+            first.") was the only evidence the click did nothing, and it rendered in `text-negative`:
+            a class Tailwind compiles to NOTHING, so it inherited `--color-on-surface` — the app's
+            primary body ink, indistinguishable from a hint — with no live region either. */}
+        {cfg.err && <FieldError>{cfg.err}</FieldError>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {/* Save stays out of reach until the config it would REPLACE has actually loaded — the
