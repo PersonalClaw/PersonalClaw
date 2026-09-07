@@ -118,6 +118,7 @@ element.
 | DCU1.3 | macOS AX driver (element walk → indexed tree with TTL+fingerprint; `AXPress`; type/set/scroll/named-action; located coordinate path via `CGEventPostToPid`; the explicit `global` warp behind its own name+SEL) via ctypes FFI | `computer_use/macos_driver.py`, `macos_ffi.py`, `types.py` | on macOS with the enable on, snapshot a TextEdit window, `AXPress` a button by index, type into a field — pointer does not move; a stale index (post-TTL) refuses and forces re-snapshot |
 | DCU1.4 | The thin stdio shim + in-gateway dispatch + the tool surface registered; ceilinged spawn (PLATFORM-HARDENING-FLOORS §1 `tool` profile) | `computer_use/cli.py`, `service.py`, `tools.py`, MCP registration | the agent lists apps and clicks an element end-to-end; the shim holds no OS handles; the driver spawn carries the ceiling |
 | V1 | Validation (macOS, enable ON): drive a real app by element index; confirm the pointer stays put; confirm a secure-field refusal; confirm SEL records; confirm the enable file being absent blocks everything | `scripts/dcu4_v1_validate.py` | **HOLDS — recorded 2026-09-06.** See the exec-log entry below. Re-runnable: `PYTHONPATH=src python scripts/dcu4_v1_validate.py` |
+| V1b | Validation (macOS, enable ON) of `DCU1.3`'s *other* half, which V1 explicitly did not reach: a **past-TTL** refusal and a **changed-fingerprint** refusal, measured separately, each forcing a re-snapshot, with the fresh path as the positive control | `scripts/dcu3_stale_index_validate.py` | **UNPROVEN on this host — `AXIsProcessTrusted()` answered False in this session, so nothing was measured and nothing was launched.** Not a skip: the harness exits 1 with `status: unproven`. The dispatch-level half is green and falsified (`tests/test_computer_use_stale_index.py`). Re-runnable: `PYTHONPATH=src python scripts/dcu3_stale_index_validate.py` |
 
 ### Session 2 — Human-facing views + Windows/Linux refusal + approval integration
 
@@ -934,3 +935,88 @@ transient because on a live desktop it genuinely is one. The 108 tests across
 `test_computer_use_{dispatch,call_sites,macos_driver}.py` + `test_spawn_ceiling_audit.py` are
 green on this commit, which is where the shim-holds-no-OS-handles and ceilinged-spawn clauses
 continue to live.
+
+- **2026-09-06 — `DCU-3`'s STALE-INDEX half: the dispatch-level clause is closed, the LIVE clause is
+  `unproven`, and the grant premise `DCU-4` recorded is not a property of this workstation.**
+  `DCU-3`'s `done_when` ends *"a stale index (past TTL or changed fingerprint) refuses and forces a
+  re-snapshot"*, and V1 above says in its own words that it *"exercised the fresh path only"*. This
+  entry is that remainder, taken as far as it goes on this host.
+  **THE PREMISE THAT UNBLOCKED THIS ATOM IS HALF WRONG, AND THE HALF THAT IS WRONG IS THE
+  INTERESTING ONE.** V1's correction — the Accessibility grant was *unprobed*, not ungrantable — is
+  right and it stands. What it then recorded is *"the macOS Accessibility grant is PRESENT and usable
+  on this workstation"*, and **that is not a workstation property.** macOS resolves an Accessibility
+  request against the **responsible process**, not against the binary that called
+  `AXIsProcessTrusted()`. Measured, on this host, minutes apart in two different sessions: at 09:51
+  `tccd` attributed the identical `cpython-3.13.14/bin/python3.13` to
+  `responsible=com.amazon.kiro.crew` (`.../kirocrew/0.6.0.10/payload/KiroCrew.app`), which holds the
+  grant and is why V1 was able to run; at 18:38 the same binary in a differently-hosted session was
+  attributed to `responsible=dev.warp.Warp-Stable` (`/Applications/Warp.app`) and got
+  `AUTHREQ_RESULT: authValue=0` — **denied**. Same machine, same python, same repo, opposite answer.
+  So "the grant is present" is true of a *session*, and the absent-vs-declared-false trap has a third
+  face here: not absent, not declared false, but **true in one session and false in the next**, which
+  is worse than either because it makes a recorded pass unreproducible without saying so. Anything
+  that depends on this grant must probe in its own session and record which responsible process it
+  measured. V1 does the probe; it does not record the responsible process, and it should.
+  **THE LIVE MEASUREMENT IS THEREFORE `unproven`, NOT SKIPPED AND NOT GREEN.**
+  `scripts/dcu3_stale_index_validate.py` probes the grant first and exits 1 with `status: unproven`,
+  `attempts: 0` — no app was launched, no window walked, nothing on the operator's desktop touched.
+  The refusal it prints is the OS's own answer and not a load failure, which is a distinction the FFI
+  makes for us: `macos_ffi` raises `FFIUnavailable` when the frameworks do not load, so `False` here
+  can only mean *the OS said no*.
+  **WHAT IS NOW CLOSED, AND IT WAS NOT CLOSED ANYWHERE BEFORE.** The clause has two verbs and only
+  the first was ever asserted. `test_computer_use_dispatch.py` proves *refuses* from both sides of
+  both bounds; nothing proved **forces a re-snapshot**. The closest existing test winds the frozen
+  clock *backwards*, which is not a re-snapshot, and the rest assert only that the string
+  `computer_snapshot` appears in the FIX line — a remedy nobody had executed.
+  `tests/test_computer_use_stale_index.py` executes it for both triggers through
+  `service.computer_dispatch`, and the load-bearing assertion is not that the new id acts: it is that
+  **the old id keeps refusing while the new one acts.** A test that checked only the new id would
+  pass against a store that had quietly started honouring the abandoned index, which is the opposite
+  of what the clause asks for.
+  **ONE CODE, THREE CAUSES — SO THE MESSAGE IS THE DISCRIMINATOR, AND THE DISCRIMINATOR IS PINNED.**
+  `service._stale` raises `ERR_COMPUTER_USE_STALE_INDEX` for an unknown/evicted id, for a past-TTL
+  id, and for a changed fingerprint. **Two of those three are vacuous for this clause** — a typo'd
+  `snapshot_id` refuses with exactly the code a careless harness is looking for, and would have
+  reported a measured refusal for a measured nothing. Every leg therefore asserts the detail it
+  expects *and* asserts the other two details are absent, and
+  `test_the_three_stale_index_details_stay_distinguishable` drives all three refusals for real and
+  holds the three strings apart, so rewording one in `service` reds the suite instead of silently
+  costing the live harness its ability to say which staleness it saw.
+  **DRIVER SPAWNS ARE THE SECOND DISCRIMINATOR, AND THEY ARE COUNTED.** The past-TTL check (step 3a)
+  is decided *before* any window is walked; the fingerprint check (step 3b) exists *because* one was.
+  So the harness requires **zero** driver operations for the TTL leg and exactly `["snapshot"]` for
+  the fingerprint leg: a TTL refusal that spawned a driver, or a fingerprint refusal that did not,
+  is a different bug wearing the same code. The counter wraps `_run_driver` and calls through —
+  delete it and every leg behaves identically.
+  **NON-VACUITY, AS LEGS RATHER THAN AS PROSE.** The fresh path runs **first** and must succeed,
+  because a run that only ever produced refusals cannot distinguish *staleness is caught* from
+  *everything is refused* — and one successful act by index rules out, in one stroke, the keystone
+  being off, `TextEdit` not being allowlisted, the `AXTextArea` not existing, the index being out of
+  range, and the grant being absent. The TTL leg additionally re-snapshots after the sleep and
+  requires the fingerprint to be **unchanged**, so age is provably the only thing that differed; the
+  fingerprint leg records its snapshot's age and requires it to be **inside** the TTL, so the clock
+  provably was not the cause. The document the TTL leg walks is deliberately one the run never
+  writes to, because an *edited* TextEdit document can retitle itself while the run sleeps — the same
+  class of false negative V1 hit twice.
+  **HARNESS GUARDS ARE THEMSELVES FALSIFIED.** Four mutations of the live line, each restored from a
+  file copy and md5-verified back, none reding nothing: TTL check neutered → 2 red; fingerprint
+  comparison neutered → 3 red (including the harness's driver-count guard); the TTL detail reworded →
+  1 red (the discriminator); and the harness's preflight changed to *skip* instead of reporting
+  `unproven` → 1 red. That last one is the point of the whole file: a skip that reads as a pass is
+  how this atom got its wrong `blocked_reason` in the first place.
+  **TWO PRODUCT DEFECTS FOUND ON THE WAY, filed rather than fixed here (#2569, #2570).** `macos_driver`'s
+  `ERR_COMPUTER_USE_AX_PERMISSION` FIX tells the operator to add *"the binary running PersonalClaw's
+  gateway (its own python executable, **not a terminal app**)"*. On this host that instruction does
+  not work and the repo's own successful run disproves it: the grant that made V1 possible is held by
+  an **app bundle** (`KiroCrew.app`), and the identity `tccd` evaluated for the python binary was the
+  responsible **terminal** app. The refusal names the wrong TCC principal, so an operator following
+  it grants something macOS never asks about (#2569). Second: a **past-TTL** stale refusal writes its
+  SEL row with `resources=''` — no app — because step 3a raises before `app = snap.app` runs, while
+  the changed-fingerprint refusal (same code, same tool) keeps it. The row is present either way, so
+  every count-based audit check stays green over a record that lost its target (#2570). Both were
+  found by measuring the two triggers *separately*; a harness that had treated
+  `ERR_COMPUTER_USE_STALE_INDEX` as one thing would have seen neither.
+  **WHAT THIS DOES NOT CLOSE.** `DCU-3` should NOT flip. The dispatch-level clause is green and
+  falsified, the live harness exists and is one command away, but the `done_when` says *live*, and on
+  this host the OS says no. The smallest remaining unit is: grant Accessibility to this session's
+  responsible process, then `PYTHONPATH=src python scripts/dcu3_stale_index_validate.py` to exit 0.
