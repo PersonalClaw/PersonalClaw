@@ -79,10 +79,26 @@ describe('the inbox distinguishes "nothing matches" from "you have nothing"', ()
     expect(tag).toMatch(/matches the current search or filter\./)
   })
 
-  it('the title and the hint read the SAME flag, so they cannot disagree', () => {
+  it('the title and the hint read the SAME flags, in the same order, so they cannot disagree', () => {
+    // 🔁 TIGHTENED 2026-09-07 — and this is a strengthening, not a loosening, which matters because
+    // editing a guard to permit what it was written to check is exactly the wrong move.
+    //
+    // This asserted the title's exact two-branch spelling: `title={narrowed ? 'Nothing here' :
+    // 'Inbox zero'}`. That spelling WAS the defect on the other axis. The hint branches `narrowed`
+    // then `disabled`; the title branched on `narrowed` only — so on a fresh install the headline read
+    // "Inbox zero" above a hint reading "Enable a source to begin". The two could still disagree about
+    // which state the list is in; they just could not disagree about `narrowed`.
+    //
+    // This test's PURPOSE (its own name) is that the two props cannot disagree. Once a third state was
+    // named, a pinned two-branch title could no longer express that purpose — so the assertion now
+    // requires BOTH flags in BOTH props, in the same order. Strictly more than it demanded before.
+    // Behaviour is covered by `inboxZeroNotConnected.test.tsx`.
     const tag = inbox.match(/<EmptyState icon=\{InboxIcon\}[\s\S]{0,900}?\/>/)?.[0] ?? ''
-    expect(tag).toMatch(/title=\{narrowed \? 'Nothing here' : 'Inbox zero'\}/)
-    expect(tag).toMatch(/hint=\{narrowed/)
+    expect(tag, 'the tag must be found before it can be measured').not.toBe('')
+    expect(tag, 'the title must branch narrowed → disabled → caught-up')
+      .toMatch(/title=\{narrowed \? 'Nothing here' : disabled \? '[^']+' : 'Inbox zero'\}/)
+    expect(tag, 'and the hint must test the same two flags in the same order')
+      .toMatch(/hint=\{narrowed[\s\S]*?: disabled/)
   })
 
   it('the announcement shares that one definition too', () => {
