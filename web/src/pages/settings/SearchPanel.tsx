@@ -75,7 +75,10 @@ function UseCaseRow({ useCase, activeProviders, providers, onChanged }: {
 
   return (
     <div className="mb-2 overflow-hidden rounded-lg bg-surface-container">
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-high">
+      {/* `focus-visible:-outline-offset-2`: this header fills the `overflow-hidden rounded-lg` card on
+          the line above, so an outward-drawn outline is clipped on ALL FOUR sides — measured 4px lost
+          per side, the ring's entire reach, i.e. no visible focus indicator at all (WCAG 2.4.7). */}
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-high focus-visible:-outline-offset-2">
         <ChevronRight size={14} className="shrink-0 text-on-surface-low transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'none', color: open ? 'var(--color-primary)' : undefined }} />
         <span className="grid size-7 shrink-0 place-items-center rounded-md"
           style={activeProviders.length > 0
