@@ -34,13 +34,13 @@ which atom it actually lands on is a judgement, so that mapping is authored, not
   ``ready_frontier``. This is the same edge set the dashboard's tier layering uses
   (``tools/gen_roadmap_dashboard.py:dag_layers`` keeps only deps that name a known atom).
 * the **full graph** — ordering edges plus each resolved EXT edge (``atom -> to_atom``).
-  Drives ``cycles``. It is *cyclic* today (two cycles), which is exactly why it cannot
+  Drives ``cycles``. It is *cyclic* today (one cycle), which is exactly why it cannot
   drive the ordering.
 
 ``plan_counts``
     One record per plan, in ``plans[]`` order, shape
     ``{code, plan, total_atoms, done, in_progress, todo, blocked}``.
-    ``blocked`` is a **seventh key added to the historical six-key shape**: two atoms carry
+    ``blocked`` is a **seventh key added to the historical six-key shape**: 11 atoms carry
     ``status: "blocked"`` and folding them into ``todo`` would claim they are startable,
     while dropping them would break ``total_atoms == done + in_progress + todo + blocked``.
     Nothing consumes this field yet (the dashboard builds its own per-plan tally), so

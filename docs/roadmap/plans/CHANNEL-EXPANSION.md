@@ -617,3 +617,32 @@ never in the clause, is adoption.
   test fixture. `CE-9`'s "no bespoke event glue shipped" clause passes today for the wrong reason: not
   because the apps route through the seam, but because nothing routes anywhere. Recording only that true
   negative would read as a discharged obligation, so the gap gets an atom instead of a footnote.
+- **2026-09-07 — `CE-10` closes the same day it was minted, and its own `done_when` had to be
+  corrected to close it.** Adoption is 4/4 (apps#90) with the conformance advisory's new trigger arm
+  landing separately in core #2576. Two things are worth keeping over the bare fact.
+  **The clause I wrote was unsatisfiable, and it was already false when I wrote it.** It demanded a
+  literal zero-hit set including `SourceEvent` and `triggers.json`. Measured on a clean extract of the
+  apps repo's `main`, `triggers.json` was **9 hits** — all legitimate prose about core's trigger-store
+  envelope — and `SourceEvent` **cannot** be zero for any adopter, because it is the SDK's own payload
+  type; holding it at zero would mean duck-typing around the SDK dataclass to satisfy a grep. The honest
+  baseline was 5-of-6. So the `done_when` is now stated over Python **names via AST** rather than raw
+  text, which is what the clause always meant: a docstring saying there is no `emit_event` here is not a
+  call to `emit_event`, and a text scan that counts it trains readers to ignore the rail. Correcting the
+  criterion rather than waving the run through is the opposite of the failure this log warns about under
+  `ET-7` — that entry declined to rewrite acceptance criteria to match a *discovery*; this one rewrites a
+  criterion that was arithmetically impossible from the day it was authored.
+  **Adoption is DISCOVERED, not counted.** `.github/scripts/check_trigger_source_adoption.py` measures
+  over the channel apps it finds. A hardcoded `assert adopters == 4` stays green when a fifth channel app
+  arrives without a source — 4/5 reads as "4, as expected" — so the denominator has to grow. Driven in
+  every direction: pre-change main 0/4 red, an adopter losing its declaration 3/4 red, a new app without
+  one 4/5 red, an unparseable manifest red as UNKNOWN rather than silently lowering the ratio, and
+  `providers: []` reported as an EMPTY declaration named separately from an absent one.
+  **Clause 3 would have been vacuous without a core change, and the reason is this roadmap's recurring
+  defect.** Conformance clause 9 *narrated* a four-part checklist — "channel + inbox + a trigger source
+  once that seam exists + contributed UI" — and only ever **checked one part**. When WF2AUT-8 shipped the
+  seam, that sentence went from forward-looking to **false**, and nothing started checking, which is how
+  adoption sat at 0/4 for a whole release with the kit reporting nothing wrong. A control that narrates
+  an obligation instead of enforcing it, the same class as this plan's own void gates. The advisory now
+  has two arms with independent suppressors, so adopting one cannot silence the other — and the arm
+  landed only **after** apps#90 brought the population into compliance, because giving a control teeth
+  before the population satisfies it is an outage, not a gate.
