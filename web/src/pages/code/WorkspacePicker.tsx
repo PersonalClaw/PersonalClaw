@@ -217,9 +217,8 @@ export function WorkspacePicker({ mode, allowCreate, onPick, onClose }: {
                 onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); else if (e.key === 'Escape' && !submitting) { setCreating(false); setError(null) } }}
                 disabled={submitting} placeholder="new-project-folder"
                 data-type="body-s" className="h-9 min-w-0 flex-1 rounded-md bg-surface-high px-2.5 text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary disabled:opacity-60" />
-              <Button size="sm" onClick={createFolder} disabled={!newName.trim() || submitting}
-                disabledReason={!newName.trim() ? 'Enter a folder name first' : undefined}>
-                {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Create + use
+              <Button size="sm" onClick={createFolder} loading={submitting} disabled={!newName.trim() || submitting}
+                disabledReason={!newName.trim() ? 'Enter a folder name first' : undefined}><Check size={14} /> Create + use
               </Button>
             </div>
           ) : (

@@ -464,9 +464,8 @@ function NewProjectModal({ busy, onClose, onCreate }: {
           {/* The reason keeps the button reachable and says what is missing — a bare
               `disabled` submit is removed from the tab order, so a keyboard user tabs past
               the action with no way to learn why (measured: title null, NOT focusable). */}
-          <Button onClick={submit} disabled={!name.trim() || busy}
-            disabledReason={!name.trim() ? 'Enter a project name first' : undefined}>
-            {busy ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Create project
+          <Button onClick={submit} loading={busy} disabled={!name.trim() || busy}
+            disabledReason={!name.trim() ? 'Enter a project name first' : undefined}><Check size={15} /> Create project
           </Button>
         </div>
       </div>

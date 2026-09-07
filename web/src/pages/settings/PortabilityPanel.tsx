@@ -194,11 +194,8 @@ export function PortabilityPanel() {
                 variant={spec.key === 'full' ? 'primary' : 'secondary'}
                 size="sm"
                 onClick={() => download(spec)}
-                disabled={busy !== null}
-              >
-                {busy === spec.key
-                  ? <><Loader2 size={15} className="animate-spin" /> Packaging…</>
-                  : <><Download size={15} /> Export {spec.label.toLowerCase()}</>}
+                loading={busy === spec.key} loadingLabel="Packaging…" disabled={busy !== null}
+              ><Download size={15} /> Export {spec.label.toLowerCase()}
               </Button>
               <span data-type="caption" className="text-on-surface-low">{spec.hint}</span>
             </div>
@@ -223,8 +220,7 @@ export function PortabilityPanel() {
             <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()} disabled={busy !== null}>
               <FileArchive size={15} /> {file ? file.name : 'Choose archive…'}
             </Button>
-            <Button size="sm" onClick={runImport} disabled={busy !== null || !file || !manifest} disabledReason={!file && busy === null ? 'Choose a file first' : (!manifest && busy === null ? 'The archive has not passed validation' : undefined)}>
-              {busy === 'import' ? <><Loader2 size={15} className="animate-spin" /> Importing…</> : <><Upload size={15} /> Import</>}
+            <Button size="sm" onClick={runImport} loading={busy === 'import'} loadingLabel="Importing…" disabled={busy !== null || !file || !manifest} disabledReason={!file && busy === null ? 'Choose a file first' : (!manifest && busy === null ? 'The archive has not passed validation' : undefined)}><Upload size={15} /> Import
             </Button>
             {busy === 'validate' && <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low"><Loader2 size={13} className="animate-spin" /> Checking archive…</span>}
             {importResult && <span data-type="caption" className="text-on-surface-low">{importResult}</span>}

@@ -68,9 +68,8 @@ export function MarketplaceDetail({ result, installed, onInstalled }: {
       <div>
         {done
           ? <Button size="sm" variant="secondary" disabled><Check size={15} /> Installed</Button>
-          : <Button size="sm" onClick={() => install(false)} disabled={installing || refused}
-              disabledReason={refused ? 'The security scanner refused this skill — a dangerous verdict cannot be overridden.' : undefined}>
-              {installing ? <><Loader2 size={15} className="animate-spin" /> Installing…</> : <><Download size={15} /> Install</>}
+          : <Button size="sm" onClick={() => install(false)} loading={installing} loadingLabel="Installing…" disabled={installing || refused}
+              disabledReason={refused ? 'The security scanner refused this skill — a dangerous verdict cannot be overridden.' : undefined}><Download size={15} /> Install
             </Button>}
       </div>
       {err && <FieldError>{err}</FieldError>}
@@ -133,8 +132,7 @@ export function MarketplaceDetail({ result, installed, onInstalled }: {
           ) : null}
           {blocked.needsConsent && (
             <div className="mt-1">
-              <Button size="sm" variant="secondary" onClick={() => install(true)} disabled={installing}>
-                {installing ? <Loader2 size={15} className="animate-spin" /> : <ShieldAlert size={15} />} Install anyway
+              <Button size="sm" variant="secondary" onClick={() => install(true)} loading={installing}><ShieldAlert size={15} /> Install anyway
               </Button>
             </div>
           )}

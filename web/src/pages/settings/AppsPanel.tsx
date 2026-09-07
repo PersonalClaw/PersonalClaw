@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, ExternalLink, Loader2 } from 'lucide-react'
+import { Check, ExternalLink } from 'lucide-react'
 import { api, type AppSummary } from '../../lib/api'
 import { notify } from '../../app/appSdk'
 import { useQuery } from '../../lib/data'
@@ -149,10 +149,9 @@ function AppSettingsCard({ app, navigate }: { app: AppSummary; navigate?: (p: st
           {cfg.err && <div data-type="body-s" className="text-negative">{cfg.err}</div>}
           <div className="flex items-center justify-end gap-2">
             {justSaved && <span data-type="caption" className="flex items-center gap-1 text-ok"><Check size={13} /> Saved</span>}
-            <Button variant="primary" size="sm" disabled={cfg.busy || !cfg.dirty || cfg.missing.length > 0}
+            <Button variant="primary" size="sm" loading={cfg.busy} disabled={cfg.busy || !cfg.dirty || cfg.missing.length > 0}
               disabledReason={cfg.missing.length > 0 ? `Fill in ${cfg.missingLabels.join(', ')}`
-                : !cfg.dirty && !cfg.busy ? 'No changes to save' : undefined} onClick={() => cfg.save()}>
-              {cfg.busy ? <Loader2 size={14} className="animate-spin" /> : null} Save
+                : !cfg.dirty && !cfg.busy ? 'No changes to save' : undefined} onClick={() => cfg.save()}>Save
             </Button>
           </div>
         </div>

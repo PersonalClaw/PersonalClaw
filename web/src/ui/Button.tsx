@@ -64,12 +64,13 @@ const sizeRole: Record<Size, string> = {
  *     radial highlight following the cursor; dropped below the heavy-effect
  *     threshold so "refined" stays flat,
  *   • a `loading` state that cross-fades the label out for a centered spinner
- *     while preserving the button's width (no layout jump).
+ *     while preserving the button's width (no layout jump), optionally naming
+ *     what is happening via `loadingLabel`.
  *  Pill by default; `shape="squircle"` opts into the superellipse corner. No
  *  hardcoded colors/px — all via tokens. */
 export function Button({
   children, variant = 'primary', size = 'md', shape = 'pill',
-  loading = false, className, onClick, disabled, type = 'button', title, ariaLabel, ariaExpanded, ariaPressed,
+  loading = false, loadingLabel, className, onClick, disabled, type = 'button', title, ariaLabel, ariaExpanded, ariaPressed,
   disabledReason,
 }: {
   children: ReactNode
@@ -77,6 +78,28 @@ export function Button({
   size?: Size
   shape?: 'pill' | 'squircle'
   loading?: boolean
+  // WHAT is happening, for a `loading` button whose progress is worth naming.
+  //
+  // Bare `loading` withholds the label: it cross-fades the whole thing to opacity 0 and centers a
+  // spinner. That is right for a short, obvious action ("Save" → spinner → done), and it is the
+  // reason this prop exists — because for a SLOW action it is the wrong trade, and 8 sites in this
+  // tree had already worked around it by hand:
+  //
+  //     {busy === 'rebuild' ? <><Loader2 className="animate-spin"/> Linking…</> : <><Share2/> Rebuild links</>}
+  //
+  // Seven of those eight name a multi-second operation — "Dreaming…", "Consolidating…",
+  // "Rendering…", "Syncing…", "Building…", "Linking…", "Running…" — and every one is strictly more
+  // informative than an unlabelled spinner. But hand-rolling it costs them `aria-busy`, because
+  // that attribute is published from `loading` and these buttons never set it. So the workaround
+  // traded an announcement for a word, and a screen-reader user got neither.
+  //
+  // 🔑 THE PROGRESS VERB IS NOT DECORATION — it is the only thing distinguishing "still working"
+  // from "stuck". A spinner alone cannot say which of five long operations is running, and these
+  // buttons sit in rows where several could be.
+  //
+  // Omit it and nothing changes: `loading` alone keeps the withheld-label behaviour every existing
+  // caller relies on.
+  loadingLabel?: string
   className?: string
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
   disabled?: boolean
@@ -183,7 +206,22 @@ export function Button({
         'transition-colors duration-100 ease-[cubic-bezier(0.2,0,0,1)]',
         // aria-disabled needs the same dimming as the native attribute, and must not
         // swallow pointer events (a hover has to reveal the title/tooltip).
-        'disabled:opacity-40 disabled:pointer-events-none aria-disabled:opacity-40 aria-disabled:cursor-not-allowed',
+        //
+        // 🔴 …EXCEPT WHEN A LOADING LABEL HAS TO BE READ. `loading` disables the button, so
+        // `disabled:opacity-40` fires and the whole control renders at 40% — measured on the real
+        // component, not reasoned about. For a bare spinner that is fine. For `loadingLabel` it
+        // defeats the prop: "Consolidating…" exists to be read, and CSS opacity COMPOUNDS, so no
+        // descendant can win it back. The dim is therefore omitted in that one case.
+        //
+        // 🪤 OMITTED, NOT OVERRIDDEN. Adding `disabled:opacity-100` alongside would put two opacity
+        // utilities on one element, and which wins is decided by Tailwind's STYLESHEET order rather
+        // than the order written here — the exact trap recorded above this file's `ghost-accent`
+        // variant, where `text-on-surface` and `text-primary` collided and the winner was accidental.
+        //
+        // Interactivity does not rely on the dim: `disabled` plus `pointer-events-none` still refuse
+        // the click, and a spinner beside a progress verb says "working" more clearly than grey does.
+        loading && loadingLabel ? 'disabled:pointer-events-none' : 'disabled:opacity-40 disabled:pointer-events-none',
+        'aria-disabled:opacity-40 aria-disabled:cursor-not-allowed',
         variants[variant], sizes[size], className,
       )}
     >
@@ -202,13 +240,31 @@ export function Button({
       <AnimatePresence>
         {loading && (
           <motion.span
+            // 🪤 aria-hidden STAYS, and `loadingLabel` does not change that. The button's
+            // accessible name must keep being its ACTION ("Rebuild links"), or the control stops
+            // being findable by the name the user is looking for — the exact regression that killed
+            // the first `disabledReason` implementation, where an sr-only span was concatenated into
+            // the name and "Create project" became "Create projectEnter a name first".
+            // `aria-busy` is what carries "working" to assistive tech; this span is the sighted
+            // channel for the same fact, so it is decorative by construction.
             aria-hidden
             className="absolute inset-0 grid place-items-center"
             initial={{ opacity: 0, scale: 0.6 }}
             animate={{ opacity: 1, scale: 1, transition: physics.snappy }}
             exit={{ opacity: 0, scale: 0.6, transition: spring.effects }}
           >
-            <Loader2 size={16} className="animate-spin" />
+            {loadingLabel ? (
+              // Same row shape the 8 hand-rolled sites used, so adopting the prop is
+              // appearance-preserving: spinner, gap, verb. `min-w-0` + `truncate` because this span
+              // is absolutely positioned over a button sized by its ORIGINAL label — a longer verb
+              // than the action it replaces would otherwise overflow the pill rather than wrap.
+              <span className="inline-flex min-w-0 items-center gap-s">
+                <Loader2 size={16} className="shrink-0 animate-spin" />
+                <span className="truncate">{loadingLabel}</span>
+              </span>
+            ) : (
+              <Loader2 size={16} className="animate-spin" />
+            )}
           </motion.span>
         )}
       </AnimatePresence>

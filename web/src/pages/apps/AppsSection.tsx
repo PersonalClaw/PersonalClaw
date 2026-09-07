@@ -3,7 +3,7 @@ import { fvs } from '../../design/fontWeight'
 import { accentChip } from '../../design/accent'
 import { motion } from 'framer-motion'
 import {
-  Blocks, Plus, Download, Loader2, Power, Trash2, Settings2, FolderOpen,
+  Blocks, Plus, Download, Power, Trash2, Settings2, FolderOpen,
   ShieldAlert, ShieldCheck, Server, LayoutGrid, RefreshCw, Plug, ChevronDown,
   MoreVertical, Database, Sparkles, Archive, HardDrive, MapPin, AlertTriangle,
 } from 'lucide-react'
@@ -1038,8 +1038,7 @@ export function SourcesPanel({ catalog, reloadCatalog, onInstalled }: {
                 {isDefault && (
                   <span className="shrink-0 rounded-pill bg-surface-highest px-2 py-0.5 text-on-surface-low text-[0.75rem]">Default</span>
                 )}
-                <Button variant="ghost" size="sm" disabled={busy === url} onClick={() => installFrom(url, url)}>
-                  {busy === url ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Install
+                <Button variant="ghost" size="sm" loading={busy === url} onClick={() => installFrom(url, url)}><Download size={14} /> Install
                 </Button>
                 {!isBuiltin && (
                   <SquareIconButton icon={Trash2} tone="danger" label="Remove source" className="shrink-0"
@@ -1275,8 +1274,7 @@ function AppCard({ item, index, busy, onInstall, onOpen, onAction }: {
               <span onClick={stop}><Button variant="primary" size="sm" onClick={() => onAction(app, 'toggle')}><Power size={14} /> Activate</Button></span>
             )
           ) : (
-            <span onClick={stop}><Button variant="secondary" size="sm" disabled={busy} onClick={onInstall}>
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} Install
+            <span onClick={stop}><Button variant="secondary" size="sm" loading={busy} onClick={onInstall}><Download size={14} /> Install
             </Button></span>
           )}
         </div>
@@ -1343,14 +1341,12 @@ function InstallModal({ onClose, onInstalled }: { onClose: () => void; onInstall
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {needsConsent ? (
-            <Button variant="primary" disabled={guarded.busy} onClick={() => doInstall(true)}>
-              {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Install anyway
+            <Button variant="primary" loading={guarded.busy} onClick={() => doInstall(true)}><ShieldAlert size={16} /> Install anyway
             </Button>
           ) : (
-            <Button variant="primary" disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doInstall(false)}
+            <Button variant="primary" loading={guarded.busy} disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doInstall(false)}
               // A terminal refusal is a SECURITY outcome, not a missing field — it needs its own sentence.
-              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}>
-              {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Install
+              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}><Download size={16} /> Install
             </Button>
           )}
         </div>
@@ -1390,13 +1386,11 @@ function UpdateModal({ name, onClose, onUpdated }: { name: string; onClose: () =
         <div className="flex justify-end gap-2 pt-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           {needsConsent ? (
-            <Button variant="primary" disabled={guarded.busy} onClick={() => doUpdate(true)}>
-              {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Update anyway
+            <Button variant="primary" loading={guarded.busy} onClick={() => doUpdate(true)}><ShieldAlert size={16} /> Update anyway
             </Button>
           ) : (
-            <Button variant="primary" disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doUpdate(false)}
-              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}>
-              {guarded.busy ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} Update
+            <Button variant="primary" loading={guarded.busy} disabled={guarded.busy || !!refusal || !source.trim()} onClick={() => doUpdate(false)}
+              disabledReason={refusal || (!source.trim() ? 'Enter a source first' : undefined)}><RefreshCw size={16} /> Update
             </Button>
           )}
         </div>
@@ -1656,8 +1650,7 @@ function StoreDetailPanel({ item, onInstalled }: { item: StoreItem; onInstalled:
         </div>
       )}
       <div>
-        <Button variant="primary" size="sm" disabled={guarded.busy} onClick={() => install(false)}>
-          {guarded.busy ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Install
+        <Button variant="primary" size="sm" loading={guarded.busy} onClick={() => install(false)}><Download size={15} /> Install
         </Button>
       </div>
 
@@ -1855,8 +1848,7 @@ function UninstallModal({ name, onClose, onDone }: { name: string; onClose: () =
         <KeptDepsList kept={kept} />
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="danger" disabled={busy} onClick={forceUninstall}>
-            {busy ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />} Force uninstall
+          <Button variant="danger" loading={busy} onClick={forceUninstall}><Trash2 size={16} /> Force uninstall
           </Button>
         </div>
       </div>
