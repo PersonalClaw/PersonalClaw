@@ -3,6 +3,7 @@ import { LoadError } from '../../ui/ListScaffold'
 import { StatusPill } from '../../ui/StatusPill'
 import { fvs } from '../../design/fontWeight'
 import { hasApiCode } from '../../lib/api'
+import { UNRECORDED_LABEL, provenanceRecorded, tokensUnrecorded } from '../../lib/unrecorded'
 import { EvalsOff } from './EvalsOff'
 import type {
   BenchmarkArmAggregate, BenchmarkProviderBinding, BenchmarkReport, BenchmarkTaskRow,
@@ -213,6 +214,17 @@ function bindingRef(binding: BenchmarkProviderBinding): string {
   return `${binding.provider_name}:${binding.model}`
 }
 
+/** "3 cells" / "1 cell" / "One or more cells" — a real plural, and an honest hedge only when the
+ *  count itself is absent.
+ *
+ *  A report written before the run-level count existed carries no number, and inventing one would be
+ *  the same defect this whole change is about: it would publish a count nobody recorded. So the
+ *  hedge is reserved for exactly that case and never used to dodge the plural. */
+function unrecordedCellPhrase(count: number | undefined): string {
+  if (typeof count !== 'number') return 'One or more cells'
+  return `${count} cell${count === 1 ? '' : 's'}`
+}
+
 /** WHICH MODEL produced this table — the one thing the table itself cannot show.
  *
  *  A benchmark run has two kinds and they render identically: cells bound to one real
@@ -232,14 +244,21 @@ function bindingRef(binding: BenchmarkProviderBinding): string {
  *  1. an object — these cells called that model, named with its endpoint;
  *  2. `null` — the run RECORDED that no provider was bound: every cell resolved the offline
  *     replay, so the table is not a model measurement;
- *  3. absent — the report predates provenance recording (ES-17 added the field without moving
- *     `report_schema`), so provenance is UNRECORDED. "We did not record it" is a different claim
- *     from "nothing was bound", and a reader who cannot tell them apart will read the first as
- *     the second — which is this project's recurring absent-versus-declared-false failure. */
+ *  3. unrecorded — the report predates provenance recording, so whether a model was called is
+ *     UNKNOWN. "We did not record it" is a different claim from "nothing was bound", and a reader
+ *     who cannot tell them apart will read the first as the second — this project's recurring
+ *     absent-versus-declared-false failure.
+ *
+ *  Which of the last two you have comes from `provenanceRecorded(report)`, which reads the schema
+ *  the report STATES. This used to be `'provider_binding' in report` (#2562): the key-presence
+ *  check rendered the three states correctly and made this panel a SECOND owner of the fact, so
+ *  every future consumer had to rediscover the trick. `REPORT_SCHEMA` exists for exactly this and
+ *  is now at 2. */
 function Provenance({ report }: { report: BenchmarkReport }) {
   const binding = report.provider_binding
-  const recorded = 'provider_binding' in report
+  const recorded = provenanceRecorded(report)
   const homeRefs = report.pin?.model_fingerprint
+  const cellRefs = report.pin?.cell_model_fingerprint
   return (
     <div className="flex flex-col gap-xs rounded-lg bg-surface-container px-l py-m">
       <span data-type="title-s" className="text-on-surface">
@@ -290,8 +309,39 @@ function Provenance({ report }: { report: BenchmarkReport }) {
           {Object.entries(homeRefs)
             .map(([useCase, ref]) => `${useCase}=${ref}`)
             .join(', ')}
-          {' '}— which is what the operator configured, not what the cells reached. Only the line
-          above says what the cells reached.
+          {' '}— which is what the operator configured, not what the cells reached.
+        </p>
+      )}
+      {/* The pin's OWN answer to "what could the cells reach", beside the home's (issue 2561). Two
+          facts, two fields: `model_fp` above is the home's digest and was identical for a bound
+          run and one where every cell failed to resolve any provider, so `cell_model_fingerprint`
+          is what a reader of the pin can actually check the table against. `null` (unrecorded) is
+          not rendered as `{}` — an older report's pin says nothing here and must keep saying it.
+          (Issue numbers are spelled without a leading hash inside these JSX comments: `tokenLint`
+          is a source-TEXT scan and reads a hash followed by four hex digits as a raw colour, which
+          is why this sentence does not demonstrate the form it is warning about.) */}
+      {cellRefs !== undefined && (
+        <p data-type="caption" className="text-on-surface-low">
+          The pin records what the <span className="text-on-surface-var">cells</span> could reach —{' '}
+          {cellRefs === null
+            ? UNRECORDED_LABEL
+            : Object.keys(cellRefs).length === 0
+              ? 'no model at all'
+              : Object.entries(cellRefs)
+                  .map(([useCase, ref]) => `${useCase}=${ref}`)
+                  .join(', ')}
+          .
+        </p>
+      )}
+      {/* A property of the RUN, not of a row (issue 2540). A provider that omits its usage block
+          makes every token ratio in the table below unrecorded rather than zero, and a reader needs
+          that before reading any ratio — the whole failure mode is a run that looks complete. */}
+      {report.tokens_recorded === false && (
+        <p data-type="caption" className="text-on-surface-low">
+          {unrecordedCellPhrase(report.unrecorded_spend_cells)} reported no token usage — their
+          provider omitted it — so every token ratio below is{' '}
+          <span className="text-on-surface-var">{UNRECORDED_LABEL}</span> rather than zero, and no
+          row is offered a direction on a spend match this run could not measure.
         </p>
       )}
     </div>
@@ -328,7 +378,7 @@ function TaskRow({ row }: { row: BenchmarkTaskRow }) {
         ))}
       </td>
       <td className="px-m py-s text-right text-on-surface-var">{fmtDelta(row.delta_points)}</td>
-      <td className="px-m py-s text-right text-on-surface-var">{fmtRatio(row.token_ratio)}</td>
+      <td className="px-m py-s text-right text-on-surface-var">{fmtRatio(row.token_ratio, row)}</td>
       <td className="px-m py-s text-right text-on-surface-var">{fmtArm(on)}</td>
       <td className="px-m py-s text-right text-on-surface-var">{fmtArm(off)}</td>
       <td className="px-m py-s text-right text-on-surface-var">{row.absent_cells}</td>
@@ -450,7 +500,12 @@ function orderedRows(view: BenchmarkView): BenchmarkTaskRow[] {
   return [...ordered, ...view.report.tasks.filter((t) => !known.has(t.task_id))]
 }
 
-/** `null` is UNMEASURED. It must never render as a verdict string, and never as a zero. */
+/** `null` is UNMEASURED. It must never render as a verdict string, and never as a zero.
+ *
+ *  `tokens_unrecorded` (#2540) is a MEASURED task whose token gate could not run, so it is a
+ *  verdict string and renders as one — the row's scores and delta are real. Keeping it out of the
+ *  `null` branch is the point: "we did not measure this" and "we measured it and could not check
+ *  the spend match" are different claims. */
 function verdictLabel(verdict: string | null): string {
   return verdict === null ? 'not measured' : verdict
 }
@@ -473,11 +528,20 @@ function fmtArm(agg: BenchmarkArmAggregate | undefined): string {
  *  whether the comparison was matched at all, and a `not_token_matched` verdict is unreadable
  *  without it.
  *
- *  `null` is "not measured" like every other absent number here. `0` is NOT: `Comparison.token_ratio`
- *  returns `0.0` when the `skills_off` arm spent nothing, which is a real (and disqualifying)
- *  observation about the run rather than a missing one, so it renders as `0.0000` and the note
- *  explains it. Collapsing the two would hide the zero-spend arm behind "not measured". */
-function fmtRatio(value: number | null): string {
+ *  THREE renderings, because `null` now carries two causes and `0` a third:
+ *
+ *  * `0` is a MEASUREMENT — `Comparison.token_ratio` returns `0.0` when the `skills_off` arm spent
+ *    nothing, a real and disqualifying observation — so it renders as `0.0000` with the note
+ *    explaining it. Collapsing it into "not measured" would hide the zero-spend arm;
+ *  * `null` with `tokens_recorded: false` is UNRECORDED (#2540): the arms were assembled and
+ *    scored, and the provider never reported the numbers the gate divides. The runner refuses the
+ *    ratio rather than averaging a placeholder zero into it;
+ *  * `null` otherwise is "not measured" — the arms could not be assembled at all.
+ *
+ *  The row is the second argument for exactly that reason: a caller cannot read this number
+ *  without also consulting the fact that says whether it was ever recorded. */
+function fmtRatio(value: number | null, row: BenchmarkTaskRow): string {
+  if (tokensUnrecorded(row)) return UNRECORDED_LABEL
   if (value === null) return 'not measured'
   return value.toFixed(4)
 }

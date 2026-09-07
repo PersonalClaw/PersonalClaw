@@ -324,8 +324,19 @@ def run_matrix(
     :class:`~personalclaw.evals.scenarios.ScenarioLibraryError` out of here, on
     purpose: the "never raises out" contract covers a CELL's infra failure (mapped to
     ``VERIFIER_ABSENT``), not a whole run that could only produce unattributable
-    scores."""
-    pin = pinning.compute_pin(spec.subject)
+    scores.
+
+    #2561: ``compute_pin`` reads the INVOKING HOME's ``active_models.json`` and never saw
+    ``provider_binding``, so a bound run and a run where every cell failed with
+    ``ProviderResolutionError`` carried the identical ``model_fp``. What the CELLS could reach is
+    recorded here as its own fact — ``{}`` when no binding is declared, which is a MEASUREMENT
+    (these cells could reach no model, so they resolved the offline ``scripted`` replay) and never
+    an absence."""
+    pin = pinning.compute_pin(spec.subject).with_cell_models(
+        {provider_binding.use_case: provider_binding.model_ref()}
+        if provider_binding is not None
+        else {}
+    )
     if not pin.is_complete():
         # Fail fast, BEFORE any cell burns a model call: an incomplete pin means the
         # row could not be written at the end anyway, and a run whose result cannot

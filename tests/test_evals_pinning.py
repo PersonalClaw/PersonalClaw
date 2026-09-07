@@ -26,7 +26,7 @@ import types
 
 import pytest
 
-from personalclaw.evals import pinning
+from personalclaw.evals import pinning, provenance
 from personalclaw.evals import runner as runner_mod
 from personalclaw.evals import scenarios as scenario_lib
 from personalclaw.evals import store
@@ -440,3 +440,137 @@ def test_pin_diff_groups_fingerprints_under_one_scenario_hash():
     assert [e["scenario_sha256"] for e in diff] == ["a" * 64, "b" * 64]
     assert diff[0]["fingerprints"] == ["fp1", "fp2"]
     assert diff[1]["fingerprints"] == ["fp1"]
+
+
+# ══ #2561 — the pin names what the CELLS could reach, as a SECOND fact ════════
+
+
+def test_the_cells_reach_is_a_separate_fact_from_the_homes_binding(home):
+    """MEASURED on `main` (`6a019e3c3`): two runs from one bound home — one with
+    `--bind-provider`, one where every cell failed with `ProviderResolutionError` — carried the
+    identical `pin.model_fp` `5970c589da34`, because `compute_pin` reads the invoking home's
+    `active_models.json` and never saw the binding.
+
+    The fix is two facts in two fields, not an overload of one: `model_fp` still names the HOME
+    (which is what `results.tsv` has always meant by it and what `pin_diff` groups on), and
+    `cell_model_fp` names what the cells could reach.
+    """
+    _pinnable(home)
+    home_pin = pinning.compute_pin("s")
+    bound = home_pin.with_cell_models({"chat": "LocalOllama:gemma4:12b"})
+    unbound = home_pin.with_cell_models({})
+
+    # The home fact is UNMOVED by either — one fact, one field.
+    assert bound.model_fp() == unbound.model_fp() == home_pin.model_fp() != ""
+    # The cells' fact separates them.
+    assert bound.cell_model_fp() != unbound.cell_model_fp()
+    assert unbound.cell_model_fp() == provenance.NO_MODEL
+    assert bound.cell_model_fp() not in (provenance.NO_MODEL, provenance.UNRECORDED)
+    assert len(bound.cell_model_fp()) == pinning.MODEL_FP_LEN
+    # And a pin nobody declared it for is UNRECORDED — never "the cells reached nothing".
+    assert home_pin.cell_model_fingerprint is None
+    assert home_pin.cell_model_fp() == provenance.UNRECORDED
+    assert provenance.state_of(home_pin.to_dict(), "cell_model_fingerprint") == (
+        provenance.UNRECORDED
+    )
+    assert provenance.state_of(unbound.to_dict(), "cell_model_fingerprint") == (
+        provenance.RECORDED_NONE
+    )
+    assert provenance.state_of(bound.to_dict(), "cell_model_fingerprint") == provenance.RECORDED
+
+
+def test_a_legacy_pin_json_reads_as_UNRECORDED_and_not_as_no_model(home):
+    """`or {}` in the reader would have turned every pin written before #2561 into "the cells
+    reached nothing" — inventing a measurement out of an absence, i.e. the defect in the reader."""
+    _pinnable(home)
+    legacy = pinning.compute_pin("s").to_dict()
+    del legacy["cell_model_fingerprint"]
+    del legacy["cell_model_fp"]
+    restored = pinning.RunPin.from_dict(legacy)
+    assert restored.cell_model_fingerprint is None
+    assert restored.cell_model_fp() == provenance.UNRECORDED
+    # A pin that RECORDED "no model" round-trips as `{}`, and the two stay apart.
+    recorded_none = pinning.RunPin.from_dict(
+        pinning.compute_pin("s").with_cell_models({}).to_dict()
+    )
+    assert recorded_none.cell_model_fingerprint == {}
+    assert recorded_none.cell_model_fp() == provenance.NO_MODEL
+
+
+def test_the_model_axis_override_does_not_drop_the_cells_reach(home):
+    """`with_model_override` rebuilt the pin field by field, so a new field would have been silently
+    dropped on every per-cell pin — #2561 re-created one layer down, in the artifact a reader goes
+    to when a cell surprises them."""
+    _pinnable(home)
+    pin = pinning.compute_pin("s").with_cell_models({"chat": "LocalOllama:gemma4:12b"})
+    overridden = pin.with_model_override("Acme:m2")
+    assert overridden.cell_model_fingerprint == {"chat": "LocalOllama:gemma4:12b"}
+    assert overridden.cell_model_fp() == pin.cell_model_fp()
+    # The home fingerprint DID move, which is what the override is for.
+    assert overridden.model_fingerprint == {"chat": "Acme:m2"}
+
+
+def test_the_ledger_row_can_tell_an_offline_run_from_a_real_model_run(home, monkeypatch):
+    """#2561's second consequence, driven through the REAL run path: "someone reading a
+    `results.tsv` row cannot tell an offline run from a real-model run. `model_fp` is identical for
+    both." Now one column can, and the two rows still agree on the home digest.
+    """
+    from personalclaw.evals import cell_provider
+
+    _pinnable(home)
+    _fake_spawn(monkeypatch)
+    binding = cell_provider.CellProviderBinding(
+        use_case="chat", provider_name="LocalOllama", model="gemma4:12b", base_url="http://x/v1"
+    )
+    run_matrix(
+        MatrixSpec(subject="s", trial_count=1), matrix_id="m-bound", provider_binding=binding
+    )
+    run_matrix(MatrixSpec(subject="s", trial_count=1), matrix_id="m-unbound")
+
+    rows = {r["study_id"]: r for r in store.read_results()}
+    assert (
+        rows["m-bound"]["model_fp"] == rows["m-unbound"]["model_fp"]
+    ), "the HOME fact is one fact and must not fork"
+    assert rows["m-bound"]["cell_model_fp"] != rows["m-unbound"]["cell_model_fp"]
+    assert rows["m-unbound"]["cell_model_fp"] == provenance.NO_MODEL
+    # A digest, and never an empty cell — an empty one already means "the column did not exist".
+    assert len(rows["m-bound"]["cell_model_fp"]) == pinning.MODEL_FP_LEN
+    assert rows["m-bound"]["cell_model_fp"] != ""
+
+    # The bound pin names ONE use case, where the home's names three-or-however-many. That is the
+    # issue's first consequence: "the pin can name three use cases when the binding grants one."
+    bound_pin = pinning.matrix_pin("m-bound")
+    assert bound_pin is not None
+    assert set(bound_pin.cell_model_fingerprint or {}) == {"chat"}
+    assert bound_pin.cell_model_fingerprint == {"chat": "LocalOllama:gemma4:12b"}
+
+
+def test_the_column_is_APPENDED_so_an_older_row_stays_parseable(home):
+    """The ledger is append-only. An old row has fewer cells, `read_results`' `zip` truncation
+    leaves the key absent, and `state_of` reads that as UNRECORDED without a special case."""
+    assert store.RESULTS_COLUMNS[-1] == "cell_model_fp"
+    assert store.RESULTS_COLUMNS[:-1] == (
+        "study_id",
+        "kind",
+        "verdict",
+        "score_old",
+        "score_new",
+        "k",
+        "model_fp",
+        "ts",
+        "scenario_id",
+        "scenario_sha256",
+        "prompt_pack_sha256",
+        "config_snapshot_ref",
+        "fixture_home",
+    )
+    path = store.results_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    short = "\t".join(store.RESULTS_COLUMNS[:-1])
+    path.write_text(
+        "\t".join(store.RESULTS_COLUMNS) + "\n" + short.replace("study_id", "old-1", 1) + "\n",
+        encoding="utf-8",
+    )
+    row = store.read_results()[0]
+    assert "cell_model_fp" not in row
+    assert provenance.is_unrecorded(row, "cell_model_fp") is True

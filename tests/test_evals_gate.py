@@ -138,10 +138,17 @@ class _ScoringMatrix:
     ``EvalRunner(judge_enabled=False)``, which filters them out of the scored set.
     """
 
-    def __init__(self, *, dollars_per_cell: float = 0.0, tokens_per_cell: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        dollars_per_cell: float = 0.0,
+        tokens_per_cell: int = 0,
+        tokens_recorded: bool = True,
+    ) -> None:
         self.calls: list[tuple[str, str | None]] = []
         self._dollars = dollars_per_cell
         self._tokens = tokens_per_cell
+        self._tokens_recorded = tokens_recorded
 
     def __call__(self, spec: MatrixSpec, *, matrix_id: str, artifact_arm=None, **_kw):
         self.calls.append((spec.subject, None if artifact_arm is None else artifact_arm.label))
@@ -172,7 +179,13 @@ class _ScoringMatrix:
                         "spend": {
                             "observed": True,
                             "attempts": 1,
-                            "tokens": self._tokens,
+                            # What a real child writes since #2540. `cell_spend` treats an ABSENT
+                            # `tokens_recorded` as unrecorded on purpose — an artifact that never
+                            # recorded whether its provider reported usage cannot vouch for its
+                            # own token count either — so this fake has to carry it.
+                            "tokens_recorded": self._tokens_recorded,
+                            "unrecorded_attempts": 0 if self._tokens_recorded else 1,
+                            "tokens": self._tokens if self._tokens_recorded else None,
                             "dollars_est": self._dollars,
                             "estimated": True,
                         },
@@ -550,6 +563,74 @@ def test_an_unobserved_spend_is_not_reported_as_zero(gate_home):
     assert report.spend["observed"] is True
     # With no cell artifact at all, the absence is carried instead.
     assert gate_mod.cell_spend("no-such-matrix")["observed"] is False
+
+
+def test_a_cell_whose_provider_reported_no_usage_makes_the_token_total_unrecorded(gate_home):
+    """#2540 at the gate, which is the OTHER reader of the cell spend dict.
+
+    `total["tokens"] += int(spend.get("tokens") or 0)` turned the cell's `None` into a measured
+    zero here, so a gate would have published a token total that silently omitted whatever the
+    unreporting cells spent. `dollars_est` is unaffected — it is a real estimate over real attempts
+    and the gate's ceiling is dollars, so the bound still bites.
+    """
+    report = gate_mod.run_gate(
+        run_id="r1",
+        arms=_arms({}, {"a": "b"}),
+        run_matrix=_ScoringMatrix(
+            dollars_per_cell=0.01, tokens_per_cell=5000, tokens_recorded=False
+        ),
+    )
+    assert report.spend["observed"] is True
+    assert report.spend["tokens_recorded"] is False
+    assert report.spend["tokens"] is None
+    assert report.spend["tokens"] != 0
+    assert report.spend["unrecorded_attempts"] == 2  # two arms × one scenario
+    assert report.spend["dollars_est"] == pytest.approx(0.02)
+
+    # VACUITY FLOOR: the same sweep with a REPORTING provider sums to a real number, so the `None`
+    # above is the guard biting and not the accumulator being broken.
+    ok = gate_mod.run_gate(
+        run_id="r2",
+        arms=_arms({}, {"a": "b"}),
+        run_matrix=_ScoringMatrix(dollars_per_cell=0.01, tokens_per_cell=5000),
+    )
+    assert ok.spend["tokens_recorded"] is True
+    assert ok.spend["tokens"] == 10_000
+    assert ok.spend["unrecorded_attempts"] == 0
+
+
+def test_one_unrecorded_matrix_makes_the_whole_runs_token_total_unrecorded(gate_home):
+    """`_accumulate`'s half of the same guard: `None or 0` there was the second site.
+
+    A run where one matrix reported and one did not has no token total — the sum of the reporting
+    half is not the run's spend.
+    """
+    spend = {
+        "observed": True,
+        "attempts": 1,
+        "tokens": 5000,
+        "tokens_recorded": True,
+        "unrecorded_attempts": 0,
+        "dollars_est": 0.01,
+        "estimated": False,
+    }
+    gate_mod._accumulate(
+        spend,
+        {
+            "observed": True,
+            "attempts": 1,
+            "tokens": None,
+            "tokens_recorded": False,
+            "unrecorded_attempts": 1,
+            "dollars_est": 0.01,
+            "estimated": False,
+        },
+    )
+    assert spend["tokens_recorded"] is False
+    assert spend["tokens"] is None
+    assert spend["unrecorded_attempts"] == 1
+    assert spend["dollars_est"] == pytest.approx(0.02)
+    assert spend["attempts"] == 2
 
 
 # ══ CLAUSE 4 — "ungated" is honest, and never blocks ═════════════════════════

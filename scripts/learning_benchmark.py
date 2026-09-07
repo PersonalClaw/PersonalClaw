@@ -56,6 +56,7 @@ from personalclaw.evals import learning_bench as bench  # noqa: E402
 from personalclaw.evals import matrix as matrix_lib  # noqa: E402
 from personalclaw.evals import overlay as overlay_lib  # noqa: E402
 from personalclaw.evals import pinning  # noqa: E402
+from personalclaw.evals import provenance  # noqa: E402
 from personalclaw.evals import skills_bench  # noqa: E402
 from personalclaw.evals import scenarios as scenario_lib  # noqa: E402
 
@@ -195,12 +196,21 @@ def _verdict_for_task(task: bench.BenchTask, cells: list) -> verdict_lib.TaskVer
     cell is reported as a count, never counted as a skills-off win). A scored cell whose spend
     was not observed flips `spend_observed` off for the whole task, because a token ratio over
     partially observed spend is not a token match.
+
+    A scored cell whose PROVIDER did not report its usage flips `tokens_recorded` off, which is a
+    different fact and was #2540's silent zero: `spend.get("tokens") or 0` fed the token
+    denominator a `0` for a cell that genuinely spent, while the cell still reported
+    `observed: true`. The cell now reports `tokens: None`
+    (`provenance.UNRECORDED`) and this is where the count is assembled; `verdict_task` refuses the
+    ratio rather than averaging over it.
     """
     trials: dict[str, list] = {verdict_lib.ARM_SKILLS_ON: [], verdict_lib.ARM_SKILLS_OFF: []}
     tool_calls: dict[str, int] = {verdict_lib.ARM_SKILLS_ON: 0, verdict_lib.ARM_SKILLS_OFF: 0}
     absent = 0
     spend_observed = True
     spend_estimated = False
+    tokens_recorded = True
+    unrecorded_cells = 0
     scored = 0
 
     for cell in cells:
@@ -213,8 +223,18 @@ def _verdict_for_task(task: bench.BenchTask, cells: list) -> verdict_lib.TaskVer
         if not spend.get("observed"):
             spend_observed = False
         spend_estimated = spend_estimated or bool(spend.get("estimated"))
+        # The guard, before the number is used. An ABSENT `tokens_recorded` is unrecorded too: a
+        # cell artifact written before #2540 never recorded whether its provider reported usage.
+        if provenance.is_unrecorded(spend, "tokens_recorded") or not spend.get("tokens_recorded"):
+            tokens_recorded = False
+            unrecorded_cells += 1
         # Scores are assertion pass RATES in 0..1; §5's band is in POINTS, so scale once, here,
         # at the boundary between the matrix's unit and the verdict rule's.
+        #
+        # `Trial.tokens` is an `int` by construction, so an unrecorded count arrives as a
+        # PLACEHOLDER 0. That is safe only because `tokens_recorded=False` below makes
+        # `verdict_task` refuse before any code reads it — and it raises
+        # `IncommensurableSpendError` if it is ever reached with the flag off.
         trials[arm].append(
             verdict_lib.Trial(score=float(cell.score) * 100.0, tokens=int(spend.get("tokens") or 0))
         )
@@ -232,7 +252,27 @@ def _verdict_for_task(task: bench.BenchTask, cells: list) -> verdict_lib.TaskVer
         tool_calls=tool_calls,
         spend_observed=spend_observed,
         spend_estimated=spend_estimated,
+        tokens_recorded=tokens_recorded,
+        unrecorded_spend_cells=unrecorded_cells,
     )
+
+
+def run_spend_facts(verdicts: list) -> dict:
+    """The RUN-level spend facts the report publishes above its task table.
+
+    #2540 asked for this as a property of the run and not only of a row: "if a provider cannot
+    report usage, that is a property of the run worth surfacing in the report". A reader deciding
+    whether to believe any token ratio in the table needs it before reading a single row.
+
+    A pure function rather than an expression inlined into the report literal, because inline it was
+    unreachable from a test — and a run-level claim nothing exercises is the inert-control shape
+    this project keeps finding. A run with NO verdicts records `True`: nothing failed to report,
+    because nothing reported at all, and `measured_tasks: 0` beside it is what says so.
+    """
+    return {
+        "tokens_recorded": all(tv.tokens_recorded for tv in verdicts) if verdicts else True,
+        "unrecorded_spend_cells": sum(tv.unrecorded_spend_cells for tv in verdicts),
+    }
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -291,7 +331,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         tv = _verdict_for_task(task, list(result.cells))
         verdicts.append(tv)
         try:
-            pin = pinning.compute_pin(task.task_id)
+            # READ BACK the pin `run_matrix` actually persisted, rather than recomputing one here.
+            # A second computation is a second answer: this one would not carry the cell binding
+            # `run_matrix` recorded (#2561), so the report would state the home's model beside a
+            # cells' field that was silently unrecorded.
+            pin = pinning.matrix_pin(matrix_id)
+            if pin is None:
+                raise RuntimeError(f"matrix {matrix_id} persisted no pin.json")
             pin_seen.setdefault("prompt_pack_sha256", pin.prompt_pack_sha256)
             pin_seen.setdefault("config_snapshot_ref", pin.config_snapshot_ref)
             pin_seen.setdefault("model_fp", pin.model_fp())
@@ -299,6 +345,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             # reader of a published table could not tell a real model from the offline replay
             # from it — and §8 forbids publishing a number whose provenance is unreadable.
             pin_seen.setdefault("model_fingerprint", dict(pin.model_fingerprint))
+            # The SECOND fact, under its own name (#2561): what the CELLS could reach. `model_fp`
+            # above is the invoking home's and was identical for a bound run and a run where every
+            # cell failed to resolve any provider at all.
+            pin_seen.setdefault("cell_model_fp", pin.cell_model_fp())
+            pin_seen.setdefault(
+                "cell_model_fingerprint",
+                None if pin.cell_model_fingerprint is None else dict(pin.cell_model_fingerprint),
+            )
         except Exception:  # noqa: BLE001 - an unpinnable task is reported, not fatal
             pass
         print(
@@ -325,12 +379,19 @@ def cmd_run(args: argparse.Namespace) -> int:
         # WHAT the cells were actually allowed to call. `null` is the honest reading of an
         # offline run and must stay distinguishable from a real one at a glance: the two
         # produce identically-shaped score tables and only one of them is a measurement.
+        #
+        # And a THIRD state a consumer must not fold into `null`: a report that never recorded
+        # this at all. That is what `report_schema` above answers (#2562) — every report at
+        # `bench.PROVENANCE_SCHEMA` or above carries this key, so a consumer reads the STATED
+        # schema and never `'provider_binding' in report`.
         "provider_binding": (binding.to_dict() if binding is not None else None),
         "home": home,
         "tasks": [tv.to_dict() for tv in verdicts],
         "skipped": skipped,
         "measured_tasks": sum(1 for tv in verdicts if tv.verdict is not None),
         "absent_cells": sum(tv.absent_cells for tv in verdicts),
+        # The RUN-level spend facts (#2540). See `run_spend_facts` for why they are a function.
+        **run_spend_facts(verdicts),
     }
     if args.reproduce:
         baseline = bench.read_report(args.reproduce)
@@ -345,6 +406,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         f"measured {report['measured_tasks']} of {len(tasks)} task(s); "
         f"{report['absent_cells']} absent cell(s)"
     )
+    if not report["tokens_recorded"]:
+        print(
+            f"{report['unrecorded_spend_cells']} cell(s) reported NO token usage — their provider "
+            f"omitted it. Every token ratio in this report is {provenance.UNRECORDED}, not zero."
+        )
     if report["measured_tasks"] == 0:
         print("NOTHING was measured. §8: this is published as such, not drawn as a zero.")
     return 0

@@ -16,6 +16,13 @@ The four parts the amendment names:
   ``active_models.json``. Rebinding a model changes the fingerprint (and therefore
   :meth:`RunPin.model_fp`) while the scenario hash stays put: that pair is exactly
   the pin-diff query "did anything change".
+
+  This names the **INVOKING HOME's** binding, and that is all it has ever named. #2561 measured
+  the consequence: two runs from one bound home — one with ``--bind-provider``, one without,
+  where every cell failed with ``ProviderResolutionError`` — carried the identical
+  ``model_fp`` ``5970c589da34``, because the flag never reached the pin. So the cells' reach is
+  a SECOND fact under its own name (``cell_model_fingerprint`` /
+  :meth:`RunPin.cell_model_fp`), never an overload of this one: two facts, two fields.
 * ``prompt_pack_sha256`` — hash over the RESOLVED prompt pack: for every shipped
   prompt/snippet, the home's copy when it exists (the user edited it) else the
   packaged one, plus any home-only additions.
@@ -34,10 +41,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.evals import provenance
 from personalclaw.evals import scenarios as scenario_lib
 from personalclaw.evals import store
 
@@ -71,6 +79,17 @@ class RunPin:
     config_snapshot_ref: str = ""
     fixture_home: str = scenario_lib.DEFAULT_FIXTURE_HOME
     library_version: int = scenario_lib.LIBRARY_VERSION
+    #: What this run's CELLS could reach — the second fact #2561 asked for, under its own name.
+    #: The three states are :mod:`personalclaw.evals.provenance`'s, spelled in JSON:
+    #:
+    #: * ``None`` — :data:`~personalclaw.evals.provenance.UNRECORDED`. Nothing declared what the
+    #:   cells could reach: a pin read back from a ``pin.json`` written before #2561, or a
+    #:   subject that spawns no cells at all (the judge/retrieval/bakeoff paths call models from
+    #:   the parent home, where ``model_fingerprint`` above already IS what ran).
+    #: * ``{}`` — recorded, and the cells could reach NO model, so they resolved the offline
+    #:   ``scripted`` replay. This is a measurement, not an absence.
+    #: * ``{use_case: ref}`` — the one grant the caller declared for the cells.
+    cell_model_fingerprint: dict[str, str] | None = None
 
     def model_fp(self) -> str:
         """Short digest of the whole fingerprint dict — the ledger's ``model_fp`` cell.
@@ -78,11 +97,52 @@ class RunPin:
         An empty fingerprint (no model bound at all) digests to ``""`` rather than
         to the hash of ``{}``, so :meth:`is_complete` can tell "unbound" from
         "bound to nothing".
+
+        This is the INVOKING HOME's digest. It is not what the cells reached — see
+        :meth:`cell_model_fp`, and #2561 for the two runs this could not tell apart.
         """
         if not self.model_fingerprint:
             return ""
         canonical = scenario_lib.canonical_json(dict(self.model_fingerprint))
         return _sha256_text(canonical)[:MODEL_FP_LEN]
+
+    def cell_model_fp(self) -> str:
+        """Short digest of what the CELLS could reach — the ledger's ``cell_model_fp`` cell.
+
+        Returns one of three values, and none of them can be confused for another because a
+        digest is 12 hex characters and neither word is:
+
+        * :data:`~personalclaw.evals.provenance.UNRECORDED` — nothing declared it;
+        * :data:`~personalclaw.evals.provenance.NO_MODEL` — declared, and the cells could reach
+          none;
+        * a 12-hex digest of the cells' fingerprint.
+
+        A WORD rather than an empty cell because an empty ``results.tsv`` cell already means a
+        third thing — the column did not exist when the row was written — and #2561's whole
+        complaint is that a reader of a ledger row could not tell an offline run from a
+        real-model one.
+        """
+        if self.cell_model_fingerprint is None:
+            return provenance.UNRECORDED
+        if not self.cell_model_fingerprint:
+            return provenance.NO_MODEL
+        canonical = scenario_lib.canonical_json(dict(self.cell_model_fingerprint))
+        return provenance.digest_cell(_sha256_text(canonical)[:MODEL_FP_LEN], recorded=True)
+
+    def with_cell_models(self, cell_models: dict[str, str] | None) -> "RunPin":
+        """This pin, recording what the run's CELLS could reach.
+
+        Takes a plain ``{use_case: ref}`` mapping rather than a
+        :class:`~personalclaw.evals.cell_provider.CellProviderBinding` so this module stays
+        provider-agnostic and free of the import: the pin records a REF, not an endpoint.
+
+        Pass ``{}`` to record "the cells could reach no model" — that is a measurement, and
+        the three cell-spawning callers that declare no binding must record it rather than
+        leave the fact unrecorded.
+        """
+        return replace(
+            self, cell_model_fingerprint=None if cell_models is None else dict(cell_models)
+        )
 
     def is_complete(self) -> bool:
         """Are all four amendment-named parts present?
@@ -123,11 +183,21 @@ class RunPin:
             "fixture_home": self.fixture_home,
             "library_version": self.library_version,
             "model_fp": self.model_fp(),
+            # `None` when UNRECORDED, `{}` when recorded-and-no-model. Never collapsed to `{}`:
+            # a JSON reader gets the same three states the TSV cell below spells in words.
+            "cell_model_fingerprint": (
+                None if self.cell_model_fingerprint is None else dict(self.cell_model_fingerprint)
+            ),
+            "cell_model_fp": self.cell_model_fp(),
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "RunPin":
         raw_fp = data.get("model_fingerprint") or {}
+        # ABSENT ⇒ `None` ⇒ UNRECORDED, which is exactly what a `pin.json` written before #2561
+        # means. `or {}` here would have turned every legacy pin into "the cells reached nothing",
+        # inventing a measurement out of an absence — the defect itself, in the reader.
+        raw_cell = data.get("cell_model_fingerprint")
         return cls(
             scenario_id=str(data.get("scenario_id", "")),
             scenario_sha256=str(data.get("scenario_sha256", "")),
@@ -136,6 +206,9 @@ class RunPin:
             config_snapshot_ref=str(data.get("config_snapshot_ref", "")),
             fixture_home=str(data.get("fixture_home", scenario_lib.DEFAULT_FIXTURE_HOME)),
             library_version=int(data.get("library_version", scenario_lib.LIBRARY_VERSION) or 0),
+            cell_model_fingerprint=(
+                None if raw_cell is None else {str(k): str(v) for k, v in dict(raw_cell).items()}
+            ),
         )
 
     def to_row(self) -> dict:
@@ -147,6 +220,10 @@ class RunPin:
             "prompt_pack_sha256": self.prompt_pack_sha256,
             "config_snapshot_ref": self.config_snapshot_ref,
             "fixture_home": self.fixture_home,
+            # #2561's second consequence: "someone reading a results.tsv row cannot tell an
+            # offline run from a real-model run. `model_fp` is identical for both." This column
+            # is the one that can.
+            "cell_model_fp": self.cell_model_fp(),
         }
 
     def with_model_override(self, model: str | None) -> "RunPin":
@@ -159,15 +236,10 @@ class RunPin:
         if not model:
             return self
         overridden = {use_case: model for use_case in (self.model_fingerprint or {"chat": ""})}
-        return RunPin(
-            scenario_id=self.scenario_id,
-            scenario_sha256=self.scenario_sha256,
-            model_fingerprint=overridden,
-            prompt_pack_sha256=self.prompt_pack_sha256,
-            config_snapshot_ref=self.config_snapshot_ref,
-            fixture_home=self.fixture_home,
-            library_version=self.library_version,
-        )
+        # `replace` rather than a field-by-field rebuild: the old spelling silently dropped every
+        # field it did not list, so adding `cell_model_fingerprint` above would have made every
+        # per-cell pin forget what its cell could reach — #2561 re-created one layer down.
+        return replace(self, model_fingerprint=overridden)
 
 
 # ── the four parts ───────────────────────────────────────────────────────────
