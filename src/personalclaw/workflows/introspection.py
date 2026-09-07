@@ -1105,3 +1105,254 @@ def attention_stats(
         debt=attention_debt(event_times, now=now),
         trend=attention_trend(per_run_counts),
     )
+
+
+# ── the two ledger rails (PP-16 seam 4, the ledger-rails third) ──
+#
+# The loop cockpit has two rails a run detail has no answer for: the FINDINGS rail (what each unit
+# of work produced, in emit order) and the VERDICT/ROI rail (what the judge said about it, and what
+# it cost). Both are PROJECTIONS over the PP-5 ledger on the loop side —
+# `loop/files.py::get_findings` reads `step_completed`, `get_verdicts` reads `judge_verdict` — and
+# both were unreachable on the run side. Measured 2026-09-06: of the four kinds PP-16's
+# ledger-rails clause names, `step_completed` surfaced only as an introspection timeline row that
+# drops the step's own output ref, `judge_verdict` and `watcher_reaped` surfaced nowhere at all,
+# and `breaker_trip` has no run-side producer whatsoever (see `RAIL_PRODUCERS`).
+#
+# Same doctrine as everything above: pure functions over event lists, no new store. What is new is
+# that these two rails must stay honest for BOTH nouns, because PP-16's whole point is that
+# loop-shaped events will one day flow through this exact projection — see `_carried`.
+
+
+#: A rail kind the workflow ENGINE writes, so a count of zero is a real observation.
+PRODUCER_ENGINE = "engine"
+
+#: A rail kind NOTHING on the run side writes, so a count of zero would be a claim rather than an
+#: observation. The rail reports `None` for these and the panel renders an em dash.
+PRODUCER_NONE = "none"
+
+#: The four ledger kinds PP-16's ledger-rails clause names, mapped to whether the workflow engine
+#: actually produces each. `breaker_trip` is the one that does not: the loop watchdog is its only
+#: writer in the tree (`loop/journal.py::breaker_trip`) and the run engine has no breaker to trip.
+#: Declared rather than inferred, because a projection over an event list cannot see who writes the
+#: list — and railed in both directions (`tests/test_pp16_ledger_rails.py`), so an engine that
+#: grows a breaker reds this table instead of silently turning an absent cell into a zero.
+RAIL_PRODUCERS: dict[str, str] = {
+    "step_completed": PRODUCER_ENGINE,
+    "judge_verdict": PRODUCER_ENGINE,
+    "watcher_reaped": PRODUCER_ENGINE,
+    "breaker_trip": PRODUCER_NONE,
+}
+
+#: The `step_completed` fields the findings rail carries, and how to coerce each. A row reports
+#: only what its event actually carried — see `_carried`.
+_FINDING_FIELDS: tuple[tuple[str, type], ...] = (
+    ("node_id", str),
+    ("instance_path", str),
+    ("epoch", int),
+    ("state", str),
+    ("model", str),
+    ("provider", str),
+    ("tokens", int),
+    ("cost_usd", float),
+    ("duration_secs", float),
+    ("retries", int),
+    ("degraded_reason", str),
+    ("output_ref", str),
+)
+
+#: The `judge_verdict` fields the verdict rail carries. `evidence` is unpacked separately.
+_VERDICT_FIELDS: tuple[tuple[str, type], ...] = (
+    ("node_id", str),
+    ("instance_path", str),
+    ("epoch", int),
+    ("template", str),
+    ("verdict", str),
+    ("status", str),
+)
+
+#: The judge scores the LOOP side's ROI rail plots, which a run-side `judge_verdict` row does NOT
+#: carry: the engine puts the rich `JudgeVerdict` in the node OUTPUT and ledgers only
+#: `verdict`/`status`/`evidence`. Named here so the gap is a DECLARATION a panel can render as
+#: absent, rather than a zero a chart would plot as "no marginal value".
+ABSENT_VERDICT_SCORES: tuple[str, ...] = ("marginal_value", "quality_score")
+
+
+def _carried(event: dict[str, Any], key: str, cast: type) -> Any:
+    """The event's value for `key`, or ``None`` when the event does not carry the key at all.
+
+    The load-bearing function of both rails, and the reason they are written this way rather than
+    with `.get(key, 0)`. **Absent and declared-zero are different facts.** A run-side
+    `step_completed` always carries `cost_usd` — the engine's emitter writes it, `0.0` for a free
+    local model, which is a real observation. A LOOP-side `step_completed` carries no cost key at
+    all, because loop money lives in `usage/turns.jsonl` and `loop.manager.loop_spend` reads it
+    there. PP-16 retires the loop noun onto the run noun, so loop-shaped rows WILL flow through
+    this projection — and a rail that defaulted them to zero would report "$0.00, 0 tokens" for
+    work that really cost money, on the one surface a user opens to find out what it cost.
+
+    A carried-but-uncoercible value reads absent rather than zero for the same reason: a number
+    nobody can parse is not a measurement of nothing.
+    """
+    if key not in event:
+        return None
+    raw = event[key]
+    if raw is None:
+        return None
+    if cast is str:
+        return str(raw)
+    try:
+        return cast(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def findings_rail(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The run-side FINDINGS rail: one row per `step_completed`, in emit order.
+
+    The counterpart of `loop/files.py::get_findings`, and deliberately the same shape of read —
+    filter the ledger to one kind, project each row's own payload, preserve emit order. The loop
+    side carries a worker-authored `finding` dict; the run side carries the engine's structured
+    step record, so the row IS the finding: which node ran, on which model and provider, what it
+    cost, how long it took, whether it degraded, and the ref to what it produced.
+
+    `output_ref` is why this cannot ride the introspection timeline: that row shape drops it (along
+    with `provider`, `retries` and `degraded_reason`), so a reader could see that a step completed
+    but not reach what it completed with.
+    """
+    rows: list[dict[str, Any]] = []
+    for event in events or []:
+        if not isinstance(event, dict) or str(event.get("kind") or "") != "step_completed":
+            continue
+        row: dict[str, Any] = {"ts": str(event.get("ts") or "")}
+        for key, cast in _FINDING_FIELDS:
+            row[key] = _carried(event, key, cast)
+        # A loop-shaped row keys its work unit by CYCLE where a run keys it by node + epoch.
+        # Carried when present rather than translated: the two are different facts, and the
+        # store-retirement seam owns that mapping, not this projection.
+        row["cycle"] = _carried(event, "cycle", int)
+        rows.append(row)
+    return rows
+
+
+def verdict_rail(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The run-side VERDICT/ROI rail: one row per `judge_verdict`, in emit order.
+
+    The counterpart of `loop/files.py::get_verdicts`. `overall` is the judge's own aggregated
+    score, lifted out of the `evidence` payload the controller ledgers — the run side's only
+    ledger-carried ROI axis, because the axis the loop rail plots (`marginal_value`) is absent from
+    a run-side verdict row by construction. Both facts are reported: `overall` when the evidence
+    carried one, and every name in `ABSENT_VERDICT_SCORES` read through `_carried`, so the panel
+    can say "the judge scored this, and this ledger carries no marginal value" instead of plotting
+    a zero. Read rather than hard-coded to `None` because a LOOP-shaped verdict row splats
+    `JudgeVerdict.to_dict()` flat and therefore does carry them.
+    """
+    rows: list[dict[str, Any]] = []
+    for event in events or []:
+        if not isinstance(event, dict) or str(event.get("kind") or "") != "judge_verdict":
+            continue
+        row: dict[str, Any] = {"ts": str(event.get("ts") or "")}
+        for key, cast in _VERDICT_FIELDS:
+            row[key] = _carried(event, key, cast)
+        evidence = event.get("evidence")
+        evidence = evidence if isinstance(evidence, dict) else {}
+        row["overall"] = _carried(evidence, "overall", float)
+        row["sample_count"] = _carried(evidence, "sample_count", int)
+        row["shortfalls"] = list(evidence.get("shortfalls") or []) or None
+        for key in ABSENT_VERDICT_SCORES:
+            row[key] = _carried(event, key, float)
+        rows.append(row)
+    return rows
+
+
+def rail_coverage(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per rail kind: its producer, and how many events of it this run's ledger holds.
+
+    The honesty half of the two rails, in the same spirit as `checklist_gaps` — a surface that
+    renders both rails and says nothing about the kinds behind them cannot distinguish "the breaker
+    never tripped" from "nothing here can trip a breaker". So `events` is ``None``, never ``0``,
+    for a kind with no run-side producer: zero is an observation, and only a kind somebody writes
+    can earn one.
+    """
+    counts: dict[str, int] = dict.fromkeys(RAIL_PRODUCERS, 0)
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        kind = str(event.get("kind") or "")
+        if kind in counts:
+            counts[kind] += 1
+    return [
+        {
+            "kind": kind,
+            "producer": producer,
+            "events": counts[kind] if producer == PRODUCER_ENGINE else None,
+        }
+        for kind, producer in sorted(RAIL_PRODUCERS.items())
+    ]
+
+
+@dataclass
+class RailTotals:
+    """The verdict/ROI rail's aggregate, with every measured field absent-aware.
+
+    Distinct from `RunStats`, and the difference is the point: `RunStats.cost_usd` is a running
+    float seeded at ``0.0``, so a ledger whose steps carry no cost key is indistinguishable from
+    one whose steps were free. That is the right trade for the economics strip, which aggregates
+    across a template's runs and needs a number to sort by. It is the wrong trade for a rail whose
+    job is to say what THIS unit of work cost — so these fields stay ``None`` until some step
+    actually carried the key.
+    """
+
+    steps_completed: int = 0
+    verdicts: int = 0
+    #: `None` until a `step_completed` carried the key; the sum thereafter.
+    cost_usd: float | None = None
+    tokens: int | None = None
+    duration_secs: float | None = None
+    #: Judge outcomes, by the verdict word the ledger row carried.
+    verdicts_by_word: dict[str, int] = field(default_factory=dict)
+    #: The judge's aggregated scores in emit order — the ROI series a panel plots. ``None`` rather
+    #: than ``[]`` when no verdict carried one: an empty series says "the judge scored nothing",
+    #: which is a different fact from "no judge has run".
+    overall_series: list[float] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "steps_completed": self.steps_completed,
+            "verdicts": self.verdicts,
+            "cost_usd": None if self.cost_usd is None else round(self.cost_usd, 6),
+            "tokens": self.tokens,
+            "duration_secs": None if self.duration_secs is None else round(self.duration_secs, 3),
+            "verdicts_by_word": dict(self.verdicts_by_word),
+            "overall_series": None if self.overall_series is None else list(self.overall_series),
+            # Named, so a reader of this payload alone learns WHICH ROI axis is missing rather than
+            # concluding the run had no marginal value.
+            "absent_scores": list(ABSENT_VERDICT_SCORES),
+        }
+
+
+def rail_totals(findings: list[dict[str, Any]], verdicts: list[dict[str, Any]]) -> RailTotals:
+    """Aggregate the two rails. Takes the projected ROWS, not the raw events.
+
+    Reading the rails rather than the ledger a second time is what keeps the aggregate and the rows
+    from ever disagreeing: a total computed off a second filter is how a cockpit ends up showing
+    eight rows above a count of nine.
+    """
+    totals = RailTotals(steps_completed=len(findings), verdicts=len(verdicts))
+    for key in ("cost_usd", "duration_secs"):
+        carried = [row[key] for row in findings if isinstance(row.get(key), (int, float))]
+        if carried:
+            setattr(totals, key, float(sum(carried)))
+    carried_tokens = [row["tokens"] for row in findings if isinstance(row.get("tokens"), int)]
+    if carried_tokens:
+        totals.tokens = sum(carried_tokens)
+    by_word: dict[str, int] = {}
+    series: list[float] = []
+    for row in verdicts:
+        word = str(row.get("verdict") or "").strip()
+        if word:
+            by_word[word] = by_word.get(word, 0) + 1
+        if isinstance(row.get("overall"), (int, float)):
+            series.append(float(row["overall"]))
+    totals.verdicts_by_word = by_word
+    if series:
+        totals.overall_series = series
+    return totals

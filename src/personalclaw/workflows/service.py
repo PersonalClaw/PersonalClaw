@@ -1531,6 +1531,51 @@ def introspect(run_id: str) -> dict[str, Any]:
     )
 
 
+def ledger_rails(run_id: str) -> dict[str, Any]:
+    """The two ledger rails for one run (PP-16 seam 4, the ledger-rails third).
+
+    The run-side answer to the loop cockpit's findings rail and verdict/ROI rail. Both are pure
+    PROJECTIONS over the ledger this run already wrote — `introspection.py` holds the arithmetic,
+    this holds the read — so nothing new is stored and no kind is minted. It is the same read the
+    loop side does through `loop/store.py::get_redacted`, which attaches `findings`
+    (`files.get_findings`, over `step_completed`) and `verdicts` (`files.get_verdicts`, over
+    `judge_verdict`) to the loop's own detail payload.
+
+    ONE ledger read for both rails and their totals, and the totals are computed from the projected
+    ROWS: a second read with a second filter is how a count and the rows beneath it drift apart.
+
+    Per-run and cheap, which is why it is not folded into `introspect`. That payload reads this
+    template's SIBLING runs to earn its p50/p95 card and its said-no sample, so it is bounded by
+    `_TEMPLATE_CARD_RUNS` and gets slower as a template accumulates history. These two rails are a
+    single run's own history, so the cockpit can paint them on connect.
+
+    Redacted through `journal_mod.redact` — the SAME recursive redactor the journal writer uses,
+    reused rather than re-derived so the two cannot drift. The findings rail carries `model`,
+    `degraded_reason` and `output_ref`, and a degraded reason is exactly where a credential
+    surfaces in a screenshot.
+    """
+    from personalclaw.workflows import introspection
+
+    run = store.get(run_id)
+    if run is None:
+        return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+
+    events = journal_mod.ledger(run_id)
+    findings = introspection.findings_rail(events)
+    verdicts = introspection.verdict_rail(events)
+    totals = introspection.rail_totals(findings, verdicts)
+    return _ok(
+        run_id=run_id,
+        workflow=run.workflow_name,
+        findings=[journal_mod.redact(row) for row in findings],
+        verdicts=[journal_mod.redact(row) for row in verdicts],
+        totals=totals.to_dict(),
+        # Which rail kinds have a producer at all, and how many events each holds. `events: null`
+        # names a kind nothing on this side writes — an absent cell, not a zero.
+        coverage=introspection.rail_coverage(events),
+    )
+
+
 def template_trajectory(name: str) -> dict[str, Any]:
     """The trajectory-signature distribution and regression signal for one template (PP-7).
 

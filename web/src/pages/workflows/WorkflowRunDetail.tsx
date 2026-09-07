@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, RotateCcw, ScanSearch, SkipForward, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, RotateCcw, ScanSearch, Scale, SkipForward, X } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Segmented } from '../../ui/Segmented'
 import { Loading } from '../../ui/ListScaffold'
@@ -24,6 +24,7 @@ import { SteeringPanel } from './SteeringPanel'
 import { WorkspacePanel } from './WorkspacePanel'
 import { OutboxPanel } from './OutboxPanel'
 import { IntrospectPanel } from './IntrospectPanel'
+import { LedgerRailsPanel } from './LedgerRailsPanel'
 import { ReviewTriagePanel } from './ReviewTriagePanel'
 
 /** One workflow run, live (WORKFLOWS-V2 Slice 7b).
@@ -62,6 +63,12 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
   // p50/p95 card, the said-no badges and the Proof section. Closed by default and fetched on
   // open — answering costs a cross-run ledger read, and most runs are never audited.
   const [introspectOpen, setIntrospectOpen] = useState(false)
+  // The two ledger rails (PP-16 seam 4): the findings rail and the verdict/ROI rail, which the
+  // loop cockpit has had and a run detail had not. Closed by default and fetched on open like its
+  // siblings, though this read is the cheap one — a single run's own ledger, no cross-run scan.
+  // On BOTH sides of the terminal split: mid-run the findings rail is what a step produced so far,
+  // and after, it is the per-step cost and judge trail behind a finished result.
+  const [railsOpen, setRailsOpen] = useState(false)
   // Coalesce refetches: a fan-out completing fires many node_done events at once, and one
   // request per event would hammer the gateway for the same answer.
   const pending = useRef<number | null>(null)
@@ -312,6 +319,13 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
             <QuietButton onClick={() => setIntrospectOpen((v) => !v)} ariaExpanded={introspectOpen} title="Introspect — cost, latency, gates, timeline and proof">
               <ScanSearch size={13} /> Introspect
             </QuietButton>
+            {/* Rails, on both sides of the terminal split like Introspect and for the neighbouring
+                reason: mid-run the findings rail is what each step has produced so far, and after,
+                it is the per-step cost and the judge trail behind the result. Separate from
+                Introspect because it answers about THIS run only — no cross-run scan. */}
+            <QuietButton onClick={() => setRailsOpen((v) => !v)} ariaExpanded={railsOpen} title="Rails — the per-step findings rail and the judge verdict/ROI rail from this run's ledger">
+              <Scale size={13} /> Rails
+            </QuietButton>
             {/* Review, likewise on both sides: mid-run an accepted finding is steered into the next
                 iteration, and on a finished run it is still where a reviewer's misses get recorded.
                 Nothing here writes to the code without an explicit accept. */}
@@ -528,6 +542,15 @@ export function WorkflowRunDetail({ runId, onBack }: { runId: string; onBack: ()
           economics — which on this surface would be a wrong number a user would act on. */}
       {introspectOpen && (
         <IntrospectPanel runId={runId} onClose={() => setIntrospectOpen(false)} />
+      )}
+
+      {/* The two ledger rails (PP-16 seam 4), docked right. Keyed on the run id like its siblings:
+          these are per-step costs and judge scores, and showing the previous run's would be a wrong
+          number on exactly the surface a user consults to find out what a run cost. */}
+      {railsOpen && (
+        <SidePanel title="Ledger rails" icon={<Scale size={18} />} onClose={() => setRailsOpen(false)} fillHeight>
+          <LedgerRailsPanel runId={runId} />
+        </SidePanel>
       )}
 
       {/* The reviewer-comment triage drawer (§7 / criterion 9), docked right. Keyed on the run id

@@ -1592,6 +1592,77 @@ export interface WorkflowIntrospection {
   // answer — a backend gap the FE cannot close by rendering harder, so it is shown, not hidden.
   checklist_gaps: string[]
 }
+// The run-side FINDINGS rail (PP-16 seam 4) — one row per `step_completed`, in emit order. Every
+// measured field is `number | null` rather than `number`: `null` means the ledger row did not carry
+// the key at all, which is NOT the same fact as a zero. A loop-shaped step carries no cost or token
+// keys (loop money lives in `usage/turns.jsonl`), so rendering `null` as 0 would report a run as
+// free that was not. Panels render these as an em dash.
+export interface WorkflowFindingRow {
+  ts: string
+  node_id: string | null
+  instance_path: string | null
+  epoch: number | null
+  state: string | null
+  model: string | null
+  provider: string | null
+  tokens: number | null
+  cost_usd: number | null
+  duration_secs: number | null
+  retries: number | null
+  degraded_reason: string | null
+  output_ref: string | null
+  // Carried only by a loop-shaped row, which keys its work unit by cycle where a run keys it by
+  // node + epoch. Not translated — the two are different facts.
+  cycle: number | null
+}
+// The run-side VERDICT/ROI rail — one row per `judge_verdict`. `overall` is the judge's aggregated
+// score, the only ROI axis a run-side verdict row carries; `marginal_value` / `quality_score` are
+// the axes the LOOP rail plots and are `null` here by construction (the engine ledgers the verdict
+// word and its evidence and keeps the rich `JudgeVerdict` in the node output).
+export interface WorkflowVerdictRow {
+  ts: string
+  node_id: string | null
+  instance_path: string | null
+  epoch: number | null
+  template: string | null
+  verdict: string | null
+  status: string | null
+  overall: number | null
+  sample_count: number | null
+  shortfalls: string[] | null
+  marginal_value: number | null
+  quality_score: number | null
+}
+// Per rail kind: whether anything on the run side WRITES it, and how many events this run holds.
+// `events: null` names a kind with no producer — `breaker_trip` is written only by the loop
+// watchdog — because "the breaker never tripped" and "nothing here can trip a breaker" are
+// different claims and only the first deserves a zero.
+export interface WorkflowRailCoverage {
+  kind: string
+  producer: 'engine' | 'none'
+  events: number | null
+}
+export interface WorkflowLedgerRails {
+  run_id: string
+  workflow: string
+  findings: WorkflowFindingRow[]
+  verdicts: WorkflowVerdictRow[]
+  totals: {
+    steps_completed: number
+    verdicts: number
+    // `null` until some step carried the key — see `WorkflowFindingRow`.
+    cost_usd: number | null
+    tokens: number | null
+    duration_secs: number | null
+    verdicts_by_word: Record<string, number>
+    // `null` (not `[]`) when no verdict carried a score: an empty series says the judge scored
+    // nothing, which is a different fact from no judge having run.
+    overall_series: number[] | null
+    // The ROI axes this payload cannot carry, named so a reader learns WHICH one is missing.
+    absent_scores: string[]
+  }
+  coverage: WorkflowRailCoverage[]
+}
 // One dashboard pin (WORK-CONTAINERS §6.5d). A REFERENCE, never a copy: no name and no content,
 // because a denormalized title goes stale on the next rename and a card that is confidently wrong
 // is worse than one that is absent.
@@ -6919,6 +6990,17 @@ export const api = {
    *  routes would let this panel render eight answers and never learn the ninth was missing. */
   workflowRunIntrospect: (id: string) =>
     get<WorkflowIntrospection>(`/api/workflows/runs/${encodeURIComponent(id)}/introspect`),
+  /** The run's two ledger rails — findings and verdict/ROI (PP-16 seam 4).
+   *
+   *  Its own call rather than a field on `introspect` because the costs differ: introspection reads
+   *  this template's SIBLING runs to earn its p50/p95 card, while these rails are one run's own
+   *  ledger, so the cockpit can paint them on connect.
+   *
+   *  Every measured field arrives as `number | null` and `null` means ABSENT, not zero. Render it
+   *  as an em dash — a zero here would claim a step was free, or that a breaker never tripped on a
+   *  side that has no breaker. */
+  workflowRunLedgerRails: (id: string) =>
+    get<WorkflowLedgerRails>(`/api/workflows/runs/${encodeURIComponent(id)}/ledger-rails`),
   workflowRunDropStatus: (id: string) =>
     get<WorkflowDropStatus>(`/api/workflows/runs/${encodeURIComponent(id)}/drop`),
   /** Drop files into a run (WORK-CONTAINERS §2.5). `confirm` ANSWERS the approval gate — the first
