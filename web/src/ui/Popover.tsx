@@ -133,7 +133,7 @@ export function Popover({
           ref={menuRef}
           variants={overlayEnter} initial="initial" animate="animate" exit="exit"
           className={portal
-            ? 'glass fixed z-50 rounded-lgi p-s'
+            ? 'glass fixed z-[var(--z-menu)] rounded-lgi p-s'
             : `glass absolute z-30 rounded-lgi p-s ${side === 'bottom' ? 'top-full mt-s' : 'bottom-full mb-s'} ${align === 'right' ? 'right-0' : 'left-0'}`}
           style={{
             transformOrigin: `${side === 'bottom' ? 'top' : 'bottom'} ${align === 'right' ? 'right' : 'left'}`,

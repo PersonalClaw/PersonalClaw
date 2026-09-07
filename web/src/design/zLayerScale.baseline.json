@@ -1,5 +1,20 @@
 {
-  "_comment": "z-layer scale ratchet (CD-05), COMPLETE. Every fixed/portaled overlay rides the --z-* scale in design/tokens.css via z-[var(--z-*)]; no app source carries a bespoke numeric z-[N]. zLayerScale.test.ts keeps it that way: a numeric z-[N] in ANY file turns CI red (the files list is empty, so every file is a clean file), and the count ceiling is 0. The scanner's anti-rot guard is a synthetic regex self-test, since there are no live offenders left for it to find.",
+  "_comment": "z-layer scale ratchet (CD-05). The ARBITRARY form is complete: no app source carries a bespoke numeric z-[N], the files list is empty and the ceiling is 0. \u26a0\ufe0f THIS FILE PREVIOUSLY CLAIMED 'COMPLETE. Every fixed/portaled overlay rides the --z-* scale' \u2014 which was FALSE. It was true only of the bracket spelling `z-[N]`; Tailwind's STANDARD scale (`z-50`, `z-40`, `z-30`) is a second spelling of the same thing and NUMERIC_Z (/\\bz-\\[-?\\d/) cannot see it. 15 `fixed` overlays were on the standard scale, every one of them below --z-modal (60), and a NEW one would have passed CI. `maxStandardScaleFixed` below is the second ratchet, shrink-only.",
   "maxArbitraryZLayers": 0,
-  "files": []
+  "files": [],
+  "maxStandardScaleFixed": 15,
+  "standardScaleFixedFiles": [
+    "pages/chat/ChatFilePanel.tsx",
+    "pages/files/browse/FileTree.tsx",
+    "pages/knowledge/KnowledgeDetail.tsx",
+    "pages/tasks/TasksListPage.tsx",
+    "pages/terminal/TerminalDrawer.tsx",
+    "ui/DegradedChip.tsx",
+    "ui/FeedbackThumbs.tsx",
+    "ui/NavRail.tsx",
+    "ui/SidePanel.tsx",
+    "ui/content/ContentSurface.tsx",
+    "ui/widget/ReactWidgetFrame.tsx",
+    "ui/widget/WidgetFrame.tsx"
+  ]
 }

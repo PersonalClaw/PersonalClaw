@@ -148,3 +148,102 @@ describe('no bespoke numeric z-[N] outside the shrinking baseline', () => {
     }
   })
 })
+
+// ── THE SECOND SPELLING, which this rail could not see ──────────────────────
+//
+// 🔴 `NUMERIC_Z` above is `/\bz-\[-?\d/` — the ARBITRARY-value form only. Tailwind's STANDARD scale
+// (`z-50`, `z-40`, `z-30`) expresses exactly the same thing and never matches it. So CD-05 migrated one
+// spelling of two, and both this file and the baseline went on to state the stronger claim:
+// *"With the migration complete the tree holds no live offender to find"* and *"Every fixed/portaled
+// overlay rides the --z-* scale"*. Measured: **15 `fixed` overlays were on the standard scale, every
+// one below --z-modal (60)**, and a NEW `fixed z-50` overlay passed CI.
+//
+// 🔑 TWO OF THEM WERE WRONG IN VALUE, NOT JUST IN SPELLING — and those are fixed rather than
+// baselined. `tokens.css` defines `--z-menu: 100` as *"control-anchored menus / popovers: ABOVE
+// dialogs"*, yet `ui/Popover` (portaled branch) and `ui/motion/ContextMenu` both sat at `z-50`
+// (= --z-content), BELOW every dialog. They now ride `--z-menu`.
+//
+// 🪤 LATENT, NOT LIVE — stated precisely so nobody re-derives it as a crash. No `Popover` or
+// `ContextMenu` is currently rendered inside a `<Modal>` region, so nothing paints behind a dialog
+// today; the defect is that the primitives contradicted the rung their own component class is
+// assigned. Checked before claiming otherwise.
+//
+// The remaining 15 are mostly right in VALUE and wrong only in expression: `--z-content: 50` is
+// documented as *"content ceiling — full-screen content panels (side / detail / file) top out here"*,
+// which is exactly where `SidePanel` and the widget frames belong. They are baselined, shrink-only,
+// rather than migrated in a rail-fixing change.
+//
+// 🪤 MEASURED FROM THE CLASS LITERAL, NOT A BYTE WINDOW. A first pass took 260 characters around each
+// `z-<n>` and asked whether `fixed` appeared nearby — which reported 21, because `Popover`'s two
+// branches sit in one ternary and the inline `absolute` branch saw its sibling's `fixed`. Reading the
+// individual class-list string gives 15. Same over-reporting shape as the `[^>]{0,N}`-inside-a-JSX-tag
+// family this repo has hit before.
+
+/** A single class-list literal that positions with `fixed` AND carries a standard-scale `z-<n>`. */
+const FIXED_STANDARD_Z = /(['"`])((?:(?!\1)[\s\S]){0,400}?)\1/g
+
+function scanStandardScaleFixed(): { byFile: Record<string, number>; total: number } {
+  const byFile: Record<string, number> = {}
+  let total = 0
+  for (const f of walk(SRC)) {
+    const rel = relative(SRC, f).replace(/\\/g, '/')
+    // Comments blanked in place: design rationale cites `fixed z-50` in prose, and this rail is
+    // about code. Length preserved so any future line report stays accurate.
+    const text = readFileSync(f, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, (m) => m.replace(/[^\n]/g, ' '))
+      .replace(/(^|[^:"'`])\/\/[^\n]*/g, (m, p1) => p1 + ' '.repeat(m.length - p1.length))
+    let n = 0
+    for (const m of text.matchAll(FIXED_STANDARD_Z)) {
+      const lit = m[2]
+      if (/\bfixed\b/.test(lit) && /\bz-\d+\b/.test(lit)) n++
+    }
+    if (n) { byFile[rel] = n; total += n }
+  }
+  return { byFile, total }
+}
+
+describe('the standard-scale spelling is ratcheted too', () => {
+  // Resolved here rather than reused: the ladder `z` in the first describe is closure-scoped to it.
+  const z = resolveScale()
+  const baseline = JSON.parse(readFileSync(join(SRC, 'design/zLayerScale.baseline.json'), 'utf8'))
+  const { byFile, total } = scanStandardScaleFixed()
+
+  it('the two control-anchored menu primitives ride --z-menu, ABOVE dialogs', () => {
+    // The value fix. `--z-menu` exists for exactly this component class; at z-50 they sat below
+    // every dialog, contradicting the rung tokens.css assigns them.
+    const pop = readFileSync(join(SRC, 'ui/Popover.tsx'), 'utf8')
+    expect(pop, 'the portaled popover must ride the menu rung').toMatch(/fixed z-\[var\(--z-menu\)\]/)
+    const ctx = readFileSync(join(SRC, 'ui/motion/ContextMenu.tsx'), 'utf8')
+    expect(ctx, 'the context menu must ride the menu rung').toMatch(/fixed z-\[var\(--z-menu\)\]/)
+    for (const [name, src] of [['Popover', pop], ['ContextMenu', ctx]] as const) {
+      expect(src, `${name} must not go back to a bare z-50 while fixed`).not.toMatch(/fixed z-50\b/)
+    }
+  })
+
+  it('--z-menu really is above --z-modal, which is what makes that fix correct', () => {
+    expect(z.menu, 'a menu must out-paint a dialog').toBeGreaterThan(z.modal)
+  })
+
+  it('no NEW file puts a fixed overlay on the standard scale', () => {
+    const unlisted = Object.keys(byFile).sort().filter((f) => !baseline.standardScaleFixedFiles.includes(f))
+    expect(
+      unlisted,
+      'A `fixed` overlay carrying a standard-scale z-<n> in a file not on the baseline:\n  '
+      + unlisted.join('\n  ')
+      + '\nRoute it through the --z-* scale (design/tokens.css) with z-[var(--z-*)].',
+    ).toEqual([])
+  })
+
+  it('the standard-scale count only shrinks', () => {
+    expect(
+      total,
+      `fixed+standard-scale z count rose to ${total} (baseline ${baseline.maxStandardScaleFixed}). `
+      + 'Use z-[var(--z-*)], or lower maxStandardScaleFixed in the same commit when migrating DOWN.',
+    ).toBeLessThanOrEqual(baseline.maxStandardScaleFixed)
+  })
+
+  it('the scanner finds the population it is filtering (not vacuously green)', () => {
+    expect(total, 'the class-literal scan must still find the baselined overlays').toBeGreaterThanOrEqual(10)
+  })
+})
