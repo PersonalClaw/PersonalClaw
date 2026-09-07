@@ -1,10 +1,23 @@
 #!/bin/sh
 # PersonalClaw bootstrap installer — the `curl -fsSL https://personalclaw.dev/install | sh` one-liner.
 #
-# Plan 34 (DISTRIBUTION) §E / T2.2. THIS FILE BELONGS IN THE WEBSITE REPO
-# (personalclaw.dev, plan 36 owns) — it is staged here under deploy/website/ so it
-# is version-controlled, shellcheck-clean, and CI-smoke-tested (plan 33 full.yml
-# runs it in a bare ubuntu container weekly). Serve it at https://personalclaw.dev/install.
+# Plan 34 (DISTRIBUTION) §E / T2.2. THIS FILE IS THE SOURCE OF TRUTH for the bytes
+# served at https://personalclaw.dev/install. It is staged here — rather than living only
+# in the website repo (personalclaw.dev, plan 36 owns) — because the rail below is here.
+# The website repo's public/install is a MIRROR: re-apply it whenever this file changes,
+# and update install.sh.sha256 in the same commit (deploy/website/README.md §1).
+#
+# What CI actually does with this file. Every claim in this block is asserted by
+# tests/test_website_installer.py, which reds if the job it names stops existing or
+# stops naming this file — an earlier version of this header advertised a weekly
+# full.yml smoke that had never been written, and nothing noticed:
+#   · ci.yml   `lint`          shellcheck -s sh + sh -n + dash -n on this file (every PR)
+#   · ci.yml   `test`          offline contract: --help / --container / unknown-arg, the
+#                              truncation-safe structure, staged-vs-pinned digest
+#   · full.yml `install-smoke` runs BOTH this file AND the bytes actually served at
+#                              /install, in a bare ubuntu container (push to main +
+#                              nightly), and reds when the two disagree. A fetch that
+#                              fails reports `unproven` and reds; it never goes green.
 #
 # What it does (idempotent — re-running upgrades):
 #   1. `--container` → print the Docker Compose snippet and exit (no install).
