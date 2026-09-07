@@ -176,9 +176,28 @@ const useSenderTrust = () => useQuery('settings:sender-trust-card',
 const useProjectionRules = () => useQuery('settings:projection-rules', () => api.projectionRules(), { persist: true })
 const useToolsSavings = () => useQuery('settings:tools-savings', () => api.toolsSavings().catch(() => null as ToolsSavings | null), { persist: true })
 const useFeedbackProducers = () => useQuery('settings:feedback-producers', () => api.feedbackProducers().catch(() => null), { persist: false })
+// 🔴 THE SAME KEY POISONING AS `settings:legibility`, ON THE APP'S MOST DANGEROUS SWITCH. This tile
+// shares `settings:agent-defaults` with `AgentDefaultsPanel`, whose own 🔴 comment records that it
+// REMOVED exactly this `.catch(() => ({}))` because *"a settings panel must not present FABRICATED
+// values as saved state"*. The hub kept it, so on the real journey the panel's fix was inert: opening
+// `#/settings` first primed the shared key with `{}`, the fetcher RESOLVED, and the panel's
+// `if (!data && loadErr)` guard never fired — `data` was defined, just empty.
+//
+// What that fabricated `{}` claimed, on a config that never loaded:
+//   · Approval mode read **"Ask each time"** from `?? 'interactive'` — while the stored default is
+//     `auto` (`loader.py`'s `AgentConfig.approval_mode`). The UI showed the SAFE mode and the runtime
+//     ran the permissive one, so a user checked their setting, saw what they wanted, changed nothing,
+//     and every tool call still executed unprompted.
+//   · YOLO read **off** from `!!c.yolo`, on a switch whose whole job is auto-approve-everything.
+//
+// The block comment below states the rule this broke — *"match the PANEL exactly, or take a key of
+// your own"* — and its compliance table never listed this key. It is listed now.
 const useAgentDefaults = () => useQuery('settings:agent-defaults', async () => {
   const [cfg, agents] = await Promise.all([
-    api.personalclawConfig().then((c) => (c.agent ?? {}) as Record<string, unknown>).catch(() => ({} as Record<string, unknown>)),
+    // NO `.catch` — byte-identical to `AgentDefaultsPanel`'s read, which is the whole point.
+    api.personalclawConfig().then((c) => (c.agent ?? {}) as Record<string, unknown>),
+    // This one KEEPS its fallback, and the panel spells it the same way: the default agent's NAME is a
+    // decorating read (the tile renders '—' for it), not a control's claimed state.
     api.agents().then((a) => a.default_agent).catch(() => ''),
   ])
   return { cfg, defaultAgent: agents }
@@ -202,6 +221,16 @@ const useAgentDefaults = () => useQuery('settings:agent-defaults', async () => {
 // So the honesty claim is per-key, not a blanket "no `.catch`": three of the four shared keys carry
 // no substitute and their tiles render a failure line instead, and the fourth copies the panel's own
 // swallow rather than diverging from it.
+//
+// 🪤 AND THE RULE WAS STATED HERE WHILE A SIXTH SHARED KEY BROKE IT, unlisted, twenty lines above:
+//
+//   settings:agent-defaults      shared, WAS DIVERGENT  AgentDefaultsPanel's read + an extra `.catch`
+//
+// That is the discipline's own blind spot worth remembering — this table enumerates the keys ONE change
+// introduced, so it reads like a registry of every shared key and is not one. `settings:agent-defaults`
+// predates it, shares `AgentDefaultsPanel`'s key, and carried precisely the divergent swallow the
+// paragraph above forbids, on the approval-mode and YOLO controls. Fixed at its hook; listed here so the
+// next reader inherits a table that covers every shared key rather than four of six.
 //
 // ✅ DRIVEN, not just read. With `/api/config/personalclaw` held at 500 and the service worker
 // blocked, on the hub→panel journey (the one that defeated legibility's own fix): all four tiles say
@@ -521,14 +550,23 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     description: 'Default agent, approval mode, and execution settings.',
     useSearchText() { const { data } = useAgentDefaults(); const c = data?.cfg ?? {}; return `agent defaults default agent approval sandbox subagents ${data?.defaultAgent ?? ''} ${String(c.approval_mode ?? '')} ${c.yolo ? 'yolo' : ''}` },
     render(query, go) {
-      const { data, refresh, stale: isStalePaint } = useAgentDefaults()
+      const { data, error: agentErr, refresh, stale: isStalePaint } = useAgentDefaults()
       const c = (data?.cfg ?? {}) as Record<string, unknown>
-      const approval = String(c.approval_mode ?? 'interactive')
+      // 🪤 `'auto'`, NOT `'interactive'`. This is now unreachable on a failed read — the fetcher rejects,
+      // so `data` is undefined and the rows below never render — but the value it substitutes still has
+      // to be TRUE if the key is ever absent from a successful read. The stored default is `auto`
+      // (`loader.py`'s `AgentConfig.approval_mode`); `'interactive'` named the opposite, and guessing the
+      // restrictive mode is the worse direction precisely because this string governs only the READOUT.
+      // Behaviour is decided by the config, so a safe-looking guess manufactures false assurance.
+      const approval = String(c.approval_mode ?? 'auto')
       const setCfg = (key: string, value: unknown) => mutate(
         () => api.patchConfig(`agent.${key}`, value).then(refresh), 'settings:agent-defaults',
       )
       return (
-        <BentoCard icon={Bot} title="Agent defaults" query={query} onClick={() => go('agent')} loading={data === undefined} rows={3} stale={isStalePaint}>
+        // `!agentErr` so a failed read stops pretending to load — the treatment the legibility tile and
+        // the other four already carry. Without it the card spins forever on a read that has finished.
+        <BentoCard icon={Bot} title="Agent defaults" query={query} onClick={() => go('agent')} loading={data === undefined && !agentErr} rows={3} stale={isStalePaint}>
+          {!data && Boolean(agentErr) && <div data-type="caption" className="text-on-surface-low">Couldn&rsquo;t load your agent defaults.</div>}
           {data && <KVList query={query} rows={[
             { k: 'Default agent', v: data.defaultAgent || '—', vText: data.defaultAgent || '—' },
             { k: 'Approval', control: true, v: <InlineSelect value={approval} ariaLabel="Approval mode" onPick={(v) => setCfg('approval_mode', v)}
