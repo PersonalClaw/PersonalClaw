@@ -406,13 +406,49 @@ export function InboxPage({ query, setQuery, navigate }: Pick<RouteProps, 'query
           // nothing. Measured on `#/inbox`: filtering to no matches rendered the blank-slate
           // onboarding paragraph. Eleven other list surfaces answer the same state with "Try a
           // different …"; this is the twelfth.
+          // 🔑 AND THE TITLE HAD THE SAME BUG THE HINT WAS FIXED FOR, ON THE OTHER AXIS. The comment
+          // above records making the hint branch on `narrowed` before `disabled`. But the title only
+          // ever branched on `narrowed` — so a brand-new user, on a fresh install with no source
+          // enabled, was congratulated with **"Inbox zero"** above a hint reading "Enable a source to
+          // begin." The headline said "you are done"; the body said "you have not started".
+          //
+          // That is not a status line a user shrugs at. "Inbox zero" is a claim about their own
+          // triage state, and on the very first visit to a nav-rail surface it is simply false —
+          // there is no zero to be at, because nothing has ever been connected.
+          //
+          // The invariant this file already states for the hint is exactly the one the title was
+          // missing: the two must never disagree about which state the list is in. Both now branch on
+          // the same two flags, in the same order.
+          // 🪤 "Enable a source to begin" was prose with nothing to click, so the ONE actionable state
+          // was the only one with no action — the user had to already know Settings › Inbox exists.
+          // `navigate` is in scope (this component's props) and `settings/inbox` is a real section id
+          // (`settings/SettingsPage.tsx`), so this was a wiring omission, not anything structural.
+          //
+          // The action is on the `disabled && !narrowed` branch ONLY. "Inbox zero" and a no-match
+          // filter are both states with nothing for the user to do, and a CTA there would invent a
+          // task out of good news — which is exactly what `emptyStateRollout`'s taxonomy forbids.
+          //
+          // 🪤 The icon is `SettingsIcon` (already imported) and NOT `Plug`, even though Plug reads
+          // more like "connect": this product already assigns `Plug` to the **Providers** settings
+          // section (`SettingsPage.tsx`, `settingsWidgets.tsx`), so it would point at Settings with the
+          // glyph meaning a different panel. The LABEL names the goal; the ICON names the destination.
+          //
+          // 🪤 KEEP THE REASONING ABOVE THE TAG, NOT INSIDE IT. `narrowedNotBlankSlate.test.tsx`
+          // extracts this element with `/<EmptyState icon=\{InboxIcon\}[\s\S]{0,900}?\/>/` — a
+          // 900-character window. Inline comments pushed the closing `/>` past it, the match came back
+          // empty, and all four of that rail's assertions failed on a change that broke none of them.
+          // Widening the rail was the wrong instrument: the window is a fair proxy for "this tag must
+          // not sprawl", so the prose belongs here and the tag stays readable.
           <EmptyState icon={InboxIcon}
-            title={narrowed ? 'Nothing here' : 'Inbox zero'}
+            title={narrowed ? 'Nothing here' : disabled ? 'Inbox is not connected yet' : 'Inbox zero'}
             hint={narrowed
               ? (kind ? `No ${kindMeta(kind).label.toLowerCase()} matches the current search or filter.` : 'Try a different search or filter.')
               : disabled
                 ? 'Inbox collects messages, questions, and notifications from your agents and connected sources (filesystem and Slack; email coming). Enable a source to begin.'
-                : 'Messages your agents and connected sources surface for triage land here. You’re all caught up.'} />
+                : 'Messages your agents and connected sources surface for triage land here. You’re all caught up.'}
+            action={disabled && !narrowed
+              ? { label: 'Connect a source', onClick: () => navigate('settings/inbox'), icon: SettingsIcon }
+              : undefined} />
         ) : (
           // DSC-13: uncapped client-side — `filtered` is a pure filter over everything
           // the endpoint returned, with no slice and no MoreRow. `anchorKey` is the fix
