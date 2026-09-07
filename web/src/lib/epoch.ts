@@ -21,6 +21,42 @@ export function epochSeconds(ts?: number | string | null): number | undefined {
   return Number.isFinite(ms) ? ms / 1000 : undefined
 }
 
+/** ── ABSOLUTE stamps, for showing WHEN something happened rather than how long ago ────────────
+ *
+ *  These sit here rather than beside a caller because they share `epochSeconds`' parser AND its
+ *  failure contract: an unreadable stamp renders **nothing**, never a fallback like "Invalid Date"
+ *  or the epoch. A blank reads as "no timestamp" (which is true); anything else claims a time the
+ *  app does not have.
+ *
+ *  Locale-resolved on purpose — no hardcoded 24-hour or AM/PM format. The reader's own locale
+ *  decides, which is the only choice that is right in every region without a setting to argue over.
+ */
+
+/** Clock time for display beside a message: `14:32`, or `2:32 PM`, per the reader's locale. */
+export function clockTime(ts?: number | string | null): string {
+  const secs = epochSeconds(ts)
+  if (secs === undefined) return ''
+  return new Date(secs * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
+/** The same instant fully spelled out, for the `title` of a clock time.
+ *
+ *  `14:32` alone is ambiguous the moment a conversation is more than a day old, and the visible
+ *  form has to stay short — so the date lives in the hover/AT text instead of costing width. */
+export function fullStamp(ts?: number | string | null): string {
+  const secs = epochSeconds(ts)
+  if (secs === undefined) return ''
+  return new Date(secs * 1000).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' })
+}
+
+/** The machine-readable form for a `<time dateTime=…>` attribute. Empty when unreadable, so the
+ *  caller can omit the attribute rather than emit `dateTime=""`, which would be a lie in markup. */
+export function isoStamp(ts?: number | string | null): string {
+  const secs = epochSeconds(ts)
+  if (secs === undefined) return ''
+  return new Date(secs * 1000).toISOString()
+}
+
 /** A chat session's recency in MILLISECONDS for sorting — `last_activity_ts`, else `last_ts`, else
  *  `created`, else 0.
  *

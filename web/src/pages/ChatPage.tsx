@@ -770,6 +770,13 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // a stale closure. Gating happens at INGESTION: while off, chat_thinking frames are
   // dropped, so the transcript state itself stays free of thinking segments.
   const { data: showThinkingCfg } = useQuery('chat:show-thinking-inline', () => api.dashboardConfig().then((c) => c.show_thinking_inline), { persist: true })
+  // "Show timestamps" — the same persisted-query shape as the read above, and read HERE because
+  // this is the component that owns a turn's `ts`. Gating happens by NOT PASSING the stamp down, so
+  // the action row never learns about the preference: absent means "no time", which is also what a
+  // turn mid-stream (no stamp yet) means, so one branch covers both. Default off, matching the
+  // config default, so an unresolved read shows nothing rather than flashing times on and off.
+  const { data: showTimestamps } = useQuery('chat:show-timestamps', () => api.dashboardConfig().then((c) => c.show_timestamps), { persist: true })
+  const stampOf = (turn: { ts?: string }) => (showTimestamps ? turn.ts : undefined)
   const showThinkingRef = useRef(false)
   useEffect(() => { showThinkingRef.current = !!showThinkingCfg }, [showThinkingCfg])
   const coalescer = useStreamCoalescer((revealed) => {
@@ -2980,14 +2987,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                                 <RewindDivider snapshots={turn.rewound} canFork={memoryMode === 'persistent'} onFork={(si) => forkRewound(i, si)} />
                               )}
                               {!streaming && <UserActions text={turnTextOf(turn)} canFork={memoryMode === 'persistent'}
-                                canRewind={!isLast} onRewind={() => rewindTo(i)}
+                                canRewind={!isLast} onRewind={() => rewindTo(i)} ts={stampOf(turn)}
                                 onEdit={() => setEditingTurn(i)} onFork={() => forkAt(i)} />}
                             </div>
                           )
                         ) : (
                           <MessageAssistant actions={!(isLast && streaming) && (
                             <AssistantActions text={turnText(turn)} isLast={isLast} canFork={memoryMode === 'persistent'}
-                              variantCount={turn.variantCount} variantIdx={turn.variantIdx}
+                              variantCount={turn.variantCount} variantIdx={turn.variantIdx} ts={stampOf(turn)}
                               onCopy={() => {}} onRegenerate={regenerate} onFork={() => forkAt(i)}
                               onSwitchVariant={isLast ? switchVariant : undefined}
                               speaking={speakingTurn === i} onSpeak={() => speak(turnText(turn), i)} />
