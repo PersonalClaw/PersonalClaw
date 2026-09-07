@@ -467,7 +467,7 @@ GitHub/GitLab issue triage with AI-suggested labels + per-issue investigation no
 
 ### `PEP-18` — Spec Builder app (suite 7/9)
 
-**Status:** todo
+**Status:** blocked (bundle merged; the install path needs one owner decision on the scanner floor — #2526)
 
 Idea -> Requirements -> Design -> Tasks, then hand to an autonomous run. App front over the WORKFLOWS-V2 engine — not a parallel planner.
 
@@ -475,7 +475,7 @@ Idea -> Requirements -> Design -> Tasks, then hand to an autonomous run. App fro
 
 ### `PEP-19` — Ops app (suite 8/9)
 
-**Status:** todo
+**Status:** blocked (bundle merged; the same single owner scanner decision as PEP-18 — #2526)
 
 On-call first responder: watch alarms/pages, claim, investigate, propose fixes. Largest and most heavily gated: every fix is confirm-gated and rides AUTONOMY-GUARDRAILS (shipped). Build last among 8/9.
 

@@ -13,7 +13,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `DCU-1` | ✅ | Keystone out-of-band enable-state | — | With the enable file absent, every computer-use tool refuses with a WHAT/WHY/FIX message pointing to the out-of-band enable step; no tool or config path can flip the state. |
 | `DCU-2` | ✅ | Target policy, input-target screen, SEL-audit gate | `EXT:AUTONOMY-GUARDRAILS:SEL audit + safety profile` | Driving a non-allowlisted app refuses; typing or set-value into a secure/password field refuses; every attempt, allowed or refused, produces a SEL record. |
 | `DCU-3` | 🟡 | macOS accessibility driver (indexed AX tree) | `DCU-1`, `EXT:SECURITY-HARDENING:OS-input-layer class-B/S review` | With the enable on, snapshotting a TextEdit window then AXPress-ing a button by index and typing into a field succeeds without the pointer moving; a stale index (past TTL or changed fingerprint) refuses and forces a re-snapshot. |
-| `DCU-4` | ⬜ | Thin stdio shim, in-gateway dispatch, tool surface + ceilinged spawn | `DCU-1`, `DCU-2`, `DCU-3`, `EXT:PLATFORM-HARDENING-FLOORS:ceilinged driver subprocess`, `EXT:AUTONOMY-GUARDRAILS:approval ladder in dispatch` | The agent lists apps and clicks an element by index end-to-end; the shim holds no OS handles; the driver spawn carries the resource ceiling; V1 holds and is recorded — a real app driven by element index with the pointer staying put, a secure-field refusal, SEL records present, and an absent enable file blocking everything. |
+| `DCU-4` | ✅ | Thin stdio shim, in-gateway dispatch, tool surface + ceilinged spawn | `DCU-1`, `DCU-2`, `DCU-3`, `EXT:PLATFORM-HARDENING-FLOORS:ceilinged driver subprocess`, `EXT:AUTONOMY-GUARDRAILS:approval ladder in dispatch` | The agent lists apps and clicks an element by index end-to-end; the shim holds no OS handles; the driver spawn carries the resource ceiling; V1 holds and is recorded — a real app driven by element index with the pointer staying put, a secure-field refusal, SEL records present, and an absent enable file blocking everything. |
 | `DCU-5` | ✅ | Approval-ladder integration for desktop drive | `DCU-4`, `EXT:AUTONOMY-GUARDRAILS:approval ladder + unattended-profile grant` | An unattended run without the grant refuses and notifies; an interactive run prompts; validated. |
 | `DCU-6` | ✅ | Windows/Linux honest typed refusals | `DCU-4` | On non-macOS, every computer-use tool returns a typed refusal naming the platform; no silent no-op; validated. |
 | `DCU-7` | ✅ | Human-facing live-view + cursor-motion overlay | `DCU-4` | The views render; neither adds any agent capability — asserted by confirming the tool surface is unchanged with the views on; validated. |
@@ -119,7 +119,7 @@ that walk-through is recorded.
 
 ### `DCU-4` — Thin stdio shim, in-gateway dispatch, tool surface + ceilinged spawn
 
-**Status:** todo
+**Status:** done
 
 The stdio MCP shim (cli.py) that resolves session identity and forwards while holding no OS handles; in-gateway dispatch running the full chain — enable / policy.check_app / index freshness+fingerprint / check_input_target / SEL gate / platform driver / re-snapshot+redact (service.py, §2); the tool surface registered in tools.py (computer_list_apps, computer_snapshot, computer_click, computer_type, computer_set_value, computer_scroll, computer_perform_action) with MCP registration; and the driver running as a ceilinged subprocess so a wedged/looping driver is kernel-bounded (§3.5). Includes end-to-end validation V1.
 

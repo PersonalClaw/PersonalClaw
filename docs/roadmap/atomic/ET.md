@@ -81,7 +81,7 @@ Session 3 (T3.1, V3); Design — Exemplars (watched-source-github, action-home-a
 
 ### `ET-7` — Bounty board: labeled `bounty` issues for wanted apps, linking scaffold/guide/conformance
 
-**Status:** todo
+**Status:** blocked (wants-list shipped and machine-checked; publishing community bounty issues is an owner action)
 
 Session 3 (T3.2); Design — Bounty board; Owner tasks 3 (reward model: recognition-only recommended)
 
