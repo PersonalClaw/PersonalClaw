@@ -150,6 +150,10 @@ Or use the bootstrap one-liner (installs `uv` if it's missing, then the above):
 curl -fsSL https://personalclaw.dev/install | sh
 ```
 
+Rather check the bytes before executing them? The script's digest is committed in
+this repo, so you can verify it from a second origin first — see
+[Verify the one-liner](docs/guides/getting-started.md#verify-the-one-liner).
+
 Then start the gateway:
 
 ```bash
