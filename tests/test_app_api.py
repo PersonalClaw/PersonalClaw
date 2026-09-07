@@ -344,6 +344,50 @@ async def test_sensitive_config_field_is_write_only(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_the_app_detail_route_masks_the_same_secret_the_config_route_does(tmp_path):
+    """``GET /api/apps/{name}`` serves the SAME stored config as ``.../config``.
+
+    The test above has pinned the write-only rule on ``/config`` since #43, and this route —
+    two functions away in the same module, reading the same file, honouring the same flag —
+    returned the secret verbatim anyway. Not a hypothetical surface: it is exactly what
+    ``api.app(name)`` fetches. Found by a derived census
+    (``test_provider_instance_secrets.py``) rather than by inspection, which is the whole
+    argument for deriving the population instead of listing the routes.
+    """
+    from personalclaw.apps.secret_fields import SECRET_MASK
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "api_key": {"type": "string", "x-meta": {"label": "API Key", "sensitive": True}},
+            "endpoint": {"type": "string"},
+        },
+    }
+    async with _client(tmp_path) as client:
+        src = _app_src(tmp_path, "sec", setup={"configSchema": schema})
+        await client.post("/api/apps", json={"source": src})
+        r = await client.put(
+            "/api/apps/sec/config",
+            json={"api_key": "sk-DETAIL-SECRET-789", "endpoint": "https://x"},
+        )
+        assert r.status == 200, await r.text()
+
+        raw = await (await client.get("/api/apps/sec")).text()
+        assert (
+            "sk-DETAIL-SECRET-789" not in raw
+        ), "the app detail route handed out the stored secret while /config masked it"
+        body = json.loads(raw)
+        assert body["config"]["api_key"] == SECRET_MASK
+        assert body["config"]["endpoint"] == "https://x", "a normal field still passes through"
+        assert body["_secret_set"] == ["api_key"]
+
+        # …and the stored value is untouched.
+        from personalclaw.apps.app_config import read_config
+
+        assert read_config("sec")["api_key"] == "sk-DETAIL-SECRET-789"
+
+
+@pytest.mark.asyncio
 async def test_config_route_rejects_traversal_name_cleanly(tmp_path):
     """A path-escaping {name} on the config route must 404 cleanly (the manifest
     check treats an invalid name as not-installed), NOT surface app_dir's guard
