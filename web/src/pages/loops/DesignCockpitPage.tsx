@@ -63,6 +63,7 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
   const tab = ((query?.dtab as Tab) || 'tokens') as Tab
   const setTab = (t: Tab) => setQuery?.({ dtab: t === 'tokens' ? null : t })
   const [tokens, setTokens] = useState<ResolvedTokens | null>(null)
+  const [tokensErr, setTokensErr] = useState<unknown>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [linkCopied, setLinkCopied] = useState(false)
   const [confirmStop, setConfirmStop] = useState(false)
@@ -81,8 +82,15 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
     }).catch((e) => { if (e?.status === 404) setNotFound(true) })
   }, [id])
 
+  // 🔑 THIS READ USED TO BE SWALLOWED (`.catch(() => {})`), and five consumers infer
+  // their whole state from `tokens === null`. That made ONE dropped rejection produce
+  // five separate false statements — two of them downloadable FILES. See `tokensErr`'s
+  // consumers below; the enumeration lives in `designTokensHonest.test.tsx`.
   const loadTokens = useCallback(() => {
-    api.uLoopDesignTokens(id, scheme).then((t) => setTokens(t as ResolvedTokens)).catch(() => {})
+    setTokensErr(null)
+    api.uLoopDesignTokens(id, scheme)
+      .then((t) => setTokens(t as ResolvedTokens))
+      .catch((e) => setTokensErr(e ?? new Error('tokens unavailable')))
   }, [id, scheme])
 
   const loadArtifacts = useCallback(() => {
@@ -324,11 +332,11 @@ export function DesignCockpitPage({ id, onBack, onDeleted, onOpenProject, onBuil
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2xl py-l">
-        {tab === 'tokens' && <TokensView tokens={tokens} scheme={scheme} overrideCount={overrideCount} onRefresh={loadTokens} onOverride={setTokenOverride} readOnly={specFrozen} />}
+        {tab === 'tokens' && <TokensView tokens={tokens} tokensErr={tokensErr} scheme={scheme} overrideCount={overrideCount} onRefresh={loadTokens} onOverride={setTokenOverride} readOnly={specFrozen} />}
         {tab === 'canvas' && <CanvasView artifacts={reactArtifacts} loopId={id} />}
         {tab === 'palette' && <PaletteView onApply={applyColorOverride} readOnly={specFrozen} />}
-        {tab === 'contrast' && <ContrastView tokens={tokens} scheme={scheme} />}
-        {tab === 'exports' && <ExportsView loop={loop} tokens={tokens} components={reactArtifacts} docs={docArtifacts} />}
+        {tab === 'contrast' && <ContrastView tokens={tokens} tokensErr={tokensErr} onRefresh={loadTokens} scheme={scheme} />}
+        {tab === 'exports' && <ExportsView loop={loop} tokens={tokens} tokensErr={tokensErr} components={reactArtifacts} docs={docArtifacts} />}
       </div>
     </div>
   )
@@ -420,10 +428,31 @@ function resolveSwatch(raw: unknown, scheme: Scheme): string {
   return ''
 }
 
+/** What every tokens-dependent view shows while `tokens` is null.
+ *
+ *  🔑 "Loading tokens…" was printed for BOTH the in-flight read and the failed one, because the
+ *  rejection was swallowed and `tokens === null` was the only signal. A permanent "Loading…" is
+ *  the worst of the three possible messages: it is false, it blames the network, and it gives the
+ *  user nothing to do — so they wait for a request that already finished. Once the failure is
+ *  carried, the two states separate and the failed one can offer the retry it always needed. */
+function TokensUnread({ tokensErr, onRefresh }: { tokensErr?: unknown; onRefresh?: () => void }) {
+  if (!tokensErr) return <div data-type="body-s" className="text-on-surface-low">Loading tokens…</div>
+  return (
+    <div role="alert" className="flex flex-col items-start gap-1">
+      <p data-type="body-s" className="text-on-surface-low">
+        Couldn’t read this design system’s tokens. Nothing is lost — the token set is still on the loop.
+      </p>
+      {/* `RefreshCw` rather than a second refresh glyph — this file already imports it, and it is
+          what `MemoryPanel`'s Try again uses. */}
+      {onRefresh && <Button variant="ghost-accent" size="xs" onClick={onRefresh}><RefreshCw size={13} /> Try again</Button>}
+    </div>
+  )
+}
+
 // ── Tokens view — live swatches + scales from the resolved token set ──
 
-export function TokensView({ tokens, scheme, overrideCount, onRefresh, onOverride, readOnly }: { tokens: ResolvedTokens | null; scheme: Scheme; overrideCount?: number; onRefresh?: () => void; onOverride?: (path: string, value: string) => void; readOnly?: boolean }) {
-  if (!tokens) return <div data-type="body-s" className="text-on-surface-low">Loading tokens…</div>
+export function TokensView({ tokens, tokensErr, scheme, overrideCount, onRefresh, onOverride, readOnly }: { tokens: ResolvedTokens | null; tokensErr?: unknown; scheme: Scheme; overrideCount?: number; onRefresh?: () => void; onOverride?: (path: string, value: string) => void; readOnly?: boolean }) {
+  if (!tokens) return <TokensUnread tokensErr={tokensErr} onRefresh={onRefresh} />
   const t = tokens.resolved
   // Token files carry `comment` keys for human context — strip them from any map we
   // render as data (otherwise a "comment" pseudo-scale/size shows up in the UI).
@@ -795,8 +824,8 @@ const CONTRAST_PAIRS: [string, string, string][] = [
   ['Border vs surface', 'border.default', 'bg.surface'],
 ]
 
-export function ContrastView({ tokens, scheme }: { tokens: ResolvedTokens | null; scheme: Scheme }) {
-  if (!tokens) return <div data-type="body-s" className="text-on-surface-low">Loading tokens…</div>
+export function ContrastView({ tokens, tokensErr, onRefresh, scheme }: { tokens: ResolvedTokens | null; tokensErr?: unknown; onRefresh?: () => void; scheme: Scheme }) {
+  if (!tokens) return <TokensUnread tokensErr={tokensErr} onRefresh={onRefresh} />
   const roles: Record<string, string> = flattenRoleLeaves(tokens.resolved?.color?.semantic?.[scheme])
   const rows = CONTRAST_PAIRS.map(([label, fgRole, bgRole]) => {
     const fg = toHex(roles[fgRole]); const bg = toHex(roles[bgRole])
@@ -913,7 +942,7 @@ function PaletteView({ onApply, readOnly }: { onApply: (scale: PaletteScale, hex
 
 // ── Exports view ──
 
-function ExportsView({ loop, tokens, components, docs }: { loop: Loop; tokens: ResolvedTokens | null; components: Artifact[]; docs: Artifact[] }) {
+function ExportsView({ loop, tokens, tokensErr, components, docs }: { loop: Loop; tokens: ResolvedTokens | null; tokensErr?: unknown; components: Artifact[]; docs: Artifact[] }) {
   const base = safeFilename(loop.name || 'design-system')
   const tokenJson = useMemo(() => JSON.stringify({ overrides: loop.kind_config?.token_overrides || {}, resolved: tokens?.resolved || {} }, null, 2), [loop, tokens])
   // Prefer the DESIGN.md the loop's worker actually authored (a kind:markdown artifact —
@@ -950,27 +979,60 @@ function ExportsView({ loop, tokens, components, docs }: { loop: Loop; tokens: R
     } finally { setBundling(false) }
   }
 
+  // 🔴 AN UNREAD TOKEN SET USED TO PRODUCE A DOWNLOADABLE FILE THAT SAID THERE WERE NO TOKENS.
+  // Neither the JSON nor the DESIGN.md row was gated, and both interpolate `tokens?.… || {}`. So a
+  // failed read handed the user a plausible, well-formed artifact whose content was wrong — and the
+  // JSON row's own copy says "feed into any build pipeline", which is precisely what makes it
+  // dangerous: it leaves the app and lands in a build. A dead button is a visible defect the user
+  // can report. A fabricated export is an invisible one they act on. Gate BOTH on the same read.
+  // 🪤 `!tokens` is true for BOTH the in-flight read and the failed one, so the reason has to
+  // branch too — telling a user mid-load that the tokens "could not be read" would trade one
+  // false statement for another. That is the same conflation this whole change removes; it would
+  // be embarrassing to reintroduce it inside the fix.
+  const unread = tokensErr
+    ? 'The token set could not be read, so this export would be empty.'
+    : 'Still reading the token set — this becomes available once it loads.'
   return (
     <div className="flex flex-col gap-l max-w-[48rem]">
       <p data-type="body-s" className="text-on-surface-low">Export the design system as reusable artifacts.</p>
-      <ExportRow title="Token set (JSON)" desc="Resolved tokens + your overrides — feed into any build pipeline." onDownload={() => downloadText(`${base}-tokens.json`, tokenJson, 'application/json')} />
-      <ExportRow title="CSS variables" desc={`A :root custom-property block (${tokens?.scheme || 'light'} scheme) — drop into any stylesheet.`} disabled={!tokens?.css} onDownload={() => tokens && downloadText(`${base}.css`, tokens.css, 'text/css')} />
+      <ExportRow title="Token set (JSON)" desc="Resolved tokens + your overrides — feed into any build pipeline."
+        disabled={!tokens} disabledReason={unread}
+        onDownload={() => downloadText(`${base}-tokens.json`, tokenJson, 'application/json')} />
+      <ExportRow title="CSS variables" desc={`A :root custom-property block (${tokens?.scheme || 'light'} scheme) — drop into any stylesheet.`}
+        disabled={!tokens?.css}
+        // Two different causes reach this gate and the user can act on only one of them.
+        disabledReason={tokens ? 'This token set resolved no CSS block — nothing to export yet.' : unread}
+        onDownload={() => tokens && downloadText(`${base}.css`, tokens.css, 'text/css')} />
       <ExportRow title={`React components${components.length ? ` (${components.length})` : ''}`}
         desc={components.length ? (bundling ? 'Bundling…' : 'The generated components bundled into one .jsx — drop into your project.') : 'No components yet — generate them on the Canvas first.'}
         disabled={!components.length || bundling} onDownload={exportComponents} />
-      <ExportRow title="DESIGN.md" desc={authoredDoc ? 'The design-system document authored by the loop — decisions, token reference, and usage.' : 'The design-system document — overrides, axes, and usage.'} onDownload={downloadDesignMd} />
+      {/* 🪤 NOT `!tokens`. `downloadDesignMd` prefers the loop's AUTHORED DESIGN.md and only falls
+          back to `buildDesignMd(loop, tokens)`, so an unread token set matters here ONLY when there
+          is no authored doc to serve instead. Gating on `!tokens` alone would disable a download
+          that was going to be perfectly correct. */}
+      <ExportRow title="DESIGN.md" desc={authoredDoc ? 'The design-system document authored by the loop — decisions, token reference, and usage.' : 'The design-system document — overrides, axes, and usage.'}
+        disabled={!authoredDoc && !tokens}
+        disabledReason={tokensErr
+          ? 'The token set could not be read, and the loop hasn’t authored a DESIGN.md yet — so this would list no tokens.'
+          : 'Still reading the token set, and the loop hasn’t authored a DESIGN.md yet.'}
+        onDownload={downloadDesignMd} />
     </div>
   )
 }
 
-function ExportRow({ title, desc, onDownload, disabled }: { title: string; desc: string; onDownload: () => void; disabled?: boolean }) {
+function ExportRow({ title, desc, onDownload, disabled, disabledReason }: { title: string; desc: string; onDownload: () => void; disabled?: boolean; disabledReason?: string }) {
   return (
     <div className="flex items-center gap-3 rounded-lg bg-surface-container px-4 py-3">
       <div className="min-w-0">
         <div data-type="label-s" className="text-on-surface" style={fvs(550)}>{title}</div>
         <div data-type="caption" className="text-on-surface-low">{desc}</div>
       </div>
-      <Button className="ml-auto shrink-0" variant="secondary" disabled={disabled} onClick={onDownload}><Download size={14} className="mr-1.5" />Download</Button>
+      {/* `Button.disabledReason` is the project's carrier for this: it rides `title` AND swaps the
+          native `disabled` for `aria-disabled`, so the button keeps its tab stop and a keyboard user
+          can reach it to hear why. Forwarding it is what lets a caller explain its own gate — before
+          this, `ExportRow` accepted `disabled` with no reason channel, so no caller structurally
+          could. */}
+      <Button className="ml-auto shrink-0" variant="secondary" disabled={disabled} disabledReason={disabledReason} onClick={onDownload}><Download size={14} className="mr-1.5" />Download</Button>
     </div>
   )
 }
