@@ -10,7 +10,9 @@
       "permissions_declared": [],
       "license": "MIT",
       "maintainer": "keyurgolani",
-      "added": "2026-09-02"
+      "added": "2026-09-02",
+      "last_validated": "2026-09-07T12:19:15Z",
+      "last_scan_verdict": "clean"
     },
     {
       "name": "inbox-github-notifications",
@@ -21,7 +23,9 @@
       "permissions_declared": [],
       "license": "MIT",
       "maintainer": "keyurgolani",
-      "added": "2026-09-02"
+      "added": "2026-09-02",
+      "last_validated": "2026-09-07T12:19:15Z",
+      "last_scan_verdict": "clean"
     },
     {
       "name": "watched-source-github",
@@ -32,7 +36,9 @@
       "permissions_declared": [],
       "license": "MIT",
       "maintainer": "keyurgolani",
-      "added": "2026-09-02"
+      "added": "2026-09-02",
+      "last_validated": "2026-09-07T12:19:15Z",
+      "last_scan_verdict": "clean"
     },
     {
       "name": "action-home-assistant",
@@ -43,7 +49,9 @@
       "permissions_declared": [],
       "license": "MIT",
       "maintainer": "keyurgolani",
-      "added": "2026-09-02"
+      "added": "2026-09-02",
+      "last_validated": "2026-09-07T12:19:15Z",
+      "last_scan_verdict": "clean"
     }
   ]
 }

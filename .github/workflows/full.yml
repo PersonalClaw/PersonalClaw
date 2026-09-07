@@ -1,8 +1,10 @@
 # Full verification — push to main + nightly cron. The broader matrix + coverage +
 # supply-chain audit that the ≤10-min PR gate (ci.yml) deliberately omits.
 # Jobs are the stable ids per CI-RELEASE-ENGINEERING C1: matrix · audit · coverage.
-# Plus security-corpus (SH-5) and install-smoke — the served `curl | sh` front door, whose
-# absence deploy/website/install.sh's header had been advertising as present.
+# Plus security-corpus (SH-5), install-smoke — the served `curl | sh` front door, whose
+# absence deploy/website/install.sh's header had been advertising as present — and
+# registry-verdicts, which keeps the community registry's pre-install scan verdicts filled
+# while the workflows that would own that job are staged in a repo GitHub never runs them from.
 name: Full
 
 on:
@@ -327,3 +329,117 @@ jobs:
             exit 1
           fi
           echo "served bytes are identical to the staged installer ($served_sum)"
+
+  registry-verdicts:
+    # ── The pre-install trust surface, actually EXERCISED ──────────────────────────────────
+    # `scratch/registry/app-registry.json` is the community registry's data tier, and its
+    # `last_validated` / `last_scan_verdict` fields are CI-OWNED by construction: a listing PR
+    # leaves them out, and whatever it does supply is overwritten from the run that actually
+    # happened (validate_registry.py's CI_OWNED_FIELDS).
+    #
+    # MEASURED 2026-09-07 on 7d45e6c04 — the defect in full: FOUR listings, and not one carrying
+    # either field. The stamper (`scratch/registry/validate_registry.py --write`) exists and works;
+    # nothing called it. The three workflows that would
+    # are staged at scratch/registry/.github/workflows/, and GitHub runs workflows only
+    # from .github/workflows/ at the repo ROOT, so inside this repo they are files and not jobs
+    # (`git grep validate_registry -- .github Makefile` returned nothing). The consequence is not
+    # cosmetic: personalclaw.dev/registry rendered four "No scan on record" cards from all-empty
+    # data, so a surface whose entire job is to show a scan verdict before you install had never
+    # once been exercised against a real one.
+    #
+    # WHY HERE AND NOT ON THE PR GATE. Every listing costs a `git ls-remote`, a shallow clone and
+    # a scanner pass over a third-party repository — four today, more as the registry grows. A
+    # ≤10-min merge gate that reds when someone else's forge hiccups trains people to re-run red
+    # checks, which is worse than no check. The half that CAN gate every PR is offline and does:
+    # tests/test_registry_validation.py's shipped-listing floor reds the moment a listing loses
+    # its verdict, at lint speed. Network here, forcing function there — the same split, and for
+    # the same reason, as install-smoke above.
+    #
+    # WHY THIS REPO'S CORE AND NOT scratch/registry/requirements.txt's PIN. The pin exists so the
+    # published registry's own CI cannot have its rule set change under it. Here the question is
+    # the opposite one — does the shipped data still say what core's scanner says TODAY — so the
+    # answer must come from this checkout.
+    #
+    # WHEN ET-9 LANDS (github.com/PersonalClaw/registry, owner-only, #2490) the three staged
+    # workflows move to that repo's root and take this over. Deleting this job is then the
+    # cleanup step, not a regression.
+    #
+    # AN UNREACHABLE REPO IS `unproven`, NOT A PASS. The validator exits 1 when it cannot reach a
+    # listing, and this job reds with it. Same doctrine as install-smoke's drift leg: "we could
+    # not check" must never arrive as "we checked and it was fine".
+    runs-on: ubuntu-latest
+    # No PERSONALCLAW_HOME — see the matrix job. Nothing here writes under a home.
+    env:
+      PERSONALCLAW_SKIP_APP_BACKENDS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      # Measured into a COPY, never over the committed file: this job's verdict is "does the
+      # committed data still match reality", and stamping the real file first would answer that
+      # question with its own output. The markdown goes to the step summary so the per-listing
+      # verdict table is readable without opening the log.
+      - name: measure — validate every shipped listing and stamp a copy
+        run: |
+          set -eu
+          cp scratch/registry/app-registry.json "$RUNNER_TEMP/measured.json"
+          uv run python scratch/registry/validate_registry.py \
+            "$RUNNER_TEMP/measured.json" --write \
+            --markdown "$GITHUB_STEP_SUMMARY" \
+            --report "$RUNNER_TEMP/report.json"
+      - name: compare — no listing may have lost or outlived its verdict
+        env:
+          MEASURED: ${{ runner.temp }}/measured.json
+        run: |
+          uv run python - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+
+          committed = json.loads(Path("scratch/registry/app-registry.json").read_text("utf-8"))
+          measured = json.loads(Path(os.environ["MEASURED"]).read_text("utf-8"))
+          rows = {r["name"]: r for r in committed["apps"]}
+          fresh = {r["name"]: r for r in measured["apps"]}
+
+          problems = []
+          # ANTI-VACUITY, and it is the first check on purpose: every loop below is green over
+          # an empty registry, so an index that lost its listings would pass this job while
+          # proving nothing at all.
+          if not rows:
+              problems.append(
+                  "the shipped app-registry.json lists NOTHING — every check below would pass "
+                  "vacuously over it"
+              )
+          for name, row in sorted(rows.items()):
+              want = fresh.get(name, {}).get("last_scan_verdict")
+              got = row.get("last_scan_verdict")
+              if got is None:
+                  problems.append(
+                      f"{name}: carries no 'last_scan_verdict'. The pre-install surface renders "
+                      f"that as \"No scan on record\", which is what an UNSCANNED listing looks "
+                      f"like — this one measured {want!r}."
+                  )
+              elif want is not None and got != want:
+                  problems.append(
+                      f"{name}: committed verdict {got!r} but this run measured {want!r}. The "
+                      f"published verdict is stale."
+                  )
+              if not row.get("last_validated"):
+                  problems.append(f"{name}: carries no 'last_validated' date.")
+
+          if problems:
+              for problem in problems:
+                  print(f"::error title=registry verdict::{problem}")
+              print(
+                  "Re-stamp with: python scratch/registry/validate_registry.py "
+                  "scratch/registry/app-registry.json --write   (then commit the result)",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          print(f"{len(rows)} shipped listing(s), each carrying the verdict this run measured")
+          PY
