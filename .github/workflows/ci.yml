@@ -20,10 +20,31 @@ on:
   push:
     branches-ignore: [main]  # main runs full.yml; feature branches run this
 
-# One in-flight run per ref — a new push cancels the previous run (soul guardrail:
-# no wasted runner time).
+# One in-flight run per BRANCH, across BOTH triggers this file enables — a new push cancels
+# the superseded run, AND a `pull_request` run cancels the duplicate `push` run sitting on the
+# same head.
+#
+# 🪤 WHY NOT `github.ref`, which this keyed on until #2595. Under `pull_request` that is
+# `refs/pull/<n>/merge`; under `push` it is `refs/heads/<branch>`. Two different strings → two
+# different groups → the two triggers never deduped, and every non-fork PR ran the entire
+# matrix TWICE, concurrently, on the identical head SHA. Measured 2026-09-07 from the Actions
+# API: 8 live branches, 16 CI runs, 9 jobs each — ~72 jobs in flight to answer 8 PRs' worth of
+# questions, with runner concurrency in the 4–6 range and `test` at ~45 min. That made this the
+# binding constraint on merge rate. The comment here used to claim "no wasted runner time",
+# which was true per-trigger and false as the claim it was making.
+#
+# 🪤 AND WHY NOT THE HEAD SHA, which is the obvious fix and is wrong. Keying on the SHA does
+# dedupe the two triggers, but it puts every commit in its OWN group, so pushing three times
+# leaves three live runs instead of cancelling the two superseded ones. That trades this bug for
+# the exact waste the guardrail exists to prevent. The branch is the only key that does both
+# jobs at once.
+#
+# The head REPO qualifies the key so that two forks which each push a branch named `patch-1` do
+# not cancel one another. For a same-repo PR it equals `github.repository`, and `github.head_ref`
+# equals `github.ref_name` — which is precisely what makes the `pull_request` and `push` keys
+# collide. That collision IS the dedupe.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:
@@ -36,6 +57,10 @@ jobs:
       contents: read   # NOT pull-requests: write — a fork PR is handed a read-only token
                        # regardless, so asking for write here only looked like it worked.
                        # The remediation comment is posted by pr-feedback.yml instead.
+      pull-requests: read   # #2595: a `push` run has no PR in its payload, so the feedback
+                            # relay's PR number is looked up by head branch. READ only — the
+                            # line above still holds, and the fork path never reaches the
+                            # lookup because a fork PR's payload already carries the number.
     steps:
       - uses: actions/checkout@v7
       - name: Install uv
@@ -91,8 +116,41 @@ jobs:
       #
       # An artifact crosses that boundary. `pr-feedback.yml` runs on `workflow_run` in the
       # BASE repo's context, where the token really is write-capable, and posts from there.
+      # Resolve the PR number WITHOUT keying on the event name — #2595.
+      #
+      # Since the concurrency group above collapsed the `pull_request` and `push` runs for a
+      # branch into ONE group, one of the two cancels the other, and which of them survives is
+      # NOT contractual. While the two steps below were gated on
+      # `github.event_name == 'pull_request'`, a push-survivor produced a red `lint` with the
+      # remediation posted NOWHERE: no artifact is uploaded, and pr-feedback.yml reads the PR
+      # number out of that artifact's pr.txt, so it correctly posts nothing. That would have
+      # traded a throughput bug for a silence bug — the worse of the two — so the dedupe above
+      # is only safe together with this step.
+      #
+      # An empty answer is legitimate (a branch pushed before its PR exists) and must not fail
+      # the step; the two steps below simply do not run, which is the same outcome as today.
+      - name: Resolve the PR number for the feedback relay
+        id: prnum
+        if: failure() && steps.lint.outputs.violations != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -eu
+          if [ -n "${EVENT_PR:-}" ]; then
+            # `pull_request`, including every fork PR — the payload already carries it, so the
+            # read-only fork token never has to make the API call below.
+            number="$EVENT_PR"
+          else
+            number=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:${HEAD_BRANCH}" \
+              --jq '.[0].number // empty' 2>/dev/null || true)
+          fi
+          printf 'number=%s\n' "${number:-}" >> "$GITHUB_OUTPUT"
+          echo "feedback relay target: PR ${number:-<none — nothing will be posted>}"
       - name: Hand the violations to the feedback workflow
-        if: failure() && github.event_name == 'pull_request' && steps.lint.outputs.violations != ''
+        if: failure() && steps.lint.outputs.violations != '' && steps.prnum.outputs.number != ''
         # 🪤 `env:`, NOT `${{ }}` inside `run:`. A `${{ }}` expression is pasted into the shell
         # script as TEXT before bash sees it, so the violations — which contain ``` fences —
         # had their backticks read as command substitution. Measured: the artifact came out
@@ -102,7 +160,7 @@ jobs:
         # the runner sets the value directly and `"$VIOLATIONS"` expands without re-parsing.
         env:
           VIOLATIONS: ${{ steps.lint.outputs.violations }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ steps.prnum.outputs.number }}
         run: |
           mkdir -p /tmp/lint-feedback
           printf '%s' "$VIOLATIONS" > /tmp/lint-feedback/violations.md
@@ -111,7 +169,7 @@ jobs:
           printf '%s' "$PR_NUMBER" > /tmp/lint-feedback/pr.txt
           wc -c /tmp/lint-feedback/violations.md /tmp/lint-feedback/pr.txt
       - name: Upload lint feedback
-        if: failure() && github.event_name == 'pull_request' && steps.lint.outputs.violations != ''
+        if: failure() && steps.lint.outputs.violations != '' && steps.prnum.outputs.number != ''
         uses: actions/upload-artifact@v7
         with:
           name: lint-feedback
