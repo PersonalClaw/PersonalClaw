@@ -120,7 +120,7 @@ Session 4 — Comparison + listing program (T4.2, T4.3, V4)
 
 ### `DL-9` — S5 T5.1: research-learnings republication section
 
-**Status:** todo
+**Status:** blocked (engineering merged on the site’s main; only the owner’s preface approval is open)
 
 Session 5 — Research republication (T5.1, V5)
 

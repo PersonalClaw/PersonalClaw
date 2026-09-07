@@ -21,7 +21,7 @@ Each atom below executes start-to-finish in one go. If an atom lists dependencie
 | `SH-9` | ⬜ | External-review scoping doc: five high-risk paths, commissioned-vs-self-audit format, publication plan | — | docs/security/review-scope.md lists the five high-risk paths, the review format, and the publication plan; scope approved by owner (owner task 3); review executed or scheduled with a date |
 | `SH-10` | ✅ | Security panel: baseline denylist shown read-only with version + verified-hash indicator and 'N user additions'; anti-drift/anti-LLM-tamper (not anti-owner) limitation documented | `SH-6` | the /api/security/denied-commands payload + security settings page render the baseline-verified state; a tamper fixture flips the indicator; 'N user additions' shown; the anti-drift/anti-LLM-tamper-not-anti-owner threat model is documented in docs/security/ |
 | `SH-11` | ⬜ | Owner: supply Apple Developer signing + notarization secrets and the minisign release key to the CI `release` environment (gates DC-1/DCU-3/SH-4) | `SH-3` | the four Apple Developer signing secrets and the minisign signing key are present in the CI `release` environment and the PersonalClaw public key is in the trusted-keys store; DC-1's signed+notarized mac build and SH-4's release-pipeline signing are unblocked on the credential side — OWNER-ONLY, belongs on gated_frontier |
-| `SH-12` | ⬜ | registry.json listings record signer identity: schema field + validation script captures it per listing | `SH-3` | app-registry.schema.json declares a signer-identity field for a listing and the registry validation script records/echoes the signer per listing in its verdict, with the existing valid sample PR still passing and a listing that omits the field handled by the declared policy rather than crashing. Needs no Apple or minisign credential, so it does not wait on SH-11. |
+| `SH-12` | ✅ | registry.json listings record signer identity: schema field + validation script captures it per listing | `SH-3` | app-registry.schema.json declares a signer-identity field for a listing and the registry validation script records/echoes the signer per listing in its verdict, with the existing valid sample PR still passing and a listing that omits the field handled by the declared policy rather than crashing. Needs no Apple or minisign credential, so it does not wait on SH-11. |
 
 ## Atom scopes
 
@@ -290,7 +290,7 @@ Owner provisioning of release-signing credentials, minted as an explicit atom so
 
 ### `SH-12` — registry.json listings record signer identity: schema field + validation script captures it per listing
 
-**Status:** todo
+**Status:** done
 
 Split from SH-4 (audit 2026-09-06): the half of SH-4 that needs no signing credentials
 

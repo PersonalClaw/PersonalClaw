@@ -91,7 +91,7 @@ Session 3 / T3.2; §C5 integration points (reuse stats.py, no second store); sou
 
 ### `PCS-9` — V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs)
 
-**Status:** todo — **env-gated**, split from PCS-7 per OWNER RULING 2026-08-28. Cannot be closed from
+**Status:** blocked (environment-gated by owner ruling: no priced Bedrock profile id, no OpenAI key here) — **env-gated**, split from PCS-7 per OWNER RULING 2026-08-28. Cannot be closed from
 this environment: no Bedrock inference-profile id resolves to a price row (a real run renders "saved
 unpriced" until `_rates` id normalisation lands, a repo-wide pricing change), and there is no
 `OPENAI_API_KEY` here (PCS-3 now supplies the OpenAI AUTOMATIC posture the run depends on). Both gates

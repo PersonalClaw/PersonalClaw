@@ -4783,7 +4783,7 @@
         {
           "id": "PCS-9",
           "title": "V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs)",
-          "status": "todo",
+          "status": "blocked",
           "scope": "Session 3 / V2; split from PCS-7 per OWNER RULING 2026-08-28",
           "done_when": "Real multi-turn Anthropic + OpenAI runs report rising hit-rate / non-zero saved-USD (turn1 creation, turns2+ read), OpenAI reports vendor reads with no marker sent, an undeclared/Ollama model runs byte-identical with zeros, toggling config off stops the marker while ordering holds.",
           "deps": [
@@ -6310,7 +6310,7 @@
         {
           "id": "DL-9",
           "title": "S5 T5.1: research-learnings republication section",
-          "status": "todo",
+          "status": "blocked",
           "scope": "Session 5 — Research republication (T5.1, V5)",
           "done_when": "the 14 learnings topics from core docs/research/learnings/ render on the site via a sync-script extension with intact cross-links, behind a preface owning the built-agentically story; preface approved by owner",
           "deps": [
@@ -6610,14 +6610,15 @@
         {
           "id": "ET-7",
           "title": "Bounty board: labeled `bounty` issues for wanted apps, linking scaffold/guide/conformance",
-          "status": "todo",
+          "status": "blocked",
           "scope": "Session 3 (T3.2); Design — Bounty board; Owner tasks 3 (reward model: recognition-only recommended)",
           "done_when": "≥6 `bounty` GitHub issues live (channels + providers + sources from the wants-list), each linking the scaffold, guide, and conformance kit; showcase thread seeded in the community surface. Channel bounties draw from CHANNEL-EXPANSION's wants-list (T7.3) and its channel scaffold template",
           "deps": [
             "ET-1",
             "ET-2",
             "EXT:CHANNEL-EXPANSION:channel wants-list (T7.3) + channel scaffold template the channel bounties reference"
-          ]
+          ],
+          "blocked_reason": "OWNER-GATED (inventory correction 2026-09-07). ET-7 carried no blocked_reason and therefore sat in the ready frontier as available agent work. It never was. Its done_when requires ≥6 bounty GitHub ISSUES LIVE plus a showcase thread seeded in the community surface — publishing community solicitations to a public org is an owner action an agent must not take. The channel third is doubly gated: CE-9 owns the WhatsApp/Signal/Matrix issues and CE-9's own done_when defers them until 'the owner approves the risk-policy paragraph', which docs/maintainers/community-bounty-drafts.md still marks PENDING OWNER APPROVAL. THE AGENT-BUILDABLE HALF IS SHIPPED (PR #2550): docs/maintainers/app-bounty-wants-list.md carries nine wanted apps spanning channels, providers and sources, with the three links every filed issue needs (scaffold command, guide, conformance bar) and both owner gates stated up front. Each row is admitted on one of two grounds and says which — its provider type is a real PROVIDER_TYPES member with no app implementing it (measured across the 54 apps in PersonalClawApps plus the four ET-6 exemplar org repos), or CHANNEL-EXPANSION T7.3 names it; a type core already covers with builtins is not a gap and gets no row. tests/test_bounty_wants_list.py makes the list executable rather than prose that rots silently: every row's type must be in PROVIDER_TYPES AND must actually scaffold, resolved through cli_app_new's runtime type table rather than PROVIDER_TYPES again, because a type can be a valid manifest value while the generator cannot emit it. So the issues are drafted and machine-checked; only the publishing is owner-side. DEP DEFECT, recorded for the cycle fix: this atom's ext dep names CHANNEL-EXPANSION as the wants-list's owner, but the list shipped under ECOSYSTEM-TOOLING's own docs/maintainers/. The CE-9 ⇄ ET-7 cycle is filed as #2551."
         },
         {
           "id": "ET-8",
@@ -6992,12 +6993,13 @@
         {
           "id": "SH-12",
           "title": "registry.json listings record signer identity: schema field + validation script captures it per listing",
-          "status": "todo",
+          "status": "done",
           "scope": "Split from SH-4 (audit 2026-09-06): the half of SH-4 that needs no signing credentials",
           "done_when": "app-registry.schema.json declares a signer-identity field for a listing and the registry validation script records/echoes the signer per listing in its verdict, with the existing valid sample PR still passing and a listing that omits the field handled by the declared policy rather than crashing. Needs no Apple or minisign credential, so it does not wait on SH-11.",
           "deps": [
             "SH-3"
-          ]
+          ],
+          "evidence": "done 2026-09-06 (PR #2546, merged). Verified clause-by-clause against merged code rather than against the PR's claim: 67 tests green in tests/test_registry_validation.py, twelve of them the signer's own. SCHEMA: scratch/registry/app-registry.schema.json declares an OPTIONAL per-listing `signer` (pattern ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$), generated from the Python authority and railed by test_the_published_schema_matches_the_python_authority so a hand edit cannot drift it. RECORDED/ECHOED PER LISTING: signer_state and signer are set on EVERY row including blocked ones, surfaced in the JSON report and as a Signer column in the PR comment — and the comment states 'Signer is what the row declares, and nothing above proved it', so a reviewer cannot mistake a claim for proof. SAMPLE STILL PASSES: test_a_valid_sample_listing_passes plus test_the_existing_valid_sample_makes_no_signer_claim. OMISSION HANDLED BY THE DECLARED POLICY RATHER THAN A CRASH: the state is SIGNER_UNDECLARED, and the policy is written down where a contributor actually reads it — CONTRIBUTING.md carries '`signer` is optional, and saying nothing is a supported answer' — railed by test_the_listing_policy_declares_what_an_omitted_signer_means, because an absent case is only 'handled by the declared policy' if the policy is published. NO CREDENTIAL: test_the_validator_records_the_signer_without_verifying_anything rails the non-verification, so this genuinely does not wait on SH-11. THE DESIGN CALL IS THE WHOLE CONTENT OF THE ATOM, so it is recorded: optional, not required. Most community apps are not signed and that is a supported state, so a mandatory field would be answered by whatever example CONTRIBUTING.md happened to show — turning 'this author never told us' into a confident-looking answer nobody made. The price of optional is that absence must stay readable, which is what the four states buy. NOTABLE: this is the FIRST place in the project where the absent-vs-declared-false distinction was designed in BY CONSTRUCTION instead of being found as a defect — it has now been found five other times. Four states: named, `unsigned` (a reserved value the author writes to state on the record that the bundles are not signed), undeclared (the field was omitted), and invalid. Three separate published facts plus a refusal, and no two render alike. `signer` is None for THREE of the four, so no caller can infer the state from the value; a JSON null is classified INVALID rather than absent, because writing the field explicitly as null is a claim shaped like nothing; and a signer may not be NAMED `unsigned`, which closes the reserved-value collision. CEILING, stated in the schema's own description: nothing is verified and nothing is inferred. The registry records the author's claim; signatures are verified at install time on the user's own machine."
         }
       ]
     },
@@ -7316,12 +7318,12 @@
             "DCU-1",
             "EXT:SECURITY-HARDENING:OS-input-layer class-B/S review"
           ],
-          "blocked_reason": "PARTIAL, verified 2026-08-27 - code is complete AND LIVE; the unmet clause is a TCC grant, so do NOT schedule an implementation slot. types.py/macos_ffi.py/macos_driver.py all exist and sit on a live dispatch path: DRIVER_MODULES['Darwin'] (resolve_driver returned None on every prior commit) -> DRIVER_CHILD_MODULE -> spawned via create_subprocess_limited, entered from POST /api/computer-use/dispatch and the tool registry. 'Without the pointer moving' IS code-provable: op_click's auto branch calls ffi.press() and nothing else, with no coordinate fallback, and CGWarpMouseCursorPosition has a single caller pinned by test_only_one_function_warps_the_real_cursor. Staleness is real on both sides: a 30s snapshot TTL raising ERR_STALE_INDEX, plus a fingerprint re-verify in the driver that refuses an ABSENT fingerprint rather than reading it as 'no check requested'. UNMET: the live AX walkthrough - the log measured AXIsProcessTrusted()==False and a real AXWindows call against Finder returning kAXErrorAPIDisabled (-25211). SMALLEST REMAINING UNIT: nothing in code. A human adds the python binary running the gateway (the interpreter, not the terminal) to Privacy & Security -> Accessibility, restarts, runs the TextEdit walkthrough; two tests already flip branch on the grant. Deliberately never prompted from code - that would be an agent-timed consent surface."
+          "blocked_reason": "PARTIAL — and its recorded premise is now MEASURED FALSE (correction 2026-09-07). The reason carried since 2026-08-27 said the unmet clause 'is a TCC grant, so do NOT schedule an implementation slot.' PR #2552 measured otherwise: the macOS Accessibility grant is PRESENT and usable on this workstation — AXIsProcessTrusted() answers True through macos_ffi.is_process_trusted — and DCU-4's whole V1 suite ran live against real apps on it. The grant was never ungrantable, only unprobed. So DCU-3 is NOT permission-gated and DOES deserve an implementation slot. Its genuine remainder is the STALE-INDEX half of its own done_when: a past-TTL or changed-fingerprint refusal that forces a re-snapshot. #2552 states explicitly that it exercised the fresh path only, so that half is unproven rather than proven. Note ERR_COMPUTER_USE_STALE_INDEX already exists and is the one refusal DCU-4's validator retries, so the code path is reachable — what is missing is the measurement that it fires when it should."
         },
         {
           "id": "DCU-4",
           "title": "Thin stdio shim, in-gateway dispatch, tool surface + ceilinged spawn",
-          "status": "todo",
+          "status": "done",
           "scope": "The stdio MCP shim (cli.py) that resolves session identity and forwards while holding no OS handles; in-gateway dispatch running the full chain — enable / policy.check_app / index freshness+fingerprint / check_input_target / SEL gate / platform driver / re-snapshot+redact (service.py, §2); the tool surface registered in tools.py (computer_list_apps, computer_snapshot, computer_click, computer_type, computer_set_value, computer_scroll, computer_perform_action) with MCP registration; and the driver running as a ceilinged subprocess so a wedged/looping driver is kernel-bounded (§3.5). Includes end-to-end validation V1.",
           "done_when": "The agent lists apps and clicks an element by index end-to-end; the shim holds no OS handles; the driver spawn carries the resource ceiling; V1 holds and is recorded — a real app driven by element index with the pointer staying put, a secure-field refusal, SEL records present, and an absent enable file blocking everything.",
           "deps": [
@@ -7329,7 +7331,7 @@
             "DCU-2",
             "DCU-3"
           ],
-          "blocked_reason": "NOT IMPLEMENTATION-BLOCKED -- VALIDATION-GATED (recorded 2026-08-27). Its code is on main: 05b2ca79 is an ancestor of origin/main. The row reads todo only because its own as-a-user validation needs the macOS Accessibility (TCC) grant, which is SIP-protected and cannot be granted by code. IMPORTANT for anyone reading the dep graph: DCU-5, DCU-6 and DCU-7 all list DCU-4 as a dep and therefore look blocked, but they are NOT -- DCU-6 was built and shipped against the landed code as PR #2137 while this row still said todo. So the dep is nominal for implementation purposes. The deps are deliberately NOT rewritten: editing a dep graph to make a frontier look better is the wrong fix, and the honest record is this note."
+          "evidence": "done 2026-09-06 (PR #2552, merged 6a019e3c3). Product code untouched — this atom's code was already on main; what was missing was its own V1 validation. THE RECORDED GATE WAS WRONG ABOUT ITS OWN NATURE, and the correction is the finding. The row had read todo since 2026-08-27 on the grounds that V1 'needs the macOS Accessibility (TCC) grant, which is SIP-protected and cannot be granted by code.' That is true of GRANTING one and silent about USING one that already exists: AXIsProcessTrusted() is a one-line read and macos_ffi.is_process_trusted was written for exactly this purpose. The gate was never ungrantable — it was UNPROBED. That is the absent-vs-declared-false trap applied to an OS PERMISSION instead of a config field, and it is the sixth instance of that class in this roadmap: nobody had asked the OS. scripts/dcu4_v1_validate.py therefore probes the grant FIRST and refuses to report a pass without it — an ungranted machine gets status: unproven with the exact System Settings path, never green, because a skip that reads as a pass is the failure mode this repo keeps rediscovering. Two phases, two interpreters, one JSON artifact, exit 0. Every step goes through service.computer_dispatch — never the driver, never the FFI — because dispatch is the only entry point DCU-4 shipped, and a validation that reached around it would prove the driver works while saying nothing about the chain meant to restrain it. V1 CLAUSES, LIVE: an absent enable file blocked ALL SEVEN tools — seven ERR_COMPUTER_USE_DISABLED refusals and seven SEL `denied` rows, the population rather than one sampled tool. A real app driven BY ELEMENT INDEX: computer_click on TextEdit's AXCloseButton (auto = AXPress) closed the front window, and computer_set_value on the AXTextArea produced a live AX value that read back byte-equal to the marker this run wrote. The pointer was sampled immediately before and after each acting dispatch and was identical both times. A LIVE AXSecureTextField (Safari over a local page carrying input[type=password]) returned ERR_COMPUTER_USE_SECURE_FIELD naming the subrole, with the field read back still empty. 8 dispatches produced 8 SEL rows, 6 approved + 2 denied. The absent-enable phase re-execs into its own process deliberately: enable_state reads the keystone once and caches it ('no mid-run flip'), so one process cannot honestly observe both states, and calling the reset_enable_state() hook would have validated the test hook instead of the property. COUNTED, NOT WRITTEN DOWN: SEL rows are checked against len(_ATTEMPTS) — the dispatches the run actually made — so a mismatch in EITHER direction reds, where a hardcoded expected count is a number that drifts. The pointer is sampled per action rather than once per run, because a wider window fails when a human nudges the mouse and a false defect is as bad as a missed one. ERR_COMPUTER_USE_STALE_INDEX is the ONLY retried refusal, because on a live desktop a tree that changed between snapshot and act is genuinely transient and re-snapshotting is the operator's own next move; no policy refusal is retried, since a policy refusal is the answer rather than a transient. Two further non-vacuous screens: computer_list_apps returned 2 of 80 running applications (the allowlist narrowing — a narrowing that returned everything would red), and a snapshot of the non-allowlisted Finder refused ERR_COMPUTER_USE_APP_NOT_ALLOWED before any window was walked. TWO FALSE NEGATIVES the harness had to survive, both recorded because both will bite the next person: pressing the close button of an EDITED document raises the save sheet instead of closing, so the clause read 'the press had no effect' when the press had worked perfectly (the click now runs before the write, on a clean document); and `open -a` restores the app's previously open windows, so a second window was still there and 'the window closed' was unobservable (both launches now use `open -F`). The same shape twice — an observable that was never as observable as it looked. BLAST RADIUS on the operator's own machine was bounded deliberately: teardown quits ONLY apps this run launched, captured BEFORE the launches, since quitting an app the operator already had open would destroy their unsaved work; the scratch document is left unsaved so that quitting discards it rather than writing a file nobody asked for; and cleanup avoids osascript entirely, because `tell application` needs the Apple Events grant — a DIFFERENT TCC grant from Accessibility — and on a host without it osascript blocks on a prompt nobody answers. Everything else is confined to a temp PERSONALCLAW_HOME, including the SEL log. GATES: make gates 6/6 PASS; 108 tests green across test_computer_use_{dispatch,call_sites,macos_driver}.py plus test_spawn_ceiling_audit.py; the validator re-run to exit 0 after the formatter and again after the commit. NOT CLOSED BY THIS: DCU-3 still owns the stale-index half of its own done_when (a past-TTL or changed-fingerprint refusal forcing a re-snapshot). This run exercised the fresh path only."
         },
         {
           "id": "DCU-5",
@@ -7708,7 +7710,7 @@
         {
           "id": "PEP-18",
           "title": "Spec Builder app (suite 7/9)",
-          "status": "todo",
+          "status": "blocked",
           "scope": "Idea -> Requirements -> Design -> Tasks, then hand to an autonomous run. App front over the WORKFLOWS-V2 engine — not a parallel planner.",
           "done_when": "The spec-builder app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; an idea walks to a task list that hands off to a real workflow run through the engine's own seams.",
           "deps": [],
@@ -7717,7 +7719,7 @@
         {
           "id": "PEP-19",
           "title": "Ops app (suite 8/9)",
-          "status": "todo",
+          "status": "blocked",
           "scope": "On-call first responder: watch alarms/pages, claim, investigate, propose fixes. Largest and most heavily gated: every fix is confirm-gated and rides AUTONOMY-GUARDRAILS (shipped). Build last among 8/9.",
           "done_when": "The ops app ships as its own validated PersonalClawApps PR built to the app-creation contract (app.json, SDK-only imports, minimum permissions, test_provider.py/test_server.py, README, LICENSE), validated by adding it as a local Store source and driving it in the real UI; listed in the Store and recorded in ECOSYSTEM-TOOLING's exemplar list; a simulated alarm is claimed, investigated, and a fix PROPOSED behind an explicit confirm gate — no ungated mutation path exists.",
           "deps": [],
@@ -7921,39 +7923,14 @@
   "dag": {
     "ready_frontier": [
       {
-        "id": "DL-9",
-        "title": "S5 T5.1: research-learnings republication section",
-        "plan": "DL"
-      },
-      {
-        "id": "PCS-9",
-        "title": "V2 live-provider verification of cache telemetry (real Anthropic + OpenAI runs)",
-        "plan": "PCS"
-      },
-      {
         "id": "PEP-16",
         "title": "Notes app (suite 5/9)",
-        "plan": "PEP"
-      },
-      {
-        "id": "PEP-18",
-        "title": "Spec Builder app (suite 7/9)",
-        "plan": "PEP"
-      },
-      {
-        "id": "PEP-19",
-        "title": "Ops app (suite 8/9)",
         "plan": "PEP"
       },
       {
         "id": "PP-16",
         "title": "A Loop becomes a WorkflowRun (retire the second work-unit noun)",
         "plan": "PP"
-      },
-      {
-        "id": "SH-12",
-        "title": "registry.json listings record signer identity: schema field + validation script captures it per listing",
-        "plan": "SH"
       }
     ],
     "gated_frontier": [
@@ -8044,14 +8021,6 @@
         "plan": "ET",
         "gate": [
           "owner"
-        ]
-      },
-      {
-        "id": "ET-7",
-        "title": "Bounty board: labeled `bounty` issues for wanted apps, linking scaffold/guide/conformance",
-        "plan": "ET",
-        "gate": [
-          "ext"
         ]
       },
       {
@@ -9920,8 +9889,8 @@
         "total_atoms": 9,
         "done": 8,
         "in_progress": 0,
-        "todo": 1,
-        "blocked": 0
+        "todo": 0,
+        "blocked": 1
       },
       {
         "code": "MUCV",
@@ -10055,8 +10024,8 @@
         "total_atoms": 11,
         "done": 8,
         "in_progress": 0,
-        "todo": 3,
-        "blocked": 0
+        "todo": 2,
+        "blocked": 1
       },
       {
         "code": "FM",
@@ -10082,8 +10051,8 @@
         "total_atoms": 10,
         "done": 5,
         "in_progress": 0,
-        "todo": 5,
-        "blocked": 0
+        "todo": 4,
+        "blocked": 1
       },
       {
         "code": "LV",
@@ -10107,9 +10076,9 @@
         "code": "SH",
         "plan": "SECURITY-HARDENING",
         "total_atoms": 12,
-        "done": 8,
+        "done": 9,
         "in_progress": 0,
-        "todo": 3,
+        "todo": 2,
         "blocked": 1
       },
       {
@@ -10134,9 +10103,9 @@
         "code": "DCU",
         "plan": "DESKTOP-COMPUTER-USE",
         "total_atoms": 7,
-        "done": 5,
+        "done": 6,
         "in_progress": 0,
-        "todo": 2,
+        "todo": 1,
         "blocked": 0
       },
       {
@@ -10154,8 +10123,8 @@
         "total_atoms": 20,
         "done": 17,
         "in_progress": 0,
-        "todo": 3,
-        "blocked": 0
+        "todo": 1,
+        "blocked": 2
       },
       {
         "code": "PP",
